@@ -95,6 +95,62 @@ pub(in crate::application::app) fn picker_op_for(action: &Action) -> Option<Pick
     })
 }
 
+/// Why the funnel arm declines a [`PickerOp`] without running it.
+/// Pure classification of `(op, is_open, is_standalone,
+/// has_document)`, so the decline branches are testable without a
+/// renderer — they read three booleans.
+///
+/// Getting these wrong is quiet: collapse
+/// [`Self::StandaloneCancel`] and Esc starts being swallowed by the
+/// persistent palette; collapse [`Self::PickerClosed`] and macros
+/// get a false "it ran".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum PickerDecline {
+    /// The picker isn't open, so there is nothing to commit,
+    /// cancel or nudge. Unreachable from the keyboard and mouse
+    /// paths (both gate on `is_open()`) but **reachable from a
+    /// macro / IPC step**, which is exactly what routing the picker
+    /// Actions through the funnel opened up. Declining keeps
+    /// `dispatch_macro`'s `any_ran` false so the keyboard handler's
+    /// custom-mutation tier still gets its turn on that key, and
+    /// keeps the scripting surface honest about what ran.
+    PickerClosed,
+    /// Cancel in Standalone mode. The persistent palette has no
+    /// "original" to cancel back to and only closes via `color
+    /// picker off` / `Action::CloseColorPicker`, so Esc must stay
+    /// available to the Document context. The keyboard pre-filter
+    /// reads the decline and falls through — byte-for-byte the
+    /// pre-funnel behavior, which returned `false` from the
+    /// picker's key handler here.
+    StandaloneCancel,
+    /// No document loaded — nothing to preview or commit onto.
+    NoDocument,
+}
+
+/// Decide whether the funnel arm can run `op`, or why it can't.
+/// `None` means "run it".
+///
+/// Order matters: `PickerClosed` is checked first because a closed
+/// picker is neither standalone nor contextual, so reporting
+/// `StandaloneCancel` for it would name the wrong reason.
+pub(in crate::application::app) fn picker_decline_reason(
+    op: PickerOp,
+    is_open: bool,
+    is_standalone: bool,
+    has_document: bool,
+) -> Option<PickerDecline> {
+    if !is_open {
+        return Some(PickerDecline::PickerClosed);
+    }
+    if matches!(op, PickerOp::Cancel) && is_standalone {
+        return Some(PickerDecline::StandaloneCancel);
+    }
+    if !has_document {
+        return Some(PickerDecline::NoDocument);
+    }
+    None
+}
+
 /// Step one channel of an `(hue_deg, sat, val)` triple. Hue wraps
 /// through `rem_euclid` so 0° − 15° lands on 345° rather than a
 /// negative angle the wheel can't render; saturation and value
@@ -215,10 +271,10 @@ pub(in crate::application::app) fn handle_color_picker_clipboard_key(
 #[cfg(test)]
 mod tests {
     //! Nudge math + the funnel-ownership table. The ownership test
-    //! walks every `Action` variant, so a new picker Action can't
-    //! ship without an entry in [`picker_op_for`] — which is the
-    //! same predicate the `dispatch_action` arm guards on and the
-    //! same one the keyboard / click routers consult.
+    //! walks every `Action` variant, so a new ColorPicker-context
+    //! Action can't ship without an entry in [`picker_op_for`] —
+    //! which is the same predicate the `dispatch_action` arm guards
+    //! on and the same one the keyboard / click routers consult.
 
     use super::*;
     use crate::application::keybinds::{ActionKind, InputContext};
@@ -247,7 +303,12 @@ mod tests {
     /// the property the issue is about: an Action the picker
     /// resolves a keystroke to cannot fail to reach a funnel arm.
     /// `ActionKind::iter()` supplies the structural completeness —
-    /// a ninth `Picker*` variant fails this test until it is wired.
+    /// a ninth **ColorPicker-context** Action fails this test until
+    /// it is wired. Note the scope: `OpenColorPicker` /
+    /// `CloseColorPicker` are `Picker`-named but sit in
+    /// `context = Document`, so the walk does not (and should not)
+    /// see them — they are console-verb mirrors with their own
+    /// funnel arms, not modal keystrokes.
     #[test]
     fn test_picker_op_for_claims_every_color_picker_context_action() {
         let listed: HashSet<ActionKind> = picker_actions().iter().map(ActionKind::from).collect();
@@ -427,6 +488,105 @@ mod tests {
             &mut hover
         ));
         assert!(!hover.dirty);
+    }
+
+    // ── Picker-arm decline branches ─────────────────────────────
+    //
+    // The three cases where the picker arm must report `Unhandled`.
+    // They read only `(op, is_open, is_standalone, has_document)`,
+    // so §T8's no-wgpu rule doesn't reach them — and each one is a
+    // silent failure if it regresses.
+
+    /// An open contextual picker with a document runs every op.
+    #[test]
+    fn test_picker_decline_reason_allows_every_op_when_open_and_loaded() {
+        for op in [
+            PickerOp::Cancel,
+            PickerOp::Commit,
+            PickerOp::Nudge(PickerNudge::HueUp),
+        ] {
+            assert_eq!(
+                picker_decline_reason(op, true, false, true),
+                None,
+                "{:?} should run against an open contextual picker",
+                op
+            );
+        }
+    }
+
+    /// **Closed picker.** Unreachable from the keyboard and mouse
+    /// paths (both gate on `is_open()`), but reachable from a macro
+    /// step — which is precisely what this PR wired up. Reporting
+    /// `Handled` here would set `dispatch_macro`'s `any_ran`, and
+    /// the keyboard handler skips the custom-mutation tier when a
+    /// macro "ran", so a `CustomMutation` bound to the same key
+    /// would silently stop firing.
+    #[test]
+    fn test_picker_decline_reason_declines_every_op_when_the_picker_is_closed() {
+        for op in [
+            PickerOp::Cancel,
+            PickerOp::Commit,
+            PickerOp::Nudge(PickerNudge::SatDown),
+        ] {
+            assert_eq!(
+                picker_decline_reason(op, false, false, true),
+                Some(PickerDecline::PickerClosed),
+                "{:?} must not claim to have run against a closed picker",
+                op
+            );
+        }
+    }
+
+    /// **Standalone cancel.** The persistent palette has no
+    /// "original" to cancel back to, so Esc must fall through to
+    /// the Document context. Collapse this branch and Esc starts
+    /// being swallowed while the palette is up.
+    #[test]
+    fn test_picker_decline_reason_declines_cancel_in_standalone_mode() {
+        assert_eq!(
+            picker_decline_reason(PickerOp::Cancel, true, true, true),
+            Some(PickerDecline::StandaloneCancel),
+        );
+    }
+
+    /// Standalone declines *only* cancel — commit fans the wheel
+    /// color across the selection and nudges still move the HSV.
+    #[test]
+    fn test_picker_decline_reason_allows_commit_and_nudge_in_standalone_mode() {
+        assert_eq!(picker_decline_reason(PickerOp::Commit, true, true, true), None);
+        assert_eq!(
+            picker_decline_reason(PickerOp::Nudge(PickerNudge::ValUp), true, true, true),
+            None
+        );
+    }
+
+    /// **No document.** Nothing to preview or commit onto.
+    #[test]
+    fn test_picker_decline_reason_declines_every_op_without_a_document() {
+        for op in [
+            PickerOp::Cancel,
+            PickerOp::Commit,
+            PickerOp::Nudge(PickerNudge::HueDown),
+        ] {
+            assert_eq!(
+                picker_decline_reason(op, true, false, false),
+                Some(PickerDecline::NoDocument),
+                "{:?} needs a document",
+                op
+            );
+        }
+    }
+
+    /// A closed picker is neither standalone nor contextual, so
+    /// the closed check must win over the standalone-cancel check
+    /// — otherwise the log line names the wrong reason and the
+    /// two branches can't be told apart in a bug report.
+    #[test]
+    fn test_picker_decline_reason_reports_closed_before_standalone_cancel() {
+        assert_eq!(
+            picker_decline_reason(PickerOp::Cancel, false, true, true),
+            Some(PickerDecline::PickerClosed),
+        );
     }
 
     #[test]

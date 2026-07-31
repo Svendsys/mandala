@@ -295,7 +295,15 @@ pub(super) fn handle_keyboard_input(
 /// characters and route them to the inline editor: open the
 /// right editor for the current selection, then replay the
 /// keystroke into it so the typed character lands as the first
-/// edit. Mirrors the `EditSelectionClean`-on-node flow.
+/// edit.
+///
+/// Mirrors the **shape** of the `EditSelectionClean`-on-node flow
+/// (open the editor, replay the keystroke into it) but not its
+/// buffer contract: this path seeds the existing text and the
+/// typed character appends at the cursor. See the `clean = false`
+/// note on the `resolve_edge_editor_plan` match below — switching
+/// to an empty buffer would change what typing over a selected
+/// label does, which is a product decision, not a funnel fix.
 ///
 /// Returns `true` when the keystroke was consumed (editor
 /// opened or selection was stale and the keystroke was dropped

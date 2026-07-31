@@ -18,7 +18,8 @@ use crate::application::keybinds::Action;
 use super::super::click::rebuild_all_with_mode;
 use super::super::color_picker_flow::{
     apply_picker_nudge, cancel_color_picker, close_color_picker_standalone, commit_color_picker,
-    commit_color_picker_to_selection, open_color_picker_standalone, picker_op_for, PickerOp,
+    commit_color_picker_to_selection, open_color_picker_standalone, picker_decline_reason, picker_op_for,
+    PickerOp,
 };
 use super::super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
@@ -816,23 +817,25 @@ fn open_editor_for_edge_selection(clean: bool, ctx: &mut InputHandlerContext<'_>
 /// `dispatch_action` picker arm, lifted out so the arm stays a
 /// two-liner and the mode branches read in one place.
 ///
-/// Returns `Unhandled` (not `Handled`) in the two cases where the
-/// keystroke is genuinely not the picker's:
-/// - **Standalone cancel.** The persistent palette has no
-///   "original" to cancel back to and only closes via `color
-///   picker off` / [`Action::CloseColorPicker`], so Esc must stay
-///   available to the Document context. The keyboard pre-filter
-///   reads the `Unhandled` and falls through — byte-for-byte the
-///   pre-funnel behavior, which returned `false` from the picker's
-///   key handler here.
-/// - **No document.** Nothing to preview or commit onto.
+/// Returns `Unhandled` whenever nothing ran — see
+/// [`picker_decline_reason`] for the three cases and why each one
+/// must not report `Handled`. `Handled` means the op reached its
+/// effect, so a nudge that the picker state rejected also reports
+/// `Unhandled` rather than claiming success.
 fn dispatch_picker_op(op: PickerOp, ctx: &mut InputHandlerContext<'_>) -> DispatchOutcome {
     let standalone = ctx.color_picker_state.is_standalone();
-    if matches!(op, PickerOp::Cancel) && standalone {
+    if let Some(reason) = picker_decline_reason(
+        op,
+        ctx.color_picker_state.is_open(),
+        standalone,
+        ctx.document.is_some(),
+    ) {
+        log::debug!("picker action {:?} declined: {:?}", op, reason);
         return DispatchOutcome::Unhandled;
     }
+    // `picker_decline_reason` just proved the document is present.
     let Some(doc) = ctx.document.as_mut() else {
-        log::debug!("picker action {:?}: no document loaded; skipping", op);
+        log::error!("picker arm: decline check and document borrow disagree");
         return DispatchOutcome::Unhandled;
     };
     match op {
@@ -874,7 +877,13 @@ fn dispatch_picker_op(op: PickerOp, ctx: &mut InputHandlerContext<'_>) -> Dispat
         PickerOp::Nudge(nudge) => {
             // Renderer-free: the preview stamp marks
             // `picker_hover.dirty` and the per-frame drain rebuilds.
-            apply_picker_nudge(nudge, ctx.color_picker_state, doc, ctx.picker_hover);
+            // The helper's `false` means the picker state rejected
+            // the nudge, so the op did not take effect — report
+            // that rather than a blanket `Handled`.
+            if !apply_picker_nudge(nudge, ctx.color_picker_state, doc, ctx.picker_hover) {
+                log::debug!("picker nudge {:?} did not apply; reporting Unhandled", nudge);
+                return DispatchOutcome::Unhandled;
+            }
         }
     }
     DispatchOutcome::Handled

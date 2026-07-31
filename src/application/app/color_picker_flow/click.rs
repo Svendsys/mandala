@@ -32,6 +32,62 @@ pub(in crate::application::app) enum PickerClick {
     Dispatch(Action),
 }
 
+/// The route a press takes when the hit alone decides it — no
+/// picker state is mutated on the way. `None` means the hit is one
+/// of the in-place ones (hue / sat / val cell selection, drag-anchor
+/// gesture start): the caller applies it and reports
+/// [`PickerClick::Consumed`].
+///
+/// Split out of [`handle_color_picker_click`] because these are the
+/// branches that decide whether a press reaches the funnel, reaches
+/// the canvas, or is swallowed — and they read only `(hit, button,
+/// is_standalone)`, so they are testable without a layout or a
+/// renderer.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::application::app) fn terminal_route_for_hit(
+    hit: crate::application::color_picker::PickerHit,
+    button: MouseButton,
+    is_standalone: bool,
+) -> Option<PickerClick> {
+    use crate::application::color_picker::PickerHit;
+
+    // RMB outside the DragAnchor region is a no-op for now — only
+    // the empty region of the wheel disk (inside the circle, off
+    // every interactive glyph) acts as a resize handle. That keeps
+    // the gesture predictable: RMB on a hue/sat/val cell or a chip
+    // doesn't accidentally resize while the user is also reading
+    // the live preview. In Standalone mode we fall through so
+    // the RMB can reach any future right-click menu on the canvas.
+    if button == MouseButton::Right && !matches!(hit, PickerHit::DragAnchor) {
+        return Some(if is_standalone {
+            PickerClick::FallThrough
+        } else {
+            PickerClick::Consumed
+        });
+    }
+    match hit {
+        PickerHit::Outside => Some(if is_standalone {
+            // Standalone mode: the persistent palette only closes
+            // via `color picker off`. Don't consume the click — let
+            // it flow through to the canvas so the user can still
+            // select nodes, create edges, etc.
+            PickerClick::FallThrough
+        } else {
+            // Contextual mode: click outside cancels. Same
+            // user-named effect the Esc key names, so it goes out
+            // as `Action::PickerCancel` and the funnel runs it.
+            PickerClick::Dispatch(Action::PickerCancel)
+        }),
+        // The ࿕ button is the mouse spelling of
+        // `Action::PickerCommit`; the funnel arm picks Standalone
+        // (fan out across the selection, stay open) vs. Contextual
+        // (write the bound target, close), so the branch lives in
+        // exactly one place.
+        PickerHit::Commit => Some(PickerClick::Dispatch(Action::PickerCommit)),
+        PickerHit::Hue(_) | PickerHit::SatCell(_) | PickerHit::ValCell(_) | PickerHit::DragAnchor => None,
+    }
+}
+
 /// Click handler for the picker. Semantics:
 ///
 /// - **Hue / SatCell / ValCell** — select the hovered value.
@@ -87,35 +143,14 @@ pub(in crate::application::app) fn handle_color_picker_click(
         return PickerClick::FallThrough;
     };
 
-    // RMB outside the DragAnchor region is a no-op for now — only
-    // the empty region of the wheel disk (inside the circle, off
-    // every interactive glyph) acts as a resize handle. That keeps
-    // the gesture predictable: RMB on a hue/sat/val cell or a chip
-    // doesn't accidentally resize while the user is also reading
-    // the live preview. In Standalone mode we fall through so
-    // the RMB can reach any future right-click menu on the canvas.
-    if button == MouseButton::Right && !matches!(hit, PickerHit::DragAnchor) {
-        return if state.is_standalone() {
-            PickerClick::FallThrough
-        } else {
-            PickerClick::Consumed
-        };
+    // Hit-decided routes (RMB swallow, outside-cancel, ࿕ commit)
+    // resolve in `terminal_route_for_hit` — none of them mutate
+    // picker state, so they're one pure table.
+    if let Some(route) = terminal_route_for_hit(hit, button, state.is_standalone()) {
+        return route;
     }
 
     match hit {
-        PickerHit::Outside => {
-            if state.is_standalone() {
-                // Standalone mode: the persistent palette only
-                // closes via `color picker off`. Don't consume the
-                // click — let it flow through to the canvas so the
-                // user can still select nodes, create edges, etc.
-                return PickerClick::FallThrough;
-            }
-            // Contextual mode: click outside cancels. Same
-            // user-named effect the Esc key names, so it goes out
-            // as `Action::PickerCancel` and the funnel runs it.
-            return PickerClick::Dispatch(Action::PickerCancel);
-        }
         PickerHit::Hue(slot) => {
             if let ColorPickerState::Open {
                 hue_deg,
@@ -148,14 +183,8 @@ pub(in crate::application::app) fn handle_color_picker_click(
             }
             apply_picker_preview(state, doc, picker_hover);
         }
-        PickerHit::Commit => {
-            // The ࿕ button is the mouse spelling of
-            // `Action::PickerCommit`; the funnel arm picks
-            // Standalone (fan out across the selection, stay
-            // open) vs. Contextual (write the bound target,
-            // close), so the branch lives in exactly one place.
-            return PickerClick::Dispatch(Action::PickerCommit);
-        }
+        // `terminal_route_for_hit` already returned for these two.
+        PickerHit::Outside | PickerHit::Commit => {}
         PickerHit::DragAnchor => {
             // Start a gesture from anywhere inside the wheel disk
             // that's not on an interactive glyph (hit_test_picker
@@ -220,5 +249,117 @@ pub(in crate::application::app) fn end_color_picker_gesture(
         was_active
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests {
+    //! The press route table. Every branch that decides whether a
+    //! press reaches the §3 funnel, reaches the canvas, or is
+    //! swallowed — none of which needs a layout, a document or a
+    //! renderer, so §T8's no-wgpu rule doesn't shield them.
+
+    use super::*;
+    use crate::application::color_picker::PickerHit;
+
+    /// LMB on the ࿕ button is the mouse spelling of
+    /// `Action::PickerCommit` and must reach the funnel in **both**
+    /// modes — the arm, not this router, picks Standalone
+    /// (fan-out, stay open) vs. Contextual (bound target, close).
+    #[test]
+    fn test_commit_hit_dispatches_picker_commit_in_both_modes() {
+        for standalone in [false, true] {
+            assert_eq!(
+                terminal_route_for_hit(PickerHit::Commit, MouseButton::Left, standalone),
+                Some(PickerClick::Dispatch(Action::PickerCommit)),
+                "standalone={}",
+                standalone
+            );
+        }
+    }
+
+    /// Contextual outside-click is a cancel, and it goes out as an
+    /// Action rather than calling `cancel_color_picker` here.
+    #[test]
+    fn test_outside_click_dispatches_picker_cancel_in_contextual_mode() {
+        assert_eq!(
+            terminal_route_for_hit(PickerHit::Outside, MouseButton::Left, false),
+            Some(PickerClick::Dispatch(Action::PickerCancel)),
+        );
+    }
+
+    /// Standalone outside-click must reach the canvas: the
+    /// persistent palette coexists with the user selecting nodes
+    /// underneath it and only closes via `color picker off`.
+    /// Collapsing this into the contextual branch would make the
+    /// palette impossible to click past.
+    #[test]
+    fn test_outside_click_falls_through_in_standalone_mode() {
+        assert_eq!(
+            terminal_route_for_hit(PickerHit::Outside, MouseButton::Left, true),
+            Some(PickerClick::FallThrough),
+        );
+    }
+
+    /// RMB anywhere but the drag anchor is swallowed in Contextual
+    /// mode and passed to the canvas in Standalone mode.
+    #[test]
+    fn test_right_button_off_the_drag_anchor_is_swallowed_only_in_contextual_mode() {
+        for hit in [
+            PickerHit::Outside,
+            PickerHit::Commit,
+            PickerHit::Hue(0),
+            PickerHit::SatCell(1),
+            PickerHit::ValCell(2),
+        ] {
+            assert_eq!(
+                terminal_route_for_hit(hit, MouseButton::Right, false),
+                Some(PickerClick::Consumed),
+                "contextual RMB on {:?}",
+                hit
+            );
+            assert_eq!(
+                terminal_route_for_hit(hit, MouseButton::Right, true),
+                Some(PickerClick::FallThrough),
+                "standalone RMB on {:?}",
+                hit
+            );
+        }
+    }
+
+    /// RMB on the drag anchor is the wheel-resize gesture, so it is
+    /// *not* a terminal route — the caller installs the gesture and
+    /// reports `Consumed`. Pinned because the RMB swallow above
+    /// would otherwise eat the resize grab.
+    #[test]
+    fn test_right_button_on_the_drag_anchor_is_not_a_terminal_route() {
+        for standalone in [false, true] {
+            assert_eq!(
+                terminal_route_for_hit(PickerHit::DragAnchor, MouseButton::Right, standalone),
+                None,
+                "standalone={}",
+                standalone
+            );
+        }
+    }
+
+    /// The in-place hits mutate picker state, so the router hands
+    /// them back to the caller rather than routing them.
+    #[test]
+    fn test_stateful_hits_are_not_terminal_routes() {
+        for hit in [
+            PickerHit::Hue(3),
+            PickerHit::SatCell(4),
+            PickerHit::ValCell(5),
+            PickerHit::DragAnchor,
+        ] {
+            assert_eq!(
+                terminal_route_for_hit(hit, MouseButton::Left, false),
+                None,
+                "{:?} selects a value / starts a gesture in place",
+                hit
+            );
+        }
     }
 }

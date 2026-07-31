@@ -143,6 +143,10 @@ pub(in crate::application::app) enum EdgeEditorPlan {
 /// the label is the endpoint's glyph and the text is its caption,
 /// and the editor edits the caption in both cases.
 #[cfg(not(target_arch = "wasm32"))]
+/// The match is deliberately **exhaustive** rather than
+/// `_ => None`: a tenth `SelectionState` variant should be a build
+/// error here, so whoever adds it has to decide whether it names a
+/// single-line editor instead of silently inheriting "no".
 pub(in crate::application::app) fn resolve_edge_editor_plan(
     selection: &crate::application::document::SelectionState,
 ) -> EdgeEditorPlan {
@@ -155,7 +159,17 @@ pub(in crate::application::app) fn resolve_edge_editor_plan(
             edge_ref: s.edge_ref(),
             endpoint_node_id: s.endpoint_node_id.clone(),
         },
-        _ => EdgeEditorPlan::None,
+        // Node-scoped selections belong to the node text editor
+        // (`apply_enter_node_edit` owns them, cross-platform); a
+        // bare `Edge` selection has a body but no label under edit;
+        // `None` has no target at all.
+        SelectionState::None
+        | SelectionState::Single(_)
+        | SelectionState::Multi(_)
+        | SelectionState::Section(_)
+        | SelectionState::MultiSection(_)
+        | SelectionState::SectionRange { .. }
+        | SelectionState::Edge(_) => EdgeEditorPlan::None,
     }
 }
 
@@ -686,6 +700,8 @@ mod tests {
 
     /// Node-scoped and empty selections belong to the node text
     /// editor (or to nothing) — the single-line editors decline.
+    /// All seven non-editor variants, so the list plus the three
+    /// editor cases above covers every `SelectionState` arm.
     #[test]
     fn test_resolve_edge_editor_plan_declines_non_edge_selections() {
         for sel in [
@@ -693,6 +709,11 @@ mod tests {
             SelectionState::Single("a".into()),
             SelectionState::Multi(vec!["a".into(), "b".into()]),
             SelectionState::Section(SectionSel::new("a", 0)),
+            SelectionState::MultiSection(vec![SectionSel::new("a", 0), SectionSel::new("b", 1)]),
+            SelectionState::SectionRange {
+                sel: SectionSel::new("a", 0),
+                range: (0, 2),
+            },
             SelectionState::Edge(EdgeRef::new("a", "b", "cross_link")),
         ] {
             assert_eq!(

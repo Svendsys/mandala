@@ -35,7 +35,8 @@ pub(in crate::application::app) use commit::{
     commit_color_picker_to_selection,
 };
 pub(in crate::application::app) use key::{
-    apply_picker_nudge, handle_color_picker_clipboard_key, picker_op_for, PickerOp,
+    apply_picker_nudge, handle_color_picker_clipboard_key, picker_decline_reason, picker_op_for,
+    PickerOp,
 };
 pub(in crate::application::app) use mouse::handle_color_picker_mouse_move;
 pub(in crate::application::app) use open::{open_color_picker_contextual, open_color_picker_standalone};
