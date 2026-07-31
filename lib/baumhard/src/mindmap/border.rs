@@ -1341,13 +1341,6 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
     }
 }
 
-/// Resolve `border_style.color_palette` (a name) to a list of
-/// per-cycle-position RGBA colors, reading the configured
-/// `palette_field` channel out of each `ColorGroup`. Returns an
-/// empty `Vec` when the name is unset or the named palette is not
-/// in the map (logs a warning in the latter case per
-/// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
-/// tree builder consume the color list without re-walking the
 /// Apply a [`crate::mindmap::scene_builder::BorderConfigEditsView`]
 /// to a slot for live-preview rendering. Mirrors the application-
 /// crate's `apply_glyph_border_edits_to_slot` shape but consumes
@@ -1480,6 +1473,17 @@ pub fn default_glyph_border_config() -> GlyphBorderConfig {
     }
 }
 
+/// Resolve `border_style.color_palette` (a name) to a list of
+/// per-cycle-position RGBA colors, reading the configured
+/// `palette_field` channel out of each `ColorGroup`. Returns an
+/// empty `Vec` when the name is unset or the named palette is not
+/// in the map (logs a warning in the latter case per
+/// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
+/// tree builder consume the color list without re-walking the
+/// palette map and re-parsing its hex strings — [`build_border_regions`]
+/// indexes the returned slice once per glyph cluster, so the walk
+/// happens once per border rather than once per glyph.
+///
 /// Cost: O(groups.len()) hex parses on names that resolve, O(1) on
 /// the unset / missing fallback paths.
 pub fn resolve_palette_cycle(

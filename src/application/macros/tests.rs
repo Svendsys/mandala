@@ -423,7 +423,7 @@ fn macro_registry_user_overrides_app_by_id() {
     assert_eq!(m.name, "User version");
     assert_eq!(src, SourceTier::User);
     // Critical for the privilege gate: the tier upgrade is
-    // honoured (User can run ConsoleLine / privileged Actions
+    // honored (User can run ConsoleLine / privileged Actions
     // even if an App macro had the same id first).
     assert!(src.allows_console_line());
 
@@ -510,7 +510,7 @@ fn macro_registry_clear_tier_only_drops_matching() {
     assert!(!reg.contains("map"));
 }
 
-/// Shadow-stack reveal property — the central new behaviour
+/// Shadow-stack reveal property — the central new behavior
 /// of the per-tier slot design. Clearing a higher tier reveals
 /// the lower-tier entry underneath instead of leaving the id
 /// permanently displaced.
@@ -580,7 +580,7 @@ fn clear_tier_removes_only_matching_slot() {
 /// User-tier macro in document A; opening document B (which
 /// has no `mindmap.macros`) clears the Map tier and the
 /// User-tier macro re-emerges. Locks the load-bearing
-/// user-visible behaviour change shadow-stacking enables.
+/// user-visible behavior change shadow-stacking enables.
 #[test]
 fn cross_tier_within_session_round_trip() {
     let mut reg = MacroRegistry::new();

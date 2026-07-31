@@ -43,8 +43,10 @@ use super::{load_layered, read_capped, xdg::xdg_mandala_path, ConfigLayer};
 /// is a change to this function, not to three call sites.
 ///
 /// Costs: one small `Vec` of at most two layers, one `xdg_mandala_path`
-/// resolution, and one `Display` render per existing path. The `stat`
-/// and the read only happen for layers the driver actually reaches.
+/// resolution, and one `Display` render per resolved path — both are
+/// rendered up front, before the walk, so the layer list can borrow
+/// them (see the comment on that pair below). The `stat` and the read
+/// only happen for layers the driver actually reaches.
 pub fn load_desktop_layered<T>(
     label: &str,
     filename: &str,
@@ -88,6 +90,11 @@ pub fn load_desktop_layered<T>(
 
 #[cfg(test)]
 mod tests {
+    // The XDG layer's own coverage — it winning when no explicit path
+    // is given, and losing to one when it is — lives in `xdg.rs`'s
+    // test module, which owns the `ENV_LOCK` / `with_env` harness that
+    // makes overriding `XDG_CONFIG_HOME` safe under the multi-threaded
+    // test runner. A second harness here would race that one.
     use super::*;
 
     /// Accepts anything that is not `!`-prefixed, uppercased so the
