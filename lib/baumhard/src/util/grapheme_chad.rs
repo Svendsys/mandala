@@ -123,6 +123,30 @@ pub fn split_off_graphemes(original: &mut String, at: usize) -> String {
     right_str
 }
 
+/// Grapheme-cluster index of the first cluster in `s` that carries any
+/// non-whitespace content, or `None` when `s` is empty or entirely
+/// whitespace.
+///
+/// A cluster counts as whitespace only when *every* scalar in it is
+/// `char::is_whitespace`, so a base character with a combining mark is
+/// content even though the mark alone would not be.
+///
+/// This is the grapheme-unit answer to "where does the leading indent
+/// end". The `char`-ordinal answer is a trap: it disagrees with the
+/// byte offset the moment the indent contains a multi-byte space such
+/// as U+3000 IDEOGRAPHIC SPACE, and it disagrees with the grapheme
+/// offset the moment the text contains a ZWJ emoji or a combining
+/// mark. Callers that then feed the result to a slice, a
+/// [`split_off_graphemes`], and a cluster-indexed insert are mixing
+/// three units (CONVENTIONS §B3).
+///
+/// Cost: O(n) grapheme walk, short-circuiting at the first content
+/// cluster. No allocation.
+pub fn first_non_whitespace_grapheme(s: &str) -> Option<usize> {
+    s.graphemes(true)
+        .position(|g| g.chars().any(|c| !c.is_whitespace()))
+}
+
 /// Number of newline-separated lines in `s`. The trailing line counts
 /// even when `s` does not end in `\n`, so an empty string yields 1.
 /// O(n) byte scan; no allocation.

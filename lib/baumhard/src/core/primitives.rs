@@ -3,7 +3,7 @@
 //! Core primitives shared across the Baumhard crate.
 //!
 //! This module defines the foundational data types that every higher-level
-//! abstraction in Baumhard rests on: character-range colour/font regions
+//! abstraction in Baumhard rests on: character-range color/font regions
 //! (`ColorFontRegions`, `ColorFontRegion`), the arithmetic operation
 //! enum (`ApplyOperation`), spatial anchoring (`Anchor`, `AnchorPoint`,
 //! `AnchorTarget`), element flags (`Flag`), and the `Applicable` trait
@@ -25,10 +25,10 @@ use strum::IntoDiscriminant;
 use crate::font::fonts::AppFont;
 use crate::util::color::FloatRgba;
 
-/// One contiguous span of text with an optional colour and font
+/// One contiguous span of text with an optional color and font
 /// pin. Identified by its [`Range`]; `Eq` / `Hash` only inspect the
 /// range so two regions with the same bounds collide in the owning
-/// [`ColorFontRegions`] set regardless of colour / font.
+/// [`ColorFontRegions`] set regardless of color / font.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ColorFontRegion {
     /// Half-open grapheme-cluster span this region covers in the
@@ -38,8 +38,8 @@ pub struct ColorFontRegion {
     /// Optional font pin overriding the area's default for this
     /// span. `None` lets the area's font show through.
     pub font: Option<AppFont>,
-    /// Optional colour pin overriding the area's default. `None`
-    /// lets the area's text colour show through.
+    /// Optional color pin overriding the area's default. `None`
+    /// lets the area's text color show through.
     pub color: Option<FloatRgba>,
 }
 
@@ -47,7 +47,7 @@ impl Hash for ColorFontRegion {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Only the range is hashed — the set semantics key on it alone
         // so a lookup by bare range can find a stored region with any
-        // colour / font payload.
+        // color / font payload.
         self.range.hash(state);
     }
 }
@@ -62,8 +62,8 @@ pub enum ColorFontRegionField {
     /// Set the region's font pin to a specific [`AppFont`],
     /// overriding the area's default for the region's span.
     Font(AppFont),
-    /// Set the region's colour pin to an explicit [`FloatRgba`],
-    /// overriding the area's default text colour for the span.
+    /// Set the region's color pin to an explicit [`FloatRgba`],
+    /// overriding the area's default text color for the span.
     Color(FloatRgba),
     /// Mutates the region as a whole (insert, replace, or delete
     /// the entry), without targeting an individual sub-field. The
@@ -93,12 +93,12 @@ impl Ord for ColorFontRegion {
 }
 
 impl ColorFontRegion {
-    /// Construct a region with an explicit range, font pin, and colour
+    /// Construct a region with an explicit range, font pin, and color
     /// pin. All fields may be `None` except the range.
     pub fn new(range: Range, font: Option<AppFont>, color: Option<FloatRgba>) -> Self {
         ColorFontRegion { range, font, color }
     }
-    /// Construct a keying-only region — no font, no colour — suitable
+    /// Construct a keying-only region — no font, no color — suitable
     /// for `BTreeSet::get` / `remove` lookups by range alone.
     pub fn new_key_only(range: Range) -> Self {
         ColorFontRegion {
@@ -196,30 +196,70 @@ impl ColorFontRegions {
         self.regions.insert(region);
     }
 
-    /// Split any region overlapping `range` at `range.start`, push the
-    /// second half forward past `range.end`, and shift every region
-    /// strictly right of `range.end` by `range.magnitude()`.
+    /// Insertion primitive for the "split around the insertion, do not
+    /// absorb it" policy: `range.magnitude()` grapheme clusters were
+    /// inserted at `range.start`, and the inserted span is to be left
+    /// *uncovered* so the caller can style it with a follow-up
+    /// [`Self::submit_region`]. Semantics, per region relative to the
+    /// insertion point `range.start`:
     ///
-    /// Costs: O(n) over existing regions plus one full vec clone of
-    /// the set.
+    /// - **Fully left** (`end <= range.start`): unchanged.
+    /// - **At or right of the insertion point** (`start >= range.start`):
+    ///   both bounds shift right by `range.magnitude()`. A region that
+    ///   *begins* at the insertion point is never split — it has
+    ///   nothing on the left of the cut, so splitting it would emit an
+    ///   empty `[start, start)` husk and an inverted right half.
+    /// - **Straddling** (`start < range.start < end`): splits in two.
+    ///   The head keeps `[start, range.start)`; the tail becomes
+    ///   `[range.end, end + range.magnitude())` — the same graphemes it
+    ///   covered before, pushed past the inserted span.
+    ///
+    /// An inverted `range` (`end < start`) is dropped with a warning
+    /// rather than underflowing, matching [`Self::submit_region`] —
+    /// this primitive is reachable from the same interactive
+    /// mutation pipeline (CODE_CONVENTIONS.md §9). A zero-magnitude
+    /// `range` is a no-op: nothing was inserted, so there is nothing
+    /// to split around.
+    ///
+    /// Contrast with [`Self::insert_regions_at`], where the straddling
+    /// region *absorbs* the insertion instead of splitting around it,
+    /// and with [`Self::shift_regions_after`], which shifts on
+    /// `start > idx` and leaves straddlers alone entirely.
+    ///
+    /// Costs: O(n) over existing regions; one `Vec` of the resulting
+    /// regions plus one `BTreeSet` rebuild. Regions are `Copy`, so
+    /// nothing deep-clones.
     pub fn split_and_separate(&mut self, range: Range) {
-        let mut copy_of_regions: Vec<_> = self.regions.iter().copied().collect();
-        let mut cloned_regions: Vec<ColorFontRegion> = Vec::new();
-        for region in &mut copy_of_regions {
-            if range.overlaps(&region.range) {
-                let mut right_part = *region;
-                right_part.range.start = range.end;
-                right_part.range.end += range.magnitude();
-                cloned_regions.push(right_part);
-                region.range.end = range.start;
+        if range.end < range.start {
+            warn!(
+                "split_and_separate dropped inverted range {}..{}",
+                range.start, range.end
+            );
+            return;
+        }
+        let magnitude = range.magnitude();
+        if magnitude == 0 {
+            return;
+        }
+        // `+ 1` covers the single split that the common case performs;
+        // pathological inputs with several straddlers simply grow.
+        let mut updated: Vec<ColorFontRegion> = Vec::with_capacity(self.regions.len() + 1);
+        for region in self.regions.iter() {
+            let mut head = *region;
+            if head.range.start >= range.start {
+                head.range.push_right(magnitude);
+            } else if head.range.end > range.start {
+                let mut tail = *region;
+                tail.range.start = range.end;
+                tail.range.end += magnitude;
+                head.range.end = range.start;
+                updated.push(tail);
             }
-            if region.range.start >= range.end {
-                region.range.push_right(range.magnitude());
-            }
+            // else: fully left of the insertion point, unchanged.
+            updated.push(head);
         }
         self.regions.clear();
-        self.regions.extend(copy_of_regions);
-        self.regions.extend(cloned_regions);
+        self.regions.extend(updated);
     }
 
     /// Shift every region whose `start > idx` right by `magnitude`.
@@ -374,7 +414,7 @@ impl ColorFontRegions {
     }
 
     /// Merge `region` into the set: if a region with the same range
-    /// already exists, its colour / font fields are overwritten by any
+    /// already exists, its color / font fields are overwritten by any
     /// `Some(_)` fields in `region` (leaving the rest intact). If no
     /// match exists, the region is inserted as-is.
     pub fn set_or_insert(&mut self, region: &ColorFontRegion) {
@@ -425,7 +465,7 @@ impl ColorFontRegions {
         self.remove(&ColorFontRegion::new_key_only(range))
     }
 
-    /// Remove the region whose range matches `region`'s. Colour / font
+    /// Remove the region whose range matches `region`'s. Color / font
     /// payloads are ignored for the match — only the range is the key.
     pub fn remove(&mut self, region: &ColorFontRegion) -> bool {
         self.regions.remove(region)
@@ -789,18 +829,18 @@ impl Anchor {
 }
 
 impl Default for Anchor {
-    /// Centre-on-parent: the element's centre is pinned to its
-    /// immediate parent's centre with zero pixel offset.
+    /// Center-on-parent: the element's center is pinned to its
+    /// immediate parent's center with zero pixel offset.
     ///
     /// The three-way constraint is:
     /// 1. **Target** — `AnchorTarget::Parent { generation_offset: 0 }`
     ///    (the immediate parent, not a grandparent).
     /// 2. **Target point** — `AnchorPoint::Center(0)` (the parent's
-    ///    geometric centre, no pixel nudge).
+    ///    geometric center, no pixel nudge).
     /// 3. **Self point** — `AnchorPoint::Center(0)` (the element's own
-    ///    centre, no pixel nudge).
+    ///    center, no pixel nudge).
     ///
-    /// Together these mean "stack my centre on my parent's centre" —
+    /// Together these mean "stack my center on my parent's center" —
     /// the most common starting layout for new tree nodes before the
     /// scene builder repositions them.
     fn default() -> Self {
@@ -859,7 +899,7 @@ pub enum AnchorPoint {
     LeftCenter(i16),
     /// Midpoint of the right edge, plus `i16` pixel offset.
     RightCenter(i16),
-    /// Geometric centre of the rectangle, plus `i16` pixel offset.
+    /// Geometric center of the rectangle, plus `i16` pixel offset.
     /// The default starting pin for new tree nodes.
     Center(i16),
 }

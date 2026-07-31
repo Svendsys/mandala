@@ -21,7 +21,11 @@ use glam::f32::Vec2;
 
 use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Range};
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField, OutlineStyle};
+use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::model::GlyphModel;
 use crate::gfx_structs::shape::NodeShape;
+use crate::util::geometry::{almost_equal_vec2, clockwise_rotation_around_pivot};
+use crate::util::ordered_vec2::OrderedVec2;
 
 /// A halo style suitable for "add a 3 px black outline" — the
 /// picker's default. Reused across the outline tests.
@@ -31,7 +35,6 @@ fn sample_outline() -> OutlineStyle {
         px: 3.0,
     }
 }
-
 
 /// Round-trip: a `DeltaGlyphArea` carrying `Some(outline)` under
 /// `Assign` writes the halo onto a previously-bare area; a follow-up
@@ -311,7 +314,10 @@ pub fn do_change_region_range_missing_region_warns_and_leaves_area_intact() {
 
     command.apply_to(&mut area);
 
-    assert_eq!(area.regions, before, "missing-range command must not mutate regions");
+    assert_eq!(
+        area.regions, before,
+        "missing-range command must not mutate regions"
+    );
 }
 
 /// `ApplyOperation::Delete` on the `Text` field clears the area's
@@ -352,4 +358,102 @@ pub fn do_delta_regions_delete_clears_regions() {
     delta.apply_to(&mut area);
 
     assert_eq!(area.regions.num_regions(), 0);
+}
+
+/// `GlyphArea::rotate` must rotate *around* the pivot, not merely
+/// rotate the pivot-relative vector: the translate-back step used to
+/// be missing, so every call teleported the area toward the origin.
+///
+/// Clockwise 90° takes `+x` onto `-y` in screen space (`+y` points
+/// down), so a point ten units right of the pivot lands ten units
+/// above it — anchored to the pivot rather than to the origin.
+#[test]
+pub fn test_area_rotate_moves_position_around_pivot() {
+    do_area_rotate_moves_position_around_pivot();
+}
+
+pub fn do_area_rotate_moves_position_around_pivot() {
+    let mut area =
+        GlyphArea::new_with_str("rot", 14.0, 14.0, Vec2::new(110.0, 100.0), Vec2::new(100.0, 20.0));
+
+    area.rotate(Vec2::new(100.0, 100.0), 90.0);
+
+    assert!(almost_equal_vec2(area.position(), Vec2::new(100.0, 90.0)));
+}
+
+/// Rotating about the area's own position is the identity — the
+/// bit-exact case the missing translate-back turned into "jump to the
+/// origin".
+#[test]
+pub fn test_area_rotate_about_self_is_identity() {
+    do_area_rotate_about_self_is_identity();
+}
+
+pub fn do_area_rotate_about_self_is_identity() {
+    let start = Vec2::new(500.0, 500.0);
+    let mut area = GlyphArea::new_with_str("rot", 14.0, 14.0, start, Vec2::new(100.0, 20.0));
+
+    area.rotate(start, 137.0);
+
+    assert!(almost_equal_vec2(area.position(), start));
+}
+
+/// The three `rotate` siblings — `GlyphArea`, `GlyphModel`, and the
+/// `GfxElement` wrapper — must agree on unit (degrees) and direction
+/// (clockwise). They did not: the area took radians counterclockwise
+/// and dropped the pivot entirely. Pinning the agreement here means a
+/// future divergence fails the suite rather than silently drifting one
+/// element type away from the other two.
+#[test]
+pub fn test_area_rotate_matches_siblings() {
+    do_area_rotate_matches_siblings();
+}
+
+pub fn do_area_rotate_matches_siblings() {
+    let start = Vec2::new(37.0, -11.0);
+    let pivot = Vec2::new(-4.0, 9.0);
+    let degrees = 41.5;
+
+    let mut area = GlyphArea::new_with_str("rot", 14.0, 14.0, start, Vec2::new(100.0, 20.0));
+    area.rotate(pivot, degrees);
+
+    let mut model = GlyphModel::new();
+    model.position = OrderedVec2::from_vec2(start);
+    model.rotate(&pivot, &degrees);
+
+    let mut element = GfxElement::new_area_non_indexed_with_id(
+        GlyphArea::new_with_str("rot", 14.0, 14.0, start, Vec2::ZERO),
+        0,
+        0,
+    );
+    element.rotate(pivot, degrees);
+
+    assert!(almost_equal_vec2(area.position(), model.position.to_vec2()));
+    assert!(almost_equal_vec2(area.position(), element.position()));
+    assert!(almost_equal_vec2(
+        area.position(),
+        clockwise_rotation_around_pivot(start, pivot, degrees)
+    ));
+}
+
+/// The rotation is reachable from the mutation pipeline through
+/// [`GlyphAreaCommand::Rotate`], the area-side twin of
+/// `GlyphModelCommand::Rotate`. A primitive no mutator can reach is a
+/// primitive nothing exercises — which is how the missing
+/// translate-back survived unnoticed.
+#[test]
+pub fn test_area_rotate_command_applies() {
+    do_area_rotate_command_applies();
+}
+
+pub fn do_area_rotate_command_applies() {
+    let mut area = GlyphArea::new_with_str("rot", 14.0, 14.0, Vec2::new(10.0, 0.0), Vec2::new(100.0, 20.0));
+
+    GlyphAreaCommand::Rotate {
+        pivot: Vec2::ZERO,
+        degrees: 90.0,
+    }
+    .apply_to(&mut area);
+
+    assert!(almost_equal_vec2(area.position(), Vec2::new(0.0, -10.0)));
 }

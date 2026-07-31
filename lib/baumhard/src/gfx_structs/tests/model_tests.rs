@@ -1620,3 +1620,225 @@ pub fn do_model_rotate_moves_position_around_pivot() {
     // Clockwise 90° takes `+x` onto `-y` (screen space has `+y` down).
     assert!(almost_equal_vec2(model.position.to_vec2(), Vec2::new(0.0, -10.0)));
 }
+
+/////////////////////////////////////////////////////////////////
+// `GlyphLine::perform_op` — the `ignore_initial_space` path.
+//
+// Every case below reached `perform_op` through a real `*Assign`
+// operator, which is how the mutation pipeline reaches it: a
+// `ModelDelta` carrying a `GlyphLine`/`GlyphMatrix` payload runs
+// `ApplyOperation::apply_ref` straight into these impls, and the
+// payload is deserialized from user-authored JSON — so
+// `ignore_initial_space` is reachable from a `.mindmap.json`
+// without a single Rust caller setting it.
+/////////////////////////////////////////////////////////////////
+
+/// Per-run text of a line, in order — the shape the
+/// `ignore_initial_space` assertions compare against.
+fn line_component_texts(line: &GlyphLine) -> Vec<&str> {
+    line.line.iter().map(|comp| comp.text.as_str()).collect()
+}
+
+/// A ten-cluster ASCII line to paint onto.
+fn hash_line() -> GlyphLine {
+    GlyphLine::new_with(GlyphComponent::text(
+        "##########",
+        AppFont::AppleTea,
+        Color::black(),
+    ))
+}
+
+/// A one-component rhs whose own leading whitespace must be counted
+/// into the paint offset but not written.
+fn indented_rhs(text: &str) -> GlyphLine {
+    let mut line = GlyphLine::new_with(GlyphComponent::text(
+        text,
+        AppFont::AliceInWonderland,
+        Color::white(),
+    ));
+    line.ignore_initial_space = true;
+    line
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_multibyte_indent() {
+    do_line_ignore_initial_space_multibyte_indent();
+}
+
+/// Four U+3000 IDEOGRAPHIC SPACEs: cluster 4, byte 12. Feeding the
+/// old `char` ordinal to the byte-indexed `String::split_off` landed
+/// mid-codepoint and panicked. The content must land at cluster 4.
+pub fn do_line_ignore_initial_space_multibyte_indent() {
+    let mut glyph_line = hash_line();
+    glyph_line += indented_rhs("\u{3000}\u{3000}\u{3000}\u{3000}!!!");
+
+    assert_eq!(line_component_texts(&glyph_line), vec!["####", "!!!", "###"]);
+    assert_eq!(glyph_line.length(), 10);
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_crlf_indent() {
+    do_line_ignore_initial_space_crlf_indent();
+}
+
+/// CRLF is one grapheme cluster made of two chars, so an indent of
+/// `"\r\n  "` is cluster 3 but char ordinal 4. The old code paid the
+/// char ordinal into a cluster-indexed insert and painted one column
+/// too far right.
+pub fn do_line_ignore_initial_space_crlf_indent() {
+    let mut glyph_line = hash_line();
+    glyph_line += indented_rhs("\r\n  🍕🍕🍕");
+
+    assert_eq!(line_component_texts(&glyph_line), vec!["###", "🍕🍕🍕", "####"]);
+    assert_eq!(glyph_line.length(), 10);
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_zwj_content() {
+    do_line_ignore_initial_space_zwj_content();
+}
+
+/// A ZWJ family sequence is one cluster of eight chars. The offset
+/// must stay in clusters on both sides of the split so the painted
+/// run occupies two columns, not eight.
+pub fn do_line_ignore_initial_space_zwj_content() {
+    let mut glyph_line = hash_line();
+    glyph_line += indented_rhs("  👨‍👩‍👧🍕");
+
+    assert_eq!(line_component_texts(&glyph_line), vec!["##", "👨‍👩‍👧🍕", "######"]);
+    assert_eq!(glyph_line.length(), 10);
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_sub_assign_rhs_longer_than_lhs() {
+    do_line_ignore_initial_space_sub_assign_rhs_longer_than_lhs();
+}
+
+/// `self` and `rhs` need not agree on how their text is cut into
+/// runs, so the rhs run index may name no lhs run at all. The
+/// `SubAssign` color arm indexed `self.line[i]` unguarded and
+/// panicked; it now falls back to the rhs color.
+pub fn do_line_ignore_initial_space_sub_assign_rhs_longer_than_lhs() {
+    let mut glyph_line = GlyphLine::new_with(GlyphComponent::text("##", AppFont::AppleTea, Color::black()));
+
+    let mut modifier_line = GlyphLine::new();
+    modifier_line.ignore_initial_space = true;
+    modifier_line.push(GlyphComponent::space(2));
+    modifier_line.push(GlyphComponent::text(
+        "!!",
+        AppFont::AliceInWonderland,
+        Color::white(),
+    ));
+    glyph_line -= modifier_line;
+
+    assert_eq!(line_component_texts(&glyph_line), vec!["##", "!!"]);
+    assert_eq!(glyph_line.get(1).unwrap().color, Color::white());
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_mul_assign_rhs_longer_than_lhs() {
+    do_line_ignore_initial_space_mul_assign_rhs_longer_than_lhs();
+}
+
+/// Same shape as the `SubAssign` case for the `MulAssign` arm, which
+/// carried the identical unguarded index.
+pub fn do_line_ignore_initial_space_mul_assign_rhs_longer_than_lhs() {
+    let mut glyph_line = GlyphLine::new_with(GlyphComponent::text("##", AppFont::AppleTea, Color::black()));
+
+    let mut modifier_line = GlyphLine::new();
+    modifier_line.ignore_initial_space = true;
+    modifier_line.push(GlyphComponent::space(2));
+    modifier_line.push(GlyphComponent::text(
+        "!!",
+        AppFont::AliceInWonderland,
+        Color::white(),
+    ));
+    glyph_line *= modifier_line;
+
+    assert_eq!(line_component_texts(&glyph_line), vec!["##", "!!"]);
+    assert_eq!(glyph_line.get(1).unwrap().color, Color::white());
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_sub_assign_uses_lhs_color_when_present() {
+    do_line_ignore_initial_space_sub_assign_uses_lhs_color_when_present();
+}
+
+/// The guard must not swallow the arm it guards: when the lhs *does*
+/// have a run at that index, `SubAssign` still subtracts the rhs
+/// color from it rather than taking the fallback.
+pub fn do_line_ignore_initial_space_sub_assign_uses_lhs_color_when_present() {
+    let mut glyph_line = GlyphLine::new();
+    glyph_line.push(GlyphComponent::text("ab", AppFont::AppleTea, Color::white()));
+    glyph_line.push(GlyphComponent::text("cd", AppFont::AppleTea, Color::white()));
+
+    let mut modifier_line = GlyphLine::new();
+    modifier_line.ignore_initial_space = true;
+    modifier_line.push(GlyphComponent::space(2));
+    modifier_line.push(GlyphComponent::text(
+        "!!",
+        AppFont::AliceInWonderland,
+        Color::black(),
+    ));
+    glyph_line -= modifier_line;
+
+    let painted = glyph_line
+        .line
+        .iter()
+        .find(|comp| comp.text == "!!")
+        .expect("the rhs content run must have been painted");
+    assert_eq!(painted.color, Color::white() - Color::black());
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_surplus_rhs_runs_append() {
+    do_line_ignore_initial_space_surplus_rhs_runs_append();
+}
+
+/// With the leading-space runs skipped, the trailing loop starts at a
+/// component index the lhs may be several slots short of.
+/// `Vec::insert(i, …)` panics there; surplus runs now append, the
+/// same rule `GlyphMatrix::add_assign` applies to surplus rows.
+pub fn do_line_ignore_initial_space_surplus_rhs_runs_append() {
+    let mut glyph_line = GlyphLine::new();
+
+    let mut modifier_line = GlyphLine::new();
+    modifier_line.ignore_initial_space = true;
+    modifier_line.push(GlyphComponent::space(1));
+    modifier_line.push(GlyphComponent::space(1));
+    modifier_line.push(GlyphComponent::space(1));
+    modifier_line.push(GlyphComponent::text(
+        "A",
+        AppFont::AliceInWonderland,
+        Color::white(),
+    ));
+    modifier_line.push(GlyphComponent::text(
+        "B",
+        AppFont::AliceInWonderland,
+        Color::white(),
+    ));
+    glyph_line += modifier_line;
+
+    assert_eq!(line_component_texts(&glyph_line), vec!["   ", "A", "B"]);
+}
+
+#[test]
+pub fn test_line_ignore_initial_space_all_whitespace_rhs_paints_nothing() {
+    do_line_ignore_initial_space_all_whitespace_rhs_paints_nothing();
+}
+
+/// Every run of an all-whitespace rhs is leading whitespace, so under
+/// the flag's contract the whole rhs is transparent. It used to be
+/// opaque — the same run blanked the lhs when nothing followed it and
+/// showed through when something did.
+pub fn do_line_ignore_initial_space_all_whitespace_rhs_paints_nothing() {
+    let mut glyph_line = hash_line();
+
+    let mut modifier_line = GlyphLine::new();
+    modifier_line.ignore_initial_space = true;
+    modifier_line.push(GlyphComponent::space(2));
+    modifier_line.push(GlyphComponent::space(2));
+    glyph_line += modifier_line;
+
+    assert_eq!(line_component_texts(&glyph_line), vec!["##########"]);
+}

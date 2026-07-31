@@ -50,6 +50,16 @@ pub enum GlyphAreaCommand {
     NudgeUp(f32),
     /// Teleport position to absolute `(x, y)`.
     MoveTo(f32, f32),
+    /// Rotate position around `pivot` by `degrees` (clockwise). The
+    /// area-side twin of
+    /// [`GlyphModelCommand::Rotate`](crate::gfx_structs::model::GlyphModelCommand::Rotate);
+    /// both bottom out in `clockwise_rotation_around_pivot`.
+    Rotate {
+        /// Pivot in world coordinates.
+        pivot: Vec2,
+        /// Rotation angle in degrees.
+        degrees: f32,
+    },
     /// Increase font scale by a delta.
     GrowFont(f32),
     /// Decrease font scale by a delta.
@@ -66,9 +76,9 @@ pub enum GlyphAreaCommand {
     SetBounds(f32, f32),
     /// Assign a font to the given character range. O(n) in region count.
     SetRegionFont(Range, AppFont),
-    /// Assign a colour to the given character range. O(n) in region count.
+    /// Assign a color to the given character range. O(n) in region count.
     SetRegionColor(Range, FloatRgba),
-    /// Remove the colour/font region at the given character range.
+    /// Remove the color/font region at the given character range.
     /// O(n) in region count.
     DeleteColorFontRegion(Range),
     /// Move an existing region from `current` to `new` range. O(n) in
@@ -83,6 +93,9 @@ impl Applicable<GlyphArea> for GlyphAreaCommand {
             GlyphAreaCommand::PopBack(pop_count) => target.pop_back(*pop_count),
             GlyphAreaCommand::MoveTo(x, y) => {
                 target.set_position((*x, *y));
+            }
+            GlyphAreaCommand::Rotate { pivot, degrees } => {
+                target.rotate(*pivot, *degrees);
             }
             GlyphAreaCommand::NudgeLeft(value) => {
                 target.nudge_left(*value);
