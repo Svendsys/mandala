@@ -29,7 +29,14 @@ serde_json = "1.0.149"
 serde-lexpr = "0.1.3"
 lazy_static = "1.5.0"
 syn = "2.0.117"
-log = { version = "0.4.29", features = ["release_max_level_off"] }
+# `release_max_level_warn`: `warn!`/`error!` survive into release
+# builds so CODE_CONVENTIONS §9's "log and degrade" posture is real in
+# the binaries users run; `info!`/`debug!`/`trace!` still compile to
+# nothing so hot paths keep their zero-cost posture. Both this manifest
+# and `lib/baumhard/Cargo.toml` must agree — cargo unions log's features
+# across the workspace, so the loudest `release_max_level_*` any crate
+# asks for is not what wins: the *most restrictive* one caps everything.
+log = { version = "0.4.29", features = ["release_max_level_warn"] }
 smol_str = "0.3.6"
 strum = "0.27"
 strum_macros = "0.27"

@@ -13,7 +13,13 @@ serde-lexpr = "0.1.3"
 slab = "0.4.12"
 lazy_static = "1.5.0"
 syn = "2.0.117"
-log = { version = "0.4.29", features = ["release_max_level_off"] }
+# Must stay in lockstep with the root `Cargo.toml` — see the note
+# there. `release_max_level_warn` keeps `warn!`/`error!` alive in
+# release so baumhard's §9 degrade paths (unknown font id, UTF-8
+# conversion failure, corrupt-region drop) are diagnosable from a user
+# report, while the chatty walker `debug!`/`trace!` instrumentation
+# still compiles to nothing.
+log = { version = "0.4.29", features = ["release_max_level_warn"] }
 env_logger = "0.11.10"
 smol_str = "0.3.6"
 indextree = {version = "4.8.1", features = ["serde"]}
