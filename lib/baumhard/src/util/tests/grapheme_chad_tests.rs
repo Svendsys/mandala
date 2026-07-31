@@ -290,13 +290,17 @@ pub fn do_replace_graphemes_until_newline() {
         // The three fields of `LineReplacement` are a contract, not
         // decoration: `growth` must be the buffer's real cluster
         // growth (that is what the region shift rides on), `at` must
-        // echo the caller's index, and `added_lines` must be the
-        // count of newlines the source contributed.
+        // be where the write actually landed — the caller's index,
+        // clamped to the end of the buffer when it points past it —
+        // and `added_lines` must be the count of newlines the source
+        // contributed.
         let after = count_grapheme_clusters(&result);
         assert_eq!(
-            outcome.at, idx,
-            "`at` must echo g_index for source {:?} into {:?}",
-            source, target
+            outcome.at,
+            idx.min(before),
+            "`at` must report the clamped write position for source {:?} into {:?}",
+            source,
+            target
         );
         assert_eq!(
             outcome.growth,
@@ -393,12 +397,27 @@ pub fn do_replace_graphemes_until_newline() {
     );
     assert_eq!(buf, "");
 
-    // `g_index` past the end appends rather than panicking.
+    // `g_index` past the end appends rather than panicking, and the
+    // reported `at` clamps to where the write actually landed. Echoing
+    // the caller's out-of-range index would make
+    // `shift_regions_after(at, growth)` skip every region between the
+    // real end of the buffer and it.
     let mut buf = String::from("ab");
     let outcome = replace_graphemes_until_newline(&mut buf, 99, "cd");
     assert_eq!(buf, "abcd");
-    assert_eq!(outcome.at, 99);
+    assert_eq!(outcome.at, 2);
     assert_eq!(outcome.growth, 2);
+
+    // In range, `at` is the caller's index untouched — including the
+    // exact-end index, which is the natural "append here" spelling.
+    let mut buf = String::from("ab");
+    let outcome = replace_graphemes_until_newline(&mut buf, 2, "cd");
+    assert_eq!(buf, "abcd");
+    assert_eq!(outcome.at, 2);
+    let mut buf = String::from("ab");
+    let outcome = replace_graphemes_until_newline(&mut buf, 1, "cd");
+    assert_eq!(buf, "acd");
+    assert_eq!(outcome.at, 1);
 }
 
 #[test]

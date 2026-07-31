@@ -32,9 +32,13 @@ pub(crate) fn slice_to_newline(s: &str, byte_index: usize) -> &str {
 /// to reflow the buffer silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LineReplacement {
-    /// Grapheme index the replacement started at — an echo of the
-    /// caller's `g_index`, so a region shift can be applied straight
-    /// from this value without threading the index separately.
+    /// Grapheme index the replacement actually started at, so a
+    /// region shift can be applied straight from this value without
+    /// threading the index separately. Normally the caller's
+    /// `g_index`; when that index is past the end of the target the
+    /// write clamps to the end of the buffer and this clamps with
+    /// it — shifting from the caller's index instead would step over
+    /// every region between the real end and it.
     pub at: usize,
     /// Net growth of the target, in grapheme clusters. Zero when the
     /// replacement fit inside the existing line tail. Shifting every
@@ -73,17 +77,25 @@ pub struct LineReplacement {
 ///
 /// # Costs
 ///
-/// Two `count_grapheme_clusters` walks, one `count_number_lines` byte
-/// scan over `source`, and one `replace_substring` — which itself
-/// allocates a fresh `Vec<u8>` copy of the whole target, a known
-/// hot-path allocation tracked alongside the rest of the "no-alloc
-/// text edit" work.
+/// Two `count_grapheme_clusters` walks — three when `g_index` is past
+/// the end of `target` and the reported position has to be clamped —
+/// one `count_number_lines` byte scan over `source`, and one
+/// `replace_substring`, which itself allocates a fresh `Vec<u8>` copy
+/// of the whole target: a known hot-path allocation tracked alongside
+/// the rest of the "no-alloc text edit" work.
 pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, source: &str) -> LineReplacement {
     let insert_num_graphemes = count_grapheme_clusters(source);
     // `count_number_lines` is "newlines + 1", so the count of `\n`
     // characters the source contributes is one less.
     let added_lines = count_number_lines(source) - 1;
-    let b_index = find_byte_index_of_grapheme(target, g_index).unwrap_or(target.len());
+    // A `g_index` past the end of the target clamps the write to the
+    // end of the buffer, so the position we report has to clamp with
+    // it (see [`LineReplacement::at`]). The extra cluster walk only
+    // runs on that out-of-range path.
+    let (b_index, at) = match find_byte_index_of_grapheme(target, g_index) {
+        Some(b) => (b, g_index),
+        None => (target.len(), count_grapheme_clusters(target)),
+    };
 
     let line_section = slice_to_newline(target, b_index);
 
@@ -96,7 +108,7 @@ pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, sour
         // short of it) and splice the source in.
         replace_substring(target, b_index, end_of_target_line_idx, source);
         LineReplacement {
-            at: g_index,
+            at,
             growth: insert_num_graphemes - target_line_num_graphemes,
             added_lines,
         }
@@ -111,7 +123,7 @@ pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, sour
             .unwrap_or(end_of_target_line_idx);
         replace_substring(target, b_index, overlap_end, source);
         LineReplacement {
-            at: g_index,
+            at,
             growth: 0,
             added_lines,
         }
@@ -499,11 +511,19 @@ pub fn split_graphemes_owned(s: &str) -> Vec<String> {
 ///
 /// # Costs
 ///
-/// O(n) grapheme walk. Allocates the result once at `s.len()` and
-/// lets it grow from there, so a non-empty separator costs one or
-/// more reallocations on long inputs.
+/// Two O(n) grapheme walks — one to count clusters, one to build —
+/// and exactly one allocation, sized to the finished string. Counting
+/// first is deliberate: reserving only `s.len()` and letting the
+/// buffer grow costs a reallocation for every non-empty separator,
+/// and the caller is a border column rebuilt per frame.
 pub fn join_graphemes(s: &str, separator: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+    if s.is_empty() {
+        return String::new();
+    }
+    // One separator per cluster boundary, of which there are
+    // `clusters - 1`.
+    let clusters = count_grapheme_clusters(s);
+    let mut out = String::with_capacity(s.len() + separator.len() * (clusters - 1));
     let mut first = true;
     for g in s.graphemes(true) {
         if !first {
