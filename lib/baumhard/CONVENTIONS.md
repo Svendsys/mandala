@@ -115,15 +115,42 @@ it with respect.
   `GlyphModelField` (in
   `lib/baumhard/src/gfx_structs/model/mutator.rs`) are
   where new kinds of change land. A new mutation variant is a new
-  field variant plus a branch in `DeltaGlyphArea::apply_to` /
-  `DeltaGlyphModel::apply_to`, not a new wrapper struct.
-  Everything else that a variant needs is generated: the `*Type`
-  tag comes from `#[derive(EnumDiscriminants)]`, and the delta
-  storage / `new()` / `operation_variant()` / merge come from the
-  shared `Delta<F>` container in
-  `lib/baumhard/src/gfx_structs/delta.rs`. **Do not hand-write a
-  discriminant enum or a second delta struct** — the two surfaces
-  were hand-kept twins once and drifted (issues #10, #24).
+  field variant plus a branch in the element's `apply_operation`,
+  not a new wrapper struct.
+
+  **Adding a field variant is exactly four edits, and every one of
+  them is forced** — the compiler or the suite fails until you make
+  it. Nothing here relies on remembering:
+
+  1. the variant on `GlyphAreaField` / `GlyphModelField`;
+  2. its arm in `impl Add for GlyphAreaField`
+     (`area_fields.rs`) — hand-written and compiler-forced.
+     Area-side only: `GlyphModelField` has no `Add` impl;
+  3. a representative in `gfx_structs::tests::delta_tests`'s
+     `area_field_for` / `model_field_for` — compiler-forced,
+     because those match exhaustively over the *derived* tag;
+  4. the branch in `GlyphArea::apply_operation` /
+     `GlyphModel::apply_operation` — forced by
+     `apply_reaches_every_{area,model}_field`, which asserts a delta
+     carrying the variant actually changes the target. Without that
+     test a variant with no branch deserializes, walks the tree,
+     matches its channel and mutates nothing, silently (issue #10-A).
+
+  Everything *else* is generated or shared and must not be
+  hand-written: the `*Type` tag comes from
+  `#[derive(EnumDiscriminants)]`; `same_type` from the
+  `Discriminated` blanket impl; and the delta storage, `new()`,
+  `operation_variant()` and the `Delta::add` merge from the shared
+  `Delta<F>` container in
+  `lib/baumhard/src/gfx_structs/delta.rs`. (Note the split on
+  "merge": `Delta::add` is shared, the per-field `Add` arm in edit 2
+  is not.) **Do not hand-write a discriminant enum or a second delta
+  struct** — the two surfaces were hand-kept twins once and drifted
+  (issues #10, #24).
+
+  A field tag is also the **JSON key** of a serialized delta, so
+  renaming or removing one is an on-disk format change: see
+  `format/mutations.md`.
 - **Do not rebuild the arena to change one field.** If you catch
   yourself writing `Arena::default()` to fix a typo in a node's text,
   stop and use a mutator.
@@ -206,17 +233,26 @@ worst target.
   `Vec::new()` or a `String::new()` on the hot path without a
   benchmark to justify it.
 - **`#[inline]` on true hot paths, not everywhere.** Use it when a
-  benchmark demonstrates an improvement. `Discriminated::variant` /
+  benchmark demonstrates an improvement.
   `Discriminated::same_type` in
-  `lib/baumhard/src/core/primitives.rs` are the exemplar: tiny,
+  `lib/baumhard/src/core/primitives.rs` is the exemplar: tiny,
   called in the tight loop, inlined on purpose. (This is the same
   exemplar that used to be named as `GlyphModelField::same_type`;
-  the predicate moved into the shared trait, the standard did not
-  move with it.) `#[inline]` on a cold function just slows down
-  compilation — and note the corollary: a *new* `#[inline]` needs a
-  benchmark that resolves the effect. On a contended machine where a
-  main-against-main control run swings ±10%, that bar is not met and
-  the attribute does not go in.
+  the predicate moved into the shared trait carrying its existing
+  attribute — the standard did not move with it.) `#[inline]` on a
+  cold function just slows down compilation.
+
+  **The corollary binds symmetrically: a *new* `#[inline]` needs a
+  benchmark that actually resolves the effect.** Its sibling
+  `Discriminated::variant` deliberately has none — it is a trivial
+  forwarder to strum's already-`#[inline]` `discriminant()`, and no
+  measurement here can resolve it. Neither can
+  `ApplyOperation::{apply, apply_ref}`. On a contended machine a
+  main-against-main control run has been observed swinging ±10% and
+  as far as −23%; below that threshold nothing is demonstrated, and
+  the attribute does not go in. Always run the control — a one-sided
+  A/B against `main` will happily report `p = 0.00` on identical
+  code.
 - **A borrowed delta must not clone a payload it will not use.**
   `Applicable::apply_to` takes `&self`, so moving an owned value out
   of a delta costs a clone. Route it through

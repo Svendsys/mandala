@@ -618,7 +618,10 @@ pub trait Flaggable {
 /// # Costs
 ///
 /// [`Self::variant`] is a single-branch match returning a
-/// fieldless enum; `#[inline]` on both methods, no allocation.
+/// fieldless enum, forwarding to strum's own `#[inline]`
+/// `discriminant()`; no allocation on either method.
+/// [`Self::same_type`] is `#[inline]` — it is the tight-loop
+/// predicate that carried that attribute before it moved here.
 pub trait Discriminated {
     /// The payload-free tag enum listing the same variants as `Self`.
     /// Bounded so it can key an `FxHashMap` (as
@@ -644,8 +647,13 @@ where
 {
     type Discriminant = <T as IntoDiscriminant>::Discriminant;
 
-    #[inline]
     fn variant(&self) -> Self::Discriminant {
+        // No `#[inline]` here: this PR deletes two `#[inline]`s for
+        // lacking a benchmark that resolves them (§B7), and adding a
+        // third on the same terms would be incoherent. The forwardee
+        // — strum's generated `discriminant()` — is already
+        // `#[inline]`, so there is nothing to reinstate until a quiet
+        // machine says otherwise.
         self.discriminant()
     }
 }

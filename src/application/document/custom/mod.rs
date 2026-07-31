@@ -758,7 +758,11 @@ impl MindMapDocument {
                 .into_iter()
                 .collect(),
             TargetScope::Siblings => {
-                let parent_id = self.mindmap.nodes.get(node_id).and_then(|n| n.parent_id.clone());
+                let parent_id = self
+                    .mindmap
+                    .nodes
+                    .get(node_id)
+                    .and_then(|n| n.parent_id.clone());
                 let index = self.mindmap.child_index();
                 parent_id
                     .map(|pid| {
