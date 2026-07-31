@@ -710,13 +710,21 @@ fn test_portal_text_bounds_combining_mark_is_single_grapheme() {
     assert_portal_text_one_grapheme_equivalent("n\u{0303}");
 }
 
-/// An empty portal-text string must still produce a non-zero AABB:
-/// `layout_portal_text`'s `.max(1)` floor holds the slot to at
-/// least one grapheme's width so an empty buffer doesn't collapse
-/// to a zero-sized layout the scene builder would then try to
-/// divide by. Pins that clamp.
+/// An empty portal-text string lays out at **zero** extent, and
+/// that is load-bearing rather than incidental. The portal tree
+/// always emits a text leaf so the §B2 mutator channel layout
+/// stays stable, so a text-less endpoint carrying a one-grapheme
+/// floor would answer clicks over a rectangle that renders
+/// nothing — the phantom hot zone beside the icon. Both consumers
+/// skip zero-extent areas (the renderer's tree walker returns
+/// early on empty text; `Tree::descendant_at` requires strictly
+/// positive bounds), so the suppression lives in the geometry
+/// with no side table to keep in sync.
+///
+/// The companion assertion at the tree level is
+/// `portal_tree_reserved_text_slot_is_unclickable_when_text_absent`.
 #[test]
-fn test_portal_text_bounds_empty_string_uses_one_grapheme_floor() {
+fn test_portal_text_bounds_empty_string_collapses_to_zero_extent() {
     use super::super::portal_style::{layout_portal_label, layout_portal_text};
     use crate::mindmap::model::PortalEndpointState;
 
@@ -750,15 +758,31 @@ fn test_portal_text_bounds_empty_string_uses_one_grapheme_floor() {
         text_font,
         "X",
     );
-    assert!(
-        almost_equal(empty.bounds.x, one_char.bounds.x),
-        "empty portal-text should match 1-grapheme width via the .max(1) floor; got empty={} one_char={}",
-        empty.bounds.x,
-        one_char.bounds.x,
+    assert_eq!(
+        empty.bounds,
+        Vec2::ZERO,
+        "empty portal-text must collapse to zero extent so it cannot answer a hit-test",
     );
     assert!(
-        empty.bounds.x > 0.0,
-        "empty portal-text bounds must be strictly positive",
+        one_char.bounds.x > 0.0,
+        "a one-grapheme label must still occupy width; got {}",
+        one_char.bounds.x,
+    );
+    // The degenerate rect is a point on the *near face* of where
+    // live text would sit: the placement math drops only the text
+    // half-extent term, so growing the label pushes it outward
+    // from here rather than making it jump.
+    let live_min = one_char.top_left;
+    let live_max = one_char.top_left + one_char.bounds;
+    assert!(
+        empty.top_left.x >= live_min.x - 1.0e-3
+            && empty.top_left.x <= live_max.x + 1.0e-3
+            && empty.top_left.y >= live_min.y - 1.0e-3
+            && empty.top_left.y <= live_max.y + 1.0e-3,
+        "zero-extent empty text should degenerate onto the live text rect; got {:?} outside [{:?}, {:?}]",
+        empty.top_left,
+        live_min,
+        live_max,
     );
 }
 

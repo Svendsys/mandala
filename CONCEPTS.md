@@ -1268,11 +1268,15 @@ position on the owning node's border), `perpendicular_offset`
 (signed distance along the outward normal), `text`, `text_color`,
 `text_font_size_pt`, `text_min/max_font_size_pt`,
 `min/max_zoom_to_render`. The icon and the adjacent text are
-separate hitboxes (`portal_icon_hitboxes` /
-`portal_text_hitboxes` in the renderer), so a click on the icon
-selects `SelectionState::PortalLabel` (and font/colour ops target
-the icon channel) while a click on the text selects
+sibling leaves of the portal tree, so a click resolves to exactly
+one of them through the tree's BVH
+(`AppScene::portal_at` → `PortalHitIndex::resolve`, yielding a
+`PortalHit` that names the sub-part). A click on the icon selects
+`SelectionState::PortalLabel` (and font/color ops target the icon
+channel) while a click on the text selects
 `SelectionState::PortalText` (and ops target the text channel).
+An endpoint with no text lays its text slot out at zero extent, so
+the reserved slot cannot answer a click.
 Full reference: [`format/portal-labels.md`](./format/portal-labels.md).
 
 ### Edge labels

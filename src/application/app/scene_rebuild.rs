@@ -340,7 +340,7 @@ pub(in crate::application::app) fn rebuild_scene_only(
         interaction_mode.resize_handle_overrides(),
         renderer.camera_zoom(),
     );
-    frame.update_all(scene_cache, app_scene, renderer);
+    frame.update_all(scene_cache, app_scene);
     flush_canvas_scene_buffers(app_scene, renderer);
 }
 
@@ -533,10 +533,12 @@ impl<'a> CanvasFrame<'a> {
 
     /// Build or in-place update the portal tree under
     /// [`crate::application::scene_host::CanvasRole::Portals`].
-    /// Hands the two AABB-keyed hitbox maps back to the renderer so
-    /// `Renderer::hit_test_portal` / `hit_test_portal_text` keep
-    /// working until hit-test routing migrates to
-    /// [`baumhard::gfx_structs::scene::Scene::component_at`].
+    /// Re-stamps the role's
+    /// [`PortalHitIndex`](baumhard::mindmap::tree_builder::PortalHitIndex)
+    /// alongside the tree so
+    /// [`AppScene::portal_at`](crate::application::scene_host::AppScene::portal_at)
+    /// can name a BVH hit. The index holds identity only; the
+    /// clickable rectangles are the tree's own `GlyphArea`s.
     ///
     /// **§B2 dispatch.** Drag, color-preview, portal-text edits, and
     /// selection toggle all leave the visible-portal *identity
@@ -550,7 +552,6 @@ impl<'a> CanvasFrame<'a> {
     pub(in crate::application::app) fn update_portal_tree(
         &self,
         app_scene: &mut crate::application::scene_host::AppScene,
-        renderer: &mut Renderer,
     ) {
         use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
         use baumhard::mindmap::tree_builder::{
@@ -581,14 +582,12 @@ impl<'a> CanvasFrame<'a> {
         match app_scene.canvas_dispatch(CanvasRole::Portals, signature) {
             CanvasDispatch::InPlaceMutator => {
                 let result = build_portal_mutator_tree_from_pairs(&pairs);
-                renderer.set_portal_icon_hitboxes(result.icon_hitboxes);
-                renderer.set_portal_text_hitboxes(result.text_hitboxes);
+                app_scene.set_portal_hit_index(result.hit_index);
                 app_scene.apply_canvas_mutator(CanvasRole::Portals, &result.mutator);
             }
             CanvasDispatch::FullRebuild => {
                 let result = build_portal_tree_from_pairs(&pairs);
-                renderer.set_portal_icon_hitboxes(result.icon_hitboxes);
-                renderer.set_portal_text_hitboxes(result.text_hitboxes);
+                app_scene.set_portal_hit_index(result.hit_index);
                 app_scene.register_canvas(CanvasRole::Portals, result.tree, glam::Vec2::ZERO);
                 app_scene.set_canvas_signature(CanvasRole::Portals, signature);
             }
@@ -597,8 +596,11 @@ impl<'a> CanvasFrame<'a> {
 
     /// Build or in-place update the connection-label tree under
     /// [`crate::application::scene_host::CanvasRole::ConnectionLabels`].
-    /// Threads the per-edge AABB hitbox map back to the renderer so
-    /// `hit_test_edge_label` keeps working.
+    /// Re-stamps the role's
+    /// [`ConnectionLabelHitIndex`](baumhard::mindmap::tree_builder::ConnectionLabelHitIndex)
+    /// alongside the tree so
+    /// [`AppScene::edge_label_at`](crate::application::scene_host::AppScene::edge_label_at)
+    /// can name a BVH hit.
     ///
     /// **§B2 dispatch.** Inline label edits (the hot path), color
     /// changes, and label movement keep the structural identity (the
@@ -609,7 +611,6 @@ impl<'a> CanvasFrame<'a> {
     pub(in crate::application::app) fn update_connection_label_tree(
         &self,
         app_scene: &mut crate::application::scene_host::AppScene,
-        renderer: &mut Renderer,
     ) {
         use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
         use baumhard::mindmap::scene_cache::EdgeKey;
@@ -647,12 +648,12 @@ impl<'a> CanvasFrame<'a> {
         match app_scene.canvas_dispatch(CanvasRole::ConnectionLabels, signature) {
             CanvasDispatch::InPlaceMutator => {
                 let result = build_connection_label_mutator_tree(&elements);
-                renderer.set_connection_label_hitboxes(result.hitboxes);
+                app_scene.set_connection_label_hit_index(result.hit_index);
                 app_scene.apply_canvas_mutator(CanvasRole::ConnectionLabels, &result.mutator);
             }
             CanvasDispatch::FullRebuild => {
                 let result = build_connection_label_tree(&elements);
-                renderer.set_connection_label_hitboxes(result.hitboxes);
+                app_scene.set_connection_label_hit_index(result.hit_index);
                 app_scene.register_canvas(CanvasRole::ConnectionLabels, result.tree, glam::Vec2::ZERO);
                 app_scene.set_canvas_signature(CanvasRole::ConnectionLabels, signature);
             }
@@ -763,15 +764,14 @@ impl<'a> CanvasFrame<'a> {
         &self,
         cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
         app_scene: &mut crate::application::scene_host::AppScene,
-        renderer: &mut Renderer,
     ) {
         self.update_connection_trees(cache, app_scene);
         self.update_border_tree(app_scene);
-        self.update_portal_tree(app_scene, renderer);
+        self.update_portal_tree(app_scene);
         self.update_section_resize_handle_tree(app_scene);
         self.update_node_resize_handle_tree(app_scene);
         self.update_section_frame_tree(app_scene);
-        self.update_connection_label_tree(app_scene, renderer);
+        self.update_connection_label_tree(app_scene);
     }
 }
 

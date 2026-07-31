@@ -102,8 +102,8 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             );
             frame.update_connection_trees(&mut scene_cache, &mut app_scene);
             frame.update_border_tree(&mut app_scene);
-            frame.update_portal_tree(&mut app_scene, &mut renderer);
-            frame.update_connection_label_tree(&mut app_scene, &mut renderer);
+            frame.update_portal_tree(&mut app_scene);
+            frame.update_connection_label_tree(&mut app_scene);
             frame.update_section_frame_tree(&mut app_scene);
             // Register the three handle-tree canvas roles with their
             // fresh-load (empty-slice) signatures. The first real

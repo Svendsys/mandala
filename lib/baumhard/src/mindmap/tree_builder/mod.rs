@@ -55,7 +55,8 @@ pub use connection::{
 };
 pub use connection_label::{
     build_connection_label_mutator_tree, build_connection_label_tree, build_label_elements,
-    connection_label_identity_sequence, ConnectionLabelElement, ConnectionLabelMutator, ConnectionLabelTree,
+    connection_label_identity_sequence, ConnectionLabelElement, ConnectionLabelHitIndex,
+    ConnectionLabelMutator, ConnectionLabelTree,
 };
 pub use edge_handle::{build_edge_handles, edge_handle_channel_for, EdgeHandleElement, EdgeHandleKind};
 pub use handle::{build_handle_mutator_tree, build_handle_tree, handle_identity_sequence, HandleVisual};
@@ -70,8 +71,8 @@ pub use overrides::{
 };
 pub use portal::{
     build_portal_mutator_tree, build_portal_mutator_tree_from_pairs, build_portal_tree,
-    build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, EndpointAreas, PortalIdentity,
-    PortalMutator, PortalPairData, PortalTree, SelectedEdgeRef,
+    build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, EndpointAreas, PortalHit,
+    PortalHitIndex, PortalIdentity, PortalMutator, PortalPairData, PortalPart, PortalTree, SelectedEdgeRef,
 };
 pub use portal_style::{
     resolve_portal_endpoint_style, resolve_portal_endpoint_text_style, ResolvedPortalStyle,

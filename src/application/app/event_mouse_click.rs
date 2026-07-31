@@ -192,7 +192,7 @@ pub(super) fn handle_mouse_input(
                 // press fall through; the corresponding release
                 // will be swallowed as click-inside.
                 let now = now_ms();
-                let parts = super::compute_click_hit(canvas_pos, ctx.mindmap_tree.as_mut(), ctx.renderer);
+                let parts = super::compute_click_hit(canvas_pos, ctx.mindmap_tree.as_mut(), ctx.app_scene);
                 let super::ClickHitParts {
                     click_hit,
                     hit_node,
@@ -471,7 +471,7 @@ pub(super) fn handle_mouse_input(
                             let stays_on_edited_label = edited
                                 .as_ref()
                                 .and_then(|er| {
-                                    ctx.renderer.hit_test_any_edge_label(release_canvas).map(|hit| {
+                                    ctx.app_scene.edge_label_at(release_canvas).map(|hit| {
                                         hit.from_id == er.from_id.as_str()
                                             && hit.to_id == er.to_id.as_str()
                                             && hit.edge_type == er.edge_type.as_str()
@@ -485,14 +485,16 @@ pub(super) fn handle_mouse_input(
                             // through the funnel (`LabelEditCommit`).
                             let _ = super::dispatch::dispatch_action(Action::LabelEditCommit, ctx, None);
                         }
-                        // Portal-text editor uses the portal-text
-                        // hitbox instead of the edge-label hitbox,
-                        // and matches `(edge_key, endpoint)` rather
-                        // than just the edge key — clicking the
-                        // *other* endpoint of the same portal edge
-                        // commits this side and then routes the
-                        // click as a fresh selection on the new
-                        // endpoint.
+                        // Portal-text editor queries the portal role
+                        // instead of the connection-label role, and
+                        // matches `(edge_key, endpoint)` rather than
+                        // just the edge key — clicking the *other*
+                        // endpoint of the same portal edge commits
+                        // this side and then routes the click as a
+                        // fresh selection on the new endpoint. A
+                        // release on the endpoint's *icon* is a
+                        // click-outside for the text editor, hence
+                        // the `PortalPart::Text` guard.
                         if ctx.portal_text_edit_state.is_open() {
                             let release_canvas = ctx
                                 .renderer
@@ -504,14 +506,14 @@ pub(super) fn handle_mouse_input(
                             let stays_on_edited_text = edited
                                 .as_ref()
                                 .and_then(|(er, ep)| {
-                                    ctx.renderer.hit_test_portal_text(release_canvas).map(
-                                        |(hit_key, hit_ep)| {
-                                            hit_key.from_id == er.from_id.as_str()
-                                                && hit_key.to_id == er.to_id.as_str()
-                                                && hit_key.edge_type == er.edge_type.as_str()
-                                                && hit_ep == *ep
-                                        },
-                                    )
+                                    ctx.app_scene.portal_at(release_canvas).map(|hit| {
+                                        hit.part
+                                            == baumhard::mindmap::tree_builder::PortalPart::Text
+                                            && hit.edge_key.from_id == er.from_id.as_str()
+                                            && hit.edge_key.to_id == er.to_id.as_str()
+                                            && hit.edge_key.edge_type == er.edge_type.as_str()
+                                            && hit.endpoint_node_id == *ep
+                                    })
                                 })
                                 .unwrap_or(false);
                             if stays_on_edited_text {

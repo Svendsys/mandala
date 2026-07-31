@@ -88,6 +88,82 @@ pub(super) fn glyph_area_of(
     tree.arena.get(node_id).unwrap().get().glyph_area().unwrap()
 }
 
+/// Shorthand for the `Tree` every builder in this module emits.
+pub(super) type GfxTree = crate::gfx_structs::tree::Tree<
+    crate::gfx_structs::element::GfxElement,
+    crate::gfx_structs::mutator::GfxMutator,
+>;
+
+/// A `GlyphArea`'s clickable rectangle as `(top_left, extent)` —
+/// the same pair the BVH tests against.
+pub(super) fn area_rect(area: &crate::gfx_structs::area::GlyphArea) -> (glam::Vec2, glam::Vec2) {
+    (
+        glam::Vec2::new(area.position.x.0, area.position.y.0),
+        glam::Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
+    )
+}
+
+/// Center point of a `GlyphArea`'s rectangle — the canonical
+/// "click right on this thing" probe.
+pub(super) fn area_center(area: &crate::gfx_structs::area::GlyphArea) -> glam::Vec2 {
+    let (pos, extent) = area_rect(area);
+    pos + extent * 0.5
+}
+
+/// The `(icon, text)` `GlyphArea` pair under endpoint `endpoint_idx`
+/// of the first portal pair in a built portal tree. Cloned so the
+/// caller can go on to borrow the tree mutably for a hit-test.
+pub(super) fn endpoint_leaf_areas(
+    tree: &GfxTree,
+    endpoint_idx: usize,
+) -> (
+    crate::gfx_structs::area::GlyphArea,
+    crate::gfx_structs::area::GlyphArea,
+) {
+    let pair = tree.root.children(&tree.arena).next().expect("one portal pair");
+    let endpoint = pair
+        .children(&tree.arena)
+        .nth(endpoint_idx)
+        .expect("endpoint void");
+    let leaves: Vec<_> = endpoint.children(&tree.arena).collect();
+    (
+        glyph_area_of(tree, leaves[0]).clone(),
+        glyph_area_of(tree, leaves[1]).clone(),
+    )
+}
+
+/// Run the production hit path over a built portal tree: BVH
+/// descent, then identity resolution through the tree's own index.
+pub(super) fn portal_hit_at(
+    portal: &mut super::super::PortalTree,
+    point: glam::Vec2,
+) -> Option<super::super::PortalHit> {
+    let node_id = portal.tree.descendant_at(point)?;
+    portal.hit_index.resolve(&portal.tree, node_id)
+}
+
+/// Every leaf of a built portal tree that can actually be clicked
+/// (strictly positive extent), named by sub-part in tree order.
+/// Zero-extent reserved text slots are absent by construction.
+pub(super) fn hittable_parts(portal: &super::super::PortalTree) -> Vec<super::super::PortalPart> {
+    let mut out = Vec::new();
+    for pair in portal.tree.root.children(&portal.tree.arena) {
+        for endpoint in pair.children(&portal.tree.arena) {
+            for leaf in endpoint.children(&portal.tree.arena) {
+                let area = glyph_area_of(&portal.tree, leaf);
+                let (_, extent) = area_rect(area);
+                if extent.x <= 0.0 || extent.y <= 0.0 {
+                    continue;
+                }
+                if let Some(hit) = portal.hit_index.resolve(&portal.tree, leaf) {
+                    out.push(hit.part);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The per-role outputs of one rebuild that cross-role assertions
 /// read, in one value.
 ///

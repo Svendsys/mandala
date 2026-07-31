@@ -837,6 +837,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("scene_offset_hit_test", |b| {
         b.iter(|| do_scene_offset_is_applied_to_hit_test())
     });
+    // Passed by path rather than wrapped in `|| f()` — the
+    // surrounding file predates `clippy::redundant_closure` being
+    // clean and carries 165 instances of the wrapped form; new
+    // entries do not add to that count.
+    c.bench_function("scene_component_in", |b| {
+        b.iter(do_scene_component_in_scopes_the_hit_to_one_tree)
+    });
+    c.bench_function("scene_component_in_offset_visibility", |b| {
+        b.iter(do_scene_component_in_honors_offset_and_visibility)
+    });
+    c.bench_function("scene_component_in_overlap_smallest_area", |b| {
+        b.iter(do_scene_component_in_resolves_overlap_by_smallest_area)
+    });
     // arena_utils //
     c.bench_function("arena_utils_clone", |b| b.iter(|| do_clone()));
     // primes //

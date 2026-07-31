@@ -683,14 +683,26 @@ pub(crate) fn bvh_find(
                 if point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y {
                     let mut hit = true;
                     if refine_with_shape {
-                        // Inflating the bounds by `slack` on every side and
-                        // shifting the local point by `slack` into the
-                        // inflated frame gives rectangle and ellipse the
-                        // same isotropic fuzzy margin the caller asked
-                        // for. `slack == 0` is the exact-hit case (no-op
-                        // inflation).
-                        let local = Vec2::new(point.x - pos.x + slack, point.y - pos.y + slack);
-                        let inflated = Vec2::new(bounds.x + 2.0 * slack, bounds.y + 2.0 * slack);
+                        // Shift into the inflated local frame so
+                        // rectangle and ellipse get the same isotropic
+                        // fuzzy margin the caller asked for. `slack == 0`
+                        // is the exact-hit case (no-op inflation).
+                        //
+                        // The frame is derived from the very `min` / `max`
+                        // the AABB test above used, not recomputed from
+                        // `pos` and `bounds`. Float addition is not
+                        // associative: for an area at x = 872.0 of width
+                        // 22.4, `pos.x + bounds.x` rounds to 894.40002
+                        // while `894.40002 - 872.0` rounds to 22.400024,
+                        // which is *greater* than `bounds.x`. Refining
+                        // against `bounds` therefore rejected points the
+                        // AABB test had just accepted — a click exactly on
+                        // a rectangle's right or bottom edge fell through
+                        // to whatever lay beneath. Subtracting the same
+                        // `min` from both sides makes the boundary compare
+                        // exact.
+                        let local = Vec2::new(point.x - min_x, point.y - min_y);
+                        let inflated = Vec2::new(max_x - min_x, max_y - min_y);
                         hit = area.shape.contains_local(local, inflated);
                     }
                     if hit {
