@@ -553,27 +553,71 @@ pub(super) fn handle_cursor_moved(
                         current_canvas,
                     };
                 } else {
-                    // LeftDrag-on-empty pan. Honour the user's
-                    // PanCanvas binding: if they unbound LeftDrag from
-                    // PanCanvas (or rebound it elsewhere), the pan
-                    // doesn't fire. Default `KeybindConfig::default()`
-                    // ships with `pan_canvas: ["LeftDrag", "MiddleClick"]`
-                    // so out-of-the-box behaviour is unchanged.
+                    // LeftDrag-on-empty. Honor the user's binding:
+                    // whatever Action is bound to `LeftDrag`
+                    // (default `PanCanvas`) goes through the §3
+                    // funnel, so rebinding the gesture rebinds the
+                    // behavior and a macro-visible Action isn't
+                    // shadowed by a second copy of its body here.
+                    // Same shape as the `RightDrag` threshold-cross
+                    // arm below and the `MiddleClick` press arm in
+                    // `event_mouse_click.rs`. If the user unbound
+                    // `LeftDrag`, nothing fires.
                     // `action_for_gesture` falls back to unmodified
                     // when no exact-modifier binding exists, so
                     // Ctrl+LeftDrag-on-empty pans like a bare
-                    // LeftDrag-on-empty did pre-branch. Only
-                    // `PanCanvas` is dispatched via this shortcut;
-                    // future Actions bound to `LeftDrag` won't fire
-                    // here without explicit handling.
-                    let leftdrag_pans = ctx.keybinds.action_for_gesture(
+                    // LeftDrag-on-empty did pre-branch.
+                    let action = ctx.keybinds.action_for_gesture(
                         crate::application::keybinds::MouseGesture::LeftDrag.key_name(),
                         ctx.modifiers.control_key(),
                         ctx.modifiers.shift_key(),
                         ctx.modifiers.alt_key(),
-                    ) == Some(crate::application::keybinds::Action::PanCanvas);
-                    if leftdrag_pans {
-                        *ctx.drag_state = DragState::Panning;
+                    );
+                    if let Some(a) = action {
+                        // Copy the press position out of
+                        // `DragState::Pending` before dispatch:
+                        // `start_pos` borrows `*ctx.drag_state`, and
+                        // the arm bodies take `ctx` mutably (and may
+                        // replace the drag state outright).
+                        let press_pos = *start_pos;
+                        let canvas_pos = ctx
+                            .renderer
+                            .screen_to_canvas(press_pos.0 as f32, press_pos.1 as f32);
+                        // This branch is the empty-canvas leg of the
+                        // Pending fan-out (no node / handle / label
+                        // hit), so the hit is `Empty` by
+                        // construction. Carrying it lets
+                        // hit-consuming Actions bound to `LeftDrag`
+                        // work here the same way they do off
+                        // `RightDrag`.
+                        let dispatch_hit = super::dispatch::DispatchHit {
+                            click_hit: super::ClickHit::Empty,
+                            canvas_pos,
+                        };
+                        super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
+                        // If the arm didn't take ownership of the
+                        // gesture the state is still `Pending`, and
+                        // every following cursor move would re-cross
+                        // the threshold and re-fire the same Action.
+                        // Clear it so a rebound one-shot Action fires
+                        // exactly once per press — the same guard the
+                        // `RightDrag` threshold-cross arm below
+                        // applies to `PendingRight`. Skipped entirely
+                        // when nothing is bound, so an unbound
+                        // `LeftDrag` still leaves `Pending` intact for
+                        // the release handler's click path.
+                        if matches!(*ctx.drag_state, DragState::Pending { .. }) {
+                            *ctx.drag_state = DragState::None;
+                        }
+                    }
+                    // Per-frame continuous-gesture state stays inline
+                    // (CODE_CONVENTIONS §3): the funnel owns the
+                    // discrete entry (`Action::PanCanvas` →
+                    // `DragState::Panning`) and this emits the
+                    // threshold-crossing frame's delta so the pan
+                    // doesn't visibly lag one cursor-move behind the
+                    // gesture.
+                    if emits_first_pan_delta(ctx.drag_state) {
                         let dx = cursor_pos_val.0 - prev_pos.0;
                         let dy = cursor_pos_val.1 - prev_pos.1;
                         ctx.renderer
@@ -661,6 +705,23 @@ fn canvas_delta(
     curr_canvas - prev_canvas
 }
 
+/// Whether the `LeftDrag`-on-empty threshold-crossing frame should
+/// also emit its camera-pan delta, read *after* the bound Action
+/// has been dispatched.
+///
+/// True exactly when the dispatch left us in `DragState::Panning`
+/// — i.e. the Action bound to `LeftDrag` was `PanCanvas` (or a
+/// future Action that also enters pan mode). Before the funnel fix
+/// this arm hardcoded `action == Some(PanCanvas)` and set
+/// `DragState::Panning` inline, so an Action rebound onto
+/// `LeftDrag` fired nothing at all. Now the funnel decides and this
+/// predicate reads the decision back, which also means an Action
+/// that starts some *other* gesture doesn't get a free camera
+/// nudge on its first frame.
+fn emits_first_pan_delta(drag_state: &DragState) -> bool {
+    matches!(drag_state, DragState::Panning)
+}
+
 /// Map a `ResizeHandleSide` to the matching winit `CursorIcon`
 /// for the corresponding 8-handle resize cursor. Diagonal corners
 /// map to `NwseResize` / `NeswResize`; edge midpoints map to the
@@ -694,7 +755,7 @@ fn cursor_icon_for_resize_side(
 /// 2. **Multi-section node** — `hit_test_target`'s single-section
 ///    fold means single-section nodes never produce a section hit
 ///    in the first place, but the redundant check here is a
-///    cheap defence against a future drift.
+///    cheap defense against a future drift.
 /// 3. **`InteractionMode::NodeEdit { matching_id }`** — outside
 ///    NodeEdit, drags on a section's area move the whole node
 ///    (consistent with click-on-section folding to `Single` per
@@ -800,14 +861,53 @@ fn rebuild_selection_highlight(
 #[cfg(test)]
 mod tests {
     use super::{
-        cursor_icon_for_resize_side, resolve_section_drag_target,
-        selection_after_node_drag_press, selection_after_section_drag_press,
+        cursor_icon_for_resize_side, emits_first_pan_delta, resolve_section_drag_target,
+        selection_after_node_drag_press, selection_after_section_drag_press, DragState,
     };
     use baumhard::mindmap::scene_builder::ResizeHandleSide;
     use crate::application::app::InteractionMode;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{SectionSel, SelectionState};
     use crate::application::platform::window::CursorIcon;
+
+    /// The `LeftDrag`-on-empty arm dispatches whatever Action the
+    /// user bound, then emits the threshold frame's pan delta only
+    /// if that dispatch entered pan mode. `Panning` is the sole
+    /// state that qualifies — a rebound Action that promotes the
+    /// press to a rect-select or a throttled drag must not also
+    /// move the camera.
+    #[test]
+    fn test_emits_first_pan_delta_only_in_panning_state() {
+        assert!(emits_first_pan_delta(&DragState::Panning));
+        assert!(!emits_first_pan_delta(&DragState::None));
+        assert!(!emits_first_pan_delta(&DragState::SelectingRect {
+            start_canvas: glam::Vec2::ZERO,
+            current_canvas: glam::Vec2::ZERO,
+        }));
+    }
+
+    /// Regression pin for the funnel gap: the arm resolves the
+    /// `LeftDrag` binding with **no filter**, so rebinding the
+    /// gesture to a non-`PanCanvas` Action yields that Action.
+    /// The pre-fix arm compared the lookup against
+    /// `Some(Action::PanCanvas)` and dropped everything else on
+    /// the floor — this asserts the comparison is gone and the
+    /// gesture name / modifier plumbing the arm uses actually
+    /// reaches the rebound entry.
+    #[test]
+    fn test_leftdrag_gesture_lookup_honors_a_non_pan_rebinding() {
+        use crate::application::keybinds::{Action, KeybindConfig, MouseGesture};
+        let mut cfg = KeybindConfig::default();
+        cfg.pan_canvas.retain(|b| b != "LeftDrag");
+        cfg.zoom_fit.push("LeftDrag".into());
+        let resolved = cfg.resolve();
+        assert_eq!(
+            resolved.action_for_gesture(MouseGesture::LeftDrag.key_name(), false, false, false),
+            Some(Action::ZoomFit),
+            "a rebound LeftDrag must resolve to the user's Action, \
+             not be filtered down to PanCanvas"
+        );
+    }
 
     /// Pure 8→4 mapping: every `ResizeHandleSide` lands on the
     /// matching winit `CursorIcon` for direction-appropriate
@@ -831,7 +931,7 @@ mod tests {
     }
 
     /// Helper: NodeEdit mode targeting `node_id` — the mode that
-    /// licences section-drag promotion.
+    /// licenses section-drag promotion.
     fn node_edit_for(node_id: &str) -> InteractionMode {
         InteractionMode::NodeEdit { node_id: node_id.to_string() }
     }

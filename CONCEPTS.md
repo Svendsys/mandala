@@ -2345,10 +2345,15 @@ post-selection dispatch point. `RightClick` has no non-color-picker
 dispatch site at all.
 
 **`LeftDrag`** is the continuous "press + movement past threshold
-on empty canvas" gesture (default `PanCanvas`). The arm sets
-`DragState::Panning` for the press duration; the per-frame pan
-delta stays inline in `event_cursor_moved.rs` because per-cursor-
-move state is legitimately not a discrete-action concern.
+on empty canvas" gesture (default `PanCanvas`). The threshold
+cross dispatches whatever Action the gesture resolves to — no
+`PanCanvas` special-case in the handler — and the `PanCanvas` arm
+sets `DragState::Panning` for the press duration. The per-frame
+pan delta stays inline in `event_cursor_moved.rs` because
+per-cursor-move state is legitimately not a discrete-action
+concern; the threshold frame's first delta is gated on the
+dispatch having actually entered `Panning`, so an Action rebound
+onto `LeftDrag` doesn't get a free camera nudge.
 
 **Modifier-fallback for mouse gestures.** Mouse handlers resolve
 through `ResolvedKeybinds::action_for_gesture`, which tries the
@@ -2447,6 +2452,14 @@ Two modes: contextual (modal, opened from edge context menu;
 commits to the targeted edge and closes) and standalone
 (persistent palette, opened via `color picker on`; commits to
 the current selection and stays open).
+
+Commit, cancel and the six HSV nudges are `Action`s that run in
+`dispatch_action` like every other user-named effect
+(CODE_CONVENTIONS §3), so a macro step can drive the picker.
+`color_picker_flow::picker_op_for` is the single predicate the
+funnel arm, the keyboard pre-filter and the click router share.
+Only the picker's Copy / Paste / Cut stay modal-local — they
+carry a hex payload no `Action` body can express.
 
 ### `BorderPreview`
 
