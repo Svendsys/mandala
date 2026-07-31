@@ -471,12 +471,39 @@ pub fn do_area_rotate_command_applies() {
 /// then fail at load time — and `MindMap.custom_mutations` is a
 /// required-shape field, so one bad example takes the whole document
 /// down with it. This test is the guard: it asserts the emitted
-/// string, parses the shape `format/mutations.md` publishes, and
-/// asserts the map shape is rejected so the doc cannot quietly drift
-/// back.
+/// string, and then **reads the example out of `format/mutations.md`
+/// itself** and parses that, so editing the doc back to the object
+/// form fails here. A hard-copied literal would only have pinned the
+/// test against itself.
 #[test]
 pub fn test_area_rotate_command_json_wire_shape() {
     do_area_rotate_command_json_wire_shape();
+}
+
+/// Pull the published `Rotate` example out of `format/mutations.md`.
+///
+/// The doc writes it as a single inline-code span on one line, so the
+/// span between the first pair of backticks on the line that names
+/// both `AreaCommand` and `Rotate` *is* the example. Panics with a
+/// pointed message if the doc no longer contains it — a silent
+/// fallback here would defeat the purpose of reading the file.
+fn documented_rotate_example() -> String {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../format/mutations.md");
+    let doc = std::fs::read_to_string(path).expect("format/mutations.md must be readable");
+    for line in doc.lines() {
+        if !line.contains("\"AreaCommand\"") || !line.contains("\"Rotate\"") {
+            continue;
+        }
+        let mut spans = line.split('`');
+        // `split` yields the text before the first backtick, then the
+        // span itself.
+        if let (Some(_), Some(example)) = (spans.next(), spans.next()) {
+            if example.contains("\"Rotate\"") {
+                return example.to_string();
+            }
+        }
+    }
+    panic!("format/mutations.md no longer publishes an inline `AreaCommand`/`Rotate` example");
 }
 
 pub fn do_area_rotate_command_json_wire_shape() {
@@ -491,9 +518,12 @@ pub fn do_area_rotate_command_json_wire_shape() {
         r#"{"AreaCommand":{"Rotate":{"pivot":[1.0,2.0],"degrees":90.0}}}"#
     );
 
-    // Byte-for-byte the example published in `format/mutations.md`.
-    let documented = r#"{"AreaCommand": { "Rotate": { "pivot": [0.0, 0.0], "degrees": 90.0 } }}"#;
-    let parsed: Mutation = serde_json::from_str(documented).expect("the documented example must parse");
+    // Read, do not restate: this is the byte sequence the doc actually
+    // publishes today, whatever that is.
+    let documented = documented_rotate_example();
+    let parsed: Mutation = serde_json::from_str(&documented).unwrap_or_else(|e| {
+        panic!("the example published in format/mutations.md must parse: {e}\n{documented}")
+    });
     match parsed {
         Mutation::AreaCommand(command) => match *command {
             GlyphAreaCommand::Rotate { pivot, degrees } => {

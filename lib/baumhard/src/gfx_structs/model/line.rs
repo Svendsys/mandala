@@ -285,19 +285,21 @@ impl GlyphLine {
         if e_idx_head == begin {
             // This whole comp can be spared: the insert starts exactly
             // on the boundary after it, so it goes into the next slot.
+            //
+            // `should_overwrite` is `true` because whether that next
+            // slot is *consumed* by the insert is not knowable from
+            // here — it depends on the item's length against a
+            // component this call has not seen. So defer to the drain
+            // window: the caller only honors the flag when
+            // `idx_comp_drain_end > idx_insert`, which is precisely
+            // "the run in the insertion slot was fully overridden".
+            // Hard-coding `false` made the result depend on how the
+            // line happened to be cut into runs — the same insert over
+            // the same text overwrote a character when the line was one
+            // run, and grew the line by one when a run boundary fell at
+            // the insertion point.
             *idx_comp_drain_begin = comp_index + 2; // next will be used
             *idx_insert = comp_index + 1; // insert into next
-                                          // Whether that next slot is *consumed* by the insert is not
-                                          // knowable from here — it depends on the item's length
-                                          // against a component this call has not seen. Defer to the
-                                          // drain window: the caller only honors this flag when
-                                          // `idx_comp_drain_end > idx_insert`, which is precisely
-                                          // "the run in the insertion slot was fully overridden".
-                                          // Hard-coding `false` here made the result depend on how
-                                          // the line happened to be cut into runs — the same insert
-                                          // over the same text overwrote a character when the line
-                                          // was one run and grew the line by one when the boundary
-                                          // fell at the insertion point.
             *should_overwrite = true;
             return true;
         } else if e_begin_comp == begin && (end - begin) >= comp_len {

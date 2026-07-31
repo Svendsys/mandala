@@ -275,8 +275,10 @@ impl ColorFontRegions {
             };
             let mut head = *region;
             if head.range.start >= range.start {
-                head.range.start += magnitude;
-                head.range.end = shifted_end;
+                // The `checked_add` above already proved this cannot
+                // fail, so the result is discarded deliberately rather
+                // than re-reported.
+                let _ = head.range.checked_push_right(magnitude);
             } else if head.range.end > range.start {
                 let mut tail = *region;
                 tail.range.start = range.end;
@@ -306,14 +308,31 @@ impl ColorFontRegions {
     /// to cover the new chars. See the symmetric
     /// [`Self::shrink_regions_after`] for the delete path.
     ///
+    /// A shift that would carry a region's `end` past `usize::MAX` is
+    /// dropped whole, leaving the set untouched rather than partly
+    /// shifted — same posture as [`Self::split_and_separate`].
+    ///
+    /// **Precondition: the region set is non-degenerate and
+    /// non-overlapping** — each region satisfies `start < end`, and no
+    /// two cover the same cluster. Like every primitive here this is a
+    /// per-region rewrite over a `BTreeSet` keyed on the range alone,
+    /// so it cannot detect a violation and will propagate it: two
+    /// regions the shift maps onto the same range collapse into one
+    /// set slot, silently dropping the loser's color and font. See
+    /// [`Self::split_and_separate`], which carries the same
+    /// precondition for the same reason.
+    ///
     /// Costs: O(n) over existing regions; one full clone of the
     /// BTreeSet to decouple from the iterator.
     pub fn shift_regions_after(&mut self, idx: usize, magnitude: usize) {
         let mut copy_of_regions: Vec<_> = self.regions.iter().copied().collect();
         for region in &mut copy_of_regions {
-            if region.range.start > idx {
-                region.range.start += magnitude;
-                region.range.end += magnitude;
+            if region.range.start > idx && !region.range.checked_push_right(magnitude) {
+                warn!(
+                    "shift_regions_after dropped: shifting region {}..{} right by {} overflows usize",
+                    region.range.start, region.range.end, magnitude
+                );
+                return;
             }
         }
         self.regions.clear();
@@ -345,6 +364,17 @@ impl ColorFontRegions {
     /// primitive exists for `GlyphMatrix::copy_from`, which explicitly
     /// follows up with a `submit_region` for the inserted span.
     ///
+    /// A shift or absorption that would carry a region's `end` past
+    /// `usize::MAX` drops the call whole — the set is left untouched
+    /// and `false` returned, so the caller treats the insertion as
+    /// unabsorbed rather than acting on a half-shifted table. Same
+    /// posture as [`Self::split_and_separate`] and
+    /// [`Self::shift_regions_after`].
+    ///
+    /// **Precondition: the region set is non-degenerate and
+    /// non-overlapping** — see [`Self::split_and_separate`], which
+    /// carries the same precondition for the same reason.
+    ///
     /// Costs: O(n) over existing regions; one collect + one extend in
     /// the common case, plus a remove/submit pair when a region
     /// absorbs the insertion.
@@ -358,11 +388,23 @@ impl ColorFontRegions {
             let mut r = *region;
             if r.range.start >= idx {
                 // Fully right of the insertion — shift both bounds.
-                r.range.start += magnitude;
-                r.range.end += magnitude;
+                if !r.range.checked_push_right(magnitude) {
+                    warn!(
+                        "insert_regions_at dropped: shifting region {}..{} right by {} overflows usize",
+                        r.range.start, r.range.end, magnitude
+                    );
+                    return false;
+                }
             } else if !absorbed && r.range.end >= idx {
                 // First straddling / left-adjacent region — absorb.
-                r.range.end += magnitude;
+                let Some(end) = r.range.end.checked_add(magnitude) else {
+                    warn!(
+                        "insert_regions_at dropped: growing region {}..{} by {} overflows usize",
+                        r.range.start, r.range.end, magnitude
+                    );
+                    return false;
+                };
+                r.range.end = end;
                 absorbed = true;
             }
             // else: fully left of the insertion, unchanged.
@@ -628,16 +670,27 @@ impl Range {
         self.end - self.start
     }
 
-    /// Shift both endpoints right by `n`.
-    pub fn push_right(&mut self, n: usize) {
+    /// Shift both endpoints right by `n`, returning `false` and
+    /// leaving the range **untouched** when that would carry `end`
+    /// past `usize::MAX`.
+    ///
+    /// The checked form is the only form. Every caller shifts a range
+    /// whose bounds came from a document — grapheme offsets a
+    /// hand-authored `.mindmap.json` can set to anything — and the
+    /// unchecked predecessor wrapped silently in release (the
+    /// workspace sets no `overflow-checks` override), turning a
+    /// far-right region into a far-left one. Since `start <= end` is
+    /// this type's invariant, checking `end` alone is sufficient.
+    ///
+    /// Costs: O(1), one `checked_add`, no allocation.
+    #[must_use]
+    pub fn checked_push_right(&mut self, n: usize) -> bool {
+        let Some(end) = self.end.checked_add(n) else {
+            return false;
+        };
         self.start += n;
-        self.end += n;
-    }
-
-    /// Shift both endpoints left by `n`.
-    pub fn push_left(&mut self, n: usize) {
-        self.start -= n;
-        self.end -= n;
+        self.end = end;
+        true
     }
 
     /// Returns `true` iff the two half-open ranges share at least one

@@ -213,6 +213,103 @@ pub fn do_split_and_separate_overflow_drops_the_whole_call() {
 }
 
 #[test]
+fn test_range_checked_push_right() {
+    do_range_checked_push_right();
+}
+
+/// [`Range::checked_push_right`] shifts both endpoints and reports
+/// success, or reports failure and leaves the range **exactly as it
+/// was** — the all-or-nothing contract every region primitive relies
+/// on to bail without half-shifting its set.
+pub fn do_range_checked_push_right() {
+    let mut ordinary = Range::new(3, 9);
+    assert!(ordinary.checked_push_right(4));
+    assert_eq!(ordinary, Range::new(7, 13));
+
+    // A zero shift succeeds and changes nothing.
+    let mut zero = Range::new(3, 9);
+    assert!(zero.checked_push_right(0));
+    assert_eq!(zero, Range::new(3, 9));
+
+    // Landing exactly on `usize::MAX` is fine — it is the last legal
+    // `end`, not an overflow.
+    let mut exact = Range::new(1, usize::MAX - 5);
+    assert!(exact.checked_push_right(5));
+    assert_eq!(exact, Range::new(6, usize::MAX));
+
+    // One past is not, and the range must be untouched afterwards.
+    let mut overflowing = Range::new(1, usize::MAX - 5);
+    assert!(!overflowing.checked_push_right(6));
+    assert_eq!(overflowing, Range::new(1, usize::MAX - 5));
+
+    // `start` is never advanced on the failing path either — the bug
+    // this shape guards against is a half-applied shift that inverts
+    // the range.
+    let mut wide = Range::new(usize::MAX - 2, usize::MAX);
+    assert!(!wide.checked_push_right(1));
+    assert_eq!(wide, Range::new(usize::MAX - 2, usize::MAX));
+    assert!(wide.start <= wide.end);
+}
+
+#[test]
+fn test_shift_regions_after_overflow_drops_the_whole_call() {
+    do_shift_regions_after_overflow_drops_the_whole_call();
+}
+
+/// [`ColorFontRegions::shift_regions_after`] carries the same
+/// all-or-nothing overflow posture as its siblings. It is on the live
+/// insertion path, so an unchecked `+= magnitude` would wrap silently
+/// in release (the workspace sets no `overflow-checks` override) and
+/// turn a far-right region into a far-left one.
+pub fn do_shift_regions_after_overflow_drops_the_whole_call() {
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new_key_only(Range::new(0, 8)));
+    regions.submit_region(ColorFontRegion::new_key_only(Range::new(10, usize::MAX)));
+
+    regions.shift_regions_after(5, 3);
+
+    assert_eq!(regions.num_regions(), 2);
+    assert!(regions.get(Range::new(0, 8)).is_some());
+    assert!(regions.get(Range::new(10, usize::MAX)).is_some());
+
+    // The ordinary path still shifts.
+    let mut ordinary = ColorFontRegions::new_empty();
+    ordinary.submit_region(ColorFontRegion::new_key_only(Range::new(10, 15)));
+    ordinary.shift_regions_after(5, 3);
+    assert!(ordinary.get(Range::new(13, 18)).is_some());
+}
+
+#[test]
+fn test_insert_regions_at_overflow_drops_the_whole_call() {
+    do_insert_regions_at_overflow_drops_the_whole_call();
+}
+
+/// [`ColorFontRegions::insert_regions_at`] is the live text-edit
+/// insertion primitive, so its overflow posture matters most: it
+/// leaves the set untouched and returns `false`, which the caret path
+/// already handles as "the new chars are uncovered" rather than
+/// acting on a half-shifted table.
+pub fn do_insert_regions_at_overflow_drops_the_whole_call() {
+    // Shift arm.
+    let mut shifting = ColorFontRegions::new_empty();
+    shifting.submit_region(ColorFontRegion::new_key_only(Range::new(10, usize::MAX)));
+    assert!(!shifting.insert_regions_at(5, 3));
+    assert!(shifting.get(Range::new(10, usize::MAX)).is_some());
+
+    // Absorb arm — the straddler's `end` is what overflows.
+    let mut absorbing = ColorFontRegions::new_empty();
+    absorbing.submit_region(ColorFontRegion::new_key_only(Range::new(0, usize::MAX)));
+    assert!(!absorbing.insert_regions_at(5, 3));
+    assert!(absorbing.get(Range::new(0, usize::MAX)).is_some());
+
+    // The ordinary path still absorbs and reports it.
+    let mut ordinary = ColorFontRegions::new_empty();
+    ordinary.submit_region(ColorFontRegion::new_key_only(Range::new(0, 10)));
+    assert!(ordinary.insert_regions_at(5, 3));
+    assert!(ordinary.get(Range::new(0, 13)).is_some());
+}
+
+#[test]
 fn test_split_and_separate_precondition_violations_propagate() {
     do_split_and_separate_precondition_violations_propagate();
 }

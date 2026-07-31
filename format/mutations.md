@@ -39,7 +39,7 @@ layer won the registry slot for that id.
 
 Override-safety note: if a user file redeclares the id of a
 bundled mutation that has a registered Rust handler (e.g.
-`flower-layout`, `tree-cascade`), the dispatcher **honours the
+`flower-layout`, `tree-cascade`), the dispatcher **honors the
 user's declarative mutator** rather than silently running the
 bundled handler's algorithm against the user's scope. See
 `MindMapDocument::will_dispatch_to_handler` for the guard.
@@ -121,10 +121,11 @@ value. The most common variants for authoring:
   takes the **whole `.mindmap.json` down** — or, in
   `~/.config/mandala/mutations.json`, makes `load_user` warn and
   silently drop the entire user mutation file. The same applies to
-  every future `Vec2` payload on either command enum. The exact wire
-  string above is pinned by
-  `do_area_rotate_command_json_wire_shape`, which also asserts the
-  object form is rejected.
+  every future `Vec2` payload on either command enum.
+  `do_area_rotate_command_json_wire_shape` **reads the example on the
+  line above out of this file** and parses it, so editing it back to
+  the object form fails the suite rather than shipping a doc that
+  breaks every document that copies it.
 
 The full vocabulary lives in
 `lib/baumhard/src/gfx_structs/area_mutators.rs` under

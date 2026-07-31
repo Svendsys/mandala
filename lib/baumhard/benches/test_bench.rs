@@ -140,6 +140,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         "line_ignore_initial_space_all_whitespace_rhs_paints_nothing",
         |b| b.iter(do_line_ignore_initial_space_all_whitespace_rhs_paints_nothing),
     );
+    c.bench_function("line_runs_paint_by_column_with_the_flag_off", |b| {
+        b.iter(do_line_runs_paint_by_column_with_the_flag_off)
+    });
     c.bench_function("line_surplus_runs_paint_at_their_own_rhs_offsets", |b| {
         b.iter(do_line_surplus_runs_paint_at_their_own_rhs_offsets)
     });
@@ -586,6 +589,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("split_and_separate_precondition_violations_propagate", |b| {
         b.iter(do_split_and_separate_precondition_violations_propagate)
+    });
+    c.bench_function("range_checked_push_right", |b| {
+        b.iter(do_range_checked_push_right)
+    });
+    c.bench_function("shift_regions_after_overflow_drops_the_whole_call", |b| {
+        b.iter(do_shift_regions_after_overflow_drops_the_whole_call)
+    });
+    c.bench_function("insert_regions_at_overflow_drops_the_whole_call", |b| {
+        b.iter(do_insert_regions_at_overflow_drops_the_whole_call)
     });
     c.bench_function("submit_region_drops_inverted_range", |b| {
         b.iter(|| do_submit_region_drops_inverted_range())

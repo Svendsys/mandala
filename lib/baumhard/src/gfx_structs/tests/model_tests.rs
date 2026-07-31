@@ -1861,6 +1861,71 @@ pub fn do_line_ignore_initial_space_surplus_rhs_runs_append() {
 }
 
 #[test]
+pub fn test_line_runs_paint_by_column_with_the_flag_off() {
+    do_line_runs_paint_by_column_with_the_flag_off();
+}
+
+/// The column-offset rewrite governs the `ignore_initial_space ==
+/// false` path too, and that is the likelier real-world trigger: a
+/// plain `ModelDelta` `GlyphMatrix` payload reaches it with the flag
+/// never set at all.
+///
+/// With the flag off there is no head paint, but the partitions still
+/// diverge — `overriding_insert` resplits `self` as it goes, so from
+/// the second run onward the rhs run ordinal names the wrong place in
+/// `self`. On `main` each row below either panics outright or
+/// resurrects text the insert should have covered:
+///
+/// - `["ab","cd"] += ["W","XYZ"]` panicked in `index_of_component`.
+/// - `["ab","cd","ef"] += ["W","X"]` panicked likewise.
+/// - `["a","b","c","d","e","f"] += ["WX","YZ"]` produced `WXYZcef`,
+///   with the overwritten `c` resurrected between them.
+///
+/// Painting by column makes each case just "write the rhs text over
+/// the lhs from column 0", independent of either partition.
+pub fn do_line_runs_paint_by_column_with_the_flag_off() {
+    // (lhs runs, rhs runs, expected text)
+    let cases: Vec<(Vec<&str>, Vec<&str>, &str)> = vec![
+        (vec!["ab", "cd"], vec!["W", "XYZ"], "WXYZ"),
+        (vec!["ab", "cd", "ef"], vec!["W", "X"], "WXcdef"),
+        (vec!["a", "b", "c", "d", "e", "f"], vec!["WX", "YZ"], "WXYZef"),
+        // rhs shorter than lhs, boundaries aligned: the tail survives.
+        (vec!["abcd", "efgh"], vec!["WX"], "WXcdefgh"),
+        // rhs longer than lhs: the surplus extends the line.
+        (vec!["ab"], vec!["W", "X", "YZ"], "WXYZ"),
+        // Emoji runs — columns are clusters on both sides.
+        (vec!["####", "@@@@"], vec!["🍕🍕", "🙏🏻"], "🍕🍕🙏🏻#@@@@"),
+    ];
+
+    for (lhs_runs, rhs_runs, expected) in cases {
+        let mut glyph_line = GlyphLine::new();
+        for run in &lhs_runs {
+            glyph_line.push(GlyphComponent::text(run, AppFont::AppleTea, Color::black()));
+        }
+        let mut modifier_line = GlyphLine::new();
+        // Explicitly off — this is the whole point of the case.
+        modifier_line.ignore_initial_space = false;
+        for run in &rhs_runs {
+            modifier_line.push(GlyphComponent::text(
+                run,
+                AppFont::AliceInWonderland,
+                Color::white(),
+            ));
+        }
+
+        glyph_line += modifier_line;
+
+        assert_eq!(
+            line_text(&glyph_line),
+            expected,
+            "lhs {:?} += rhs {:?}",
+            lhs_runs,
+            rhs_runs
+        );
+    }
+}
+
+#[test]
 pub fn test_line_surplus_runs_paint_at_their_own_rhs_offsets() {
     do_line_surplus_runs_paint_at_their_own_rhs_offsets();
 }
