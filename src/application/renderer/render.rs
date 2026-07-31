@@ -380,9 +380,15 @@ impl Renderer {
         );
 
         // Interactive path: a contended font-system lock must skip
-        // the frame, not abort the process.
+        // the frame, not abort the process. `debug!`, not `warn!`,
+        // per CODE_CONVENTIONS §9: this runs once per frame, the
+        // skip is a designed transient that the next frame retries,
+        // and there is nothing a user could act on — a `warn!` here
+        // would flood stderr at frame rate for no diagnostic gain.
+        // `rebuild_mode_status_overlay_if_needed` takes the same
+        // contention path silently for the same reason.
         let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
-            log::warn!("font_system lock contended in prepare_text_for_pass, skipping");
+            log::debug!("renderer: font_system lock contended in prepare_text_for_pass, skipping");
             return false;
         };
 

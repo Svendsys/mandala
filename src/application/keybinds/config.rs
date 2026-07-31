@@ -643,7 +643,7 @@ impl KeybindConfig {
             for s in *strings {
                 match KeyBind::parse(s) {
                     Ok(k) => binds.push((action.clone(), k)),
-                    Err(e) => warn!("skipping invalid keybind '{}': {}", s, e),
+                    Err(e) => warn!("keybinds: skipping invalid keybind '{}': {}", s, e),
                 }
             }
         }
@@ -900,14 +900,17 @@ impl KeybindConfig {
         for (combo, mutation_id) in &self.custom_mutation_bindings {
             match KeyBind::parse(combo) {
                 Ok(k) => custom_binds.push((k, mutation_id.clone())),
-                Err(e) => warn!("skipping invalid custom_mutation_binding '{}': {}", combo, e),
+                Err(e) => warn!(
+                    "keybinds: skipping invalid custom_mutation_binding '{}': {}",
+                    combo, e
+                ),
             }
         }
         let mut macro_binds: Vec<(KeyBind, String)> = Vec::new();
         for (combo, macro_id) in &self.macro_bindings {
             match KeyBind::parse(combo) {
                 Ok(k) => macro_binds.push((k, macro_id.clone())),
-                Err(e) => warn!("skipping invalid macro_binding '{}': {}", combo, e),
+                Err(e) => warn!("keybinds: skipping invalid macro_binding '{}': {}", combo, e),
             }
         }
 
@@ -946,14 +949,14 @@ fn push_parametric<F>(
             Ok(k) => match build(&binding.args) {
                 Some(action) => binds.push((action, k)),
                 None => warn!(
-                    "skipping {} binding '{}': wrong args (got {}, expected {})",
+                    "keybinds: skipping {} binding '{}': wrong args (got {}, expected {})",
                     name,
                     binding.combo,
                     binding.args.len(),
                     expected_arity,
                 ),
             },
-            Err(e) => warn!("skipping invalid keybind '{}': {}", binding.combo, e),
+            Err(e) => warn!("keybinds: skipping invalid keybind '{}': {}", binding.combo, e),
         }
     }
 }
