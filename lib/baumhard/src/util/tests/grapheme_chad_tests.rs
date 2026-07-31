@@ -5,9 +5,11 @@ use lazy_static::lazy_static;
 use crate::util::grapheme_chad::{
     count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
     delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_byte_range, find_nth_line_grapheme_range,
-    first_non_whitespace_grapheme, grapheme_display_width, insert_new_lines, insert_str_at_grapheme,
-    insert_str_at_grapheme_counted, push_spaces, replace_graphemes_until_newline, scalar_display_width,
-    slice_to_newline, split_off_graphemes, truncate_to_display_width, word_left, word_right,
+    first_non_whitespace_grapheme, grapheme_display_width, insert_new_lines, insert_spaces,
+    insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
+    prev_word_boundary_ws, push_spaces, replace_graphemes_until_newline, scalar_display_width,
+    slice_to_newline, split_graphemes_owned, split_off_graphemes, take_graphemes, token_start_ws,
+    truncate_to_display_width, word_left, word_right, LineReplacement,
 };
 
 lazy_static! {
@@ -250,9 +252,119 @@ pub fn test_replace_graphemes_until_newline() {
 pub fn do_replace_graphemes_until_newline() {
     for (source, idx, target, expected) in REPLACE_GRAPHEMES_UNTIL_NEWLINE_TEST.clone() {
         let mut result = target.to_string();
-        replace_graphemes_until_newline(&mut result, idx, &source);
+        let before = count_grapheme_clusters(&result);
+        let outcome = replace_graphemes_until_newline(&mut result, idx, &source);
         assert_eq!(result, expected);
+
+        // The three fields of `LineReplacement` are a contract, not
+        // decoration: `growth` must be the buffer's real cluster
+        // growth (that is what the region shift rides on), `at` must
+        // echo the caller's index, and `added_lines` must be the
+        // count of newlines the source contributed.
+        let after = count_grapheme_clusters(&result);
+        assert_eq!(
+            outcome.at, idx,
+            "`at` must echo g_index for source {:?} into {:?}",
+            source, target
+        );
+        assert_eq!(
+            outcome.growth,
+            after - before,
+            "`growth` must equal the real cluster growth for source {:?} into {:?}",
+            source,
+            target
+        );
+        assert_eq!(
+            outcome.added_lines,
+            source.matches('\n').count(),
+            "`added_lines` must count the source's newlines for source {:?}",
+            source
+        );
+        assert_eq!(
+            count_number_lines(&result),
+            count_number_lines(target) + outcome.added_lines,
+            "the target must gain exactly `added_lines` lines for source {:?} into {:?}",
+            source,
+            target
+        );
     }
+
+    // A single-line source into a single-line target: the plain case
+    // the old `Option<(usize, usize)>` return could describe.
+    let mut buf = String::from("abc");
+    assert_eq!(
+        replace_graphemes_until_newline(&mut buf, 1, "XYZ"),
+        LineReplacement {
+            at: 1,
+            // The 2-cluster tail "bc" became the 3-cluster "XYZ".
+            growth: 1,
+            added_lines: 0
+        }
+    );
+    assert_eq!(buf, "aXYZ");
+
+    // Replacement that fits inside the line tail reports no growth
+    // and preserves the surplus.
+    let mut buf = String::from("abcdef");
+    assert_eq!(
+        replace_graphemes_until_newline(&mut buf, 1, "XY"),
+        LineReplacement {
+            at: 1,
+            growth: 0,
+            added_lines: 0
+        }
+    );
+    assert_eq!(buf, "aXYdef");
+
+    // The contract fix: a multi-line source reflows the target, and
+    // `added_lines` is how the caller learns it. The old doc claimed
+    // the source was cut at its first `\n` — it never was, and there
+    // was no way for a line-addressed caller to notice.
+    let mut buf = String::from("abc\ntail");
+    let outcome = replace_graphemes_until_newline(&mut buf, 0, "1\n2\n3");
+    assert_eq!(buf, "1\n2\n3\ntail");
+    assert_eq!(outcome.added_lines, 2, "two newlines came from the source");
+    assert_eq!(outcome.growth, 2, "5 clusters replaced 3");
+    assert_eq!(count_number_lines(&buf), 4);
+
+    // The bound is on the *target* only: the target's own `\n` is
+    // never consumed, so the tail after it survives untouched.
+    let mut buf = String::from("ab\nkeep");
+    replace_graphemes_until_newline(&mut buf, 0, "longer");
+    assert_eq!(buf, "longer\nkeep");
+
+    // Adversarial sources. A skin-toned emoji and a ZWJ family are
+    // one cluster each, so a two-emoji source grows a 1-cluster line
+    // by exactly 1 — a codepoint-counting implementation would say 5.
+    let mut buf = String::from("x");
+    let outcome = replace_graphemes_until_newline(&mut buf, 0, "🙏🏻👨‍👩‍👧");
+    assert_eq!(buf, "🙏🏻👨‍👩‍👧");
+    assert_eq!(outcome.growth, 1);
+    assert_eq!(outcome.added_lines, 0);
+
+    // A CRLF in the source is one cluster but still one added line —
+    // `added_lines` counts `\n` characters, matching what
+    // `count_number_lines` sees.
+    let mut buf = String::from("ab");
+    let outcome = replace_graphemes_until_newline(&mut buf, 0, "a\r\nb");
+    assert_eq!(buf, "a\r\nb");
+    assert_eq!(outcome.added_lines, 1);
+    assert_eq!(count_number_lines(&buf), 2);
+
+    // Empty source into an empty target: nothing moves, nothing grows.
+    let mut buf = String::new();
+    assert_eq!(
+        replace_graphemes_until_newline(&mut buf, 0, ""),
+        LineReplacement::default()
+    );
+    assert_eq!(buf, "");
+
+    // `g_index` past the end appends rather than panicking.
+    let mut buf = String::from("ab");
+    let outcome = replace_graphemes_until_newline(&mut buf, 99, "cd");
+    assert_eq!(buf, "abcd");
+    assert_eq!(outcome.at, 99);
+    assert_eq!(outcome.growth, 2);
 }
 
 #[test]
@@ -720,5 +832,504 @@ pub fn do_first_non_whitespace_grapheme() {
                 tail
             );
         }
+    }
+}
+
+#[test]
+pub fn test_take_graphemes() {
+    do_take_graphemes();
+}
+
+/// [`take_graphemes`] must cut on cluster boundaries and report
+/// overflow from the same walk. The adversarial cases are the ones
+/// where a byte- or `char`-based `take` diverges: a skin-tone
+/// modifier (base + modifier), a ZWJ family (three bases + two
+/// joiners), a regional-indicator flag (two scalars), an NFD
+/// combining mark, a CRLF pair, and U+200B, which is a real cluster
+/// even though it renders as nothing.
+pub fn do_take_graphemes() {
+    // ASCII baseline, including both sides of the cap.
+    assert_eq!(take_graphemes("abcdef", 3), ("abc", true));
+    assert_eq!(take_graphemes("abc", 3), ("abc", false));
+    assert_eq!(take_graphemes("ab", 3), ("ab", false));
+
+    // n = 0 borrows nothing but still answers the overflow question.
+    assert_eq!(take_graphemes("abc", 0), ("", true));
+    assert_eq!(take_graphemes("", 0), ("", false));
+    assert_eq!(take_graphemes("", 5), ("", false));
+
+    // Skin-tone modifier: `🙏🏻` is base + U+1F3FB, one cluster.
+    // Taking 1 must yield the whole thing, never the bare base.
+    assert_eq!(take_graphemes("🙏🏻ab", 1), ("🙏🏻", true));
+    assert_eq!(take_graphemes("🙏🏻🙏🏻", 1), ("🙏🏻", true));
+    assert_eq!(take_graphemes("🙏🏻🙏🏻", 2), ("🙏🏻🙏🏻", false));
+
+    // ZWJ family: five scalars, one cluster.
+    assert_eq!(take_graphemes("👨‍👩‍👧x", 1), ("👨‍👩‍👧", true));
+    assert_eq!(count_grapheme_clusters(take_graphemes("👨‍👩‍👧x", 1).0), 1);
+
+    // Regional-indicator pair (flag): two scalars, one cluster.
+    assert_eq!(take_graphemes("🇺🇸🇳🇴", 1), ("🇺🇸", true));
+    assert_eq!(take_graphemes("🇺🇸🇳🇴", 2), ("🇺🇸🇳🇴", false));
+
+    // Combining mark: NFD "café" is 5 scalars, 4 clusters, and the
+    // acute must travel with its base.
+    let cafe_nfd = "cafe\u{0301}";
+    assert_eq!(take_graphemes(cafe_nfd, 4), (cafe_nfd, false));
+    assert_eq!(take_graphemes(cafe_nfd, 3), ("caf", true));
+
+    // Lone combining mark at index 0 — no base to attach to, so it
+    // is its own cluster and `take(1)` must not return an empty
+    // slice.
+    assert_eq!(take_graphemes("\u{0301}abc", 1), ("\u{0301}", true));
+
+    // CRLF is a single cluster under UAX #29.
+    assert_eq!(take_graphemes("a\r\nb", 2), ("a\r\n", true));
+    assert_eq!(take_graphemes("\r\n", 1), ("\r\n", false));
+
+    // U+3000 IDEOGRAPHIC SPACE is three bytes but one cluster, and
+    // U+200B ZERO WIDTH SPACE is a cluster despite rendering blank.
+    assert_eq!(take_graphemes("\u{3000}ab", 1), ("\u{3000}", true));
+    assert_eq!(take_graphemes("a\u{200B}b", 2), ("a\u{200B}", true));
+
+    // Every prefix must be a valid, cluster-aligned slice of the
+    // source — the property callers rely on when they format it.
+    for input in ["", "abc", "🙏🏻👨‍👩‍👧🇺🇸", "a\r\nb", "\u{0301}x", "\u{3000}\u{200B}"]
+    {
+        let total = count_grapheme_clusters(input);
+        for n in 0..=total + 2 {
+            let (prefix, overflow) = take_graphemes(input, n);
+            assert!(
+                input.starts_with(prefix),
+                "prefix {:?} is not a prefix of {:?}",
+                prefix,
+                input
+            );
+            assert_eq!(
+                count_grapheme_clusters(prefix),
+                n.min(total),
+                "prefix of {:?} at n={} has the wrong cluster count",
+                input,
+                n
+            );
+            assert_eq!(overflow, total > n, "overflow flag for {:?} at n={}", input, n);
+        }
+    }
+}
+
+#[test]
+pub fn test_line_bounds_at() {
+    do_line_bounds_at();
+}
+
+/// [`line_bounds_at`] replaces the app crate's two hand-rolled
+/// walks; these cases are ported from the editor tests it subsumed,
+/// plus the CRLF case the old `g == "\n"` test walked straight past.
+pub fn do_line_bounds_at() {
+    // Single line: bounds are the whole buffer.
+    assert_eq!(line_bounds_at("abc", 2), (0, 3));
+    assert_eq!(line_bounds_at("abc", 0), (0, 3));
+
+    // Empty buffer.
+    assert_eq!(line_bounds_at("", 0), (0, 0));
+    assert_eq!(line_bounds_at("", 7), (0, 0));
+
+    // Three lines of "ab\ncd\nef": clusters 0..2, 3..5, 6..8.
+    let s = "ab\ncd\nef";
+    assert_eq!(line_bounds_at(s, 0), (0, 2));
+    assert_eq!(line_bounds_at(s, 1), (0, 2));
+    // A cursor sitting *on* the newline belongs to the line it ends.
+    assert_eq!(line_bounds_at(s, 2), (0, 2));
+    assert_eq!(line_bounds_at(s, 3), (3, 5));
+    assert_eq!(line_bounds_at(s, 4), (3, 5));
+    assert_eq!(line_bounds_at(s, 6), (6, 8));
+    assert_eq!(line_bounds_at(s, 7), (6, 8));
+    // Past the end clamps to the last line.
+    assert_eq!(line_bounds_at(s, 99), (6, 8));
+
+    // Trailing newline opens an empty final line.
+    assert_eq!(line_bounds_at("abc\n", 4), (4, 4));
+    assert_eq!(line_bounds_at("abc\n", 0), (0, 3));
+
+    // A buffer of only newlines: every line is empty.
+    assert_eq!(line_bounds_at("\n\n", 0), (0, 0));
+    assert_eq!(line_bounds_at("\n\n", 1), (1, 1));
+    assert_eq!(line_bounds_at("\n\n", 2), (2, 2));
+
+    // CRLF: `\r\n` is ONE cluster, so "ab\r\ncd" is 5 clusters, not
+    // 6, and the terminator sits at index 2. Testing `g == "\n"`
+    // would miss it entirely and report one 5-cluster line.
+    let crlf = "ab\r\ncd";
+    assert_eq!(count_grapheme_clusters(crlf), 5);
+    assert_eq!(line_bounds_at(crlf, 0), (0, 2));
+    assert_eq!(line_bounds_at(crlf, 3), (3, 5));
+
+    // Multi-byte and multi-scalar content: bounds are cluster
+    // indices, so a line of emoji is as long as it looks.
+    let emoji = "🙏🏻👨‍👩‍👧\n🇺🇸";
+    assert_eq!(line_bounds_at(emoji, 0), (0, 2));
+    assert_eq!(line_bounds_at(emoji, 3), (3, 4));
+
+    // U+3000 and U+200B are ordinary content clusters, not
+    // terminators.
+    assert_eq!(line_bounds_at("a\u{3000}\u{200B}b", 0), (0, 4));
+
+    // Property: for every cursor into every buffer the bounds must
+    // bracket the cursor (once clamped) and never split a line.
+    for input in ["", "a", "ab\ncd\nef", "abc\n", "\n\n", "ab\r\ncd", "🙏🏻\n🇺🇸"] {
+        let total = count_grapheme_clusters(input);
+        for cursor in 0..=total + 1 {
+            let (start, end) = line_bounds_at(input, cursor);
+            assert!(start <= end, "{:?} at {}: start > end", input, cursor);
+            assert!(end <= total, "{:?} at {}: end past the buffer", input, cursor);
+            assert!(
+                start <= cursor.min(total),
+                "{:?} at {}: start {} is past the cursor",
+                input,
+                cursor,
+                start
+            );
+        }
+    }
+}
+
+#[test]
+pub fn test_prev_word_boundary_ws() {
+    do_prev_word_boundary_ws();
+}
+
+/// [`prev_word_boundary_ws`] is the `Ctrl+W` motion the console's
+/// `kill_word` used to hand-roll. It differs from [`word_left`]
+/// wherever punctuation appears: `key=value` is one token here and
+/// three there.
+pub fn do_prev_word_boundary_ws() {
+    // Cursor at 0, and empty buffers, are no-ops.
+    assert_eq!(prev_word_boundary_ws("", 0), 0);
+    assert_eq!(prev_word_boundary_ws("", 9), 0);
+    assert_eq!(prev_word_boundary_ws("hello", 0), 0);
+
+    // End of a single word lands at its start.
+    assert_eq!(prev_word_boundary_ws("hello", 5), 0);
+    assert_eq!(prev_word_boundary_ws("hello", 99), 0);
+
+    // Trailing whitespace is skipped before the token is.
+    assert_eq!(prev_word_boundary_ws("foo bar", 7), 4);
+    assert_eq!(prev_word_boundary_ws("foo bar ", 8), 4);
+    assert_eq!(prev_word_boundary_ws("foo bar   ", 10), 4);
+    assert_eq!(prev_word_boundary_ws("foo bar", 4), 0);
+
+    // The whole point of the `_ws` sibling: punctuation stays inside
+    // the token, so a kv pair dies in one stroke. `word_left` would
+    // stop at the `=`.
+    assert_eq!(prev_word_boundary_ws("section key=value", 17), 8);
+    assert_eq!(word_left("section key=value", 17), 12);
+    assert_eq!(prev_word_boundary_ws("a/b/c", 5), 0);
+
+    // Leading whitespace: walking back off the first token lands at 0.
+    assert_eq!(prev_word_boundary_ws("   word", 7), 3);
+    assert_eq!(prev_word_boundary_ws("   word", 3), 0);
+    assert_eq!(prev_word_boundary_ws("   ", 3), 0);
+
+    // U+3000 IDEOGRAPHIC SPACE is whitespace — and it is three bytes
+    // and one cluster, so a byte-indexed implementation would land
+    // two bytes into it.
+    assert_eq!(prev_word_boundary_ws("foo\u{3000}bar", 7), 4);
+    // Other exotic spaces behave the same.
+    assert_eq!(prev_word_boundary_ws("foo\u{00A0}bar", 7), 4);
+
+    // U+200B ZERO WIDTH SPACE is NOT whitespace (it is `Cf`), so it
+    // holds the token together — the same rule
+    // `first_non_whitespace_grapheme` applies.
+    assert_eq!(prev_word_boundary_ws("foo\u{200B}bar", 7), 0);
+
+    // Emoji are token content: a skin-toned emoji, a ZWJ family and
+    // a flag are one cluster each and none is a separator.
+    assert_eq!(prev_word_boundary_ws("ab🙏🏻cd", 5), 0);
+    assert_eq!(prev_word_boundary_ws("x 👨‍👩‍👧", 3), 2);
+    assert_eq!(prev_word_boundary_ws("x 🇺🇸", 3), 2);
+
+    // Combining marks ride with their base: NFD "café" is one token.
+    assert_eq!(prev_word_boundary_ws("cafe\u{0301}", 4), 0);
+    // A lone combining mark at index 0 is content, not a separator.
+    assert_eq!(prev_word_boundary_ws("\u{0301}ab", 3), 0);
+
+    // A CRLF cluster is all-whitespace, so it separates tokens.
+    assert_eq!(prev_word_boundary_ws("foo\r\nbar", 7), 4);
+}
+
+#[test]
+pub fn test_token_start_ws() {
+    do_token_start_ws();
+}
+
+/// [`token_start_ws`] is [`prev_word_boundary_ws`] without the
+/// leading whitespace skip — the scan the completion popup needs, so
+/// that a cursor parked after a space reports an *empty* token
+/// rather than reaching back into the previous word.
+pub fn do_token_start_ws() {
+    assert_eq!(token_start_ws("", 0), 0);
+    assert_eq!(token_start_ws("hello", 0), 0);
+    assert_eq!(token_start_ws("hello", 5), 0);
+    assert_eq!(token_start_ws("hello", 99), 0);
+
+    // Mid-token.
+    assert_eq!(token_start_ws("foo bar", 6), 4);
+    assert_eq!(token_start_ws("foo bar", 7), 4);
+
+    // The divergence from `prev_word_boundary_ws`: a cursor sitting
+    // right after whitespace starts a fresh (empty) token.
+    assert_eq!(token_start_ws("foo ", 4), 4);
+    assert_eq!(prev_word_boundary_ws("foo ", 4), 0);
+    assert_eq!(token_start_ws("foo   ", 6), 6);
+    assert_eq!(token_start_ws("   ", 3), 3);
+
+    // kv tokens stay whole so the caller can locate the `=` itself.
+    assert_eq!(token_start_ws("section key=val", 15), 8);
+    assert_eq!(token_start_ws("node color=#ff0000", 18), 5);
+
+    // Same Unicode rules as its sibling.
+    assert_eq!(token_start_ws("foo\u{3000}bar", 7), 4);
+    assert_eq!(token_start_ws("foo\u{200B}bar", 7), 0);
+    assert_eq!(token_start_ws("ab🙏🏻cd", 5), 0);
+    assert_eq!(token_start_ws("cafe\u{0301}", 4), 0);
+    assert_eq!(token_start_ws("\u{0301}ab", 3), 0);
+    // "a\r\nb" is THREE clusters — the CRLF is one — so a cursor of
+    // 4 clamps to 3 and the token is the final "b" at index 2.
+    assert_eq!(token_start_ws("a\r\nb", 4), 2);
+
+    // Property: the reported start is always a cluster index at or
+    // before the (clamped) cursor, and the token it delimits holds
+    // no whitespace at all.
+    for input in ["", "foo bar", "a b  c", "key=value x", "\u{3000}q", "🙏🏻 👨‍👩‍👧"] {
+        let total = count_grapheme_clusters(input);
+        for cursor in 0..=total + 1 {
+            let start = token_start_ws(input, cursor);
+            let clamped = cursor.min(total);
+            assert!(start <= clamped, "{:?} at {}: start past cursor", input, cursor);
+            let from = find_byte_index_of_grapheme(input, start).unwrap_or(input.len());
+            let to = find_byte_index_of_grapheme(input, clamped).unwrap_or(input.len());
+            assert!(
+                !input[from..to].chars().any(char::is_whitespace),
+                "{:?} at {}: token {:?} contains whitespace",
+                input,
+                cursor,
+                &input[from..to]
+            );
+        }
+    }
+}
+
+#[test]
+pub fn test_insert_spaces() {
+    do_insert_spaces();
+}
+
+/// [`insert_spaces`] shipped `pub` with neither a test nor a bench
+/// (issue #38 item 5) even though `GlyphMatrix::place_in` calls it
+/// once per painted row. The cases that matter are the boundary ones:
+/// `n = 0`, an index past the end, and an index that a byte- or
+/// `char`-based insert would land inside a cluster.
+pub fn do_insert_spaces() {
+    // n = 0 leaves the string alone at every index.
+    let mut s = String::from("abc");
+    insert_spaces(&mut s, 0, 0);
+    assert_eq!(s, "abc");
+    insert_spaces(&mut s, 2, 0);
+    assert_eq!(s, "abc");
+    insert_spaces(&mut s, 99, 0);
+    assert_eq!(s, "abc");
+
+    // Front, middle, and exact-end insertion.
+    let mut s = String::from("abc");
+    insert_spaces(&mut s, 0, 2);
+    assert_eq!(s, "  abc");
+    let mut s = String::from("abc");
+    insert_spaces(&mut s, 1, 3);
+    assert_eq!(s, "a   bc");
+    let mut s = String::from("abc");
+    insert_spaces(&mut s, 3, 2);
+    assert_eq!(s, "abc  ");
+
+    // Past the end appends rather than panicking — the contract
+    // `place_in` leans on when a row is shorter than the x-offset.
+    let mut s = String::from("abc");
+    insert_spaces(&mut s, 99, 2);
+    assert_eq!(s, "abc  ");
+
+    // Empty buffer.
+    let mut s = String::new();
+    insert_spaces(&mut s, 0, 3);
+    assert_eq!(s, "   ");
+    let mut s = String::new();
+    insert_spaces(&mut s, 5, 0);
+    assert_eq!(s, "");
+
+    // Mid-emoji: index 1 of a skin-toned 🙏🏻 is *after* the whole
+    // cluster. A `char`-indexed insert would wedge the spaces
+    // between the base and its U+1F3FB modifier and change the
+    // rendered glyph.
+    let mut s = String::from("🙏🏻x");
+    insert_spaces(&mut s, 1, 1);
+    assert_eq!(s, "🙏🏻 x");
+    assert_eq!(count_grapheme_clusters(&s), 3);
+
+    // ZWJ family: five scalars, one cluster. Inserting at 1 must
+    // not sever a joiner.
+    let mut s = String::from("👨‍👩‍👧👨‍👩‍👧");
+    insert_spaces(&mut s, 1, 2);
+    assert_eq!(s, "👨‍👩‍👧  👨‍👩‍👧");
+    assert_eq!(count_grapheme_clusters(&s), 4);
+
+    // Regional-indicator pair.
+    let mut s = String::from("🇺🇸🇳🇴");
+    insert_spaces(&mut s, 1, 1);
+    assert_eq!(s, "🇺🇸 🇳🇴");
+    assert_eq!(count_grapheme_clusters(&s), 3);
+
+    // Combining mark: inserting at 1 of NFD "é" goes after the
+    // acute, not between base and mark.
+    let mut s = String::from("e\u{0301}x");
+    insert_spaces(&mut s, 1, 1);
+    assert_eq!(s, "e\u{0301} x");
+
+    // Lone combining mark at index 0 is its own cluster, so index 1
+    // is past it.
+    let mut s = String::from("\u{0301}ab");
+    insert_spaces(&mut s, 1, 1);
+    assert_eq!(s, "\u{0301} ab");
+    // Inserting *before* it must not merge the space with the mark:
+    // the space becomes the mark's base, fusing them into one
+    // cluster. Documented rather than wished away — the byte layout
+    // is what the caller asked for.
+    let mut s = String::from("\u{0301}ab");
+    insert_spaces(&mut s, 0, 1);
+    assert_eq!(s, " \u{0301}ab");
+
+    // CRLF is one cluster; index 1 is past the whole pair.
+    let mut s = String::from("a\r\nb");
+    insert_spaces(&mut s, 2, 1);
+    assert_eq!(s, "a\r\n b");
+
+    // U+3000 is one cluster of three bytes.
+    let mut s = String::from("\u{3000}x");
+    insert_spaces(&mut s, 1, 1);
+    assert_eq!(s, "\u{3000} x");
+
+    // Property: the cluster count always grows by exactly `n` when
+    // the buffer has no cluster-merging boundary at `idx`.
+    for input in ["", "abc", "🙏🏻👨‍👩‍👧", "a\r\nb", "\u{3000}\u{200B}"] {
+        let before = count_grapheme_clusters(input);
+        for idx in 0..=before + 1 {
+            for n in 0..3 {
+                let mut s = input.to_string();
+                insert_spaces(&mut s, idx, n);
+                assert_eq!(
+                    count_grapheme_clusters(&s),
+                    before + n,
+                    "{:?}: insert_spaces(idx={}, n={}) changed the cluster count wrongly",
+                    input,
+                    idx,
+                    n
+                );
+            }
+        }
+    }
+}
+
+#[test]
+pub fn test_split_graphemes_owned() {
+    do_split_graphemes_owned();
+}
+
+/// [`split_graphemes_owned`] is the border-pattern splitter lifted
+/// out of `border_pattern.rs`. Its contract is that concatenating the
+/// pieces reproduces the input and every piece is exactly one
+/// cluster.
+pub fn do_split_graphemes_owned() {
+    assert_eq!(split_graphemes_owned(""), Vec::<String>::new());
+    assert_eq!(split_graphemes_owned("abc"), vec!["a", "b", "c"]);
+
+    // One cluster each, however many scalars they carry.
+    assert_eq!(split_graphemes_owned("🙏🏻"), vec!["🙏🏻"]);
+    assert_eq!(split_graphemes_owned("👨‍👩‍👧"), vec!["👨‍👩‍👧"]);
+    assert_eq!(split_graphemes_owned("🇺🇸🇳🇴"), vec!["🇺🇸", "🇳🇴"]);
+    assert_eq!(split_graphemes_owned("e\u{0301}"), vec!["e\u{0301}"]);
+    assert_eq!(split_graphemes_owned("\u{0301}"), vec!["\u{0301}"]);
+    assert_eq!(split_graphemes_owned("\r\n"), vec!["\r\n"]);
+    assert_eq!(
+        split_graphemes_owned("\u{3000}\u{200B}"),
+        vec!["\u{3000}", "\u{200B}"]
+    );
+
+    // The two properties every caller depends on.
+    for input in [
+        "",
+        "abc",
+        "─┬─",
+        "🙏🏻👨‍👩‍👧🇺🇸",
+        "a\r\nb",
+        "\u{0301}x",
+        "\u{3000}\u{200B}",
+    ] {
+        let parts = split_graphemes_owned(input);
+        assert_eq!(parts.concat(), input, "round-trip failed for {:?}", input);
+        assert_eq!(
+            parts.len(),
+            count_grapheme_clusters(input),
+            "count for {:?}",
+            input
+        );
+        for p in &parts {
+            assert_eq!(
+                count_grapheme_clusters(p),
+                1,
+                "{:?} split off a non-cluster {:?}",
+                input,
+                p
+            );
+        }
+    }
+}
+
+#[test]
+pub fn test_join_graphemes() {
+    do_join_graphemes();
+}
+
+/// [`join_graphemes`] backs the vertical border rail, which stacks
+/// one cluster per row. Joining by `char` instead would drop a
+/// combining mark onto the row below its base and shatter a ZWJ
+/// emoji into its parts.
+pub fn do_join_graphemes() {
+    assert_eq!(join_graphemes("", "\n"), "");
+    assert_eq!(join_graphemes("a", "\n"), "a");
+    assert_eq!(join_graphemes("ab", "\n"), "a\nb");
+    assert_eq!(join_graphemes("abc", "-"), "a-b-c");
+
+    // An empty separator rebuilds the input verbatim.
+    assert_eq!(join_graphemes("🙏🏻👨‍👩‍👧", ""), "🙏🏻👨‍👩‍👧");
+
+    // Multi-scalar clusters stay whole and land on one row each.
+    assert_eq!(join_graphemes("🙏🏻👨‍👩‍👧", "\n"), "🙏🏻\n👨‍👩‍👧");
+    assert_eq!(join_graphemes("🇺🇸🇳🇴", "\n"), "🇺🇸\n🇳🇴");
+    // The acute must stay with its base rather than starting a row.
+    assert_eq!(join_graphemes("e\u{0301}x", "\n"), "e\u{0301}\nx");
+    // A CRLF is one cluster, so it is one row, not two.
+    assert_eq!(join_graphemes("a\r\nb", "|"), "a|\r\n|b");
+    // Multi-character separators work too.
+    assert_eq!(join_graphemes("ab", "<>"), "a<>b");
+
+    // Property: the joined string always holds `n - 1` separators
+    // and drops back to the input when they are stripped.
+    for input in ["", "a", "abc", "🙏🏻👨‍👩‍👧🇺🇸", "e\u{0301}x", "\u{3000}\u{200B}"] {
+        let n = count_grapheme_clusters(input);
+        let joined = join_graphemes(input, "\n");
+        assert_eq!(
+            joined.matches('\n').count(),
+            n.saturating_sub(1),
+            "separator count for {:?}",
+            input
+        );
+        assert_eq!(joined.replace('\n', ""), input, "round-trip for {:?}", input);
     }
 }

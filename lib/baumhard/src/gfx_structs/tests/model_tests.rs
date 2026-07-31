@@ -9,7 +9,7 @@ use crate::gfx_structs::model::{
     DeltaGlyphModel, GlyphComponent, GlyphLine, GlyphMatrix, GlyphModel, GlyphModelField,
 };
 use crate::util::color::Color;
-use crate::util::grapheme_chad::count_grapheme_clusters;
+use crate::util::grapheme_chad::{count_grapheme_clusters, count_number_lines};
 
 /// The tests are written in a non-test-annotated function and then wrapped by an annotated test function
 /// So that they can be reused for benchmarking
@@ -287,6 +287,100 @@ pub fn matrix_place_in_3() {
         let _region_11 = regions.get(Range::new(84, 94)).unwrap();
         let _region_12 = regions.get(Range::new(105, 115)).unwrap();
     }
+}
+
+#[test]
+pub fn test_matrix_place_in_multiline_component() {
+    matrix_place_in_multiline_component();
+}
+
+/// A `GlyphComponent`'s text may itself contain newlines — the tree
+/// builder wraps a whole mindmap section, author's line breaks and
+/// all, in a single component on a single `GlyphLine`. Painting such
+/// a row grows the target by a line, and every row after it has to
+/// move down with it.
+///
+/// Before `replace_graphemes_until_newline` reported
+/// `LineReplacement::added_lines` (issue #38 item 4) `place_in` had no
+/// way to know: it kept addressing target row `n + 1` as
+/// `line_num + offset.1`, which after a multi-line paint pointed
+/// *inside* the text it had just inserted, and row 1 overwrote the
+/// tail of row 0.
+pub fn matrix_place_in_multiline_component() {
+    let mut matrix = GlyphMatrix::new();
+    // Row 0 carries an author line break inside one component.
+    matrix.push(GlyphLine::new_with(GlyphComponent::text(
+        "AA\nBB",
+        AppFont::Evilz,
+        Color::black(),
+    )));
+    matrix.push(GlyphLine::new_with(GlyphComponent::text(
+        "CC",
+        AppFont::Evilz,
+        Color::black(),
+    )));
+    matrix.push(GlyphLine::new_with(GlyphComponent::text(
+        "DD",
+        AppFont::Evilz,
+        Color::black(),
+    )));
+
+    let mut regions = ColorFontRegions::new_empty();
+    let mut my_string = String::new();
+    matrix.place_in(&mut my_string, &mut regions, (0, 0));
+
+    // Four target lines for three matrix rows: row 0 contributed two
+    // of them. Rows 1 and 2 land *below* row 0's second line rather
+    // than on top of it.
+    assert_eq!(my_string, "AA\nBB\nCC\nDD");
+    assert_eq!(count_number_lines(&my_string), 4);
+
+    // Regions stay in whole-buffer grapheme coordinates and none of
+    // them was clobbered by the drift.
+    assert_eq!(regions.num_regions(), 3);
+    assert!(
+        regions.get(Range::new(0, 5)).is_some(),
+        "row 0 spans its own newline"
+    );
+    assert!(
+        regions.get(Range::new(6, 8)).is_some(),
+        "row 1 shifted past row 0"
+    );
+    assert!(
+        regions.get(Range::new(9, 11)).is_some(),
+        "row 2 shifted past both"
+    );
+
+    // The same paint with a y-offset keeps the drift relative to the
+    // offset rather than swallowing it.
+    let mut regions = ColorFontRegions::new_empty();
+    let mut offset_string = String::new();
+    matrix.place_in(&mut offset_string, &mut regions, (0, 2));
+    assert_eq!(offset_string, "\n\nAA\nBB\nCC\nDD");
+    assert_eq!(regions.num_regions(), 3);
+
+    // Two newlines in one component drift the rows below by two.
+    let mut deep = GlyphMatrix::new();
+    deep.push(GlyphLine::new_with(GlyphComponent::text(
+        "A\nB\nC",
+        AppFont::Evilz,
+        Color::black(),
+    )));
+    deep.push(GlyphLine::new_with(GlyphComponent::text(
+        "D",
+        AppFont::Evilz,
+        Color::black(),
+    )));
+    let mut regions = ColorFontRegions::new_empty();
+    let mut deep_string = String::new();
+    deep.place_in(&mut deep_string, &mut regions, (0, 0));
+    assert_eq!(deep_string, "A\nB\nC\nD");
+
+    // An x-offset still pads each row it actually paints into.
+    let mut regions = ColorFontRegions::new_empty();
+    let mut padded = String::new();
+    matrix.place_in(&mut padded, &mut regions, (2, 0));
+    assert_eq!(padded, "  AA\nBB\n  CC\n  DD");
 }
 
 #[test]

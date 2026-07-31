@@ -21,29 +21,68 @@ pub(crate) fn slice_to_newline(s: &str, byte_index: usize) -> &str {
     &s[byte_index..end_byte_index]
 }
 
-/// Replace `target`'s graphemes from `g_index` up to (and not past) the
-/// next newline with the graphemes in `source`. If `source` is longer
-/// than the existing line tail, the extras are appended; if shorter,
-/// the surplus tail beyond `source`'s length is preserved (only the
-/// overlapping prefix is overwritten). Stops at the first `\n` in
-/// either string — multi-line replacement is intentionally outside
-/// this helper's scope.
+/// What a [`replace_graphemes_until_newline`] call did to its target.
 ///
-/// Returns `Some((g_index, extra))` when the replacement *grew* the
-/// line by `extra` graphemes (the caller uses this to shift any
-/// downstream `ColorFontRegions` ranges). Returns `None` when the
-/// replacement fit entirely within the existing line tail.
+/// A caller that keeps grapheme-indexed side tables next to the buffer
+/// — `ColorFontRegions` spans, or `GlyphMatrix`'s "line N of the
+/// target" row bookkeeping — needs three facts to stay in step with
+/// the edit, and the previous `Option<(usize, usize)>` return could
+/// only carry two of them. In particular it could not say that the
+/// target had *gained lines*, which is why a multi-line source used
+/// to reflow the buffer silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LineReplacement {
+    /// Grapheme index the replacement started at — an echo of the
+    /// caller's `g_index`, so a region shift can be applied straight
+    /// from this value without threading the index separately.
+    pub at: usize,
+    /// Net growth of the target, in grapheme clusters. Zero when the
+    /// replacement fit inside the existing line tail. Shifting every
+    /// region that starts after `at` right by `growth` keeps
+    /// whole-buffer grapheme indices correct.
+    pub growth: usize,
+    /// How many extra lines the target gained, i.e. the number of
+    /// `\n` characters `source` contributed. Non-zero means every
+    /// line of the target *after* the edited one has moved down by
+    /// this much, and a caller that addresses the target by line
+    /// number must compensate.
+    pub added_lines: usize,
+}
+
+/// Replace `target`'s graphemes from `g_index` up to (and not past)
+/// the next newline **in `target`** with the graphemes in `source`.
+/// If `source` is longer than the existing line tail, the extras are
+/// appended; if shorter, the surplus tail beyond `source`'s length is
+/// preserved (only the overlapping prefix is overwritten).
 ///
-/// Cost: two `count_grapheme_clusters` walks plus one
-/// `replace_substring` (which itself allocates a fresh `Vec<u8>` —
-/// a known hot-path allocation tracked alongside the rest of the
-/// "no-alloc text edit" work).
-pub fn replace_graphemes_until_newline(
-    target: &mut String,
-    g_index: usize,
-    source: &str,
-) -> Option<(usize, usize)> {
+/// The newline bound applies to the *target only*. `source` is
+/// inserted whole, newlines and all. The doc used to claim the helper
+/// "stops at the first `\n` in either string"; it never did, and the
+/// old `Option<(usize, usize)>` return had no way to tell the caller
+/// that the buffer had grown a line. A multi-line `source` therefore
+/// **reflows** `target`: the surviving tail of the edited line ends up
+/// on the source's last line, and every following line moves down.
+/// [`LineReplacement::added_lines`] reports exactly that drift, so a
+/// line-addressed caller such as `GlyphMatrix::place_in` can
+/// compensate instead of painting its next row into the middle of the
+/// text it just inserted.
+///
+/// Returns a [`LineReplacement`] describing the edit. `growth` is the
+/// net grapheme-count change and is `0` whenever the replacement fit
+/// inside the existing line tail.
+///
+/// # Costs
+///
+/// Two `count_grapheme_clusters` walks, one `count_number_lines` byte
+/// scan over `source`, and one `replace_substring` — which itself
+/// allocates a fresh `Vec<u8>` copy of the whole target, a known
+/// hot-path allocation tracked alongside the rest of the "no-alloc
+/// text edit" work.
+pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, source: &str) -> LineReplacement {
     let insert_num_graphemes = count_grapheme_clusters(source);
+    // `count_number_lines` is "newlines + 1", so the count of `\n`
+    // characters the source contributes is one less.
+    let added_lines = count_number_lines(source) - 1;
     let b_index = find_byte_index_of_grapheme(target, g_index).unwrap_or(target.len());
 
     let line_section = slice_to_newline(target, b_index);
@@ -52,18 +91,30 @@ pub fn replace_graphemes_until_newline(
     let end_of_target_line_idx = b_index + line_section.len();
 
     if insert_num_graphemes >= target_line_num_graphemes {
-        // We can basically cut away this whole region and then insert our string
+        // The source covers the whole line tail: cut the tail away
+        // (never the terminating `\n` — `slice_to_newline` stops
+        // short of it) and splice the source in.
         replace_substring(target, b_index, end_of_target_line_idx, source);
-        Some((g_index, insert_num_graphemes - target_line_num_graphemes))
+        LineReplacement {
+            at: g_index,
+            growth: insert_num_graphemes - target_line_num_graphemes,
+            added_lines,
+        }
     } else {
-        // We need to cut away a part between index..insert_num_graphemes, and then insert our string
-        replace_substring(
-            target,
-            b_index,
-            find_byte_index_of_grapheme(target, g_index + insert_num_graphemes).unwrap(),
-            source,
-        );
-        None
+        // The source is shorter than the line tail: overwrite only
+        // the overlapping prefix and leave the surplus in place.
+        // The bound is in range by construction (`g_index +
+        // insert_num_graphemes` is strictly inside the line), but
+        // fall back to the line end rather than panic in a text-edit
+        // hot path.
+        let overlap_end = find_byte_index_of_grapheme(target, g_index + insert_num_graphemes)
+            .unwrap_or(end_of_target_line_idx);
+        replace_substring(target, b_index, overlap_end, source);
+        LineReplacement {
+            at: g_index,
+            growth: 0,
+            added_lines,
+        }
     }
 }
 
@@ -154,6 +205,51 @@ pub fn count_number_lines(s: &str) -> usize {
     s.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1
 }
 
+/// Grapheme-index bounds of the newline-separated line that contains
+/// `cursor`, as a half-open `(line_start, line_end)` pair.
+///
+/// `line_start` is the index just past the most recent line
+/// terminator strictly before `cursor` (0 when there is none).
+/// `line_end` is the index of the first line terminator at or after
+/// `cursor`, or `s`'s cluster count when no terminator follows.
+/// Neither bound includes the terminator itself, so
+/// `line_end - line_start` is the line's visible length in clusters
+/// and `cursor` always satisfies `line_start <= cursor` for any
+/// in-range cursor. A `cursor` past the cluster count yields the last
+/// line's bounds; an empty `s` yields `(0, 0)`.
+///
+/// A "line terminator" is any cluster ending in `\n`, which covers
+/// both a bare LF and a CRLF pair — UAX #29 fuses `\r\n` into a
+/// single cluster, so testing `g == "\n"` would walk straight past a
+/// Windows line ending and report one long line. The CR is treated as
+/// part of the terminator and therefore falls outside both bounds.
+///
+/// This is the one implementation of "where does the cursor's line
+/// begin and end" (CONVENTIONS §B3); the editor's Home / End /
+/// up-line / down-line motions all route through it.
+///
+/// # Costs
+///
+/// One O(n) grapheme walk that stops at the line's terminator — so
+/// O(distance to the end of the cursor's line), degrading to the
+/// whole buffer only when the cursor sits on the last line. No
+/// allocation.
+pub fn line_bounds_at(s: &str, cursor: usize) -> (usize, usize) {
+    let mut line_start = 0usize;
+    let mut total = 0usize;
+    for (i, g) in s.graphemes(true).enumerate() {
+        if g.ends_with('\n') {
+            if i < cursor {
+                line_start = i + 1;
+            } else {
+                return (line_start, i);
+            }
+        }
+        total = i + 1;
+    }
+    (line_start, total)
+}
+
 /// Grapheme-cluster span of the `n`-th newline-separated line in `s`,
 /// returned as a half-open `(start_grapheme, end_grapheme)` range.
 /// `n = 0` is the first line. Returns `None` if `s` is empty or `n`
@@ -162,7 +258,7 @@ pub fn count_number_lines(s: &str) -> usize {
 /// Cost: O(n) grapheme walk plus a final `s.graphemes(true).count()`
 /// when the last line is requested.
 pub fn find_nth_line_grapheme_range(s: &str, n: usize) -> Option<(usize, usize)> {
-    if s.len() == 0 {
+    if s.is_empty() {
         return None;
     }
     let mut line_head = 0;
@@ -198,7 +294,7 @@ pub fn find_nth_line_grapheme_range(s: &str, n: usize) -> Option<(usize, usize)>
 ///
 /// Cost: O(n) byte-level walk via `char_indices()`. No allocation.
 pub fn find_nth_line_byte_range(s: &str, n: usize) -> Option<(usize, usize)> {
-    if s.len() == 0 {
+    if s.is_empty() {
         return None;
     }
     let mut line_head = 0;
@@ -238,9 +334,20 @@ pub fn push_spaces(s: &mut String, n: usize) {
     s.push_str(&spaces);
 }
 
-/// Insert `n` spaces at grapheme-cluster index `idx`. If `idx` is
-/// past the string's grapheme count the spaces are appended. O(n)
-/// grapheme walk + O(len) `String::insert_str` shift.
+/// Insert `n` spaces at grapheme-cluster index `idx`.
+///
+/// `idx` counts clusters, so the spaces always land on a cluster
+/// boundary — inserting at index 1 of `"🙏🏻x"` goes after the whole
+/// skin-toned emoji, not between its base and its modifier. At or
+/// past the string's cluster count the spaces are appended, which
+/// makes `idx == count` the natural "at the end" spelling. `n == 0`
+/// is a no-op on the contents (the empty repeat is still inserted).
+///
+/// # Costs
+///
+/// O(n) `str::repeat` for the space run, an O(idx) grapheme walk to
+/// find the boundary, and the O(len) `String::insert_str` shift of
+/// everything after it.
 pub fn insert_spaces(s: &mut String, idx: usize, n: usize) {
     let spaces = " ".repeat(n);
     match find_byte_index_of_grapheme(s, idx) {
@@ -309,6 +416,84 @@ pub fn delete_grapheme_at(s: &mut String, idx: usize) {
 /// allocation.
 pub fn count_grapheme_clusters(s: &str) -> usize {
     s.graphemes(true).count()
+}
+
+/// Borrow the first `n` grapheme clusters of `s`, and say whether any
+/// clusters were left behind.
+///
+/// Returns `(prefix, truncated)`. `prefix` covers at most `n`
+/// clusters — the whole of `s` when it is shorter — and `truncated`
+/// is `true` exactly when `s` holds more than `n` clusters. That flag
+/// is what an "…"-appending caller actually wants, and it falls out
+/// of the same walk.
+///
+/// This replaces the `text.graphemes(true).take(n).collect::<String>()`
+/// plus `text.graphemes(true).count() > n` idiom, which walks the
+/// string twice and allocates the prefix. `n == 0` yields
+/// `("", !s.is_empty())`.
+///
+/// # Costs
+///
+/// O(min(`n`, cluster count)) grapheme walk plus one extra cluster
+/// decode to answer `truncated`. No allocation — the prefix borrows
+/// from `s`, and it always ends on a cluster boundary so a ZWJ emoji
+/// or a combining mark is never cut in half.
+pub fn take_graphemes(s: &str, n: usize) -> (&str, bool) {
+    let mut end = 0usize;
+    let mut iter = s.graphemes(true);
+    for _ in 0..n {
+        match iter.next() {
+            Some(g) => end += g.len(),
+            // Fewer than `n` clusters available: the whole string is
+            // the prefix and nothing was left behind.
+            None => return (s, false),
+        }
+    }
+    (&s[..end], iter.next().is_some())
+}
+
+/// Split `s` into its grapheme clusters, each owned as a `String`.
+///
+/// Exists for the cluster-vector layouts that must outlive the source
+/// string — `SidePattern`'s parsed border sections are the caller
+/// this was lifted from. Prefer borrowing iteration (`take_graphemes`,
+/// `find_byte_index_of_grapheme`) wherever the source stays alive:
+/// this shape is the expensive one.
+///
+/// # Costs
+///
+/// O(n) grapheme walk, one heap allocation per cluster plus one for
+/// the vector. On ASCII that is one 1-byte `String` per character.
+pub fn split_graphemes_owned(s: &str) -> Vec<String> {
+    s.graphemes(true).map(|g| g.to_string()).collect()
+}
+
+/// Rebuild `s` with `separator` inserted between every adjacent pair
+/// of grapheme clusters, so `join_graphemes("ab", "\n") == "a\nb"`.
+/// An empty `s` yields an empty `String`; a single cluster yields
+/// itself with no separator.
+///
+/// Splitting on clusters rather than `char`s is the whole point: a
+/// vertical border column built by joining `char`s would put the
+/// combining mark of `é` on the row below its base, and would split a
+/// ZWJ emoji into its component codepoints.
+///
+/// # Costs
+///
+/// O(n) grapheme walk. Allocates the result once at `s.len()` and
+/// lets it grow from there, so a non-empty separator costs one or
+/// more reallocations on long inputs.
+pub fn join_graphemes(s: &str, separator: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut first = true;
+    for g in s.graphemes(true) {
+        if !first {
+            out.push_str(separator);
+        }
+        out.push_str(g);
+        first = false;
+    }
+    out
 }
 
 /// Monospace display width of `s` in terminal-cell units, counting
@@ -476,12 +661,13 @@ pub fn delete_front_unicode(s: &mut String, n: usize) {
 /// count is clamped at the buffer's grapheme count.
 ///
 /// **Cost**: one O(n) `grapheme_indices` walk bounded by `cursor`
-/// (collects byte offsets into a `Vec<usize>` of capacity `cursor`),
-/// then a backward array-index scan of that vector — the second
-/// scan is O(cursor) byte-slice + `is_alphanumeric` checks, no
-/// grapheme decoding. Allocates `cursor * size_of::<usize>()` bytes;
-/// the prior in-app version allocated a `Vec<&str>` over the
-/// **whole** buffer (per `CONVENTIONS §B7` hot-path posture).
+/// (collects byte offsets into a `Vec<usize>` of capacity
+/// `cursor + 1`), then a backward array-index scan of that vector —
+/// the second scan is O(cursor) byte-slice + `is_alphanumeric`
+/// checks, no grapheme decoding. Allocates
+/// `(cursor + 1) * size_of::<usize>()` bytes; the prior in-app
+/// version allocated a `Vec<&str>` over the **whole** buffer (per
+/// `CONVENTIONS §B7` hot-path posture).
 ///
 /// `is_alphanumeric` is applied to the grapheme's *first* scalar.
 /// For ZWJ clusters and combining-mark sequences this matches the
@@ -489,36 +675,114 @@ pub fn delete_front_unicode(s: &mut String, n: usize) {
 /// (flag emoji) the first scalar is non-alphanumeric so the cluster
 /// counts as a boundary.
 pub fn word_left(buffer: &str, cursor: usize) -> usize {
+    scan_back(buffer, cursor, grapheme_is_word, true)
+}
+
+/// Move a grapheme-indexed cursor LEFT past one **whitespace-delimited**
+/// word — the `Ctrl+W` / "kill word" motion, as opposed to
+/// [`word_left`]'s alphanumeric-run motion.
+///
+/// A cluster is a separator only when *every* scalar in it is
+/// `char::is_whitespace`, so `-`, `=`, `/` and emoji all stay inside
+/// the word. That is the difference that matters to a shell-style
+/// console: `word_left` stops at each punctuation run inside
+/// `key=value`, while this walks over the whole token.
+///
+/// Skips backwards past any whitespace immediately before `cursor`,
+/// then past the run of non-whitespace it reaches, returning the
+/// grapheme index at that run's start. `cursor == 0` returns 0; a
+/// `cursor` past the buffer's cluster count is clamped to the count.
+///
+/// U+3000 IDEOGRAPHIC SPACE and the other multi-byte spaces are
+/// separators here (`char::is_whitespace` covers them) while U+200B
+/// ZERO WIDTH SPACE is *not* — it is `Cf`, not whitespace, so it
+/// stays inside the token exactly as it does for
+/// [`first_non_whitespace_grapheme`].
+///
+/// **Cost**: same shape as [`word_left`] — one `grapheme_indices`
+/// walk bounded by `cursor` collecting `cursor + 1` byte offsets,
+/// then a backward scan over that vector.
+pub fn prev_word_boundary_ws(buffer: &str, cursor: usize) -> usize {
+    scan_back(buffer, cursor, grapheme_is_not_whitespace, true)
+}
+
+/// Grapheme index at which the whitespace-delimited token *ending* at
+/// `cursor` starts.
+///
+/// The difference from [`prev_word_boundary_ws`] is the leading skip:
+/// this one does **not** step over whitespace sitting immediately
+/// before the cursor, so a cursor parked after a space reports the
+/// cursor itself — an empty token, which is what a completion popup
+/// wants when the user has just typed a separator and is starting a
+/// fresh argument. `prev_word_boundary_ws` would instead delete back
+/// into the previous word.
+///
+/// `cursor == 0` returns 0; a `cursor` past the buffer's cluster
+/// count is clamped to the count.
+///
+/// **Cost**: same shape as [`prev_word_boundary_ws`].
+pub fn token_start_ws(buffer: &str, cursor: usize) -> usize {
+    scan_back(buffer, cursor, grapheme_is_not_whitespace, false)
+}
+
+/// Shared backward cursor scan behind [`word_left`],
+/// [`prev_word_boundary_ws`], and [`token_start_ws`].
+///
+/// `in_word` classifies a cluster as part of a word. When
+/// `skip_leading_boundary` is set the scan first steps back over any
+/// run of non-word clusters, then over the word run it reaches;
+/// otherwise it only does the second step.
+///
+/// Collecting `cursor + 1` grapheme-start offsets is what makes the
+/// classifier see *exact* cluster slices: the vector's last entry is
+/// the end offset of the cluster just before `cursor`, so a predicate
+/// that inspects every scalar (whitespace) is as correct as one that
+/// inspects only the first (alphanumeric).
+fn scan_back(buffer: &str, cursor: usize, in_word: fn(&str) -> bool, skip_leading_boundary: bool) -> usize {
     if cursor == 0 {
         return 0;
     }
-    // Collect grapheme-start byte offsets up to `cursor` so we can
-    // walk them in reverse. Allocates `cursor` `usize`s (cheap), not
-    // the full grapheme `&str` slices.
-    let mut starts: Vec<usize> = Vec::with_capacity(cursor);
-    for (idx, (byte, _)) in buffer.grapheme_indices(true).enumerate() {
-        if idx >= cursor {
-            break;
+    let starts = grapheme_start_offsets(buffer, cursor);
+    let mut i = starts.len() - 1;
+    if skip_leading_boundary {
+        while i > 0 && !in_word(&buffer[starts[i - 1]..starts[i]]) {
+            i -= 1;
         }
-        starts.push(byte);
     }
-    // Append the byte length so we can recover the grapheme just
-    // before `cursor` regardless of cursor's relation to the grapheme
-    // count. (If `cursor > grapheme_count`, the walk above stopped
-    // early; `starts.len()` is the actual grapheme count.)
-    let count = starts.len();
-    if count == 0 {
-        return 0;
-    }
-    starts.push(buffer.len());
-    let mut i = count;
-    while i > 0 && !grapheme_is_word(&buffer[starts[i - 1]..starts[i]]) {
-        i -= 1;
-    }
-    while i > 0 && grapheme_is_word(&buffer[starts[i - 1]..starts[i]]) {
+    while i > 0 && in_word(&buffer[starts[i - 1]..starts[i]]) {
         i -= 1;
     }
     i
+}
+
+/// Byte offsets of the grapheme clusters of `buffer` that lie before
+/// `cursor`, plus one trailing sentinel so cluster `i` is exactly
+/// `&buffer[out[i]..out[i + 1]]`.
+///
+/// The returned vector always has at least one element, and its
+/// length minus one is the number of clusters strictly before
+/// `cursor` (which is fewer than `cursor` when the cursor runs past
+/// the end of the buffer).
+///
+/// Cost: one `grapheme_indices` walk bounded by `cursor`; allocates
+/// `cursor + 1` `usize`s, not the cluster slices themselves.
+fn grapheme_start_offsets(buffer: &str, cursor: usize) -> Vec<usize> {
+    let mut starts: Vec<usize> = Vec::with_capacity(cursor + 1);
+    for (idx, (byte, _)) in buffer.grapheme_indices(true).enumerate() {
+        starts.push(byte);
+        if idx == cursor {
+            // `byte` is the start of the cluster *at* the cursor,
+            // which is the end of the cluster before it — the
+            // sentinel we need. Stop.
+            break;
+        }
+    }
+    if starts.len() <= cursor {
+        // The walk ran out of clusters before reaching `cursor`, so
+        // no sentinel was collected; the buffer's end is it.
+        starts.push(buffer.len());
+    }
+    starts
 }
 
 /// Move a grapheme-indexed cursor RIGHT to the next word boundary.
@@ -570,5 +834,12 @@ fn grapheme_is_word(g: &str) -> bool {
     g.chars().next().map(char::is_alphanumeric).unwrap_or(false)
 }
 
-#[cfg(test)]
-mod test {}
+/// Whether a grapheme is part of a whitespace-delimited token
+/// (`prev_word_boundary_ws` / `token_start_ws`). A cluster separates
+/// tokens only when *every* scalar in it is whitespace, so a base
+/// character carrying a combining mark stays inside the token even
+/// though the mark alone would not — the same rule
+/// [`first_non_whitespace_grapheme`] applies.
+fn grapheme_is_not_whitespace(g: &str) -> bool {
+    g.chars().any(|c| !c.is_whitespace())
+}

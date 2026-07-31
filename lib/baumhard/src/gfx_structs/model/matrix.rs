@@ -149,14 +149,25 @@ impl GlyphMatrix {
     /// The target `string` is padded with newlines / spaces as
     /// needed so every source component lands on the intended
     /// grapheme cell. `regions` gains one `ColorFontRegion` per
-    /// painted component so the renderer can colour/fontify the
+    /// painted component so the renderer can color/fontify the
     /// right spans.
+    ///
+    /// A component's text may itself contain newlines — a mindmap
+    /// section is one `GlyphComponent` carrying the author's whole
+    /// multi-line string — so painting row `n` can push every row
+    /// after it further down the target. `place_in` tracks that drift
+    /// from [`crate::util::grapheme_chad::LineReplacement::added_lines`] and offsets its
+    /// subsequent row lookups by it; without that, row `n + 1` used
+    /// to be painted into the middle of the text row `n` had just
+    /// inserted.
     ///
     /// # Costs
     ///
     /// O(total painted graphemes + existing text size) — the walk
     /// over source components is linear, but each
-    /// `replace_graphemes_until_newline` call is O(line length).
+    /// `replace_graphemes_until_newline` call is O(line length), and
+    /// each row does one `count_number_lines` byte scan of the target
+    /// to top up its line count.
     pub fn place_in(&self, string: &mut String, regions: &mut ColorFontRegions, offset: (usize, usize)) {
         // Ensure that there's enough lines present in the string
         let num_lines = count_number_lines(string);
@@ -166,11 +177,24 @@ impl GlyphMatrix {
             insert_new_lines(string, needed_lines - num_lines);
         }
 
+        // Extra target lines contributed by multi-line component
+        // text painted on the rows above the current one.
+        let mut line_drift = 0usize;
+
         for (line_num, line) in self.matrix.iter().enumerate() {
+            let target_row = line_num + offset.1 + line_drift;
+            // The up-front padding above sized the target for a
+            // drift-free paint; every line a multi-line component
+            // added has pushed the rows we still owe further out.
+            let have_lines = count_number_lines(string);
+            if target_row >= have_lines {
+                insert_new_lines(string, target_row + 1 - have_lines);
+            }
+
             let graph_line_start_index: usize;
             {
                 // If there's an x-offset, then we also need to ensure that each line is at least the length of that;
-                let target_line_grapheme_range = find_nth_line_grapheme_range(string, line_num + offset.1);
+                let target_line_grapheme_range = find_nth_line_grapheme_range(string, target_row);
                 if let Some(line_graph_range) = target_line_grapheme_range {
                     let target_line_len = line_graph_range.1 - line_graph_range.0;
                     graph_line_start_index = line_graph_range.0;
@@ -190,10 +214,11 @@ impl GlyphMatrix {
             // not yet implemented.
             let mut comp_head = graph_line_start_index + offset.0;
             for component in line.line.iter() {
-                let region_shift = replace_graphemes_until_newline(string, comp_head, &component.text);
-                if let Some(t) = region_shift {
-                    regions.shift_regions_after(t.0, t.1);
+                let replacement = replace_graphemes_until_newline(string, comp_head, &component.text);
+                if replacement.growth > 0 {
+                    regions.shift_regions_after(replacement.at, replacement.growth);
                 }
+                line_drift += replacement.added_lines;
                 regions.submit_region(ColorFontRegion::new(
                     Range::new(comp_head, comp_head + component.length()),
                     Some(component.font),
