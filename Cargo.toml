@@ -33,9 +33,13 @@ syn = "2.0.117"
 # builds so CODE_CONVENTIONS §9's "log and degrade" posture is real in
 # the binaries users run; `info!`/`debug!`/`trace!` still compile to
 # nothing so hot paths keep their zero-cost posture. Both this manifest
-# and `lib/baumhard/Cargo.toml` must agree — cargo unions log's features
-# across the workspace, so the loudest `release_max_level_*` any crate
-# asks for is not what wins: the *most restrictive* one caps everything.
+# and `lib/baumhard/Cargo.toml` must agree, and the two cannot silently
+# *disagree*: cargo unions log's features across the workspace, and log
+# itself `compile_error!`s on "multiple release_max_level_* features
+# set", so a mixed workspace fails to build outright. What can still
+# happen quietly is both manifests agreeing on the *wrong* level — a
+# joint drift back to `off`, or the feature dropped entirely (which
+# uncaps to `Trace`). That is what `baumhard::util::log::tests` pins.
 log = { version = "0.4.29", features = ["release_max_level_warn"] }
 smol_str = "0.3.6"
 strum = "0.27"

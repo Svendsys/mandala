@@ -15,8 +15,12 @@
 //! `gfx_structs::tests::area_tests::documented_rotate_example`, which
 //! reads its inline-code example straight out of
 //! `format/mutations.md` for exactly this reason. This module
-//! generalizes the fenced-block half of that idea so every doc pin
-//! shares one reader.
+//! generalizes that idea so every doc pin shares one reader:
+//! [`documented_json_block`] for a fenced example,
+//! [`section_text`] for the prose of a named section. Both are
+//! section-scoped, which is the property a whole-file `contains()`
+//! lacks — it keeps passing after the thing it claims to pin has
+//! moved somewhere else entirely.
 //!
 //! Everything here panics loudly rather than degrading: a silent
 //! fallback when the heading or the block has moved would defeat the
@@ -108,6 +112,63 @@ pub fn documented_json_block(path: &Path, heading: &str, nth: usize) -> String {
     );
 }
 
+/// Return the body of the Markdown section introduced by the heading
+/// line `heading` in the file at `path` — everything after the heading
+/// up to the next heading of the *same or shallower* depth, with the
+/// heading line itself excluded and surrounding whitespace trimmed.
+///
+/// This is the prose sibling of [`documented_json_block`]: use it when
+/// a test needs to pin what a *named section* says rather than what a
+/// fenced block contains. A whole-file `contains()` is not a substitute
+/// — it stays green when the paragraph is moved to a different section
+/// or the heading it claims to pin is renamed away, which is exactly
+/// the silent drift this module exists to refuse.
+///
+/// `heading` is matched as a whole line after trimming, so pass it
+/// exactly as written including its `#` markers (e.g. `"## §9 Error
+/// handling"`).
+///
+/// Fenced blocks are transparent to the section scan: a shell comment
+/// (`# note`) inside a ``` fence is content, not a heading, so it
+/// cannot truncate the section early.
+///
+/// Panics — never returns a fallback — when the file is unreadable or
+/// the heading is absent. An empty section is returned as `""` rather
+/// than panicking; a test that cares asserts on the content.
+///
+/// Cost: one full read of the Markdown file plus a single line scan —
+/// O(file_size), paid once per test that pins a section.
+pub fn section_text(path: &Path, heading: &str) -> String {
+    let doc =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+
+    let heading_depth = heading_depth_of(heading).unwrap_or_else(|| {
+        panic!("{heading:?} is not a Markdown heading — pass it with its leading '#' markers")
+    });
+
+    let mut lines = doc.lines();
+    lines
+        .find(|line| line.trim_end() == heading)
+        .unwrap_or_else(|| panic!("{} no longer publishes the heading {heading:?}", path.display()));
+
+    let mut body: Vec<&str> = Vec::new();
+    let mut in_fence = false;
+    for line in lines {
+        let trimmed = line.trim_end();
+        if trimmed.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        } else if !in_fence {
+            if let Some(depth) = heading_depth_of(trimmed) {
+                if depth <= heading_depth {
+                    break;
+                }
+            }
+        }
+        body.push(line);
+    }
+    body.join("\n").trim().to_string()
+}
+
 /// Depth of a Markdown ATX heading (`## x` → 2), or `None` when the
 /// line is not a heading. A run of `#` must be followed by a space
 /// to count, so a `#[derive(...)]` inside a fenced block cannot be
@@ -195,6 +256,43 @@ mod tests {
         let dir = TempDir::new("doc-fixtures-missing");
         let path = write_doc(&dir, SAMPLE);
         let err = std::panic::catch_unwind(|| documented_json_block(&path, "## Absent", 0))
+            .expect_err("a missing heading must panic, not fall back");
+        let msg = err.downcast_ref::<String>().expect("panic payload is a String");
+        assert!(msg.contains("no longer publishes the heading"), "got: {msg}");
+    }
+
+    /// A section stops at its next sibling heading and keeps its
+    /// deeper subsections — the property that makes it a real pin
+    /// rather than a whole-file substring search.
+    #[test]
+    fn test_section_text_stops_at_the_next_sibling_heading() {
+        let dir = TempDir::new("doc-fixtures-section");
+        let path = write_doc(&dir, SAMPLE);
+        let first = section_text(&path, "## First");
+        assert!(first.contains("{ \"a\": 1 }"), "got: {first}");
+        assert!(first.contains("### Nested"), "deeper headings stay in; got: {first}");
+        assert!(!first.contains("{ \"b\": 1 }"), "## Second must not leak in; got: {first}");
+    }
+
+    /// A `#`-prefixed line inside a fence is content, not a heading,
+    /// so it must not truncate the section.
+    #[test]
+    fn test_section_text_ignores_headings_inside_fences() {
+        let dir = TempDir::new("doc-fixtures-section-fence");
+        let path = write_doc(
+            &dir,
+            "## Only\n\n```sh\n# not a heading\n```\n\ntail line\n\n## Next\n\nother\n",
+        );
+        let body = section_text(&path, "## Only");
+        assert!(body.contains("tail line"), "fence must not end the section; got: {body}");
+        assert!(!body.contains("other"), "## Next must not leak in; got: {body}");
+    }
+
+    #[test]
+    fn test_section_text_panics_when_the_heading_is_gone() {
+        let dir = TempDir::new("doc-fixtures-section-missing");
+        let path = write_doc(&dir, SAMPLE);
+        let err = std::panic::catch_unwind(|| section_text(&path, "## Absent"))
             .expect_err("a missing heading must panic, not fall back");
         let msg = err.downcast_ref::<String>().expect("panic payload is a String");
         assert!(msg.contains("no longer publishes the heading"), "got: {msg}");

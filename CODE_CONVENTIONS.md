@@ -369,9 +369,16 @@ industrial cost/benefit reasoning. This is not license for speculation.
   because the call is compiled out entirely. A designed, transient
   degrade that the next frame retries (a contended `try_write`, a
   skipped overlay reshape) is instrumentation, not a warning: log it at
-  `debug!` so a persistent condition doesn't flood stderr. The native
-  runtime filter defaults to `warn` to match (`util::log::init`);
-  `RUST_LOG` overrides it.
+  `debug!` so a persistent condition doesn't flood stderr. The
+  compile-time cap is what makes the boundary identical on both
+  targets (§4); the runtime filters underneath it differ and are set
+  in one place, `util::log::init` — native `env_logger` defaults to
+  `warn` (`RUST_LOG` overrides; `RUST_LOG=` set-but-empty counts as
+  unset), WASM `console_log` sits at `Info`, looser than native but
+  invisible in release because the cap removes `info!` before the
+  filter ever sees it. Every binary the workspace ships calls
+  `util::log::init` — including `maptool`, which exercises the same
+  loader degrade paths.
 - **One log-message prefix idiom: `"<area>: message"`.** The area is the
   subsystem, not the enclosing function — `"macros: ..."`,
   `"font::attrs: ..."`, `"keybinds: ..."`, `"console history: ..."`.

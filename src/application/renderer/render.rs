@@ -246,6 +246,13 @@ impl Renderer {
             //    overlays, all drawn on top of the node backgrounds.
             //    Interactive path: log and continue on render failure
             //    so a single bad atlas frame doesn't crash the editor.
+            //    Unreachable as of glyphon 0.11.0 — `TextRenderer::
+            //    render` returns `Ok(())` on every path and neither
+            //    `RenderError` variant is ever constructed — so this
+            //    is forward-compat cover, not a live warn, and it
+            //    carries no frame-rate spam risk today. Kept because
+            //    the signature is fallible and a future glyphon may
+            //    start using it.
             if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
                 log::warn!("text_renderer.render failed: {e}");
             }
@@ -267,6 +274,8 @@ impl Renderer {
             //    filtered action rows. Drawn on top of the palette
             //    backdrop so every glyph sits cleanly on solid fill.
             //    Interactive path: log and continue on render failure.
+            //    Unreachable in glyphon 0.11.0 for the same reason as
+            //    the main pass above; kept as forward-compat cover.
             if let Err(e) = self
                 .console_text_renderer
                 .render(&self.atlas, &self.viewport, &mut pass)
@@ -395,6 +404,22 @@ impl Renderer {
         // Interactive path: a glyphon prepare failure must degrade the
         // frame, not abort the process. Skip the whole render so we
         // don't run a half-prepared atlas through the GPU.
+        //
+        // Logged once per fault episode, not once per frame. Unlike
+        // the `render()` failures above, `PrepareError::AtlasFull` is
+        // reachable and can be *permanent*: glyphon only reports it
+        // after `TextAtlas::grow()` returns `false`, which it does
+        // unconditionally once the atlas has reached
+        // `max_texture_dimension_2d` — commonly 4096 on WebGL2, a
+        // first-class target under CODE_CONVENTIONS §4. Returning
+        // `false` here makes the caller bail before
+        // `get_current_texture()` / `present()`, so the skipped frame
+        // takes no vsync backpressure either: under
+        // `RedrawMode::NoLimit` with `ControlFlow::Poll` the loop
+        // spins at CPU rate during a drag or animation and an
+        // unguarded `warn!` would write a line per spin. The flag
+        // clears on the next successful prepare, so a transient fault
+        // logs again if it returns.
         if let Err(e) = self.text_renderer.prepare(
             &self.device,
             &self.queue,
@@ -404,7 +429,10 @@ impl Renderer {
             main_text_areas,
             &mut self.swash_cache,
         ) {
-            log::warn!("text_renderer.prepare failed, skipping frame: {e}");
+            if !self.prepare_fault_logged {
+                self.prepare_fault_logged = true;
+                log::warn!("text_renderer.prepare failed, skipping frame: {e}");
+            }
             return false;
         }
         if let Err(e) = self.console_text_renderer.prepare(
@@ -416,10 +444,14 @@ impl Renderer {
             palette_text_areas,
             &mut self.swash_cache,
         ) {
-            log::warn!("console_text_renderer.prepare failed, skipping frame: {e}");
+            if !self.prepare_fault_logged {
+                self.prepare_fault_logged = true;
+                log::warn!("console_text_renderer.prepare failed, skipping frame: {e}");
+            }
             return false;
         }
         drop(font_system);
+        self.prepare_fault_logged = false;
         true
     }
 
