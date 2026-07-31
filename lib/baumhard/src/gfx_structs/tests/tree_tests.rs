@@ -167,6 +167,16 @@ lazy_static!(
              (GlyphAreaCommand::MoveTo(500.0, 500.0),
                 vec![(GfxElementField::GlyphArea(
                 GlyphAreaField::position(500.0, 500.0)), ApplyOperation::Assign)]),
+             // Rotating about the area's own position is the one
+             // rotation with a bit-exact expectation (the translated
+             // vector is exactly zero, so no trig error can leak in) —
+             // and it is exactly the case the missing translate-back
+             // used to teleport to the origin.
+             // `area_rotate_moves_position_around_pivot` covers a
+             // displaced pivot with the geometry epsilon.
+             (GlyphAreaCommand::Rotate { pivot: Vec2::new(500.0, 500.0), degrees: 90.0 },
+                vec![(GfxElementField::GlyphArea(
+                GlyphAreaField::position(500.0, 500.0)), ApplyOperation::Assign)]),
              (GlyphAreaCommand::SetRegionColor(Range::new(0,0),[25.0, 25.0, 25.0, 25.0]),
                 vec![(GfxElementField::Region(Range::new(0,0),
                 ColorFontRegionField::Color([25.0, 25.0, 25.0, 25.0])), ApplyOperation::Assign)]),

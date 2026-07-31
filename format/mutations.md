@@ -39,7 +39,7 @@ layer won the registry slot for that id.
 
 Override-safety note: if a user file redeclares the id of a
 bundled mutation that has a registered Rust handler (e.g.
-`flower-layout`, `tree-cascade`), the dispatcher **honours the
+`flower-layout`, `tree-cascade`), the dispatcher **honors the
 user's declarative mutator** rather than silently running the
 bundled handler's algorithm against the user's scope. See
 `MindMapDocument::will_dispatch_to_handler` for the guard.
@@ -106,10 +106,39 @@ value. The most common variants for authoring:
   Sibling variants: `NudgeLeft`, `NudgeUp`, `NudgeDown`.
 - `{"AreaCommand": { "SetFontSize": 18.0 }}` — absolute font size.
 - `{"AreaCommand": { "MoveTo": [100.0, 200.0] }}` — absolute x,y.
+- `{"AreaCommand": { "Rotate": { "pivot": [0.0, 0.0], "degrees": 90.0 } }}`
+  — rotate the area's position clockwise around `pivot`. Degrees,
+  not radians; clockwise in screen space, where `+y` points down.
+  Mirrors its model-side twin `{"ModelCommand": { "Rotate": … }}`.
+
+  **`pivot` is a two-element `[x, y]` array, not an
+  `{"x": …, "y": …}` object.** The *variant* is struct-shaped (named
+  members `pivot` and `degrees`), but the `Vec2` inside it is
+  serialized by `glam` as a sequence, and its deserializer accepts
+  nothing else. The object form fails with
+  `invalid type: map, expected a sequence of 2 f32 values`, and
+  because `custom_mutations` is a required-shape field, that error
+  takes the **whole `.mindmap.json` down** — or, in
+  `~/.config/mandala/mutations.json`, makes `load_user` warn and
+  silently drop the entire user mutation file. The same applies to
+  every future `Vec2` payload on either command enum.
+  `do_area_rotate_command_json_wire_shape` **reads the example on the
+  line above out of this file** and parses it, so editing it back to
+  the object form fails the suite rather than shipping a doc that
+  breaks every document that copies it.
 
 The full vocabulary lives in
 `lib/baumhard/src/gfx_structs/area_mutators.rs` under
 `GlyphAreaCommand`. Same enum-variant-as-JSON-tag convention.
+
+> **Added (pre-V1, per `CODE_CONVENTIONS.md` §10).** `Rotate` is
+> new on the area side; the model side already had it. The addition
+> is purely additive — no existing key changed meaning, so no
+> in-repo fixture, bundled asset, or `maptool` path needed
+> migrating. Previously `GlyphArea::rotate` existed in Rust but no
+> command could reach it, which is why its missing translate-back
+> (it rotated the pivot-relative vector and never added the pivot
+> back, teleporting the area toward the origin) went unnoticed.
 
 ### Delta mutations and their field-map keys
 
@@ -137,6 +166,37 @@ The valid keys are exactly the variants of `GlyphAreaField`
 `GlyphLines`, `Layer`, `Position`, `Operation`). Both tag sets are
 *derived* from the field enums, so the key list can never drift from
 the fields that actually exist.
+
+A `GlyphLine` payload (used directly by `GlyphLine`/`GlyphLines`
+and nested inside `GlyphMatrix`) carries a required
+`ignore_initial_space` boolean alongside its `line` array of runs.
+When it is `true` the rhs's leading whitespace is *transparent*:
+the all-whitespace runs in front are skipped, and the first run
+carrying content paints at its own grapheme offset — its indent
+counted into the offset, not written over the target. An rhs that
+is entirely whitespace therefore paints nothing at all.
+
+Every run after that first one paints at **its own** grapheme
+offset within the rhs, in order. Offsets are columns, not run
+ordinals: the rhs's run boundaries need not line up with the
+target's, and after the first paint they generally do not. Two
+rhs payloads that spell the same text with different run
+boundaries produce the same result; only the column each run
+starts at matters. Runs that reach past the end of the target
+extend it, padding any gap with whitespace.
+
+> **Behavior change (pre-V1, per `CODE_CONVENTIONS.md` §10).** All
+> the statements above are new. The path previously mixed byte,
+> `char`, and grapheme offsets, so an indent containing a
+> multi-byte space (U+3000) panicked outright and a multi-char
+> cluster (CRLF) painted one column off; runs after the first were
+> placed by run ordinal against the target rather than by their own
+> column, which reordered and mislaid them; an rhs with more runs
+> than the target also panicked; and an all-whitespace rhs blanked the
+> target instead of showing through. No in-repo fixture or bundled
+> asset set the flag, so there was nothing to migrate — but a
+> hand-authored file that relied on the old blanking behavior needs
+> `ignore_initial_space: false` to keep it.
 
 > **Breaking change (pre-V1, per `CODE_CONVENTIONS.md` §10).** The
 > area-side operation key was previously spelled `ApplyOperation`;

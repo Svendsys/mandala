@@ -182,7 +182,10 @@ pub enum GlyphModelCommand {
     MoveTo(f32, f32),
     /// Rotate position around `pivot` by `degrees` (clockwise).
     Rotate {
-        /// Pivot in world coordinates.
+        /// Pivot in world coordinates. On the wire this is a
+        /// two-element `[x, y]` array — `glam` serializes `Vec2` as a
+        /// sequence and its deserializer rejects the
+        /// `{"x": …, "y": …}` object form. See `format/mutations.md`.
         pivot: Vec2,
         /// Rotation angle in degrees.
         degrees: f32,

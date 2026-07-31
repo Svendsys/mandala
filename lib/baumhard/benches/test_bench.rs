@@ -114,6 +114,44 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("line_add_assign_2", |b| b.iter(|| line_add_assign_2()));
     c.bench_function("line_add_assign_3", |b| b.iter(|| line_add_assign_3()));
     c.bench_function("line_add_assign_4", |b| b.iter(|| line_add_assign_4()));
+    c.bench_function("line_ignore_initial_space_multibyte_indent", |b| {
+        b.iter(do_line_ignore_initial_space_multibyte_indent)
+    });
+    c.bench_function("line_ignore_initial_space_crlf_indent", |b| {
+        b.iter(do_line_ignore_initial_space_crlf_indent)
+    });
+    c.bench_function("line_ignore_initial_space_zwj_content", |b| {
+        b.iter(do_line_ignore_initial_space_zwj_content)
+    });
+    c.bench_function("line_ignore_initial_space_sub_assign_rhs_longer_than_lhs", |b| {
+        b.iter(do_line_ignore_initial_space_sub_assign_rhs_longer_than_lhs)
+    });
+    c.bench_function("line_ignore_initial_space_mul_assign_rhs_longer_than_lhs", |b| {
+        b.iter(do_line_ignore_initial_space_mul_assign_rhs_longer_than_lhs)
+    });
+    c.bench_function(
+        "line_ignore_initial_space_sub_assign_uses_lhs_color_when_present",
+        |b| b.iter(do_line_ignore_initial_space_sub_assign_uses_lhs_color_when_present),
+    );
+    c.bench_function("line_ignore_initial_space_surplus_rhs_runs_append", |b| {
+        b.iter(do_line_ignore_initial_space_surplus_rhs_runs_append)
+    });
+    c.bench_function(
+        "line_ignore_initial_space_all_whitespace_rhs_paints_nothing",
+        |b| b.iter(do_line_ignore_initial_space_all_whitespace_rhs_paints_nothing),
+    );
+    c.bench_function("line_runs_paint_by_column_with_the_flag_off", |b| {
+        b.iter(do_line_runs_paint_by_column_with_the_flag_off)
+    });
+    c.bench_function("line_surplus_runs_paint_at_their_own_rhs_offsets", |b| {
+        b.iter(do_line_surplus_runs_paint_at_their_own_rhs_offsets)
+    });
+    c.bench_function("line_surplus_runs_overwrite_a_longer_lhs_in_place", |b| {
+        b.iter(do_line_surplus_runs_overwrite_a_longer_lhs_in_place)
+    });
+    c.bench_function("overriding_insert_is_partition_independent", |b| {
+        b.iter(do_overriding_insert_is_partition_independent)
+    });
     c.bench_function("component_of_index", |b| b.iter(|| component_of_index()));
     c.bench_function("index_of_component", |b| b.iter(|| index_of_component()));
     c.bench_function("expanding_insert_1", |b| b.iter(|| expanding_insert_1()));
@@ -230,6 +268,21 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("delta_regions_delete_clears_regions", |b| {
         b.iter(|| do_delta_regions_delete_clears_regions())
+    });
+    c.bench_function("area_rotate_moves_position_around_pivot", |b| {
+        b.iter(do_area_rotate_moves_position_around_pivot)
+    });
+    c.bench_function("area_rotate_about_self_is_identity", |b| {
+        b.iter(do_area_rotate_about_self_is_identity)
+    });
+    c.bench_function("area_rotate_matches_siblings", |b| {
+        b.iter(do_area_rotate_matches_siblings)
+    });
+    c.bench_function("area_rotate_command_applies", |b| {
+        b.iter(do_area_rotate_command_applies)
+    });
+    c.bench_function("area_rotate_command_json_wire_shape", |b| {
+        b.iter(do_area_rotate_command_json_wire_shape)
     });
     // zoom_visibility //
     c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {
@@ -364,6 +417,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("count_grapheme_clusters", |b| {
         b.iter(|| do_count_grapheme_clusters())
     });
+    c.bench_function("first_non_whitespace_grapheme", |b| {
+        b.iter(do_first_non_whitespace_grapheme)
+    });
     c.bench_function("find_nth_line_byte_indices", |b| {
         b.iter(|| do_find_nth_line_byte_indices())
     });
@@ -467,9 +523,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("select_font_variants_keeps_distinct_styles_of_one_family", |b| {
         b.iter(do_select_font_variants_keeps_distinct_styles_of_one_family)
     });
-    c.bench_function("select_font_variants_keeps_same_container_faces_of_one_family", |b| {
-        b.iter(do_select_font_variants_keeps_same_container_faces_of_one_family)
-    });
+    c.bench_function(
+        "select_font_variants_keeps_same_container_faces_of_one_family",
+        |b| b.iter(do_select_font_variants_keeps_same_container_faces_of_one_family),
+    );
     c.bench_function("select_font_variants_collapses_one_face_in_two_containers", |b| {
         b.iter(do_select_font_variants_collapses_one_face_in_two_containers)
     });
@@ -521,6 +578,27 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("overlaps", |b| b.iter(|| do_overlaps()));
     c.bench_function("split_and_separate_1", |b| b.iter(|| do_split_and_separate_1()));
     c.bench_function("split_and_separate_2", |b| b.iter(|| do_split_and_separate_2()));
+    c.bench_function("split_and_separate_truth_table", |b| {
+        b.iter(do_split_and_separate_truth_table)
+    });
+    c.bench_function("split_and_separate_preserves_payload_on_both_halves", |b| {
+        b.iter(do_split_and_separate_preserves_payload_on_both_halves)
+    });
+    c.bench_function("split_and_separate_overflow_drops_the_whole_call", |b| {
+        b.iter(do_split_and_separate_overflow_drops_the_whole_call)
+    });
+    c.bench_function("split_and_separate_precondition_violations_propagate", |b| {
+        b.iter(do_split_and_separate_precondition_violations_propagate)
+    });
+    c.bench_function("range_checked_push_right", |b| {
+        b.iter(do_range_checked_push_right)
+    });
+    c.bench_function("shift_regions_after_overflow_drops_the_whole_call", |b| {
+        b.iter(do_shift_regions_after_overflow_drops_the_whole_call)
+    });
+    c.bench_function("insert_regions_at_overflow_drops_the_whole_call", |b| {
+        b.iter(do_insert_regions_at_overflow_drops_the_whole_call)
+    });
     c.bench_function("submit_region_drops_inverted_range", |b| {
         b.iter(|| do_submit_region_drops_inverted_range())
     });

@@ -5,9 +5,9 @@ use lazy_static::lazy_static;
 use crate::util::grapheme_chad::{
     count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
     delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_byte_range, find_nth_line_grapheme_range,
-    grapheme_display_width, insert_new_lines, insert_str_at_grapheme, insert_str_at_grapheme_counted,
-    push_spaces, replace_graphemes_until_newline, scalar_display_width, slice_to_newline,
-    split_off_graphemes, truncate_to_display_width, word_left, word_right,
+    first_non_whitespace_grapheme, grapheme_display_width, insert_new_lines, insert_str_at_grapheme,
+    insert_str_at_grapheme_counted, push_spaces, replace_graphemes_until_newline, scalar_display_width,
+    slice_to_newline, split_off_graphemes, truncate_to_display_width, word_left, word_right,
 };
 
 lazy_static! {
@@ -639,4 +639,86 @@ pub fn do_word_right() {
 
     // Regional-indicator pair — `"foo🇺🇸bar"` cursor=3 → 7.
     assert_eq!(word_right("foo🇺🇸bar", 3), 7);
+}
+
+lazy_static! {
+    /// Truth table for [`first_non_whitespace_grapheme`]:
+    /// `(case name, input, expected cluster index)`.
+    ///
+    /// The interesting rows are the ones where the byte offset, the
+    /// `char` ordinal, and the grapheme index of the same answer all
+    /// differ — those are precisely the inputs that used to panic or
+    /// mis-place text in `GlyphLine::perform_op`.
+    pub static ref FIRST_NON_WHITESPACE_GRAPHEME_TEST: Vec<(&'static str, &'static str, Option<usize>)> = vec![
+        ("empty string has no content", "", None),
+        ("all ASCII space", "    ", None),
+        ("mixed ASCII whitespace only", " \t\n\r", None),
+        ("content at the very front", "abc", Some(0)),
+        ("ASCII indent", "  abc", Some(2)),
+        // U+3000 is three bytes wide: the answer is cluster 2, but the
+        // byte offset is 6. Feeding the cluster index to a byte-indexed
+        // `String::split_off` panics mid-codepoint — the original bug.
+        ("ideographic-space indent (multi-byte)", "\u{3000}\u{3000}abc", Some(2)),
+        ("ideographic space is whitespace all the way", "\u{3000}\u{3000}", None),
+        // CRLF is one cluster made of two chars, both whitespace: the
+        // `char` ordinal here is 4, the grapheme index is 3.
+        ("CRLF indent (multi-char single cluster)", "\r\n  abc", Some(3)),
+        // Emoji are single clusters but several chars / many bytes, so
+        // a char ordinal drifts the moment content is emoji.
+        ("emoji at the front", "🍕🍕abc", Some(0)),
+        ("emoji after an indent", "  🍕", Some(2)),
+        ("ZWJ family cluster after an indent", "  👨‍👩‍👧", Some(2)),
+        ("skin-tone modifier cluster after an indent", "  🙏🏻x", Some(2)),
+        ("regional-indicator pair after an indent", "  🇺🇸", Some(2)),
+        // A cluster counts as whitespace only when *every* scalar in it
+        // is whitespace, so a space carrying a combining acute is
+        // content, not indent.
+        ("space plus combining mark is content", " \u{0301}abc", Some(0)),
+        ("combining mark on a letter after an indent", "  e\u{0301}f", Some(2)),
+        // U+200B ZERO WIDTH SPACE lacks the White_Space property, so it
+        // is content — deliberately, since it occupies a cluster slot.
+        ("zero-width space is not whitespace", " \u{200B}", Some(1)),
+    ];
+}
+
+#[test]
+fn test_first_non_whitespace_grapheme() {
+    do_first_non_whitespace_grapheme();
+}
+
+/// Walks [`FIRST_NON_WHITESPACE_GRAPHEME_TEST`] and additionally
+/// asserts the result is a valid cluster index into the input — the
+/// property every caller relies on when it feeds the value straight
+/// into [`split_off_graphemes`].
+pub fn do_first_non_whitespace_grapheme() {
+    for (name, input, expected) in FIRST_NON_WHITESPACE_GRAPHEME_TEST.iter() {
+        let got = first_non_whitespace_grapheme(input);
+        assert_eq!(got, *expected, "case `{}`", name);
+        if let Some(idx) = got {
+            assert!(
+                idx < count_grapheme_clusters(input),
+                "case `{}`: {} is not a cluster index into {:?}",
+                name,
+                idx,
+                input
+            );
+            // Splitting there must leave the indent behind and start
+            // the tail on real content — no mid-cluster cut.
+            let mut buffer = input.to_string();
+            let tail = split_off_graphemes(&mut buffer, idx);
+            assert!(
+                buffer.chars().all(char::is_whitespace),
+                "case `{}`: prefix {:?} is not pure whitespace",
+                name,
+                buffer
+            );
+            assert_eq!(
+                first_non_whitespace_grapheme(&tail),
+                Some(0),
+                "case `{}`: tail {:?} does not start on content",
+                name,
+                tail
+            );
+        }
+    }
 }
