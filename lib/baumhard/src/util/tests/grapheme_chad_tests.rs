@@ -102,6 +102,20 @@ lazy_static! {
         ("\n🙏🏻\n🙏🏻\n", 2, Some((1+8+1, 1+8+1+8))),
         ("🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻", 1, Some((8*10+1, (8*10+1)+8*10))),
         ("🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻", 2, Some((20*8 + 2, (20*8 + 2) + 10*8))),
+        // CRLF is one terminator, and the CR belongs to it — the byte
+        // walk has to agree with `find_nth_line_grapheme_range`, which
+        // sees `\r\n` as a single cluster (UAX #29).
+        ("AA\r\nBB", 0, Some((0, 2))),
+        ("AA\r\nBB", 1, Some((4, 6))),
+        ("AA\r\nBB", 2, None),
+        ("\r\n", 0, Some((0, 0))),
+        ("\r\n", 1, None),
+        ("\r\nx", 1, Some((2, 3))),
+        ("a\r\n\r\nb", 1, Some((3, 3))),
+        ("a\r\n\r\nb", 2, Some((5, 6))),
+        // A lone CR is not a line terminator under UAX #29 and must
+        // not split the line here either.
+        ("a\rb", 0, Some((0, 3))),
     ];
 
     pub static ref NTH_LINE_GRAPHEME_INDICES_TEST: Vec<(&'static str, usize, Option<(usize, usize)>)> = vec![
@@ -121,6 +135,23 @@ lazy_static! {
         ("🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻", 1, Some((11, 11))),
         ("🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\na\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻", 1, Some((11, 12))),
         ("🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻", 2, Some((12, 22))),
+        // UAX #29 fuses `\r\n` into one cluster, so a `g == "\n"`
+        // test walks straight past a Windows line ending and folds
+        // two lines into one. `GlyphMatrix::place_in` sizes its
+        // buffer with `count_number_lines`, which counts `\n`
+        // *characters*, so the two have to agree on CRLF or every
+        // row after a CRLF-bearing one lands a line too far down.
+        ("AA\r\nBB", 0, Some((0, 2))),
+        ("AA\r\nBB", 1, Some((3, 5))),
+        ("AA\r\nBB", 2, None),
+        ("\r\n", 0, Some((0, 0))),
+        ("\r\n", 1, None),
+        ("\r\nx", 1, Some((1, 2))),
+        ("a\r\n\r\nb", 1, Some((2, 2))),
+        ("a\r\n\r\nb", 2, Some((3, 4))),
+        // A lone CR is not a line terminator under UAX #29 and must
+        // not split the line here either.
+        ("a\rb", 0, Some((0, 3))),
     ];
 
     pub static ref REPLACE_GRAPHEMES_UNTIL_NEWLINE_TEST: Vec<(&'static str, usize, &'static str, &'static str)> = vec![
@@ -344,12 +375,15 @@ pub fn do_replace_graphemes_until_newline() {
 
     // A CRLF in the source is one cluster but still one added line —
     // `added_lines` counts `\n` characters, matching what
-    // `count_number_lines` sees.
+    // `count_number_lines` sees. Every line-addressing helper has to
+    // agree with that or a caller mixing the two drifts: see the CRLF
+    // rows in `NTH_LINE_GRAPHEME_INDICES_TEST`.
     let mut buf = String::from("ab");
     let outcome = replace_graphemes_until_newline(&mut buf, 0, "a\r\nb");
     assert_eq!(buf, "a\r\nb");
     assert_eq!(outcome.added_lines, 1);
     assert_eq!(count_number_lines(&buf), 2);
+    assert_eq!(find_nth_line_grapheme_range(&buf, 1), Some((2, 3)));
 
     // Empty source into an empty target: nothing moves, nothing grows.
     let mut buf = String::new();

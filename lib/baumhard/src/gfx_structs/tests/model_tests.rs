@@ -294,11 +294,9 @@ pub fn test_matrix_place_in_multiline_component() {
     matrix_place_in_multiline_component();
 }
 
-/// A `GlyphComponent`'s text may itself contain newlines — the tree
-/// builder wraps a whole mindmap section, author's line breaks and
-/// all, in a single component on a single `GlyphLine`. Painting such
-/// a row grows the target by a line, and every row after it has to
-/// move down with it.
+/// A `GlyphComponent`'s text is arbitrary and may itself contain
+/// newlines. Painting such a row grows the target by a line, and
+/// every row after it has to move down with it.
 ///
 /// Before `replace_graphemes_until_newline` reported
 /// `LineReplacement::added_lines` (issue #38 item 4) `place_in` had no
@@ -306,6 +304,14 @@ pub fn test_matrix_place_in_multiline_component() {
 /// `line_num + offset.1`, which after a multi-line paint pointed
 /// *inside* the text it had just inserted, and row 1 overwrote the
 /// tail of row 0.
+///
+/// The CRLF cases guard the other half of that agreement. `place_in`
+/// counts drift in `\n` *characters* (via `count_number_lines`) but
+/// addresses rows through `find_nth_line_grapheme_range`; UAX #29
+/// fuses `\r\n` into a single cluster, so unless the addresser treats
+/// any cluster ending in `\n` as a terminator the two disagree and
+/// every row after a CRLF-bearing one is looked up a line too far
+/// down, falls off the end, and is appended onto its predecessor.
 pub fn matrix_place_in_multiline_component() {
     let mut matrix = GlyphMatrix::new();
     // Row 0 carries an author line break inside one component.
@@ -381,6 +387,91 @@ pub fn matrix_place_in_multiline_component() {
     let mut padded = String::new();
     matrix.place_in(&mut padded, &mut regions, (2, 0));
     assert_eq!(padded, "  AA\nBB\n  CC\n  DD");
+
+    // The same three rows with a Windows line ending in row 0. One
+    // cluster, one added line — rows 1 and 2 must still land on their
+    // own lines rather than collide at the end of the buffer.
+    let mut crlf = GlyphMatrix::new();
+    for text in ["AA\r\nBB", "CC", "DD"] {
+        crlf.push(GlyphLine::new_with(GlyphComponent::text(
+            text,
+            AppFont::Evilz,
+            Color::black(),
+        )));
+    }
+
+    let mut regions = ColorFontRegions::new_empty();
+    let mut crlf_string = String::new();
+    crlf.place_in(&mut crlf_string, &mut regions, (0, 0));
+    assert_eq!(crlf_string, "AA\r\nBB\nCC\nDD");
+    assert_eq!(count_number_lines(&crlf_string), 4);
+    assert_eq!(regions.num_regions(), 3);
+    assert!(
+        regions.get(Range::new(0, 5)).is_some(),
+        "CRLF row 0 spans its own terminator"
+    );
+    assert!(
+        regions.get(Range::new(6, 8)).is_some(),
+        "CRLF row 1 shifted past row 0"
+    );
+    assert!(
+        regions.get(Range::new(9, 11)).is_some(),
+        "CRLF row 2 shifted past both"
+    );
+
+    let mut regions = ColorFontRegions::new_empty();
+    let mut crlf_offset = String::new();
+    crlf.place_in(&mut crlf_offset, &mut regions, (0, 1));
+    assert_eq!(crlf_offset, "\nAA\r\nBB\nCC\nDD");
+
+    let mut regions = ColorFontRegions::new_empty();
+    let mut crlf_padded = String::new();
+    crlf.place_in(&mut crlf_padded, &mut regions, (2, 0));
+    assert_eq!(crlf_padded, "  AA\r\nBB\n  CC\n  DD");
+
+    // A component that is nothing but a CRLF still contributes
+    // exactly one line of drift.
+    let mut bare = GlyphMatrix::new();
+    for text in ["\r\n", "CC", "DD"] {
+        bare.push(GlyphLine::new_with(GlyphComponent::text(
+            text,
+            AppFont::Evilz,
+            Color::black(),
+        )));
+    }
+    let mut regions = ColorFontRegions::new_empty();
+    let mut bare_string = String::new();
+    bare.place_in(&mut bare_string, &mut regions, (0, 0));
+    assert_eq!(bare_string, "\r\n\nCC\nDD");
+
+    // Two CRLFs in one component drift the rows below by two.
+    let mut deep_crlf = GlyphMatrix::new();
+    for text in ["A\r\nB\r\nC", "DD", "EE"] {
+        deep_crlf.push(GlyphLine::new_with(GlyphComponent::text(
+            text,
+            AppFont::Evilz,
+            Color::black(),
+        )));
+    }
+    let mut regions = ColorFontRegions::new_empty();
+    let mut deep_crlf_string = String::new();
+    deep_crlf.place_in(&mut deep_crlf_string, &mut regions, (0, 0));
+    assert_eq!(deep_crlf_string, "A\r\nB\r\nC\nDD\nEE");
+
+    // A lone CR is not a line terminator and must not be counted as
+    // drift by either side of the bookkeeping.
+    let mut lone_cr = GlyphMatrix::new();
+    for text in ["AA\rBB", "CC", "DD"] {
+        lone_cr.push(GlyphLine::new_with(GlyphComponent::text(
+            text,
+            AppFont::Evilz,
+            Color::black(),
+        )));
+    }
+    let mut regions = ColorFontRegions::new_empty();
+    let mut lone_cr_string = String::new();
+    lone_cr.place_in(&mut lone_cr_string, &mut regions, (0, 0));
+    assert_eq!(lone_cr_string, "AA\rBB\nCC\nDD");
 }
 
 #[test]

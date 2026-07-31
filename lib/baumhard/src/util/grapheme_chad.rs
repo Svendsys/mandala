@@ -255,6 +255,15 @@ pub fn line_bounds_at(s: &str, cursor: usize) -> (usize, usize) {
 /// `n = 0` is the first line. Returns `None` if `s` is empty or `n`
 /// is past the last line.
 ///
+/// A "line terminator" is any cluster ending in `\n` — the same rule
+/// [`line_bounds_at`] applies, and for the same reason: UAX #29 fuses
+/// `\r\n` into a single cluster, so a `g == "\n"` test walks straight
+/// past a Windows line ending and folds two lines into one. The
+/// terminator (CR included) falls outside the returned range. Counting
+/// lines this way agrees with [`count_number_lines`], which counts
+/// `\n` *characters* — a CRLF is one of each — so a caller that sizes
+/// a buffer with one and addresses it with the other stays in step.
+///
 /// Cost: O(n) grapheme walk plus a final `s.graphemes(true).count()`
 /// when the last line is requested.
 pub fn find_nth_line_grapheme_range(s: &str, n: usize) -> Option<(usize, usize)> {
@@ -269,10 +278,7 @@ pub fn find_nth_line_grapheme_range(s: &str, n: usize) -> Option<(usize, usize)>
             last_line_start = idx;
             new_line = false;
         }
-        // Grapheme clusters yielded by `unicode_segmentation` are
-        // guaranteed non-empty, so a literal newline is the only
-        // line terminator we have to test for.
-        if graph == "\n" {
+        if graph.ends_with('\n') {
             if line_head == n {
                 // We're at the end of the requested line: emit the
                 // half-open range [last_line_start, idx).
@@ -292,6 +298,12 @@ pub fn find_nth_line_grapheme_range(s: &str, n: usize) -> Option<(usize, usize)>
 /// `(start_byte, end_byte)`. `n = 0` is the first line. Returns
 /// `None` if `s` is empty or `n` is past the last line.
 ///
+/// Line terminators follow the same rule as
+/// [`find_nth_line_grapheme_range`] and [`line_bounds_at`]: a CRLF is
+/// one terminator, and the CR is part of it rather than part of the
+/// preceding line's text. The byte walk cannot see clusters, so the
+/// CR is recognized by lookbehind instead — the outcome is identical.
+///
 /// Cost: O(n) byte-level walk via `char_indices()`. No allocation.
 pub fn find_nth_line_byte_range(s: &str, n: usize) -> Option<(usize, usize)> {
     if s.is_empty() {
@@ -300,20 +312,27 @@ pub fn find_nth_line_byte_range(s: &str, n: usize) -> Option<(usize, usize)> {
     let mut line_head = 0;
     let mut last_line_start = 0;
     let mut new_line: bool = true;
+    let mut after_cr = false;
     for (idx, ch) in s.char_indices() {
         if new_line {
             last_line_start = idx;
             new_line = false;
         }
         if ch == '\n' {
+            // A CR immediately before the LF belongs to the
+            // terminator, not to the line — `\r` is one byte, so it
+            // starts at `idx - 1`.
+            let line_end = if after_cr { idx - 1 } else { idx };
             if line_head == n {
                 // Newline that terminates the requested line — emit
-                // [last_line_start, idx), i.e. without the \n itself.
-                return Some((last_line_start, idx));
+                // [last_line_start, line_end), i.e. without the
+                // terminator itself.
+                return Some((last_line_start, line_end));
             }
             new_line = true;
             line_head += 1;
         }
+        after_cr = ch == '\r';
     }
     if line_head < n || (line_head == n && new_line) {
         return None;
