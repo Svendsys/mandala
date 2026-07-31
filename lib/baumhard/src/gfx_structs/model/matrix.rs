@@ -2,8 +2,11 @@
 
 //! `GlyphMatrix` — a column-of-[`GlyphLine`]s wrapper. The `place_in`
 //! method paints the matrix onto a target `String` + `ColorFontRegions`
-//! at an offset, the workhorse of the scene-builder's glyph placement
-//! path.
+//! at an offset: the composition primitive a scene builder reaches for
+//! when several models share one text buffer. Nothing in the crate
+//! calls it yet — today's builders hand each `GlyphModel` its own
+//! buffer — so it is a library surface held to library standards
+//! rather than a per-frame hot path.
 
 use super::component::GlyphComponent;
 use super::line::GlyphLine;
@@ -152,11 +155,10 @@ impl GlyphMatrix {
     /// painted component so the renderer can color/fontify the
     /// right spans.
     ///
-    /// A component's text may itself contain newlines — a mindmap
-    /// section is one `GlyphComponent` carrying the author's whole
-    /// multi-line string — so painting row `n` can push every row
-    /// after it further down the target. `place_in` tracks that drift
-    /// from the `added_lines` field of
+    /// A component's text is arbitrary and may itself contain
+    /// newlines, so painting row `n` can push every row after it
+    /// further down the target. `place_in` tracks that drift from the
+    /// `added_lines` field of
     /// [`LineReplacement`](crate::util::grapheme_chad::LineReplacement)
     /// and offsets its subsequent row lookups by it; without that, row
     /// `n + 1` used to be painted into the middle of the text row `n`
@@ -166,18 +168,23 @@ impl GlyphMatrix {
     ///
     /// O(total painted graphemes + existing text size) — the walk
     /// over source components is linear, but each
-    /// `replace_graphemes_until_newline` call is O(line length). The
-    /// target's line count is scanned once up front and then tracked
-    /// incrementally, so the drift bookkeeping adds no extra passes.
+    /// `replace_graphemes_until_newline` call is O(line length) and
+    /// scans its own source once for the drift count. The target's
+    /// line count is scanned once up front and then tracked
+    /// incrementally, so the drift bookkeeping adds no extra pass over
+    /// the target.
     pub fn place_in(&self, string: &mut String, regions: &mut ColorFontRegions, offset: (usize, usize)) {
         // Ensure that there's enough lines present in the string
         let num_lines = count_number_lines(string);
         let needed_lines = self.matrix.len() + offset.1;
 
-        // Running line count of `string`. The only things below that
-        // change it are `insert_new_lines` (exactly `n` lines) and a
-        // `LineReplacement` (exactly `added_lines`), so this stays
-        // exact without ever re-scanning the buffer.
+        // Running line count of `string`, kept exact without ever
+        // re-scanning the buffer: the only things below that change it
+        // are `insert_new_lines` (exactly `n` lines) and a
+        // `LineReplacement` (exactly `added_lines`). It exists to make
+        // the "the row I am about to address already exists"
+        // invariant checkable rather than merely argued — see the
+        // `debug_assert` in the loop.
         let mut have_lines = num_lines;
         if needed_lines > num_lines {
             insert_new_lines(string, needed_lines - num_lines);
@@ -190,14 +197,13 @@ impl GlyphMatrix {
 
         for (line_num, line) in self.matrix.iter().enumerate() {
             let target_row = line_num + offset.1 + line_drift;
-            // The up-front padding above sized the target for a
-            // drift-free paint; every line a multi-line component
-            // added has pushed the rows we still owe further out.
-            if target_row >= have_lines {
-                let extra = target_row + 1 - have_lines;
-                insert_new_lines(string, extra);
-                have_lines += extra;
-            }
+            // The padding above guarantees `have_lines >=
+            // self.matrix.len() + offset.1`, and every line the drift
+            // counts is one a source physically inserted — so
+            // `target_row <= (len - 1) + offset.1 + line_drift <=
+            // have_lines - 1`. The row we are about to address always
+            // exists; no top-up is reachable here.
+            debug_assert!(target_row < have_lines);
 
             let graph_line_start_index: usize;
             {
