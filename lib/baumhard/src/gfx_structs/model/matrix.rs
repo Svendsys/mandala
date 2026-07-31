@@ -166,16 +166,22 @@ impl GlyphMatrix {
     ///
     /// O(total painted graphemes + existing text size) — the walk
     /// over source components is linear, but each
-    /// `replace_graphemes_until_newline` call is O(line length), and
-    /// each row does one `count_number_lines` byte scan of the target
-    /// to top up its line count.
+    /// `replace_graphemes_until_newline` call is O(line length). The
+    /// target's line count is scanned once up front and then tracked
+    /// incrementally, so the drift bookkeeping adds no extra passes.
     pub fn place_in(&self, string: &mut String, regions: &mut ColorFontRegions, offset: (usize, usize)) {
         // Ensure that there's enough lines present in the string
         let num_lines = count_number_lines(string);
         let needed_lines = self.matrix.len() + offset.1;
 
+        // Running line count of `string`. The only things below that
+        // change it are `insert_new_lines` (exactly `n` lines) and a
+        // `LineReplacement` (exactly `added_lines`), so this stays
+        // exact without ever re-scanning the buffer.
+        let mut have_lines = num_lines;
         if needed_lines > num_lines {
             insert_new_lines(string, needed_lines - num_lines);
+            have_lines = needed_lines;
         }
 
         // Extra target lines contributed by multi-line component
@@ -187,9 +193,10 @@ impl GlyphMatrix {
             // The up-front padding above sized the target for a
             // drift-free paint; every line a multi-line component
             // added has pushed the rows we still owe further out.
-            let have_lines = count_number_lines(string);
             if target_row >= have_lines {
-                insert_new_lines(string, target_row + 1 - have_lines);
+                let extra = target_row + 1 - have_lines;
+                insert_new_lines(string, extra);
+                have_lines += extra;
             }
 
             let graph_line_start_index: usize;
@@ -220,6 +227,7 @@ impl GlyphMatrix {
                     regions.shift_regions_after(replacement.at, replacement.growth);
                 }
                 line_drift += replacement.added_lines;
+                have_lines += replacement.added_lines;
                 regions.submit_region(ColorFontRegion::new(
                     Range::new(comp_head, comp_head + component.length()),
                     Some(component.font),
