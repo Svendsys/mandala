@@ -171,7 +171,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("matrix_place_in_2", |b| b.iter(|| matrix_place_in_2()));
     c.bench_function("matrix_place_in_3", |b| b.iter(|| matrix_place_in_3()));
     c.bench_function("matrix_place_in_multiline_component", |b| {
-        b.iter(|| matrix_place_in_multiline_component())
+        b.iter(matrix_place_in_multiline_component)
     });
     c.bench_function("matrix_add_assign_1", |b| b.iter(|| matrix_add_assign_1()));
     c.bench_function("matrix_add_assign_2", |b| b.iter(|| matrix_add_assign_2()));
@@ -511,13 +511,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("word_left", |b| b.iter(|| do_word_left()));
     c.bench_function("word_right", |b| b.iter(|| do_word_right()));
-    c.bench_function("prev_word_boundary_ws", |b| b.iter(|| do_prev_word_boundary_ws()));
-    c.bench_function("token_start_ws", |b| b.iter(|| do_token_start_ws()));
-    c.bench_function("take_graphemes", |b| b.iter(|| do_take_graphemes()));
-    c.bench_function("line_bounds_at", |b| b.iter(|| do_line_bounds_at()));
-    c.bench_function("insert_spaces", |b| b.iter(|| do_insert_spaces()));
-    c.bench_function("split_graphemes_owned", |b| b.iter(|| do_split_graphemes_owned()));
-    c.bench_function("join_graphemes", |b| b.iter(|| do_join_graphemes()));
+    c.bench_function("prev_word_boundary_ws", |b| b.iter(do_prev_word_boundary_ws));
+    c.bench_function("token_start_ws", |b| b.iter(do_token_start_ws));
+    c.bench_function("take_graphemes", |b| b.iter(do_take_graphemes));
+    c.bench_function("line_bounds_at", |b| b.iter(do_line_bounds_at));
+    c.bench_function("insert_spaces", |b| b.iter(do_insert_spaces));
+    c.bench_function("split_graphemes_owned", |b| b.iter(do_split_graphemes_owned));
+    c.bench_function("join_graphemes", |b| b.iter(do_join_graphemes));
     // geometry //
     c.bench_function("90_deg_rotation", |b| b.iter(|| do_90_deg_rotation()));
     c.bench_function("180_deg_rotation", |b| b.iter(|| do_180_deg_rotation()));
