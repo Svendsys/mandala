@@ -383,17 +383,20 @@ pub(crate) fn layout_portal_text(
     );
     // Distance along the outward normal needed to keep the text
     // AABB entirely outside the icon AABB. Both AABBs are world-
-    // axis-aligned; their half-extent along an arbitrary normal
-    // is the "support function" of the rectangle —
-    // `|half.x * normal.x| + |half.y * normal.y|`. For cardinal
-    // normals (top/right/bottom/left sides) this collapses to the
-    // half-width and the old `icon.bounds.x * 0.5 + bounds.x * 0.5`
-    // formula. For the cardinal-corner transitions where
-    // `border_outward_normal` briefly returns a diagonal
-    // (Y-down canvas, normal from a corner), the old formula
-    // under-estimated the clearance and the text AABB could
-    // cross into the icon AABB — mis-routing icon clicks to
-    // `ClickHit::PortalText`.
+    // axis-aligned; their half-extent along an arbitrary normal is
+    // the "support function" of the rectangle —
+    // `|half.x * normal.x| + |half.y * normal.y|`.
+    //
+    // `border_outward_normal` returns only the four axis-aligned
+    // unit vectors today, so this collapses to the half-width or
+    // half-height and the general form is not currently load-
+    // bearing. It is written in the general form anyway because it
+    // is the *reason* icon and text can never overlap — with
+    // `padding` strictly positive, the normal is a separating axis
+    // between the two boxes for any normal, not just the cardinal
+    // four. That separation is what lets click routing resolve the
+    // portal's two sub-parts in a single BVH descent instead of
+    // needing a text-before-icon precedence rule.
     let icon_half = icon.bounds * 0.5;
     let text_half = bounds * 0.5;
     let abs_normal = Vec2::new(normal.x.abs(), normal.y.abs());

@@ -10,11 +10,20 @@
 //! different marker sizes) and edge labels can overlap (crossing
 //! edges). The winner is the smallest-area element — the topmost
 //! one visually — and it must not move when the *names* of the
-//! nodes involved change. The predecessor resolved overlaps by
-//! `FxHashMap` iteration order over `(EdgeKey, endpoint)` keys, so
-//! the winner was a function of node-id hashes: over the 400-fixture
-//! sweep in [`portal_overlap_always_resolves_to_the_smaller_icon`]
-//! it picked the larger, occluded icon in 244 cases.
+//! nodes involved change, nor between one run of the app and the
+//! next.
+//!
+//! The predecessor resolved overlaps by `FxHashMap` iteration order
+//! over `(EdgeKey, endpoint)` keys, so the winner was a function of
+//! key hashes rather than of geometry. Over the 400-fixture sweep in
+//! [`test_portal_overlap_always_resolves_to_the_smaller_icon`] it
+//! picked the larger, occluded icon in roughly 220–250 of the 400 —
+//! the exact count differs every run, because the renderer's setters
+//! took a `std::collections::HashMap` and re-collected it into the
+//! `FxHashMap`, so hashbrown's insertion order (and with it the
+//! resolution of group collisions) rode on `std`'s per-process
+//! `RandomState` seed. Five separate processes measured 231, 224,
+//! 229, 218 and 229.
 //!
 //! **Migrating routing onto the tree changed no answers.** The
 //! differential harness sweeps thousands of synthetic click points
@@ -114,7 +123,7 @@ fn hub_icon(tree: &Tree<GfxElement, GfxMutator>, pair_idx: usize) -> GlyphArea {
 }
 
 #[test]
-fn portal_overlap_resolves_to_the_topmost_smaller_icon() {
+fn test_portal_overlap_resolves_to_the_topmost_smaller_icon() {
     // Two markers stacked on one border point. The click lands in
     // the overlap; the answer must be the visually topmost element,
     // which for stacked markers is the smaller one — anything else
@@ -166,7 +175,7 @@ fn portal_overlap_resolves_to_the_topmost_smaller_icon() {
 }
 
 #[test]
-fn portal_overlap_always_resolves_to_the_smaller_icon() {
+fn test_portal_overlap_always_resolves_to_the_smaller_icon() {
     // The same stacked geometry, 400 times, varying only the node
     // ids. Geometry never moves, so a geometry-driven hit test
     // answers identically every time. The `FxHashMap` scan this
@@ -396,7 +405,7 @@ fn portal_sweep_map() -> MindMap {
 }
 
 #[test]
-fn portal_tree_hit_matches_a_linear_scan_over_the_same_rectangles() {
+fn test_portal_tree_hit_matches_a_linear_scan_over_the_same_rectangles() {
     let map = portal_sweep_map();
     let mut portal = build_portal_tree(&map, &HashMap::new(), None, None, None, None, 1.0);
     let oracle = portal_oracle(&portal);
@@ -435,7 +444,7 @@ fn portal_tree_hit_matches_a_linear_scan_over_the_same_rectangles() {
 }
 
 #[test]
-fn connection_label_tree_hit_matches_a_linear_scan_over_the_same_rectangles() {
+fn test_connection_label_tree_hit_matches_a_linear_scan_over_the_same_rectangles() {
     // The canonical fixture — every labeled edge in `testament`,
     // laid out by the real loader — swept against the oracle.
     let map = crate::mindmap::loader::load_from_file(&test_map_path()).expect("testament map loads");
@@ -448,6 +457,11 @@ fn connection_label_tree_hit_matches_a_linear_scan_over_the_same_rectangles() {
     );
 
     let mut labels = build_connection_label_tree(&elements);
+    // The index names exactly the labels the tree carries — a
+    // shorter index would silently answer `None` on the tail
+    // channels, which the sweep below would then blame on the BVH.
+    assert!(!labels.hit_index.is_empty());
+    assert_eq!(labels.hit_index.len(), elements.len());
     let oracle = label_oracle(&labels);
     assert_eq!(oracle.len(), elements.len());
 
@@ -504,7 +518,7 @@ fn crossing_labels_map() -> MindMap {
 }
 
 #[test]
-fn crossing_edge_labels_resolve_to_the_smaller_label() {
+fn test_crossing_edge_labels_resolve_to_the_smaller_label() {
     let map = crossing_labels_map();
     let hidden = map.fold_hidden_set();
     let elements = build_label_elements(&map, &HashMap::new(), None, None, None, 1.0, &hidden);

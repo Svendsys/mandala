@@ -722,7 +722,7 @@ fn test_portal_text_bounds_combining_mark_is_single_grapheme() {
 /// with no side table to keep in sync.
 ///
 /// The companion assertion at the tree level is
-/// `portal_tree_reserved_text_slot_is_unclickable_when_text_absent`.
+/// `test_portal_tree_reserved_text_slot_is_unclickable_when_text_absent`.
 #[test]
 fn test_portal_text_bounds_empty_string_collapses_to_zero_extent() {
     use super::super::portal_style::{layout_portal_label, layout_portal_text};

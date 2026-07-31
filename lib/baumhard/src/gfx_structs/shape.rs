@@ -120,7 +120,19 @@ impl NodeShape {
 
     /// Point-in-shape test in the node's **local** coordinate space,
     /// where the bounding box runs from `(0, 0)` to `bounds`.
-    /// Callers pre-translate `local = world_point - area.position`.
+    ///
+    /// Callers pre-translate into that frame, and **which two values
+    /// they subtract matters**: derive `local` and `bounds` from the
+    /// same `min` / `max` pair, as
+    /// `local = point - min`, `bounds = max - min`. Recomputing
+    /// either side independently (say `local = point - position`
+    /// against a separately-stored extent) makes the boundary
+    /// compare inexact — f32 addition is not associative, so
+    /// `(position + extent) - position` can exceed `extent` by an
+    /// ULP and a point exactly on the far edge then reports `false`.
+    /// `bvh_find` in
+    /// [`tree_walker`](crate::gfx_structs::tree_walker) is the
+    /// reference caller.
     ///
     /// A degenerate `bounds` (either dimension `<= 0`) always
     /// reports `false`, matching how the BVH skips zero-size areas

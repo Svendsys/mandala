@@ -698,9 +698,23 @@ pub(crate) fn bvh_find(
                         // against `bounds` therefore rejected points the
                         // AABB test had just accepted — a click exactly on
                         // a rectangle's right or bottom edge fell through
-                        // to whatever lay beneath. Subtracting the same
-                        // `min` from both sides makes the boundary compare
-                        // exact.
+                        // to whatever lay beneath. Whether it bit depended
+                        // on the coordinates: the same fixture's y axis
+                        // rounds the other way (22.399994), so one edge
+                        // could misbehave while the opposite one did not.
+                        //
+                        // Every hit test in the app funnels through here —
+                        // `Tree::descendant_at` backs both the canvas-role
+                        // routing and `document::hit_test`'s node and
+                        // section picking — so this was a whole-app edge
+                        // defect, not a portal one.
+                        //
+                        // Subtracting the same `min` from both sides makes
+                        // the boundary compare exact. For a rectangle the
+                        // refinement is then a provable no-op (the
+                        // accepted set is exactly the closed AABB); for an
+                        // ellipse the frame shifts by at most an ULP and
+                        // stays inside the unchanged AABB.
                         let local = Vec2::new(point.x - min_x, point.y - min_y);
                         let inflated = Vec2::new(max_x - min_x, max_y - min_y);
                         hit = area.shape.contains_local(local, inflated);

@@ -1183,6 +1183,100 @@ fn section_frame_emission_benchmark(c: &mut Criterion) {
     });
 }
 
+/// Inline a minimal `MindEdge` constructor for the bench file, for
+/// the same reason [`bench_node`] exists — the crate's
+/// `synthetic_*_edge` helpers are `pub(crate)`.
+fn bench_edge(from: &str, to: &str, portal: bool, label: Option<&str>) -> baumhard::mindmap::model::MindEdge {
+    use baumhard::mindmap::model::{GlyphConnectionConfig, MindEdge, DISPLAY_MODE_PORTAL};
+    MindEdge {
+        from_id: from.to_string(),
+        to_id: to.to_string(),
+        edge_type: "cross_link".into(),
+        color: "#ff0000".into(),
+        width: 3,
+        line_style: "solid".into(),
+        visible: true,
+        label: label.map(str::to_string),
+        label_config: None,
+        anchor_from: "auto".into(),
+        anchor_to: "auto".into(),
+        control_points: vec![],
+        glyph_connection: Some(GlyphConnectionConfig {
+            body: "\u{25C8}".into(),
+            font_size_pt: 16.0,
+            ..GlyphConnectionConfig::default()
+        }),
+        display_mode: portal.then(|| DISPLAY_MODE_PORTAL.to_string()),
+        portal_from: None,
+        portal_to: None,
+        min_zoom_to_render: None,
+        max_zoom_to_render: None,
+    }
+}
+
+/// P1-34: the two canvas-role hit indexes. `resolve` runs on every
+/// pointer event — §B1 puts hit tests under the same rules as
+/// `walk_tree_from` — and its whole claim is that naming a hit is
+/// O(1): two `parent()` hops plus a slice index for portals, one
+/// arena lookup plus a slice index for labels. A change that turned
+/// either into a scan over the index would show as a slope against
+/// the fixture size, so both are benched against a deliberately wide
+/// fixture with the hit taken on the *last* channel — the worst case
+/// for a hypothetical scan and indistinguishable from the first for
+/// the index lookup that is actually there.
+fn hit_index_resolve_benchmark(c: &mut Criterion) {
+    use baumhard::mindmap::tree_builder::{
+        build_connection_label_tree, build_label_elements, build_portal_tree_from_pairs,
+        portal_pair_data,
+    };
+
+    const PAIRS: usize = 60;
+    let offsets: HashMap<String, (f32, f32)> = HashMap::new();
+
+    // One hub joined to `PAIRS` partners by portal-mode edges, so
+    // the index carries `PAIRS` entries.
+    let mut portal_map = synthetic_single_section_map(PAIRS + 1);
+    for i in 0..PAIRS {
+        portal_map.edges.push(bench_edge("n0", &format!("n{}", i + 1), true, None));
+    }
+    let hidden = portal_map.fold_hidden_set();
+    let pairs = portal_pair_data(&portal_map, &offsets, None, None, None, None, 1.0, &hidden);
+    assert_eq!(pairs.len(), PAIRS, "portal bench fixture did not build");
+    let portal = build_portal_tree_from_pairs(&pairs);
+    // Deepest channel path: last pair, second endpoint, text slot.
+    let last_leaf = {
+        let t = &portal.tree;
+        let pair = t.root.children(&t.arena).nth(PAIRS - 1).expect("last pair");
+        let endpoint = pair.children(&t.arena).nth(1).expect("to-endpoint void");
+        endpoint.children(&t.arena).nth(1).expect("text leaf")
+    };
+    c.bench_function("portal_hit_index_resolve", |b| {
+        b.iter(|| portal.hit_index.resolve(&portal.tree, last_leaf))
+    });
+
+    // Same shape for labels: `PAIRS` line-mode edges each carrying a
+    // label, hit on the last channel.
+    let mut label_map = synthetic_single_section_map(PAIRS + 1);
+    for i in 0..PAIRS {
+        label_map
+            .edges
+            .push(bench_edge("n0", &format!("n{}", i + 1), false, Some("label")));
+    }
+    let label_hidden = label_map.fold_hidden_set();
+    let elements = build_label_elements(&label_map, &offsets, None, None, None, 1.0, &label_hidden);
+    assert_eq!(elements.len(), PAIRS, "label bench fixture did not build");
+    let labels = build_connection_label_tree(&elements);
+    let last_label = labels
+        .tree
+        .root
+        .children(&labels.tree.arena)
+        .nth(PAIRS - 1)
+        .expect("last label leaf");
+    c.bench_function("connection_label_hit_index_resolve", |b| {
+        b.iter(|| labels.hit_index.resolve(&labels.tree, last_label))
+    });
+}
+
 criterion_group!(
     benches,
     criterion_benchmark,
@@ -1191,5 +1285,6 @@ criterion_group!(
     node_edit_mode_rebuild_benchmark,
     fast_resize_anchor_inference_benchmark,
     section_frame_emission_benchmark,
+    hit_index_resolve_benchmark,
 );
 criterion_main!(benches);

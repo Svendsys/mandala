@@ -386,7 +386,7 @@ fn portal_tree_text_area_carries_text_color_and_size_overrides() {
 }
 
 #[test]
-fn portal_tree_resolves_icon_and_text_clicks_to_their_own_sub_parts() {
+fn test_portal_tree_resolves_icon_and_text_clicks_to_their_own_sub_parts() {
     // An endpoint with visible text exposes two separately
     // clickable leaves: a click on the icon rectangle resolves to
     // `PortalPart::Icon`, a click on the text rectangle to
@@ -449,7 +449,7 @@ fn portal_tree_resolves_icon_and_text_clicks_to_their_own_sub_parts() {
 }
 
 #[test]
-fn portal_tree_reserved_text_slot_is_unclickable_when_text_absent() {
+fn test_portal_tree_reserved_text_slot_is_unclickable_when_text_absent() {
     // A text-less endpoint still emits its text leaf — the
     // channel layout has to stay stable for the §B2 in-place
     // mutator path — but that leaf must not answer clicks, or a

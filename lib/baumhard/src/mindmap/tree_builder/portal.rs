@@ -176,10 +176,16 @@ impl PortalHitIndex {
     ///
     /// `hit` must come from the tree this index was built
     /// alongside. Returns `None` for any node that is not a
-    /// portal leaf (the root, a pair void, an endpoint void) and
-    /// for a pair channel the index does not cover — a
-    /// mismatched tree/index pair degrades to "no hit" rather
-    /// than naming the wrong portal.
+    /// portal leaf (the root, a pair void, an endpoint void).
+    ///
+    /// An index *shorter* than the tree degrades to "no hit" on
+    /// the uncovered pair channels. An index of the right length
+    /// built from a different pair *order* would name the wrong
+    /// portal — nothing in the data can catch that, so the
+    /// contract is that the index is stamped in the same call that
+    /// registers or mutates the tree (see
+    /// `CanvasFrame::update_portal_tree`, which does both on both
+    /// §B2 arms).
     ///
     /// # Costs
     ///

@@ -280,12 +280,20 @@ impl AppScene {
     /// Remove a canvas role's tree, if registered. Also clears any
     /// recorded structural signature — a future re-register starts
     /// from a clean slate, forcing a full rebuild before the in-place
-    /// mutator path can run again.
+    /// mutator path can run again — and the role's hit index, so no
+    /// per-role state outlives the tree it describes.
     pub fn unregister_canvas(&mut self, role: CanvasRole) {
         if let Some(id) = self.canvas_role_slot_mut(role).take() {
             self.canvas.remove(id);
         }
         self.canvas_signatures.remove(&role);
+        match role {
+            CanvasRole::Portals => self.portal_hit_index = PortalHitIndex::default(),
+            CanvasRole::ConnectionLabels => {
+                self.connection_label_hit_index = ConnectionLabelHitIndex::default()
+            }
+            _ => {}
+        }
     }
 
     /// Record the structural signature of the tree currently
@@ -443,9 +451,13 @@ impl AppScene {
 
     /// Record the identity names for the currently registered
     /// [`CanvasRole::Portals`] tree. Called by the portal
-    /// dispatcher on both §B2 arms — the index is cheap to
-    /// rebuild and re-stamping unconditionally means it can never
-    /// describe a tree that is no longer registered.
+    /// dispatcher on both §B2 arms — the index is cheap to rebuild,
+    /// and stamping it unconditionally in the same call that
+    /// registers or mutates the tree is what keeps channel order
+    /// and identity order in step.
+    ///
+    /// [`Self::unregister_canvas`] clears it again, so the index
+    /// never outlives the tree it names.
     pub fn set_portal_hit_index(&mut self, index: PortalHitIndex) {
         self.portal_hit_index = index;
     }
@@ -780,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn portal_at_names_every_clickable_leaf_and_misses_elsewhere() {
+    fn test_portal_at_names_every_clickable_leaf_and_misses_elsewhere() {
         let map = portal_fixture_map();
         let mut app = AppScene::new();
         register_portals(&mut app, &map);
@@ -801,28 +813,41 @@ mod tests {
     }
 
     #[test]
-    fn portal_at_is_none_when_the_role_is_not_registered() {
-        // Before the first rebuild — and after the portal tree is
-        // unregistered — a click must not resolve to a portal at
-        // all. The stale index alone must never produce a hit.
+    fn test_portal_at_is_none_when_the_role_is_not_registered() {
+        // Two independent guards, both asserted here because either
+        // alone would let a click resolve against state that no
+        // longer describes anything on screen.
         let map = portal_fixture_map();
         let mut app = AppScene::new();
         assert_eq!(app.portal_at(Vec2::ZERO), None);
 
+        // 1. An index with no tree behind it answers nothing —
+        //    `portal_at` gates on the role slot, not on the index.
         register_portals(&mut app, &map);
         let probe = portal_leaf_probes(&app)[0].0;
+        let orphan_index = app.portal_hit_index.clone();
         assert!(app.portal_at(probe).is_some());
 
-        app.unregister_canvas(CanvasRole::Portals);
+        let mut bare = AppScene::new();
+        bare.set_portal_hit_index(orphan_index);
         assert_eq!(
-            app.portal_at(probe),
+            bare.portal_at(probe),
             None,
-            "an unregistered role must not answer clicks even while its index is still stamped"
+            "an index with no registered tree must never produce a hit"
+        );
+
+        // 2. Unregistering drops the index too, so no per-role state
+        //    outlives the tree it names.
+        app.unregister_canvas(CanvasRole::Portals);
+        assert_eq!(app.portal_at(probe), None);
+        assert!(
+            app.portal_hit_index.is_empty(),
+            "unregister_canvas must clear the role's hit index"
         );
     }
 
     #[test]
-    fn edge_label_at_names_the_owning_edge() {
+    fn test_edge_label_at_names_the_owning_edge() {
         use baumhard::mindmap::tree_builder::{build_connection_label_tree, build_label_elements};
 
         fonts::init();
@@ -890,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn canvas_role_hit_tests_honor_the_registered_offset() {
+    fn test_canvas_role_hit_tests_honor_the_registered_offset() {
         // `register_canvas` takes an offset; a role registered away
         // from the origin must be hit-tested in the same space the
         // caller passes (canvas coordinates), not tree-local ones.

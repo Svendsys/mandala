@@ -208,9 +208,11 @@ pub fn do_bvh_descend_point_on_exact_boundary() {
 
     assert_eq!(tree.descendant_at(Vec2::new(10.0, 20.0)), Some(id));
     assert_eq!(tree.descendant_at(Vec2::new(40.0, 60.0)), Some(id));
+    // Just outside on each of the four sides.
     assert!(tree.descendant_at(Vec2::new(40.01, 60.0)).is_none());
     assert!(tree.descendant_at(Vec2::new(40.0, 60.01)).is_none());
     assert!(tree.descendant_at(Vec2::new(9.99, 20.0)).is_none());
+    assert!(tree.descendant_at(Vec2::new(20.0, 19.99)).is_none());
 }
 
 #[test]
