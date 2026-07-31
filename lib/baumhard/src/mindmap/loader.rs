@@ -51,9 +51,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             //   here when the typed map carries the symptom
             //   (zero-section node, or the substring marker
             //   indicates a dropped field).
-            if map.nodes.values().any(|n| n.sections.is_empty())
-                || has_legacy_marker(json)
-            {
+            if map.nodes.values().any(|n| n.sections.is_empty()) || has_legacy_marker(json) {
                 if let Some(err) = detect_legacy_shape(json) {
                     return Err(err);
                 }
@@ -229,7 +227,11 @@ fn warn_on_duplicate_edges(map: &MindMap) {
     use std::collections::HashMap;
     let mut seen: HashMap<(&str, &str, &str), usize> = HashMap::new();
     for (i, edge) in map.edges.iter().enumerate() {
-        let key = (edge.from_id.as_str(), edge.to_id.as_str(), edge.edge_type.as_str());
+        let key = (
+            edge.from_id.as_str(),
+            edge.to_id.as_str(),
+            edge.edge_type.as_str(),
+        );
         if let Some(&first) = seen.get(&key) {
             log::warn!(
                 "duplicate edge tuple (from_id={:?}, to_id={:?}, edge_type={:?}) \
@@ -280,8 +282,7 @@ fn detect_section_count_cap(map: &MindMap) -> Option<String> {
 /// error describing the path + underlying cause.
 pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
     let value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
-    let json =
-        serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
+    let json = serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
     write_atomic(path, &json)
 }
 
@@ -289,8 +290,13 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 /// Cleans up the temp file on rename failure so a partially-written
 /// staging file is never left behind. Used by [`save_to_file`] for the
 /// typed-`MindMap` save path; also exposed for legacy-migration tools
-/// (`maptool convert --portals` etc.) that ship raw `serde_json::Value`
-/// to disk without a `MindMap` round-trip.
+/// — every `maptool convert` verb routes through it — that ship raw
+/// `serde_json::Value` to disk without a `MindMap` round-trip.
+///
+/// The existing file at `path` is never opened for writing, which is
+/// what makes an in-place migration (input path == output path) safe:
+/// the old bytes survive untouched until the rename swaps the
+/// finished file in.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -298,8 +304,7 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
         .ok_or_else(|| format!("invalid path: {}", path.display()))?
         .to_string_lossy();
     let tmp_path = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
-    fs::write(&tmp_path, contents)
-        .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
+    fs::write(&tmp_path, contents).map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
     fs::rename(&tmp_path, path).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         format!(
@@ -316,6 +321,55 @@ mod tests {
     use crate::mindmap::test_helpers::testament_map_path as test_map_path;
     use crate::util::test_temp::TempDir;
     use std::path::PathBuf;
+
+    /// `format/README.md` §"Minimum-viable example" claims to print
+    /// "a complete, valid mindmap with a single root node". Nothing
+    /// checked that claim, and the loader is strict enough — required
+    /// keys, zero-section rejection, the legacy-shape screens — that
+    /// a stale example would quietly become a broken starting point
+    /// for anyone hand-authoring a map. The literal below is the
+    /// verbatim text of that fenced block.
+    #[test]
+    fn test_documented_minimum_viable_example_loads() {
+        const DOC_MINIMUM_MAP: &str = r##"{
+  "version": "1.0",
+  "name": "hello",
+  "canvas": { "background_color": "#000000" },
+  "nodes": {
+    "0": {
+      "id": "0",
+      "parent_id": null,
+      "position": { "x": 0.0, "y": 0.0 },
+      "size": { "width": 200.0, "height": 60.0 },
+      "sections": [
+        { "text": "Hello" }
+      ],
+      "style": {
+        "background_color": "#141414",
+        "frame_color": "#30b082",
+        "text_color": "#ffffff",
+        "shape": "rectangle",
+        "corner_radius_percent": 10.0,
+        "frame_thickness": 4.0,
+        "show_frame": true,
+        "show_shadow": false
+      },
+      "layout": { "type": "map", "direction": "auto", "spacing": 50.0 },
+      "folded": false,
+      "notes": "",
+      "color_schema": null,
+      "channel": 0
+    }
+  },
+  "edges": []
+}"##;
+        let map =
+            load_from_str(DOC_MINIMUM_MAP).expect("format/README.md's minimum-viable example must load");
+        assert_eq!(map.name, "hello");
+        assert_eq!(map.nodes.len(), 1);
+        assert_eq!(map.nodes["0"].sections[0].text, "Hello");
+        assert!(map.edges.is_empty());
+    }
 
     #[test]
     fn test_load_testament_map() {
@@ -624,16 +678,8 @@ mod tests {
         let offsets = std::collections::HashMap::new();
         let aabbs = node_clip_aabbs(&map, &offsets, None, &hidden);
         let mut cache = SceneConnectionCache::new();
-        let (connection_elements, _handles) = build_connection_elements(
-            &map,
-            &offsets,
-            &aabbs,
-            None,
-            None,
-            &mut cache,
-            1.0,
-            &hidden,
-        );
+        let (connection_elements, _handles) =
+            build_connection_elements(&map, &offsets, &aabbs, None, None, &mut cache, 1.0, &hidden);
 
         // All visible edges should produce connection elements
         let visible_edges = map.edges.iter().filter(|e| e.visible).count();

@@ -2747,12 +2747,16 @@ stubs warn-and-noop pending the browser's async clipboard API.
 A separate binary in `crates/maptool/` for
 scripted operations on `.mindmap.json` files: `show`, `grep`,
 `apply`, `export`, `convert --legacy`, `convert --portals`,
-`verify`.
+`convert --sections`, `verify`.
 
 Authoring and maintenance from outside the
 app. `verify` is the structural-invariant checker
 ([`format/validation.md`](./format/validation.md)). `convert`
-migrates legacy formats. `apply` pipes node text through an
+migrates legacy formats — `--legacy` runs the portal and section
+folds inside itself, so a miMind import is one hop
+([`format/migration.md`](./format/migration.md)); every verb writes
+through an atomic staging file + rename, so input and output may be
+the same path. `apply` pipes node text through an
 external command for batch edits. `export` renders to Markdown.
 `grep` and `show` are read-only inspectors.
 

@@ -503,6 +503,44 @@ fn display_mode_portal_round_trips_through_json() {
     assert!(is_portal_edge(&back));
 }
 
+/// `format/schema.md` §"Portal-mode edges" prints a portal edge as
+/// literal JSON, and `maptool convert` emits exactly this shape for
+/// every folded legacy portal. A documented example that does not
+/// deserialize is worse than none — a reader hand-authoring an edge
+/// from it produces a file the loader refuses. The literal below is
+/// the verbatim text of that fenced block, so a field rename or a
+/// dropped `#[serde(default)]` fails here instead of in someone's
+/// editor.
+///
+/// Note what it omits: `label`, which carries no `#[serde(default)]`
+/// and is unconditionally serialized. It parses anyway because serde
+/// supplies `None` for a missing `Option<T>`. Anything that turns
+/// that field into a non-`Option` breaks the documented example, and
+/// this test is where that shows up.
+#[test]
+fn documented_portal_edge_example_deserializes() {
+    const DOC_PORTAL_EDGE: &str = r##"{
+  "from_id": "0.3",
+  "to_id": "1.7.2",
+  "type": "cross_link",
+  "color": "#30b082",
+  "width": 3,
+  "line_style": "solid",
+  "visible": true,
+  "anchor_from": "auto",
+  "anchor_to": "auto",
+  "control_points": [],
+  "glyph_connection": { "body": "◈", "font_size_pt": 16.0 },
+  "display_mode": "portal"
+}"##;
+    let edge: MindEdge = serde_json::from_str(DOC_PORTAL_EDGE)
+        .expect("format/schema.md's portal-edge example must deserialize");
+    assert!(is_portal_edge(&edge));
+    assert_eq!(edge.from_id, "0.3");
+    assert_eq!(edge.to_id, "1.7.2");
+    assert_eq!(edge.glyph_connection.as_ref().unwrap().body, "◈");
+}
+
 #[test]
 fn display_mode_none_omitted_in_serialize() {
     let edge = synthetic_edge_with_label(None, None);
@@ -540,7 +578,12 @@ fn portal_glyph_presets_are_nonempty_and_unique() {
 /// fires the same test.
 #[test]
 fn zoom_window_skip_default_and_round_trip_on_every_struct() {
-    fn check_pair(label: &str, default_json: &str, authored_min: f32, mut set_pair: impl FnMut(Option<f32>, Option<f32>) -> (String, Option<f32>, Option<f32>)) {
+    fn check_pair(
+        label: &str,
+        default_json: &str,
+        authored_min: f32,
+        mut set_pair: impl FnMut(Option<f32>, Option<f32>) -> (String, Option<f32>, Option<f32>),
+    ) {
         // Default: neither key emitted.
         assert!(
             !default_json.contains("min_zoom_to_render"),
@@ -561,7 +604,10 @@ fn zoom_window_skip_default_and_round_trip_on_every_struct() {
         // One-sided: only min present, max absent both in JSON and after round-trip.
         let (json, back_min, back_max) = set_pair(Some(authored_min), None);
         assert!(json.contains(&format!("\"min_zoom_to_render\":{authored_min}")));
-        assert!(!json.contains("max_zoom_to_render"), "{label}: one-sided max leaked: {json}");
+        assert!(
+            !json.contains("max_zoom_to_render"),
+            "{label}: one-sided max leaked: {json}"
+        );
         assert_eq!(back_min, Some(authored_min));
         assert!(back_max.is_none());
     }
@@ -788,7 +834,10 @@ fn mindsection_channel_option_round_trip() {
     // None ⇒ skip-serialize.
     let none_section = MindSection::new_default("a".into(), Vec::new());
     let none_json = serde_json::to_string(&none_section).unwrap();
-    assert!(!none_json.contains("channel"), "default channel must skip-serialize");
+    assert!(
+        !none_json.contains("channel"),
+        "default channel must skip-serialize"
+    );
     let parsed_none: MindSection = serde_json::from_str("{\"text\":\"a\"}").unwrap();
     assert_eq!(parsed_none.channel, None, "absent field parses as None");
 
@@ -918,7 +967,11 @@ fn test_canvas_section_frame_defaults_round_trip() {
         theme_variants: HashMap::new(),
     };
     let json = serde_json::to_string(&plain).expect("serializes");
-    assert!(!json.contains("default_section_frame_border"), "None skips: {}", json);
+    assert!(
+        !json.contains("default_section_frame_border"),
+        "None skips: {}",
+        json
+    );
     assert!(!json.contains("default_focused_section_frame_border"));
 
     // Authored canvas: both fields land + round-trip.
@@ -946,7 +999,9 @@ fn test_canvas_section_frame_defaults_round_trip() {
     let json = serde_json::to_string(&authored).expect("serializes");
     let back: Canvas = serde_json::from_str(&json).expect("round-trips");
     let unfocused = back.default_section_frame_border.expect("unfocused survives");
-    let focused = back.default_focused_section_frame_border.expect("focused survives");
+    let focused = back
+        .default_focused_section_frame_border
+        .expect("focused survives");
     assert_eq!(unfocused.preset, "double");
     assert_eq!(unfocused.color.as_deref(), Some("#aaaaaa"));
     assert_eq!(focused.preset, "heavy");
@@ -1034,7 +1089,12 @@ fn child_index_matches_root_nodes_and_children_of_order() {
     for node in map.nodes.values() {
         let expected = map.children_of(&node.id);
         let actual = index.children_of(&node.id);
-        assert_eq!(actual.len(), expected.len(), "children_of mismatch for {}", node.id);
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "children_of mismatch for {}",
+            node.id
+        );
         for (a, b) in actual.iter().zip(expected.iter()) {
             assert_eq!(a.id, b.id);
         }
@@ -1070,7 +1130,10 @@ fn fold_hidden_set_hides_descendants_of_folded_nodes() {
 
     let hidden: std::collections::HashSet<&str> = map.fold_hidden_set();
     assert!(hidden.contains("0.0"), "child of folded root should be hidden");
-    assert!(hidden.contains("0.0.0"), "grandchild of folded root should be hidden");
+    assert!(
+        hidden.contains("0.0.0"),
+        "grandchild of folded root should be hidden"
+    );
     assert!(!hidden.contains("0"), "folded root itself is visible");
     assert!(!hidden.contains("1"), "unrelated root is visible");
 }

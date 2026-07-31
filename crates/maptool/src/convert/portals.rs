@@ -7,43 +7,41 @@
 //!   `color`                   → `edge.color`
 //!   `font`/`font_size_pt`     → `glyph_connection.{font,font_size_pt}`
 //! `label` is dropped (post-refactor portals identify by edge tuple).
+//!
+//! The transform itself is [`fold_portals_into_edges`], which the
+//! `--portals` verb and the `--legacy` pipeline both call. A legacy
+//! miMind map can carry portals, so folding them is part of the one
+//! legacy hop `format/migration.md` promises — not a separate
+//! follow-up the user has to know to run.
 
-use baumhard::mindmap::loader::write_atomic;
 use serde_json::{json, Value};
 use std::path::Path;
 
-/// Read `input_path`, convert any `portals[]` entries into
-/// portal-mode edges appended to `edges[]`, and write the result to
-/// `output_path`. In-place migrations (input == output) are fine:
-/// the read completes before the write begins, and the write uses
-/// a temp-file + rename so a kill mid-write leaves the original
-/// intact rather than truncated.
-pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), String> {
-    let content = std::fs::read_to_string(input_path)
-        .map_err(|e| format!("failed to read {}: {e}", input_path.display()))?;
-
-    let mut root: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("failed to parse {}: {e}", input_path.display()))?;
-
-    let portals = match root.as_object_mut() {
-        Some(obj) => obj.remove("portals"),
-        None => None,
-    };
-    let portals_array = match portals {
-        Some(Value::Array(a)) => a,
-        Some(_) | None => {
-            // No portals field, or an unexpected shape: pass through.
-            let json =
-                serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize: {e}"))?;
-            write_atomic(output_path, &json)?;
-            return Ok(());
-        }
-    };
-
-    let converted = portals_array.len();
-    let edges = root
+/// Fold every entry of the legacy top-level `portals[]` array into a
+/// portal-mode edge appended to `edges[]`, removing the `portals` key.
+/// Returns the number of portals folded.
+///
+/// Idempotent: a tree with no `portals` key (already migrated) folds
+/// zero portals and is left byte-identical. A `portals` value that is
+/// present but not an array is dropped as unreadable rather than
+/// failing the conversion — the current loader rejects the key in any
+/// shape, so leaving it behind would keep the map unloadable.
+///
+/// Errors only on a root that is not a JSON object, or an `edges`
+/// key that is not an array — both of which make the file unusable
+/// as a mindmap regardless of portals.
+pub(super) fn fold_portals_into_edges(root: &mut Value) -> Result<usize, String> {
+    let obj = root
         .as_object_mut()
-        .ok_or("map root must be a JSON object")?
+        .ok_or_else(|| "map root must be a JSON object".to_string())?;
+    let portals_array = match obj.remove("portals") {
+        Some(Value::Array(a)) => a,
+        // No portals field, or an unexpected shape: nothing to fold.
+        Some(_) | None => return Ok(0),
+    };
+
+    let folded = portals_array.len();
+    let edges = obj
         .entry("edges")
         .or_insert_with(|| Value::Array(Vec::new()))
         .as_array_mut()
@@ -113,11 +111,20 @@ pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), Stri
         edges.push(edge);
     }
 
-    let json = serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize: {e}"))?;
-    write_atomic(output_path, &json)?;
+    Ok(folded)
+}
 
-    eprintln!("converted {} portal(s) to portal-mode edges", converted);
-    Ok(())
+/// Read `input_path`, convert any `portals[]` entries into
+/// portal-mode edges appended to `edges[]`, and write the result to
+/// `output_path`. In-place migrations (input == output) are fine:
+/// the read completes before the write begins, and the write uses
+/// a temp-file + rename so a kill mid-write leaves the original
+/// intact rather than truncated.
+pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), String> {
+    super::transform_map_file(input_path, output_path, |root| {
+        let folded = fold_portals_into_edges(root)?;
+        Ok(format!("converted {folded} portal(s) to portal-mode edges"))
+    })
 }
 
 #[cfg(test)]
@@ -193,5 +200,91 @@ mod tests {
         assert_eq!(edges[0]["color"], "#ff00aa");
         assert_eq!(edges[0]["glyph_connection"]["body"], "⬢");
         assert_eq!(edges[0]["glyph_connection"]["font_size_pt"], 20.0);
+    }
+
+    /// `format/migration.md` §"The fold, exactly" prints both halves
+    /// of this transform as literal JSON. A doc example that drifts
+    /// from the converter is worse than no example — a reader hand-
+    /// migrating a map by that block would produce a file the loader
+    /// rejects. Both string literals below are the verbatim text of
+    /// those two fenced blocks; the assertion is that the converter
+    /// turns the first into the second.
+    #[test]
+    fn documented_fold_matches_converter_output() {
+        const DOC_LEGACY_PORTAL: &str = r##"{
+  "endpoint_a": "0.0",
+  "endpoint_b": "0.1",
+  "label": "Cross-reference",
+  "glyph": "⬢",
+  "color": "#ff00aa",
+  "font": "LiberationSans",
+  "font_size_pt": 18.0
+}"##;
+        const DOC_PORTAL_EDGE: &str = r##"{
+  "from_id": "0.0",
+  "to_id": "0.1",
+  "type": "cross_link",
+  "color": "#ff00aa",
+  "width": 3,
+  "line_style": "solid",
+  "visible": true,
+  "label": null,
+  "anchor_from": "auto",
+  "anchor_to": "auto",
+  "control_points": [],
+  "glyph_connection": {
+    "body": "⬢",
+    "font": "LiberationSans",
+    "font_size_pt": 18.0
+  },
+  "display_mode": "portal"
+}"##;
+
+        let legacy_portal: Value = serde_json::from_str(DOC_LEGACY_PORTAL)
+            .expect("the documented legacy portal block must be valid JSON");
+        let mut root = json!({ "edges": [], "portals": [legacy_portal] });
+        assert_eq!(fold_portals_into_edges(&mut root).unwrap(), 1);
+
+        let expected: Value = serde_json::from_str(DOC_PORTAL_EDGE)
+            .expect("the documented portal-edge block must be valid JSON");
+        let produced = &root["edges"].as_array().unwrap()[0];
+        assert_eq!(
+            produced, &expected,
+            "converter output drifted from format/migration.md's documented fold"
+        );
+
+        // ...and the documented shape is one the typed model accepts,
+        // so a reader who copies the block by hand gets a loadable map.
+        serde_json::from_str::<baumhard::mindmap::model::MindEdge>(DOC_PORTAL_EDGE)
+            .expect("the documented portal edge must deserialize as a MindEdge");
+    }
+
+    /// A `portals` key holding something other than an array is
+    /// dropped rather than carried through: the loader rejects the
+    /// key in every shape, so preserving it would leave the output
+    /// unloadable for no gain.
+    #[test]
+    fn non_array_portals_key_is_dropped() {
+        let mut root = json!({ "edges": [], "portals": "not an array" });
+        assert_eq!(fold_portals_into_edges(&mut root).unwrap(), 0);
+        assert!(root.get("portals").is_none());
+    }
+
+    /// A legacy map with no `edges` key at all still gets its portals:
+    /// the fold creates the array rather than silently dropping them.
+    #[test]
+    fn fold_creates_edges_array_when_absent() {
+        let mut root = json!({
+            "portals": [{ "endpoint_a": "0", "endpoint_b": "1" }]
+        });
+        assert_eq!(fold_portals_into_edges(&mut root).unwrap(), 1);
+        let edges = root["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["display_mode"], "portal");
+        // Defaults documented in format/migration.md.
+        assert_eq!(edges[0]["glyph_connection"]["body"], "\u{25C8}");
+        assert_eq!(edges[0]["color"], "#aa88cc");
+        assert_eq!(edges[0]["glyph_connection"]["font_size_pt"], 16.0);
+        assert!(edges[0]["glyph_connection"].get("font").is_none());
     }
 }

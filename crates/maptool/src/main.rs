@@ -53,15 +53,19 @@ Commands:
                                 Convert a legacy (miMind-derived) map
                                 to the current format: structural IDs,
                                 named enums, hoisted palettes, channel
-                                field.
+                                field, legacy portals folded into
+                                portal-mode edges, and node text folded
+                                into a sections[] array. One hop — the
+                                output loads and verifies without a
+                                follow-up convert.
   convert --portals <in.json> <out.json>
                                 Migrate a pre-refactor map whose
                                 portals live in a top-level portals
                                 array to the unified form (portals
                                 are edges with display_mode portal).
-                                Input and output paths may be the
-                                same file (the read completes
-                                before the write).
+                                Also runs inside --legacy; use this
+                                verb for a map that is otherwise
+                                already current.
   convert --sections <in.json> <out.json>
                                 Migrate a pre-section-refactor map
                                 whose nodes carry text / text_runs
@@ -69,8 +73,15 @@ Commands:
                                 where each node has a sections[] array.
                                 Each legacy node folds into a single
                                 default section; idempotent on already-
-                                migrated maps. Input and output paths
-                                may be the same file.
+                                migrated maps. Also runs inside
+                                --legacy.
+
+                                All three convert verbs accept the same
+                                path for <in.json> and <out.json>: the
+                                read completes first, and the write
+                                stages to a temp file and renames, so
+                                an interrupted run leaves the original
+                                intact rather than truncated.
   verify <map.json>             Check the file against the format's
                                 structural invariants (parent_id
                                 consistency, Dewey IDs, edge and portal
@@ -168,10 +179,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
                 parsed.cmd_args,
             )?;
             if parsed.dry_run {
-                eprintln!(
-                    "dry-run: would modify {} target(s):",
-                    changed.len()
-                );
+                eprintln!("dry-run: would modify {} target(s):", changed.len());
                 for (id, section_idx) in &changed {
                     if parsed.target_notes {
                         eprintln!("  {id} (notes)");
@@ -364,7 +372,7 @@ struct ApplyArgs<'a> {
 }
 
 /// Parse the args that follow `apply` on the command line. Flags `-i`,
-/// `--notes`, and `--dry-run` are recognised anywhere before the `--`
+/// `--notes`, and `--dry-run` are recognized anywhere before the `--`
 /// separator. Everything after `--` is the external command and its
 /// args, passed through verbatim so users can invoke any program.
 fn parse_apply_args(args: &[String]) -> Result<ApplyArgs<'_>, CliError> {
@@ -432,11 +440,7 @@ fn parse_apply_args(args: &[String]) -> Result<ApplyArgs<'_>, CliError> {
 ///
 /// Sort: numeric on `node_id` then `section_idx` for stable
 /// output across runs.
-fn select_section_targets(
-    map: &MindMap,
-    regex: &Regex,
-    target_notes: bool,
-) -> Vec<(String, usize)> {
+fn select_section_targets(map: &MindMap, regex: &Regex, target_notes: bool) -> Vec<(String, usize)> {
     let mut targets: Vec<(String, usize)> = Vec::new();
     for node in map.nodes.values() {
         if target_notes {
@@ -588,6 +592,7 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use baumhard::util::test_temp::TempDir;
     use std::path::PathBuf;
 
     fn testament() -> MindMap {
@@ -683,7 +688,7 @@ mod tests {
 
     #[test]
     fn parse_grep_args_i_after_map_path() {
-        // -i between map and pattern must still be recognised — the
+        // -i between map and pattern must still be recognized — the
         // parser treats `-i` as position-independent.
         let args = as_strings(&["map.json", "-i", "pat"]);
         let p = parse_grep_args(&args).unwrap();
@@ -788,6 +793,115 @@ mod tests {
         assert!(run(&args).is_ok(), "testament map must verify clean");
     }
 
+    // --- convert --legacy: the one-hop migration contract ------------
+    //
+    // `format/migration.md` promises "a single legacy hop produces a
+    // post-section file in one step" and that `maptool verify` on the
+    // output "should exit 0". A legacy map that carried portals broke
+    // both: the fold never ran, the top-level `portals[]` survived,
+    // and the loader refused the converted file — so `verify` could
+    // not even parse it. These tests are the end-to-end pin.
+
+    fn legacy_with_portals_path() -> PathBuf {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push("tests/fixtures/legacy_with_portals.mindmap.json");
+        p
+    }
+
+    /// Guards the fixture itself: if a future edit made it loadable,
+    /// the round-trip test below would pass without proving anything.
+    #[test]
+    fn legacy_with_portals_fixture_is_rejected_by_the_loader() {
+        let err = load_from_file(&legacy_with_portals_path())
+            .expect_err("the legacy fixture must not load as a current-format map");
+        assert!(
+            err.contains("portals"),
+            "fixture should trip the legacy-portals detector, got: {err}"
+        );
+    }
+
+    #[test]
+    fn run_convert_legacy_on_portal_bearing_map_loads_and_verifies_in_one_hop() {
+        let dir = TempDir::new("convert-legacy-portals");
+        let output = dir.join("converted.mindmap.json");
+        let args = as_strings(&[
+            "convert",
+            "--legacy",
+            legacy_with_portals_path().to_str().unwrap(),
+            output.to_str().unwrap(),
+        ]);
+        run(&args).expect("convert --legacy must succeed");
+
+        // The loader is the real acceptance test: pre-fix it rejected
+        // this file, pointing at `maptool convert --portals`.
+        let map = load_from_file(&output).expect("converted map must load");
+
+        let portal_edges: Vec<_> = map
+            .edges
+            .iter()
+            .filter(|e| e.display_mode.as_deref() == Some("portal"))
+            .collect();
+        assert_eq!(portal_edges.len(), 1, "the legacy portal must survive as an edge");
+        let portal = portal_edges[0];
+        // Endpoints carry the *new* Dewey ids, so the fold has to run
+        // after the id rewrite, not before it.
+        assert_eq!(portal.from_id, "0.0");
+        assert_eq!(portal.to_id, "0.1");
+        assert_eq!(portal.edge_type, "cross_link");
+        assert_eq!(portal.color, "#ff00aa");
+        let glyph = portal
+            .glyph_connection
+            .as_ref()
+            .expect("portal edge must carry its marker glyph");
+        assert_eq!(glyph.body, "⬢");
+        assert_eq!(glyph.font.as_deref(), Some("LiberationSans"));
+        assert_eq!(glyph.font_size_pt, 18.0);
+
+        // The rest of the legacy hop must still land: integer enums
+        // named, node text folded into sections, palettes hoisted.
+        assert_eq!(map.nodes["0"].sections[0].text, "Legacy root");
+        assert_eq!(map.nodes["0"].style.shape, "rounded_rectangle");
+        assert_eq!(map.nodes["0.1"].layout.layout_type, "outline");
+        assert!(map.palettes.contains_key("coral-v3"));
+
+        // ...and `verify` exits 0 on the output, in that one hop.
+        let verify_args = as_strings(&["verify", output.to_str().unwrap()]);
+        assert!(
+            run(&verify_args).is_ok(),
+            "converted map must verify clean without a follow-up convert"
+        );
+    }
+
+    /// Running the standalone portal verb over an already-folded map
+    /// is a no-op, so the two paths compose instead of double-folding.
+    #[test]
+    fn run_convert_portals_after_legacy_is_a_no_op() {
+        let dir = TempDir::new("convert-legacy-then-portals");
+        let output = dir.join("converted.mindmap.json");
+        let legacy = as_strings(&[
+            "convert",
+            "--legacy",
+            legacy_with_portals_path().to_str().unwrap(),
+            output.to_str().unwrap(),
+        ]);
+        run(&legacy).unwrap();
+        let once = fs::read_to_string(&output).unwrap();
+
+        let portals = as_strings(&[
+            "convert",
+            "--portals",
+            output.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ]);
+        run(&portals).unwrap();
+        // Compared as a boolean: both sides are whole map files, and a
+        // value-diff on failure buries the point (TEST_CONVENTIONS §T5).
+        assert!(
+            fs::read_to_string(&output).unwrap() == once,
+            "convert --portals must not change an already-folded map"
+        );
+    }
+
     #[test]
     fn run_verify_flags_invalid_fixture() {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -815,7 +929,10 @@ mod tests {
             id: "0".into(),
             parent_id: None,
             position: baumhard::mindmap::model::Position { x: 0.0, y: 0.0 },
-            size: baumhard::mindmap::model::Size { width: 100.0, height: 40.0 },
+            size: baumhard::mindmap::model::Size {
+                width: 100.0,
+                height: 40.0,
+            },
             sections: vec![
                 {
                     let mut s = MindSection::new_default("a".into(), Vec::new());
@@ -855,12 +972,18 @@ mod tests {
             max_zoom_to_render: None,
         };
         n.sections[0].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
-        n.sections[0].size = Some(baumhard::mindmap::model::Size { width: 10.0, height: 10.0 });
+        n.sections[0].size = Some(baumhard::mindmap::model::Size {
+            width: 10.0,
+            height: 10.0,
+        });
         n.sections[1].offset = baumhard::mindmap::model::Position { x: 0.0, y: 10.0 };
-        n.sections[1].size = Some(baumhard::mindmap::model::Size { width: 10.0, height: 10.0 });
+        n.sections[1].size = Some(baumhard::mindmap::model::Size {
+            width: 10.0,
+            height: 10.0,
+        });
         map.nodes.insert("0".into(), n);
 
-        let scratch = baumhard::util::test_temp::TempDir::new("verify-broadcast-channel");
+        let scratch = TempDir::new("verify-broadcast-channel");
         let path = scratch.join("map.mindmap.json");
         save_to_file(&path, &map).unwrap();
         let args = as_strings(&["verify", path.to_str().unwrap()]);
@@ -882,36 +1005,26 @@ mod tests {
         load_from_file(&apply_fixture_path()).unwrap()
     }
 
-    /// RAII guard for a per-test copy of the apply fixture. The file is
-    /// placed in the OS temp dir with a PID + nanos suffix so parallel
-    /// test runs don't collide, and it's removed on drop — so a panic
-    /// mid-test doesn't leak the file.
-    struct TmpMap(PathBuf);
+    /// RAII guard for a per-test copy of the apply fixture, living in
+    /// its own [`TempDir`] so parallel runs cannot collide and a panic
+    /// mid-test still cleans up. The directory is held (not just the
+    /// path) because dropping it is what removes the copy; field order
+    /// is irrelevant here since `remove_dir_all` takes the file with
+    /// it either way.
+    struct TmpMap {
+        _dir: TempDir,
+        path: PathBuf,
+    }
 
     impl TmpMap {
         fn new(name: &str) -> Self {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let mut dst = std::env::temp_dir();
-            dst.push(format!(
-                "maptool_apply_{}_{}_{}.mindmap.json",
-                name,
-                std::process::id(),
-                nanos
-            ));
-            std::fs::copy(apply_fixture_path(), &dst).unwrap();
-            Self(dst)
+            let dir = TempDir::new(&format!("apply-{name}"));
+            let path = dir.join("map.mindmap.json");
+            std::fs::copy(apply_fixture_path(), &path).unwrap();
+            Self { _dir: dir, path }
         }
         fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TmpMap {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
+            &self.path
         }
     }
 
@@ -971,7 +1084,10 @@ mod tests {
             .get_mut("0.1")
             .unwrap()
             .sections
-            .push(MindSection::new_default("hello-from-section-1".into(), Vec::new()));
+            .push(MindSection::new_default(
+                "hello-from-section-1".into(),
+                Vec::new(),
+            ));
         let targets = select_section_targets(&map, &rx("hello-from-section-1", false), false);
         assert_eq!(targets, vec![("0.1".to_string(), 1)]);
     }

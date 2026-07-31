@@ -23,10 +23,74 @@ file that still carries a non-empty `portals[]`; migrate with:
 maptool convert --portals <input.json> <output.json>
 ```
 
-Input and output may be the same path (the read completes before
-the write begins). Each legacy `PortalPair` becomes a `MindEdge`
-with `edge_type = "cross_link"`, `display_mode = "portal"`, and the
-original glyph / color / font carried into `glyph_connection`.
+Input and output may be the same path — see
+[Writes are atomic](#writes-are-atomic). Each legacy `PortalPair`
+becomes a `MindEdge` with `edge_type = "cross_link"`,
+`display_mode = "portal"`, and the original glyph / color / font
+carried into `glyph_connection`. The legacy `label` is dropped —
+post-refactor portals identify by the edge tuple, and per-endpoint
+label text lives on
+[`portal_from` / `portal_to`](./portal-labels.md).
+
+A legacy miMind map can carry portals too, so this pass also runs
+automatically inside `convert --legacy` — right after the ID
+rewrite, so the folded endpoints carry their new Dewey IDs. A
+single legacy hop therefore produces a file the loader accepts;
+there is no follow-up `convert --portals` to remember.
+
+### The fold, exactly
+
+Given this legacy entry:
+
+```json
+{
+  "endpoint_a": "0.0",
+  "endpoint_b": "0.1",
+  "label": "Cross-reference",
+  "glyph": "⬢",
+  "color": "#ff00aa",
+  "font": "LiberationSans",
+  "font_size_pt": 18.0
+}
+```
+
+the top-level `portals` key is removed and this edge is appended to
+`edges[]`:
+
+```json
+{
+  "from_id": "0.0",
+  "to_id": "0.1",
+  "type": "cross_link",
+  "color": "#ff00aa",
+  "width": 3,
+  "line_style": "solid",
+  "visible": true,
+  "label": null,
+  "anchor_from": "auto",
+  "anchor_to": "auto",
+  "control_points": [],
+  "glyph_connection": {
+    "body": "⬢",
+    "font": "LiberationSans",
+    "font_size_pt": 18.0
+  },
+  "display_mode": "portal"
+}
+```
+
+Missing legacy fields take defaults: `glyph` falls back to `◈`
+(an empty string counts as missing — a zero-width marker is
+unclickable), `color` to `#aa88cc`, `font_size_pt` to `16.0`, and
+`font` is omitted entirely when absent. A missing `endpoint_a` /
+`endpoint_b` becomes an empty id rather than dropping the portal
+silently — `maptool verify` then flags it as a dangling edge
+reference, which is the diagnosable outcome.
+
+Both blocks above are pinned by
+`convert::portals::tests::documented_fold_matches_converter_output`,
+which parses this exact text and compares it against what the
+converter emits.
 
 ## Also: migrating node text into sections
 
@@ -54,27 +118,48 @@ maptool convert --legacy <input.json> <output.json>
 ```
 
 Reads `<input.json>` as a legacy-format file and writes `<output.json>` in
-the current format. The input is never modified.
+the current format. Unless the two paths are the same, the input is
+never modified.
+
+## Writes are atomic
+
+All three `convert` verbs write the same way: the finished JSON goes
+to a staging file (`<dir>/.<name>.<pid>.tmp`) which is then renamed
+over the output path. The existing file at that path is never opened
+for writing, so an interrupted run — a kill, a full disk, a crash —
+leaves either the original file intact or the converted file
+complete, never a truncated partial. That is what makes passing the
+same path for input and output safe on every verb, not just
+`--portals`.
 
 ## What it does
 
 1. **Assigns Dewey-decimal IDs** by walking the tree (using `parent_id` +
    the old `index` field for sibling order). Rewrites every reference —
    edge `from_id`/`to_id` (covers both line-mode and portal-mode edges;
-   post-refactor portals live in the edges array) and the HashMap keys.
-2. **Converts integer enums to named strings** for `shape_type` →
+   post-refactor portals live in the edges array), legacy
+   `portals[].endpoint_a`/`endpoint_b`, and the HashMap keys.
+2. **Folds legacy `portals[]` into portal-mode edges** and removes the
+   top-level array — the same pass `convert --portals` runs, applied
+   here right after the ID rewrite so the folded endpoints carry
+   their new Dewey IDs. See
+   [The fold, exactly](#the-fold-exactly) above.
+3. **Converts integer enums to named strings** for `shape_type` →
    `shape`, `layout.type`, `layout.direction`, `line_style`,
    `anchor_from`, `anchor_to`. Unknown integer values fall back to
    sensible defaults (documented in each enum's value list —
    see [enums.md](./enums.md)).
-3. **Hoists color schemas to top-level palettes**. Each unique palette is
+4. **Hoists color schemas to top-level palettes**. Each unique palette is
    defined once; per-node `color_schema` becomes a lightweight reference.
    The `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
    `"coral-v3"`).
-4. **Removes `index`** from each node (sibling order derives from the new
+5. **Removes `index`** from each node (sibling order derives from the new
    Dewey ID).
-5. **Adds `channel: 0`** to each node (the default).
+6. **Adds `channel: 0`** to each node (the default).
+7. **Folds node `text` / `text_runs` into `sections[0]`** — the same
+   pass `convert --sections` runs, applied last so an already-cleaned
+   tree converges on the post-section shape.
 
 ## Known limitations
 
