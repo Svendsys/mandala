@@ -416,6 +416,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("select_font_variants_keeps_distinct_styles_of_one_family", |b| {
         b.iter(do_select_font_variants_keeps_distinct_styles_of_one_family)
     });
+    c.bench_function("select_font_variants_keeps_same_container_faces_of_one_family", |b| {
+        b.iter(do_select_font_variants_keeps_same_container_faces_of_one_family)
+    });
+    c.bench_function("select_font_variants_collapses_one_face_in_two_containers", |b| {
+        b.iter(do_select_font_variants_collapses_one_face_in_two_containers)
+    });
     c.bench_function("select_font_variants_renames_name_collisions", |b| {
         b.iter(do_select_font_variants_renames_name_collisions)
     });

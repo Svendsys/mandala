@@ -444,17 +444,75 @@ fn test_select_font_variants_breaks_ties_by_path() {
     do_select_font_variants_breaks_ties_by_path();
 }
 
-/// Two files of the same family and the same container leave the
-/// extension preference undecided. The lexicographically smallest
-/// relative path wins — relative, because the absolute path embeds a
-/// checkout directory and would make the choice machine-dependent.
+/// Two *distinct* files that derive the same name are both kept —
+/// they are two faces, not one face in two containers — and the
+/// lexicographically smallest relative path wins the bare name.
+/// Relative, because the absolute path embeds a checkout directory
+/// and would make the choice machine-dependent.
+///
+/// The rename is the point. An earlier revision keyed the collapse on
+/// `(family_key, variant)` and silently discarded `Regal-vmJE`, the
+/// same data loss as the `Family-Style` case reached through another
+/// door. Only a genuine container pair may make a file disappear.
 pub fn do_select_font_variants_breaks_ties_by_path() {
     let selection = select_font_variants(vec![
         candidate("regal-font/Regal-vmJE.ttf", Some("Regal")),
         candidate("regal-font/Regal-aaaa.ttf", Some("Regal")),
     ]);
-    assert_eq!(selection.fonts.len(), 1);
+    assert_eq!(selection.fonts.len(), 2, "two distinct faces must both survive");
+    assert_eq!(selection.fonts[0].variant, "Regal");
     assert_eq!(selection.fonts[0].relative_path, "regal-font/Regal-aaaa.ttf");
+    assert_eq!(selection.fonts[1].variant, "Regal2");
+    assert_eq!(selection.fonts[1].relative_path, "regal-font/Regal-vmJE.ttf");
+    assert_eq!(selection.warnings.len(), 1, "the rename is warned, not silent");
+}
+
+#[test]
+fn test_select_font_variants_keeps_same_container_faces_of_one_family() {
+    do_select_font_variants_keeps_same_container_faces_of_one_family();
+}
+
+/// Two faces of one family whose name tables are unreadable both fall
+/// back to the same stem-derived identifier. They are still two
+/// files, so both must survive under renamed variants.
+///
+/// This is the residual half of the `Family-Style.ttf` data loss:
+/// narrowing the collapse key from `family_key` to
+/// `(family_key, variant)` fixed the readable-name-table case but
+/// left this one, where adding `Family-Bold.ttf` silently repointed
+/// the existing `Family` variant at a different face — no build
+/// break, no warning, just a different glyph set behind the same
+/// name. Requiring distinct containers closes it.
+pub fn do_select_font_variants_keeps_same_container_faces_of_one_family() {
+    let selection = select_font_variants(vec![
+        candidate("family-font/Family-Bold.ttf", None),
+        candidate("family-font/Family-Regular.ttf", None),
+    ]);
+    assert_eq!(selection.fonts.len(), 2, "two same-container faces must both survive");
+    assert_eq!(selection.fonts[0].variant, "Family");
+    assert_eq!(selection.fonts[0].relative_path, "family-font/Family-Bold.ttf");
+    assert_eq!(selection.fonts[1].variant, "Family2");
+    assert_eq!(selection.fonts[1].relative_path, "family-font/Family-Regular.ttf");
+}
+
+#[test]
+fn test_select_font_variants_collapses_one_face_in_two_containers() {
+    do_select_font_variants_collapses_one_face_in_two_containers();
+}
+
+/// The case the collapse exists for, pinned so the stem key does not
+/// over-correct into keeping both: one face shipped as `.ttf` and
+/// `.otf` is one file per container, so exactly one is embedded — the
+/// `.ttf`, by `FontCandidate::preference` — and nothing is warned,
+/// because a redundant container is not a collision.
+pub fn do_select_font_variants_collapses_one_face_in_two_containers() {
+    let selection = select_font_variants(vec![
+        candidate("regal-font/Regal.otf", Some("Regal")),
+        candidate("regal-font/Regal.ttf", Some("Regal")),
+    ]);
+    assert_eq!(selection.fonts.len(), 1, "one face in two containers is one variant");
+    assert_eq!(selection.fonts[0].relative_path, "regal-font/Regal.ttf");
+    assert!(selection.warnings.is_empty(), "container dedup is not a collision");
 }
 
 #[test]

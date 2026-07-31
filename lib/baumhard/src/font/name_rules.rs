@@ -488,21 +488,31 @@ pub struct FontSelection {
 /// 2. **Redundant containers are collapsed.** Font hosts ship one
 ///    face as both `.ttf` and `.otf`, and `FontCandidate::preference`
 ///    picks which of the pair is embedded. This is the only pass
-///    that discards a font, so its key is deliberately narrow:
-///    candidates collapse only when they agree on *both*
-///    [`family_key`] **and** the derived variant name — that is,
-///    only when keeping both could not produce two distinguishable
-///    variants anyway. Silent, because it is the expected shape of
-///    the tree rather than a problem.
+///    that discards a font, so it fires on exactly one shape: a
+///    group of files agreeing on [`family_key`] **and** derived
+///    variant name in which **every file sits in a different
+///    container**. Silent, because one face published twice is the
+///    expected shape of the tree rather than a problem.
 ///
-///    Grouping on [`family_key`] alone is what the previous
-///    revision did, and it was wrong in a way that lost data:
-///    `Family-Regular.ttf` and `Family-Bold.ttf` share a key and
-///    are two faces, so dropping a font a **new file caused to be
-///    dropped** could silently delete an `AppFont` variant that
-///    code elsewhere still referenced, breaking the build with a
-///    diagnostic that named an unrelated font. Two styles of one
-///    family now both survive and get their own variants.
+///    The container test is what makes the rule safe, and it cannot
+///    be replaced by comparing stems: hosts publish the pair with
+///    per-container stems (`AppleTea-jELql.otf` beside
+///    `AppleTea-z8R1a.ttf`), so the stems of one face routinely
+///    differ. Two earlier keys were both wrong, in the same
+///    direction — each discarded a file that pass 3 could have kept:
+///
+///    - [`family_key`] alone put `Family-Regular.ttf` and
+///      `Family-Bold.ttf` in one group, so adding a style could
+///      silently delete an `AppFont` variant that code elsewhere
+///      referenced — breaking the build with a diagnostic naming an
+///      unrelated font.
+///    - `(family_key, variant)` still dropped one of two **distinct**
+///      faces whenever both derived the same name *and* shipped in
+///      the same container: two files whose name tables are
+///      unreadable fall back to the same stem-derived identifier, and
+///      the second vanished with no warning, silently repointing an
+///      existing variant at a different face. Requiring distinct
+///      containers closes that: two `.ttf`s are never redundant.
 /// 3. **Distinct fonts that derive the same name are renamed**, not
 ///    dropped: the preferred one keeps the bare name and the rest
 ///    take the first free `Name2`, `Name3`, … suffix, each with a
@@ -542,21 +552,41 @@ pub fn select_font_variants(candidates: Vec<FontCandidate>) -> FontSelection {
     // though the walk that produced them is not.
     selection.warnings.sort();
 
-    // Keyed on (family, derived name) rather than family alone: see
-    // pass 2 above. Collapsing on the family alone deletes a face.
-    let mut by_face: std::collections::BTreeMap<(String, String), FontCandidate> =
+    // Group on (family, derived name), then collapse a group only
+    // when every file in it sits in a *different* container. That is
+    // the one shape this pass exists for — the same face shipped as
+    // `.ttf` and `.otf`, which font hosts publish with per-container
+    // stems (`AppleTea-jELql.otf` beside `AppleTea-z8R1a.ttf`), so a
+    // stem cannot identify a face and the extension has to.
+    //
+    // Two files sharing a container are two faces, however their
+    // names collide: `Family-Regular.ttf` and `Family-Bold.ttf` with
+    // unreadable name tables both derive `Family`. Collapsing those
+    // silently repoints an existing variant at a different face. They
+    // fall through to the rename pass below instead.
+    let mut by_face: std::collections::BTreeMap<(String, String), Vec<FontCandidate>> =
         std::collections::BTreeMap::new();
     for candidate in named {
         let key = (candidate.family_key.clone(), candidate.variant.clone());
-        match by_face.get(&key) {
-            Some(incumbent) if incumbent.preference() <= candidate.preference() => {}
-            _ => {
-                by_face.insert(key, candidate);
-            }
-        }
+        by_face.entry(key).or_default().push(candidate);
     }
 
-    let mut survivors: Vec<FontCandidate> = by_face.into_values().collect();
+    let mut survivors: Vec<FontCandidate> = Vec::new();
+    for (_, mut group) in by_face {
+        let containers: std::collections::BTreeSet<&str> =
+            group.iter().map(|font| font.extension.as_str()).collect();
+        if containers.len() == group.len() {
+            // One file per container: redundant copies of one face.
+            group.sort_by(|left, right| {
+                left.preference()
+                    .cmp(&right.preference())
+                    .then_with(|| left.relative_path.cmp(&right.relative_path))
+            });
+            survivors.push(group.into_iter().next().expect("group is never empty"));
+        } else {
+            survivors.extend(group);
+        }
+    }
     survivors.sort_by(|left, right| {
         left.variant
             .cmp(&right.variant)
