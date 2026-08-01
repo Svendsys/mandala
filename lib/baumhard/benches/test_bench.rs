@@ -684,7 +684,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_single_span_none_color_none_font())
     });
     c.bench_function("region_shift_and_shrink_disagree_at_the_seam", |b| {
-        b.iter(|| do_region_shift_and_shrink_disagree_at_the_seam())
+        b.iter(do_region_shift_and_shrink_disagree_at_the_seam)
     });
     c.bench_function("shrink_regions_after_fully_right_shifts_left", |b| {
         b.iter(|| do_shrink_regions_after_fully_right_shifts_left())
