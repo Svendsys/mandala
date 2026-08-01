@@ -9,11 +9,11 @@ use baumhard::mindmap::tree_builder::{build_node_resize_handles, ResizeHandleSid
 use glam::Vec2;
 
 use crate::application::document::apply_node_resize_to_tree;
-use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_node_resize_handle_tree_from_slice};
+use super::pending::ThrottledPending;
 use super::release::{ReleaseCommit, ReleaseRefresh};
-use super::{DrainContext, ThrottledInteraction};
+use super::{DrainContext, ThrottledDragInteraction, ThrottledInteraction};
 
 /// Per-frame drains apply a side-aware delta to the node's
 /// `position` and `size` in the tree only; the model is unchanged
@@ -26,12 +26,10 @@ pub(in crate::application::app) struct NodeResizeInteraction {
     pub start_position: Position,
     /// Node's `size` at drag start.
     pub start_size: Size,
-    /// Accumulated total delta across the entire drag.
-    pub total_delta: Vec2,
-    /// Delta accumulated since the last successful drain.
-    pub pending_delta: Vec2,
-    /// Per-interaction adaptive throttle.
-    pub throttle: MutationFrequencyThrottle,
+    /// Delta-accumulate pending state plus this gesture's adaptive
+    /// throttle. The running total is what `resolve` folds into the
+    /// start AABB.
+    pub pending: ThrottledPending,
     /// `true` when the drag was started by the right mouse
     /// button (fast-resize gesture from `PendingRight`); `false`
     /// when it was started by the left button (handle drag).
@@ -54,9 +52,7 @@ impl NodeResizeInteraction {
             side,
             start_position,
             start_size,
-            total_delta: Vec2::ZERO,
-            pending_delta: Vec2::ZERO,
-            throttle: MutationFrequencyThrottle::with_default_budget(),
+            pending: ThrottledPending::accumulating_deltas(),
             started_with_right,
         }
     }
@@ -76,7 +72,57 @@ impl NodeResizeInteraction {
             "node resize"
         }
     }
+}
 
+impl ThrottledInteraction for NodeResizeInteraction {
+    fn pending(&self) -> &ThrottledPending {
+        &self.pending
+    }
+
+    fn pending_mut(&mut self) -> &mut ThrottledPending {
+        &mut self.pending
+    }
+
+    fn drain(&mut self, ctx: DrainContext<'_>) {
+        let DrainContext {
+            mindmap_tree,
+            app_scene,
+            renderer,
+            ..
+        } = ctx;
+
+        let pending_delta = self.pending.take_delta();
+        if let Some(tree) = mindmap_tree.as_mut() {
+            let (new_position, new_size) = self.resolve(self.pending.total_delta());
+            let canvas_pos = Vec2::new(new_position.x as f32, new_position.y as f32);
+            let canvas_size = Vec2::new(new_size.width as f32, new_size.height as f32);
+            // Per-frame *incremental* position delta — the
+            // section children store absolute canvas coords and
+            // need to track the container's per-frame movement.
+            // For pure E/S/SE drags `axis_factors == (>=0, >=0)`
+            // and the cumulative position stays at `start_position`,
+            // so this delta is `(0, 0)` and sections don't shift.
+            let (fx, fy) = self.side.axis_factors();
+            let pending_pos_delta = Vec2::new(
+                if fx == -1 { pending_delta.x } else { 0.0 },
+                if fy == -1 { pending_delta.y } else { 0.0 },
+            );
+            apply_node_resize_to_tree(
+                tree,
+                &self.node_id,
+                canvas_pos,
+                canvas_size,
+                pending_pos_delta,
+            );
+            renderer.rebuild_buffers_from_tree(&tree.tree);
+            let elements = build_node_resize_handles(&self.node_id, canvas_pos, canvas_size);
+            update_node_resize_handle_tree_from_slice(&elements, app_scene);
+            flush_canvas_scene_buffers(app_scene, renderer);
+        }
+    }
+}
+
+impl ThrottledDragInteraction for NodeResizeInteraction {
     /// Release-commit body, renderer-free. See [`super::release`].
     ///
     /// Writes the resolved `(position, size)` through
@@ -88,14 +134,14 @@ impl NodeResizeInteraction {
     /// Single-source for both the left-release and right-release
     /// finalization paths — pre-fix, the two arms held byte-near
     /// duplicates of this body. CODE_CONVENTIONS §5.
-    pub(in crate::application::app) fn commit_on_release_core(
+    fn commit_on_release_core(
         &mut self,
         c: ReleaseCommit<'_>,
     ) -> ReleaseRefresh {
         let Some(doc) = c.document.as_mut() else {
             return ReleaseRefresh::None;
         };
-        let (new_position, new_size) = self.resolve(self.total_delta);
+        let (new_position, new_size) = self.resolve(self.pending.total_delta());
         match doc.set_node_aabb(&self.node_id, new_position, new_size) {
             Ok(true) => {}
             Ok(false) => {
@@ -116,54 +162,11 @@ impl NodeResizeInteraction {
         c.scene_cache.clear();
         ReleaseRefresh::All
     }
-}
 
-impl ThrottledInteraction for NodeResizeInteraction {
-    fn has_pending(&self) -> bool {
-        self.pending_delta != Vec2::ZERO
-    }
-
-    fn throttle(&mut self) -> &mut MutationFrequencyThrottle {
-        &mut self.throttle
-    }
-
-    fn drain(&mut self, ctx: DrainContext<'_>) {
-        let DrainContext {
-            mindmap_tree,
-            app_scene,
-            renderer,
-            ..
-        } = ctx;
-
-        if let Some(tree) = mindmap_tree.as_mut() {
-            let (new_position, new_size) = self.resolve(self.total_delta);
-            let canvas_pos = Vec2::new(new_position.x as f32, new_position.y as f32);
-            let canvas_size = Vec2::new(new_size.width as f32, new_size.height as f32);
-            // Per-frame *incremental* position delta — the
-            // section children store absolute canvas coords and
-            // need to track the container's per-frame movement.
-            // For pure E/S/SE drags `axis_factors == (>=0, >=0)`
-            // and the cumulative position stays at `start_position`,
-            // so this delta is `(0, 0)` and sections don't shift.
-            let (fx, fy) = self.side.axis_factors();
-            let pending_pos_delta = Vec2::new(
-                if fx == -1 { self.pending_delta.x } else { 0.0 },
-                if fy == -1 { self.pending_delta.y } else { 0.0 },
-            );
-            apply_node_resize_to_tree(
-                tree,
-                &self.node_id,
-                canvas_pos,
-                canvas_size,
-                pending_pos_delta,
-            );
-            renderer.rebuild_buffers_from_tree(&tree.tree);
-            let elements = build_node_resize_handles(&self.node_id, canvas_pos, canvas_size);
-            update_node_resize_handle_tree_from_slice(&elements, app_scene);
-            flush_canvas_scene_buffers(app_scene, renderer);
-        }
-
-        self.pending_delta = Vec2::ZERO;
+    /// Right-button fast-resize gestures are finalized by the
+    /// right-button release; left-button handle drags are not.
+    fn started_with_right(&self) -> bool {
+        self.started_with_right
     }
 }
 
@@ -171,7 +174,7 @@ impl ThrottledInteraction for NodeResizeInteraction {
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, trait_default_tests_for_throttled_interaction,
+        drive_throttle_over_budget, moved, trait_default_tests_for_throttled_interaction,
     };
 
     fn fixture(side: ResizeHandleSide) -> NodeResizeInteraction {
@@ -197,8 +200,8 @@ mod tests {
         assert_eq!(i.side, ResizeHandleSide::SE);
         assert_eq!(i.start_position.x, 100.0);
         assert_eq!(i.start_size.width, 200.0);
-        assert_eq!(i.pending_delta, Vec2::ZERO);
-        assert_eq!(i.total_delta, Vec2::ZERO);
+        assert_eq!(i.pending.pending_delta(), Vec2::ZERO);
+        assert_eq!(i.pending.total_delta(), Vec2::ZERO);
     }
 
     #[test]
@@ -263,38 +266,36 @@ mod tests {
         assert_eq!(size.height, 80.0);
     }
 
+    /// Delta-accumulate discipline — see the `MovingNode`
+    /// counterpart for why the wiring is worth its own test.
     #[test]
-    fn test_has_pending_false_for_zero_delta() {
-        let i = fixture(ResizeHandleSide::SE);
-        assert!(!i.has_pending());
-    }
-
-    #[test]
-    fn test_has_pending_true_for_nonzero_delta() {
+    fn test_pending_uses_the_delta_accumulate_discipline() {
         let mut i = fixture(ResizeHandleSide::SE);
-        i.pending_delta = Vec2::new(1.0, 0.0);
+        assert!(!i.has_pending());
+        i.accumulate(moved(1.0, 0.0));
         assert!(i.has_pending());
+        assert_eq!(i.pending.total_delta(), Vec2::new(1.0, 0.0));
+        assert_eq!(i.pending.peek_cursor(), None);
     }
 
     #[test]
     fn test_reset_resets_only_throttle() {
         let mut i = fixture(ResizeHandleSide::SE);
-        i.pending_delta = Vec2::new(11.0, 13.0);
-        i.total_delta = Vec2::new(17.0, 19.0);
-        drive_throttle_over_budget(&mut i.throttle);
-        assert!(i.throttle.current_n() > 1);
+        i.accumulate(moved(11.0, 13.0));
+        drive_throttle_over_budget(&mut i.pending.throttle);
+        assert!(i.pending.throttle.current_n() > 1);
 
         i.reset();
 
-        assert_eq!(i.throttle.current_n(), 1);
-        assert_eq!(i.pending_delta, Vec2::new(11.0, 13.0));
-        assert_eq!(i.total_delta, Vec2::new(17.0, 19.0));
+        assert_eq!(i.pending.throttle.current_n(), 1);
+        assert_eq!(i.pending.pending_delta(), Vec2::new(11.0, 13.0));
+        assert_eq!(i.pending.total_delta(), Vec2::new(11.0, 13.0));
     }
 
     trait_default_tests_for_throttled_interaction! {
         build = || fixture(ResizeHandleSide::SE),
         set_pending = |i: &mut NodeResizeInteraction| {
-            i.pending_delta = Vec2::new(1.0, 0.0);
+            i.accumulate(moved(1.0, 0.0));
         },
     }
 
@@ -306,6 +307,9 @@ mod tests {
     fn left_handle_drag_marks_started_with_right_false() {
         let i = fixture(ResizeHandleSide::SE);
         assert!(!i.started_with_right);
+        // ...and the trait predicate the right-release path reads
+        // agrees with the field.
+        assert!(!ThrottledDragInteraction::started_with_right(&i));
     }
 
     #[test]
@@ -318,5 +322,6 @@ mod tests {
             true,
         );
         assert!(i.started_with_right);
+        assert!(ThrottledDragInteraction::started_with_right(&i));
     }
 }

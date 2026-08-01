@@ -638,8 +638,7 @@ impl InitState {
             // pins the loop in `ControlFlow::Poll`. Two boolean
             // writes, no GPU work; bypass the throttle and clear
             // immediately.
-            picker_hover.dirty = false;
-            picker_hover.canvas_dirty = false;
+            picker_hover.clear_pending();
         }
 
         if let DragState::SelectingRect {

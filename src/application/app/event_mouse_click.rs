@@ -14,7 +14,6 @@ use super::console_input::save_console_history;
 use super::input_context::InputHandlerContext;
 use super::modal_editor::commit_modal_editors_on_release;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
-use super::throttled_interaction::ThrottledDrag;
 use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{rect_select, SelectionState};
@@ -479,34 +478,10 @@ pub(super) fn handle_mouse_input(
                     // drains left stale samples, then run the
                     // canvas decree the commit hands back. The
                     // gesture-specific half lives in each
-                    // interaction's `commit_on_release_core`.
-                    DragState::Throttled(ThrottledDrag::MovingNode(mut i)) => {
-                        let refresh = i.commit_on_release_core(ctx.release_commit());
-                        refresh.execute(ctx.drain_context());
-                    }
-                    DragState::Throttled(ThrottledDrag::MovingSection(mut i)) => {
-                        let refresh = i.commit_on_release_core(ctx.release_commit());
-                        refresh.execute(ctx.drain_context());
-                    }
-                    DragState::Throttled(ThrottledDrag::NodeResize(mut i)) => {
-                        let refresh = i.commit_on_release_core(ctx.release_commit());
-                        refresh.execute(ctx.drain_context());
-                    }
-                    DragState::Throttled(ThrottledDrag::SectionResize(mut i)) => {
-                        let refresh = i.commit_on_release_core(ctx.release_commit());
-                        refresh.execute(ctx.drain_context());
-                    }
-                    DragState::Throttled(ThrottledDrag::EdgeHandle(mut i)) => {
-                        let refresh = i.commit_on_release_core(ctx.release_commit());
-                        refresh.execute(ctx.drain_context());
-                    }
-                    DragState::Throttled(ThrottledDrag::PortalLabel(mut i)) => {
-                        let refresh = i.commit_on_release_core(ctx.release_commit());
-                        refresh.execute(ctx.drain_context());
-                    }
-                    DragState::Throttled(ThrottledDrag::EdgeLabel(mut i)) => {
-                        let refresh = i.commit_on_release_core(ctx.release_commit());
-                        refresh.execute(ctx.drain_context());
+                    // interaction's `commit_on_release_core`, so an
+                    // eighth variant does not grow this ladder.
+                    DragState::Throttled(mut drag) => {
+                        drag.as_dyn_mut().commit_on_release(ctx.drain_context());
                     }
                     DragState::SelectingRect {
                         start_canvas,
@@ -664,35 +639,27 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
                     let _ = super::dispatch::dispatch_action(a, ctx, None);
                 }
             }
-            // Threshold-cross promoted `PendingRight` to one of
-            // the resize Throttled variants — finalize via the
-            // shared helpers. Gate on `started_with_right` so an
-            // accidental right-click during a left-button-driven
-            // handle drag doesn't terminate the resize: the
-            // left-button release is the rightful finalizer.
-            DragState::Throttled(ThrottledDrag::NodeResize(mut i)) if i.started_with_right => {
-                let refresh = i.commit_on_release_core(ctx.release_commit());
-                refresh.execute(ctx.drain_context());
-            }
-            DragState::Throttled(ThrottledDrag::SectionResize(mut i)) if i.started_with_right => {
-                let refresh = i.commit_on_release_core(ctx.release_commit());
-                refresh.execute(ctx.drain_context());
-            }
-            // Left-button-driven Throttled resize that survived
-            // a stray right-release — restore the state and let
-            // the eventual left-button release finalize it.
-            other @ DragState::Throttled(ThrottledDrag::NodeResize(_))
-            | other @ DragState::Throttled(ThrottledDrag::SectionResize(_)) => {
-                log::debug!(
-                    "right-release on left-button resize ignored; left-button release \
-                     will finalize"
-                );
-                *ctx.drag_state = other;
+            // Threshold-cross promoted `PendingRight` to a
+            // Throttled variant — finalize through the same
+            // `commit_on_release` the left-button release runs.
+            // Gated on `started_with_right` so an accidental
+            // right-click during a left-button-driven drag doesn't
+            // terminate it: the left-button release is the rightful
+            // finalizer, and the state goes back untouched.
+            DragState::Throttled(mut drag) => {
+                if drag.as_dyn().started_with_right() {
+                    drag.as_dyn_mut().commit_on_release(ctx.drain_context());
+                } else {
+                    log::debug!(
+                        "right-release on a left-button drag ignored; the left-button \
+                         release will finalize"
+                    );
+                    *ctx.drag_state = DragState::Throttled(drag);
+                }
             }
             // Any other state on right-release: put it back. Right-
-            // button release shouldn't terminate a left-button
-            // drag, a panning gesture, a rubber-band selection,
-            // or any of the non-resize Throttled variants.
+            // button release shouldn't terminate a panning gesture
+            // or a rubber-band selection either.
             other => {
                 *ctx.drag_state = other;
             }

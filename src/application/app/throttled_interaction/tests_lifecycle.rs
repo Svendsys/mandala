@@ -47,7 +47,9 @@ use crate::application::document::{
     apply_drag_delta, EdgeRef, MindMapDocument,
 };
 
+use super::pending::DragInput;
 use super::release::{ReleaseCommit, ReleaseRefresh};
+use super::ThrottledDragInteraction;
 
 /// One scripted lifecycle step.
 #[derive(Debug, Clone, Copy)]
@@ -169,21 +171,16 @@ fn seed_connection() -> CachedConnection {
 /// Drive `script` against one gesture, rendering one trace line per
 /// step.
 ///
-/// The five hooks are the whole per-variant surface: how a cursor
-/// sample folds in, what a drain does that the release can observe,
-/// what the release commits, and how the pending state and the
-/// gesture's own model value render. Everything else — step
-/// ordering, the trace shape, the undo and cache columns — is
-/// shared, so a divergence between two variants is a divergence in
-/// the gesture, not in the harness.
-#[allow(clippy::too_many_arguments)]
-fn drive<I>(
+/// `Move` and `Release` go through the trait — one call each, the
+/// same two the event files make. The remaining hooks are what the
+/// harness cannot get from the trait: a renderer-free stand-in for
+/// the drain, and how this gesture's pending state and model value
+/// render.
+fn drive<I: ThrottledDragInteraction>(
     world: &mut World,
     interaction: &mut I,
     script: &[Step],
-    accumulate: impl Fn(&mut I, Vec2, Vec2),
     drain: impl Fn(&mut I, &mut World),
-    release: impl Fn(&mut I, &mut World) -> ReleaseRefresh,
     pending: impl Fn(&I) -> String,
     model: impl Fn(&World) -> String,
 ) -> Vec<String> {
@@ -191,14 +188,14 @@ fn drive<I>(
     for step in script {
         let refresh = match *step {
             Step::Move { delta, cursor } => {
-                accumulate(interaction, delta, cursor);
+                interaction.accumulate(DragInput { delta, cursor });
                 None
             }
             Step::Drain => {
                 drain(interaction, world);
                 None
             }
-            Step::Release => Some(release(interaction, world)),
+            Step::Release => Some(interaction.commit_on_release_core(world.commit())),
         };
         let pending = pending(interaction);
         let model = model(world);
@@ -307,20 +304,22 @@ mod moving_node {
             &mut world,
             &mut i,
             script,
-            |i, delta, _cursor| {
-                i.total_delta += delta;
-                i.pending_delta += delta;
-            },
             |i, w| {
                 if let Some(tree) = w.mindmap_tree.as_mut() {
                     for nid in &i.node_ids {
-                        apply_drag_delta(tree, nid, i.pending_delta.x, i.pending_delta.y, !i.individual);
+                        let d = i.pending.pending_delta();
+                        apply_drag_delta(tree, nid, d.x, d.y, !i.individual);
                     }
                 }
-                i.pending_delta = Vec2::ZERO;
+                i.pending.take_delta();
             },
-            |i, w| i.commit_on_release_core(w.commit()),
-            |i| format!("pend={} total={}", v2(i.pending_delta), v2(i.total_delta)),
+            |i| {
+                format!(
+                    "pend={} total={}",
+                    v2(i.pending.pending_delta()),
+                    v2(i.pending.total_delta())
+                )
+            },
             |w| model(w, base),
         )
     }
@@ -389,15 +388,16 @@ mod moving_node {
                 &mut world,
                 &mut i,
                 &[mv(10.0, 5.0, 10.0, 5.0), Step::Release],
-                |i, delta, _cursor| {
-                    i.total_delta += delta;
-                    i.pending_delta += delta;
-                },
                 |i, _w| {
-                    i.pending_delta = Vec2::ZERO;
+                    i.pending.take_delta();
                 },
-                |i, w| i.commit_on_release_core(w.commit()),
-                |i| format!("pend={} total={}", v2(i.pending_delta), v2(i.total_delta)),
+                    |i| {
+                format!(
+                    "pend={} total={}",
+                    v2(i.pending.pending_delta()),
+                    v2(i.pending.total_delta())
+                )
+            },
                 |w| model(w, base),
             ),
             vec![
@@ -421,15 +421,16 @@ mod moving_node {
                 &mut world,
                 &mut i,
                 &[mv(10.0, 5.0, 10.0, 5.0), Step::Release],
-                |i, delta, _cursor| {
-                    i.total_delta += delta;
-                    i.pending_delta += delta;
-                },
                 |i, _w| {
-                    i.pending_delta = Vec2::ZERO;
+                    i.pending.take_delta();
                 },
-                |i, w| i.commit_on_release_core(w.commit()),
-                |i| format!("pend={} total={}", v2(i.pending_delta), v2(i.total_delta)),
+                    |i| {
+                format!(
+                    "pend={} total={}",
+                    v2(i.pending.pending_delta()),
+                    v2(i.pending.total_delta())
+                )
+            },
                 |w| model(w, base),
             ),
             vec![
@@ -499,15 +500,16 @@ mod section_gestures {
             &mut world,
             &mut i,
             script,
-            |i, delta, _cursor| {
-                i.total_delta += delta;
-                i.pending_delta += delta;
-            },
             |i, _w| {
-                i.pending_delta = Vec2::ZERO;
+                i.pending.take_delta();
             },
-            |i, w| i.commit_on_release_core(w.commit()),
-            |i| format!("pend={} total={}", v2(i.pending_delta), v2(i.total_delta)),
+            |i| {
+                format!(
+                    "pend={} total={}",
+                    v2(i.pending.pending_delta()),
+                    v2(i.pending.total_delta())
+                )
+            },
             move |w| section_model(w, &trace_id),
         )
     }
@@ -578,15 +580,16 @@ mod section_gestures {
             &mut world,
             &mut i,
             script,
-            |i, delta, _cursor| {
-                i.total_delta += delta;
-                i.pending_delta += delta;
-            },
             |i, _w| {
-                i.pending_delta = Vec2::ZERO;
+                i.pending.take_delta();
             },
-            |i, w| i.commit_on_release_core(w.commit()),
-            |i| format!("pend={} total={}", v2(i.pending_delta), v2(i.total_delta)),
+            |i| {
+                format!(
+                    "pend={} total={}",
+                    v2(i.pending.pending_delta()),
+                    v2(i.pending.total_delta())
+                )
+            },
             move |w| section_model(w, &trace_id),
         )
     }
@@ -681,15 +684,16 @@ mod node_resize {
             &mut world,
             &mut i,
             script,
-            |i, delta, _cursor| {
-                i.total_delta += delta;
-                i.pending_delta += delta;
-            },
             |i, _w| {
-                i.pending_delta = Vec2::ZERO;
+                i.pending.take_delta();
             },
-            |i, w| i.commit_on_release_core(w.commit()),
-            |i| format!("pend={} total={}", v2(i.pending_delta), v2(i.total_delta)),
+            |i| {
+                format!(
+                    "pend={} total={}",
+                    v2(i.pending.pending_delta()),
+                    v2(i.pending.total_delta())
+                )
+            },
             |w| node_model(w),
         )
     }
@@ -806,10 +810,6 @@ mod edge_handle {
             &mut world,
             &mut i,
             script,
-            |i, delta, _cursor| {
-                i.total_delta += delta;
-                i.pending_delta += delta;
-            },
             |i, w| {
                 if let Some(doc) = w.document.as_mut() {
                     i.handle = apply_edge_handle_drag(
@@ -817,13 +817,18 @@ mod edge_handle {
                         &i.edge_ref,
                         i.handle,
                         i.start_handle_pos,
-                        i.total_delta,
+                        i.pending.total_delta(),
                     );
                 }
-                i.pending_delta = Vec2::ZERO;
+                i.pending.take_delta();
             },
-            |i, w| i.commit_on_release_core(w.commit()),
-            |i| format!("pend={} total={}", v2(i.pending_delta), v2(i.total_delta)),
+            |i| {
+                format!(
+                    "pend={} total={}",
+                    v2(i.pending.pending_delta()),
+                    v2(i.pending.total_delta())
+                )
+            },
             |w| cp_model(w),
         )
     }
@@ -929,16 +934,12 @@ mod portal_label {
             &mut world,
             &mut i,
             script,
-            |i, _delta, cursor| {
-                i.pending_cursor = Some(cursor);
-            },
             |i, w| {
-                if let (Some(doc), Some(cursor)) = (w.document.as_mut(), i.pending_cursor.take()) {
+                if let (Some(doc), Some(cursor)) = (w.document.as_mut(), i.pending.take_cursor()) {
                     apply_portal_label_drag(doc, &i.edge_ref, &i.endpoint_node_id, cursor);
                 }
             },
-            |i, w| i.commit_on_release_core(w.commit()),
-            |i| format!("cursor={}", opt_v2(i.pending_cursor)),
+            |i| format!("cursor={}", opt_v2(i.pending.peek_cursor())),
             |w| portal_model(w),
         )
     }
@@ -1020,16 +1021,12 @@ mod edge_label {
             &mut world,
             &mut i,
             script,
-            |i, _delta, cursor| {
-                i.pending_cursor = Some(cursor);
-            },
             |i, w| {
-                if let (Some(doc), Some(cursor)) = (w.document.as_mut(), i.pending_cursor.take()) {
+                if let (Some(doc), Some(cursor)) = (w.document.as_mut(), i.pending.take_cursor()) {
                     apply_edge_label_drag(doc, &i.edge_ref, cursor);
                 }
             },
-            |i, w| i.commit_on_release_core(w.commit()),
-            |i| format!("cursor={}", opt_v2(i.pending_cursor)),
+            |i| format!("cursor={}", opt_v2(i.pending.peek_cursor())),
             |w| label_model(w),
         )
     }

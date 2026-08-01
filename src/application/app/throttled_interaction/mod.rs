@@ -1,10 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Unified shell for continuous, high-frequency-input-driven
-//! mutations. `ThrottledInteraction::drive` packages the
-//! has-pending → should-drain → record-duration dance so each
-//! consumer supplies only `has_pending`, `throttle`, `drain`, and
-//! (optionally) `reset`.
+//! mutations, covering the whole lifecycle of one:
+//!
+//! 1. **Accumulate** — [`ThrottledDragInteraction::accumulate`]
+//!    folds a cursor sample into the gesture's pending state, per
+//!    the discipline its [`ThrottledPending`] was built with.
+//! 2. **Drain** — [`ThrottledInteraction::drive`] packages the
+//!    has-pending → should-drain → record-duration dance around the
+//!    per-gesture `drain` body.
+//! 3. **Commit on release** —
+//!    [`ThrottledDragInteraction::commit_on_release`] flushes what
+//!    the throttle left pending, writes the model with its undo
+//!    entry, and runs the canvas decree its renderer-free core hands
+//!    back (see [`release`]).
+//!
+//! An implementor supplies four things: the accessor pair for its
+//! [`ThrottledPending`], a `drain` body, and — if it is a drag — a
+//! `commit_on_release` body. `has_pending`, `throttle`, `accumulate`
+//! and the whole drive shell follow. Adding a new throttled drag is
+//! one struct, one trait impl and one [`ThrottledDrag`] variant;
+//! neither event-file dispatcher grows.
 //!
 //! Scope: drags and hover effects that fire a flood of cursor
 //! events. One-shots and self-gated paths stay on their existing
@@ -32,6 +48,7 @@ pub(in crate::application::app) mod edge_label;
 pub(in crate::application::app) mod moving_node;
 pub(in crate::application::app) mod moving_section;
 pub(in crate::application::app) mod node_resize;
+pub(in crate::application::app) mod pending;
 pub(in crate::application::app) mod portal_label;
 pub(in crate::application::app) mod release;
 pub(in crate::application::app) mod section_resize;
@@ -46,8 +63,10 @@ pub(in crate::application::app) use edge_label::EdgeLabelInteraction;
 pub(in crate::application::app) use moving_node::MovingNodeInteraction;
 pub(in crate::application::app) use moving_section::MovingSectionInteraction;
 pub(in crate::application::app) use node_resize::NodeResizeInteraction;
+pub(in crate::application::app) use pending::{DragInput, ThrottledPending};
+
 pub(in crate::application::app) use portal_label::PortalLabelInteraction;
-pub(in crate::application::app) use release::ReleaseCommit;
+pub(in crate::application::app) use release::{ReleaseCommit, ReleaseRefresh};
 pub(in crate::application::app) use section_resize::SectionResizeInteraction;
 
 /// Mutable references into the persistent app state every drain
@@ -74,6 +93,19 @@ pub(in crate::application::app) struct DrainContext<'a> {
     pub interaction_mode: &'a super::InteractionMode,
 }
 
+impl DrainContext<'_> {
+    /// The renderer-free slice a release commit body works against.
+    /// Reborrows, so the caller keeps the full context for the
+    /// decree that follows.
+    pub(in crate::application::app) fn release_commit(&mut self) -> ReleaseCommit<'_> {
+        ReleaseCommit {
+            document: &mut *self.document,
+            mindmap_tree: &mut *self.mindmap_tree,
+            scene_cache: &mut *self.scene_cache,
+        }
+    }
+}
+
 /// The mutually-exclusive throttled drag variants. Only one can be
 /// active at any instant, which is why they live behind the same
 /// `DragState::Throttled` tag. Picker hover, which coexists with
@@ -90,11 +122,17 @@ pub(in crate::application::app) enum ThrottledDrag {
 }
 
 impl ThrottledDrag {
-    /// Widen the active variant to a trait-object borrow so the
-    /// dispatcher can call [`ThrottledInteraction::drive`] without
-    /// naming each kind. One match arm per variant; the drain
-    /// dispatcher itself stays shapeless.
-    pub(in crate::application::app) fn as_dyn_mut(&mut self) -> &mut dyn ThrottledInteraction {
+    /// Widen the active variant to a trait-object borrow so every
+    /// dispatcher — accumulate, drain, commit-on-release — can reach
+    /// it without naming the kind. One match arm per variant, and
+    /// this is the only place in the crate that has one; the three
+    /// dispatchers themselves stay shapeless.
+    ///
+    /// Widened to [`ThrottledDragInteraction`] rather than to
+    /// [`ThrottledInteraction`]: the drag trait has the other as a
+    /// supertrait, so `drive()` is reachable through it and a second
+    /// ladder is not needed.
+    pub(in crate::application::app) fn as_dyn_mut(&mut self) -> &mut dyn ThrottledDragInteraction {
         match self {
             Self::MovingNode(i) => i,
             Self::MovingSection(i) => i,
@@ -111,7 +149,7 @@ impl ThrottledDrag {
     /// without mutation; an immutable borrow lets callers ask the
     /// active variant whether the event loop should keep iterating
     /// without holding `&mut self.drag_state`.
-    pub(in crate::application::app) fn as_dyn(&self) -> &dyn ThrottledInteraction {
+    pub(in crate::application::app) fn as_dyn(&self) -> &dyn ThrottledDragInteraction {
         match self {
             Self::MovingNode(i) => i,
             Self::MovingSection(i) => i,
@@ -128,19 +166,35 @@ impl ThrottledDrag {
 /// mutation path. See the module-level docs for why this trait
 /// exists and what it replaces.
 pub(in crate::application::app) trait ThrottledInteraction {
+    /// This interaction's pending input plus the throttle that
+    /// gates its drain. The whole of the required state surface:
+    /// [`has_pending`](Self::has_pending),
+    /// [`throttle`](Self::throttle) and
+    /// [`ThrottledDragInteraction::accumulate`] are all provided
+    /// from it, so a new implementor writes the accessor pair once
+    /// instead of restating its pending discipline in three places.
+    fn pending(&self) -> &ThrottledPending;
+
+    /// `&mut` counterpart of [`Self::pending`].
+    fn pending_mut(&mut self) -> &mut ThrottledPending;
+
     /// True iff the interaction has accumulated state waiting to
     /// be applied. When false, [`drive`](Self::drive) returns
     /// without touching the throttle — consulting `should_drain()`
     /// on an idle interaction would advance the skip counter and
     /// push the first real drain out of cadence.
-    fn has_pending(&self) -> bool;
+    fn has_pending(&self) -> bool {
+        self.pending().has_pending()
+    }
 
     /// Access to this interaction's adaptive throttle. Each
     /// interaction owns its own instance; per-gesture cost
     /// profiles (a 500-node move-node delta vs a single-glyph
     /// label reposition) tune independently and do not bias each
     /// other's moving-average windows.
-    fn throttle(&mut self) -> &mut MutationFrequencyThrottle;
+    fn throttle(&mut self) -> &mut MutationFrequencyThrottle {
+        &mut self.pending_mut().throttle
+    }
 
     /// The per-component body: apply the accumulated pending state
     /// to the model and rebuild whichever scene trees the
@@ -196,62 +250,214 @@ pub(in crate::application::app) trait ThrottledInteraction {
     }
 }
 
+/// The two lifecycle phases a *drag* has and the picker-hover
+/// interaction does not: a cursor sample arriving, and a button
+/// coming up.
+///
+/// Split from [`ThrottledInteraction`] rather than folded into it so
+/// `commit_on_release` stays a required method. A default that did
+/// nothing would let a new drag variant compile with no release
+/// behavior at all — silently losing the user's gesture at mouse-up,
+/// which is the least visible way this could break.
+pub(in crate::application::app) trait ThrottledDragInteraction: ThrottledInteraction {
+    /// Fold one `CursorMoved` sample into the pending state.
+    ///
+    /// Provided, and not meant to be overridden: which half of the
+    /// sample survives is a property of the
+    /// [`ThrottledPending`] discipline the gesture chose at
+    /// construction, not of the gesture's own code.
+    fn accumulate(&mut self, input: DragInput) {
+        self.pending_mut().accumulate(input);
+    }
+
+    /// Commit the gesture at button-up, without touching the
+    /// renderer: flush whatever the throttle left pending, write the
+    /// model with its undo entry, clear the scene cache if the
+    /// per-frame drains left stale samples in it, and return the
+    /// canvas work that leaves owing.
+    ///
+    /// Required rather than the renderer-facing
+    /// [`commit_on_release`](Self::commit_on_release) so the split
+    /// holds by construction: a gesture cannot reach `&mut Renderer`
+    /// from inside its commit even if it wants to, which is what
+    /// keeps the whole release ladder testable (see [`release`]).
+    fn commit_on_release_core(&mut self, commit: ReleaseCommit<'_>) -> ReleaseRefresh;
+
+    /// The renderer-facing shell around
+    /// [`commit_on_release_core`](Self::commit_on_release_core).
+    /// Not meant to be overridden — overriding it is how a gesture
+    /// would quietly acquire a second, untested release path.
+    fn commit_on_release(&mut self, mut ctx: DrainContext<'_>) {
+        self.commit_on_release_core(ctx.release_commit()).execute(ctx);
+    }
+
+    /// True iff the right mouse button started this gesture.
+    ///
+    /// The right-button release path finalizes only gestures it
+    /// started; a stray right-click during a left-button drag must
+    /// not terminate it, because the left-button release is the
+    /// rightful finalizer. Defaults to `false` — a gesture that
+    /// cannot be started with the right button says nothing.
+    fn started_with_right(&self) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge,
+        drive_throttle_over_budget, fixture_edge, moved,
     };
     use crate::application::document::EdgeRef;
-    use baumhard::mindmap::tree_builder::EdgeHandleKind;
+    use baumhard::mindmap::model::{Position, Size};
+    use baumhard::mindmap::tree_builder::{EdgeHandleKind, ResizeHandleSide};
     use glam::Vec2;
 
-    #[test]
-    fn test_as_dyn_mut_routes_to_moving_node() {
-        let mut inner = MovingNodeInteraction::new(vec!["x".into()], false, std::collections::HashSet::new());
-        // Non-zero pending flips `has_pending` to true; if dispatch
-        // reached the wrong struct the bit wouldn't survive.
-        inner.pending_delta = Vec2::new(1.0, 0.0);
-        let mut drag = ThrottledDrag::MovingNode(inner);
-        assert!(drag.as_dyn_mut().has_pending());
+    /// One of each variant, in declaration order. Built through the
+    /// real constructors so a variant that picks the wrong pending
+    /// discipline shows up here, not in production.
+    fn every_variant() -> Vec<ThrottledDrag> {
+        vec![
+            ThrottledDrag::MovingNode(MovingNodeInteraction::new(
+                vec!["x".into()],
+                false,
+                std::collections::HashSet::new(),
+            )),
+            ThrottledDrag::MovingSection(MovingSectionInteraction::new("x".into(), 0, (0.0, 0.0))),
+            ThrottledDrag::SectionResize(SectionResizeInteraction::new(
+                "x".into(),
+                0,
+                ResizeHandleSide::SE,
+                Position { x: 0.0, y: 0.0 },
+                Size {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                false,
+            )),
+            ThrottledDrag::NodeResize(NodeResizeInteraction::new(
+                "x".into(),
+                ResizeHandleSide::SE,
+                Position { x: 0.0, y: 0.0 },
+                Size {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                false,
+            )),
+            ThrottledDrag::EdgeHandle(EdgeHandleInteraction::new(
+                EdgeRef::new("a", "b", "parent_child"),
+                EdgeHandleKind::AnchorFrom,
+                fixture_edge(),
+                Vec2::ZERO,
+            )),
+            ThrottledDrag::PortalLabel(PortalLabelInteraction::new(
+                EdgeRef::new("a", "b", "parent_child"),
+                "a".to_string(),
+                fixture_edge(),
+            )),
+            ThrottledDrag::EdgeLabel(EdgeLabelInteraction::new(
+                EdgeRef::new("a", "b", "parent_child"),
+                fixture_edge(),
+            )),
+        ]
+    }
+
+    /// Name each variant through an exhaustive `match`, so adding one
+    /// to the enum is a *build* error here. Paired with
+    /// [`test_every_variant_is_covered`], that turns "someone added a
+    /// throttled drag and forgot the fixture" from a silent coverage
+    /// hole into a red build.
+    fn variant_name(drag: &ThrottledDrag) -> &'static str {
+        match drag {
+            ThrottledDrag::MovingNode(_) => "MovingNode",
+            ThrottledDrag::MovingSection(_) => "MovingSection",
+            ThrottledDrag::SectionResize(_) => "SectionResize",
+            ThrottledDrag::NodeResize(_) => "NodeResize",
+            ThrottledDrag::EdgeHandle(_) => "EdgeHandle",
+            ThrottledDrag::PortalLabel(_) => "PortalLabel",
+            ThrottledDrag::EdgeLabel(_) => "EdgeLabel",
+        }
     }
 
     #[test]
-    fn test_as_dyn_mut_routes_to_edge_handle() {
-        let mut inner = EdgeHandleInteraction::new(
-            EdgeRef::new("a", "b", "parent_child"),
-            EdgeHandleKind::AnchorFrom,
-            fixture_edge(),
-            Vec2::ZERO,
+    fn test_every_variant_is_covered() {
+        let names: Vec<&str> = every_variant().iter().map(variant_name).collect();
+        assert_eq!(
+            names,
+            vec![
+                "MovingNode",
+                "MovingSection",
+                "SectionResize",
+                "NodeResize",
+                "EdgeHandle",
+                "PortalLabel",
+                "EdgeLabel",
+            ],
+            "every ThrottledDrag variant must appear in the shared fixture"
         );
-        inner.pending_delta = Vec2::new(0.0, 2.0);
-        let mut drag = ThrottledDrag::EdgeHandle(inner);
-        assert!(drag.as_dyn_mut().has_pending());
     }
 
+    /// The accumulate half of the lifecycle, through the same single
+    /// `as_dyn_mut()` call the cursor-move dispatcher makes.
+    ///
+    /// Every variant must go from idle to pending on one sample. A
+    /// gesture wired to the wrong pending discipline — cursor-latch
+    /// where the drain wants a summed delta, or the reverse — still
+    /// compiles and is still handed samples; it would just never
+    /// report pending, and the drag would silently do nothing. This
+    /// is the entry-point pin for that class of bug.
     #[test]
-    fn test_as_dyn_mut_routes_to_portal_label() {
-        let mut inner = PortalLabelInteraction::new(
-            EdgeRef::new("a", "b", "parent_child"),
-            "a".to_string(),
-            fixture_edge(),
-        );
-        inner.pending_cursor = Some(Vec2::new(10.0, 20.0));
-        let mut drag = ThrottledDrag::PortalLabel(inner);
-        assert!(drag.as_dyn_mut().has_pending());
+    fn test_accumulate_through_as_dyn_mut_flips_every_variant_to_pending() {
+        for mut drag in every_variant() {
+            let name = variant_name(&drag);
+            assert!(!drag.as_dyn().has_pending(), "{name} must start idle");
+            drag.as_dyn_mut().accumulate(moved(3.0, -2.0));
+            assert!(
+                drag.as_dyn().has_pending(),
+                "{name} did not accept a cursor sample through accumulate()"
+            );
+        }
     }
 
+    /// ...and the loop-continuation predicate agrees with it, for
+    /// every variant. Under `ControlFlow::Wait` a variant that
+    /// reported `false` here would park the loop with a
+    /// throttle-deferred drain still queued.
     #[test]
-    fn test_as_dyn_mut_routes_to_edge_label() {
-        let mut inner = EdgeLabelInteraction::new(EdgeRef::new("a", "b", "parent_child"), fixture_edge());
-        inner.pending_cursor = Some(Vec2::new(5.0, 5.0));
-        let mut drag = ThrottledDrag::EdgeLabel(inner);
-        assert!(drag.as_dyn_mut().has_pending());
+    fn test_needs_continuation_follows_accumulate_for_every_variant() {
+        for mut drag in every_variant() {
+            let name = variant_name(&drag);
+            assert!(!drag.as_dyn().needs_continuation(), "{name} must start idle");
+            drag.as_dyn_mut().accumulate(moved(1.0, 0.0));
+            assert!(
+                drag.as_dyn().needs_continuation(),
+                "{name} left a pending drain unreachable under ControlFlow::Wait"
+            );
+        }
+    }
+
+    /// Only the two resize gestures can be started by the right
+    /// button, and only when they were told they were. The
+    /// right-release path finalizes on this predicate alone now, so a
+    /// variant answering `true` by accident would have its gesture
+    /// terminated by a stray right-click.
+    #[test]
+    fn test_started_with_right_defaults_to_false_for_every_variant() {
+        for drag in every_variant() {
+            assert!(
+                !drag.as_dyn().started_with_right(),
+                "{} claimed a right-button origin it was not given",
+                variant_name(&drag)
+            );
+        }
     }
 
     #[test]
     fn test_as_dyn_mut_throttle_mutations_reach_underlying_struct() {
-        let inner = MovingNodeInteraction::new(vec!["x".into()], false, std::collections::HashSet::new());
+        let inner =
+            MovingNodeInteraction::new(vec!["x".into()], false, std::collections::HashSet::new());
         let mut drag = ThrottledDrag::MovingNode(inner);
         let n = drive_throttle_over_budget(drag.as_dyn_mut().throttle());
         assert!(n > 1, "expected n > 1 after over-budget work, got {}", n);
@@ -260,7 +466,7 @@ mod tests {
         let ThrottledDrag::MovingNode(real) = drag else {
             panic!("variant changed unexpectedly");
         };
-        assert_eq!(real.throttle.current_n(), n);
+        assert_eq!(real.pending.throttle.current_n(), n);
     }
 
     #[test]
@@ -268,21 +474,21 @@ mod tests {
         // The trait's default `reset` impl is "throttle().reset()" and
         // nothing else — pending / domain state must survive. Exercise
         // through a real implementor that does NOT override `reset`.
-        let mut inner = MovingNodeInteraction::new(vec!["n".into()], true, std::collections::HashSet::new());
-        inner.pending_delta = Vec2::new(3.0, 4.0);
-        inner.total_delta = Vec2::new(7.0, 0.0);
-        drive_throttle_over_budget(&mut inner.throttle);
-        assert!(inner.throttle.current_n() > 1);
+        let mut inner =
+            MovingNodeInteraction::new(vec!["n".into()], true, std::collections::HashSet::new());
+        inner.accumulate(moved(3.0, 4.0));
+        drive_throttle_over_budget(&mut inner.pending.throttle);
+        assert!(inner.pending.throttle.current_n() > 1);
 
         // Default reset from the trait.
         (&mut inner as &mut dyn ThrottledInteraction).reset();
 
-        assert_eq!(inner.throttle.current_n(), 1);
+        assert_eq!(inner.pending.throttle.current_n(), 1);
         // Pending and domain state are untouched — per the trait contract
         // they belong to the implementor and are expected to be empty
         // already or dropped with `self`.
-        assert_eq!(inner.pending_delta, Vec2::new(3.0, 4.0));
-        assert_eq!(inner.total_delta, Vec2::new(7.0, 0.0));
+        assert_eq!(inner.pending.pending_delta(), Vec2::new(3.0, 4.0));
+        assert_eq!(inner.pending.total_delta(), Vec2::new(3.0, 4.0));
         assert_eq!(inner.node_ids, vec!["n".to_string()]);
         assert!(inner.individual);
     }
@@ -294,77 +500,22 @@ mod tests {
         // enum routes via `as_dyn_mut`. If routing returned a stale or
         // wrong-variant borrow the predicate would disagree with the
         // real struct's state.
-        let mut idle = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
+        let idle =
+            MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         let mut idle_drag = ThrottledDrag::MovingNode(idle);
         assert!(
             !idle_drag.as_dyn_mut().should_perform_drain(),
             "idle interaction through dyn_mut must report no drain"
         );
 
-        idle = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
-        idle.pending_delta = Vec2::new(1.0, 0.0);
-        let mut pending_drag = ThrottledDrag::MovingNode(idle);
+        let mut pending =
+            MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
+        pending.accumulate(moved(1.0, 0.0));
+        let mut pending_drag = ThrottledDrag::MovingNode(pending);
         assert!(
             pending_drag.as_dyn_mut().should_perform_drain(),
             "pending interaction through dyn_mut must drain on fresh throttle"
         );
     }
-
-    #[test]
-    fn test_needs_continuation_matches_has_pending_idle() {
-        // The default `needs_continuation` body returns
-        // `has_pending`. An idle interaction with no pending state
-        // does not require the event loop to keep iterating —
-        // `ControlFlow::Wait` can park.
-        let inner = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
-        let drag = ThrottledDrag::MovingNode(inner);
-        assert!(!drag.as_dyn().needs_continuation());
-    }
-
-    #[test]
-    fn test_needs_continuation_matches_has_pending_with_pending_delta() {
-        // With a non-zero pending_delta the throttle may have
-        // deferred a drain; under `ControlFlow::Wait` the loop
-        // would otherwise park indefinitely until the next cursor
-        // event. `needs_continuation` forces another iteration so
-        // the deferred work flushes.
-        let mut inner = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
-        inner.pending_delta = Vec2::new(1.0, 0.0);
-        let drag = ThrottledDrag::MovingNode(inner);
-        assert!(drag.as_dyn().needs_continuation());
-    }
-
-    #[test]
-    fn test_needs_continuation_routes_through_each_variant() {
-        // Every `ThrottledDrag` variant must route
-        // `needs_continuation` to its underlying struct's
-        // `has_pending`; any mis-routing would silently leave a
-        // pending drain stuck under `Wait`.
-        use baumhard::mindmap::tree_builder::EdgeHandleKind;
-
-        let mut moving_node = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
-        moving_node.pending_delta = Vec2::new(1.0, 0.0);
-        assert!(ThrottledDrag::MovingNode(moving_node).as_dyn().needs_continuation());
-
-        let mut edge_handle = EdgeHandleInteraction::new(
-            EdgeRef::new("a", "b", "parent_child"),
-            EdgeHandleKind::AnchorFrom,
-            fixture_edge(),
-            Vec2::ZERO,
-        );
-        edge_handle.pending_delta = Vec2::new(0.0, 2.0);
-        assert!(ThrottledDrag::EdgeHandle(edge_handle).as_dyn().needs_continuation());
-
-        let mut portal_label = PortalLabelInteraction::new(
-            EdgeRef::new("a", "b", "parent_child"),
-            "a".to_string(),
-            fixture_edge(),
-        );
-        portal_label.pending_cursor = Some(Vec2::new(10.0, 20.0));
-        assert!(ThrottledDrag::PortalLabel(portal_label).as_dyn().needs_continuation());
-
-        let mut edge_label = EdgeLabelInteraction::new(EdgeRef::new("a", "b", "parent_child"), fixture_edge());
-        edge_label.pending_cursor = Some(Vec2::new(5.0, 5.0));
-        assert!(ThrottledDrag::EdgeLabel(edge_label).as_dyn().needs_continuation());
-    }
 }
+

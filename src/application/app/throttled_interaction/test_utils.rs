@@ -25,7 +25,20 @@
 use crate::application::document::defaults::default_parent_child_edge;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 use baumhard::mindmap::model::MindEdge;
+use glam::Vec2;
 use std::time::Duration;
+
+use super::pending::DragInput;
+
+/// One cursor sample whose delta and absolute cursor are the same
+/// pair of numbers. Enough for the impl-side tests, which care only
+/// that the gesture kept the half its discipline says it should.
+pub fn moved(x: f32, y: f32) -> DragInput {
+    DragInput {
+        delta: Vec2::new(x, y),
+        cursor: Vec2::new(x, y),
+    }
+}
 
 /// Push the throttle's average over-budget until `n > 1`. Returns
 /// the final drain divisor for assertion plumbing.

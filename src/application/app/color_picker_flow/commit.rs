@@ -272,7 +272,7 @@ pub(in crate::application::app) fn apply_picker_preview(
     // `picker_hover.throttle` (the same `MutationFrequencyThrottle`
     // type the drag path uses), which self-tunes to keep the
     // per-frame work under the refresh budget.
-    picker_hover.dirty = true;
+    picker_hover.mark_dirty();
     // Additionally flag the canvas dirty: `doc.color_picker_preview`
     // drives a per-edge color override that the scene builder reads
     // during emission. Only `apply_picker_preview` writes to that
@@ -281,7 +281,7 @@ pub(in crate::application::app) fn apply_picker_preview(
     // `rebuild_scene_only` during a wheel drag. Keyboard nudges,
     // however, land here even mid-drag; they must still trigger the
     // canvas rebuild so the targeted edge repaints.
-    picker_hover.canvas_dirty = true;
+    picker_hover.mark_canvas_dirty();
 }
 
 /// Commit the picker's current HSV to every colorable item in the

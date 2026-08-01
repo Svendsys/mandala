@@ -18,8 +18,9 @@ use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::{
-    EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
-    NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
+    DragInput, EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction,
+    MovingSectionInteraction, NodeResizeInteraction, PortalLabelInteraction,
+    SectionResizeInteraction, ThrottledDrag,
 };
 use super::DragState;
 use crate::application::common::RenderDecree;
@@ -141,51 +142,15 @@ pub(super) fn handle_cursor_moved(
             ctx.renderer
                 .process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
         }
-        DragState::Throttled(ThrottledDrag::MovingNode(i)) => {
-            // Per-frame mutation + rebuild happens in AboutToWait
-            // behind `ThrottledInteraction::drive`'s adaptive gate.
-            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
-            i.total_delta += delta;
-            i.pending_delta += delta;
-        }
-        DragState::Throttled(ThrottledDrag::MovingSection(i)) => {
-            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
-            i.total_delta += delta;
-            i.pending_delta += delta;
-        }
-        DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
-            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
-            i.total_delta += delta;
-            i.pending_delta += delta;
-        }
-        DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
-            i.total_delta += delta;
-            i.pending_delta += delta;
-        }
-        DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
-            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
-            i.total_delta += delta;
-            i.pending_delta += delta;
-        }
-        DragState::Throttled(ThrottledDrag::EdgeLabel(i)) => {
-            // Overwrite discipline: store the latest cursor —
-            // `EdgeLabelInteraction::drain` projects it onto the
-            // edge path at consume time, so intermediate cursors
-            // carry no information the projection needs.
-            let cursor_canvas = ctx
-                .renderer
-                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-            i.pending_cursor = Some(cursor_canvas);
-        }
-        DragState::Throttled(ThrottledDrag::PortalLabel(i)) => {
-            // Overwrite discipline, same as `EdgeLabel` —
-            // `PortalLabelInteraction::drain` snaps to the node
-            // border at consume time.
-            let cursor_canvas = ctx
-                .renderer
-                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-            i.pending_cursor = Some(cursor_canvas);
+        DragState::Throttled(drag) => {
+            // One sample, both forms; the gesture's own pending
+            // discipline decides which half survives — the five
+            // delta drags sum, the two label drags keep the last
+            // cursor and discard the rest. Per-frame mutation and
+            // rebuild happen in AboutToWait behind
+            // `ThrottledInteraction::drive`'s adaptive gate.
+            let input = drag_input(ctx.renderer, prev_pos, cursor_pos_val);
+            drag.as_dyn_mut().accumulate(input);
         }
         DragState::Pending {
             start_pos,
@@ -692,19 +657,26 @@ pub(super) fn handle_cursor_moved(
     }
 }
 
-/// Compute the canvas-space delta between two screen positions.
-/// Used by every accumulating drag arm; the camera transform
-/// (zoom + pan) lives in the renderer, so a screen → canvas
-/// conversion at both ends is the only honest way to derive a
-/// delta that survives an interleaved camera pan.
-fn canvas_delta(
+/// Project one screen-space cursor move into the canvas-space
+/// [`DragInput`] every throttled drag consumes.
+///
+/// Both ends go through `screen_to_canvas` because the camera
+/// transform (zoom + pan) lives in the renderer, and converting at
+/// both ends is the only honest way to derive a delta that survives
+/// an interleaved camera pan. The absolute half is the same
+/// projection the delta's right-hand term already needed, so the
+/// two forms cost one conversion pair between them.
+fn drag_input(
     renderer: &crate::application::renderer::Renderer,
     prev: (f64, f64),
     curr: (f64, f64),
-) -> glam::Vec2 {
+) -> DragInput {
     let prev_canvas = renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32);
-    let curr_canvas = renderer.screen_to_canvas(curr.0 as f32, curr.1 as f32);
-    curr_canvas - prev_canvas
+    let cursor = renderer.screen_to_canvas(curr.0 as f32, curr.1 as f32);
+    DragInput {
+        delta: cursor - prev_canvas,
+        cursor,
+    }
 }
 
 /// Whether the `LeftDrag`-on-empty threshold-crossing frame should

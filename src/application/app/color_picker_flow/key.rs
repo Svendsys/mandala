@@ -452,8 +452,12 @@ mod tests {
             .color_picker_preview
             .expect("nudge restamps the document's transient preview");
         assert_eq!(preview.color, baumhard::util::color::hsv_to_hex(25.0, 0.5, 0.5));
-        assert!(hover.dirty, "the per-frame drain must be flagged");
-        assert!(hover.canvas_dirty, "the canvas must repaint the previewed edge");
+        use crate::application::app::throttled_interaction::ThrottledInteraction;
+        assert!(hover.has_pending(), "the per-frame drain must be flagged");
+        assert!(
+            hover.canvas_needs_rebuild(),
+            "the canvas must repaint the previewed edge"
+        );
     }
 
     /// A keyboard nudge takes over from the pointer: the stale
@@ -498,7 +502,8 @@ mod tests {
             &mut doc,
             &mut hover
         ));
-        assert!(!hover.dirty);
+        use crate::application::app::throttled_interaction::ThrottledInteraction;
+        assert!(!hover.has_pending());
     }
 
     // ── Picker-arm decline branches ─────────────────────────────
