@@ -232,21 +232,6 @@ decision, not a drive-by edit.
   `include_bytes!` content can be tagged `App`; user-modifiable
   paths (XDG data dirs etc.) tag as `User` or below.
 
-- **One version per dependency, written once.** A crate that two or
-  more workspace members need is declared in the root manifest's
-  `[workspace.dependencies]`, and each member writes
-  `dep.workspace = true` — with `features` beside it when that member
-  needs more, since features are additive on top of the shared entry.
-  A crate only one member uses stays in that member's manifest. The
-  reason this is an invariant and not a preference: cargo raises no
-  objection when two members name the same crate at different
-  versions, it simply builds both, and the symptom is two mutually
-  incompatible copies of the same types. `strum` sat at 0.27 and 0.28
-  simultaneously until it was unified by hand.
-  `baumhard::util::manifests` enforces all three clauses of the rule
-  against the real manifests, so the next split fails a test rather
-  than shipping.
-
 ## §4 Cross-platform as first class
 
 Native desktop, browser on desktop, and browser on mobile are three
@@ -269,10 +254,11 @@ first-class deployments. The lowest-spec target sets the budget.
   a feature genuinely belongs native-only, the `cfg` guard sits at the
   module boundary and an entry appears in `CLAUDE.md`'s "Dual-target
   status" section naming the reason. "I'll add WASM later" is not a
-  contract this repo recognizes. `./test.sh`'s WASM type-check gate,
-  `./build.sh` (which always builds both legs), and CI
-  (`.github/workflows/test.yml`) enforce
-  this.
+  contract this repo recognizes. What enforces it: `./test.sh`'s WASM
+  gate, which is `cargo check --target wasm32-unknown-unknown
+  --workspace` and is the check to reach for while iterating;
+  `./build.sh`, which always builds both legs in full; and CI
+  (`.github/workflows/test.yml`), which runs `./test.sh`.
 
 ## §5 Canonical or exemplary
 
@@ -432,9 +418,51 @@ Workspace-level commitment:
 ## §12 Commit hygiene
 
 - **Tests land in the commit that introduces the code they test.**
-- **`./test.sh` is green before committing.** `./test.sh --lint` is advisory; review it. `./test.sh --bench` for performance-conscious
-  Baumhard commits.
+- **`./test.sh` is green before committing.** It also type-checks the
+  benchmark targets and the wasm32 leg, so neither can rot between
+  merges. `./test.sh --lint` is advisory; review it.
 - **`./build.sh` is green for cross-platform changes.** Anything
   outside an explicit `cfg` guard must build for
   `wasm32-unknown-unknown` before commit.
 - **Commit messages explain *why*, not what the diff shows.**
+- **Benchmarks are for maintainers.** `AGENTS.md` forbids automated
+  agents from running `cargo bench`, `./bench.sh` or
+  `./test.sh --bench`, and forbids performance claims made without the
+  main-against-main control row
+  [`lib/baumhard/CONVENTIONS.md §B7`](./lib/baumhard/CONVENTIONS.md)
+  requires. Changing benchmark code is still expected — §B3 wants a
+  bench entry alongside a new primitive — and `./test.sh` proves those
+  targets compile.
+
+## §13 Cargo manifests
+
+Mechanical repo rules about where a line goes in a `Cargo.toml`.
+Unlike §3, obeying these *is* a drive-by edit — it is what you do
+while adding a dependency, not a decision to weigh.
+
+- **One version per dependency, written once.** A crate that two or
+  more workspace members need is declared in the root manifest's
+  `[workspace.dependencies]`, and each member writes
+  `dep.workspace = true` — with `features` beside it when that member
+  needs more, since features are additive on top of the shared entry.
+  A crate only one member uses stays in that member's manifest. The
+  reason this is a rule and not a preference: cargo raises no
+  objection when two members name the same crate at different
+  versions, it simply builds both, and the symptom is two mutually
+  incompatible copies of the same types. `strum` sat at 0.27 and 0.28
+  simultaneously until it was unified by hand.
+  `baumhard::util::manifests` reads the real manifests and checks all
+  three clauses, in every dependency spelling cargo accepts — inline,
+  `[dependencies.<name>]` sub-table, wrapped across lines, renamed via
+  `package =`. A shape it cannot read stops the run rather than
+  dropping out of the checked set, which is the property that makes
+  the check worth citing.
+- **A dependency that exists to turn a feature on says so.** Cargo
+  unions features across the workspace, so a manifest entry with no
+  call site can still be load-bearing — the root manifest's
+  `getrandom` is the live example. Comment it, or the next
+  dead-dependency sweep deletes it.
+- **Say what a per-target table buys.** A dependency moved under
+  `[target.'cfg(...)'.dependencies]` changes the feature union on the
+  *other* target too. Note the consequence where the move is made; see
+  `env_logger` in `lib/baumhard/Cargo.toml`.
