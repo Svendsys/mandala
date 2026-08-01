@@ -278,30 +278,25 @@ pub(in crate::application::app) trait ThrottledDragInteraction:
     /// per-frame drains left stale samples in it, and return the
     /// canvas work that leaves owing.
     ///
-    /// Required rather than the renderer-facing
-    /// [`commit_on_release`](Self::commit_on_release), which is what
-    /// keeps the release ladder testable (see [`release`]).
+    /// This is the *only* release entry point on the trait, which is
+    /// what keeps the release ladder testable (see [`release`]):
+    /// [`ReleaseCommit`] carries no renderer, so a commit body has
+    /// nothing to reach it with. The one thing on the release path
+    /// still holding `&mut Renderer` is
+    /// [`ReleaseRefresh::execute`], which lives on the decree and
+    /// not on a gesture at all.
     ///
-    /// What that buys is precise, and less than "by construction":
-    /// *requiring* the core means a new variant cannot compile with
-    /// no release behavior at all, and makes the renderer-free half
-    /// the path of least resistance. It does **not** wall the
-    /// renderer off — the trait is unsealed and
-    /// [`commit_on_release`](Self::commit_on_release) is a provided
-    /// method taking a [`DrainContext`], so an implementor that
-    /// overrides it does reach `&mut Renderer` and does compile.
-    /// Not overriding it is a convention, not a guarantee.
+    /// Requiring it rather than defaulting it means a new variant
+    /// cannot compile with no release behavior at all. What is left
+    /// as convention is the *drain* half: [`drain`] and its
+    /// [`drive`](ThrottledInteraction::drive) shell take a
+    /// [`DrainContext`] because a per-frame drain genuinely
+    /// repaints, and [`accumulate`](Self::accumulate) is provided
+    /// rather than sealed. Neither is meant to write the model —
+    /// nothing enforces that.
+    ///
+    /// [`drain`]: ThrottledInteraction::drain
     fn commit_on_release_core(&mut self, commit: ReleaseCommit<'_>) -> ReleaseRefresh;
-
-    /// The renderer-facing shell around
-    /// [`commit_on_release_core`](Self::commit_on_release_core).
-    /// Not meant to be overridden — overriding it is how a gesture
-    /// would quietly acquire a second, untested release path. That
-    /// is a convention and nothing enforces it: the trait is
-    /// unsealed and this signature hands out a [`DrainContext`].
-    fn commit_on_release(&mut self, mut ctx: DrainContext<'_>) {
-        self.commit_on_release_core(ctx.release_commit()).execute(ctx);
-    }
 
     /// True iff the right mouse button started this gesture.
     ///

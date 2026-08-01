@@ -2103,15 +2103,15 @@ them. Implementors add a `drain(ctx)` body and, rarely, a `reset`.
 `ThrottledDragInteraction` adds the two phases a drag has and the
 picker-hover interaction does not: `accumulate(DragInput)`
 (provided) and `commit_on_release_core(ReleaseCommit) ->
-ReleaseRefresh` (required, with `commit_on_release` as the
-provided renderer-facing shell). The core is required rather than
-the shell so that a new variant cannot compile with no release
-behavior at all, and so the renderer-free half is the path of
-least resistance — which is what keeps the release path testable.
-The trait is unsealed and `commit_on_release` takes a
-`DrainContext`, so an implementor that overrides the shell does
-reach `&mut Renderer`; not doing so is convention, not a
-guarantee.
+ReleaseRefresh` (required). The core is required so that a new
+variant cannot compile with no release behavior at all, and it is
+the *only* release entry point on the trait — `ReleaseCommit`
+carries no renderer, so a commit body has nothing to reach one
+with. Running the decree needs `&mut Renderer` and lives on
+`ReleaseRefresh::execute`, off the gesture trait entirely. What
+stays convention is the drain half: `drain` and its `drive` shell
+take a `DrainContext` because a per-frame drain genuinely
+repaints.
 
 `ThrottledPending` (`throttled_interaction/pending.rs`) owns the
 pending half. Three disciplines cover every implementor, and each

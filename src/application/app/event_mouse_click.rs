@@ -684,10 +684,11 @@ fn finalize_or_put_back(
     mut drag: Box<ThrottledDrag>,
     ctx: &mut InputHandlerContext<'_>,
 ) {
-    // Bound rather than matched in place: the `ReleaseCommit`
-    // reborrow of `ctx` has to end before the arm reaches for
-    // `ctx.drain_context()`, and a match scrutinee's temporaries
-    // live for the whole match.
+    // Bound for readability; matching the call in place compiles
+    // just as well. The `ReleaseCommit` is moved into
+    // `commit_if_resolved` and dropped there, and the
+    // `Option<ReleaseRefresh>` that comes back is `Copy` and borrows
+    // nothing, so no borrow of `ctx` survives into the arms.
     let refresh = commit_if_resolved(released, &mut drag, ctx.release_commit());
     match refresh {
         Some(refresh) => refresh.execute(ctx.drain_context()),
