@@ -357,6 +357,35 @@ industrial cost/benefit reasoning. This is not license for speculation.
   message.** Startup is everything before the first frame: CLI parse,
   `Renderer::new`, `fonts::init`, the initial `loader::load_from_file`,
   the `?map=` parser on WASM. Bare `unwrap()` outside tests is a bug.
+- **`warn!` and `error!` survive into release; `info!`, `debug!` and
+  `trace!` do not.** Both crates build `log` with
+  `release_max_level_warn`, so the degrade half of "degrade the frame,
+  log, keep running" is real in the binaries users actually run —
+  `./build.sh`, `./run.sh`, and the WASM bundle all ship release. That
+  fixes which macro to reach for: a condition a user or a bug report
+  needs to know about is `warn!`/`error!`; developer instrumentation —
+  walker traces, per-frame counters, anything you would be unhappy to
+  see at 60 Hz — is `debug!`/`trace!`, which cost nothing in release
+  because the call is compiled out entirely. A designed, transient
+  degrade that the next frame retries (a contended `try_write`, a
+  skipped overlay reshape) is instrumentation, not a warning: log it at
+  `debug!` so a persistent condition doesn't flood stderr. The
+  compile-time cap is what makes the boundary identical on both
+  targets (§4); the runtime filters underneath it differ and are set
+  in one place, `util::log::init` — native `env_logger` defaults to
+  `warn` (`RUST_LOG` overrides; `RUST_LOG=` set-but-empty counts as
+  unset), WASM `console_log` sits at `Info`, looser than native but
+  invisible in release because the cap removes `info!` before the
+  filter ever sees it. Every binary the workspace ships calls
+  `util::log::init` — including `maptool`, which exercises the same
+  loader degrade paths.
+- **One log-message prefix idiom: `"<area>: message"`.** The area is the
+  subsystem, not the enclosing function — `"macros: ..."`,
+  `"font::attrs: ..."`, `"keybinds: ..."`, `"console history: ..."`.
+  Function names go stale under refactor and tell a user nothing; the
+  area is what they can name in a bug report. Bare messages with no
+  prefix are not acceptable. Normalize prefixes in files you are
+  already editing rather than in a repository-wide sweep.
 
 ## §10 No backwards-compatibility assumptions until V1
 

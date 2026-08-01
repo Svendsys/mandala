@@ -71,7 +71,7 @@ pub(in crate::application::app) fn apply_set_border_preview(
 
         let mut edits = BorderConfigEdits::default();
         if let Err(msg) = stage_kv(&mut edits, field, value) {
-            log::warn!("apply_set_border_preview: stage_kv error: {msg}");
+            log::warn!("border: SetBorderPreview stage_kv error: {msg}");
             return false;
         }
 

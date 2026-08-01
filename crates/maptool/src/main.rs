@@ -91,6 +91,14 @@ Commands:
                                 violations otherwise.";
 
 fn main() -> ExitCode {
+    // maptool is a shipped release binary that walks the same
+    // baumhard load/save paths the app does, so it hits the same §9
+    // degrade sites — `loader`'s duplicate-edge warn, the model's
+    // validation errors. Without an installed logger those go to
+    // `log`'s no-op default and the tool reports a clean run over a
+    // map it silently repaired.
+    baumhard::util::log::init();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
