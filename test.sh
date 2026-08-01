@@ -74,7 +74,9 @@ fi
 
 if [ "$BENCH" -eq 1 ]; then
   echo "== benches =="
-  cargo bench -p baumhard -p mandala
+  # baumhard is the only crate with a benchmark harness
+  # (TEST_CONVENTIONS §T2.3); keep this in step with ./bench.sh.
+  cargo bench -p baumhard
 fi
 
 # WASM type-check gate. Native tests can stay green while the WASM leg

@@ -26,6 +26,13 @@ name = "mandala"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+# TEST_CONVENTIONS §T2.3 as a manifest fact rather than a sentence:
+# this crate has no benchmark harness. Without this, cargo
+# auto-discovers anything dropped into `benches/` as a bench target
+# built against the *default* libtest harness, which ignores
+# `criterion_main!` and yields a binary that runs zero benchmarks
+# while looking like it runs some. That is what used to be here.
+autobenches = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -103,5 +110,11 @@ js-sys = "0.3.95"
 web-sys = { version = "0.3.95", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response"] }
 getrandom = { version = "0.4.2", features = ["wasm_js"] }
 
-[dev-dependencies]
-criterion = { version = "0.8.2", features = ["html_reports"] }
+# No `[dev-dependencies]`, and in particular no `criterion`: this
+# crate has no benchmark harness (TEST_CONVENTIONS §T2.3) and every
+# mandala-side test lives inline. `benches/` used to hold a
+# `_template.rs` that cargo auto-discovered under the *default*
+# libtest harness — which ignores `criterion_main!` — so it linked
+# criterion into the build and then ran zero benchmarks. The
+# benchmark harness is baumhard's; see
+# `lib/baumhard/benches/test_bench.rs`.

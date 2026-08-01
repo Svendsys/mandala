@@ -79,6 +79,16 @@ The `pub mod tests;` pattern is Baumhard-only. The `mandala` crate has
 no benchmark harness, so there is no reason to ever reach for it
 there — every mandala-side test lives inline.
 
+Both manifests now say this rather than only this document: `mandala`
+carries no `criterion` dev-dependency and both crates set
+`autobenches = false`, so baumhard's single declared `[[bench]]`
+target is the workspace's only one. That closes a gap this section
+used to describe inaccurately — each crate had a `benches/_template.rs`
+which cargo auto-discovered and built against the *default* libtest
+harness, where `criterion_main!` is ignored: the binaries ran zero
+benchmarks and said nothing about it. A new benchmark has to be
+declared explicitly with `harness = false` to exist at all.
+
 ## §T3 Naming
 
 - **Test functions:** `test_<topic>_<specific_case>`. Lowercase

@@ -3,6 +3,15 @@ name = "baumhard"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+# The `[[bench]]` entry at the bottom of this file is the crate's only
+# benchmark target, and this is what makes "only" true. Cargo's
+# default is to *also* auto-discover every other `.rs` under
+# `benches/` as a bench target compiled against the libtest harness —
+# which ignores `criterion_main!`, so such a file builds, links
+# criterion, runs zero benchmarks and reports success. A `_template.rs`
+# sat there doing exactly that. Turning autodiscovery off means a new
+# bench has to be declared with `harness = false` to exist at all.
+autobenches = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

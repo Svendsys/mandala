@@ -1443,7 +1443,6 @@ dependencies = [
  "arboard",
  "baumhard",
  "bytemuck",
- "criterion",
  "getrandom 0.4.2",
  "glam",
  "glyphon",
