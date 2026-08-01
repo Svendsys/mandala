@@ -225,6 +225,53 @@ pub fn rebuild_document_macros(
     rebuild_inline_macros(registry, doc);
 }
 
+/// Build the load-time macro registry: App and User tiers from the
+/// platform loaders, then the document-derived Map and Inline tiers.
+///
+/// This is the whole of what both runtimes do at startup, and both
+/// used to do it in their own copy — same loop, same counters, same
+/// `log::info!` format string. The logging shape is load-bearing:
+/// cross-target log triage compares browser-console output against
+/// desktop stderr, so a divergence in the message is a divergence in
+/// the tooling.
+///
+/// Tier precedence is App < User < Map < Inline, enforced by insert
+/// order plus the registry's last-writer-wins semantics. Higher-tier
+/// ids shadow lower-tier ones; clearing a higher tier reveals what
+/// is underneath. `format/macros.md` carries the threat model and the
+/// SOURCE-OF-TRUTH list of places that must move together when the
+/// order changes — this function is now one place rather than two.
+///
+/// `document` is `None` when no map loaded (native can start with no
+/// file); the two document-derived tiers are then simply absent.
+pub fn build_macro_registry(
+    document: Option<&crate::application::document::MindMapDocument>,
+) -> super::MacroRegistry {
+    let mut macros = super::MacroRegistry::new();
+    let mut app_count = 0usize;
+    for m in load_app_macros() {
+        macros.insert(m, SourceTier::App);
+        app_count += 1;
+    }
+    let mut user_count = 0usize;
+    for m in load_user_macros() {
+        macros.insert(m, SourceTier::User);
+        user_count += 1;
+    }
+    if app_count > 0 || user_count > 0 {
+        log::info!(
+            "loaded {} macro(s): {} app-tier, {} user-tier",
+            macros.len(),
+            app_count,
+            user_count
+        );
+    }
+    if let Some(d) = document {
+        rebuild_document_macros(&mut macros, d);
+    }
+    macros
+}
+
 // `load_user_macros` lives in the cfg-routed sibling modules
 // `platform_desktop` and `platform_web`; the platform-routed
 // `pub use` at the top of this file picks the right one for the

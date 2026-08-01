@@ -43,10 +43,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::platform::web::EventLoopExtWebSys;
 use winit::window::WindowId;
 
-use super::scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice,
-    warm_handle_tree_arenas, CanvasFrame,
-};
+use super::scene_rebuild::{rebuild_all, warm_scene_at_load};
 use super::text_edit::TextEditState;
 use super::{Application, LastClick};
 use crate::application::common::RenderDecree;
@@ -685,44 +682,17 @@ pub(super) fn run(mut app: Application) {
                     renderer.rebuild_buffers_from_tree(&mindmap_tree.tree);
                     renderer.fit_camera_to_tree(&mindmap_tree.tree);
 
-                    // Project every canvas role once so the per-edge
-                    // Bezier-sample cache is populated at load and
-                    // first interactions don't pay the full cost.
-                    // WASM init runs in Default mode — no handles emit.
-                    let init_offsets = std::collections::HashMap::new();
-                    let frame = CanvasFrame::new(
+                    // Every canvas role projected once at load plus
+                    // the handle-tree allocator warm —
+                    // `warm_scene_at_load`, the body native's init
+                    // runs too. `fit_camera_to_tree` above settled
+                    // the zoom, which that helper reads.
+                    warm_scene_at_load(
                         &doc,
-                        &init_offsets,
-                        crate::application::document::InteractionModeOverrides::none(),
-                        renderer.camera_zoom(),
+                        &mut init_app_scene,
+                        &mut renderer,
+                        &mut init_scene_cache,
                     );
-                    frame.update_connection_trees(&mut init_scene_cache, &mut init_app_scene);
-                    frame.update_border_tree(&mut init_app_scene);
-                    frame.update_portal_tree(&mut init_app_scene);
-                    frame.update_connection_label_tree(&mut init_app_scene);
-                    frame.update_section_frame_tree(&mut init_app_scene);
-                    // Register the three handle-tree canvas roles
-                    // with fresh-load (empty-slice) signatures.
-                    // First real selection still takes FullRebuild
-                    // (8-handle signature differs from empty), but
-                    // every subsequent return to "nothing selected"
-                    // hits InPlaceMutator. Mirrors the native init.
-                    frame.update_section_resize_handle_tree(&mut init_app_scene);
-                    frame.update_node_resize_handle_tree(&mut init_app_scene);
-                    // Synthetic-handle allocator warm; mirrors
-                    // native init. See `warm_handle_tree_arenas`
-                    // doc for what this does and what it doesn't.
-                    warm_handle_tree_arenas(&mut init_app_scene);
-                    // Restamp the empty-handle signatures so the
-                    // load-end canvas state matches what's on
-                    // screen. The later `rebuild_all` re-stamps
-                    // these via `rebuild_scene_only`, but we do it
-                    // here too so correctness doesn't depend on
-                    // `rebuild_all` running.
-                    update_edge_handle_tree_from_slice(&[], &mut init_app_scene);
-                    frame.update_section_resize_handle_tree(&mut init_app_scene);
-                    frame.update_node_resize_handle_tree(&mut init_app_scene);
-                    flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
                     tree_opt = Some(mindmap_tree);
                     doc_opt = Some(doc);
                 }
@@ -770,35 +740,13 @@ pub(super) fn run(mut app: Application) {
         *renderer_for_init.borrow_mut() = Some(renderer);
 
         if let Some(doc) = doc_opt {
-            // Build the macro registry — App + User tiers from the
-            // bundled JSON / `?macros=` / localStorage; Map + Inline
-            // tiers from the just-loaded document. Mirrors
-            // `run_native_init.rs:117-142` precedence and logging
-            // shape so cross-target log triage stays uniform.
-            let mut macros = crate::application::macros::MacroRegistry::new();
-            let mut app_count = 0usize;
-            for m in crate::application::macros::loader::load_app_macros() {
-                macros.insert(m, crate::application::source_tier::SourceTier::App);
-                app_count += 1;
-            }
-            let mut user_count = 0usize;
-            for m in crate::application::macros::loader::load_user_macros() {
-                macros.insert(m, crate::application::source_tier::SourceTier::User);
-                user_count += 1;
-            }
-            if app_count > 0 || user_count > 0 {
-                log::info!(
-                    "loaded {} macro(s): {} app-tier, {} user-tier",
-                    macros.len(),
-                    app_count,
-                    user_count,
-                );
-            }
-            // Document-derived tiers — Map first, then Inline. The
-            // shared `rebuild_document_macros` helper enforces the
-            // ordering so it can't drift between the native and WASM
-            // load sites.
-            crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
+            // App + User tiers from the bundled JSON / `?macros=` /
+            // localStorage, then the document-derived Map and Inline
+            // tiers. Body is `macros::loader::build_macro_registry`,
+            // which native's init calls too — including the
+            // `log::info!` shape, so cross-target log triage stays
+            // uniform.
+            let macros = crate::application::macros::loader::build_macro_registry(Some(&doc));
 
             *input_for_init.borrow_mut() = Some(WasmInputState {
                 document: doc,

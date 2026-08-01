@@ -384,6 +384,71 @@ pub(in crate::application::app) fn rebuild_camera_geometry(
     flush_canvas_scene_buffers(app_scene, renderer);
 }
 
+/// Project every canvas role once at load, and warm the handle-tree
+/// allocators.
+///
+/// Both runtimes ran this as a line-for-line copy in their init
+/// paths, differing only in local variable names. It is the one
+/// startup body where a divergence would be invisible — the map still
+/// draws either way; only the first interaction gets slower on
+/// whichever target fell behind.
+///
+/// Three things happen, in this order:
+///
+/// 1. **Project every role.** Populates the per-edge Bezier-sample
+///    cache so first interactions don't pay the full cost. Reads
+///    `renderer.camera_zoom()`, so the caller must have settled the
+///    camera (`fit_camera_to_tree`) first — otherwise connection
+///    glyphs size against the default-init zoom rather than the
+///    real one. Init runs before any interaction, so the mode is
+///    `Default` and no resize handles emit; the explicit
+///    [`InteractionModeOverrides::none`] makes the warm projection
+///    match the first post-init frame's shape.
+/// 2. **Register the handle-tree roles** with their fresh-load
+///    (empty-slice) signatures, then warm their arenas with
+///    synthetic 8-element slices. The first real selection still
+///    takes a full rebuild — its signature differs from the empty
+///    one — but the cosmic-text `BufferLine` pools and arena bumpers
+///    inside `build_handle_tree` are warm by then. Registration also
+///    lets §B2 dispatch find the roles at all; without it the first
+///    interaction would force a register-and-rebuild and the second
+///    another rebuild.
+/// 3. **Re-stamp the empty-handle signatures**, so the canvas state
+///    at load-end is the empty-handles state rather than the
+///    synthetic 8-handle one. The caller's later `rebuild_all` would
+///    also do this, but re-stamping here means correctness does not
+///    depend on that call — if a future change makes it conditional
+///    or moves it, the canvas state stays well-defined.
+///
+/// [`InteractionModeOverrides::none`]:
+///     crate::application::document::InteractionModeOverrides::none
+pub(in crate::application::app) fn warm_scene_at_load(
+    doc: &MindMapDocument,
+    app_scene: &mut crate::application::scene_host::AppScene,
+    renderer: &mut Renderer,
+    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+) {
+    let init_offsets = std::collections::HashMap::new();
+    let frame = CanvasFrame::new(
+        doc,
+        &init_offsets,
+        crate::application::document::InteractionModeOverrides::none(),
+        renderer.camera_zoom(),
+    );
+    frame.update_connection_trees(scene_cache, app_scene);
+    frame.update_border_tree(app_scene);
+    frame.update_portal_tree(app_scene);
+    frame.update_connection_label_tree(app_scene);
+    frame.update_section_frame_tree(app_scene);
+    frame.update_section_resize_handle_tree(app_scene);
+    frame.update_node_resize_handle_tree(app_scene);
+    warm_handle_tree_arenas(app_scene);
+    update_edge_handle_tree_from_slice(&[], app_scene);
+    frame.update_section_resize_handle_tree(app_scene);
+    frame.update_node_resize_handle_tree(app_scene);
+    flush_canvas_scene_buffers(app_scene, renderer);
+}
+
 // =====================================================================
 // Canvas-role projection.
 //
