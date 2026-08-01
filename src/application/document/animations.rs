@@ -225,7 +225,7 @@ impl MindMapDocument {
     ///
     /// Today the interpolation surface is whole-node `position`
     /// only — the section-aware completion still routes through
-    /// `apply_custom_mutation` which honours `target_scope:
+    /// `apply_custom_mutation` which honors `target_scope:
     /// SectionsOnly`, so the committed final state lands on the
     /// section. Per-frame interpolation of section-area
     /// `position` is the named seam this signature opens for
@@ -255,7 +255,7 @@ impl MindMapDocument {
         // projection relies on: `cm.timing` must be Some with a
         // non-zero duration, else the caller should have taken
         // the instant-mutation path.
-        if !cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+        if cm.timing.as_ref().is_none_or(|t| t.duration_ms == 0) {
             return;
         }
 
@@ -289,6 +289,17 @@ impl MindMapDocument {
         // (size-aware mutations) can't be previewed against a single
         // model node — the scratch stays at `from` and the animation
         // lerps to whatever the mutator produces at completion.
+        //
+        // `unwrap_or_default()` therefore means "no preview", not "no
+        // animation": a mutator `flat_mutations` declines — for a
+        // runtime hole, a filtering predicate, or nested payloads that
+        // disagree — still gets an instance, still holds the dedup
+        // slot for its full duration, and lerps from `from` to an
+        // identical `to`. This is the one `flat_mutations` call site
+        // where a decline produces no warning and no skip, so it is
+        // pinned by
+        // `tests_mutations::test_start_animation_with_a_declined_mutator_tweens_zero_delta`
+        // rather than left to be rediscovered.
         let mut scratch = from_node.clone();
         let flat = cm
             .mutator
@@ -479,7 +490,7 @@ impl MindMapDocument {
             // `from_node`) leaves any unrelated edit made to the node
             // during the animation intact.
             if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
-                node.position = anim.from_node.position.clone();
+                node.position = anim.from_node.position;
             }
             *tree = self.build_tree();
             self.apply_custom_mutation(&anim.cm, &anim.target_id, Some(tree));
@@ -494,7 +505,7 @@ impl MindMapDocument {
             // flag the document dirty.
             let moved = anim.to_node.position != anim.from_node.position;
             if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
-                node.position = anim.to_node.position.clone();
+                node.position = anim.to_node.position;
             }
             if moved {
                 self.undo_stack.push(UndoAction::CustomMutation {
@@ -517,8 +528,8 @@ impl MindMapDocument {
     /// suppression interval (e.g. a tree-mutating drag during
     /// which `tick_animations` was skipped). Without this the
     /// next post-suppression tick observes a wall-clock-elapsed
-    /// >= `total` and snaps the animation to its `to` state in
-    /// one frame.
+    /// value `>= total` and snaps the animation to its `to` state
+    /// in one frame.
     pub fn shift_active_animations_start_ms(&mut self, by_ms: u64) {
         if by_ms == 0 {
             return;

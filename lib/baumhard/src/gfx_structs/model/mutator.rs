@@ -164,7 +164,7 @@ impl Applicable<GlyphModel> for DeltaGlyphModel {
 ///
 /// The payload-free `GlyphModelCommandType` tag is derived from this
 /// enum, so a new command cannot ship without its tag.
-#[derive(Clone, Debug, Serialize, Deserialize, EnumDiscriminants)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, EnumDiscriminants)]
 #[strum_discriminants(name(GlyphModelCommandType))]
 #[strum_discriminants(derive(Hash, Serialize, Deserialize, EnumIter, Display))]
 #[strum_discriminants(doc = "Payload-free tag for [`GlyphModelCommand`], derived by strum.")]

@@ -82,7 +82,7 @@ pub enum Instruction {
 ///
 /// Cost: one allocation for the boxed closure dispatch per subscriber;
 /// no arena walk.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct GlyphTreeEventInstance {
     /// The kind of event being delivered.
@@ -168,7 +168,18 @@ pub enum GlyphTreeEvent {
 /// The payload-free `MutationType` tag is derived from this enum and
 /// reached through
 /// [`crate::core::primitives::Discriminated::variant`].
-#[derive(Clone, Debug, Serialize, Deserialize, EnumDiscriminants)]
+///
+/// `PartialEq` is IEEE equality over the whole payload, derived. Not
+/// `Eq`, and **not reflexive**: the numeric payloads are `f32`, so a
+/// mutation carrying a `NaN` is not equal to itself. Use
+/// [`Mutation::writes_the_same`] — not `==` — for "would these two
+/// write the same thing", which is the question
+/// [`flat_mutations`](crate::mindmap::custom_mutation::flat_mutations)
+/// asks before collapsing an AST's nested payloads into one list.
+/// `==` is still the right operator for an ordinary value
+/// comparison; it is only the *agreement* predicate that needs the
+/// reflexive form.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, EnumDiscriminants)]
 #[strum_discriminants(name(MutationType))]
 #[strum_discriminants(derive(Hash, Serialize, Deserialize))]
 #[strum_discriminants(doc = "Payload-free tag for [`Mutation`], derived by strum. Lets a")]
@@ -238,6 +249,56 @@ impl Mutation {
     /// Return a `Mutation::None` — the no-op sentinel. No allocation.
     pub fn none() -> Self {
         Mutation::None
+    }
+
+    /// Whether these two mutations would write the same thing —
+    /// the **reflexive** payload-agreement predicate, as opposed to
+    /// `==`.
+    ///
+    /// Derived `PartialEq` over `f32` is not an equivalence relation:
+    /// `NaN != NaN`, so a mutation carrying a `NaN` is not `==` to
+    /// itself. That matters because
+    /// [`flat_mutations`](crate::mindmap::custom_mutation::flat_mutations)
+    /// collapses an AST only when every payload beneath the root
+    /// agrees with the one it returns, and
+    /// [`scope::self_and_descendants`](crate::mindmap::custom_mutation::scope::self_and_descendants)
+    /// builds its AST by cloning **one** list into two `Macro` nodes
+    /// — so that comparison is a payload against itself. Under `==`
+    /// a `NaN` there declines the whole mutator while the identical
+    /// payload under
+    /// [`scope::self_only`](crate::mindmap::custom_mutation::scope::self_only)
+    /// applies: two helpers differing only in scope disagreeing on
+    /// whether the mutation runs at all.
+    ///
+    /// Two payloads agree when they are `==` **or** when they are
+    /// structurally identical. The second disjunct is what restores
+    /// reflexivity; the first is what keeps `0.0` agreeing with
+    /// `-0.0`, which "would write the same thing" requires. The
+    /// union is itself an equivalence relation: structural identity
+    /// implies equal values except for `NaN` payload bits, so a
+    /// chain through either disjunct stays consistent.
+    ///
+    /// Structural identity is taken over the derived `Debug`
+    /// rendering, which is the NaN-normalizing view of these types
+    /// that costs no hand-written traversal: `f32`'s `Debug` prints
+    /// every `NaN` as `NaN` while distinguishing `inf`, `-0.0` and
+    /// every finite value (its shortest round-tripping form is
+    /// injective). None of the types reachable from a `Mutation` has
+    /// a hand-written `Debug`, so the rendering is total — nothing is
+    /// elided, and two mutations rendering alike really are alike.
+    ///
+    /// The serialized form is **not** usable for this: `serde_json`
+    /// writes every non-finite float as `null`, so it would make a
+    /// `NaN` payload agree with an `inf` one — and `inf` *is*
+    /// reachable from a `.mindmap.json` (an out-of-range literal), so
+    /// that would be a silently-dropped payload rather than merely an
+    /// over-strict decline.
+    ///
+    /// Costs: O(1) on the common path — `==` answers, and only a
+    /// genuine disagreement or a `NaN` reaches the fallback, which
+    /// renders both operands into `String`s.
+    pub fn writes_the_same(&self, other: &Self) -> bool {
+        self == other || format!("{self:?}") == format!("{other:?}")
     }
 
     /// Returns `true` when this mutation carries actual work (i.e. is

@@ -481,7 +481,8 @@ and the imperative `DynamicMutationHandler` seam (used for
 size-aware layouts like `flower-layout` / `tree-cascade`).
 
 `target_scope` is one of `"SelfOnly"`, `"Children"`,
-`"Descendants"`, `"SelfAndDescendants"`, `"Parent"`, `"Siblings"`.
+`"Descendants"`, `"SelfAndDescendants"`, `"Parent"`, `"Siblings"`,
+`"SectionsOnly"`.
 `behavior` defaults to `"Persistent"`; `"Toggle"` reverses on
 second trigger.
 

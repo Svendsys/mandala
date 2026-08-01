@@ -84,8 +84,9 @@ Fields the shape above uses:
 - `predicate` — optional `Predicate` filter gate; defaults to none.
   See [predicate](#predicate--top-level-filter-gate) below.
 - `target_scope` — one of `SelfOnly` / `Children` / `Descendants` /
-  `SelfAndDescendants` / `Parent` / `Siblings`. Governs both what
-  nodes the mutations apply to *and* the undo-snapshot window.
+  `SelfAndDescendants` / `Parent` / `Siblings` / `SectionsOnly`.
+  Governs both what nodes the mutations apply to *and* the
+  undo-snapshot window.
 
 When the legacy shape isn't enough — a mutation that needs
 per-child positioning, runtime-computed values, or the
@@ -292,8 +293,8 @@ writes won't be reverted by `Ctrl+Z` and won't reach the saved model.
 | `Children` | Direct children of the anchor. |
 | `Descendants` | All descendants recursively (not the anchor). |
 | `SelfAndDescendants` | Anchor + all descendants. |
-| `Parent` | The anchor's parent node. |
-| `Siblings` | The anchor's siblings (excluding itself). |
+| `Parent` | The anchor's parent node. Empty on a root — the mutation is a no-op. |
+| `Siblings` | The anchor's siblings (excluding itself). **Empty on a root**: "sibling" means "shares my parent", and a root shares none, so the other roots of a multi-root map are *not* siblings. A `Siblings` mutation on a root snapshots nothing, mutates nothing, and pushes no undo entry. |
 | `SectionsOnly` | Every section of the anchor — bypasses the chrome-only container fan-out so text / font / region mutations land on the section-areas only. The anchor `MindNode` is still the snapshot window (whole-node clone covers per-section state). Use this when a mutation must avoid colliding with a sibling mind-node sharing the section's channel. |
 
 For scope-helper-generated MutatorNodes (via
@@ -301,6 +302,51 @@ For scope-helper-generated MutatorNodes (via
 matches the `target_scope` value — `scope::self_and_descendants(...)`
 pairs with `SelfAndDescendants`, etc. For hand-authored MutatorNodes,
 pick the smallest scope that covers every node the AST will touch.
+
+### Which scopes admit a tree-walking mutator
+
+The application resolves a scope to a target set and then **anchors
+the mutator at each target in turn**. So the pairing has complete
+undo coverage only when the target set is *closed* under whatever
+the mutator walks: everything a mutator anchored at a target can
+reach must itself be a target, or the undo snapshot ends up narrower
+than the write set.
+
+Only `Descendants` and `SelfAndDescendants` are closed — a
+descendant's children are still descendants. Every other scope,
+including `Children` and `Siblings`, requires a mutator that touches
+**only its anchor**: anchoring a `MapChildren`-reach mutator at each
+child reaches the *grandchildren*, and at each sibling reaches that
+sibling's children, neither of which the snapshot captured.
+
+Closure is a statement about **undo coverage, and nothing else**. It
+does not say the mutation applies once per node. Per-target
+anchoring means a mutator with a reach wider than `SelfOnly` runs
+once for *every* target that reaches a given node, so under a
+`SelfAndDescendants` scope a `Descendants`-reach mutator is anchored
+at each node of the subtree and a node at depth *k* below the anchor
+is written *k + 1* times. The snapshot still covers all of it —
+closure holds, `covers_reach` is right to approve — but a
+non-idempotent payload (a relative nudge, say) compounds. Today's
+flat-apply path collapses the AST to one list and applies it once
+per target, so nothing compounds yet; the announced walker path is
+where this becomes real.
+
+`baumhard::mindmap::custom_mutation::mutator_reach` computes the
+widest set an AST can reach and `TargetScope::covers_reach` checks
+the pairing; a mismatch is a `warn!` at apply time, not a rejection —
+the mutation still runs, but its undo coverage is incomplete. The
+`mutation inspect <id>` console verb prints the computed reach.
+
+One caveat on "still runs", because it bites precisely the pairings
+this gate rejects. The pairings that trip it — a `Children` or
+`Siblings` scope against a `MapChildren`-reach mutator, say — are by
+construction *not* flat-extractable, and the flat-apply path is the
+only path wired today. So such a mutation collects its second warning
+from `apply_to_tree` and is **skipped**: the `covers_reach` warning
+is advisory, but the non-flat decline behind it is not. "Still runs"
+is accurate for a flat-extractable AST whose declared scope is merely
+too narrow, and for those only.
 
 ## `predicate` — top-level filter gate
 
@@ -368,6 +414,60 @@ Four top-level variants:
   - `RepeatWhileAlwaysTrue` — apply children to every descendant.
   - `RepeatWhile(<Predicate>)` — apply children to every descendant
     for which the predicate holds, short-circuit once it fails.
+    Note the predicate genuinely filters: a `RepeatWhile` whose
+    predicate is the bare `{ "fields": [] }` shape (no fields,
+    `always_match` absent/false) matches **nothing**. Today's
+    flat-apply path has no predicate evaluator, so it declines any
+    `RepeatWhile` that isn't `always_match` and warns instead of
+    applying — the alternative would be landing the payload on the
+    whole scope set, the inverse of what the AST says.
+    Extraction is **all-or-nothing**: one such `RepeatWhile`
+    *anywhere* in the AST declines the whole mutator, nested just as
+    much as at the root. Honoring a root while dropping a nested
+    branch would be the worse failure of the two — the root's payload
+    would blanket every target, the nested payload would land
+    nowhere, and nothing would warn.
+
+    The same argument decides shapes with **no** unevaluatable node
+    in them. `Macro{[L1], children: [Macro{[L2]}]}` is extractable
+    top to bottom and still declines, because one flat list cannot be
+    both `L1` and `L2` — picking `L1` lands `L2` nowhere, which is the
+    identical failure by a different road. So the rule is: every
+    payload anywhere in the AST must **agree with** the one
+    extracted. `scope::self_and_descendants` satisfies it exactly
+    (its root and nested `Macro` carry two clones of the same list);
+    nesting *differing* payloads is declined, not merged.
+    Concatenating them instead would turn that helper into a
+    double-apply.
+
+    "Agree" is *would write the same thing*, which is deliberately
+    not `==` on the payload: the numeric fields are `f32`, so `==`
+    is not reflexive and a `NaN` would make the duplicated payload
+    of `scope::self_and_descendants` disagree with **itself** and
+    decline, while the same payload under `scope::self_only` — with
+    nothing to compare — applied. Two payloads agree when they are
+    `==` **or** structurally identical, so `NaN` agrees with itself
+    and `0.0` still agrees with `-0.0`. `NaN` does not agree with
+    `inf`.
+
+    Two corollaries of "every payload must agree":
+
+    - An `Instruction` wrapper carrying its own `mutation` — a
+      `Runtime` hole or an `AreaDelta` per-cell template — is
+      declined. Both are payloads the flat path provably cannot
+      evaluate. The scope helpers all set `"mutation": "None"`.
+    - A `Void` **on channel 0** is transparent, since it carries no
+      mutation of its own: an empty one cannot lose anything and does
+      not decline, while one wrapping a disagreeing payload still
+      surfaces the disagreement. Off channel 0 it declines — a
+      `Void`'s channel is branch routing (the walker aligns its
+      children only against the target child on that channel), and
+      the flat path produces one list applied to whole elements with
+      nothing to route on. All the scope helpers build on channel 0.
+      `Single` declines in every form, including
+      `"mutation": "None"`: it is a leaf whose `channel` selects the
+      target it writes, so admitting it would widen the flat path
+      into precisely the routing it cannot honor.
   - `RotateWhile(<f32>, <Predicate>)` — rotation stub (reserved).
   - `SpatialDescend(<OrderedVec2>)` — descend by AABB containment to
     the deepest node that holds the point, deliver the instruction's

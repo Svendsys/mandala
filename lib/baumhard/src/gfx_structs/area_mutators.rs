@@ -29,7 +29,7 @@ use super::zoom_visibility::ZoomVisibility;
 ///
 /// The payload-free `GlyphAreaCommandType` tag is derived from this
 /// enum, so a new command cannot ship without its tag.
-#[derive(Clone, Debug, Copy, Serialize, Deserialize, EnumDiscriminants)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, EnumDiscriminants)]
 #[strum_discriminants(name(GlyphAreaCommandType))]
 #[strum_discriminants(derive(Hash, Serialize, Deserialize, EnumIter, Display))]
 #[strum_discriminants(doc = "Payload-free tag for [`GlyphAreaCommand`], derived by strum. Keys")]

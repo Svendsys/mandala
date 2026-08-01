@@ -1628,7 +1628,7 @@ they did not author.
 
 ### Target scopes
 
-Six variants telling the dispatcher which nodes the
+Seven variants telling the dispatcher which nodes the
 mutation covers — also used as the snapshot window for undo.
 
 A mutation declares "I touch this node only" or
@@ -1640,9 +1640,27 @@ fully reverse it.
 
 Variants: `SelfOnly`, `Children`,
 `Descendants` (not the anchor), `SelfAndDescendants`, `Parent`,
-`Siblings` (the anchor's siblings, excluding itself). Scope
-helpers in `custom_mutation::scope` produce matching
-`MutatorNode` shapes for the AST walker.
+`Siblings` (the anchor's siblings, excluding itself — a root has
+none, since "sibling" means "shares my parent" and the other
+roots of a multi-root map do not), `SectionsOnly` (the anchor's
+section-areas; the anchor `MindNode` is still the snapshot
+window). Scope helpers in `custom_mutation::scope` produce
+matching `MutatorNode` shapes for the AST walker.
+
+The scope resolves to a target set and the mutator is anchored at
+**each target in turn**, so a pairing has complete undo coverage
+only when that set is closed under the mutator's reach. Only the
+two descendant scopes are; every other scope needs a mutator that
+touches its anchor alone. `TargetScope::covers_reach` encodes that
+table and `warn!`s on a mismatch — see `format/mutations.md`.
+
+Closure is about undo coverage alone, not about how often the
+payload lands. Per-target anchoring runs a wider-than-`SelfOnly`
+mutator once per ancestor target, so a `SelfAndDescendants` scope
+paired with a `Descendants` reach writes a node at depth *k*
+*k + 1* times — covered by the snapshot, but compounding for a
+non-idempotent payload. The flat-apply path applies once per
+target and so avoids this today.
 
 ### Behaviors — `Persistent` vs. `Toggle`
 

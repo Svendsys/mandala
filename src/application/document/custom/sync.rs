@@ -15,7 +15,7 @@
 //! `nodes/{mod, …}` precedent already in this directory.
 
 use baumhard::core::primitives::ColorFontRegion;
-use baumhard::font::fonts::family_name_of;
+use baumhard::font::fonts::{app_font_by_family, family_name_of};
 use baumhard::mindmap::model::TextRun;
 use baumhard::mindmap::tree_builder::MindMapTree;
 use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
@@ -537,18 +537,36 @@ impl MindMapDocument {
                     if !colors_equal {
                         return false;
                     }
-                    // Forward path: model `font: String` → tree
-                    // `region.font: Option<AppFont>`; the reverse
-                    // path uses `family_name_of`. Empty model
-                    // font and `None` AppFont collide on
-                    // "no pin", so equate them here.
-                    let region_font_name = region.font.and_then(family_name_of);
-                    let model_font_name: Option<&str> = if run.font.is_empty() {
+                    // Font comparison **forward-projects the model**,
+                    // exactly like the position / offset / size
+                    // comparisons above: run the model's family
+                    // string through `app_font_by_family` (empty →
+                    // `None`, matching the forward path in
+                    // `tree_builder/node.rs::mindnode_section_area`)
+                    // and compare the resulting `Option<AppFont>`
+                    // against what the tree actually carries.
+                    //
+                    // Comparing the tree-side font back-projected to
+                    // a *name* against the model's raw string is
+                    // asymmetric and can never succeed for a family
+                    // the font database doesn't know: the forward
+                    // path maps an unresolvable family to `None`, so
+                    // `family_name_of(None)` yields `None` while the
+                    // model still holds the authored string. Every
+                    // section then reads as divergent on every apply
+                    // — the lossy text/regions round-trip runs
+                    // needlessly and `changed` comes back `true` for
+                    // a genuine no-op, resurrecting exactly the dead
+                    // undo entries P0-02 (#2) removed. The testament
+                    // map hits this on all 252 nodes: it authors
+                    // `"LiberationSans"` while the face registers
+                    // `"Liberation Sans"`.
+                    let model_font = if run.font.is_empty() {
                         None
                     } else {
-                        Some(run.font.as_str())
+                        app_font_by_family(&run.font)
                     };
-                    region_font_name == model_font_name
+                    region.font == model_font
                 });
             // Selective gate: only run the lossy text/regions
             // round-trip when the tree side diverged. Note this is
@@ -645,7 +663,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_merges_with_prior() {
+    fn test_region_to_text_run_merges_with_prior() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
         let prior = styled_run(0, 5);
         let out = region_to_text_run(&region, Some(&prior));
@@ -660,7 +678,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_falls_back_to_defaults_without_prior() {
+    fn test_region_to_text_run_falls_back_to_defaults_without_prior() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, None);
         let out = region_to_text_run(&region, None);
         assert!(!out.bold);
@@ -673,14 +691,14 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_uses_region_color_without_prior() {
+    fn test_region_to_text_run_uses_region_color_without_prior() {
         let region = ColorFontRegion::new(Range::new(0, 3), None, Some([0.0, 1.0, 0.0, 1.0]));
         let out = region_to_text_run(&region, None);
         assert_eq!(out.color, "#00ff00");
     }
 
     #[test]
-    fn region_to_text_run_preserves_var_color_when_range_matches() {
+    fn test_region_to_text_run_preserves_var_color_when_range_matches() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
         let prior_with_var = TextRun {
             color: "var(--accent)".into(),
@@ -691,7 +709,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_loses_var_color_on_range_change() {
+    fn test_region_to_text_run_loses_var_color_on_range_change() {
         let region = ColorFontRegion::new(Range::new(0, 3), None, Some([1.0, 0.0, 0.0, 1.0]));
         let prior_with_var = TextRun {
             color: "var(--accent)".into(),
@@ -702,7 +720,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn exact_overlap_match_wins_over_partial() {
+    fn test_exact_overlap_match_wins_over_partial() {
         let r1 = run(0, 5, "#aabbcc", "");
         let r2 = run(2, 7, "#ddeeff", "");
         let priors = vec![&r1, &r2];
@@ -711,7 +729,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn dominant_overlap_wins_when_no_exact_match() {
+    fn test_dominant_overlap_wins_when_no_exact_match() {
         let small = run(0, 1, "#000000", "");
         let large = run(0, 4, "#ffffff", "");
         let priors = vec![&small, &large];
@@ -720,9 +738,69 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn no_overlap_returns_none() {
+    fn test_no_overlap_returns_none() {
         let r1 = run(0, 5, "#aabbcc", "");
         let priors = vec![&r1];
         assert!(exact_or_dominant_overlap(&priors, 10, 15).is_none());
+    }
+}
+
+/// The idempotence contract behind the `changed` verdict.
+///
+/// `sync_node_from_tree` is `#[must_use]` precisely because
+/// `apply_custom_mutation` gates the undo-stack push and the
+/// `dirty` flag on it (P0-02, #2: "No undo entries for no-op
+/// applies"). That gate is only worth anything if the verdict is
+/// *tight*: a sync against a tree the model just produced, with no
+/// mutation in between, must report `false` for every node.
+///
+/// Any selective-gate comparison that reads a lossy forward
+/// conversion backwards breaks the property silently — the model
+/// stays byte-identical, but the verdict says "changed" and a dead
+/// undo entry lands on the stack, eating the user's next Ctrl-Z.
+#[cfg(test)]
+mod sync_verdict_tests {
+    use crate::application::document::tests_common::load_test_doc;
+
+    /// Model → tree → model with nothing in between changes nothing
+    /// and must *report* nothing, for every node in the fixture.
+    ///
+    /// Red before the font-gate fix: all 252 testament nodes
+    /// reported `changed == true` while serializing byte-identical,
+    /// because the map authors runs as `"LiberationSans"` while the
+    /// bundled face registers the family as `"Liberation Sans"`, so
+    /// the forward path stored `None` and the back-projected
+    /// comparison could never match.
+    #[test]
+    fn test_round_trip_with_no_mutation_reports_no_change() {
+        let mut doc = load_test_doc();
+        let before = doc.mindmap.clone();
+        let tree = doc.build_tree();
+        let mut ids: Vec<String> = doc.mindmap.nodes.keys().cloned().collect();
+        ids.sort();
+        let mut reported: Vec<String> = Vec::new();
+        for id in &ids {
+            if doc.sync_node_from_tree(id, &tree) {
+                reported.push(id.clone());
+            }
+        }
+        // The model really is untouched — so any `true` verdict is a
+        // false positive, not a missed write.
+        for id in &ids {
+            assert_eq!(
+                serde_json::to_string(before.nodes.get(id).unwrap()).unwrap(),
+                serde_json::to_string(doc.mindmap.nodes.get(id).unwrap()).unwrap(),
+                "node '{}' must survive a mutation-free round trip byte-identical",
+                id
+            );
+        }
+        assert!(
+            reported.is_empty(),
+            "{} of {} nodes reported a change with no mutation applied (first: {:?}); \
+             every one of those is a dead undo entry",
+            reported.len(),
+            ids.len(),
+            &reported[..reported.len().min(5)]
+        );
     }
 }
