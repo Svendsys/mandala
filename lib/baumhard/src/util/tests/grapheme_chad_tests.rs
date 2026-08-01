@@ -922,6 +922,26 @@ pub fn do_word_left() {
     assert_eq!(count_grapheme_clusters(prepend), 4);
     assert_eq!(word_left(prepend, 4), 3);
     assert_eq!(word_left(prepend, 3), 0);
+
+    // The *second* class the two predicates disagree on, pinned
+    // because `grapheme_is_word`'s doc names it and a reader is
+    // entitled to check it: a non-alphanumeric base carrying an
+    // `Other_Alphabetic` mark. U+0345 COMBINING GREEK YPOGEGRAMMENI is
+    // one of 1 353 such marks, and `char::is_alphanumeric` reports it
+    // as alphabetic, so `"-\u{345}"` is a word cluster under `any` and
+    // a boundary under a first-scalar rule. Here `any` is the *less*
+    // obviously right answer — the marked hyphen stops breaking the
+    // word — and that is the price of fixing `Prepend`.
+    let marked_hyphen = "key-\u{345}val";
+    assert_eq!(count_grapheme_clusters(marked_hyphen), 7);
+    assert_eq!(
+        word_left(marked_hyphen, 7),
+        0,
+        "the marked hyphen is part of the word under the `any` rule, so the whole run is one word"
+    );
+    // The unmarked hyphen still breaks it, which is what makes the
+    // above a consequence of the mark and not of the hyphen.
+    assert_eq!(word_left("key-val", 7), 4);
 }
 
 #[test]

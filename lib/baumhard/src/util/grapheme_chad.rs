@@ -87,8 +87,8 @@ pub struct LineReplacement {
     /// overwriting the one-cluster tail of `"ab"` with a lone
     /// `U+0301` leaves one cluster where there were two — a
     /// **negative** growth, which the caller answers with
-    /// `ColorFontRegions::shrink_regions_after` rather than
-    /// `shift_regions_after`.
+    /// `ColorFontRegions::shrink_regions_after` rather than one of the
+    /// grow-side primitives.
     pub growth: isize,
     /// One past the last cluster of the *post-edit* target whose base
     /// scalar came from `source`. Together with [`Self::at`] it is the
@@ -971,15 +971,43 @@ pub fn word_right(buffer: &str, cursor: usize) -> usize {
 ///
 /// The first-scalar rule this replaces agreed on every cluster whose
 /// base is the visible character — ZWJ families, skin tones,
-/// combining-mark sequences, regional-indicator pairs (no scalar in a
-/// flag is alphanumeric, so it stays a boundary under both rules) —
-/// and disagreed on exactly one class: UAX #29 `Prepend`, where GB9b
-/// glues an *invisible* formatting scalar to the front of the
-/// character it applies to. U+0600 ARABIC NUMBER SIGN before a digit
-/// is the everyday case; the first-scalar rule reads the invisible
-/// prefix, calls the cluster a boundary, and walks the cursor straight
-/// through a number as though it were punctuation. Reading any scalar
-/// finds the digit.
+/// combining-mark sequences, VS16 sequences (`"❤\u{FE0F}"`,
+/// `"1\u{FE0F}\u{20E3}"`), Indic conjuncts, and regional-indicator
+/// pairs (no scalar in a flag is alphanumeric, so a flag stays a
+/// boundary under both rules). It disagreed on **two** classes, not
+/// one; the sweeps below are over every scalar in Unicode.
+///
+/// - **UAX #29 `Prepend`** — GB9b glues an *invisible* formatting
+///   scalar to the front of the character it applies to. There are
+///   **13** such scalars (U+0600–U+0605, U+06DD, U+070F, U+0890,
+///   U+0891, U+08E2, U+110BD, U+110CD). U+0600 ARABIC NUMBER SIGN
+///   before a digit is the everyday case: the first-scalar rule reads
+///   the invisible prefix, calls the cluster a boundary, and walks the
+///   cursor straight through a number as though it were punctuation.
+///   Reading any scalar finds the digit. This is the class the rule
+///   was changed for.
+/// - **A non-alphanumeric base carrying an `Other_Alphabetic` mark** —
+///   `Mn`/`Mc` codepoints that `char::is_alphanumeric` reports as
+///   alphabetic. **1 353** scalars qualify, and every one of them
+///   disagrees behind *any* non-alphanumeric base, so the class is a
+///   cross product rather than a list: `"-\u{345}"` (hyphen +
+///   COMBINING GREEK YPOGEGRAMMENI), `"$\u{093E}"` (dollar +
+///   DEVANAGARI VOWEL SIGN AA), `"،\u{064E}"` (Arabic comma + FATHA).
+///   Here `any` is the *less* obviously right answer:
+///
+///   ```text
+///   buf = "key-\u{345}val"   clusters ["k","e","y","-\u{345}","v","a","l"]
+///   word_left(buf, 8) = 0    // one word — the marked hyphen no longer breaks it
+///   ```
+///
+///   It is marginal under either rule: the cluster is one thing on
+///   screen and neither answer is wrong about what the reader sees,
+///   the input is vanishingly rare in editor text, and the cost of
+///   getting it "wrong" is one cursor hop. `any` is kept because it
+///   is the rule [`grapheme_is_not_whitespace`] uses and because the
+///   `Prepend` class it fixes is real Arabic text; the second class is
+///   the price, and it is named here rather than left for a reader to
+///   discover.
 fn grapheme_is_word(g: &str) -> bool {
     g.chars().any(char::is_alphanumeric)
 }
