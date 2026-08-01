@@ -255,7 +255,8 @@ first-class deployments. The lowest-spec target sets the budget.
   module boundary and an entry appears in `CLAUDE.md`'s "Dual-target
   status" section naming the reason. "I'll add WASM later" is not a
   contract this repo recognizes. `./test.sh`'s WASM type-check gate,
-  `./build.sh --wasm`, and CI (`.github/workflows/test.yml`) enforce
+  `./build.sh` (which always builds both legs), and CI
+  (`.github/workflows/test.yml`) enforce
   this.
 
 ## §5 Canonical or exemplary

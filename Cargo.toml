@@ -4,6 +4,23 @@ members = ["lib/baumhard", "lib/mandala_derive", "crates/maptool"]
 [workspace.package]
 license = "MPL-2.0"
 
+# The profile `./build.sh --fat` selects, and the reason that flag
+# exists: `release` keeps `codegen-units = 16` and thin-local LTO so
+# incremental release builds stay tolerable during development, which
+# leaves cross-crate inlining on the table. `release-lto` trades build
+# time for that — one codegen unit per crate and whole-graph LTO — and
+# is what a shipped native binary should be built with. It is a
+# separate profile rather than a change to `release` so the everyday
+# `cargo build --release` loop is not taxed.
+#
+# Kept in the root manifest because cargo only honors `[profile.*]`
+# there: a `[profile.release-lto]` in `lib/baumhard/Cargo.toml` is
+# ignored with a warning, so this is the one place it can live.
+[profile.release-lto]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
 [package]
 name = "mandala"
 version = "0.1.0"
