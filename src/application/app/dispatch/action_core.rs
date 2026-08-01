@@ -110,7 +110,24 @@ pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
     if matches!(outcome, DispatchOutcome::Unhandled)
         && matches!(
             action,
-            Action::ExitMode | Action::EditSelection | Action::EditSelectionClean,
+            Action::ExitMode
+                | Action::EditSelection
+                | Action::EditSelectionClean
+                // Fourth member of the mixed-branch set — the same
+                // set `keybinds::tests::
+                // test_wasm_compatibility_mixed_branch_actions_are_native_only`
+                // names. Its `Unhandled` means "the edge-label
+                // selection committed; only the single-line editor
+                // open is missing", which is work done, so the macro
+                // runner must not report `any_ran=false`.
+                //
+                // Unreachable today: a macro carries no `DispatchHit`,
+                // and the arm returns `Handled` early when `hit` is
+                // `None`. Listed anyway because this function is the
+                // written-down mixed-branch set, and an arm that is
+                // in the set but not in the list is a silent
+                // misreport the moment macros gain a hit payload.
+                | Action::DoubleClickActivate,
         )
     {
         DispatchOutcome::Handled
@@ -705,6 +722,17 @@ mod tests {
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
+    /// `DoubleClickActivate`'s `Unhandled` means the edge-label
+    /// selection committed and only the native single-line editor
+    /// open is missing — the same "cross-platform slice ran" shape
+    /// `EditSelection` has, so it lifts the same way.
+    #[test]
+    fn double_click_activate_unhandled_lifts_to_handled() {
+        let out =
+            lift_mixed_branch_for_wasm_macro(&Action::DoubleClickActivate, DispatchOutcome::Unhandled);
+        assert_eq!(out, DispatchOutcome::Handled);
+    }
+
     #[test]
     fn handled_passes_through_for_mixed_branch_arms() {
         // The lift only flips Unhandled→Handled; an already-Handled
@@ -715,6 +743,7 @@ mod tests {
             Action::ExitMode,
             Action::EditSelection,
             Action::EditSelectionClean,
+            Action::DoubleClickActivate,
         ] {
             let out = lift_mixed_branch_for_wasm_macro(&action, DispatchOutcome::Handled);
             assert_eq!(out, DispatchOutcome::Handled, "action={:?}", action);

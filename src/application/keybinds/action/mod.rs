@@ -471,6 +471,16 @@ pub enum Action {
     /// `Empty` → fire `CreateOrphanNodeAndEdit` if it's bound (default
     /// off — the gesture is intentionally unbound for empty-canvas
     /// double-clicks).
+    ///
+    /// **WASM: mixed-branch**, classified `NativeOnly` under the "ANY
+    /// NativeOnly branch" rule. Both targets resolve the gesture
+    /// through this table and run one shared body
+    /// (`cross_dispatch::pointer`), so rebinding or unbinding
+    /// `double_click_activate` takes effect in the browser too. Three
+    /// of the four routes are fully cross-platform; the `EdgeLabel`
+    /// route commits the selection on both targets and then opens the
+    /// single-line editor on native only, since the browser has no
+    /// single-line editor yet. Same shape as `EditSelection`.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     DoubleClickActivate,
     /// Create an unattached node at the cursor and immediately open
