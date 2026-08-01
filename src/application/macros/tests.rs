@@ -127,8 +127,8 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
             Action::DoubleClickActivate,
             Action::EditSelection,
             Action::EditSelectionClean,
-            // Same dispatch surface (`open_label_edit` /
-            // `open_portal_text_edit`) as `EditSelection` — a
+            // Same dispatch surface (`open_single_line_edit`)
+            // as `EditSelection` — a
             // hostile macro firing this with an edge label /
             // portal selection forces the user into an inline
             // editor over selected content.

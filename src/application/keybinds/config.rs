@@ -450,7 +450,7 @@ impl Default for KeybindConfig {
 
             // LabelEdit cursor primitives. Same routing path as
             // TextEdit but single-line — no Up/Down/Word*. Defaults
-            // mirror what `route_label_edit_key` previously
+            // mirror what `route_single_line_key` previously
             // hardcoded.
             label_edit_cursor_left: vec!["ArrowLeft".into()],
             label_edit_cursor_right: vec!["ArrowRight".into()],
@@ -608,11 +608,23 @@ impl KeybindConfig {
             (Action::TextEditCursorDown, &self.text_edit_cursor_down),
             (Action::TextEditCursorHome, &self.text_edit_cursor_home),
             (Action::TextEditCursorEnd, &self.text_edit_cursor_end),
-            (Action::TextEditCursorLeftSelect, &self.text_edit_cursor_left_select),
-            (Action::TextEditCursorRightSelect, &self.text_edit_cursor_right_select),
+            (
+                Action::TextEditCursorLeftSelect,
+                &self.text_edit_cursor_left_select,
+            ),
+            (
+                Action::TextEditCursorRightSelect,
+                &self.text_edit_cursor_right_select,
+            ),
             (Action::TextEditCursorUpSelect, &self.text_edit_cursor_up_select),
-            (Action::TextEditCursorDownSelect, &self.text_edit_cursor_down_select),
-            (Action::TextEditCursorHomeSelect, &self.text_edit_cursor_home_select),
+            (
+                Action::TextEditCursorDownSelect,
+                &self.text_edit_cursor_down_select,
+            ),
+            (
+                Action::TextEditCursorHomeSelect,
+                &self.text_edit_cursor_home_select,
+            ),
             (Action::TextEditCursorEndSelect, &self.text_edit_cursor_end_select),
             (Action::TextEditWordLeft, &self.text_edit_word_left),
             (Action::TextEditWordRight, &self.text_edit_word_right),

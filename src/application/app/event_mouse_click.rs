@@ -204,15 +204,14 @@ pub(super) fn handle_mouse_input(
                 } = parts;
                 // Suppress the double-click → open-editor gesture when
                 // an editor is already open on the click's target. The
-                // three editor states are mutually exclusive by
+                // two editor states are mutually exclusive by
                 // construction (the event-keyboard dispatch steals on
                 // whichever is open first), so one match suffices.
-                // Without this guard for the label / portal-text
-                // editors, a double-click while editing would call
-                // `open_label_edit` / `open_portal_text_edit` a second
-                // time, which re-seeds the buffer from the committed
-                // model value and silently destroys the in-progress
-                // edit.
+                // Without this guard for the single-line editor, a
+                // double-click while editing would call
+                // `open_single_line_edit` a second time, which
+                // re-seeds the buffer from the committed model
+                // value and silently destroys the in-progress edit.
                 let already_editing_same_target = {
                     let node_match = ctx
                         .text_edit_state
