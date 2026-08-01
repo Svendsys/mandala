@@ -3,7 +3,7 @@
 //! Tests for [`crate::gfx_structs::model::GlyphModel`] — line/matrix
 //! construction and component layout (§T1).
 
-use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Range};
+use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegion, ColorFontRegions, Range};
 use crate::font::fonts::AppFont;
 use crate::gfx_structs::model::{
     DeltaGlyphModel, GlyphComponent, GlyphLine, GlyphMatrix, GlyphModel, GlyphModelField,
@@ -472,6 +472,39 @@ pub fn matrix_place_in_multiline_component() {
     let mut lone_cr_string = String::new();
     lone_cr.place_in(&mut lone_cr_string, &mut regions, (0, 0));
     assert_eq!(lone_cr_string, "AA\rBB\nCC\nDD");
+
+    // Painting into a target that *already* carries a Windows line
+    // ending. This is the composition case the module header names —
+    // several models sharing one buffer — and it is where addressing
+    // rows by the cluster line model while writing them by the raw
+    // `\n` byte comes apart: the overwritten line tail would swallow
+    // the CR, turning the CRLF into a bare LF and under-reporting the
+    // region shift by one cluster.
+    let mut over_crlf = GlyphMatrix::new();
+    over_crlf.push(GlyphLine::new_with(GlyphComponent::text(
+        "ABCDEFG",
+        AppFont::Evilz,
+        Color::black(),
+    )));
+    let mut regions = ColorFontRegions::new_empty();
+    // The pre-existing region sits on the second line, after the
+    // terminator, so the paint must slide it right by the full
+    // seven-minus-four = three clusters the first line gained.
+    regions.submit_region(ColorFontRegion::new(
+        Range::new(5, 9),
+        Some(AppFont::Evilz),
+        Some(Color::black().to_float()),
+    ));
+    let mut existing = String::from("XXXX\r\nYYYY");
+    over_crlf.place_in(&mut existing, &mut regions, (0, 0));
+    assert_eq!(
+        existing, "ABCDEFG\r\nYYYY",
+        "the target's CRLF terminator must survive being painted over"
+    );
+    assert!(
+        regions.get(Range::new(8, 12)).is_some(),
+        "the trailing region must shift by the real cluster growth (3), not by 2"
+    );
 }
 
 #[test]

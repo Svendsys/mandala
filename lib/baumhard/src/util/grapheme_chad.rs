@@ -12,11 +12,43 @@ use log::error;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Borrow the slice from `byte_index` up to (not including) the next
-/// `\n`, or to the end of `s` if no newline follows. `byte_index` must
-/// land on a UTF-8 char boundary; passing a mid-codepoint byte panics
-/// like any other `String` slice. O(n) on the search distance.
+/// line terminator, or to the end of `s` if no terminator follows.
+///
+/// The terminator is a cluster ending in `\n` — the same rule
+/// [`line_bounds_at`], [`find_nth_line_grapheme_range`] and
+/// [`find_nth_line_byte_range`] apply, and this helper is the fourth
+/// member of that family: it is what
+/// [`replace_graphemes_until_newline`] uses to decide how much of a
+/// line it may overwrite. Under UAX #29 `\r\n` is a single cluster, so
+/// cutting at the raw `\n` byte would leave the CR inside the returned
+/// slice — a slice ending mid-cluster, whose caller then splices the
+/// CR away and turns a Windows line ending into a Unix one. A `\r`
+/// immediately before the `\n` is therefore excluded too. A CR that is
+/// *not* followed by `\n` is not a terminator and stays in the line.
+///
+/// `byte_index` must land on a UTF-8 char boundary; passing a
+/// mid-codepoint byte panics like any other `String` slice. A
+/// `byte_index` that lands mid-*cluster* — on the `\n` of a CRLF, say
+/// — is outside the contract but yields an empty slice rather than an
+/// inverted range.
+///
+/// Cost: O(n) on the search distance for the `\n`, plus one byte of
+/// lookbehind. No allocation.
 pub(crate) fn slice_to_newline(s: &str, byte_index: usize) -> &str {
-    let end_byte_index = s[byte_index..].find('\n').map_or(s.len(), |i| byte_index + i);
+    let end_byte_index = match s[byte_index..].find('\n') {
+        Some(i) => {
+            let nl = byte_index + i;
+            // `\r` is one byte, so the CR of a CRLF starts at `nl - 1`.
+            // The `> byte_index` guard keeps a caller that pointed at
+            // the LF itself from producing an inverted range.
+            if nl > byte_index && s.as_bytes()[nl - 1] == b'\r' {
+                nl - 1
+            } else {
+                nl
+            }
+        }
+        None => s.len(),
+    };
 
     &s[byte_index..end_byte_index]
 }
@@ -40,11 +72,25 @@ pub struct LineReplacement {
     /// it — shifting from the caller's index instead would step over
     /// every region between the real end and it.
     pub at: usize,
-    /// Net growth of the target, in grapheme clusters. Zero when the
-    /// replacement fit inside the existing line tail. Shifting every
-    /// region that starts after `at` right by `growth` keeps
-    /// whole-buffer grapheme indices correct.
-    pub growth: usize,
+    /// Net change in the target's grapheme-cluster count — the
+    /// buffer's *measured* delta, not `source clusters - overwritten
+    /// clusters` arithmetic. Shifting every region that starts after
+    /// `at` right by `growth` keeps whole-buffer grapheme indices
+    /// correct.
+    ///
+    /// The distinction is not academic and it is why this is signed:
+    /// UAX #29 segmentation is not compositional across a splice
+    /// seam, so a source whose first scalar extends a cluster
+    /// (a combining mark, a ZWJ continuation, an LF after a CR, a
+    /// regional indicator completing a pair) *fuses* with the
+    /// character before it. Splicing `"\r"` in front of a `"\n"`
+    /// leaves one cluster where the arithmetic predicts two, and
+    /// overwriting the one-cluster tail of `"ab"` with a lone
+    /// `U+0301` leaves one cluster where there were two — a
+    /// **negative** growth, which the caller answers with
+    /// `ColorFontRegions::shrink_regions_after` rather than
+    /// `shift_regions_after`.
+    pub growth: isize,
     /// How many extra lines the target gained, i.e. the number of
     /// `\n` characters `source` contributed. Non-zero means every
     /// line of the target *after* the edited one has moved down by
@@ -71,30 +117,44 @@ pub struct LineReplacement {
 /// compensate instead of painting its next row into the middle of the
 /// text it just inserted.
 ///
-/// Returns a [`LineReplacement`] describing the edit. `growth` is the
-/// net grapheme-count change and is `0` whenever the replacement fit
-/// inside the existing line tail.
+/// The line bound is the same one every other line helper in this
+/// module uses: a cluster ending in `\n` terminates the line, and a
+/// CRLF is one such cluster whose CR belongs to the terminator. The
+/// tail this function may overwrite therefore stops **before** the CR,
+/// and a Windows line ending survives being painted over. The bound
+/// itself is computed by the crate-private `slice_to_newline`.
+///
+/// Returns a [`LineReplacement`] describing the edit.
+/// [`LineReplacement::growth`] is the buffer's measured
+/// grapheme-cluster delta and may be negative; see its doc for why
+/// arithmetic on the two cluster counts is not the same thing.
 ///
 /// # Costs
 ///
-/// Two `count_grapheme_clusters` walks — three when `g_index` is past
-/// the end of `target` and the reported position has to be clamped —
-/// one `count_number_lines` byte scan over `source`, and one
+/// Two whole-buffer `count_grapheme_clusters` walks — one before the
+/// splice, one after — because `growth` is measured rather than
+/// computed and UAX #29 gives no cheaper exact answer across a splice
+/// seam (a regional-indicator run makes the required lookbehind
+/// unbounded). On top of that: one bounded `find_byte_index_of_grapheme`
+/// walk for the write position, one `count_grapheme_clusters` of the
+/// line tail, one `count_number_lines` byte scan over `source`, and one
 /// `replace_substring`, which itself allocates a fresh `Vec<u8>` copy
-/// of the whole target: a known hot-path allocation tracked alongside
-/// the rest of the "no-alloc text edit" work.
+/// of the whole target and re-validates it as UTF-8 — a known hot-path
+/// allocation tracked alongside the rest of the "no-alloc text edit"
+/// work. Every term is O(target length); the function was already in
+/// that class before the measurement was added.
 pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, source: &str) -> LineReplacement {
     let insert_num_graphemes = count_grapheme_clusters(source);
     // `count_number_lines` is "newlines + 1", so the count of `\n`
     // characters the source contributes is one less.
     let added_lines = count_number_lines(source) - 1;
+    let clusters_before = count_grapheme_clusters(target);
     // A `g_index` past the end of the target clamps the write to the
     // end of the buffer, so the position we report has to clamp with
-    // it (see [`LineReplacement::at`]). The extra cluster walk only
-    // runs on that out-of-range path.
+    // it (see [`LineReplacement::at`]).
     let (b_index, at) = match find_byte_index_of_grapheme(target, g_index) {
         Some(b) => (b, g_index),
-        None => (target.len(), count_grapheme_clusters(target)),
+        None => (target.len(), clusters_before),
     };
 
     let line_section = slice_to_newline(target, b_index);
@@ -104,29 +164,27 @@ pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, sour
 
     if insert_num_graphemes >= target_line_num_graphemes {
         // The source covers the whole line tail: cut the tail away
-        // (never the terminating `\n` — `slice_to_newline` stops
-        // short of it) and splice the source in.
+        // (never the terminator — `slice_to_newline` stops short of
+        // the whole cluster, CR included) and splice the source in.
         replace_substring(target, b_index, end_of_target_line_idx, source);
-        LineReplacement {
-            at,
-            growth: insert_num_graphemes - target_line_num_graphemes,
-            added_lines,
-        }
     } else {
         // The source is shorter than the line tail: overwrite only
         // the overlapping prefix and leave the surplus in place.
         // The bound is in range by construction (`g_index +
-        // insert_num_graphemes` is strictly inside the line), but
-        // fall back to the line end rather than panic in a text-edit
-        // hot path.
+        // insert_num_graphemes` is strictly inside the line — this
+        // branch only runs when `g_index` itself resolved), but fall
+        // back to the line end rather than panic in a text-edit hot
+        // path.
         let overlap_end = find_byte_index_of_grapheme(target, g_index + insert_num_graphemes)
             .unwrap_or(end_of_target_line_idx);
         replace_substring(target, b_index, overlap_end, source);
-        LineReplacement {
-            at,
-            growth: 0,
-            added_lines,
-        }
+    }
+
+    LineReplacement {
+        at,
+        // Measured, not derived: see `LineReplacement::growth`.
+        growth: count_grapheme_clusters(target) as isize - clusters_before as isize,
+        added_lines,
     }
 }
 
@@ -275,6 +333,12 @@ pub fn line_bounds_at(s: &str, cursor: usize) -> (usize, usize) {
 /// lines this way agrees with [`count_number_lines`], which counts
 /// `\n` *characters* — a CRLF is one of each — so a caller that sizes
 /// a buffer with one and addresses it with the other stays in step.
+///
+/// Four helpers in this module answer a "where does the line end"
+/// question and all four apply that rule: this one,
+/// [`find_nth_line_byte_range`], [`line_bounds_at`], and the
+/// crate-private `slice_to_newline` that
+/// [`replace_graphemes_until_newline`] writes through.
 ///
 /// Cost: O(n) grapheme walk plus a final `s.graphemes(true).count()`
 /// when the last line is requested.

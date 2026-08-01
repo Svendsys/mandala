@@ -17,6 +17,7 @@ use crate::util::grapheme_chad::{
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, MulAssign, SubAssign};
 
 /// Stacked collection of [`GlyphLine`]s rendered top-to-bottom.
@@ -166,13 +167,16 @@ impl GlyphMatrix {
     ///
     /// # Costs
     ///
-    /// O(total painted graphemes + existing text size) — the walk
-    /// over source components is linear, but each
-    /// `replace_graphemes_until_newline` call is O(line length) and
-    /// scans its own source once for the drift count. The target's
-    /// line count is scanned once up front and then tracked
-    /// incrementally, so the drift bookkeeping adds no extra pass over
-    /// the target.
+    /// O(components × target size) — the walk over source components
+    /// is linear, but each `replace_graphemes_until_newline` call
+    /// walks the whole target twice to measure the cluster delta its
+    /// region shift rides on, plus once more inside
+    /// `replace_substring`. The target's *line* count, by contrast, is
+    /// scanned once up front and then tracked incrementally, so the
+    /// drift bookkeeping specifically adds no extra pass. This is a
+    /// composition primitive, not a per-frame path (see the module
+    /// header); nothing here has been measured against a control, so
+    /// no performance claim is made either way.
     pub fn place_in(&self, string: &mut String, regions: &mut ColorFontRegions, offset: (usize, usize)) {
         // Ensure that there's enough lines present in the string
         let num_lines = count_number_lines(string);
@@ -229,8 +233,20 @@ impl GlyphMatrix {
             let mut comp_head = graph_line_start_index + offset.0;
             for component in line.line.iter() {
                 let replacement = replace_graphemes_until_newline(string, comp_head, &component.text);
-                if replacement.growth > 0 {
-                    regions.shift_regions_after(replacement.at, replacement.growth);
+                // `growth` is the buffer's measured cluster delta and
+                // can go either way: a component whose first scalar
+                // extends the cluster before it fuses with it and the
+                // buffer *shrinks*. `shrink_regions_after` is the
+                // delete-path mirror of `shift_regions_after`, so the
+                // spans stay pinned to their text in both directions.
+                match replacement.growth.cmp(&0) {
+                    Ordering::Greater => {
+                        regions.shift_regions_after(replacement.at, replacement.growth as usize)
+                    }
+                    Ordering::Less => {
+                        regions.shrink_regions_after(replacement.at, replacement.growth.unsigned_abs())
+                    }
+                    Ordering::Equal => {}
                 }
                 line_drift += replacement.added_lines;
                 have_lines += replacement.added_lines;

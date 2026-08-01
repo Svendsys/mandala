@@ -178,6 +178,35 @@ lazy_static! {
         ("@@@@@@@@@@", 63,
             "🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@\n          🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n          🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n          🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻",
             "🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@\n@@@@@@@@@@🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n          🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n          🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻"),
+        // CRLF in the *target*. Under UAX #29 `\r\n` is one cluster
+        // and the whole of it is the line terminator, so the line
+        // tail this helper is allowed to overwrite stops **before**
+        // the CR. Cutting at the raw `\n` byte instead splices the CR
+        // away (a Windows line ending silently becomes a Unix one)
+        // and under-reports `growth` by one, which slides every
+        // downstream `ColorFontRegions` span one cluster left.
+        ("WXYZ", 0, "AA\r\nBB", "WXYZ\r\nBB"),
+        ("XY", 0, "AA\r\nBB", "XY\r\nBB"),
+        ("X", 0, "AA\r\nBB", "XA\r\nBB"),
+        // Writing *at* the terminator's own cluster index: the tail
+        // is empty, so the source is inserted ahead of the CRLF.
+        ("Z", 1, "A\r\nB", "AZ\r\nB"),
+        // CRLF at the very start — line 0 is empty.
+        ("XY", 0, "\r\nB", "XY\r\nB"),
+        ("Q", 0, "\r\n", "Q\r\n"),
+        // CRLF at the very end, and two CRLFs in a row.
+        ("Q", 0, "A\r\n", "Q\r\n"),
+        ("ab", 0, "A\r\n\r\nB", "ab\r\n\r\nB"),
+        // A CRLF terminator next to clusters that are themselves
+        // multi-scalar: a skin-toned emoji and a regional-indicator
+        // pair. A byte-counting tail would land inside either.
+        ("🙏🏻🙏🏻", 0, "🙏🏻\r\n🙏🏻", "🙏🏻🙏🏻\r\n🙏🏻"),
+        ("xy", 0, "🇩🇰\r\n🇸🇪", "xy\r\n🇸🇪"),
+        ("xy", 0, "e\u{301}\r\nx", "xy\r\nx"),
+        // A lone CR is NOT a terminator, so it stays inside the line
+        // and is overwritable like any other cluster.
+        ("Z", 0, "AA\rBB", "ZA\rBB"),
+        ("ZZZZZZ", 0, "AA\rBB", "ZZZZZZ"),
     ];
 
     pub static ref COUNT_GRAPHEMES_TEST: Vec<(&'static str, usize)> = vec![
@@ -231,6 +260,23 @@ lazy_static! {
             0, "🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@"),
         (COMPLEX_NEWLINE_STRING.clone(),
             find_byte_index_of_grapheme(&COMPLEX_NEWLINE_STRING, 21).unwrap(), "🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻@@@@@@@@@@"),
+        // A CRLF terminator: the CR is part of the terminator cluster
+        // under UAX #29, so it falls outside the line — the same rule
+        // `line_bounds_at` and both nth-line finders apply. Stopping
+        // at the raw `\n` byte would hand the caller a slice ending
+        // mid-cluster.
+        ("abcde\r\n", 0, "abcde"),
+        ("abcde\r\nfg", 0, "abcde"),
+        ("\r\nfg", 0, ""),
+        // Starting *on* the terminator's own first byte yields an
+        // empty tail rather than a one-byte `"\r"`.
+        ("abcde\r\nfg", 5, ""),
+        // A lone CR is not a terminator and stays in the line.
+        ("abc\rde", 0, "abc\rde"),
+        // Degenerate: a byte index that lands on the LF of a CRLF is
+        // mid-cluster and outside the contract, but it must not
+        // produce an inverted slice and panic.
+        ("abcde\r\nfg", 6, ""),
     ];
 }
 
@@ -304,7 +350,7 @@ pub fn do_replace_graphemes_until_newline() {
         );
         assert_eq!(
             outcome.growth,
-            after - before,
+            after as isize - before as isize,
             "`growth` must equal the real cluster growth for source {:?} into {:?}",
             source,
             target
@@ -418,6 +464,61 @@ pub fn do_replace_graphemes_until_newline() {
     let outcome = replace_graphemes_until_newline(&mut buf, 1, "cd");
     assert_eq!(buf, "acd");
     assert_eq!(outcome.at, 1);
+
+    // The CRLF terminator, spelled out. `"AA\r\nBB"` is five clusters
+    // — A, A, "\r\n", B, B — so line 0 is the two-cluster "AA" and
+    // the write must stop before the CR. Cutting at the `\n` byte
+    // instead eats the CR (five clusters become "WXYZ\nBB", seven)
+    // *and* reports `growth` as 4 - 3 = 1 rather than the true 2,
+    // sliding every downstream region one cluster left.
+    let mut buf = String::from("AA\r\nBB");
+    let outcome = replace_graphemes_until_newline(&mut buf, 0, "WXYZ");
+    assert_eq!(buf, "WXYZ\r\nBB", "the CRLF terminator must survive intact");
+    assert_eq!(outcome.growth, 2, "growth is the whole-buffer cluster delta");
+    assert_eq!(outcome.added_lines, 0);
+    assert_eq!(count_number_lines(&buf), 2);
+    assert_eq!(find_nth_line_grapheme_range(&buf, 0), Some((0, 4)));
+    assert_eq!(find_nth_line_grapheme_range(&buf, 1), Some((5, 7)));
+
+    // The same edit through `line_bounds_at`: every line helper in
+    // this module must agree on where line 0 of a CRLF buffer ends,
+    // and `replace_graphemes_until_newline` is one of them.
+    let subject = "AA\r\nBB";
+    assert_eq!(line_bounds_at(subject, 0), (0, 2));
+    assert_eq!(
+        slice_to_newline(subject, 0),
+        "AA",
+        "the writable line tail stops before the CR, not before the LF"
+    );
+
+    // `growth` is a *measured* delta, not `source_clusters -
+    // tail_clusters` arithmetic: UAX #29 segmentation is not
+    // compositional across a splice seam, so a source whose first
+    // scalar extends the preceding cluster fuses with it.
+    let mut buf = String::from("\n");
+    let outcome = replace_graphemes_until_newline(&mut buf, 0, "\r");
+    assert_eq!(buf, "\r\n");
+    assert_eq!(
+        outcome.growth, 0,
+        "the inserted CR fused with the following LF into one cluster"
+    );
+
+    let mut buf = String::from("abc");
+    let outcome = replace_graphemes_until_newline(&mut buf, 1, "\u{301}abc");
+    assert_eq!(buf, "a\u{301}abc");
+    assert_eq!(
+        outcome.growth, 1,
+        "the leading combining mark joined the 'a' before it: 3 clusters -> 4"
+    );
+
+    // Fusion can make the buffer *shrink*, which is why `growth` is
+    // signed. Replacing the one-cluster tail "b" with a lone
+    // combining mark leaves a single cluster where there were two.
+    let mut buf = String::from("ab");
+    let outcome = replace_graphemes_until_newline(&mut buf, 1, "\u{301}");
+    assert_eq!(buf, "a\u{301}");
+    assert_eq!(count_grapheme_clusters(&buf), 1);
+    assert_eq!(outcome.growth, -1, "growth must be able to report a shrink");
 }
 
 #[test]
@@ -1108,6 +1209,19 @@ pub fn do_prev_word_boundary_ws() {
 
     // A CRLF cluster is all-whitespace, so it separates tokens.
     assert_eq!(prev_word_boundary_ws("foo\r\nbar", 7), 4);
+
+    // The rule is *every* scalar, not the first one. SPACE + U+0301
+    // COMBINING ACUTE is a single cluster whose first scalar is
+    // whitespace but which is not whitespace as a whole, so it is
+    // token content and does not break the run. A first-scalar-only
+    // predicate would report 4 here and 8 below — this is the pair
+    // that pins the decision `first_non_whitespace_grapheme` also
+    // makes.
+    assert_eq!(prev_word_boundary_ws("foo \u{301}bar", 7), 0);
+    assert_eq!(prev_word_boundary_ws("ab \u{301}", 4), 0);
+    // And the converse direction: a cluster whose first scalar is
+    // *not* whitespace is content no matter what follows, which the
+    // NFD "café" case above already covers.
 }
 
 #[test]
@@ -1150,10 +1264,28 @@ pub fn do_token_start_ws() {
     // 4 clamps to 3 and the token is the final "b" at index 2.
     assert_eq!(token_start_ws("a\r\nb", 4), 2);
 
+    // Separator-hood is decided over *every* scalar in the cluster,
+    // not the first: SPACE + U+0301 COMBINING ACUTE is one cluster
+    // that starts with whitespace and is not whitespace, so it holds
+    // the token together. A first-scalar-only predicate reports 4.
+    assert_eq!(token_start_ws("foo \u{301}bar", 7), 0);
+
     // Property: the reported start is always a cluster index at or
-    // before the (clamped) cursor, and the token it delimits holds
-    // no whitespace at all.
-    for input in ["", "foo bar", "a b  c", "key=value x", "\u{3000}q", "🙏🏻 👨‍👩‍👧"] {
+    // before the (clamped) cursor, and no cluster inside the token it
+    // delimits is entirely whitespace. Note the shape of the
+    // invariant — "contains no whitespace scalar" would be the wrong
+    // one, and the `"x \u{301}y"` row is the case that tells them
+    // apart.
+    for input in [
+        "",
+        "foo bar",
+        "a b  c",
+        "key=value x",
+        "\u{3000}q",
+        "🙏🏻 👨‍👩‍👧",
+        "x \u{301}y",
+        "a\r\nb",
+    ] {
         let total = count_grapheme_clusters(input);
         for cursor in 0..=total + 1 {
             let start = token_start_ws(input, cursor);
@@ -1161,13 +1293,16 @@ pub fn do_token_start_ws() {
             assert!(start <= clamped, "{:?} at {}: start past cursor", input, cursor);
             let from = find_byte_index_of_grapheme(input, start).unwrap_or(input.len());
             let to = find_byte_index_of_grapheme(input, clamped).unwrap_or(input.len());
-            assert!(
-                !input[from..to].chars().any(char::is_whitespace),
-                "{:?} at {}: token {:?} contains whitespace",
-                input,
-                cursor,
-                &input[from..to]
-            );
+            for cluster in split_graphemes_owned(&input[from..to]) {
+                assert!(
+                    cluster.chars().any(|c| !c.is_whitespace()),
+                    "{:?} at {}: token {:?} contains the all-whitespace cluster {:?}",
+                    input,
+                    cursor,
+                    &input[from..to],
+                    cluster
+                );
+            }
         }
     }
 }
