@@ -259,7 +259,9 @@ pub(in crate::application::app) trait ThrottledInteraction {
 /// nothing would let a new drag variant compile with no release
 /// behavior at all — silently losing the user's gesture at mouse-up,
 /// which is the least visible way this could break.
-pub(in crate::application::app) trait ThrottledDragInteraction: ThrottledInteraction {
+pub(in crate::application::app) trait ThrottledDragInteraction:
+    ThrottledInteraction
+{
     /// Fold one `CursorMoved` sample into the pending state.
     ///
     /// Provided, and not meant to be overridden: which half of the
@@ -456,8 +458,7 @@ mod tests {
 
     #[test]
     fn test_as_dyn_mut_throttle_mutations_reach_underlying_struct() {
-        let inner =
-            MovingNodeInteraction::new(vec!["x".into()], false, std::collections::HashSet::new());
+        let inner = MovingNodeInteraction::new(vec!["x".into()], false, std::collections::HashSet::new());
         let mut drag = ThrottledDrag::MovingNode(inner);
         let n = drive_throttle_over_budget(drag.as_dyn_mut().throttle());
         assert!(n > 1, "expected n > 1 after over-budget work, got {}", n);
@@ -474,8 +475,7 @@ mod tests {
         // The trait's default `reset` impl is "throttle().reset()" and
         // nothing else — pending / domain state must survive. Exercise
         // through a real implementor that does NOT override `reset`.
-        let mut inner =
-            MovingNodeInteraction::new(vec!["n".into()], true, std::collections::HashSet::new());
+        let mut inner = MovingNodeInteraction::new(vec!["n".into()], true, std::collections::HashSet::new());
         inner.accumulate(moved(3.0, 4.0));
         drive_throttle_over_budget(&mut inner.pending.throttle);
         assert!(inner.pending.throttle.current_n() > 1);
@@ -500,8 +500,7 @@ mod tests {
         // enum routes via `as_dyn_mut`. If routing returned a stale or
         // wrong-variant borrow the predicate would disagree with the
         // real struct's state.
-        let idle =
-            MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
+        let idle = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         let mut idle_drag = ThrottledDrag::MovingNode(idle);
         assert!(
             !idle_drag.as_dyn_mut().should_perform_drain(),
@@ -518,4 +517,3 @@ mod tests {
         );
     }
 }
-

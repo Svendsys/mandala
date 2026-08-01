@@ -18,9 +18,7 @@ use glam::Vec2;
 use crate::application::document::EdgeRef;
 
 use super::super::edge_drag::apply_edge_handle_drag;
-use super::super::scene_rebuild::{
-    flush_canvas_scene_buffers, CanvasFrame,
-};
+use super::super::scene_rebuild::{flush_canvas_scene_buffers, CanvasFrame};
 use super::pending::ThrottledPending;
 use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledDragInteraction, ThrottledInteraction};
@@ -127,10 +125,7 @@ impl ThrottledDragInteraction for EdgeHandleInteraction {
     /// `original` is cloned rather than moved out so the body can
     /// take `&mut self` like every other release commit; one clone
     /// per gesture end.
-    fn commit_on_release_core(
-        &mut self,
-        c: ReleaseCommit<'_>,
-    ) -> ReleaseRefresh {
+    fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let Some(doc) = c.document.as_mut() else {
             return ReleaseRefresh::None;
         };
@@ -152,8 +147,7 @@ impl ThrottledDragInteraction for EdgeHandleInteraction {
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge, moved,
-        trait_default_tests_for_throttled_interaction,
+        drive_throttle_over_budget, fixture_edge, moved, trait_default_tests_for_throttled_interaction,
     };
     use baumhard::mindmap::tree_builder::EdgeHandleKind;
 

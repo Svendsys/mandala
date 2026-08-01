@@ -43,9 +43,7 @@ use glam::Vec2;
 use baumhard::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCache};
 use baumhard::mindmap::tree_builder::{MindMapTree, ResizeHandleSide};
 
-use crate::application::document::{
-    apply_drag_delta, EdgeRef, MindMapDocument,
-};
+use crate::application::document::{apply_drag_delta, EdgeRef, MindMapDocument};
 
 use super::pending::DragInput;
 use super::release::{ReleaseCommit, ReleaseRefresh};
@@ -136,11 +134,7 @@ fn line(refresh: Option<ReleaseRefresh>, pending: &str, model: &str, world: &Wor
         Some(r) => format!("{:?}", r),
         None => "-".to_string(),
     };
-    let undo = world
-        .document
-        .as_ref()
-        .map(|d| d.undo_stack.len())
-        .unwrap_or(0);
+    let undo = world.document.as_ref().map(|d| d.undo_stack.len()).unwrap_or(0);
     format!(
         "{} {} model={} undo={} cache={}",
         refresh,
@@ -282,7 +276,13 @@ mod moving_node {
                 .document
                 .as_ref()
                 .and_then(|d| d.mindmap.nodes.get(id))
-                .map(|n| format!("({},{})", round1(n.position.x as f32), round1(n.position.y as f32)))
+                .map(|n| {
+                    format!(
+                        "({},{})",
+                        round1(n.position.x as f32),
+                        round1(n.position.y as f32)
+                    )
+                })
                 .unwrap_or_else(|| "-".to_string())
         };
         let tree = match tree_pos(&world.mindmap_tree, FROM_ID) {
@@ -391,13 +391,13 @@ mod moving_node {
                 |i, _w| {
                     i.pending.take_delta();
                 },
-                    |i| {
-                format!(
-                    "pend={} total={}",
-                    v2(i.pending.pending_delta()),
-                    v2(i.pending.total_delta())
-                )
-            },
+                |i| {
+                    format!(
+                        "pend={} total={}",
+                        v2(i.pending.pending_delta()),
+                        v2(i.pending.total_delta())
+                    )
+                },
                 |w| model(w, base),
             ),
             vec![
@@ -424,13 +424,13 @@ mod moving_node {
                 |i, _w| {
                     i.pending.take_delta();
                 },
-                    |i| {
-                format!(
-                    "pend={} total={}",
-                    v2(i.pending.pending_delta()),
-                    v2(i.pending.total_delta())
-                )
-            },
+                |i| {
+                    format!(
+                        "pend={} total={}",
+                        v2(i.pending.pending_delta()),
+                        v2(i.pending.total_delta())
+                    )
+                },
                 |w| model(w, base),
             ),
             vec![
@@ -598,10 +598,7 @@ mod section_gestures {
     #[test]
     fn test_section_resize_se_grows_size_only() {
         assert_eq!(
-            run_section_resize(
-                ResizeHandleSide::SE,
-                &[mv(20.0, 10.0, 20.0, 10.0), Step::Release]
-            ),
+            run_section_resize(ResizeHandleSide::SE, &[mv(20.0, 10.0, 20.0, 10.0), Step::Release]),
             vec![
                 "- pend=(20,10) total=(20,10) model=off=(10,10) size=(50,30) undo=0 cache=1",
                 "All pend=(20,10) total=(20,10) model=off=(10,10) size=(70,40) undo=1 cache=0",
@@ -633,10 +630,7 @@ mod section_gestures {
     #[test]
     fn test_section_resize_rejected_commit_snaps_back_without_undo() {
         assert_eq!(
-            run_section_resize(
-                ResizeHandleSide::SE,
-                &[mv(500.0, 0.0, 500.0, 0.0), Step::Release]
-            ),
+            run_section_resize(ResizeHandleSide::SE, &[mv(500.0, 0.0, 500.0, 0.0), Step::Release]),
             vec![
                 "- pend=(500,0) total=(500,0) model=off=(10,10) size=(50,30) undo=0 cache=1",
                 "All pend=(500,0) total=(500,0) model=off=(10,10) size=(50,30) undo=0 cache=0",
@@ -651,11 +645,7 @@ mod node_resize {
     use baumhard::mindmap::model::{Position, Size};
 
     fn node_model(world: &World) -> String {
-        let Some(node) = world
-            .document
-            .as_ref()
-            .and_then(|d| d.mindmap.nodes.get(FROM_ID))
-        else {
+        let Some(node) = world.document.as_ref().and_then(|d| d.mindmap.nodes.get(FROM_ID)) else {
             return "-".to_string();
         };
         format!(
@@ -911,7 +901,10 @@ mod portal_label {
         let render = |s: &Option<baumhard::mindmap::model::PortalEndpointState>| match s {
             Some(s) => format!(
                 "t={} perp={}",
-                s.border_t.map(round1).map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+                s.border_t
+                    .map(round1)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".into()),
                 s.perpendicular_offset
                     .map(round1)
                     .map(|v| v.to_string())
@@ -949,11 +942,7 @@ mod portal_label {
     #[test]
     fn test_latched_cursor_is_the_last_one_and_the_release_commits_it() {
         assert_eq!(
-            run(&[
-                mv(0.0, 0.0, 60.0, 30.0),
-                mv(0.0, 0.0, 120.0, 30.0),
-                Step::Release
-            ]),
+            run(&[mv(0.0, 0.0, 60.0, 30.0), mv(0.0, 0.0, 120.0, 30.0), Step::Release]),
             vec![
                 "- cursor=(60,30) model=from[t=- perp=-] to[-] undo=0 cache=1",
                 "- cursor=(120,30) model=from[t=- perp=-] to[-] undo=0 cache=1",
@@ -1003,7 +992,10 @@ mod edge_label {
         match &edge.label_config {
             Some(cfg) => format!(
                 "t={} perp={}",
-                cfg.position_t.map(round1).map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+                cfg.position_t
+                    .map(round1)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".into()),
                 cfg.perpendicular_offset
                     .map(round1)
                     .map(|v| v.to_string())

@@ -110,10 +110,7 @@ impl ThrottledDragInteraction for PortalLabelInteraction {
     /// The no-op check compares only the two fields this drag
     /// touches (`portal_from` / `portal_to`) — whole-edge
     /// `PartialEq` would fold in float-fragile `control_points`.
-    fn commit_on_release_core(
-        &mut self,
-        c: ReleaseCommit<'_>,
-    ) -> ReleaseRefresh {
+    fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let pending_cursor = self.pending.take_cursor();
         if let (Some(doc), Some(cursor)) = (c.document.as_mut(), pending_cursor) {
             apply_portal_label_drag(doc, &self.edge_ref, &self.endpoint_node_id, cursor);
@@ -131,11 +128,10 @@ impl ThrottledDragInteraction for PortalLabelInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::Vec2;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge, moved,
-        trait_default_tests_for_throttled_interaction,
+        drive_throttle_over_budget, fixture_edge, moved, trait_default_tests_for_throttled_interaction,
     };
+    use glam::Vec2;
 
     fn fixture_interaction() -> PortalLabelInteraction {
         PortalLabelInteraction::new(

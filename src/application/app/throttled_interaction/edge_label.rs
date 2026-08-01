@@ -104,10 +104,7 @@ impl ThrottledDragInteraction for EdgeLabelInteraction {
     /// drain already narrowed to the label tree because node trees
     /// are untouched by a label move, and the release commit is the
     /// same story.
-    fn commit_on_release_core(
-        &mut self,
-        c: ReleaseCommit<'_>,
-    ) -> ReleaseRefresh {
+    fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let pending_cursor = self.pending.take_cursor();
         if let (Some(doc), Some(cursor)) = (c.document.as_mut(), pending_cursor) {
             apply_edge_label_drag(doc, &self.edge_ref, cursor);
@@ -125,11 +122,10 @@ impl ThrottledDragInteraction for EdgeLabelInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::Vec2;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge, moved,
-        trait_default_tests_for_throttled_interaction,
+        drive_throttle_over_budget, fixture_edge, moved, trait_default_tests_for_throttled_interaction,
     };
+    use glam::Vec2;
 
     fn fixture_interaction() -> EdgeLabelInteraction {
         EdgeLabelInteraction::new(EdgeRef::new("a", "b", "parent_child"), fixture_edge())

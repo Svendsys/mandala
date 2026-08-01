@@ -137,10 +137,7 @@ impl ThrottledDragInteraction for MovingSectionInteraction {
     /// A single setter call; AABB overflow rejection logs and falls
     /// through to [`ReleaseRefresh::All`], which rebuilds the tree
     /// from the unchanged model and snaps the section back.
-    fn commit_on_release_core(
-        &mut self,
-        c: ReleaseCommit<'_>,
-    ) -> ReleaseRefresh {
+    fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let Some(doc) = c.document.as_mut() else {
             return ReleaseRefresh::None;
         };

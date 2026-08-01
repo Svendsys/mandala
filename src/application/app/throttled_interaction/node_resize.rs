@@ -107,13 +107,7 @@ impl ThrottledInteraction for NodeResizeInteraction {
                 if fx == -1 { pending_delta.x } else { 0.0 },
                 if fy == -1 { pending_delta.y } else { 0.0 },
             );
-            apply_node_resize_to_tree(
-                tree,
-                &self.node_id,
-                canvas_pos,
-                canvas_size,
-                pending_pos_delta,
-            );
+            apply_node_resize_to_tree(tree, &self.node_id, canvas_pos, canvas_size, pending_pos_delta);
             renderer.rebuild_buffers_from_tree(&tree.tree);
             let elements = build_node_resize_handles(&self.node_id, canvas_pos, canvas_size);
             update_node_resize_handle_tree_from_slice(&elements, app_scene);
@@ -134,10 +128,7 @@ impl ThrottledDragInteraction for NodeResizeInteraction {
     /// Single-source for both the left-release and right-release
     /// finalization paths — pre-fix, the two arms held byte-near
     /// duplicates of this body. CODE_CONVENTIONS §5.
-    fn commit_on_release_core(
-        &mut self,
-        c: ReleaseCommit<'_>,
-    ) -> ReleaseRefresh {
+    fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let Some(doc) = c.document.as_mut() else {
             return ReleaseRefresh::None;
         };
@@ -318,7 +309,10 @@ mod tests {
             "n".to_string(),
             ResizeHandleSide::SE,
             Position { x: 0.0, y: 0.0 },
-            Size { width: 100.0, height: 50.0 },
+            Size {
+                width: 100.0,
+                height: 50.0,
+            },
             true,
         );
         assert!(i.started_with_right);

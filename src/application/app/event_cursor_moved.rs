@@ -18,9 +18,8 @@ use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::{
-    DragInput, EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction,
-    MovingSectionInteraction, NodeResizeInteraction, PortalLabelInteraction,
-    SectionResizeInteraction, ThrottledDrag,
+    DragInput, EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
+    NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
 };
 use super::DragState;
 use crate::application::common::RenderDecree;
@@ -382,13 +381,11 @@ pub(super) fn handle_cursor_moved(
                                     // `Section(node, idx)` so the
                                     // mid-drag picker hint matches
                                     // the in-flight gesture.
-                                    if let Some(new_sel) =
-                                        selection_after_section_drag_press(
-                                            &doc.selection,
-                                            &node_id,
-                                            section_idx,
-                                        )
-                                    {
+                                    if let Some(new_sel) = selection_after_section_drag_press(
+                                        &doc.selection,
+                                        &node_id,
+                                        section_idx,
+                                    ) {
                                         doc.selection = new_sel;
                                         rebuild_selection_highlight(
                                             doc,
@@ -443,13 +440,16 @@ pub(super) fn handle_cursor_moved(
                         ctx.modifiers.shift_key(),
                     ) {
                         if let Some(doc) = ctx.document.as_mut() {
-                            if let Some(new_sel) = selection_after_section_drag_press(
-                                &doc.selection,
-                                &node_id,
-                                section_idx,
-                            ) {
+                            if let Some(new_sel) =
+                                selection_after_section_drag_press(&doc.selection, &node_id, section_idx)
+                            {
                                 doc.selection = new_sel;
-                                rebuild_selection_highlight(doc, ctx.interaction_mode, ctx.mindmap_tree, ctx.renderer);
+                                rebuild_selection_highlight(
+                                    doc,
+                                    ctx.interaction_mode,
+                                    ctx.mindmap_tree,
+                                    ctx.renderer,
+                                );
                             }
                         }
                         ctx.scene_cache.clear();
@@ -470,11 +470,14 @@ pub(super) fn handle_cursor_moved(
                     // (release rebuild lands the same coherent
                     // shape).
                     if let Some(doc) = ctx.document.as_mut() {
-                        if let Some(new_sel) =
-                            selection_after_node_drag_press(&doc.selection, &node_id)
-                        {
+                        if let Some(new_sel) = selection_after_node_drag_press(&doc.selection, &node_id) {
                             doc.selection = new_sel;
-                            rebuild_selection_highlight(doc, ctx.interaction_mode, ctx.mindmap_tree, ctx.renderer);
+                            rebuild_selection_highlight(
+                                doc,
+                                ctx.interaction_mode,
+                                ctx.mindmap_tree,
+                                ctx.renderer,
+                            );
                         }
                     }
                     // Shift+drag: move all selected nodes together.
@@ -702,9 +705,7 @@ fn emits_first_pan_delta(drag_state: &DragState) -> bool {
 /// vertical / horizontal resize cursors. Used by both
 /// handle-driven Resize-mode drags and right-button fast-resize
 /// gestures (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
-fn cursor_icon_for_resize_side(
-    side: baumhard::mindmap::tree_builder::ResizeHandleSide,
-) -> CursorIcon {
+fn cursor_icon_for_resize_side(side: baumhard::mindmap::tree_builder::ResizeHandleSide) -> CursorIcon {
     use baumhard::mindmap::tree_builder::ResizeHandleSide as S;
     match side {
         // Diagonal corners — NW/SE share \ axis, NE/SW share / axis.
@@ -845,11 +846,11 @@ mod tests {
         cursor_icon_for_resize_side, emits_first_pan_delta, resolve_section_drag_target,
         selection_after_node_drag_press, selection_after_section_drag_press, DragState,
     };
-    use baumhard::mindmap::tree_builder::ResizeHandleSide;
     use crate::application::app::InteractionMode;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{SectionSel, SelectionState};
     use crate::application::platform::window::CursorIcon;
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
 
     /// The `LeftDrag`-on-empty arm dispatches whatever Action the
     /// user bound, then emits the threshold frame's pan delta only
@@ -900,21 +901,47 @@ mod tests {
     fn cursor_icon_for_resize_side_pin_per_side() {
         // Diagonals share an axis: NW/SE = `\` = NwseResize.
         //                          NE/SW = `/` = NeswResize.
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::NW), CursorIcon::NwseResize);
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::SE), CursorIcon::NwseResize);
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::NE), CursorIcon::NeswResize);
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::SW), CursorIcon::NeswResize);
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::NW),
+            CursorIcon::NwseResize
+        );
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::SE),
+            CursorIcon::NwseResize
+        );
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::NE),
+            CursorIcon::NeswResize
+        );
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::SW),
+            CursorIcon::NeswResize
+        );
         // Edge midpoints.
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::N), CursorIcon::NsResize);
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::S), CursorIcon::NsResize);
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::E), CursorIcon::EwResize);
-        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::W), CursorIcon::EwResize);
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::N),
+            CursorIcon::NsResize
+        );
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::S),
+            CursorIcon::NsResize
+        );
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::E),
+            CursorIcon::EwResize
+        );
+        assert_eq!(
+            cursor_icon_for_resize_side(ResizeHandleSide::W),
+            CursorIcon::EwResize
+        );
     }
 
     /// Helper: NodeEdit mode targeting `node_id` — the mode that
     /// licenses section-drag promotion.
     fn node_edit_for(node_id: &str) -> InteractionMode {
-        InteractionMode::NodeEdit { node_id: node_id.to_string() }
+        InteractionMode::NodeEdit {
+            node_id: node_id.to_string(),
+        }
     }
 
     /// Multi-section node + non-shift + valid section_idx + NodeEdit
@@ -925,7 +952,10 @@ mod tests {
         let (doc, id) = pinned_two_section_node();
         let mode = node_edit_for(&id);
         let result = resolve_section_drag_target(Some(&doc), &mode, &id, Some(1), false);
-        assert!(result.is_some(), "multi-section + non-shift + NodeEdit must promote");
+        assert!(
+            result.is_some(),
+            "multi-section + non-shift + NodeEdit must promote"
+        );
         let (idx, _, _) = result.unwrap();
         assert_eq!(idx, 1);
     }
@@ -947,13 +977,7 @@ mod tests {
     #[test]
     fn test_resolve_section_drag_target_default_mode_returns_none() {
         let (doc, id) = pinned_two_section_node();
-        let result = resolve_section_drag_target(
-            Some(&doc),
-            &InteractionMode::Default,
-            &id,
-            Some(1),
-            false,
-        );
+        let result = resolve_section_drag_target(Some(&doc), &InteractionMode::Default, &id, Some(1), false);
         assert!(result.is_none(), "Default mode must NOT promote section drag");
     }
 
@@ -1008,9 +1032,7 @@ mod tests {
     /// `None` document or `None` hit_section_idx → fall-through.
     #[test]
     fn test_resolve_section_drag_target_no_doc_or_idx_returns_none() {
-        assert!(
-            resolve_section_drag_target(None, &node_edit_for("0"), "0", Some(0), false).is_none()
-        );
+        assert!(resolve_section_drag_target(None, &node_edit_for("0"), "0", Some(0), false).is_none());
         let (doc, id) = pinned_two_section_node();
         let mode = node_edit_for(&id);
         assert!(resolve_section_drag_target(Some(&doc), &mode, &id, None, false).is_none());
@@ -1107,10 +1129,7 @@ mod tests {
     /// section-drag arm's demote.
     #[test]
     fn test_node_drag_press_demotes_multisection_to_single() {
-        let prev = SelectionState::MultiSection(vec![
-            SectionSel::new("a", 0),
-            SectionSel::new("b", 0),
-        ]);
+        let prev = SelectionState::MultiSection(vec![SectionSel::new("a", 0), SectionSel::new("b", 0)]);
         let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
         assert!(matches!(new, SelectionState::Single(id) if id == "a"));
     }

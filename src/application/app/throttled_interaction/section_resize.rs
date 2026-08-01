@@ -131,13 +131,7 @@ impl ThrottledInteraction for SectionResizeInteraction {
                     (new_size.width as f32).max(MIN_DRAG_SIZE_PX),
                     (new_size.height as f32).max(MIN_DRAG_SIZE_PX),
                 );
-                apply_section_resize_to_tree(
-                    tree,
-                    &self.node_id,
-                    self.section_idx,
-                    canvas_pos,
-                    canvas_size,
-                );
+                apply_section_resize_to_tree(tree, &self.node_id, self.section_idx, canvas_pos, canvas_size);
                 renderer.rebuild_buffers_from_tree(&tree.tree);
                 let elements = build_section_resize_handles(
                     &self.node_id,
@@ -164,10 +158,7 @@ impl ThrottledDragInteraction for SectionResizeInteraction {
     /// `EditNodeStyle` undo entry via the section's parent node
     /// (sections share their owning node's style undo envelope —
     /// see `mutate_section_with_style_undo` in `nodes/`).
-    fn commit_on_release_core(
-        &mut self,
-        c: ReleaseCommit<'_>,
-    ) -> ReleaseRefresh {
+    fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let Some(doc) = c.document.as_mut() else {
             return ReleaseRefresh::None;
         };
@@ -338,9 +329,9 @@ mod tests {
     /// button started; the trait predicate must report the field.
     #[test]
     fn test_started_with_right_reports_the_origin_button() {
-        assert!(!ThrottledDragInteraction::started_with_right(
-            &fixture(ResizeHandleSide::SE)
-        ));
+        assert!(!ThrottledDragInteraction::started_with_right(&fixture(
+            ResizeHandleSide::SE
+        )));
         let fast = SectionResizeInteraction::new(
             "n".to_string(),
             0,

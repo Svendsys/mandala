@@ -17,15 +17,11 @@ use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
-use crate::application::document::{
-    apply_drag_delta, apply_drag_delta_and_collect_patches, UndoAction,
-};
-use super::super::scene_rebuild::{
-    flush_canvas_scene_buffers, CanvasFrame,
-};
+use super::super::scene_rebuild::{flush_canvas_scene_buffers, CanvasFrame};
 use super::pending::ThrottledPending;
 use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledDragInteraction, ThrottledInteraction};
+use crate::application::document::{apply_drag_delta, apply_drag_delta_and_collect_patches, UndoAction};
 
 /// Drag-to-move state for one or more nodes. `individual = true`
 /// (Alt-drag) moves only the anchor nodes; false moves each
@@ -165,10 +161,7 @@ impl ThrottledDragInteraction for MovingNodeInteraction {
     /// release the final position must be committed in full even
     /// if the throttle was mid-stretch skipping intermediate
     /// drains.
-    fn commit_on_release_core(
-        &mut self,
-        c: ReleaseCommit<'_>,
-    ) -> ReleaseRefresh {
+    fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let pending_delta = self.pending.pending_delta();
         let had_pending = pending_delta != Vec2::ZERO;
         if had_pending {
@@ -219,11 +212,7 @@ mod tests {
 
     #[test]
     fn test_new_initializes_fields_with_zero_deltas() {
-        let i = MovingNodeInteraction::new(
-            vec!["a".to_string(), "b".to_string()],
-            true,
-            HashSet::new(),
-        );
+        let i = MovingNodeInteraction::new(vec!["a".to_string(), "b".to_string()], true, HashSet::new());
         assert_eq!(i.node_ids, vec!["a".to_string(), "b".to_string()]);
         assert_eq!(i.pending.pending_delta(), Vec2::ZERO);
         assert_eq!(i.pending.total_delta(), Vec2::ZERO);

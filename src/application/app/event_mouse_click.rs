@@ -13,9 +13,9 @@ use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_cli
 use super::console_input::save_console_history;
 use super::input_context::InputHandlerContext;
 use super::modal_editor::commit_modal_editors_on_release;
+use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::release::{resolve_release, ThrottledRelease};
 use super::throttled_interaction::ThrottledDrag;
-use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{rect_select, SelectionState};
