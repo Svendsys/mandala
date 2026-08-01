@@ -252,8 +252,12 @@ re-litigate them without a strong reason.
 
 ## §T11 Running the suite
 
-- `./test.sh` — full suite across `baumhard` and `mandala`; prints a
-  test count at the end.
+- `./test.sh` — full suite across every workspace member —
+  `mandala`, `baumhard`, `mandala_derive`, `maptool` — then the
+  wasm32 type-check gate; prints a test count at the end. It runs
+  `cargo test --workspace` rather than a list of `-p` flags, on
+  purpose: the list it used to carry named three of the four members
+  and so never ran `mandala_derive`'s tests at all.
 - `./test.sh --coverage` — runs under `cargo-llvm-cov` (install with
   `cargo install cargo-llvm-cov`). HTML at
   `target/llvm-cov/html/index.html`, LCOV at
@@ -262,9 +266,10 @@ re-litigate them without a strong reason.
   `cargo clippy --workspace --all-targets`. Both advisory; review
   output but they do not fail the run.
 - `./test.sh --bench` — also runs `cargo bench` after tests pass.
-- `cargo test -p baumhard --lib <pattern>` or
-  `cargo test -p mandala --lib <pattern>` — targeted subset while
-  iterating.
+- `cargo test -p baumhard --lib <pattern>`,
+  `cargo test -p mandala --lib <pattern>`,
+  `cargo test -p mandala_derive` or `cargo test -p maptool` —
+  targeted subset while iterating.
 - `cargo doc -p baumhard --no-deps` — render the library docs and
   spot-check that every `pub` item has the doc comment
   [`lib/baumhard/CONVENTIONS.md §B9`](./lib/baumhard/CONVENTIONS.md)

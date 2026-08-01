@@ -12,7 +12,8 @@ usage() {
   cat <<'EOF'
 Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
 
-  (no flags)   Run the full test suite across baumhard + mandala, then
+  (no flags)   Run the full test suite across every workspace member
+               (mandala, baumhard, mandala_derive, maptool), then
                type-check the WASM target so cross-platform drift fails
                the run instead of sneaking into a merge.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
@@ -64,7 +65,14 @@ else
   echo "== tests =="
   TEST_LOG=$(mktemp)
   trap 'rm -f "$TEST_LOG"' EXIT
-  cargo test -p baumhard -p mandala -p maptool 2>&1 | tee "$TEST_LOG"
+  # `--workspace`, not a hand-written list of `-p` flags. The list
+  # this replaces named three of the four members and silently
+  # dropped `mandala_derive`'s 13 tests for as long as that crate has
+  # existed — a list of members is a copy of the `[workspace]` table
+  # and copies go stale. `--coverage` above and the wasm32 gate below
+  # were already `--workspace`; this is the odd one out rejoining
+  # them.
+  cargo test --workspace 2>&1 | tee "$TEST_LOG"
 
   TOTAL=$(grep -E '^test result: ok\. [0-9]+ passed' "$TEST_LOG" \
     | awk '{ sum += $4 } END { print sum+0 }')
