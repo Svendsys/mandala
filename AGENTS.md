@@ -22,7 +22,10 @@ in good faith:
 - **Changing benchmark code is fine; executing it is not.** Adding or
   moving a `benches/` entry — which `lib/baumhard/CONVENTIONS.md` §B3
   requires alongside a new primitive — is a static change. `cargo check
-  --benches` proves the target still compiles. That is sufficient.
+  --benches` proves the target still compiles. That is sufficient, and
+  `./test.sh` runs it for you (`cargo check --workspace --benches`), so
+  a renamed `do_*()` fails the gate rather than waiting for a benchmark
+  run nobody here is allowed to do.
 
 - **Do not make performance claims.** `lib/baumhard/CONVENTIONS.md` §B7
   requires a main-against-main control row for any number, and you will

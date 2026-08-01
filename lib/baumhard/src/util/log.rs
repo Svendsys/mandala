@@ -74,9 +74,10 @@ fn rust_log_is_effective(value: Option<&str>) -> bool {
     value.is_some_and(|v| !v.trim().is_empty())
 }
 
-/// The `log` feature both workspace manifests must declare. Changing
-/// this constant without changing both manifests fails
-/// [`tests::test_both_manifests_keep_warn_and_error_in_release`].
+/// The `log` feature the workspace's single `log` declaration — in
+/// the root `[workspace.dependencies]` table — must carry. Changing
+/// this constant without changing that declaration fails
+/// [`tests::test_the_workspace_keeps_warn_and_error_in_release`].
 #[cfg(all(test, not(target_arch = "wasm32")))]
 const REQUIRED_LOG_LEVEL_FEATURE: &str = "release_max_level_warn";
 
@@ -88,12 +89,12 @@ const POLICY_HEADING: &str = "## §9 Error handling";
 
 /// `log` versions in which the
 /// `compile_error!("multiple release_max_level_* features set")` guard
-/// the manifest comments lean on was *read*, not assumed —
+/// the root manifest's comment leans on was *read*, not assumed —
 /// `log-0.4.29/src/lib.rs:376-394`.
 ///
-/// The manifests both request `"0.4.29"`, which is a caret
+/// `[workspace.dependencies]` requests `"0.4.29"`, which is a caret
 /// requirement, so `cargo update` can move the resolved version
-/// underneath that text without touching either manifest. Pinning the
+/// underneath that text without touching the manifest. Pinning the
 /// *lockfile* is therefore the only place the claim can be held.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 const VERIFIED_LOG_VERSIONS: &[&str] = &["0.4.29"];
@@ -101,42 +102,52 @@ const VERIFIED_LOG_VERSIONS: &[&str] = &["0.4.29"];
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::{rust_log_is_effective, POLICY_HEADING, REQUIRED_LOG_LEVEL_FEATURE, VERIFIED_LOG_VERSIONS};
-    use crate::util::doc_fixtures::section_text;
-    use std::path::{Path, PathBuf};
+    use crate::util::doc_fixtures::{repo_path, section_text};
 
-    /// Absolute path to a manifest under the repo root, resolved from
-    /// baumhard's own `CARGO_MANIFEST_DIR` the same way
-    /// [`crate::util::doc_fixtures::format_doc_path`] does.
-    fn repo_path(relative: &str) -> PathBuf {
-        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(relative)
-    }
-
-    /// Return the `log = { ... }` dependency line from a manifest.
-    fn log_dependency_line(manifest: &str) -> String {
-        let text = std::fs::read_to_string(repo_path(manifest))
-            .unwrap_or_else(|e| panic!("{manifest} must be readable: {e}"));
-        text.lines()
-            .find(|line| line.trim_start().starts_with("log = "))
-            .unwrap_or_else(|| panic!("{manifest} no longer declares a `log = ` dependency"))
-            .to_string()
+    /// Every line in the workspace that declares a `log` dependency,
+    /// paired with the manifest it came from.
+    ///
+    /// Sourced through [`crate::util::manifests::member_manifests`]
+    /// rather than a hard-coded pair of paths, so a future member
+    /// that declares its own `log` is checked rather than missed —
+    /// which is precisely how the level could drift back apart after
+    /// `[workspace.dependencies]` made the shared declaration
+    /// singular.
+    fn log_dependency_lines() -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        for manifest in crate::util::manifests::member_manifests() {
+            let text = std::fs::read_to_string(repo_path(&manifest))
+                .unwrap_or_else(|e| panic!("{manifest} must be readable: {e}"));
+            found.extend(
+                text.lines()
+                    .filter(|line| line.trim_start().starts_with("log = "))
+                    .map(|line| (manifest.clone(), line.to_string())),
+            );
+        }
+        found
     }
 
     /// The whole failure mode this issue was about: a `log` max-level
     /// feature that quietly deletes CODE_CONVENTIONS §9's failure
     /// channel from the binaries users run.
     ///
-    /// The two manifests cannot silently *disagree* — cargo unions
-    /// `log`'s features across the workspace and `log` itself
-    /// `compile_error!`s on "multiple release_max_level_* features
-    /// set", so a mixed workspace fails to build and nothing gets as
-    /// far as running. What has no compiler behind it is the two
-    /// manifests silently *agreeing on the wrong level*: a joint drift
-    /// back to `off`, a swap to `release_max_level_error`, or the
-    /// feature dropped from both (which uncaps release to `Trace` and
-    /// re-admits the chatty walker instrumentation). Those are what
-    /// this pins.
+    /// The workspace used to declare the feature twice — once in the
+    /// app crate, once in baumhard. Those could not silently
+    /// *disagree*, because cargo unions `log`'s features across the
+    /// workspace and `log` itself `compile_error!`s on "multiple
+    /// release_max_level_* features set", so a mixed workspace failed
+    /// to build. `[workspace.dependencies]` removed the second
+    /// declaration outright, so there is nothing left to mix.
+    ///
+    /// What still has no compiler behind it is the surviving
+    /// declaration naming the *wrong* level: a drift back to `off`, a
+    /// swap to `release_max_level_error`, or the feature dropped
+    /// (which uncaps release to `Trace` and re-admits the chatty
+    /// walker instrumentation). That is what this pins — over every
+    /// `log = ` line in the workspace, so re-splitting the
+    /// declaration cannot slip a second, wrong one past it either.
     #[test]
-    fn test_both_manifests_keep_warn_and_error_in_release() {
+    fn test_the_workspace_keeps_warn_and_error_in_release() {
         // Every level cap that would drop `warn!` below the §9
         // contract, plus the two looser ones — naming them all means
         // a swap to any other variant fails here rather than sliding
@@ -149,8 +160,16 @@ mod tests {
             "release_max_level_trace",
         ];
 
-        for manifest in ["Cargo.toml", "lib/baumhard/Cargo.toml"] {
-            let line = log_dependency_line(manifest);
+        let declarations = log_dependency_lines();
+        assert_eq!(
+            declarations.len(),
+            1,
+            "the workspace must declare `log` exactly once, in the root \
+             `[workspace.dependencies]` table, with every member writing \
+             `log.workspace = true`; found {declarations:#?}"
+        );
+
+        for (manifest, line) in declarations {
             assert!(
                 line.contains(REQUIRED_LOG_LEVEL_FEATURE),
                 "{manifest} must declare `{REQUIRED_LOG_LEVEL_FEATURE}` on the `log` \

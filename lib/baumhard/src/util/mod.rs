@@ -27,6 +27,12 @@ pub mod grapheme_chad;
 /// target. Macro callsites keep using `log::warn!` etc. directly,
 /// since `log` is the universal Rust facade.
 pub mod log;
+/// Reader over the workspace's own `Cargo.toml` files, so the
+/// "one version, declared once in `[workspace.dependencies]`" rule
+/// is enforced instead of merely written down. Test-only and
+/// native-only — nothing in a shipped build parses manifests.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod manifests;
 /// Hashable, `Eq`-able 2D float vector (each axis wrapped in
 /// `OrderedFloat`).
 pub mod ordered_vec2;
