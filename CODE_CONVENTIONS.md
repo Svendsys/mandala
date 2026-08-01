@@ -440,7 +440,7 @@ Mechanical repo rules about where a line goes in a `Cargo.toml`.
 Unlike §3, obeying these *is* a drive-by edit — it is what you do
 while adding a dependency, not a decision to weigh.
 
-- **One version per dependency, written once.** A crate that two or
+- **One *version string* per dependency, written once.** A crate that two or
   more workspace members need is declared in the root manifest's
   `[workspace.dependencies]`, and each member writes
   `dep.workspace = true` — with `features` beside it when that member
@@ -452,11 +452,18 @@ while adding a dependency, not a decision to weigh.
   incompatible copies of the same types. `strum` sat at 0.27 and 0.28
   simultaneously until it was unified by hand.
   `baumhard::util::manifests` reads the real manifests and checks all
-  three clauses, in every dependency spelling cargo accepts — inline,
-  `[dependencies.<name>]` sub-table, wrapped across lines, renamed via
-  `package =`. A shape it cannot read stops the run rather than
-  dropping out of the checked set, which is the property that makes
-  the check worth citing.
+  three clauses, in every spelling in use here — inline,
+  `[dependencies.<name>]` sub-table, `dep.workspace = true`, wrapped
+  across lines, renamed via `package =`, with or without a trailing
+  comment. The spellings cargo accepts that nobody here writes stop
+  the run instead: a shape it cannot read is refused by name rather
+  than dropping out of the checked set, which is the property that
+  makes the check worth citing. The heading says *version string* on
+  purpose — a declaration that names no version is outside the first
+  two clauses, so `path` and `git` dependencies are exempt and two
+  members pinning one crate to two git revisions would not be
+  reported. Nothing here uses a `git` dependency; the first one to
+  arrive owes that gap a decision.
 - **A dependency that exists to turn a feature on says so.** Cargo
   unions features across the workspace, so a manifest entry with no
   call site can still be load-bearing — the root manifest's

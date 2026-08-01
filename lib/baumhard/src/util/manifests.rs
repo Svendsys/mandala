@@ -26,6 +26,13 @@
 //!   (which would silently override it);
 //! - the table carries nothing only one member uses.
 //!
+//! What the first two clauses do *not* reach: a declaration with no
+//! version string. `path` dependencies have none by construction, and
+//! neither do `git` ones — two members could pin one crate to two
+//! different revisions and nothing here would report it. No member
+//! uses a `git` dependency today; the day one arrives, this is where
+//! that gap gets closed rather than discovered.
+//!
 //! **The member list is read, not restated.** [`member_manifests`]
 //! parses `[workspace] members` out of the root manifest, so a fifth
 //! crate is covered the day it is added — the failure mode
@@ -45,12 +52,22 @@
 //!
 //! Concretely:
 //!
-//! - Both spellings cargo offers for a dependency parse: the inline
-//!   `serde = { version = "1", features = [...] }` and the sub-table
-//!   header `[dependencies.serde]` with its keys on the lines below.
-//!   The second is what a `taplo fmt` or a long feature list turns
-//!   the first into, and it is a one-line way to re-split a version,
-//!   so it has to be seen rather than skipped.
+//! - Every spelling in use here parses; the rest stop the run. The
+//!   inline `serde = { version = "1", features = [...] }`, the
+//!   sub-table header `[dependencies.serde]` with its keys on the
+//!   lines below, and the dotted `serde.workspace = true`. The
+//!   sub-table form is what a `taplo fmt` or a long feature list
+//!   turns the inline one into, and it is a one-line way to re-split
+//!   a version, so it has to be seen rather than skipped. Cargo
+//!   accepts one more spelling nobody here writes — the rest of the
+//!   dotted family, `serde.version = "1"` and `serde.path = "../x"`,
+//!   which is the sub-table written inline. That one refuses by name
+//!   rather than parsing, which is the safe direction: it stops a run
+//!   instead of deleting a declaration from the checked set.
+//! - A leading UTF-8 BOM is stripped before anything is read. Cargo
+//!   accepts a BOM, so a manifest carrying one is a manifest this
+//!   reader has to see all of; left in place it hides the first
+//!   section header, and every key under that header with it.
 //! - A renamed dependency (`fast = { package = "rustc-hash", ... }`)
 //!   is recorded under the crate it actually pulls in, so a rename
 //!   cannot hide a split behind a different key.
@@ -64,9 +81,9 @@
 //!   answer given here.
 //! - Everything left **refuses**: a section header the reader has no
 //!   classification for, a table nested deeper under a dependency
-//!   table, a value that is neither a version string nor an inline
-//!   table. Each panics naming the file, the line, and what the
-//!   reader could not do with it.
+//!   table, a header whose `]` never arrives, a value that is neither
+//!   a version string nor an inline table. Each panics naming the
+//!   file, the line, and what the reader could not do with it.
 //!
 //! The refusal policy is weighted by risk on purpose, because it used
 //! to be weighted the other way: silence is for shapes that cannot
@@ -219,12 +236,14 @@ enum Section {
 /// treated as harmless, because "harmless" is exactly what a missed
 /// dependency table looks like from here.
 ///
-/// `patch` and `replace` are deliberately *absent*. Neither is a
-/// member dependency table, so none of the three rules applies to
-/// them as written — but both redirect where a dependency comes from,
-/// which is close enough that the first person to add one should have
-/// to decide what these rules mean for it rather than have this list
-/// decide silently.
+/// `patch` and `replace` are deliberately *absent*, and
+/// [`section_for`] refuses them with a message of their own that says
+/// why, rather than the generic one whose advice is to extend this
+/// list. Neither is a member dependency table, so none of the three
+/// rules applies to them as written — but both redirect where a
+/// dependency comes from, which is close enough that the first person
+/// to add one should have to decide what these rules mean for it
+/// rather than have this list decide silently.
 const NON_DEPENDENCY_ROOTS: [&str; 12] = [
     "package",
     "lib",
@@ -305,6 +324,26 @@ fn section_for(path: &str, header: &str) -> Section {
         };
     }
     let root = header.split('.').next().unwrap_or(header);
+    // `patch` and `replace` get their own refusal, because the generic
+    // one below ends in advice — "add its root to
+    // `NON_DEPENDENCY_ROOTS`" — that would resolve this case exactly
+    // wrongly, in one line, and silently. Pinning a fork is a routine
+    // edit; the first person to make one should read why these two are
+    // held out rather than how to stop the suite complaining.
+    assert!(
+        root != "patch" && root != "replace",
+        "{path}: section [{header}] redirects where a dependency comes from, and \
+         `util::manifests` refuses it on purpose rather than classifying it. The \
+         three rules are written about *which version a member asks for*; a patched \
+         or replaced source keeps the asking untouched and changes what that ask \
+         resolves to, so a shared `[workspace.dependencies]` entry can stay \
+         letter-perfect while two members build against different code. Nobody has \
+         had to decide what the rules mean for that yet, and it is a decision, not a \
+         classification — so decide it here, in this module, with a test that says \
+         what you decided. Do not add `{root}` to `NON_DEPENDENCY_ROOTS`: that is \
+         the one-line way to make this section invisible, which is the failure this \
+         reader exists to not have."
+    );
     assert!(
         NON_DEPENDENCY_ROOTS.contains(&root),
         "{path}: section [{header}] is one `util::manifests` has no classification \
@@ -332,6 +371,22 @@ pub(crate) fn parse(path: &str, text: &str) -> Manifest {
     for (line, raw) in logical_lines(text) {
         let (line, raw) = (line.as_str(), raw.as_str());
         if line.starts_with('[') {
+            // A header that does not close is not a header, and must
+            // not be classified as one. `logical_lines` joins on
+            // unbalanced delimiters, so a table header split across
+            // lines — or a file that ends mid-header — arrives here
+            // as one long buffer starting with `[`; classifying its
+            // first segment would read `[target.'cfg(any(` as the
+            // known-harmless `target` root and drop the whole table
+            // without a word. Illegal TOML, so cargo rejects the file
+            // first, but this reader does not get to rely on that.
+            assert!(
+                line.ends_with(']'),
+                "{path}: section header {raw:?} is never closed with `]`. \
+                 `util::manifests` reads a header from one line; a header wrapped \
+                 across lines, or a file that ends inside one, cannot be classified \
+                 and must not be guessed at."
+            );
             // `[[bench]]` and friends end a dependency table just as
             // any other header does; `section_for` classifies them as
             // `Other` and the lines after them are skipped.
@@ -411,13 +466,18 @@ fn apply_sub_table_key(dep: &mut Dep, key: &str, value: &str) {
 /// failing tests. Nothing about a line break changes which crate is
 /// pulled in at which version, so nothing about it may change the
 /// answer this module gives.
+///
+/// A leading UTF-8 BOM is dropped first. Cargo accepts one, and left
+/// in place it would make `\u{feff}[package]` fail `starts_with('[')`
+/// — the first section of the file, and every key under it, read as
+/// the body of no section at all.
 fn logical_lines(text: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut buffer = String::new();
     let mut first_raw = String::new();
     let mut depth = 0;
 
-    for raw in text.lines() {
+    for raw in text.trim_start_matches('\u{feff}').lines() {
         let line = strip_trailing_comment(raw.trim());
         if line.is_empty() {
             continue;
@@ -435,9 +495,19 @@ fn logical_lines(text: &str) -> Vec<(String, String)> {
             out.push((buffer.clone(), first_raw.clone()));
         }
     }
-    // An unbalanced tail is still handed on rather than dropped: the
-    // reader downstream refuses it by name, which beats a declaration
-    // disappearing because the file ended mid-table.
+    // An unbalanced tail is still handed on rather than dropped,
+    // which beats a declaration disappearing because the file ended
+    // mid-table. Downstream refuses it either way, but by two
+    // different routes and it is worth being exact about which: a
+    // tail that is a *value* (`foo = { version = "1",`) is refused by
+    // `parse_dep`, which names the crate and says the inline table
+    // never closes. A tail that begins with a *header* would not have
+    // reached that refusal — joined, it still `starts_with('[')`, so
+    // `parse` would take it for a header and `section_for` would
+    // classify the pseudo-header's first segment, which for
+    // `[target.'cfg(any(` is `target`: a known non-dependency root,
+    // and the table under it silently gone. `parse` therefore
+    // requires a header line to close with `]` before classifying it.
     if depth > 0 {
         out.push((buffer, first_raw));
     }
@@ -606,15 +676,24 @@ fn inline_value<'a>(body: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
-/// Strip the surrounding quotes from a TOML string value.
+/// Strip the surrounding quotes from a TOML string value, basic
+/// (`"1.0"`) or literal (`'1.0'`).
+///
+/// Both spellings mean the same version to cargo, so both must mean
+/// the same string here: a sub-table's `version = '1.0'` was recorded
+/// as `'1.0'`, delimiters and all. No rule misfired on it — all three
+/// key on `version.is_some()` — but a version that is not the version
+/// is a wrong answer waiting for the first rule that reads one.
 fn quoted(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches('"')
-        .split('"')
-        .next()
-        .unwrap_or_default()
-        .to_string()
+    let value = value.trim();
+    match value.chars().next() {
+        Some(delimiter @ ('"' | '\'')) => value[delimiter.len_utf8()..]
+            .split(delimiter)
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+        _ => value.to_string(),
+    }
 }
 
 /// The names declared in `[workspace.dependencies]`.
@@ -814,7 +893,7 @@ features = [
 path = "../../lib/baumhard"
 
 [build-dependencies.ttf-parser]
-version = "0.25.1"
+version = '0.25.1'
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.arboard]
 version = "3.6.1"
@@ -856,6 +935,12 @@ name = "test_bench"
         assert_eq!(
             by_name("ttf-parser").table,
             Table::Member("build-dependencies".into())
+        );
+        assert_eq!(
+            by_name("ttf-parser").version.as_deref(),
+            Some("0.25.1"),
+            "a TOML literal string is the same version as a basic one, and must be \
+             recorded without its delimiters"
         );
         assert_eq!(
             by_name("arboard").table,
@@ -931,6 +1016,61 @@ name = "test_bench"
         assert_eq!(m.deps[3].version.as_deref(), Some("1.0"));
     }
 
+    /// A UTF-8 BOM is something cargo accepts, so it is something this
+    /// reader has to survive. Left in place, `\u{feff}[dependencies]`
+    /// does not `starts_with('[')`: the header is not recognized, the
+    /// section is never entered, and every declaration under it drops
+    /// out of the checked set without a word — the one property this
+    /// module claims it does not have. The real manifests all open
+    /// with `[package]`, so today a BOM would cost nothing; that is an
+    /// accident of ordering that any manifest edit can undo, which is
+    /// exactly the kind of accident not worth depending on.
+    #[test]
+    fn test_parser_reads_a_manifest_with_a_byte_order_mark() {
+        let m = fixture(
+            "fixture/Cargo.toml",
+            "\u{feff}[dependencies]\nfoo = \"1.0\"\nbar = \"2.0\"\n",
+        );
+        assert_eq!(
+            m.deps.len(),
+            2,
+            "a BOM must not hide the first section header, or the table under it"
+        );
+        assert_eq!(m.deps[0].version.as_deref(), Some("1.0"));
+        assert_eq!(m.deps[1].version.as_deref(), Some("2.0"));
+
+        let shadowed = [
+            fixture("Cargo.toml", "[workspace.dependencies]\nstrum = \"0.28.0\"\n"),
+            fixture(
+                "member/Cargo.toml",
+                "\u{feff}[dependencies]\nstrum = \"0.27.0\"\n",
+            ),
+        ];
+        assert_eq!(
+            workspace_entries_overridden(&shadowed).keys().collect::<Vec<_>>(),
+            vec!["strum"],
+            "and a violation in a BOM-prefixed manifest is still reported"
+        );
+    }
+
+    /// A header this reader cannot see the end of is a header it may
+    /// not classify. `logical_lines` joins on unbalanced delimiters,
+    /// so a wrapped table header arrives as one buffer beginning with
+    /// `[`; its first segment here is `target`, a known non-dependency
+    /// root, and taking that answer would drop the table in silence.
+    /// Cargo rejects a newline inside a table header, so this is
+    /// hardening rather than a live shape — but it was the last path
+    /// left where an unbalanced delimiter produced silence instead of
+    /// a refusal, and the module's claim is that there is no such path.
+    #[test]
+    #[should_panic(expected = "never closed with `]`")]
+    fn test_parser_refuses_a_header_that_does_not_close() {
+        parse(
+            "fixture/Cargo.toml",
+            "[target.'cfg(any(\n  unix,\n))'.dependencies]\nfoo = \"1.0\"\n",
+        );
+    }
+
     /// A `#` inside a quoted value is part of the value, not the
     /// start of a comment.
     #[test]
@@ -959,6 +1099,21 @@ name = "test_bench"
         parse(
             "fixture/Cargo.toml",
             "[dependencies.strum.metadata]\nversion = \"0.27\"\n",
+        );
+    }
+
+    /// `[patch]` and `[replace]` are refused, and *what the refusal
+    /// says* is the point of pinning it: the generic unclassified-
+    /// section message ends by suggesting `NON_DEPENDENCY_ROOTS`,
+    /// which for these two would silence the refusal in one line and
+    /// call it a fix. Pinning a fork is a routine edit, so the first
+    /// person to hit this must read why rather than how.
+    #[test]
+    #[should_panic(expected = "Do not add `patch` to `NON_DEPENDENCY_ROOTS`")]
+    fn test_parser_refuses_a_patched_source_with_its_reason() {
+        parse(
+            "fixture/Cargo.toml",
+            "[patch.crates-io]\nstrum = { path = \"../strum\" }\n",
         );
     }
 
