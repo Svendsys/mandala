@@ -66,7 +66,9 @@ impl MindMapDocument {
         if len >= crate::application::document::MAX_SECTIONS_PER_NODE {
             return Err(format!(
                 "section add: node '{}' already has {} sections (cap = {})",
-                node_id, len, crate::application::document::MAX_SECTIONS_PER_NODE
+                node_id,
+                len,
+                crate::application::document::MAX_SECTIONS_PER_NODE
             ));
         }
         let insert_at = at.unwrap_or(len).min(len);
@@ -166,7 +168,7 @@ impl MindMapDocument {
         at_grapheme: Option<usize>,
     ) -> Result<usize, String> {
         use baumhard::mindmap::model::text_run_ops;
-        use unicode_segmentation::UnicodeSegmentation;
+        use baumhard::util::grapheme_chad::{count_grapheme_clusters, find_byte_index_of_grapheme};
 
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -187,7 +189,7 @@ impl MindMapDocument {
         // grapheme index (for partitioning the runs — `TextRun.start`
         // / `.end` are grapheme-cluster indices per
         // `format/text-runs.md`). Walking once gives us both.
-        let total_graphemes = original_text.graphemes(true).count();
+        let total_graphemes = count_grapheme_clusters(original_text);
         let split_grapheme = match at_grapheme {
             Some(g) if g > total_graphemes => {
                 return Err(format!(
@@ -204,11 +206,7 @@ impl MindMapDocument {
         } else {
             // The g-th grapheme boundary is the byte offset of
             // the start of the g-th grapheme cluster.
-            original_text
-                .grapheme_indices(true)
-                .nth(split_grapheme)
-                .map(|(b, _)| b)
-                .unwrap_or(original_text.len())
+            find_byte_index_of_grapheme(original_text, split_grapheme).unwrap_or(original_text.len())
         };
 
         let prefix_text = original_text[..split_byte].to_string();
@@ -656,10 +654,10 @@ mod tests {
         let after_set_size = doc.mindmap.nodes.get(&id).unwrap().size;
         // Sanity: the floor pass actually grew the node.
         assert!(
-            after_set_size.width > before_size.width
-                || after_set_size.height > before_size.height,
+            after_set_size.width > before_size.width || after_set_size.height > before_size.height,
             "fixture-validity check: long text must trigger floor-pass growth (before: {:?}, after: {:?})",
-            before_size, after_set_size
+            before_size,
+            after_set_size
         );
         assert!(doc.undo());
         let after_undo_size = doc.mindmap.nodes.get(&id).unwrap().size;
@@ -730,10 +728,11 @@ mod tests {
         // Two sections so delete is allowed; selection on the last.
         doc.add_section(&id, None, empty_section()).unwrap();
         let last_idx = doc.mindmap.nodes.get(&id).unwrap().sections.len() - 1;
-        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
-            node_id: id.clone(),
-            section_idx: last_idx,
-        });
+        doc.selection =
+            crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+                node_id: id.clone(),
+                section_idx: last_idx,
+            });
         doc.delete_section(&id, last_idx).unwrap();
         // Selection demotes to Single — the section is gone.
         assert!(
@@ -751,10 +750,11 @@ mod tests {
         use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
-        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
-            node_id: id.clone(),
-            section_idx: 0,
-        });
+        doc.selection =
+            crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            });
 
         // Stage a section-targeted border preview.
         let mut edits = BorderConfigEdits::default();

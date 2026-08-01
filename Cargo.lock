@@ -1610,7 +1610,6 @@ dependencies = [
  "strum_macros 0.27.2",
  "tinyvec",
  "ttf-parser",
- "unicode-segmentation",
  "walkdir",
  "wasm-bindgen",
  "wasm-bindgen-futures",
