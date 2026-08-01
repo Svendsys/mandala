@@ -663,7 +663,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_merges_with_prior() {
+    fn test_region_to_text_run_merges_with_prior() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
         let prior = styled_run(0, 5);
         let out = region_to_text_run(&region, Some(&prior));
@@ -678,7 +678,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_falls_back_to_defaults_without_prior() {
+    fn test_region_to_text_run_falls_back_to_defaults_without_prior() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, None);
         let out = region_to_text_run(&region, None);
         assert!(!out.bold);
@@ -691,14 +691,14 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_uses_region_color_without_prior() {
+    fn test_region_to_text_run_uses_region_color_without_prior() {
         let region = ColorFontRegion::new(Range::new(0, 3), None, Some([0.0, 1.0, 0.0, 1.0]));
         let out = region_to_text_run(&region, None);
         assert_eq!(out.color, "#00ff00");
     }
 
     #[test]
-    fn region_to_text_run_preserves_var_color_when_range_matches() {
+    fn test_region_to_text_run_preserves_var_color_when_range_matches() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
         let prior_with_var = TextRun {
             color: "var(--accent)".into(),
@@ -709,7 +709,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn region_to_text_run_loses_var_color_on_range_change() {
+    fn test_region_to_text_run_loses_var_color_on_range_change() {
         let region = ColorFontRegion::new(Range::new(0, 3), None, Some([1.0, 0.0, 0.0, 1.0]));
         let prior_with_var = TextRun {
             color: "var(--accent)".into(),
@@ -720,7 +720,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn exact_overlap_match_wins_over_partial() {
+    fn test_exact_overlap_match_wins_over_partial() {
         let r1 = run(0, 5, "#aabbcc", "");
         let r2 = run(2, 7, "#ddeeff", "");
         let priors = vec![&r1, &r2];
@@ -729,7 +729,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn dominant_overlap_wins_when_no_exact_match() {
+    fn test_dominant_overlap_wins_when_no_exact_match() {
         let small = run(0, 1, "#000000", "");
         let large = run(0, 4, "#ffffff", "");
         let priors = vec![&small, &large];
@@ -738,7 +738,7 @@ mod region_converter_tests {
     }
 
     #[test]
-    fn no_overlap_returns_none() {
+    fn test_no_overlap_returns_none() {
         let r1 = run(0, 5, "#aabbcc", "");
         let priors = vec![&r1];
         assert!(exact_or_dominant_overlap(&priors, 10, 15).is_none());
@@ -772,7 +772,7 @@ mod sync_verdict_tests {
     /// the forward path stored `None` and the back-projected
     /// comparison could never match.
     #[test]
-    fn round_trip_with_no_mutation_reports_no_change() {
+    fn test_round_trip_with_no_mutation_reports_no_change() {
         let mut doc = load_test_doc();
         let before = doc.mindmap.clone();
         let tree = doc.build_tree();
