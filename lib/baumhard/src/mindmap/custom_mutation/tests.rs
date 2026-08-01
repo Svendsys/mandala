@@ -541,18 +541,225 @@ mod flat_mutations_tests {
         );
     }
 
-    /// The all-or-nothing rule keys on *extractability*, not on child
-    /// count: a wrapper whose children are all extractable still
-    /// yields the first payload found.
+    /// The rule is not a child *count* limit: several children are
+    /// fine as long as they agree. Asserting on the returned list's
+    /// **contents**, not its length — a length assertion here cannot
+    /// tell "both children said `nudge(1)`" from "the second child's
+    /// list was thrown away", which is the whole question this test
+    /// sits next to. The disagreeing twin is
+    /// [`repeat_while_wrapper_declines_when_children_payloads_differ`],
+    /// which returns `None` rather than picking a winner.
     #[test]
-    fn repeat_while_wrapper_with_several_extractable_children_still_extracts() {
+    fn repeat_while_wrapper_with_several_agreeing_children_still_extracts() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             mutation: MutationSrc::None,
             children: vec![macro_child(), macro_child()],
         };
-        assert_eq!(flat_mutations(&node).map(|m| m.len()), Some(1));
+        assert_eq!(flat_mutations(&node), Some(vec![nudge()]));
+    }
+
+    /// The scope helpers' payloads survive by value, not just by
+    /// count — `scope::self_and_descendants` in particular carries
+    /// two clones of the same list (root Macro + nested Macro), and
+    /// the equality rule is what makes that a no-op instead of a
+    /// double-apply or a decline.
+    #[test]
+    fn scope_helper_payloads_extract_by_value() {
+        for node in [
+            scope::self_only(vec![nudge()]),
+            scope::descendants(vec![nudge()]),
+            scope::self_and_descendants(vec![nudge()]),
+        ] {
+            assert_eq!(flat_mutations(&node), Some(vec![nudge()]));
+        }
+    }
+
+    // ---- Payload equivalence, not mere extractability ----
+    //
+    // Four shapes that are *entirely* extractable node-by-node and
+    // still cannot be collapsed into one flat list. Each returned
+    // `Some([NudgeRight(1.0)])` before the equality rule landed,
+    // silently discarding the payload named in the assertion message.
+
+    fn nudge_999() -> Mutation {
+        Mutation::area_command(GlyphAreaCommand::NudgeRight(999.0))
+    }
+
+    fn macro_child_999() -> MutatorNode {
+        MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge_999()]),
+            children: vec![],
+        }
+    }
+
+    /// A nested `Macro` whose literal list *differs* from the root's.
+    /// Both nodes are individually extractable, so the extractability
+    /// rule admits the shape — and then one flat list has to stand in
+    /// for two different payloads, which it cannot. Returning the
+    /// root's list blankets every target with `nudge(1)` and lands
+    /// `nudge(999)` nowhere, with no warning: the exact failure the
+    /// nested rule exists to prevent, reached without a single
+    /// unevaluatable node.
+    #[test]
+    fn macro_root_over_a_differing_nested_macro_is_not_flat_extractable() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![macro_child_999()],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "the nested nudge(999) would be silently dropped; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
+    /// The wrapper flavor of the same defect: two extractable
+    /// children carrying different lists. Keeping the first and
+    /// discarding the rest is what `payload.get_or_insert` used to
+    /// do.
+    #[test]
+    fn repeat_while_wrapper_declines_when_children_payloads_differ() {
+        let node = MutatorNode::Instruction {
+            channel: 0,
+            instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            mutation: MutationSrc::None,
+            children: vec![macro_child(), macro_child_999()],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "the second child's nudge(999) would be silently dropped; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
+    /// An `Instruction` wrapper carrying its own per-step
+    /// `MutationSrc::AreaDelta` — a per-cell template resolved
+    /// against the area lookup, which the flat path has no access to.
+    /// Unwrapping past it drops the delta entirely. Both scope
+    /// helpers set `mutation: MutationSrc::None`, so requiring that
+    /// costs nothing.
+    #[test]
+    fn repeat_while_wrapper_with_its_own_area_delta_is_not_flat_extractable() {
+        use crate::mutator_builder::CellField;
+        let node = MutatorNode::Instruction {
+            channel: 0,
+            instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            mutation: MutationSrc::AreaDelta(vec![CellField::position]),
+            children: vec![macro_child()],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "the wrapper's own AreaDelta would be silently dropped; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
+    /// Same wrapper, `MutationSrc::Runtime` — documented as
+    /// "entirely runtime-supplied", resolved from a `SectionContext`
+    /// the flat path never builds. Provably unevaluatable here.
+    #[test]
+    fn repeat_while_wrapper_with_a_runtime_hole_is_not_flat_extractable() {
+        let node = MutatorNode::Instruction {
+            channel: 0,
+            instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            mutation: MutationSrc::Runtime,
+            children: vec![macro_child()],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "the wrapper's runtime hole would be silently dropped; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
+    /// The filtering-predicate wrapper is declined for its predicate
+    /// whether or not it also carries a payload — the two guards are
+    /// independent, and a shape failing both must not sneak through
+    /// on some future arm reshuffle.
+    #[test]
+    fn match_nothing_repeat_while_with_a_runtime_hole_is_not_flat_extractable() {
+        let node = MutatorNode::Instruction {
+            channel: 0,
+            instruction: InstructionSpec::RepeatWhile(Predicate::new()),
+            mutation: MutationSrc::Runtime,
+            children: vec![macro_child()],
+        };
+        assert!(flat_mutations(&node).is_none());
+    }
+
+    // ---- `Void` is payload-free structure, so it is transparent ----
+
+    /// An **empty** `Void` child carries nothing, so nothing can be
+    /// lost by keeping the root's payload. Declining here would kill
+    /// a well-formed mutator to protect a payload that does not
+    /// exist. Contrast [`single_child_is_not_flat_extractable`].
+    #[test]
+    fn empty_void_child_does_not_decline_the_mutator() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![MutatorNode::Void {
+                channel: 0,
+                children: vec![],
+            }],
+        };
+        assert_eq!(flat_mutations(&node), Some(vec![nudge()]));
+    }
+
+    /// A `Void` passes its children's payload through rather than
+    /// swallowing it — grouping is not a payload boundary. Here the
+    /// grouped list *disagrees* with the root's, and the disagreement
+    /// still has to surface through the wrapper.
+    #[test]
+    fn void_child_forwards_a_disagreeing_payload_and_declines() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![MutatorNode::Void {
+                channel: 0,
+                children: vec![macro_child_999()],
+            }],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "a Void must not hide a differing payload; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
+    /// A `Void` **root** has no payload of its own and no children to
+    /// take one from, so there is no list to apply — decline, and let
+    /// the apply site warn. Pins that transparency is not the same as
+    /// "extracts to an empty list".
+    #[test]
+    fn empty_void_root_is_not_flat_extractable() {
+        let node = MutatorNode::Void {
+            channel: 0,
+            children: vec![],
+        };
+        assert!(flat_mutations(&node).is_none());
+    }
+
+    /// `Single` carries a real channel-targeted `MutationSrc` that
+    /// the flat path — which applies one list to whole elements —
+    /// has nowhere to put. Unlike `Void` it is not payload-free, so
+    /// it declines.
+    #[test]
+    fn single_child_is_not_flat_extractable() {
+        use crate::mutator_builder::ChannelSrc;
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![MutatorNode::Single {
+                channel: ChannelSrc::Literal(0),
+                mutation: MutationSrc::Runtime,
+            }],
+        };
+        assert!(flat_mutations(&node).is_none());
     }
 
     /// `MapChildren` has no flat equivalent — the flat path iterates

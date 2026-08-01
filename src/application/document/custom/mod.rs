@@ -168,7 +168,7 @@ impl MindMapDocument {
         &mut self,
         custom: &CustomMutation,
         node_id: &str,
-        mut tree: Option<&mut MindMapTree>,
+        tree: Option<&mut MindMapTree>,
     ) {
         // For toggle behavior, check if already active and reverse if so.
         if custom.behavior == MutationBehavior::Toggle {
@@ -194,7 +194,12 @@ impl MindMapDocument {
             // re-stamp in `reapply_active_toggles`.
             self.active_toggles.push(key);
             // Toggle mutations apply to tree only (visual), no model sync.
-            if let Some(tree) = tree.as_deref_mut() {
+            // No `as_deref_mut()` reborrow: this branch `return`s
+            // immediately below, so `tree` is at its last use and can
+            // be moved out of (same reasoning as the `else if let
+            // Some(tree) = tree` on the persistent path).
+            if let Some(tree) = tree {
+                self.warn_about_mutator(custom);
                 self.apply_to_tree(custom, node_id, tree);
             } else {
                 log::warn!(
@@ -256,11 +261,15 @@ impl MindMapDocument {
             // real change; the snapshot taken above is its undo home.
             true
         } else if let Some(tree) = tree {
-            // Surface any mutator field the sync-back can't persist
-            // *before* applying, so a partially-supported mutation
-            // doesn't silently drop half its effect on the next
-            // rebuild (§5 no half-features).
-            self.warn_unsupported_mutator_fields(custom);
+            // Surface a declined AST, or any mutator field the
+            // sync-back can't persist, *before* applying — so a
+            // partially-supported mutation doesn't silently drop half
+            // its effect on the next rebuild (§5 no half-features).
+            // Hoisted here rather than left inside `apply_to_tree`
+            // because the persistent path calls that twice (once for
+            // the caller's interactive tree, once for the pure tree),
+            // which logged every diagnosis twice per apply.
+            self.warn_about_mutator(custom);
             // Apply to the caller's interactive tree so the change is
             // immediately visible / hit-testable before the next
             // rebuild (the render, keybind, and click paths read this
@@ -309,22 +318,51 @@ impl MindMapDocument {
         }
     }
 
-    /// Log a `warn!` when `custom`'s flat mutation list writes any
-    /// tree-side field the sync-back can't persist (line-height,
-    /// outline, shape, zoom-visibility). Silent partial application
-    /// is the worst outcome — the change flashes for one frame then
-    /// reverts, and the author is left chasing a vanishing effect.
-    /// Naming the field at apply time turns that into a diagnosable
-    /// event (§5 no half-features).
+    /// Diagnose everything wrong with `custom`'s mutator that the
+    /// apply is about to paper over, and log one `warn!` per problem.
+    /// Two of them:
     ///
-    /// Non-flat mutators (no extractable list) and mutator-less
-    /// document-action mutations are silently skipped here — they
-    /// have their own diagnostics on the apply path.
-    fn warn_unsupported_mutator_fields(&self, custom: &CustomMutation) {
+    /// - **The AST is declined by the flat-apply path** — a runtime
+    ///   hole, a filtering `RepeatWhile`, a `Single` root, or nested
+    ///   payloads that disagree (see
+    ///   [`flat_mutations`]). Nothing will be applied at all.
+    /// - **The flat list writes a field the sync-back can't
+    ///   persist** (line-height, outline, shape, zoom-visibility).
+    ///   The change flashes for one frame and then reverts, and the
+    ///   author is left chasing a vanishing effect.
+    ///
+    /// Both are silent-failure shapes, which is the worst outcome;
+    /// naming them at apply time turns each into a diagnosable event
+    /// (§5 no half-features).
+    ///
+    /// **This is the one place either is reported.**
+    /// [`Self::apply_to_tree`] deliberately stays quiet on a declined
+    /// AST: the persistent path calls it twice per apply (interactive
+    /// tree, then pure tree), so warning there logged everything
+    /// twice, and [`Self::reapply_active_toggles`] calls it once per
+    /// active toggle on *every* rebuild, which would turn a single
+    /// bad toggle into per-frame log spam. Callers that apply on
+    /// behalf of a user gesture call this first; the re-stamp path
+    /// does not, because its toggle was diagnosed when the user
+    /// turned it on.
+    ///
+    /// Mutator-less (document-action-only) mutations are not a
+    /// problem shape and are skipped.
+    fn warn_about_mutator(&self, custom: &CustomMutation) {
         let Some(mutator) = custom.mutator.as_ref() else {
             return;
         };
         let Some(mutations) = flat_mutations(mutator) else {
+            log::warn!(
+                "mutation '{}': mutator AST is not flat-extractable — the flat-apply path \
+                 can't evaluate this shape, so the apply is skipped. Causes: a root that \
+                 isn't a `Macro` with a literal list, a `RepeatWhile` predicate that isn't \
+                 `always_match`, a runtime-supplied payload, or two nested payloads that \
+                 disagree. Use `scope::self_only` / `scope::descendants` / \
+                 `scope::self_and_descendants` for now, or wait for the walker-based \
+                 `apply_custom_mutation` path.",
+                custom.id
+            );
             return;
         };
         let mut fields: Vec<&'static str> = Vec::new();
@@ -462,24 +500,15 @@ impl MindMapDocument {
 
         let Some(mutator) = custom.mutator.as_ref() else { return };
         let Some(mutations) = flat_mutations(mutator) else {
-            // Non-flat mutator AST (e.g. `scope::descendants` —
-            // `Instruction`-rooted, no Macro at the root). The
-            // current flat-apply path can't extract a mutation
-            // list from these shapes; pre-fix this returned
-            // silently and the entire apply was a no-op with no
-            // diagnostic. The richer `mutator_builder` walker
-            // path is the home for these (size-aware /
-            // predicate-filtered descendant iteration); until
-            // it's wired into `apply_custom_mutation`, warn so
-            // authors notice the silent drop instead of chasing
-            // a missing visual change.
-            log::warn!(
-                "mutation '{}': mutator AST is non-flat (root is not `Macro` with literal list); \
-                 the flat-apply path can't evaluate this shape — apply skipped. \
-                 Use `scope::self_only` / `scope::self_and_descendants` for now, \
-                 or wait for the walker-based `apply_custom_mutation` path.",
-                custom.id
-            );
+            // Declined AST — the flat-apply path can't extract a
+            // mutation list from this shape, so nothing is applied.
+            // The warning lives in
+            // [`Self::warn_about_mutator`], which every
+            // user-gesture caller runs exactly once before reaching
+            // here; see that doc for why it is not logged in this
+            // function. The richer `mutator_builder` walker path is
+            // the eventual home for these shapes (size-aware /
+            // predicate-filtered descendant iteration).
             return;
         };
         // Top-level predicate gate (item E3). When `Some`, every

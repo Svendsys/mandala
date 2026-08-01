@@ -82,7 +82,7 @@ pub enum Instruction {
 ///
 /// Cost: one allocation for the boxed closure dispatch per subscriber;
 /// no arena walk.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlyphTreeEventInstance {
     /// The kind of event being delivered.
     pub event_type: GlyphTreeEvent,
@@ -166,7 +166,15 @@ pub enum GlyphTreeEvent {
 /// The payload-free `MutationType` tag is derived from this enum and
 /// reached through
 /// [`crate::core::primitives::Discriminated::variant`].
-#[derive(Clone, Debug, Serialize, Deserialize, EnumDiscriminants)]
+///
+/// `PartialEq` is structural equality over the whole payload — two
+/// mutations are equal when they would write the same thing. It is
+/// what lets
+/// [`flat_mutations`](crate::mindmap::custom_mutation::flat_mutations)
+/// decide whether an AST's nested payloads all say the same thing
+/// before collapsing them into one list. Not `Eq`: the numeric
+/// payloads are `f32`, so equality inherits IEEE `NaN != NaN`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, EnumDiscriminants)]
 #[strum_discriminants(name(MutationType))]
 #[strum_discriminants(derive(Hash, Serialize, Deserialize))]
 #[strum_discriminants(doc = "Payload-free tag for [`Mutation`], derived by strum. Lets a")]

@@ -338,6 +338,16 @@ the pairing; a mismatch is a `warn!` at apply time, not a rejection —
 the mutation still runs, but its undo coverage is incomplete. The
 `mutation inspect <id>` console verb prints the computed reach.
 
+One caveat on "still runs", because it bites precisely the pairings
+this gate rejects. The pairings that trip it — a `Children` or
+`Siblings` scope against a `MapChildren`-reach mutator, say — are by
+construction *not* flat-extractable, and the flat-apply path is the
+only path wired today. So such a mutation collects its second warning
+from `apply_to_tree` and is **skipped**: the `covers_reach` warning
+is advisory, but the non-flat decline behind it is not. "Still runs"
+is accurate for a flat-extractable AST whose declared scope is merely
+too narrow, and for those only.
+
 ## `predicate` — top-level filter gate
 
 Optional `Predicate` that narrows the candidate elements
@@ -417,6 +427,30 @@ Four top-level variants:
     branch would be the worse failure of the two — the root's payload
     would blanket every target, the nested payload would land
     nowhere, and nothing would warn.
+
+    The same argument decides shapes with **no** unevaluatable node
+    in them. `Macro{[L1], children: [Macro{[L2]}]}` is extractable
+    top to bottom and still declines, because one flat list cannot be
+    both `L1` and `L2` — picking `L1` lands `L2` nowhere, which is the
+    identical failure by a different road. So the rule is: every
+    payload anywhere in the AST must **equal** the one extracted.
+    `scope::self_and_descendants` satisfies it exactly (its root and
+    nested `Macro` carry two clones of the same list); nesting
+    *differing* payloads is declined, not merged. Concatenating them
+    instead would turn that helper into a double-apply.
+
+    Two corollaries of "every payload must agree":
+
+    - An `Instruction` wrapper carrying its own `mutation` — a
+      `Runtime` hole or an `AreaDelta` per-cell template — is
+      declined. Both are payloads the flat path provably cannot
+      evaluate. The scope helpers all set `"mutation": "None"`.
+    - A `Void` is transparent, since it is pure structural grouping
+      and carries no payload of its own: an empty `Void` cannot lose
+      anything and does not decline, while a `Void` wrapping a
+      disagreeing payload still surfaces the disagreement. `Single`
+      is not transparent — it carries a real channel-targeted
+      mutation with nowhere to go on the flat path — and declines.
   - `RotateWhile(<f32>, <Predicate>)` — rotation stub (reserved).
   - `SpatialDescend(<OrderedVec2>)` — descend by AABB containment to
     the deepest node that holds the point, deliver the instruction's

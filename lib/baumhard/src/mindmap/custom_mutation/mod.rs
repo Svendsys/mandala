@@ -292,82 +292,144 @@ pub fn apply_mutations_to_element(
 /// walker path is phased in for size-aware mutations in a separate
 /// session.
 ///
-/// # Extraction is all-or-nothing
+/// # Extraction is all-or-nothing, and it keys on payload equality
 ///
-/// A node is extractable only when **every** node beneath it is too.
-/// A single unevaluatable node anywhere in the AST declines the whole
-/// mutator, so the apply site warns and skips instead of applying a
-/// partial reading of it.
+/// The extracted list is applied **once per scope-collected target**.
+/// For that single list to mean what the AST says, two things have to
+/// hold of every node beneath the root:
 ///
-/// That is not fussiness — it is the only way the extracted list can
-/// mean what the AST says. Extraction collapses a tree into one flat
-/// list that the app applies once per scope-collected target, so any
-/// sub-tree the flat path cannot honor would simply vanish while the
-/// surviving payload blanketed the entire target set. Accepting
-/// `Macro{[L1], children: [Instruction{RepeatWhile(matches-nothing)}
-/// {Macro[L2]}]}` on the strength of its root alone would land `L1`
-/// everywhere and `L2` nowhere — the same "applied result differs
-/// from the authored AST" defect the `always_match` guard below
-/// exists to prevent, just one level down and without the warning.
+/// 1. **It must be evaluatable by the flat path.** A single
+///    unevaluatable node anywhere in the AST declines the whole
+///    mutator, so the apply site warns and skips instead of applying
+///    a partial reading of it. Accepting
+///    `Macro{[L1], children: [Instruction{RepeatWhile(matches-nothing)}
+///    {Macro[L2]}]}` on the strength of its root alone would land
+///    `L1` everywhere and `L2` nowhere — the same "applied result
+///    differs from the authored AST" defect the `always_match` guard
+///    below exists to prevent, just one level down and without the
+///    warning.
+/// 2. **Every payload it carries must equal the one returned.**
+///    Extractability alone is not enough, and this is the sharper of
+///    the two rules: `Macro{[L1], children: [Macro{[L2]}]}` is
+///    *entirely* extractable and still cannot be collapsed, because
+///    one flat list cannot be both `L1` and `L2`. Returning `L1` there
+///    would blanket every target with `L1` and land `L2` nowhere —
+///    exactly the failure rule 1 exists to prevent, reached by a
+///    different road. So a differing payload declines too.
+///
+///    The rule is deliberately conservative rather than permissive:
+///    concatenating the descendant payloads instead would turn
+///    [`scope::self_and_descendants`] — whose root and nested `Macro`
+///    carry two clones of the *same* list — into a double-apply.
+///    Equality is what makes that helper's duplicate payload a no-op
+///    rather than a special case.
+///
+/// [`MutationSrc`](crate::mutator_builder::MutationSrc) payloads on an
+/// `Instruction` wrapper are unevaluatable by rule 1 for the same
+/// reason: `MutationSrc::Runtime` is resolved by a
+/// [`SectionContext`](crate::mutator_builder::SectionContext) the flat
+/// path never consults, and `MutationSrc::AreaDelta` is a per-cell
+/// template. Both scope helpers that build wrappers set
+/// `mutation: MutationSrc::None`, so requiring it costs nothing.
+///
+/// A [`MutatorNode::Void`](crate::mutator_builder::MutatorNode::Void)
+/// is *payload-free structure*, so it is transparent: it contributes
+/// nothing of its own and passes its children's payload through. An
+/// empty `Void` in particular can lose nothing, and declining on one
+/// would kill a mutator to save a payload that does not exist.
+/// `Single` is the opposite case and still declines — it carries a
+/// real channel-targeted `MutationSrc` the flat path cannot place.
+///
+/// Costs: O(AST size). Clones each payload-bearing node's literal
+/// list once — including the clones it compares and discards — so a
+/// declined mutator still allocates. Called on every apply (three
+/// times: once by the unsupported-field warning and once per tree),
+/// plus once per animation start; none of those is a frame path.
 pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
-    use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutatorNode as N};
-    /// Extract from a control-flow wrapper's children: every child
-    /// must be extractable (see "all-or-nothing" above), and the
-    /// wrapper's payload is the first list found among them. Returns
-    /// `None` for a childless wrapper, which carries no mutations.
-    fn from_children(children: &[MutatorNode]) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
-        let mut payload = None;
-        for child in children {
-            let list = flat_mutations(child)?;
-            payload.get_or_insert(list);
-        }
-        payload
-    }
-    match mutator {
-        // The root's literal list is the payload, but only once every
-        // child is extractable too — otherwise the child's mutations
-        // would be dropped silently while this list blanketed the
-        // whole target set. `scope::self_only` has no children, and
-        // `scope::self_and_descendants`'s single `Instruction` child
-        // is extractable via the arm below, so both stay admitted.
+    // The outer `Option` is the decline verdict; the inner one
+    // distinguishes "carries this payload" from "payload-free
+    // structure". A root that reaches the end payload-free (a bare
+    // `Void`, a childless wrapper) has no list to apply and declines,
+    // which is what makes the apply site warn rather than silently
+    // run an empty mutation.
+    extract(mutator)?
+}
+
+/// One node's contribution to the flat list.
+///
+/// - `None` — decline: this node (or something under it) is not
+///   evaluatable by the flat path, or two payloads below it disagree.
+/// - `Some(None)` — evaluatable, but payload-free structure.
+/// - `Some(Some(list))` — evaluatable, and the subtree agrees on
+///   `list`.
+///
+/// Cost: see [`flat_mutations`].
+fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator::Mutation>>> {
+    use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode as N};
+    let (mut payload, children) = match node {
+        // Pure structural grouping — no payload of its own.
+        N::Void { children, .. } => (None, children.as_slice()),
+        // The literal list is this node's payload; the children below
+        // must agree with it.
         N::Macro {
             mutations: MutationListSrc::Literal(list),
             children,
             ..
-        } if children.iter().all(|c| flat_mutations(c).is_some()) => Some(list.clone()),
-        // `Instruction(RepeatWhile(always_true))` wrappers
-        // (built by `scope::descendants` and the inner branch of
-        // `scope::self_and_descendants`) carry a child Macro
-        // with the actual mutations. The flat-apply path drives
-        // the iteration via `collect_affected_node_ids` so the
-        // wrapper's repeat-while semantics are redundant — we
-        // can extract the Macro's literal list directly. Only
-        // honor `always_true` predicates: a predicate-filtered
-        // wrapper would need walker-based evaluation, which the
-        // flat-apply path can't provide; falling through to
-        // `None` makes that case warn at the apply site.
+        } => (Some(list.clone()), children.as_slice()),
+        // `Instruction(RepeatWhile(always_true))` wrappers (built by
+        // `scope::descendants` and the inner branch of
+        // `scope::self_and_descendants`) carry a child Macro with the
+        // actual mutations. The flat-apply path drives the iteration
+        // via `collect_affected_node_ids`, so the wrapper's
+        // repeat-while semantics are redundant and its children's
+        // literal list can be extracted directly.
+        //
+        // `mutation: MutationSrc::None` is required: a wrapper
+        // carrying its own per-step `Runtime` or `AreaDelta` payload
+        // is a payload the flat path provably cannot evaluate, and
+        // unwrapping past it would drop it in silence.
         N::Instruction {
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            mutation: MutationSrc::None,
             children,
             ..
-        } => from_children(children),
-        // `always_match` is the *only* admissible test, because it
-        // is the only thing [`Predicate::test`] short-circuits on.
-        // Everything else — including an empty field list — is a
-        // predicate that filters. In particular a bare
-        // `Predicate::new()` (`fields: []`, `always_match: false`)
-        // matches **nothing**, the footgun documented on
-        // [`CustomMutation::predicate`]; unwrapping it here would
-        // land the Macro's payload on every node the scope
+        } => (None, children.as_slice()),
+        // `always_match` is the *only* admissible predicate test,
+        // because it is the only thing [`Predicate::test`]
+        // short-circuits on. Everything else — including an empty
+        // field list — is a predicate that filters. In particular a
+        // bare `Predicate::new()` (`fields: []`,
+        // `always_match: false`) matches **nothing**, the footgun
+        // documented on [`CustomMutation::predicate`]; unwrapping it
+        // here would land the Macro's payload on every node the scope
         // collected, which is the exact inverse of what the AST
         // authorizes.
         N::Instruction {
             instruction: InstructionSpec::RepeatWhile(p),
+            mutation: MutationSrc::None,
             children,
             ..
-        } if p.always_match => from_children(children),
-        _ => None,
+        } if p.always_match => (None, children.as_slice()),
+        // Everything else declines: `MapChildren` and the other
+        // walking instructions have no flat equivalent, a
+        // `MutationListSrc::Runtime` Macro needs a section context,
+        // `Single` carries a channel-targeted mutation the flat path
+        // cannot place, and `Repeat` expands at build time.
+        _ => return None,
+    };
+    for child in children {
+        match (&payload, extract(child)?) {
+            // Payload-free child: nothing to reconcile.
+            (_, None) => {}
+            // First payload found in this subtree.
+            (None, Some(list)) => payload = Some(list),
+            // A second payload must say the same thing, or the flat
+            // list cannot represent both — decline (rule 2 above).
+            (Some(have), Some(list)) if *have != list => return None,
+            (Some(_), Some(_)) => {}
+        }
     }
+    Some(payload)
 }
 
 /// Which node sets, relative to the anchor, the mutator AST could
