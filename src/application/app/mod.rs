@@ -475,10 +475,18 @@ enum DragState {
     /// Mouse is down but hasn't moved past the drag threshold yet.
     ///
     /// Boxed: the press-time hit chain is eight fields wide and made
-    /// this the widest `DragState` variant by a factor of five over
-    /// its nearest neighbor, which every other state — including the
-    /// `None` that is live almost all the time — would otherwise pay
+    /// this the widest `DragState` variant by a factor of six over
+    /// its nearest neighbor — `PendingPress` is 384 bytes against
+    /// `PendingRight`'s 64 — which every other state, including the
+    /// `None` that is live almost all the time, would otherwise pay
     /// for. One allocation per mouse-down.
+    ///
+    /// With `Pending` and `Throttled` boxed, `PendingRight` is the
+    /// widest variant left and `DragState` is 64 bytes (912 before
+    /// this pass). `PendingRight` stays unboxed deliberately: at 64
+    /// bytes it is not the outlier the other two were, and boxing it
+    /// would trade 40 bytes of stack for an allocation on every
+    /// right-button press.
     Pending(Box<PendingPress>),
     /// Right-button is down + cursor hasn't moved past the drag
     /// threshold. Press-time hit captures the body of any node /

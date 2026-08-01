@@ -146,7 +146,7 @@ hierarchical that needs to render or be hit-tested: one tree for the
 mindmap nodes, one for connection glyphs, one for borders, one for
 the console overlay, and so on. Every node in a tree is reached
 through an opaque `NodeId` — not a pointer, not an index — so the
-tree can be rearranged, cached, or serialised without invalidating
+tree can be rearranged, cached, or serialized without invalidating
 references. Nodes are `Clone`, mutation is in-place (never
 rebuild-the-arena), and both AABB caches and an optional region
 index ride along so hit-testing stays cheap.
@@ -468,7 +468,7 @@ against each; the walker evaluates it per candidate node and
 decides whether to recurse.
 
 `lib/baumhard/src/gfx_structs/predicate.rs`.
-Pure data (serialisable); typical predicates carry one or two
+Pure data (serializable); typical predicates carry one or two
 fields, so evaluation is effectively `O(1)`. Float comparisons
 use `almost_equal` with a `1e-5` epsilon
 ([`util/geometry.rs`](#utilities--grapheme_chad-color-geometry)). The
@@ -532,7 +532,7 @@ this mutator carries.
 A mutation is not one uniform thing — a
 `GlyphArea` and a `GlyphModel` accept different kinds of change.
 The `Mutation` enum is the sum type covering all of them: two
-flavours each for area and model (field-level `Delta` vs.
+flavors each for area and model (field-level `Delta` vs.
 imperative `Command`), plus `Event` (subscriber dispatch) and
 `None` (structural placeholder).
 
@@ -649,7 +649,7 @@ zoomed in on its region and noise when the whole map is on
 screen; an overview landmark is a guide when zoomed out and
 redundant up close. `ZoomVisibility` lets authors say "this
 appears between 1.5× and 3× zoom" and have the renderer silently
-honour it — no script, no custom mutation, just two fields.
+honor it — no script, no custom mutation, just two fields.
 
 `lib/baumhard/src/gfx_structs/zoom_visibility.rs`.
 Two `Option<f32>` fields, a `contains(zoom) -> bool` predicate;
@@ -747,7 +747,7 @@ Declaring mutators by hand as
 `MutatorTree<GfxMutator>` is fine for Rust code but hostile to
 JSON authoring. The builder DSL solves this: authors write
 `MutatorNode` in JSON (the shape is nearly identical to
-`GfxMutator` but serialisable and with `Repeat` for "N
+`GfxMutator` but serializable and with `Repeat` for "N
 consecutive channels with the same template"), and the builder
 walks the AST with a `SectionContext` to resolve runtime values
 (counts, fields, dynamically-chosen mutations) into a concrete
@@ -1301,7 +1301,7 @@ When two endpoints are far apart on the canvas,
 drawing a literal line between them is visually noisy and
 expensive (hundreds of glyphs). Portals decouple the visual link
 from the physical span: the user sees a small glyph at each end,
-recognises them as a pair (matching color, matching text), and
+recognizes them as a pair (matching color, matching text), and
 can double-click either to fly the camera to the partner.
 Portals share the underlying edge with line-mode — the only
 difference is `display_mode`.
@@ -2054,16 +2054,23 @@ pre-redesign `AppMode` into this enum is one of those).
 
 ### `DragState`
 
-The drag state machine: `None` / `Pending` /
+The drag state machine: `None` / `Pending` / `PendingRight` /
 `Panning` / `SelectingRect` / `Throttled(ThrottledDrag)`.
 
 Mouse-down does not commit to a drag yet —
 the user might be clicking, or might be about to drag. `Pending`
-captures everything the cursor was over at button-down; once
+captures everything the cursor was over at button-down
+(`PendingRight` is its body-only right-button counterpart); once
 movement crosses the drag threshold, the state transitions to
 `Panning` (empty space), `SelectingRect` (Shift+drag on empty
-space), or one of the four `ThrottledDrag` variants depending
+space), or one of the seven `ThrottledDrag` variants depending
 on what was hit.
+
+`Pending` and `Throttled` carry boxed payloads, so `DragState`
+itself is 64 bytes rather than the 912 the widest variant used to
+impose on every state — including the `None` that is live for all
+but a few seconds of a session. `PendingRight`, 64 bytes, is the
+widest variant left and stays unboxed.
 
 `src/application/app/mod.rs:358-411`.
 Native-only today. Hit priority on `Pending` is fixed: edge
@@ -2098,8 +2105,13 @@ picker-hover interaction does not: `accumulate(DragInput)`
 (provided) and `commit_on_release_core(ReleaseCommit) ->
 ReleaseRefresh` (required, with `commit_on_release` as the
 provided renderer-facing shell). The core is required rather than
-the shell so a gesture cannot reach `&mut Renderer` from inside
-its commit, which is what keeps the release path testable.
+the shell so that a new variant cannot compile with no release
+behavior at all, and so the renderer-free half is the path of
+least resistance — which is what keeps the release path testable.
+The trait is unsealed and `commit_on_release` takes a
+`DrainContext`, so an implementor that overrides the shell does
+reach `&mut Renderer`; not doing so is convention, not a
+guarantee.
 
 `ThrottledPending` (`throttled_interaction/pending.rs`) owns the
 pending half. Three disciplines cover every implementor, and each
@@ -2650,7 +2662,7 @@ depends on the user seeing changes before they land.
 setters) and `lib/baumhard/src/mindmap/tree_builder/overrides.rs`
 (the borrowed view + injection in `border.rs` / `node_clip.rs`,
 `section_frame.rs`). Same discipline as `ColorPickerPreview`:
-never serialised, never push undo, never flip `dirty`. Cancel
+never serialized, never push undo, never flip `dirty`. Cancel
 or commit clears the slot; a fresh `set_border_preview` call
 replaces the prior preview atomically. Selection drift causes
 lazy defer-clear: the preview stops rendering when the live
