@@ -218,7 +218,14 @@ enum Section {
 /// closed on purpose: an unrecognized header panics rather than being
 /// treated as harmless, because "harmless" is exactly what a missed
 /// dependency table looks like from here.
-const NON_DEPENDENCY_ROOTS: [&str; 14] = [
+///
+/// `patch` and `replace` are deliberately *absent*. Neither is a
+/// member dependency table, so none of the three rules applies to
+/// them as written — but both redirect where a dependency comes from,
+/// which is close enough that the first person to add one should have
+/// to decide what these rules mean for it rather than have this list
+/// decide silently.
+const NON_DEPENDENCY_ROOTS: [&str; 12] = [
     "package",
     "lib",
     "bin",
@@ -230,8 +237,6 @@ const NON_DEPENDENCY_ROOTS: [&str; 14] = [
     "workspace",
     "lints",
     "badges",
-    "patch",
-    "replace",
     "target",
 ];
 
