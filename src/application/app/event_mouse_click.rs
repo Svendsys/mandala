@@ -15,6 +15,7 @@ use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_cli
 use super::console_input::save_console_history;
 use super::edge_drag::apply_edge_handle_drag;
 use super::input_context::InputHandlerContext;
+use super::modal_editor::commit_modal_editors_on_release;
 use super::portal_label_drag::apply_portal_label_drag;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all, rebuild_scene_only};
 use super::throttled_interaction::ThrottledDrag;
@@ -218,28 +219,12 @@ pub(super) fn handle_mouse_input(
                         .node_id()
                         .map(|id| hit_node.as_deref() == Some(id))
                         .unwrap_or(false);
-                    let edge_label_match = ctx
-                        .label_edit_state
-                        .edited_edge_ref()
-                        .zip(edge_label_hit.as_ref())
-                        .map(|(er, hit)| {
-                            hit.from_id == er.from_id.as_str()
-                                && hit.to_id == er.to_id.as_str()
-                                && hit.edge_type == er.edge_type.as_str()
-                        })
+                    let single_line_match = ctx
+                        .single_line_edit_state
+                        .target()
+                        .map(|t| t.matches_press_hit(edge_label_hit.as_ref(), portal_text_hit.as_ref()))
                         .unwrap_or(false);
-                    let portal_text_match = ctx
-                        .portal_text_edit_state
-                        .edited_endpoint()
-                        .zip(portal_text_hit.as_ref())
-                        .map(|((er, ep), (hit_key, hit_ep))| {
-                            hit_key.from_id == er.from_id.as_str()
-                                && hit_key.to_id == er.to_id.as_str()
-                                && hit_key.edge_type == er.edge_type.as_str()
-                                && hit_ep.as_str() == ep
-                        })
-                        .unwrap_or(false);
-                    node_match || edge_label_match || portal_text_match
+                    node_match || single_line_match
                 };
                 let is_dblclick = !already_editing_same_target
                     && ctx
@@ -328,22 +313,20 @@ pub(super) fn handle_mouse_input(
                 };
                 // Node resize handle press capture — only fires when
                 // the active mode is `Resize { Node(_) }`.
-                let hit_node_resize_handle = match (
-                    ctx.document.as_ref(),
-                    ctx.interaction_mode.resize_handle_node(),
-                ) {
-                    (Some(doc), Some(node_id)) => {
-                        let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
-                        crate::application::document::hit_test_node_resize_handle(
-                            &doc.mindmap,
-                            canvas_pos,
-                            node_id,
-                            tol,
-                        )
-                        .map(|side| (node_id.to_string(), side))
-                    }
-                    _ => None,
-                };
+                let hit_node_resize_handle =
+                    match (ctx.document.as_ref(), ctx.interaction_mode.resize_handle_node()) {
+                        (Some(doc), Some(node_id)) => {
+                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                            crate::application::document::hit_test_node_resize_handle(
+                                &doc.mindmap,
+                                canvas_pos,
+                                node_id,
+                                tol,
+                            )
+                            .map(|side| (node_id.to_string(), side))
+                        }
+                        _ => None,
+                    };
                 // Portal-label drag capture. Takes precedence
                 // over `hit_node` at threshold-cross time so
                 // pressing a marker and dragging slides the label
@@ -402,129 +385,22 @@ pub(super) fn handle_mouse_input(
                         hit_edge_label,
                         ..
                     } => {
-                        // If the node text editor is open, the
+                        // If an inline text editor is open, the
                         // release decides whether to commit or
-                        // swallow. If the release lands inside the
-                        // edited node's AABB, keep editing (no
-                        // commit, no selection change). Otherwise
-                        // commit and fall through.
-                        if ctx.text_edit_state.is_open() {
-                            let release_canvas = ctx
-                                .renderer
-                                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-                            // Refresh the subtree-AABB cache before the
-                            // overflow-aware containment check —
-                            // `point_in_node_aabb` reads
-                            // `subtree_aabb()` which returns `None`
-                            // when the cache is dirty (post-mutation
-                            // / post-tree-rebuild). A `None` falls
-                            // back to the container-only path,
-                            // regressing the multi-section overflow
-                            // gesture this branch was added to fix.
-                            // `ensure_subtree_aabbs` is O(1) on a
-                            // clean cache and O(arena) on the first
-                            // call after a mutation; either way it's
-                            // cheap relative to the click handler.
-                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
-                                tree.tree.ensure_subtree_aabbs();
-                            }
-                            let inside = ctx
-                                .text_edit_state
-                                .node_id()
-                                .zip(ctx.mindmap_tree.as_ref())
-                                .map(|(id, tree)| {
-                                    crate::application::document::point_in_node_aabb(release_canvas, id, tree)
-                                })
-                                .unwrap_or(false);
-                            if inside {
-                                // Click-inside: keep
-                                // editing. Do NOT fall
-                                // through to handle_click
-                                // (that would change the
-                                // selection). Also do
-                                // not transition drag
-                                // state — the release
-                                // is fully consumed.
-                                return;
-                            }
-                            // Click-outside: commit the edit through
-                            // the funnel (`Action::TextEditCommit`),
-                            // then fall through to the regular click
-                            // path so the new selection lands.
-                            let _ = super::dispatch::dispatch_action(Action::TextEditCommit, ctx, None);
-                        }
-                        // Same shape for the inline edge-label
-                        // editor: a release that doesn't hit the
-                        // edge currently being edited commits the
-                        // buffer; a release that lands back on
-                        // the same edge label keeps the editor
-                        // open. Without this branch, the only way
-                        // to close the editor was Esc / Enter,
-                        // and clicking elsewhere felt unresponsive.
-                        // Mirrors the node text editor's behavior
-                        // so the same muscle memory transfers.
-                        if ctx.label_edit_state.is_open() {
-                            let release_canvas = ctx
-                                .renderer
-                                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-                            let edited = ctx.label_edit_state.edited_edge_ref().cloned();
-                            let stays_on_edited_label = edited
-                                .as_ref()
-                                .and_then(|er| {
-                                    ctx.app_scene.edge_label_at(release_canvas).map(|hit| {
-                                        hit.from_id == er.from_id.as_str()
-                                            && hit.to_id == er.to_id.as_str()
-                                            && hit.edge_type == er.edge_type.as_str()
-                                    })
-                                })
-                                .unwrap_or(false);
-                            if stays_on_edited_label {
-                                return;
-                            }
-                            // Click-outside the edited label: commit
-                            // through the funnel (`LabelEditCommit`).
-                            let _ = super::dispatch::dispatch_action(Action::LabelEditCommit, ctx, None);
-                        }
-                        // Portal-text editor queries the portal role
-                        // instead of the connection-label role, and
-                        // matches `(edge_key, endpoint)` rather than
-                        // just the edge key — clicking the *other*
-                        // endpoint of the same portal edge commits
-                        // this side and then routes the click as a
-                        // fresh selection on the new endpoint. A
-                        // release on the endpoint's *icon* is a
-                        // click-outside for the text editor, hence
-                        // the `PortalPart::Text` guard.
-                        if ctx.portal_text_edit_state.is_open() {
-                            let release_canvas = ctx
-                                .renderer
-                                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-                            let edited = ctx
-                                .portal_text_edit_state
-                                .edited_endpoint()
-                                .map(|(er, ep)| (er.clone(), ep.to_string()));
-                            let stays_on_edited_text = edited
-                                .as_ref()
-                                .and_then(|(er, ep)| {
-                                    ctx.app_scene.portal_at(release_canvas).map(|hit| {
-                                        hit.part
-                                            == baumhard::mindmap::tree_builder::PortalPart::Text
-                                            && hit.edge_key.from_id == er.from_id.as_str()
-                                            && hit.edge_key.to_id == er.to_id.as_str()
-                                            && hit.edge_key.edge_type == er.edge_type.as_str()
-                                            && hit.endpoint_node_id == *ep
-                                    })
-                                })
-                                .unwrap_or(false);
-                            if stays_on_edited_text {
-                                return;
-                            }
-                            // Click-outside the edited portal-text:
-                            // commit through the funnel. The dispatch
-                            // arm picks `portal_text_edit_state` over
-                            // `label_edit_state` since portal is
-                            // checked first.
-                            let _ = super::dispatch::dispatch_action(Action::LabelEditCommit, ctx, None);
+                        // swallow. A release inside the element
+                        // under edit keeps editing (no commit, no
+                        // selection change, no drag-state
+                        // transition — the release is fully
+                        // consumed); a release anywhere else
+                        // commits through the funnel and falls
+                        // through to the regular click path so the
+                        // new selection lands. Without the
+                        // click-outside half, the only way to close
+                        // an editor would be Esc / Enter, and
+                        // clicking elsewhere would feel
+                        // unresponsive.
+                        if commit_modal_editors_on_release(ctx) {
+                            return;
                         }
                         // Edge-label single click: route to the
                         // `EdgeLabel` selection rather than opening
@@ -563,11 +439,7 @@ pub(super) fn handle_mouse_input(
                         // from inside NodeEdit left the user in
                         // an orphan "NodeEdit + EdgeLabel selection"
                         // state.
-                        maybe_exit_node_edit_on_outside_click(
-                            ctx,
-                            cursor_pos_val,
-                            hit_node.as_deref(),
-                        );
+                        maybe_exit_node_edit_on_outside_click(ctx, cursor_pos_val, hit_node.as_deref());
                         let entered_label_select = if let Some(er) = edge_label_target {
                             if let Some(doc) = ctx.document.as_mut() {
                                 let prev = doc.selection.clone();
@@ -816,7 +688,13 @@ pub(super) fn handle_mouse_input(
                             // because node trees are untouched by a
                             // label move; the release commit is
                             // the same story.
-                            rebuild_scene_only(doc, ctx.interaction_mode, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_scene_only(
+                                doc,
+                                ctx.interaction_mode,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
                         }
                     }
                     DragState::SelectingRect {
@@ -882,11 +760,7 @@ pub(super) fn handle_mouse_input(
 ///    [`finalize_section_resize_release`], the same helpers the
 ///    left-button release path uses. Single-source commit shape
 ///    regardless of which button started the gesture.
-fn handle_right_button(
-    state: ElementState,
-    cursor_pos_val: (f64, f64),
-    ctx: &mut InputHandlerContext<'_>,
-) {
+fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mut InputHandlerContext<'_>) {
     if state == ElementState::Pressed {
         // Mode + modal guards: don't arm a fast-resize gesture
         // when the user's intent is unambiguously elsewhere.
@@ -914,17 +788,11 @@ fn handle_right_button(
             log::debug!("right-button press ignored (target-picker mode active)");
             return;
         }
-        if ctx.text_edit_state.is_open()
-            || ctx.label_edit_state.is_open()
-            || ctx.portal_text_edit_state.is_open()
-        {
+        if ctx.text_edit_state.is_open() || ctx.single_line_edit_state.is_open() {
             log::debug!("right-button press ignored (modal text editor open)");
             return;
         }
-        if matches!(
-            *ctx.interaction_mode,
-            super::InteractionMode::Resize { .. }
-        ) {
+        if matches!(*ctx.interaction_mode, super::InteractionMode::Resize { .. }) {
             log::debug!("right-button press ignored (Resize mode active; use the visible handles)");
             return;
         }
@@ -957,9 +825,7 @@ fn handle_right_button(
         // here — fast-resize is a meaningful gesture; clobbering an
         // in-flight resize with a stray right-press would be visible.
         if !matches!(*ctx.drag_state, DragState::None) {
-            log::debug!(
-                "right-button press ignored (drag already in flight); state stays put"
-            );
+            log::debug!("right-button press ignored (drag already in flight); state stays put");
             return;
         }
         *ctx.drag_state = DragState::PendingRight {
@@ -1076,11 +942,7 @@ fn finalize_node_resize_release(
             );
         }
         Err(msg) => {
-            log::info!(
-                "{} release rejected: {} (snapping back)",
-                gesture_label,
-                msg
-            );
+            log::info!("{} release rejected: {} (snapping back)", gesture_label, msg);
         }
     }
     ctx.scene_cache.clear();
@@ -1131,11 +993,7 @@ fn finalize_section_resize_release(
             );
         }
         Err(msg) => {
-            log::info!(
-                "{} release rejected: {} (snapping back)",
-                gesture_label,
-                msg
-            );
+            log::info!("{} release rejected: {} (snapping back)", gesture_label, msg);
         }
     }
     ctx.scene_cache.clear();
@@ -1175,7 +1033,9 @@ fn maybe_exit_node_edit_on_outside_click(
     // count as inside). `ensure_subtree_aabbs` is needed because
     // post-mutation AABB caches go dirty; same shape as the
     // text-editor's click-outside-commit gate.
-    let release_canvas = ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+    let release_canvas = ctx
+        .renderer
+        .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
     if let Some(tree) = ctx.mindmap_tree.as_mut() {
         tree.tree.ensure_subtree_aabbs();
     }

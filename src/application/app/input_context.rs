@@ -20,7 +20,7 @@ use crate::application::macros::MacroRegistry;
 use crate::application::renderer::Renderer;
 use crate::application::scene_host::AppScene;
 
-use super::label_edit::{LabelEditState, PortalTextEditState};
+use super::single_line_edit::SingleLineEditor;
 use super::text_edit::TextEditState;
 use super::throttled_interaction::ColorPickerHoverInteraction;
 use super::{DragState, InteractionMode, LastClick};
@@ -60,10 +60,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub console_state: &'a mut ConsoleState,
     /// Console command-history ring.
     pub console_history: &'a mut Vec<String>,
-    /// Inline edge-label editor state.
-    pub label_edit_state: &'a mut LabelEditState,
-    /// Inline portal-text editor state.
-    pub portal_text_edit_state: &'a mut PortalTextEditState,
+    /// Inline single-line editor state (edge label / portal
+    /// caption).
+    pub single_line_edit_state: &'a mut SingleLineEditor,
     /// Inline node text editor state.
     pub text_edit_state: &'a mut TextEditState,
     /// Glyph-wheel color-picker state.
@@ -143,8 +142,7 @@ impl<'a> InputHandlerContext<'a> {
                 drag_state: &mut *self.drag_state,
                 console_state: &mut *self.console_state,
                 console_history: &mut *self.console_history,
-                label_edit_state: &mut *self.label_edit_state,
-                portal_text_edit_state: &mut *self.portal_text_edit_state,
+                single_line_edit_state: &mut *self.single_line_edit_state,
                 color_picker_state: &mut *self.color_picker_state,
                 hovered_node: &mut *self.hovered_node,
                 cursor_is_hand: &mut *self.cursor_is_hand,

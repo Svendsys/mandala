@@ -71,14 +71,14 @@ mod event_keyboard;
 mod event_mouse_click;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
-mod interaction_mode;
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
+mod interaction_mode;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
 #[cfg(not(target_arch = "wasm32"))]
-mod label_edit;
+mod modal_editor;
 #[cfg(not(target_arch = "wasm32"))]
 mod portal_label_drag;
 #[cfg(not(target_arch = "wasm32"))]
@@ -87,6 +87,8 @@ mod run_native;
 mod run_native_init;
 #[cfg(target_arch = "wasm32")]
 mod run_wasm;
+#[cfg(not(target_arch = "wasm32"))]
+mod single_line_edit;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
 mod touch_gesture;
@@ -374,7 +376,6 @@ fn click_hit_from_priority(
     }
 }
 
-
 // Re-export the mode enum, the shared selection→target resolver,
 // and the resolver's typed error so the console layer can carry
 // `InteractionMode` inside `ConsoleSideEffect` and consumers across
@@ -455,8 +456,7 @@ enum DragState {
         /// Takes precedence over `hit_node` — a handle sits on
         /// the section's edge and clicking it is a resize, not
         /// a section drag.
-        hit_section_resize_handle:
-            Option<(String, usize, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
+        hit_section_resize_handle: Option<(String, usize, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
         /// If a node is currently `Single`-selected and the
         /// cursor landed on one of its 8 resize handles, this
         /// records `(node_id, side)` so a drag past threshold

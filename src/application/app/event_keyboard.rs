@@ -14,12 +14,10 @@ use crate::application::platform::input::Key;
 use super::color_picker_flow::{handle_color_picker_clipboard_key, picker_op_for};
 use super::console_input::handle_console_key;
 use super::input_context::InputHandlerContext;
-use super::label_edit::{
-    handle_label_edit_key, handle_portal_text_edit_key, open_label_edit, open_portal_text_edit,
-    resolve_edge_editor_plan, EdgeEditorPlan,
+use super::modal_editor::{steal_key_for_modal, ModalEditor};
+use super::single_line_edit::{
+    handle_single_line_edit_key, open_single_line_edit, resolve_single_line_target,
 };
-use super::text_edit::handle_text_edit_key;
-use crate::application::keybinds::Action;
 
 pub(super) fn handle_keyboard_input(
     logical_key: Key,
@@ -94,126 +92,19 @@ pub(super) fn handle_keyboard_input(
         }
     }
 
-    // Inline label edit modal. Steals keys the same way
-    // the console does. Escape discards, Enter commits,
-    // Backspace pops, character keys append.
-    //
-    // Commit/cancel pre-filter: dispatch through the funnel
-    // (`Action::LabelEditCommit` / `LabelEditCancel`) BEFORE
-    // calling the modal handler — `dispatch_action`'s arm body
-    // owns the close-and-rebuild path. The modal handler retains
-    // the literal-Key character insertion + cursor primitives
-    // (CODE_CONVENTIONS §3 carve-out for Key payloads).
-    if ctx.label_edit_state.is_open() {
-        let action = key_name.as_deref().and_then(|n| {
-            ctx.keybinds.action_for_context(
-                crate::application::keybinds::InputContext::LabelEdit,
-                n,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-            )
-        });
-        if let Some(modal_action @ (Action::LabelEditCommit | Action::LabelEditCancel)) = action {
-            let _ = super::dispatch::dispatch_action(modal_action, ctx, None);
-            return;
-        }
-        if let Some(doc) = ctx.document.as_mut() {
-            handle_label_edit_key(
-                &key_name,
-                &logical_key,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-                ctx.keybinds,
-                ctx.label_edit_state,
-                doc,
-                ctx.mindmap_tree,
-                ctx.app_scene,
-                ctx.renderer,
-                ctx.scene_cache,
-            );
-        }
-        return;
-    }
-
-    // Inline portal-text edit modal — parallel to the
-    // edge label editor but keyed to
-    // `(edge_ref, endpoint_node_id)`. Same keystroke
-    // routing via `InputContext::LabelEdit` and the same
-    // `LabelEditCommit/Cancel` Actions (the dispatch arm
-    // picks the open state).
-    if ctx.portal_text_edit_state.is_open() {
-        let action = key_name.as_deref().and_then(|n| {
-            ctx.keybinds.action_for_context(
-                crate::application::keybinds::InputContext::LabelEdit,
-                n,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-            )
-        });
-        if let Some(modal_action @ (Action::LabelEditCommit | Action::LabelEditCancel)) = action {
-            let _ = super::dispatch::dispatch_action(modal_action, ctx, None);
-            return;
-        }
-        if let Some(doc) = ctx.document.as_mut() {
-            handle_portal_text_edit_key(
-                &key_name,
-                &logical_key,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-                ctx.keybinds,
-                ctx.portal_text_edit_state,
-                doc,
-                ctx.interaction_mode,
-                ctx.mindmap_tree,
-                ctx.app_scene,
-                ctx.renderer,
-                ctx.scene_cache,
-            );
-        }
-        return;
-    }
-
-    // Inline node text editor. Steals keys the same way
-    // the console / label-edit modals do. Enter and Tab
-    // are literal characters inside the editor — this is
-    // a multi-line paragraph editor, not an outliner.
-    // Esc cancels; commit is via click-outside in the
-    // mouse handler. Pre-filter commit/cancel through the
-    // funnel like LabelEdit above.
-    if ctx.text_edit_state.is_open() {
-        let action = key_name.as_deref().and_then(|n| {
-            ctx.keybinds.action_for_context(
-                crate::application::keybinds::InputContext::TextEdit,
-                n,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-            )
-        });
-        if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) = action {
-            let _ = super::dispatch::dispatch_action(modal_action, ctx, None);
-            return;
-        }
-        if let Some(doc) = ctx.document.as_mut() {
-            handle_text_edit_key(
-                &key_name,
-                &logical_key,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-                ctx.keybinds,
-                ctx.text_edit_state,
-                doc,
-                ctx.mindmap_tree,
-                ctx.app_scene,
-                ctx.renderer,
-                ctx.scene_cache,
-            );
-        }
+    // Inline text-editor modals. The single-line editor (edge
+    // label / portal caption) and the multi-line node text editor
+    // steal keys the same way the console does, and they steal
+    // them the *same* way as each other: commit / cancel are
+    // pre-filtered through the funnel — `dispatch_action`'s arm
+    // body owns the close-and-rebuild path — and everything else
+    // goes to the editor's own handler, which keeps the
+    // literal-Key character insertion and the rebindable cursor
+    // primitives (CODE_CONVENTIONS §3 carve-out for Key payloads).
+    // Inside the node editor Enter and Tab are literal characters:
+    // it is a multi-line paragraph editor, not an outliner.
+    if let Some(modal) = ModalEditor::stealing(ctx) {
+        steal_key_for_modal(modal, &key_name, &logical_key, ctx);
         return;
     }
 
@@ -224,12 +115,11 @@ pub(super) fn handle_keyboard_input(
     // unmatched keys reach the global Action set normally.
     // `action_for_context` itself does the fallthrough; we just
     // pick the right starting context.
-    let starting_context =
-        if matches!(ctx.interaction_mode, super::InteractionMode::NodeEdit { .. }) {
-            crate::application::keybinds::InputContext::NodeEdit
-        } else {
-            crate::application::keybinds::InputContext::Document
-        };
+    let starting_context = if matches!(ctx.interaction_mode, super::InteractionMode::NodeEdit { .. }) {
+        crate::application::keybinds::InputContext::NodeEdit
+    } else {
+        crate::application::keybinds::InputContext::Document
+    };
     let action = key_name.as_deref().and_then(|k| {
         ctx.keybinds.action_for_context(
             starting_context,
@@ -301,7 +191,7 @@ pub(super) fn handle_keyboard_input(
 /// (open the editor, replay the keystroke into it) but not its
 /// buffer contract: this path seeds the existing text and the
 /// typed character appends at the cursor. See the `clean = false`
-/// note on the `resolve_edge_editor_plan` match below — switching
+/// note on the `open_single_line_edit` call below — switching
 /// to an empty buffer would change what typing over a selected
 /// label does, which is a product decision, not a funnel fix.
 ///
@@ -314,11 +204,7 @@ pub(super) fn handle_keyboard_input(
 /// Caller already checked `action.is_none()` so rebinding any
 /// printable to a Document action keeps that binding alive
 /// even when an edge label is selected.
-fn try_type_to_edit(
-    logical_key: &Key,
-    key_name: &Option<String>,
-    ctx: &mut InputHandlerContext<'_>,
-) -> bool {
+fn try_type_to_edit(logical_key: &Key, key_name: &Option<String>, ctx: &mut InputHandlerContext<'_>) -> bool {
     if ctx.modifiers.control_key() || ctx.modifiers.alt_key() {
         return false;
     }
@@ -343,68 +229,33 @@ fn try_type_to_edit(
     // `EditSelectionClean`'s empty-buffer contract — retyping over
     // a selected label would be a separate, user-visible product
     // decision.
-    let opened = match resolve_edge_editor_plan(&doc.selection) {
-        EdgeEditorPlan::Label { edge_ref } => {
-            open_label_edit(
-                &edge_ref,
-                false,
-                doc,
-                ctx.label_edit_state,
-                ctx.app_scene,
-                ctx.renderer,
-            );
-            ctx.label_edit_state.is_open()
-        }
-        EdgeEditorPlan::PortalText {
-            edge_ref,
-            endpoint_node_id,
-        } => {
-            open_portal_text_edit(
-                &edge_ref,
-                &endpoint_node_id,
-                false,
-                doc,
-                ctx.portal_text_edit_state,
-                ctx.app_scene,
-                ctx.renderer,
-            );
-            ctx.portal_text_edit_state.is_open()
-        }
-        EdgeEditorPlan::None => return false,
+    let Some(target) = resolve_single_line_target(&doc.selection) else {
+        return false;
     };
-    if opened {
-        if ctx.label_edit_state.is_open() {
-            handle_label_edit_key(
-                key_name,
-                logical_key,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-                ctx.keybinds,
-                ctx.label_edit_state,
-                doc,
-                ctx.mindmap_tree,
-                ctx.app_scene,
-                ctx.renderer,
-                ctx.scene_cache,
-            );
-        } else if ctx.portal_text_edit_state.is_open() {
-            handle_portal_text_edit_key(
-                key_name,
-                logical_key,
-                ctx.modifiers.control_key(),
-                ctx.modifiers.shift_key(),
-                ctx.modifiers.alt_key(),
-                ctx.keybinds,
-                ctx.portal_text_edit_state,
-                doc,
-                ctx.interaction_mode,
-                ctx.mindmap_tree,
-                ctx.app_scene,
-                ctx.renderer,
-                ctx.scene_cache,
-            );
-        }
+    open_single_line_edit(
+        target,
+        false,
+        doc,
+        ctx.single_line_edit_state,
+        ctx.app_scene,
+        ctx.renderer,
+    );
+    if ctx.single_line_edit_state.is_open() {
+        handle_single_line_edit_key(
+            key_name,
+            logical_key,
+            ctx.modifiers.control_key(),
+            ctx.modifiers.shift_key(),
+            ctx.modifiers.alt_key(),
+            ctx.keybinds,
+            ctx.single_line_edit_state,
+            doc,
+            ctx.interaction_mode,
+            ctx.mindmap_tree,
+            ctx.app_scene,
+            ctx.renderer,
+            ctx.scene_cache,
+        );
         return true;
     }
     // `open_*` silently returned — the selection's target

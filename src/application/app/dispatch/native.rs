@@ -25,8 +25,10 @@ use super::super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
 };
 use super::super::input_context::InputHandlerContext;
-use super::super::label_edit::{open_label_edit, open_portal_text_edit};
 use super::super::scene_rebuild::rebuild_all;
+use super::super::single_line_edit::{
+    close_single_line_edit, open_single_line_edit, resolve_single_line_target, SingleLineEditTarget,
+};
 use super::super::text_edit::open_text_edit;
 use super::super::{ClickHit, DragState, InteractionMode};
 use super::apply_keybind_custom_mutation;
@@ -247,11 +249,7 @@ pub(in crate::application::app) fn dispatch_action(
                     scene_cache: core.scene_cache,
                     interaction_mode: core.interaction_mode,
                 };
-                let _ = super::cross_dispatch::apply_enter_node_edit(
-                    clean,
-                    &mut rc,
-                    core.text_edit_state,
-                );
+                let _ = super::cross_dispatch::apply_enter_node_edit(clean, &mut rc, core.text_edit_state);
             }
             DispatchOutcome::Handled
         }
@@ -269,11 +267,7 @@ pub(in crate::application::app) fn dispatch_action(
                     scene_cache: core.scene_cache,
                     interaction_mode: core.interaction_mode,
                 };
-                let _ = super::cross_dispatch::apply_enter_section_edit(
-                    false,
-                    &mut rc,
-                    core.text_edit_state,
-                );
+                let _ = super::cross_dispatch::apply_enter_section_edit(false, &mut rc, core.text_edit_state);
             }
             DispatchOutcome::Handled
         }
@@ -447,12 +441,10 @@ pub(in crate::application::app) fn dispatch_action(
                         // section[1] opened the editor on
                         // section[0].
                         doc.selection = match section_idx {
-                            Some(idx) => SelectionState::Section(
-                                crate::application::document::SectionSel {
-                                    node_id: nid.clone(),
-                                    section_idx: *idx,
-                                },
-                            ),
+                            Some(idx) => SelectionState::Section(crate::application::document::SectionSel {
+                                node_id: nid.clone(),
+                                section_idx: *idx,
+                            }),
                             None => SelectionState::Single(nid.clone()),
                         };
                         rebuild_all(
@@ -525,7 +517,14 @@ pub(in crate::application::app) fn dispatch_action(
                         );
                         // Double-click on an edge label edits the
                         // existing text — not clean.
-                        open_label_edit(&er, false, doc, ctx.label_edit_state, ctx.app_scene, ctx.renderer);
+                        open_single_line_edit(
+                            SingleLineEditTarget::EdgeLabel { edge_ref: er },
+                            false,
+                            doc,
+                            ctx.single_line_edit_state,
+                            ctx.app_scene,
+                            ctx.renderer,
+                        );
                     }
                 }
                 ClickHit::Empty => {
@@ -610,59 +609,18 @@ pub(in crate::application::app) fn dispatch_action(
         // editor — never two at once). Order is observationally
         // equivalent because at most one is_open(); checking
         // portal-text first picks the more specific selection.
-        Action::LabelEditCancel => {
+        Action::LabelEditCancel | Action::LabelEditCommit => {
             if let Some(doc) = ctx.document.as_mut() {
-                if ctx.portal_text_edit_state.is_open() {
-                    super::super::label_edit::close_portal_text_edit(
-                        false,
-                        doc,
-                        ctx.interaction_mode,
-                        ctx.portal_text_edit_state,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                } else if ctx.label_edit_state.is_open() {
-                    super::super::label_edit::close_label_edit(
-                        false,
-                        doc,
-                        ctx.interaction_mode,
-                        ctx.label_edit_state,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::LabelEditCommit => {
-            if let Some(doc) = ctx.document.as_mut() {
-                if ctx.portal_text_edit_state.is_open() {
-                    super::super::label_edit::close_portal_text_edit(
-                        true,
-                        doc,
-                        ctx.interaction_mode,
-                        ctx.portal_text_edit_state,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                } else if ctx.label_edit_state.is_open() {
-                    super::super::label_edit::close_label_edit(
-                        true,
-                        doc,
-                        ctx.interaction_mode,
-                        ctx.label_edit_state,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                close_single_line_edit(
+                    matches!(action, Action::LabelEditCommit),
+                    doc,
+                    ctx.interaction_mode,
+                    ctx.single_line_edit_state,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
             }
             DispatchOutcome::Handled
         }
@@ -674,7 +632,18 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::LabelEditCursorEnd
         | Action::LabelEditDeleteBack
         | Action::LabelEditDeleteForward => {
-            apply_label_edit_action(action, ctx.label_edit_state);
+            if let Some(doc) = ctx.document.as_mut() {
+                super::super::single_line_edit::apply_single_line_edit_action(
+                    action,
+                    ctx.single_line_edit_state,
+                    doc,
+                    ctx.interaction_mode,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            }
             DispatchOutcome::Handled
         }
 
@@ -701,8 +670,7 @@ pub(in crate::application::app) fn dispatch_action(
                 crate::application::app::console_input::exec::execute_console_line(
                     &line,
                     ctx.console_state,
-                    ctx.label_edit_state,
-                    ctx.portal_text_edit_state,
+                    ctx.single_line_edit_state,
                     ctx.color_picker_state,
                     ctx.text_edit_state,
                     doc,
@@ -779,38 +747,23 @@ pub(in crate::application::app) fn dispatch_action(
 /// that `log::warn!` themselves, so there is nothing for callers
 /// here to branch on.
 fn open_editor_for_edge_selection(clean: bool, ctx: &mut InputHandlerContext<'_>) {
-    use super::super::label_edit::{resolve_edge_editor_plan, EdgeEditorPlan};
-
     let Some(doc) = ctx.document.as_mut() else {
         return;
     };
-    match resolve_edge_editor_plan(&doc.selection) {
-        EdgeEditorPlan::Label { edge_ref } => open_label_edit(
-            &edge_ref,
-            clean,
-            doc,
-            ctx.label_edit_state,
-            ctx.app_scene,
-            ctx.renderer,
-        ),
-        EdgeEditorPlan::PortalText {
-            edge_ref,
-            endpoint_node_id,
-        } => open_portal_text_edit(
-            &edge_ref,
-            &endpoint_node_id,
-            clean,
-            doc,
-            ctx.portal_text_edit_state,
-            ctx.app_scene,
-            ctx.renderer,
-        ),
-        EdgeEditorPlan::None => {
-            log::debug!(
-                "open_editor_for_edge_selection: selection is not an edge label / portal endpoint; no-op"
-            );
-        }
-    }
+    let Some(target) = resolve_single_line_target(&doc.selection) else {
+        log::debug!(
+            "open_editor_for_edge_selection: selection is not an edge label / portal endpoint; no-op"
+        );
+        return;
+    };
+    open_single_line_edit(
+        target,
+        clean,
+        doc,
+        ctx.single_line_edit_state,
+        ctx.app_scene,
+        ctx.renderer,
+    );
 }
 
 /// Run a [`PickerOp`] against the live picker. Body of the
@@ -935,24 +888,6 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
     *cursor != before || buffer.len() != len_before
 }
 
-/// Convenience wrapper for the dispatch-table call site that takes
-/// the LabelEditState carrier directly.
-pub(in crate::application::app) fn apply_label_edit_action(
-    action: Action,
-    state: &mut super::super::label_edit::LabelEditState,
-) -> bool {
-    use super::super::label_edit::LabelEditState;
-    let LabelEditState::Open {
-        buffer,
-        cursor_grapheme_pos,
-        ..
-    } = state
-    else {
-        return false;
-    };
-    apply_label_edit_action_to_buffer(action, buffer, cursor_grapheme_pos)
-}
-
 // `sibling_id` lifted to `dispatch/cross_dispatch/selection/mod.rs`
 // so the WASM dispatcher can reach the same fold-aware navigation
 // logic.
@@ -1052,8 +987,7 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
         crate::application::app::console_input::exec::execute_console_line(
             line,
             self.ctx.console_state,
-            self.ctx.label_edit_state,
-            self.ctx.portal_text_edit_state,
+            self.ctx.single_line_edit_state,
             self.ctx.color_picker_state,
             self.ctx.text_edit_state,
             doc,
@@ -1229,14 +1163,16 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
         let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
         ctx.scene_cache.clear();
-        *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(
-            SectionResizeInteraction::new(
-                node_id, section_idx, side, start_offset, start_size,
-                // Fast-resize gesture (`PendingRight` promotion) — the
-                // right-button release path may finalize this drag.
-                true,
-            ),
-        ));
+        *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(SectionResizeInteraction::new(
+            node_id,
+            section_idx,
+            side,
+            start_offset,
+            start_size,
+            // Fast-resize gesture (`PendingRight` promotion) — the
+            // right-button release path may finalize this drag.
+            true,
+        )));
     } else {
         let Some(node) = doc.mindmap.nodes.get(&node_id) else {
             log::debug!("FastResizeStart: node '{}' not found; skipping", node_id);
@@ -1249,9 +1185,13 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
         let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
         ctx.scene_cache.clear();
-        *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(
-            NodeResizeInteraction::new(node_id, side, start_position, start_size, true),
-        ));
+        *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
+            node_id,
+            side,
+            start_position,
+            start_size,
+            true,
+        )));
     }
 }
 
