@@ -35,6 +35,13 @@ pub mod palettes;
 /// Lazy Sieve of Eratosthenes — the prime table the region-params
 /// grid chooser consults to avoid prime dimension factors.
 pub mod primes;
+/// Reachability walk over baumhard's own source, so a test can
+/// enumerate the types a deserializer may be handed instead of
+/// restating them in a list that drifts. Test-only: `syn` is a
+/// dev-dependency and a shipped build has no business carrying a
+/// parser for its own source.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod serde_coverage;
 /// Collision-free scratch directories for filesystem tests, so
 /// concurrent `cargo test` runs cannot race on a shared path.
 /// Native-only — there is no filesystem to scratch on under wasm32.

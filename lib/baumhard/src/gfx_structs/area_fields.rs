@@ -41,6 +41,7 @@ use strum_macros::{Display, EnumDiscriminants, EnumIter};
 /// quality without having to tune it. Hot-path work (§B7) — enable only when
 /// the background legibility problem actually needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutlineStyle {
     /// RGBA halo color, applied to every glyph in every halo copy.
     pub color: [u8; 4],
@@ -141,7 +142,7 @@ pub enum GlyphAreaField {
     /// Render bounds (width, height) in pixels. Under `Add` the
     /// components grow; under `Assign` the bounds are replaced.
     Bounds(OrderedVec2),
-    /// Character-range colour / font runs. Under `Add` each run in
+    /// Character-range color / font runs. Under `Add` each run in
     /// the delta is submitted (merged) into the existing set; under
     /// `Assign` the entire set is replaced; under `Subtract` matching
     /// runs are removed; under `Delete` the set is cleared.

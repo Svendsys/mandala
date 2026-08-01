@@ -17,7 +17,10 @@ An earlier revision stored portals in a separate top-level
 `portals[]` array. That parallel hierarchy has been folded into the
 `edges[]` array — portals are now edges with
 `display_mode = "portal"`. The current loader refuses to read a
-file that still carries a non-empty `portals[]`; migrate with:
+file that still carries a `portals` key at all — an empty array is
+still a key the format has no field for, and one that would
+disappear from the file at the next save (see
+[schema.md](./schema.md#unknown-keys-are-rejected)). Migrate with:
 
 ```
 maptool convert --portals <input.json> <output.json>
@@ -98,9 +101,11 @@ The reported count is the number of edges actually written, not the
 length of the input array, so a summary line of `1 folded in from
 legacy portals` next to three warnings tells you exactly what
 survived. A `portals` key that is not an array at all is dropped the
-same way, with the same kind of warning. (The loader only rejects a
-*non-empty array* `portals`; the other shapes load fine — they just
-carry nothing the app can read, and no legacy writer produced them.)
+same way, with the same kind of warning. (The loader rejects the
+`portals` **key**, whatever its shape — an empty array and a string
+are as unreadable to the current format as a populated one, and
+leaving either in place would only mean losing it silently at the
+next save.)
 
 Both blocks above are read straight out of this file by
 `convert::portals::tests::test_documented_fold_matches_converter_output`,
