@@ -17,6 +17,14 @@
 //! log -p` on this file shows the driver changing and not one
 //! expected line moving.
 //!
+//! **One expected column has moved since**, in the four `MovingNode`
+//! releases: its commit core now *takes* the pending slot instead of
+//! peeking it, like the other six cores, so the post-release `pend=`
+//! reads `(0,0)` rather than the stale value. Nothing else on those
+//! lines changed — same model, same tree, same undo depth, same
+//! cache, same decree. The stale value was only ever observable
+//! here, because production drops the interaction at release.
+//!
 //! **What a `Drain` step models.** The real `drain()` bodies need a
 //! live `Renderer`, which TEST_CONVENTIONS §T8 keeps out of the
 //! harness. A `Drain` step here performs exactly the part of the
@@ -333,7 +341,7 @@ mod moving_node {
             vec![
                 "- pend=(10,5) total=(10,5) model=a=(0,0) b=(400,0) tree_a+=(0,0) undo=0 cache=1",
                 "- pend=(12,8) total=(12,8) model=a=(0,0) b=(400,0) tree_a+=(0,0) undo=0 cache=1",
-                "All pend=(12,8) total=(12,8) model=a=(12,8) b=(412,8) tree_a+=(12,8) undo=1 cache=0",
+                "All pend=(0,0) total=(12,8) model=a=(12,8) b=(412,8) tree_a+=(12,8) undo=1 cache=0",
             ]
         );
     }
@@ -354,7 +362,7 @@ mod moving_node {
                 "- pend=(10,5) total=(10,5) model=a=(0,0) b=(400,0) tree_a+=(0,0) undo=0 cache=1",
                 "- pend=(0,0) total=(10,5) model=a=(0,0) b=(400,0) tree_a+=(10,5) undo=0 cache=1",
                 "- pend=(2,3) total=(12,8) model=a=(0,0) b=(400,0) tree_a+=(10,5) undo=0 cache=1",
-                "All pend=(2,3) total=(12,8) model=a=(12,8) b=(412,8) tree_a+=(12,8) undo=1 cache=0",
+                "All pend=(0,0) total=(12,8) model=a=(12,8) b=(412,8) tree_a+=(12,8) undo=1 cache=0",
             ]
         );
     }
@@ -402,7 +410,7 @@ mod moving_node {
             ),
             vec![
                 "- pend=(10,5) total=(10,5) model=a=(0,0) b=(400,0) tree_a+=(0,0) undo=0 cache=1",
-                "All pend=(10,5) total=(10,5) model=a=(10,5) b=(400,0) tree_a+=(10,5) undo=1 cache=0",
+                "All pend=(0,0) total=(10,5) model=a=(10,5) b=(400,0) tree_a+=(10,5) undo=1 cache=0",
             ]
         );
     }
@@ -435,7 +443,7 @@ mod moving_node {
             ),
             vec![
                 "- pend=(10,5) total=(10,5) model=a=- b=- tree_a+=(0,0) undo=0 cache=1",
-                "None pend=(10,5) total=(10,5) model=a=- b=- tree_a+=(10,5) undo=0 cache=1",
+                "None pend=(0,0) total=(10,5) model=a=- b=- tree_a+=(10,5) undo=0 cache=1",
             ]
         );
     }
@@ -1060,5 +1068,184 @@ mod edge_label {
             run(&[Step::Release]),
             vec!["SceneOnly cursor=- model=- undo=0 cache=1"]
         );
+    }
+}
+
+// ── The release gate ────────────────────────────────────────
+
+/// The button gate wrapped around the seven commits, driven the way
+/// `event_mouse_click::finalize_or_put_back` drives it.
+///
+/// The full shell takes `&mut InputHandlerContext` — a live wgpu
+/// device — so it stays out of reach (TEST_CONVENTIONS §T8).
+/// [`commit_if_resolved`] is its renderer-free half, and it is the
+/// half that decides whether anything is written at all. Pinned here
+/// because a gate that committed on *both* branches would end a
+/// left-button drag on a stray right-click and write its model
+/// besides, and no per-interaction test can see that: every commit
+/// body is perfectly correct in isolation. The bug lives entirely in
+/// which of them runs.
+mod release_gate {
+    use super::*;
+    use crate::application::app::throttled_interaction::release::commit_if_resolved;
+    use crate::application::app::throttled_interaction::{
+        MovingNodeInteraction, NodeResizeInteraction, ThrottledDrag,
+    };
+    use crate::application::platform::input::MouseButton;
+    use baumhard::mindmap::model::{Position, Size};
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
+    use std::collections::HashSet;
+
+    /// A left-started move-node carrying 30 units the throttle never
+    /// flushed. Committing it is loud — the node moves and an undo
+    /// entry appears — so "committed anyway" cannot hide.
+    fn left_started_drag() -> ThrottledDrag {
+        let mut i = MovingNodeInteraction::new(
+            vec![FROM_ID.to_string()],
+            false,
+            HashSet::from([TO_ID.to_string()]),
+        );
+        i.accumulate(DragInput {
+            delta: Vec2::new(30.0, 0.0),
+            cursor: Vec2::new(30.0, 0.0),
+        });
+        ThrottledDrag::MovingNode(i)
+    }
+
+    /// A right-started fast-resize: the one shape the right button
+    /// *does* own.
+    fn right_started_drag() -> ThrottledDrag {
+        let mut i = NodeResizeInteraction::new(
+            FROM_ID.to_string(),
+            ResizeHandleSide::SE,
+            Position { x: 0.0, y: 0.0 },
+            Size {
+                width: 100.0,
+                height: 50.0,
+            },
+            true,
+        );
+        i.accumulate(DragInput {
+            delta: Vec2::new(20.0, 10.0),
+            cursor: Vec2::new(20.0, 10.0),
+        });
+        ThrottledDrag::NodeResize(i)
+    }
+
+    fn node_pos(world: &World) -> (f64, f64) {
+        let n = world
+            .document
+            .as_ref()
+            .and_then(|d| d.mindmap.nodes.get(FROM_ID))
+            .expect("fixture carries the node");
+        (n.position.x, n.position.y)
+    }
+
+    fn node_size(world: &World) -> (f64, f64) {
+        let n = world
+            .document
+            .as_ref()
+            .and_then(|d| d.mindmap.nodes.get(FROM_ID))
+            .expect("fixture carries the node");
+        (n.size.width, n.size.height)
+    }
+
+    fn undo_depth(world: &World) -> usize {
+        world
+            .document
+            .as_ref()
+            .map(|d| d.undo_stack.len())
+            .unwrap_or(0)
+    }
+
+    /// **The put-back branch writes nothing.** A right release
+    /// arriving part-way through a left-button drag must hand the
+    /// gesture back untouched: no model write, no undo entry, no
+    /// scene-cache clear, and no decree for the caller to run.
+    ///
+    /// This is the one the shell could get wrong without any
+    /// interaction noticing — `commit_on_release_core` would do
+    /// exactly what it is supposed to, on a release that had no
+    /// business calling it.
+    #[test]
+    fn test_right_release_on_a_left_started_drag_commits_nothing() {
+        let mut world = edge_world(false);
+        let before_pos = node_pos(&world);
+        let mut drag = left_started_drag();
+
+        let refresh = commit_if_resolved(MouseButton::Right, &mut drag, world.commit());
+
+        assert_eq!(refresh, None, "a put-back owes the canvas no decree");
+        assert_eq!(undo_depth(&world), 0, "a put-back must push no undo entry");
+        assert_eq!(
+            node_pos(&world),
+            before_pos,
+            "a put-back must not move the node"
+        );
+        assert_eq!(
+            world.scene_cache.len(),
+            1,
+            "a put-back must leave the scene cache alone"
+        );
+    }
+
+    /// The converse, on the same gesture and the same world: the
+    /// left release does commit, so the assertions above are pinning
+    /// the gate and not an inert fixture.
+    #[test]
+    fn test_left_release_on_the_same_drag_commits() {
+        let mut world = edge_world(false);
+        let before_pos = node_pos(&world);
+        let mut drag = left_started_drag();
+
+        let refresh = commit_if_resolved(MouseButton::Left, &mut drag, world.commit());
+
+        assert_eq!(refresh, Some(ReleaseRefresh::All));
+        assert_eq!(undo_depth(&world), 1, "the commit pushes its undo entry");
+        assert_eq!(
+            node_pos(&world),
+            (before_pos.0 + 30.0, before_pos.1),
+            "the commit applies the full accumulated delta"
+        );
+        assert_eq!(
+            world.scene_cache.len(),
+            0,
+            "the commit clears the cache it left stale samples in"
+        );
+    }
+
+    /// A right release *does* own the fast-resize it started, so the
+    /// gate is not simply "the right button never commits".
+    ///
+    /// Only the height is asserted exactly: `set_node_aabb` clamps
+    /// the width up to the node's text-driven minimum, which is a
+    /// font metric and would make this a font regression test.
+    #[test]
+    fn test_right_release_commits_the_fast_resize_it_started() {
+        let mut world = edge_world(false);
+        let mut drag = right_started_drag();
+
+        let refresh = commit_if_resolved(MouseButton::Right, &mut drag, world.commit());
+
+        assert_eq!(refresh, Some(ReleaseRefresh::All));
+        assert_eq!(undo_depth(&world), 1);
+        assert_eq!(
+            node_size(&world).1,
+            60.0,
+            "the SE handle's 10 units of vertical drag reached the model"
+        );
+    }
+
+    /// ...and the same fast-resize is still finalized by a left
+    /// release, which is the fourth cell of the gate.
+    #[test]
+    fn test_left_release_also_commits_a_right_started_drag() {
+        let mut world = edge_world(false);
+        let mut drag = right_started_drag();
+
+        let refresh = commit_if_resolved(MouseButton::Left, &mut drag, world.commit());
+
+        assert_eq!(refresh, Some(ReleaseRefresh::All));
+        assert_eq!(undo_depth(&world), 1);
     }
 }

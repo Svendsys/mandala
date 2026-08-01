@@ -161,8 +161,19 @@ impl ThrottledDragInteraction for MovingNodeInteraction {
     /// release the final position must be committed in full even
     /// if the throttle was mid-stretch skipping intermediate
     /// drains.
+    ///
+    /// The pending slot is *taken*, not peeked, like every other
+    /// release core's. `commit_on_release_core` is `&mut self`, so
+    /// a second call is expressible — the lifecycle harness can
+    /// script two `Release` steps — and peeking would flush the
+    /// same delta into the tree twice. This does not make the body
+    /// idempotent (the model write below reads the running total,
+    /// which no release consumes); it removes the one asymmetry
+    /// among the seven cores about whether the pending slot
+    /// survives a release. `take_delta` leaves the running total
+    /// alone by contract.
     fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
-        let pending_delta = self.pending.pending_delta();
+        let pending_delta = self.pending.take_delta();
         let had_pending = pending_delta != Vec2::ZERO;
         if had_pending {
             if let Some(tree) = c.mindmap_tree.as_mut() {

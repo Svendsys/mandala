@@ -14,7 +14,7 @@ use super::console_input::save_console_history;
 use super::input_context::InputHandlerContext;
 use super::modal_editor::commit_modal_editors_on_release;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
-use super::throttled_interaction::release::{resolve_release, ThrottledRelease};
+use super::throttled_interaction::release::commit_if_resolved;
 use super::throttled_interaction::ThrottledDrag;
 use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
@@ -671,18 +671,27 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
 /// The caller has already `mem::replace`d the drag state with `None`,
 /// so the put-back branch has to restore it — that restore and the
 /// commit are the only two outcomes, and which one applies is
-/// [`resolve_release`]'s pure decision.
+/// [`commit_if_resolved`]'s renderer-free decision.
+///
+/// Two arms, and both of them are the part that needs the input
+/// layer: running the canvas decree (`&mut Renderer`) and restoring
+/// `DragState`. Everything before that — the button gate and the
+/// model write itself — is [`commit_if_resolved`], which the
+/// lifecycle harness drives directly.
 #[cfg(not(target_arch = "wasm32"))]
 fn finalize_or_put_back(
     released: MouseButton,
     mut drag: Box<ThrottledDrag>,
     ctx: &mut InputHandlerContext<'_>,
 ) {
-    match resolve_release(released, drag.as_dyn().started_with_right()) {
-        ThrottledRelease::Commit => {
-            drag.as_dyn_mut().commit_on_release(ctx.drain_context());
-        }
-        ThrottledRelease::PutBack => {
+    // Bound rather than matched in place: the `ReleaseCommit`
+    // reborrow of `ctx` has to end before the arm reaches for
+    // `ctx.drain_context()`, and a match scrutinee's temporaries
+    // live for the whole match.
+    let refresh = commit_if_resolved(released, &mut drag, ctx.release_commit());
+    match refresh {
+        Some(refresh) => refresh.execute(ctx.drain_context()),
+        None => {
             log::debug!(
                 "{:?}-button release on a drag it did not start; the originating \
                  button's release will finalize",

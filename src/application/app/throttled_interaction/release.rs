@@ -23,7 +23,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::platform::input::MouseButton;
 
 use super::super::scene_rebuild::{rebuild_all, rebuild_scene_only};
-use super::DrainContext;
+use super::{DrainContext, ThrottledDrag};
 
 /// The renderer-free half of a release-commit's context: everything
 /// a commit body reads or mutates before it names the canvas work
@@ -49,7 +49,11 @@ pub(in crate::application::app) struct ReleaseCommit<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::application::app) enum ReleaseRefresh {
     /// Nothing to repaint. Reached only when no document is loaded,
-    /// in which case the commit found nothing to write either.
+    /// in which case there is nothing on screen to repaint — but a
+    /// commit may still have written the tree on its way here:
+    /// `MovingNode` flushes its pending delta into `mindmap_tree`
+    /// *before* it checks for a document, and the oracle records
+    /// that as deliberate.
     None,
     /// Scene-only rebuild. The gesture moved something that lives
     /// purely in the scene projection (an edge label), so the node
@@ -94,6 +98,33 @@ pub(in crate::application::app) fn resolve_release(
     match released {
         MouseButton::Right if !started_with_right => ThrottledRelease::PutBack,
         _ => ThrottledRelease::Commit,
+    }
+}
+
+/// Run `released` against an in-flight throttled drag, renderer-free:
+/// commit the gesture iff `released` is the button that owns it.
+///
+/// `Some(refresh)` is "committed, and the caller owes the canvas this
+/// decree"; `None` is "put the drag state back — this button did not
+/// start the gesture".
+///
+/// This is the whole of `event_mouse_click::finalize_or_put_back`
+/// except the two things that need the input layer: running the
+/// decree (`&mut Renderer`) and restoring `DragState`. The split is
+/// not cosmetic — the two branches are disjoint in what they need,
+/// and pulling the commit branch out here is what makes "does a
+/// right release on a left-started drag write anything?" a question
+/// the harness can ask. The full shell takes `&mut
+/// InputHandlerContext`, i.e. a live wgpu device, which
+/// TEST_CONVENTIONS §T8 keeps out of the tests.
+pub(in crate::application::app) fn commit_if_resolved(
+    released: MouseButton,
+    drag: &mut ThrottledDrag,
+    commit: ReleaseCommit<'_>,
+) -> Option<ReleaseRefresh> {
+    match resolve_release(released, drag.as_dyn().started_with_right()) {
+        ThrottledRelease::Commit => Some(drag.as_dyn_mut().commit_on_release_core(commit)),
+        ThrottledRelease::PutBack => None,
     }
 }
 
