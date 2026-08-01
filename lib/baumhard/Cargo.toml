@@ -41,12 +41,13 @@ derivative = "2.2.0"
 
 # `env_logger` is load-bearing, not a leftover — and it is the native
 # half of a matched pair with `console_log` below. `util::log::init()`
-# is the workspace's single logger-installation point, and both
-# binaries that front this library (the app crate's `main` and
-# `maptool`) call it; since `log`'s `release_max_level_warn` above
-# keeps `warn!`/`error!` alive in release builds, a release run with
-# no logger installed would silently drop exactly the diagnostics
-# CODE_CONVENTIONS §9's "log and degrade" posture depends on.
+# is the workspace's single logger-installation point, and the binaries
+# that front this library call it: the app crate's `main`, `maptool`,
+# and `src/bin/generate_stress_map.rs`, which this crate ships itself.
+# Since `log`'s `release_max_level_warn` above keeps `warn!`/`error!`
+# alive in release builds, a release run with no logger installed would
+# silently drop exactly the diagnostics CODE_CONVENTIONS §9's "log and
+# degrade" posture depends on.
 #
 # Declared per-target rather than feature-gated. A feature both
 # consumers would always enable is a switch with one position; the
@@ -54,6 +55,27 @@ derivative = "2.2.0"
 # `cfg(target_arch)`-split and `env_logger` has nothing to do on
 # wasm32. Placing it here says that in the manifest and stops the
 # browser build compiling it.
+#
+# One consequence worth writing down, because it is invisible in this
+# diff and the error it would eventually produce points somewhere
+# else: `env_logger` was the only crate enabling `log/std` on the
+# wasm32 leg, and cargo unions features per target, so the browser
+# build's `log` is now `release_max_level_warn` alone where it used to
+# be `release_max_level_warn,std`. That is survivable today only
+# because `console_log 1.0.0` installs a `static LOGGER` through
+# `log::set_logger(&LOGGER)` (`console_log-1.0.0/src/lib.rs:215`)
+# rather than `log::set_boxed_logger`, which is the API `log`'s
+# `std`/`alloc` features gate. A wasm arm that reached for
+# `set_boxed_logger`, or a replacement for `console_log` that boxes its
+# logger, needs `log = { workspace = true, features = ["std"] }` here —
+# without it the browser build stops compiling with an error naming
+# `log`, not this line.
+#
+# The asymmetry with `rand` is deliberate and is not an oversight: see
+# the `getrandom` note in the root manifest. `rand` cannot move into a
+# `cfg(not(wasm32))` table the way `env_logger` did, because
+# `generate_stress_map` uses it and the wasm32 gate builds that binary
+# on both legs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.10"
 
@@ -75,8 +97,13 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # dependency test-only means a shipped build never links it.
 #
 # `features` on a workspace dependency is additive, so this asks for
-# `full` on top of the default set the root table declares without
-# forcing it on `mandala_derive`, whose macro needs only the defaults.
+# `full` on top of the default set the root table declares, without
+# editing the shared entry. Under resolver 2 it lands on the
+# *target*-graph `syn` node; the proc-macro-graph node `mandala_derive`
+# compiles against is a separate one, which has `full` on it anyway
+# from `strum_macros` and `wasm-bindgen-backend`. Asking for less there
+# does not mean compiling against less — see
+# `lib/mandala_derive/Cargo.toml`.
 syn = { workspace = true, features = ["full"] }
 
 [[bench]]

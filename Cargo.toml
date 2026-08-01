@@ -25,11 +25,21 @@ license = "MPL-2.0"
 # costs a lookup.
 #
 # Per-member feature differences survive: `features` in a member
-# manifest is additive on top of whatever this table declares. The
+# manifest is additive on top of whatever this table declares, and a
+# member can therefore ask for more without editing this table. The
 # live example is `syn`, listed here without features — baumhard's
 # dev-dependency adds `["full"]` for `util::serde_coverage`'s
-# `parse_file`, while `mandala_derive` takes the defaults, which are
-# all its macro needs.
+# `parse_file`, while `mandala_derive` asks for nothing beyond the
+# defaults its macro needs.
+#
+# "Asks for" and "compiles against" are not the same thing, and this
+# comment used to conflate them. Cargo unifies features per resolved
+# package node, so what any member compiles against is the union over
+# that node's dependents; `mandala_derive` in a workspace-wide build
+# gets the proc-macro graph's `syn`, `full` and all. See the note in
+# `lib/mandala_derive/Cargo.toml` for the detail. Listing a dependency
+# featureless here is about where the *declaration* lives, not about
+# what gets compiled.
 [workspace.dependencies]
 glam = { version = "0.32.1", features = ["serde"] }
 indextree = { version = "4.8.1", features = ["serde"] }
