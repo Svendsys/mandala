@@ -14,11 +14,13 @@ Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
 
   (no flags)   Run the full test suite across every workspace member
                (mandala, baumhard, mandala_derive, maptool), then
-               type-check the WASM target so cross-platform drift fails
-               the run instead of sneaking into a merge.
+               type-check the benchmark targets and the WASM target so
+               neither can rot silently between merges.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
   --lint       Also run cargo fmt --check and cargo clippy (advisory, never fails the run).
-  --bench      Also run cargo bench after tests pass.
+  --bench      Also *run* cargo bench after tests pass. Maintainers
+               only — AGENTS.md forbids automated agents this flag.
+               The unconditional bench type-check needs no flag.
   --help       Show this message.
 EOF
 }
@@ -84,8 +86,28 @@ if [ "$BENCH" -eq 1 ]; then
   echo "== benches =="
   # baumhard is the only crate with a benchmark harness
   # (TEST_CONVENTIONS §T2.3); keep this in step with ./bench.sh.
+  #
+  # Maintainers only. AGENTS.md forbids automated agents from running
+  # benchmarks at all, which is also why the type-check below is
+  # unconditional rather than folded in here.
   cargo bench -p baumhard
 fi
+
+# Bench-target type-check gate. Unconditional, and deliberately not
+# behind --bench: this compiles the benchmark targets without running
+# a single benchmark, so it is available to everyone AGENTS.md forbids
+# from running one.
+#
+# It closes a hole this repo would otherwise have. `benches/test_bench.rs`
+# imports `do_*()` bodies by path and is not compiled under `cfg(test)`,
+# so `cargo test` cannot notice when one is renamed
+# (lib/baumhard/CONVENTIONS.md §B8). §B8 names `cargo bench` and
+# `./test.sh --bench` as the two mechanisms that would — and AGENTS.md
+# forbids both. `autobenches = false` removed even the accidental net of
+# cargo compiling a stray `benches/*.rs`. Without this line, a renamed
+# `do_*()` breaks the bench file and no green run anywhere reports it.
+echo "== bench targets type-check =="
+cargo check --workspace --benches
 
 # WASM type-check gate. Native tests can stay green while the WASM leg
 # rots silently (see CODE_CONVENTIONS.md §2); this catches shared-helper
