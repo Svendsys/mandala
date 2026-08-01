@@ -1151,11 +1151,7 @@ mod release_gate {
     }
 
     fn undo_depth(world: &World) -> usize {
-        world
-            .document
-            .as_ref()
-            .map(|d| d.undo_stack.len())
-            .unwrap_or(0)
+        world.document.as_ref().map(|d| d.undo_stack.len()).unwrap_or(0)
     }
 
     /// **The put-back branch writes nothing.** A right release
@@ -1177,11 +1173,7 @@ mod release_gate {
 
         assert_eq!(refresh, None, "a put-back owes the canvas no decree");
         assert_eq!(undo_depth(&world), 0, "a put-back must push no undo entry");
-        assert_eq!(
-            node_pos(&world),
-            before_pos,
-            "a put-back must not move the node"
-        );
+        assert_eq!(node_pos(&world), before_pos, "a put-back must not move the node");
         assert_eq!(
             world.scene_cache.len(),
             1,

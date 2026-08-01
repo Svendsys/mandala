@@ -77,8 +77,14 @@ fn test_matches_modifiers_exactly() {
     assert!(!k.matches("z", false, false, false));
 }
 
+/// One row of [`test_default_config_resolves_every_documented_binding`]'s
+/// table: `(context, key, ctrl, shift, alt, expected_action)`.
+/// Named because the tuple is six wide and clippy's
+/// `type_complexity` is right that the inline spelling is unreadable.
+type BindingCase = (Option<InputContext>, &'static str, bool, bool, bool, Action);
+
 /// Default-config bindings resolve in every context Mandala
-/// honours: the bare `Document` context plus the four modal
+/// honors: the bare `Document` context plus the four modal
 /// contexts (`Console`, `ColorPicker`, `LabelEdit`, `TextEdit`).
 /// Table-driven so a binding rename / removal triggers exactly
 /// one diffable failure rather than scrolling through a wall
@@ -87,8 +93,7 @@ fn test_matches_modifiers_exactly() {
 fn test_default_config_resolves_every_documented_binding() {
     let resolved = KeybindConfig::default().resolve();
 
-    // (context, key, ctrl, shift, alt, expected_action)
-    let cases: &[(Option<InputContext>, &str, bool, bool, bool, Action)] = &[
+    let cases: &[BindingCase] = &[
         // Document context (the bare-context resolver).
         (None, "z", true, false, false, Action::Undo),
         (None, "p", true, false, false, Action::EnterReparentMode),
@@ -960,7 +965,7 @@ fn test_bare_right_drag_returns_none_with_default_config() {
 
 /// Users can opt in to bare `RightDrag` for fast-resize by
 /// rebinding `fast_resize_start` to remove the Ctrl modifier.
-/// Pins the user-customisation path the doc-comment promises.
+/// Pins the user-customization path the doc-comment promises.
 #[test]
 fn test_user_rebind_to_bare_right_drag_works() {
     let cfg = KeybindConfig {
@@ -1070,7 +1075,7 @@ fn test_action_for_gesture_exact_modifier_match_wins_over_fallback() {
     assert_eq!(
         r.action_for_gesture("wheelup", false, false, false),
         Some(Action::ZoomOut),
-        "bare wheelup honours its bare binding"
+        "bare wheelup honors its bare binding"
     );
 }
 

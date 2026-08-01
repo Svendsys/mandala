@@ -130,7 +130,7 @@ pub struct KeybindConfig {
     // ── Border Preview ───────────────────────────────────────────
     /// Discard the active border preview.
     ///
-    /// **Default: unbound** — but the user-visible Esc behaviour
+    /// **Default: unbound** — but the user-visible Esc behavior
     /// is "if a preview is active, cancel it; otherwise exit the
     /// current mode" because `Action::ExitMode` (the default Esc
     /// binding) calls `cancel_border_preview()` first and
@@ -398,7 +398,7 @@ impl Default for KeybindConfig {
             // Default unbound — `Home` is consumed by the text editor
             // when it's open (already routed to TextEditCursorHome),
             // and binding it at the Document level would shadow that
-            // for users who haven't customised. Users who want a
+            // for users who haven't customized. Users who want a
             // jump-to-root key bind it themselves.
             jump_to_root: vec![],
 
@@ -717,7 +717,7 @@ impl KeybindConfig {
         // Color: `args = [axis, value]` where axis = `bg|text|border`.
         // `axis.parse::<ColorAxis>()` is the strum-`EnumString`-derived
         // round-trip with `IntoStaticStr` (`Bg.into() == "bg"` etc.) —
-        // unrecognised tokens land in `Err`, which `push_parametric`
+        // unrecognized tokens land in `Err`, which `push_parametric`
         // then warns and skips on.
         push_parametric(&mut binds, "set_color", 2, &self.set_color, |args| match args {
             [axis, value] => axis
