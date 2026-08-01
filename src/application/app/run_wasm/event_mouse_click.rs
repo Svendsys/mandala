@@ -25,15 +25,12 @@ use crate::application::platform::input::ElementState;
 
 use super::PendingClick;
 use crate::application::app::click_triggers::fire_onclick_triggers;
-use crate::application::app::scene_rebuild::{
-    rebuild_after_selection_change, rebuild_all, rebuild_scene_only,
-};
-use crate::application::app::text_edit::open_text_edit;
+use crate::application::app::scene_rebuild::rebuild_after_selection_change;
 use crate::application::app::{
-    compute_click_hit, dispatch, is_double_click, now_ms, ClickHit, ClickHitParts, LastClick,
+    compute_click_hit, dispatch, is_double_click, now_ms, ClickHitParts, LastClick,
 };
 use crate::application::document::{
-    point_in_node_aabb, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState,
+    EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState,
 };
 use crate::application::keybinds::Action;
 
