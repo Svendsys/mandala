@@ -91,6 +91,30 @@ pub struct LineReplacement {
     /// `ColorFontRegions::shrink_regions_after` rather than
     /// `shift_regions_after`.
     pub growth: isize,
+    /// One past the last cluster of the *post-edit* target whose base
+    /// scalar came from `source`. Together with [`Self::at`] it is the
+    /// exact grapheme span the spliced text occupies — `at ..
+    /// written_end` — so a caller that pins a `ColorFontRegion` to the
+    /// text it just wrote can take the span straight from the
+    /// measurement instead of adding up cluster counts that were taken
+    /// in isolation.
+    ///
+    /// Isolated arithmetic is wrong for the same reason [`Self::growth`]
+    /// is measured: across a splice seam the source's clusters are not
+    /// the source's clusters any more. The rule this field applies is
+    /// **a cluster belongs to whichever text contributed its first
+    /// scalar**:
+    ///
+    /// - A source that merely *extends* the cluster before it (a lone
+    ///   combining mark, an LF landing after a CR) owns no cell of its
+    ///   own, and `written_end == at` — an empty span. The fused cell
+    ///   keeps the identity of the character whose base it is.
+    /// - A source whose last cluster is extended by the text *after* it
+    ///   keeps that shared cell, because its own scalar is the base.
+    ///
+    /// `at <= written_end <= ` the post-edit cluster count, always, so a
+    /// span built from this field can never point past the buffer.
+    pub written_end: usize,
     /// How many extra lines the target gained, i.e. the number of
     /// `\n` characters `source` contributed. Non-zero means every
     /// line of the target *after* the edited one has moved down by
@@ -128,14 +152,21 @@ pub struct LineReplacement {
 /// [`LineReplacement::growth`] is the buffer's measured
 /// grapheme-cluster delta and may be negative; see its doc for why
 /// arithmetic on the two cluster counts is not the same thing.
+/// [`LineReplacement::at`] and [`LineReplacement::written_end`] are
+/// likewise measured, and bound the span the source actually occupies
+/// in the post-edit buffer — a caller pinning a region to the text it
+/// wrote must use them rather than adding up the source's clusters,
+/// which are counted in isolation and stop being true across the seam.
 ///
 /// # Costs
 ///
-/// Two whole-buffer `count_grapheme_clusters` walks — one before the
-/// splice, one after — because `growth` is measured rather than
-/// computed and UAX #29 gives no cheaper exact answer across a splice
-/// seam (a regional-indicator run makes the required lookbehind
-/// unbounded). On top of that: one bounded `find_byte_index_of_grapheme`
+/// Two whole-buffer grapheme walks — one before the splice, one after —
+/// because `growth` is measured rather than computed and UAX #29 gives
+/// no cheaper exact answer across a splice seam (a regional-indicator
+/// run makes the required lookbehind unbounded). The second walk
+/// yields `written_end` at the same time, so the span costs nothing on
+/// top of the delta. Debug builds pay one further walk for the
+/// `at`-consistency `debug_assert`. On top of that: one bounded `find_byte_index_of_grapheme`
 /// walk for the write position, one `count_grapheme_clusters` of the
 /// line tail, one `count_number_lines` byte scan over `source`, and one
 /// `replace_substring`, which itself allocates a fresh `Vec<u8>` copy
@@ -180,12 +211,51 @@ pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, sour
         replace_substring(target, b_index, overlap_end, source);
     }
 
+    // One post-splice walk answers both measured questions: the new
+    // cluster count (for `growth`) and how many clusters start before
+    // the end of the text we just wrote (for `written_end`).
+    let (clusters_after, written_end) = count_clusters_and_starts_before(target, b_index + source.len());
+
+    debug_assert_eq!(
+        at,
+        count_clusters_and_starts_before(target, b_index).1,
+        "`at` must equal the post-edit count of clusters starting before the write position"
+    );
+
     LineReplacement {
         at,
         // Measured, not derived: see `LineReplacement::growth`.
-        growth: count_grapheme_clusters(target) as isize - clusters_before as isize,
+        growth: clusters_after as isize - clusters_before as isize,
+        written_end,
         added_lines,
     }
+}
+
+/// Total grapheme-cluster count of `s`, and how many of those clusters
+/// *start* strictly before `byte_limit`, in one walk.
+///
+/// The second number is the span arithmetic `replace_graphemes_until_newline`
+/// needs on both ends of a splice: counted at the write position it is
+/// the first cluster the source can claim, and counted at the end of
+/// the written bytes it is one past the last. Counting cluster *starts*
+/// rather than clusters *contained* is what implements the
+/// "a cluster belongs to whichever text contributed its first scalar"
+/// rule documented on [`LineReplacement::written_end`]. A `byte_limit`
+/// past the end of `s` simply yields the total.
+///
+/// Cost: one O(n) grapheme walk. No allocation.
+fn count_clusters_and_starts_before(s: &str, byte_limit: usize) -> (usize, usize) {
+    let mut total = 0;
+    let mut starts_before = 0;
+    let mut byte = 0;
+    for g in s.graphemes(true) {
+        if byte < byte_limit {
+            starts_before += 1;
+        }
+        byte += g.len();
+        total += 1;
+    }
+    (total, starts_before)
 }
 
 /// Return the byte offset of the `index`-th grapheme cluster in `s`.

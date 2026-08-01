@@ -9,7 +9,7 @@ use crate::gfx_structs::model::{
     DeltaGlyphModel, GlyphComponent, GlyphLine, GlyphMatrix, GlyphModel, GlyphModelField,
 };
 use crate::util::color::Color;
-use crate::util::grapheme_chad::{count_grapheme_clusters, count_number_lines};
+use crate::util::grapheme_chad::{count_grapheme_clusters, count_number_lines, find_byte_index_of_grapheme};
 
 /// The tests are written in a non-test-annotated function and then wrapped by an annotated test function
 /// So that they can be reused for benchmarking
@@ -504,6 +504,106 @@ pub fn matrix_place_in_multiline_component() {
     assert!(
         regions.get(Range::new(8, 12)).is_some(),
         "the trailing region must shift by the real cluster growth (3), not by 2"
+    );
+
+    // The same paint at a *non-zero* x-offset. `place_in` pads short
+    // rows out to the offset with `insert_spaces`, which puts clusters
+    // into the middle of the buffer — every row but the last has text
+    // after it. Until the padding was reported to `regions`, the
+    // caller span below simply stopped pointing at its text: it stayed
+    // at 5..9 and sliced to "   A" instead of "YYYY". The `(0, 0)`
+    // case above walks straight past that, which is why this one
+    // exists.
+    let mut x_offset = GlyphMatrix::new();
+    x_offset.push(GlyphLine::new_with(GlyphComponent::text(
+        "AB",
+        AppFont::Evilz,
+        Color::black(),
+    )));
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new(
+        Range::new(5, 9),
+        Some(AppFont::Evilz),
+        Some(Color::black().to_float()),
+    ));
+    let mut padded = String::from("XXXX\r\nYYYY");
+    x_offset.place_in(&mut padded, &mut regions, (8, 0));
+    assert_eq!(padded, "XXXX    AB\r\nYYYY");
+    assert_eq!(count_grapheme_clusters(&padded), 15);
+    assert!(
+        regions.get(Range::new(11, 15)).is_some(),
+        "the caller span must ride the four inserted padding clusters, landing on \"YYYY\" again"
+    );
+    assert!(
+        regions.get(Range::new(8, 10)).is_some(),
+        "the painted component owns the two cells it wrote"
+    );
+    // Spelled out against the buffer so a future change to the region
+    // arithmetic cannot keep the index while losing the text.
+    let span_start = find_byte_index_of_grapheme(&padded, 11).unwrap();
+    assert_eq!(&padded[span_start..], "YYYY");
+}
+
+#[test]
+pub fn test_matrix_place_in_fusing_component() {
+    matrix_place_in_fusing_component();
+}
+
+/// A component whose text begins with a cluster-extending scalar
+/// fuses into the cell before it, so the buffer *shrinks* where the
+/// arithmetic says it grows. That is the negative half of
+/// `LineReplacement::growth` and the `shrink_regions_after` arm of
+/// `place_in` — reachable in three lines, and unexercised by every
+/// other test in this file, all of whose components start on a
+/// non-combining scalar.
+pub fn matrix_place_in_fusing_component() {
+    let mut matrix = GlyphMatrix::new();
+    let mut line = GlyphLine::new();
+    line.push(GlyphComponent::text("ab", AppFont::Evilz, Color::black()));
+    // U+0301 COMBINING ACUTE ACCENT: not a cell of its own, it
+    // extends the cell before it.
+    line.push(GlyphComponent::text("\u{301}", AppFont::Evilz, Color::black()));
+    matrix.push(line);
+
+    let mut regions = ColorFontRegions::new_empty();
+    // A caller span on the text after the paint. The buffer loses one
+    // cluster to the fusion, so this must move *left* by one.
+    regions.submit_region(ColorFontRegion::new(
+        Range::new(4, 8),
+        Some(AppFont::Evilz),
+        Some(Color::black().to_float()),
+    ));
+    let mut buffer = String::from("XXXXXXXX");
+    matrix.place_in(&mut buffer, &mut regions, (0, 0));
+
+    assert_eq!(buffer, "ab\u{301}XXXXX");
+    assert_eq!(
+        count_grapheme_clusters(&buffer),
+        7,
+        "\"b\" and the accent are one cell: eight clusters became seven"
+    );
+    assert!(
+        regions.get(Range::new(3, 7)).is_some(),
+        "the caller span must follow the shrink; a grow-only `place_in` leaves it at 4..8, one cell past its text"
+    );
+    assert!(
+        regions.get(Range::new(4, 8)).is_none(),
+        "the pre-shrink span must not survive"
+    );
+    let span_start = find_byte_index_of_grapheme(&buffer, 3).unwrap();
+    assert_eq!(
+        &buffer[span_start..],
+        "XXXX",
+        "the span 3..7 still covers the four X's the caller pinned, now one cell to the left"
+    );
+    assert!(
+        regions.get(Range::new(0, 2)).is_some(),
+        "\"ab\" owns the two cells it wrote, including the one the accent joined"
+    );
+    assert!(
+        regions.get(Range::new(2, 2)).is_some(),
+        "a component that only extends the cell before it owns no cell of its own, so its span is empty — \
+         and above all is not 2..3, which is a different component's text"
     );
 }
 

@@ -305,8 +305,19 @@ impl ColorFontRegions {
     /// Callers that want the surrounding region to absorb the insertion
     /// (the text-editor caret, user typing) should instead use
     /// [`Self::insert_regions_at`], which extends straddling regions
-    /// to cover the new chars. See the symmetric
-    /// [`Self::shrink_regions_after`] for the delete path.
+    /// to cover the new chars, and shifts on `start >= idx` rather
+    /// than `start > idx`. See [`Self::shrink_regions_after`] for the
+    /// delete path.
+    ///
+    /// **The delete path is a companion, not a mirror, at the
+    /// `start == idx` seam.** A region anchored exactly at `idx`
+    /// survives a shift untouched (it still describes the cells the
+    /// caller is about to re-cover with its own `submit_region`),
+    /// while `shrink_regions_after` drops the same region, because
+    /// there the cut *removed* the text it covered. Both are right for
+    /// their direction; a caller pairing the two — `GlyphMatrix::place_in`
+    /// does — must not assume one from the other.
+    /// `do_region_shift_and_shrink_disagree_at_the_seam` pins it.
     ///
     /// A shift that would carry a region's `end` past `usize::MAX` is
     /// dropped whole, leaving the set untouched rather than partly
@@ -415,7 +426,9 @@ impl ColorFontRegions {
         absorbed
     }
 
-    /// Symmetric delete-path companion to [`Self::shift_regions_after`].
+    /// Delete-path companion to [`Self::shift_regions_after`] — a
+    /// companion rather than a mirror: at the `start == idx` seam the
+    /// two deliberately differ, and that doc comment says why.
     /// `magnitude` chars starting at position `idx` have been removed
     /// from the backing text; rewrite the region ranges to reflect
     /// that. Semantics, per region relative to the cut `[idx, idx+magnitude)`:

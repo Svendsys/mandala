@@ -173,6 +173,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("matrix_place_in_multiline_component", |b| {
         b.iter(matrix_place_in_multiline_component)
     });
+    c.bench_function("matrix_place_in_fusing_component", |b| {
+        b.iter(matrix_place_in_fusing_component)
+    });
     c.bench_function("matrix_add_assign_1", |b| b.iter(|| matrix_add_assign_1()));
     c.bench_function("matrix_add_assign_2", |b| b.iter(|| matrix_add_assign_2()));
     c.bench_function("line_add_assign_1", |b| b.iter(|| line_add_assign_1()));
@@ -682,6 +685,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("single_span_none_color_none_font", |b| {
         b.iter(|| do_single_span_none_color_none_font())
+    });
+    c.bench_function("region_shift_and_shrink_disagree_at_the_seam", |b| {
+        b.iter(|| do_region_shift_and_shrink_disagree_at_the_seam())
     });
     c.bench_function("shrink_regions_after_fully_right_shifts_left", |b| {
         b.iter(|| do_shrink_regions_after_fully_right_shifts_left())
@@ -1227,8 +1233,7 @@ fn bench_edge(from: &str, to: &str, portal: bool, label: Option<&str>) -> baumha
 /// the index lookup that is actually there.
 fn hit_index_resolve_benchmark(c: &mut Criterion) {
     use baumhard::mindmap::tree_builder::{
-        build_connection_label_tree, build_label_elements, build_portal_tree_from_pairs,
-        portal_pair_data,
+        build_connection_label_tree, build_label_elements, build_portal_tree_from_pairs, portal_pair_data,
     };
 
     const PAIRS: usize = 60;
@@ -1238,7 +1243,9 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
     // the index carries `PAIRS` entries.
     let mut portal_map = synthetic_single_section_map(PAIRS + 1);
     for i in 0..PAIRS {
-        portal_map.edges.push(bench_edge("n0", &format!("n{}", i + 1), true, None));
+        portal_map
+            .edges
+            .push(bench_edge("n0", &format!("n{}", i + 1), true, None));
     }
     let hidden = portal_map.fold_hidden_set();
     let pairs = portal_pair_data(&portal_map, &offsets, None, None, None, None, 1.0, &hidden);

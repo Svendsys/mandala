@@ -103,7 +103,7 @@ impl GlyphMatrix {
     pub fn new() -> Self {
         GlyphMatrix { matrix: vec![] }
     }
-    /// Append a line. O(1) amortised.
+    /// Append a line. O(1) amortized.
     pub fn push(&mut self, line: GlyphLine) {
         self.matrix.push(line);
     }
@@ -122,7 +122,7 @@ impl GlyphMatrix {
     /// bounds, then return a mutable reference to that line. The
     /// explicit-grow path that the old `IndexMut` quietly did on
     /// every out-of-bounds index — callers that need auto-grow
-    /// must say so. O(growth) amortised.
+    /// must say so. O(growth) amortized.
     pub fn ensure_line(&mut self, line_num: usize) -> &mut GlyphLine {
         if line_num >= self.matrix.len() {
             self.matrix.resize_with(line_num + 1, GlyphLine::new);
@@ -164,6 +164,27 @@ impl GlyphMatrix {
     /// and offsets its subsequent row lookups by it; without that, row
     /// `n + 1` used to be painted into the middle of the text row `n`
     /// had just inserted.
+    ///
+    /// Every span this emits — and the head it advances between
+    /// components — comes from the measurement
+    /// [`LineReplacement`](crate::util::grapheme_chad::LineReplacement)
+    /// took against the buffer, never from the component's own cluster
+    /// count. UAX #29 segmentation is not compositional across a splice
+    /// seam, so a count taken in isolation is not a position in the
+    /// target. Two consequences are worth stating plainly:
+    ///
+    /// - Every emitted region is in bounds, and slices back to exactly
+    ///   the component's text whenever neither seam fused.
+    /// - A component whose text only *extends* the cluster before it
+    ///   (a lone combining mark) fuses into that cell and so owns no
+    ///   cell of its own; its region is empty and the cell keeps the
+    ///   identity of the component that contributed the base
+    ///   character. Preventing the fusion, as opposed to reporting it
+    ///   exactly, is a question about the matrix cell model and is not
+    ///   answered here.
+    ///
+    /// Padding inserted for a non-zero x-offset is reported to
+    /// `regions` too, so caller spans on the rows below survive it.
     ///
     /// # Costs
     ///
@@ -217,10 +238,29 @@ impl GlyphMatrix {
                     let target_line_len = line_graph_range.1 - line_graph_range.0;
                     graph_line_start_index = line_graph_range.0;
                     if target_line_len < offset.0 {
-                        insert_spaces(string, line_graph_range.1, offset.0 - target_line_len);
+                        let pad = offset.0 - target_line_len;
+                        // The padding goes into the *middle* of the
+                        // buffer — every row but the last has text
+                        // after it — so the region table has to be
+                        // told, or every caller span below this row
+                        // stops pointing at its text. `insert_regions_at`
+                        // rather than `shift_regions_after`: this is a
+                        // pure insertion at a cell boundary with no
+                        // `submit_region` to follow, so a span starting
+                        // exactly *at* the insertion point must move
+                        // (`start >= idx`), which is the semantics
+                        // `shift_regions_after`'s replace-and-shift
+                        // rule deliberately does not have. A span
+                        // ending at the boundary absorbs the blanks
+                        // instead of leaving a hole in the run.
+                        insert_spaces(string, line_graph_range.1, pad);
+                        regions.insert_regions_at(line_graph_range.1, pad);
                     }
                 } else {
-                    // Important that this is done before pushing spaces
+                    // Important that this is done before pushing spaces.
+                    // `push_spaces` appends past the end of the buffer,
+                    // so there is no text — and therefore no region —
+                    // after it to shift.
                     graph_line_start_index = count_grapheme_clusters(string);
                     push_spaces(string, offset.0);
                 }
@@ -236,9 +276,13 @@ impl GlyphMatrix {
                 // `growth` is the buffer's measured cluster delta and
                 // can go either way: a component whose first scalar
                 // extends the cluster before it fuses with it and the
-                // buffer *shrinks*. `shrink_regions_after` is the
-                // delete-path mirror of `shift_regions_after`, so the
-                // spans stay pinned to their text in both directions.
+                // buffer *shrinks*. The two primitives are not exact
+                // mirrors at the `start == at` seam — a span anchored
+                // there survives a grow and is clipped by a shrink —
+                // but in both directions that span is the text this
+                // component just overwrote, so both answers are the
+                // right one for their direction. See
+                // `ColorFontRegions::shift_regions_after`.
                 match replacement.growth.cmp(&0) {
                     Ordering::Greater => {
                         regions.shift_regions_after(replacement.at, replacement.growth as usize)
@@ -250,12 +294,23 @@ impl GlyphMatrix {
                 }
                 line_drift += replacement.added_lines;
                 have_lines += replacement.added_lines;
+                // The span comes from the same measurement `growth`
+                // does. `component.length()` counts the component's
+                // clusters *in isolation*, which stops being the truth
+                // the moment the write fuses with the text on either
+                // side of the seam: adding it up walks the head off
+                // the end of the buffer and lands spans on the line
+                // terminators this code goes to such lengths to
+                // protect. `at .. written_end` is measured against the
+                // post-edit buffer, so it is in bounds by construction
+                // and equals the component's own clusters whenever
+                // nothing fused.
                 regions.submit_region(ColorFontRegion::new(
-                    Range::new(comp_head, comp_head + component.length()),
+                    Range::new(replacement.at, replacement.written_end),
                     Some(component.font),
                     Some(component.color.to_float()),
                 ));
-                comp_head += &component.length();
+                comp_head = replacement.written_end;
             }
         }
     }

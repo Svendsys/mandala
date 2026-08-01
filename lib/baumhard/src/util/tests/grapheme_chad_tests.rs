@@ -333,13 +333,14 @@ pub fn do_replace_graphemes_until_newline() {
         let outcome = replace_graphemes_until_newline(&mut result, idx, &source);
         assert_eq!(result, expected);
 
-        // The three fields of `LineReplacement` are a contract, not
+        // The four fields of `LineReplacement` are a contract, not
         // decoration: `growth` must be the buffer's real cluster
         // growth (that is what the region shift rides on), `at` must
         // be where the write actually landed — the caller's index,
         // clamped to the end of the buffer when it points past it —
-        // and `added_lines` must be the count of newlines the source
-        // contributed.
+        // `written_end` must bound the span the source occupies in the
+        // post-edit buffer, and `added_lines` must be the count of
+        // newlines the source contributed.
         let after = count_grapheme_clusters(&result);
         assert_eq!(
             outcome.at,
@@ -361,6 +362,46 @@ pub fn do_replace_graphemes_until_newline() {
             "`added_lines` must count the source's newlines for source {:?}",
             source
         );
+
+        // `written_end` is the half of the span contract a caller
+        // pins its `ColorFontRegion` to, so it must be in bounds and
+        // must actually bracket the bytes the splice wrote. The write
+        // landed at `b_index`; the source occupies
+        // `[b_index, b_index + source.len())` afterwards.
+        let b_index = find_byte_index_of_grapheme(target, idx).unwrap_or(target.len());
+        assert!(
+            outcome.at <= outcome.written_end && outcome.written_end <= after,
+            "the written span {}..{} must be non-inverted and inside the {}-cluster buffer for source {:?} into {:?}",
+            outcome.at,
+            outcome.written_end,
+            after,
+            source,
+            target
+        );
+        let span_start_byte = find_byte_index_of_grapheme(&result, outcome.at).unwrap_or(result.len());
+        let span_end_byte = find_byte_index_of_grapheme(&result, outcome.written_end).unwrap_or(result.len());
+        assert!(
+            span_start_byte >= b_index && span_end_byte >= b_index + source.len(),
+            "the written span must cover the spliced bytes {}..{} for source {:?} into {:?}, got bytes {}..{}",
+            b_index,
+            b_index + source.len(),
+            source,
+            target,
+            span_start_byte,
+            span_end_byte
+        );
+        if span_start_byte == b_index && span_end_byte == b_index + source.len() {
+            // Neither seam fused, so the span must slice back to the
+            // source exactly — the property `component.length()`
+            // arithmetic only ever got right by luck.
+            assert_eq!(
+                &result[span_start_byte..span_end_byte],
+                source,
+                "a non-fusing span must slice back to its source for {:?} into {:?}",
+                source,
+                target
+            );
+        }
         assert_eq!(
             count_number_lines(&result),
             count_number_lines(target) + outcome.added_lines,
@@ -379,6 +420,9 @@ pub fn do_replace_graphemes_until_newline() {
             at: 1,
             // The 2-cluster tail "bc" became the 3-cluster "XYZ".
             growth: 1,
+            // Nothing fused, so the span is the source's own three
+            // clusters, sitting where the write landed.
+            written_end: 4,
             added_lines: 0
         }
     );
@@ -392,6 +436,7 @@ pub fn do_replace_graphemes_until_newline() {
         LineReplacement {
             at: 1,
             growth: 0,
+            written_end: 3,
             added_lines: 0
         }
     );
@@ -502,6 +547,11 @@ pub fn do_replace_graphemes_until_newline() {
         outcome.growth, 0,
         "the inserted CR fused with the following LF into one cluster"
     );
+    assert_eq!(
+        (outcome.at, outcome.written_end),
+        (0, 1),
+        "the source contributed the base scalar of the fused CRLF cell, so it owns it"
+    );
 
     let mut buf = String::from("abc");
     let outcome = replace_graphemes_until_newline(&mut buf, 1, "\u{301}abc");
@@ -519,6 +569,49 @@ pub fn do_replace_graphemes_until_newline() {
     assert_eq!(buf, "a\u{301}");
     assert_eq!(count_grapheme_clusters(&buf), 1);
     assert_eq!(outcome.growth, -1, "growth must be able to report a shrink");
+    assert_eq!(
+        (outcome.at, outcome.written_end),
+        (1, 1),
+        "a source that only extends the cell before it owns no cell, so its span is empty"
+    );
+
+    // The mirror of the case above at the *other* seam: the source
+    // keeps a cell that the text after it extends, because the base
+    // scalar of that cell is the source's own. A lone regional
+    // indicator left in the target pairs up with the one the source
+    // ends on, so two cells become one and the source owns the
+    // survivor.
+    let mut buf = String::from("ab\u{1F1F4}");
+    let outcome = replace_graphemes_until_newline(&mut buf, 1, "\u{1F1F3}");
+    assert_eq!(buf, "a\u{1F1F3}\u{1F1F4}");
+    assert_eq!(
+        count_grapheme_clusters(&buf),
+        2,
+        "the two indicators formed one flag"
+    );
+    assert_eq!(outcome.growth, -1);
+    assert_eq!(
+        (outcome.at, outcome.written_end),
+        (1, 2),
+        "the trailing indicator joined the source's cell; the source still owns it"
+    );
+
+    // The span is the answer arithmetic gets wrong. `"\u{301}"` is one
+    // cluster in isolation, so `at + count_grapheme_clusters(source)`
+    // says 1..2 in a buffer that is one cluster long — a region one
+    // past the end of the text it styles. That is the shape of the
+    // defect `GlyphMatrix::place_in` used to emit on every row.
+    let mut buf = String::from("ab");
+    let outcome = replace_graphemes_until_newline(&mut buf, 1, "\u{301}");
+    assert!(
+        outcome.written_end <= count_grapheme_clusters(&buf),
+        "a measured span can never point past the buffer"
+    );
+    assert_ne!(
+        outcome.written_end,
+        outcome.at + count_grapheme_clusters("\u{301}"),
+        "the arithmetic answer is the wrong one here; that is why the span is measured"
+    );
 }
 
 #[test]

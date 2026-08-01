@@ -450,6 +450,58 @@ pub fn do_single_span_none_color_none_font() {
 }
 
 #[test]
+fn test_region_shift_and_shrink_disagree_at_the_seam() {
+    do_region_shift_and_shrink_disagree_at_the_seam();
+}
+
+/// The grow and shrink primitives are *not* mirrors of one another at
+/// `start == idx`, and the two callers that pair them —
+/// `GlyphMatrix::place_in` and the text-edit delete path — depend on
+/// the difference rather than on a symmetry.
+///
+/// A span anchored exactly at the edit position covers the text the
+/// edit is overwriting. Growing, `shift_regions_after` leaves it
+/// alone: its "replace and shift" contract has the caller submit a
+/// fresh span for the new text, and moving the old one right would
+/// slide it off the cells it still describes onto the untouched tail.
+/// Shrinking, `shrink_regions_after` is describing a *deletion* — the
+/// cells that span covered are gone, so a span that lies wholly inside
+/// the cut collapses. Both answers are correct for their direction;
+/// what would be wrong is assuming one from the other, so this pins
+/// the seam in both directions.
+pub fn do_region_shift_and_shrink_disagree_at_the_seam() {
+    let mut grown = ColorFontRegions::new_empty();
+    grown.submit_region(ColorFontRegion::new_key_only(Range::new(2, 3)));
+    grown.shift_regions_after(2, 1);
+    assert_eq!(grown.num_regions(), 1);
+    assert!(
+        grown.get(Range::new(2, 3)).is_some(),
+        "a span anchored at the edit position keeps the cells it describes across a grow"
+    );
+
+    let mut shrunk = ColorFontRegions::new_empty();
+    shrunk.submit_region(ColorFontRegion::new_key_only(Range::new(2, 3)));
+    shrunk.shrink_regions_after(2, 1);
+    assert_eq!(
+        shrunk.num_regions(),
+        0,
+        "the same span lies wholly inside the cut, and deleted text keeps no span"
+    );
+
+    // One cell further out the two do agree, which is the case
+    // `place_in`'s caller spans actually ride.
+    let mut grown_after = ColorFontRegions::new_empty();
+    grown_after.submit_region(ColorFontRegion::new_key_only(Range::new(3, 4)));
+    grown_after.shift_regions_after(2, 1);
+    assert!(grown_after.get(Range::new(4, 5)).is_some());
+
+    let mut shrunk_after = ColorFontRegions::new_empty();
+    shrunk_after.submit_region(ColorFontRegion::new_key_only(Range::new(3, 4)));
+    shrunk_after.shrink_regions_after(2, 1);
+    assert!(shrunk_after.get(Range::new(2, 3)).is_some());
+}
+
+#[test]
 fn test_shrink_regions_after_fully_right_shifts_left() {
     do_shrink_regions_after_fully_right_shifts_left();
 }
