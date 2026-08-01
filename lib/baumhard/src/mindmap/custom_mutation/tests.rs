@@ -26,7 +26,7 @@ fn sample(id: &str) -> CustomMutation {
 }
 
 #[test]
-fn roundtrip_preserves_all_fields() {
+fn test_roundtrip_preserves_all_fields() {
     let mut cm = sample("nudge");
     cm.description = "Nudge every selected node one pixel right.".into();
     cm.contexts = vec![contexts::MAP_NODE.into()];
@@ -39,7 +39,7 @@ fn roundtrip_preserves_all_fields() {
 }
 
 #[test]
-fn empty_description_and_contexts_omitted_from_json() {
+fn test_empty_description_and_contexts_omitted_from_json() {
     let cm = sample("bare");
     let json = serde_json::to_string(&cm).unwrap();
     assert!(!json.contains("\"description\""));
@@ -47,7 +47,7 @@ fn empty_description_and_contexts_omitted_from_json() {
 }
 
 #[test]
-fn legacy_json_with_mutations_and_scope_loads_into_new_shape() {
+fn test_legacy_json_with_mutations_and_scope_loads_into_new_shape() {
     // Pre-unification shape: `mutations` + `target_scope`, no
     // `mutator` field. The backward-compat deserializer
     // synthesizes the MutatorNode via `scope` helpers so old maps
@@ -69,7 +69,7 @@ fn legacy_json_with_mutations_and_scope_loads_into_new_shape() {
 }
 
 #[test]
-fn legacy_json_with_only_document_actions_loads_with_no_mutator() {
+fn test_legacy_json_with_only_document_actions_loads_with_no_mutator() {
     // `theme_demo.mindmap.json` shape: document_actions only.
     // `mutations` absent (serde-default) + `target_scope` present.
     // The synthesized mutator is None — no tree payload.
@@ -94,7 +94,7 @@ fn legacy_json_with_only_document_actions_loads_with_no_mutator() {
 /// the review flagged — a user opening + saving a legacy map
 /// should never lose information.
 #[test]
-fn legacy_theme_demo_map_round_trips_through_canonical_save() {
+fn test_legacy_theme_demo_map_round_trips_through_canonical_save() {
     use crate::mindmap::loader::{load_from_file, save_to_file};
     use std::path::PathBuf;
 
@@ -139,7 +139,7 @@ fn legacy_theme_demo_map_round_trips_through_canonical_save() {
 }
 
 #[test]
-fn matches_context_hits_exact_and_dotted_descendants() {
+fn test_matches_context_hits_exact_and_dotted_descendants() {
     let mut cm = sample("x");
     cm.contexts = vec![contexts::MAP_NODE.into(), contexts::MAP_TREE.into()];
     assert!(cm.matches_context(contexts::MAP));
@@ -149,13 +149,13 @@ fn matches_context_hits_exact_and_dotted_descendants() {
 }
 
 #[test]
-fn is_internal_is_true_on_empty_contexts() {
+fn test_is_internal_is_true_on_empty_contexts() {
     let cm = sample("empty");
     assert!(cm.is_internal());
 }
 
 #[test]
-fn is_internal_is_true_when_tag_present() {
+fn test_is_internal_is_true_when_tag_present() {
     let mut cm = sample("tagged");
     cm.contexts = vec![contexts::INTERNAL.into(), contexts::MAP_NODE.into()];
     assert!(cm.is_internal());
@@ -164,7 +164,7 @@ fn is_internal_is_true_when_tag_present() {
 }
 
 #[test]
-fn targets_map_hits_any_map_sub_namespace() {
+fn test_targets_map_hits_any_map_sub_namespace() {
     let mut cm = sample("m");
     cm.contexts = vec![contexts::MAP_TREE.into()];
     assert!(cm.targets_map());
@@ -172,7 +172,7 @@ fn targets_map_hits_any_map_sub_namespace() {
 }
 
 #[test]
-fn trigger_binding_roundtrip() {
+fn test_trigger_binding_roundtrip() {
     let binding = TriggerBinding {
         trigger: Trigger::OnKey("r".to_string()),
         mutation_id: "highlight-red".to_string(),
@@ -185,7 +185,7 @@ fn trigger_binding_roundtrip() {
 }
 
 #[test]
-fn document_action_set_theme_variant_roundtrip() {
+fn test_document_action_set_theme_variant_roundtrip() {
     let action = DocumentAction::SetThemeVariant("dark".to_string());
     let json = serde_json::to_string(&action).unwrap();
     let back: DocumentAction = serde_json::from_str(&json).unwrap();
@@ -193,7 +193,7 @@ fn document_action_set_theme_variant_roundtrip() {
 }
 
 #[test]
-fn mutation_behavior_default_is_persistent() {
+fn test_mutation_behavior_default_is_persistent() {
     // Absent `behavior` key in source JSON deserializes to
     // `Persistent` via the struct-level serde default, so maps
     // written before the field existed still load.
@@ -211,11 +211,11 @@ fn mutation_behavior_default_is_persistent() {
 // The `all_target_scopes_serialize` that used to live here listed
 // six of the seven variants by hand — it never covered
 // `SectionsOnly`. Replaced by
-// `reach_tests::every_target_scope_variant_serializes`, which is
+// `reach_tests::test_every_target_scope_variant_serializes`, which is
 // driven off `TargetScope::iter()` and cannot be one variant short.
 
 #[test]
-fn all_triggers_serialize() {
+fn test_all_triggers_serialize() {
     for trigger in [
         Trigger::OnClick,
         Trigger::OnHover,
@@ -239,7 +239,7 @@ mod reach_tests {
     }
 
     #[test]
-    fn scope_self_only_covers_only_self_only_reach() {
+    fn test_scope_self_only_covers_only_self_only_reach() {
         assert!(TargetScope::SelfOnly.covers_reach(MutatorReach::SelfOnly));
         assert!(!TargetScope::SelfOnly.covers_reach(MutatorReach::Children));
         assert!(!TargetScope::SelfOnly.covers_reach(MutatorReach::Descendants));
@@ -251,37 +251,37 @@ mod reach_tests {
     /// `Children` snapshot (`collect_affected_node_ids`) never
     /// captured. Only `SelfOnly` reach is covered.
     #[test]
-    fn scope_children_covers_only_self_only_reach() {
+    fn test_scope_children_covers_only_self_only_reach() {
         assert!(TargetScope::Children.covers_reach(MutatorReach::SelfOnly));
         assert!(!TargetScope::Children.covers_reach(MutatorReach::Children));
         assert!(!TargetScope::Children.covers_reach(MutatorReach::Descendants));
     }
 
-    /// Same argument as [`scope_children_covers_only_self_only_reach`]
+    /// Same argument as [`test_scope_children_covers_only_self_only_reach`]
     /// one level over: a sibling's children are not siblings.
     #[test]
-    fn scope_siblings_covers_only_self_only_reach() {
+    fn test_scope_siblings_covers_only_self_only_reach() {
         assert!(TargetScope::Siblings.covers_reach(MutatorReach::SelfOnly));
         assert!(!TargetScope::Siblings.covers_reach(MutatorReach::Children));
         assert!(!TargetScope::Siblings.covers_reach(MutatorReach::Descendants));
     }
 
     #[test]
-    fn scope_parent_covers_only_self_only_reach() {
+    fn test_scope_parent_covers_only_self_only_reach() {
         assert!(TargetScope::Parent.covers_reach(MutatorReach::SelfOnly));
         assert!(!TargetScope::Parent.covers_reach(MutatorReach::Children));
         assert!(!TargetScope::Parent.covers_reach(MutatorReach::Descendants));
     }
 
     #[test]
-    fn scope_sections_only_covers_only_self_only_reach() {
+    fn test_scope_sections_only_covers_only_self_only_reach() {
         assert!(TargetScope::SectionsOnly.covers_reach(MutatorReach::SelfOnly));
         assert!(!TargetScope::SectionsOnly.covers_reach(MutatorReach::Children));
         assert!(!TargetScope::SectionsOnly.covers_reach(MutatorReach::Descendants));
     }
 
     #[test]
-    fn scope_self_and_descendants_covers_everything() {
+    fn test_scope_self_and_descendants_covers_everything() {
         assert!(TargetScope::SelfAndDescendants.covers_reach(MutatorReach::SelfOnly));
         assert!(TargetScope::SelfAndDescendants.covers_reach(MutatorReach::Children));
         assert!(TargetScope::SelfAndDescendants.covers_reach(MutatorReach::Descendants));
@@ -297,7 +297,7 @@ mod reach_tests {
     ///
     /// Hand-written *values*, machine-checked *coverage*: the table
     /// is the pin, and
-    /// [`covers_reach_table_covers_every_variant_pair`] is what makes
+    /// [`test_covers_reach_table_covers_every_variant_pair`] is what makes
     /// the word "exhaustive" true rather than aspirational.
     fn covers_reach_expected_table() -> Vec<(TargetScope, MutatorReach, bool)> {
         use MutatorReach::{Children, Descendants, SelfOnly};
@@ -329,7 +329,7 @@ mod reach_tests {
     /// Whole-table pin: every listed `(scope, reach)` cell agrees
     /// with [`TargetScope::covers_reach`].
     #[test]
-    fn covers_reach_table_is_stable() {
+    fn test_covers_reach_table_is_stable() {
         for (scope, reach, want) in covers_reach_expected_table() {
             assert_eq!(
                 scope.covers_reach(reach),
@@ -342,7 +342,7 @@ mod reach_tests {
         }
     }
 
-    /// What makes [`covers_reach_table_is_stable`] *exhaustive*
+    /// What makes [`test_covers_reach_table_is_stable`] *exhaustive*
     /// rather than merely long.
     ///
     /// A hand-typed table is green the day an eighth `TargetScope`
@@ -357,7 +357,7 @@ mod reach_tests {
     /// this is that lesson applied to the list the PR itself added
     /// (CLAUDE.md §5).
     #[test]
-    fn covers_reach_table_covers_every_variant_pair() {
+    fn test_covers_reach_table_covers_every_variant_pair() {
         use std::collections::BTreeSet;
         use strum::IntoEnumIterator;
 
@@ -404,7 +404,7 @@ mod reach_tests {
     /// missing `SectionsOnly`, which is precisely the variant this
     /// PR had to add to three prose surfaces by hand.
     #[test]
-    fn every_target_scope_variant_serializes() {
+    fn test_every_target_scope_variant_serializes() {
         use strum::IntoEnumIterator;
         let mut seen = 0usize;
         for scope in TargetScope::iter() {
@@ -417,7 +417,7 @@ mod reach_tests {
     }
 
     #[test]
-    fn scope_descendants_covers_everything() {
+    fn test_scope_descendants_covers_everything() {
         assert!(TargetScope::Descendants.covers_reach(MutatorReach::SelfOnly));
         assert!(TargetScope::Descendants.covers_reach(MutatorReach::Children));
         assert!(TargetScope::Descendants.covers_reach(MutatorReach::Descendants));
@@ -444,54 +444,89 @@ mod reach_tests {
     /// no filesystem to read them from (`TEST_CONVENTIONS.md` §T9).
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn every_target_scope_variant_is_published_by_the_format_specs() {
-        use crate::util::doc_fixtures::{documented_section_text, format_doc_path};
+    fn test_every_target_scope_variant_is_published_by_the_docs() {
+        use crate::util::doc_fixtures::{documented_section_text, repo_doc_path};
         use strum::IntoEnumIterator;
 
-        // (spec file, heading whose body publishes the vocabulary)
+        // (doc path relative to the repo root, heading whose body
+        // publishes the vocabulary). All three are surfaces this PR
+        // had to repair by hand.
         let surfaces = [
-            ("schema.md", "## CustomMutation"),
-            ("mutations.md", "## `target_scope`"),
+            ("format/schema.md", "## CustomMutation"),
+            ("format/mutations.md", "## `target_scope`"),
+            ("CONCEPTS.md", "### Target scopes"),
         ];
         let mut gaps: Vec<String> = Vec::new();
-        for (file, heading) in surfaces {
-            let path = format_doc_path(file);
-            let body = documented_section_text(&path, heading);
+        for (doc, heading) in surfaces {
+            let body = documented_section_text(&repo_doc_path(doc), heading);
             for scope in TargetScope::iter() {
                 let name = format!("{:?}", scope);
                 if !body.contains(&name) {
-                    gaps.push(format!("format/{} §{} never names {:?}", file, heading, scope));
+                    gaps.push(format!("{} §{} never names {:?}", doc, heading, scope));
                 }
             }
         }
         assert!(
             gaps.is_empty(),
-            "a TargetScope variant exists that the normative spec does not publish:\n  {}\n\
-             Add it to the spec — the docs are the contract, this test only reads them.",
+            "a TargetScope variant exists that the docs do not publish:\n  {}\n\
+             Add it to the doc — the docs are the contract, this test only reads them.",
             gaps.join("\n  ")
         );
     }
 
+    /// CONCEPTS §4 opens the scope section by counting the variants
+    /// in words ("Seven variants telling the dispatcher..."). That
+    /// sentence went stale once already — it read "Six" until this
+    /// PR found `SectionsOnly` undocumented — and a prose numeral is
+    /// exactly what no compiler checks. Pinned to
+    /// `TargetScope::iter().count()`, with the neighboring numerals
+    /// rejected so a stale one cannot sit alongside the right one.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn reach_of_self_only_scope_helper_is_self_only() {
+    fn test_concepts_variant_count_matches_the_enum() {
+        use crate::util::doc_fixtures::{documented_section_text, repo_doc_path};
+        use strum::IntoEnumIterator;
+
+        const WORDS: [&str; 8] = ["Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
+        let count = TargetScope::iter().count();
+        let expected = WORDS
+            .get(count - 3)
+            .unwrap_or_else(|| panic!("{count} variants is outside the range this test spells"));
+
+        let body = documented_section_text(&repo_doc_path("CONCEPTS.md"), "### Target scopes");
+        let phrase = format!("{expected} variants");
+        assert!(
+            body.contains(&phrase),
+            "CONCEPTS §4 must open with {phrase:?} — there are {count} TargetScope variants"
+        );
+        for wrong in WORDS.iter().filter(|w| **w != *expected) {
+            assert!(
+                !body.contains(&format!("{wrong} variants")),
+                "CONCEPTS §4 still says {wrong:?} variants; there are {count}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_reach_of_self_only_scope_helper_is_self_only() {
         let node = scope::self_only(vec![nudge()]);
         assert_eq!(mutator_reach(&node), MutatorReach::SelfOnly);
     }
 
     #[test]
-    fn reach_of_descendants_scope_helper_is_descendants() {
+    fn test_reach_of_descendants_scope_helper_is_descendants() {
         let node = scope::descendants(vec![nudge()]);
         assert_eq!(mutator_reach(&node), MutatorReach::Descendants);
     }
 
     #[test]
-    fn reach_of_self_and_descendants_scope_helper_is_descendants() {
+    fn test_reach_of_self_and_descendants_scope_helper_is_descendants() {
         let node = scope::self_and_descendants(vec![nudge()]);
         assert_eq!(mutator_reach(&node), MutatorReach::Descendants);
     }
 
     #[test]
-    fn reach_of_mapchildren_is_children() {
+    fn test_reach_of_mapchildren_is_children() {
         use crate::mutator_builder::{InstructionSpec, MutationSrc, MutatorNode};
         let node = MutatorNode::Instruction {
             channel: 0,
@@ -556,7 +591,7 @@ mod flat_mutations_tests {
     /// `c` is, so the guard collapsed to
     /// `always_match || fields.is_empty()` and admitted this shape.
     #[test]
-    fn match_nothing_repeat_while_is_not_flat_extractable() {
+    fn test_match_nothing_repeat_while_is_not_flat_extractable() {
         let node = repeat_while(Predicate::new());
         assert!(
             flat_mutations(&node).is_none(),
@@ -567,7 +602,7 @@ mod flat_mutations_tests {
     /// The always-true wrapper `scope::descendants` builds is the
     /// shape the guard exists to admit.
     #[test]
-    fn always_true_repeat_while_is_flat_extractable() {
+    fn test_always_true_repeat_while_is_flat_extractable() {
         let node = repeat_while(Predicate::always_true());
         assert_eq!(flat_mutations(&node).map(|m| m.len()), Some(1));
     }
@@ -578,7 +613,7 @@ mod flat_mutations_tests {
     /// extractable. Pins that the guard keys on the flag, not on
     /// `fields.is_empty()`.
     #[test]
-    fn always_match_with_fields_is_still_flat_extractable() {
+    fn test_always_match_with_fields_is_still_flat_extractable() {
         let predicate = Predicate {
             fields: vec![(GfxElementField::Channel(3), Comparator::equals())],
             always_match: true,
@@ -589,7 +624,7 @@ mod flat_mutations_tests {
     /// A genuinely filtering predicate needs walker-based
     /// evaluation the flat path can't provide.
     #[test]
-    fn field_filtered_repeat_while_is_not_flat_extractable() {
+    fn test_field_filtered_repeat_while_is_not_flat_extractable() {
         let predicate = Predicate {
             fields: vec![(GfxElementField::Channel(3), Comparator::equals())],
             always_match: false,
@@ -600,7 +635,7 @@ mod flat_mutations_tests {
     /// The `RepeatWhileAlwaysTrue` sugar variant takes its own arm
     /// and stays extractable.
     #[test]
-    fn repeat_while_always_true_sugar_is_flat_extractable() {
+    fn test_repeat_while_always_true_sugar_is_flat_extractable() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
@@ -613,7 +648,7 @@ mod flat_mutations_tests {
     /// The scope helpers stay extractable — they are the shapes the
     /// flat-apply path is built around.
     #[test]
-    fn scope_helpers_stay_flat_extractable() {
+    fn test_scope_helpers_stay_flat_extractable() {
         assert_eq!(
             flat_mutations(&scope::self_only(vec![nudge()])).map(|m| m.len()),
             Some(1)
@@ -635,7 +670,7 @@ mod flat_mutations_tests {
     /// case — nothing warned. Extraction is all-or-nothing precisely
     /// so this shape declines.
     #[test]
-    fn macro_root_over_a_match_nothing_repeat_while_is_not_flat_extractable() {
+    fn test_macro_root_over_a_match_nothing_repeat_while_is_not_flat_extractable() {
         let node = MutatorNode::Macro {
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
@@ -652,7 +687,7 @@ mod flat_mutations_tests {
     /// dropped a match-nothing sibling, which is the `Macro`-root
     /// defect reachable through a `scope::descendants`-shaped root.
     #[test]
-    fn repeat_while_wrapper_declines_when_any_child_is_unevaluatable() {
+    fn test_repeat_while_wrapper_declines_when_any_child_is_unevaluatable() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
@@ -671,10 +706,10 @@ mod flat_mutations_tests {
     /// tell "both children said `nudge(1)`" from "the second child's
     /// list was thrown away", which is the whole question this test
     /// sits next to. The disagreeing twin is
-    /// [`repeat_while_wrapper_declines_when_children_payloads_differ`],
+    /// [`test_repeat_while_wrapper_declines_when_children_payloads_differ`],
     /// which returns `None` rather than picking a winner.
     #[test]
-    fn repeat_while_wrapper_with_several_agreeing_children_still_extracts() {
+    fn test_repeat_while_wrapper_with_several_agreeing_children_still_extracts() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
@@ -690,7 +725,7 @@ mod flat_mutations_tests {
     /// the equality rule is what makes that a no-op instead of a
     /// double-apply or a decline.
     #[test]
-    fn scope_helper_payloads_extract_by_value() {
+    fn test_scope_helper_payloads_extract_by_value() {
         for node in [
             scope::self_only(vec![nudge()]),
             scope::descendants(vec![nudge()]),
@@ -728,7 +763,7 @@ mod flat_mutations_tests {
     /// nested rule exists to prevent, reached without a single
     /// unevaluatable node.
     #[test]
-    fn macro_root_over_a_differing_nested_macro_is_not_flat_extractable() {
+    fn test_macro_root_over_a_differing_nested_macro_is_not_flat_extractable() {
         let node = MutatorNode::Macro {
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
@@ -746,7 +781,7 @@ mod flat_mutations_tests {
     /// discarding the rest is what `payload.get_or_insert` used to
     /// do.
     #[test]
-    fn repeat_while_wrapper_declines_when_children_payloads_differ() {
+    fn test_repeat_while_wrapper_declines_when_children_payloads_differ() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
@@ -767,7 +802,7 @@ mod flat_mutations_tests {
     /// helpers set `mutation: MutationSrc::None`, so requiring that
     /// costs nothing.
     #[test]
-    fn repeat_while_wrapper_with_its_own_area_delta_is_not_flat_extractable() {
+    fn test_repeat_while_wrapper_with_its_own_area_delta_is_not_flat_extractable() {
         use crate::mutator_builder::CellField;
         let node = MutatorNode::Instruction {
             channel: 0,
@@ -786,7 +821,7 @@ mod flat_mutations_tests {
     /// "entirely runtime-supplied", resolved from a `SectionContext`
     /// the flat path never builds. Provably unevaluatable here.
     #[test]
-    fn repeat_while_wrapper_with_a_runtime_hole_is_not_flat_extractable() {
+    fn test_repeat_while_wrapper_with_a_runtime_hole_is_not_flat_extractable() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
@@ -805,7 +840,7 @@ mod flat_mutations_tests {
     /// independent, and a shape failing both must not sneak through
     /// on some future arm reshuffle.
     #[test]
-    fn match_nothing_repeat_while_with_a_runtime_hole_is_not_flat_extractable() {
+    fn test_match_nothing_repeat_while_with_a_runtime_hole_is_not_flat_extractable() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::RepeatWhile(Predicate::new()),
@@ -820,9 +855,9 @@ mod flat_mutations_tests {
     /// An **empty** `Void` child carries nothing, so nothing can be
     /// lost by keeping the root's payload. Declining here would kill
     /// a well-formed mutator to protect a payload that does not
-    /// exist. Contrast [`single_child_is_not_flat_extractable`].
+    /// exist. Contrast [`test_single_child_is_not_flat_extractable`].
     #[test]
-    fn empty_void_child_does_not_decline_the_mutator() {
+    fn test_empty_void_child_does_not_decline_the_mutator() {
         let node = MutatorNode::Macro {
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
@@ -839,7 +874,7 @@ mod flat_mutations_tests {
     /// grouped list *disagrees* with the root's, and the disagreement
     /// still has to surface through the wrapper.
     #[test]
-    fn void_child_forwards_a_disagreeing_payload_and_declines() {
+    fn test_void_child_forwards_a_disagreeing_payload_and_declines() {
         let node = MutatorNode::Macro {
             channel: 0,
             mutations: MutationListSrc::Literal(vec![nudge()]),
@@ -860,7 +895,7 @@ mod flat_mutations_tests {
     /// the apply site warn. Pins that transparency is not the same as
     /// "extracts to an empty list".
     #[test]
-    fn empty_void_root_is_not_flat_extractable() {
+    fn test_empty_void_root_is_not_flat_extractable() {
         let node = MutatorNode::Void {
             channel: 0,
             children: vec![],
@@ -873,7 +908,7 @@ mod flat_mutations_tests {
     /// has nowhere to put. Unlike `Void` it is not payload-free, so
     /// it declines.
     #[test]
-    fn single_child_is_not_flat_extractable() {
+    fn test_single_child_is_not_flat_extractable() {
         use crate::mutator_builder::ChannelSrc;
         let node = MutatorNode::Macro {
             channel: 0,
@@ -890,7 +925,7 @@ mod flat_mutations_tests {
     /// scope-collected model nodes, not the zip-by-position pairing
     /// the instruction means.
     #[test]
-    fn map_children_is_not_flat_extractable() {
+    fn test_map_children_is_not_flat_extractable() {
         let node = MutatorNode::Instruction {
             channel: 0,
             instruction: InstructionSpec::MapChildren,

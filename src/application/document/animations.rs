@@ -225,7 +225,7 @@ impl MindMapDocument {
     ///
     /// Today the interpolation surface is whole-node `position`
     /// only — the section-aware completion still routes through
-    /// `apply_custom_mutation` which honours `target_scope:
+    /// `apply_custom_mutation` which honors `target_scope:
     /// SectionsOnly`, so the committed final state lands on the
     /// section. Per-frame interpolation of section-area
     /// `position` is the named seam this signature opens for
@@ -289,6 +289,17 @@ impl MindMapDocument {
         // (size-aware mutations) can't be previewed against a single
         // model node — the scratch stays at `from` and the animation
         // lerps to whatever the mutator produces at completion.
+        //
+        // `unwrap_or_default()` therefore means "no preview", not "no
+        // animation": a mutator `flat_mutations` declines — for a
+        // runtime hole, a filtering predicate, or nested payloads that
+        // disagree — still gets an instance, still holds the dedup
+        // slot for its full duration, and lerps from `from` to an
+        // identical `to`. This is the one `flat_mutations` call site
+        // where a decline produces no warning and no skip, so it is
+        // pinned by
+        // `tests_mutations::test_start_animation_with_a_declined_mutator_tweens_zero_delta`
+        // rather than left to be rediscovered.
         let mut scratch = from_node.clone();
         let flat = cm
             .mutator

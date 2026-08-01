@@ -859,7 +859,7 @@ mod covers_reach_differential_tests {
     /// `SectionsOnly` is excluded — its anchors are section-areas
     /// inside one `MindNode`, not model nodes, so the closure
     /// argument doesn't transfer. It gets
-    /// [`sections_only_gate_is_sound_and_deliberately_conservative`]
+    /// [`test_sections_only_gate_is_sound_and_deliberately_conservative`]
     /// instead.
     ///
     /// Derived from `TargetScope::iter()` with that one subtraction,
@@ -867,7 +867,7 @@ mod covers_reach_differential_tests {
     /// here or explicitly excluded, and the exclusion is one named
     /// arm rather than a silent omission. A hand-typed array would
     /// simply run six cases forever
-    /// ([`node_scopes_accounts_for_every_target_scope`] is the pin).
+    /// ([`test_node_scopes_accounts_for_every_target_scope`] is the pin).
     fn node_scopes() -> Vec<TargetScope> {
         use strum::IntoEnumIterator;
         TargetScope::iter()
@@ -884,7 +884,7 @@ mod covers_reach_differential_tests {
     /// run or deliberately routed to the `SectionsOnly` test — no
     /// variant may fall between the two.
     #[test]
-    fn node_scopes_accounts_for_every_target_scope() {
+    fn test_node_scopes_accounts_for_every_target_scope() {
         use strum::IntoEnumIterator;
         for scope in TargetScope::iter() {
             let covered = node_scopes().contains(&scope) || scope == TargetScope::SectionsOnly;
@@ -977,7 +977,7 @@ mod covers_reach_differential_tests {
     /// The differential run: every node scope x every reach, gate
     /// verdict against reference verdict, both directions.
     #[test]
-    fn covers_reach_matches_structural_closure_on_the_testament_map() {
+    fn test_covers_reach_matches_structural_closure_on_the_testament_map() {
         let doc = load_test_doc();
         assert!(
             doc.mindmap.nodes.len() > 100,
@@ -1025,7 +1025,7 @@ mod covers_reach_differential_tests {
     /// direction of the asymmetry so a later "optimization" can't
     /// flip it silently.
     #[test]
-    fn sections_only_gate_is_sound_and_deliberately_conservative() {
+    fn test_sections_only_gate_is_sound_and_deliberately_conservative() {
         let doc = load_test_doc();
         let mut node_ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
         node_ids.sort();
@@ -1049,7 +1049,7 @@ mod covers_reach_differential_tests {
     /// case, not a hypothetical. Pins the documented semantics on
     /// [`TargetScope::Siblings`].
     #[test]
-    fn siblings_of_a_root_node_is_the_empty_set() {
+    fn test_siblings_of_a_root_node_is_the_empty_set() {
         let doc = load_test_doc();
         let roots: Vec<String> = doc
             .mindmap
@@ -1075,7 +1075,7 @@ mod covers_reach_differential_tests {
     /// `Siblings` + `MutatorReach::SelfOnly` is closed while
     /// `Siblings` + `Parent`-style reaches are not.
     #[test]
-    fn siblings_excludes_the_trigger_node() {
+    fn test_siblings_excludes_the_trigger_node() {
         let doc = load_test_doc();
         let index = doc.mindmap.child_index();
         let mut checked = 0usize;
@@ -1113,7 +1113,7 @@ mod unsupported_field_tests {
     /// ARE persisted by the sync-back, so they must NOT be flagged —
     /// this is the whole point of the P0-02 fix.
     #[test]
-    fn grow_and_shrink_font_are_supported() {
+    fn test_grow_and_shrink_font_are_supported() {
         for cmd in [
             GlyphAreaCommand::GrowFont(2.0),
             GlyphAreaCommand::ShrinkFont(2.0),
@@ -1131,7 +1131,7 @@ mod unsupported_field_tests {
     /// Position / bounds commands persist too (node position, section
     /// offset/size), so they're not flagged.
     #[test]
-    fn position_and_bounds_commands_are_supported() {
+    fn test_position_and_bounds_commands_are_supported() {
         for cmd in [
             GlyphAreaCommand::NudgeRight(5.0),
             GlyphAreaCommand::MoveTo(1.0, 2.0),
@@ -1146,7 +1146,7 @@ mod unsupported_field_tests {
     /// derived as `scale * 1.2` on every rebuild) — they must be
     /// flagged so the author isn't left chasing a vanishing change.
     #[test]
-    fn line_height_commands_are_flagged() {
+    fn test_line_height_commands_are_flagged() {
         for cmd in [
             GlyphAreaCommand::SetLineHeight(1.5),
             GlyphAreaCommand::GrowLineHeight(0.2),
@@ -1166,7 +1166,7 @@ mod unsupported_field_tests {
     /// tree-only fields with no reverse converter — is flagged, one
     /// name per unsupported field it writes.
     #[test]
-    fn shape_outline_zoom_delta_fields_are_flagged() {
+    fn test_shape_outline_zoom_delta_fields_are_flagged() {
         let area = GlyphArea::new(14.0, 16.8, glam::Vec2::ZERO, glam::Vec2::new(10.0, 10.0));
         // `full_assign_from` emits Text/position/bounds/scale/
         // line_height/regions/Outline/ZoomVisibility/Operation — a
@@ -1188,7 +1188,7 @@ mod unsupported_field_tests {
     /// A delta that only touches persisted fields (position + scale)
     /// is NOT flagged.
     #[test]
-    fn supported_only_delta_is_clean() {
+    fn test_supported_only_delta_is_clean() {
         let delta = DeltaGlyphArea::new(vec![
             GlyphAreaField::position(1.0, 2.0),
             GlyphAreaField::scale(20.0),

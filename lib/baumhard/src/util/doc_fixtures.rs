@@ -39,7 +39,17 @@ use std::path::{Path, PathBuf};
 /// and its existence is not checked here — [`documented_json_block`]
 /// reports that with a better message.
 pub fn format_doc_path(file_name: &str) -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../format")).join(file_name)
+    repo_doc_path("format").join(file_name)
+}
+
+/// Absolute path to `<repo>/<relative>`, for the reference docs that
+/// live outside `format/` — `CONCEPTS.md`, `CODE_CONVENTIONS.md`,
+/// `TEST_CONVENTIONS.md`. Same `CARGO_MANIFEST_DIR` anchor as
+/// [`format_doc_path`], which is a thin wrapper over this.
+///
+/// Cost: one `PathBuf` allocation. No I/O.
+pub fn repo_doc_path(relative: &str) -> PathBuf {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(relative)
 }
 
 /// Return the `nth` (0-based) fenced ```` ```json ```` block that

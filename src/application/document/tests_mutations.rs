@@ -361,8 +361,8 @@ fn test_collect_affected_node_ids_parent_of_root_is_empty() {
 // The two `Siblings` cases that used to sit here — "siblings exclude
 // self" and "a root has no siblings" — now live in
 // `custom::covers_reach_differential_tests` as
-// `siblings_excludes_the_trigger_node` and
-// `siblings_of_a_root_node_is_the_empty_set`. Those versions sweep
+// `test_siblings_excludes_the_trigger_node` and
+// `test_siblings_of_a_root_node_is_the_empty_set`. Those versions sweep
 // *every* qualifying node and *every* root of the testament map
 // rather than the first child found and the hard-coded id `"0"`, so
 // they strictly subsume these; keeping both would be the §10
@@ -1229,6 +1229,133 @@ fn test_apply_custom_mutation_always_true_repeat_while_still_applies() {
     assert_eq!(doc.undo_stack.len(), 1);
 }
 
+/// The **nested** all-or-nothing rule, through the caller rather than
+/// through `flat_mutations` alone.
+///
+/// `test_apply_custom_mutation_match_nothing_repeat_while_does_not_apply`
+/// above exercises the *root* case; this is the shape the rule was
+/// extended for — a `Macro` root whose own literal list is perfectly
+/// extractable, over a child the flat path cannot evaluate. Before
+/// the rule, the root's payload was returned and blanketed the whole
+/// `SelfAndDescendants` set while the nested payload landed nowhere.
+///
+/// Pins all four halves of "declined": the model is untouched, no
+/// undo entry is pushed, the document stays clean, and the tree the
+/// caller handed in is not written either (the flat path is the only
+/// path, so a decline means nothing moved anywhere).
+#[test]
+fn test_apply_custom_mutation_unevaluatable_nested_child_applies_nothing() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::predicate::Predicate;
+    use baumhard::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+
+    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+
+    let mut doc = load_test_doc();
+    let mut cm = make_test_mutation("nested-decline", TS::SelfAndDescendants);
+    cm.mutator = Some(MutatorNode::Macro {
+        channel: 0,
+        // Extractable on its own — this is the payload that used to
+        // escape and blanket every target.
+        mutations: MutationListSrc::Literal(vec![nudge(10.0)]),
+        children: vec![MutatorNode::Instruction {
+            channel: 0,
+            // `Predicate::new()` matches nothing; the flat path has no
+            // predicate evaluator, so this branch is unevaluatable.
+            instruction: InstructionSpec::RepeatWhile(Predicate::new()),
+            mutation: MutationSrc::None,
+            children: vec![MutatorNode::Macro {
+                channel: 0,
+                mutations: MutationListSrc::Literal(vec![nudge(99.0)]),
+                children: vec![],
+            }],
+        }],
+    });
+    doc.mindmap.custom_mutations.push(cm.clone());
+    doc.build_mutation_registry();
+    let mut tree = doc.build_tree();
+
+    let before: Vec<(String, f64)> = doc
+        .mindmap
+        .nodes
+        .iter()
+        .map(|(id, n)| (id.clone(), n.position.x))
+        .collect();
+    let tree_before = tree
+        .arena_id_for("0")
+        .and_then(|id| tree.tree.arena.get(id))
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| a.position.x.0)
+        .expect("node '0' is in the tree");
+
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+
+    for (id, x) in &before {
+        assert_eq!(
+            doc.mindmap.nodes.get(id).unwrap().position.x,
+            *x,
+            "node '{}' must be untouched: the root's payload has no business \
+             applying when a nested branch was declined",
+            id
+        );
+    }
+    let tree_after = tree
+        .arena_id_for("0")
+        .and_then(|id| tree.tree.arena.get(id))
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| a.position.x.0)
+        .expect("node '0' is in the tree");
+    assert_eq!(
+        tree_after, tree_before,
+        "a declined mutator must not write the display tree either"
+    );
+    assert!(
+        doc.undo_stack.is_empty(),
+        "a declined apply must not push an undo entry"
+    );
+    assert!(!doc.dirty, "a declined apply must not mark the document dirty");
+}
+
+/// The same decline, one level up: two nested payloads that are each
+/// individually extractable but **disagree**. No unevaluatable node
+/// anywhere — the shape is refused purely because one flat list
+/// cannot be both `nudge(10)` and `nudge(99)`.
+#[test]
+fn test_apply_custom_mutation_disagreeing_nested_payload_applies_nothing() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mutator_builder::{MutationListSrc, MutatorNode};
+
+    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+
+    let mut doc = load_test_doc();
+    let mut cm = make_test_mutation("nested-disagree", TS::SelfAndDescendants);
+    cm.mutator = Some(MutatorNode::Macro {
+        channel: 0,
+        mutations: MutationListSrc::Literal(vec![nudge(10.0)]),
+        children: vec![MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge(99.0)]),
+            children: vec![],
+        }],
+    });
+    doc.mindmap.custom_mutations.push(cm.clone());
+    doc.build_mutation_registry();
+    let mut tree = doc.build_tree();
+
+    let before = doc.mindmap.nodes.get("0").unwrap().position.x;
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+
+    assert_eq!(
+        doc.mindmap.nodes.get("0").unwrap().position.x,
+        before,
+        "nudge(10) must not land while nudge(99) lands nowhere"
+    );
+    assert!(doc.undo_stack.is_empty(), "a declined apply pushes no undo entry");
+    assert!(!doc.dirty);
+}
+
 #[test]
 fn test_apply_custom_mutation_toggle_does_not_set_dirty() {
     let mut doc = load_test_doc();
@@ -1364,6 +1491,111 @@ fn test_start_animation_derives_to_snapshot_via_nudge() {
     assert!(
         (anim.from_node.position.x - orig_x).abs() < 0.001,
         "from_node.x should match original",
+    );
+}
+
+/// The third `flat_mutations` call site (`animations.rs`), which no
+/// test reached before.
+///
+/// `start_animation_inner` derives the `to` snapshot by replaying the
+/// extracted flat list against a scratch node, and reaches for
+/// `.unwrap_or_default()` when the mutator declines. So a declined
+/// mutator does not warn and does not skip here — it silently becomes
+/// a **zero-delta tween**: an instance is created, it occupies the
+/// dedup slot for its full duration, it ticks, and it lands the node
+/// exactly where it started.
+///
+/// That is the intended shape (the doc above the call says the
+/// scratch "stays at `from`" for shapes it cannot preview), but it is
+/// the one call site where a decline is invisible at runtime, so it
+/// gets pinned rather than assumed. The mutator here is the nested
+/// disagreement from
+/// `test_apply_custom_mutation_disagreeing_nested_payload_applies_nothing`
+/// — every node extractable, two payloads that disagree.
+#[test]
+fn test_start_animation_with_a_declined_mutator_tweens_zero_delta() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mutator_builder::{MutationListSrc, MutatorNode};
+
+    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+
+    let mut doc = load_test_doc();
+    let mut cm = make_animated_mutation("anim-declined", 500);
+    cm.mutator = Some(MutatorNode::Macro {
+        channel: 0,
+        mutations: MutationListSrc::Literal(vec![nudge(100.0)]),
+        children: vec![MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge(999.0)]),
+            children: vec![],
+        }],
+    });
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+
+    doc.start_animation(&cm, &node_id, 0);
+
+    assert_eq!(
+        doc.active_animations.len(),
+        1,
+        "a declined mutator still creates an instance — `unwrap_or_default` \
+         does not abort the animation"
+    );
+    let anim = &doc.active_animations[0];
+    assert!(
+        (anim.from_node.position.x - orig_x).abs() < 0.001,
+        "from_node is the live node"
+    );
+    assert!(
+        (anim.to_node.position.x - orig_x).abs() < 0.001,
+        "to_node must equal from_node: neither nudge(100) nor nudge(999) may \
+         land when the AST was declined. Got to.x = {}, from.x = {}",
+        anim.to_node.position.x,
+        orig_x
+    );
+
+    // And it really is inert end to end: run it to completion and the
+    // model is where it started.
+    doc.tick_animations(1_000, None);
+    assert!(
+        (doc.mindmap.nodes.get(&node_id).unwrap().position.x - orig_x).abs() < 0.001,
+        "a zero-delta tween must leave the model untouched at completion"
+    );
+}
+
+/// Control row for the test above: the *same* mutator with the nested
+/// payload made to agree extracts normally and tweens by the real
+/// delta. Without this, "to == from" could pass for a reason having
+/// nothing to do with the decline.
+#[test]
+fn test_start_animation_with_an_agreeing_nested_payload_tweens_the_delta() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mutator_builder::{MutationListSrc, MutatorNode};
+
+    let nudge = |n: f32| Mutation::area_command(GlyphAreaCommand::NudgeRight(n));
+
+    let mut doc = load_test_doc();
+    let mut cm = make_animated_mutation("anim-agreeing", 500);
+    cm.mutator = Some(MutatorNode::Macro {
+        channel: 0,
+        mutations: MutationListSrc::Literal(vec![nudge(100.0)]),
+        children: vec![MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge(100.0)]),
+            children: vec![],
+        }],
+    });
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+
+    doc.start_animation(&cm, &node_id, 0);
+    let anim = &doc.active_animations[0];
+    assert!(
+        (anim.to_node.position.x - (orig_x + 100.0)).abs() < 0.001,
+        "agreeing nested payloads extract to one list applied once; got {}",
+        anim.to_node.position.x
     );
 }
 
