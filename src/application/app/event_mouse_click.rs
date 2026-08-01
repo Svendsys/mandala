@@ -361,7 +361,7 @@ pub(super) fn handle_mouse_input(
                     );
                     return;
                 }
-                *ctx.drag_state = DragState::Pending {
+                *ctx.drag_state = DragState::Pending(Box::new(super::PendingPress {
                     start_pos: cursor_pos_val,
                     hit_node,
                     hit_section_idx,
@@ -370,15 +370,16 @@ pub(super) fn handle_mouse_input(
                     hit_edge_label: edge_label_hit,
                     hit_section_resize_handle,
                     hit_node_resize_handle,
-                };
+                }));
             } else {
                 match std::mem::replace(ctx.drag_state, DragState::None) {
-                    DragState::Pending {
-                        hit_node,
-                        hit_section_idx,
-                        hit_edge_label,
-                        ..
-                    } => {
+                    DragState::Pending(press) => {
+                        let super::PendingPress {
+                            hit_node,
+                            hit_section_idx,
+                            hit_edge_label,
+                            ..
+                        } = *press;
                         // If an inline text editor is open, the
                         // release decides whether to commit or
                         // swallow. A release inside the element

@@ -14,8 +14,6 @@
 
 use std::collections::HashMap;
 
-use glam::Vec2;
-
 use crate::application::document::EdgeRef;
 
 use super::super::edge_label_drag::apply_edge_label_drag;
@@ -127,6 +125,7 @@ impl ThrottledDragInteraction for EdgeLabelInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec2;
     use crate::application::app::throttled_interaction::test_utils::{
         drive_throttle_over_budget, fixture_edge, moved,
         trait_default_tests_for_throttled_interaction,

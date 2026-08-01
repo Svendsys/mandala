@@ -1165,7 +1165,7 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
         let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
         ctx.scene_cache.clear();
-        *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(SectionResizeInteraction::new(
+        *ctx.drag_state = DragState::throttled(ThrottledDrag::SectionResize(SectionResizeInteraction::new(
             node_id,
             section_idx,
             side,
@@ -1187,7 +1187,7 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
         let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
         ctx.scene_cache.clear();
-        *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
+        *ctx.drag_state = DragState::throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
             node_id,
             side,
             start_position,

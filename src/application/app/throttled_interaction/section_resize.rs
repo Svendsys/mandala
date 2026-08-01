@@ -107,7 +107,7 @@ impl ThrottledInteraction for SectionResizeInteraction {
         // release via `set_section_aabb`. The section's
         // canvas-space position derives from the *current
         // model* node.position plus the in-progress offset, so
-        // a concurrent node move doesn't desynchronise mid-drag.
+        // a concurrent node move doesn't desynchronize mid-drag.
         self.pending.take_delta();
         if let (Some(doc), Some(tree)) = (document.as_ref(), mindmap_tree.as_mut()) {
             let (new_offset, new_size) = self.resolve(self.pending.total_delta());

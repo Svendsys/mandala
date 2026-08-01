@@ -689,7 +689,7 @@ says "pan by 10 pixels" and an animation says "fit-to-bounds with
 5% margin", both go through the same apply site.
 
 `lib/baumhard/src/gfx_structs/camera.rs`.
-Position in canvas space (the point at the viewport centre),
+Position in canvas space (the point at the viewport center),
 `zoom: f32` clamped between `MIN_ZOOM = 0.05` and `MAX_ZOOM =
 5.0`. `CameraMutation` variants: `Pan { screen_delta }`,
 `ZoomAt { screen_focus, factor }`, `ZoomCenter { factor }`,
@@ -1275,14 +1275,14 @@ to derive the clamped screen-space size.
 ### `ControlPoint`
 
 An author-set Bézier offset on a `MindEdge`,
-expressed as an offset from a node centre rather than an
+expressed as an offset from a node center rather than an
 absolute canvas coordinate.
 
 Straight line-mode edges can become curved
 when the author specifies control points. Zero control points
 is a straight segment; one promotes to a cubic Bézier (via
 quadratic-to-cubic lifting); two or more define a cubic
-directly. Control points live as offsets from endpoint centres
+directly. Control points live as offsets from endpoint centers
 so a node move drags the curve along without the author
 having to re-tune the path.
 
@@ -1379,7 +1379,7 @@ abstraction: stable across resize, deterministic across corners.
 Functions: `wrap_border_t` (rem-Euclid into `[0, 4)`),
 `border_point_at`, `border_outward_normal`,
 `default_border_t` (the auto-orientation: cast a ray from owner
-to partner centre), `nearest_border_t` (project a canvas point to
+to partner center), `nearest_border_t` (project a canvas point to
 the closest border parameter, used by drag-snap).
 
 ### Fold state
@@ -2072,20 +2072,56 @@ always win over larger AABBs.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
-A trait + seven-variant enum providing one uniform
-shell for continuous, high-rate-input drag types.
+A trait pair + seven-variant enum providing one uniform
+shell for the whole lifecycle of a continuous, high-rate-input
+drag.
 
 Dragging a node, a section, a section's
 resize handle, a node's resize handle, an edge handle, a portal
-label, and an edge label all follow the same per-frame pattern:
-accumulate input deltas, ask the throttle whether to drain,
-apply if drain, otherwise wait. The trait factors that
-accept-and-drain dance into one place; new throttled drags
-attach as one struct + one trait impl + one enum variant
-without growing the dispatch.
+label, and an edge label all follow the same three-phase pattern:
+fold each cursor sample into pending state, ask the throttle
+whether to drain and apply if so, and commit to the model when
+the button comes up. All three phases live here; new throttled
+drags attach as one struct + one trait impl + one enum variant
+without growing either event-file dispatcher.
 
 `src/application/app/throttled_interaction/mod.rs`.
-Trait methods: `has_pending`, `throttle`, `drain(ctx)`, `reset`.
+
+`ThrottledInteraction` is the drain shell: `pending()` /
+`pending_mut()` are the only required state accessors, and
+`has_pending`, `throttle`, `should_perform_drain`,
+`needs_continuation` and the `drive` shell are all provided from
+them. Implementors add a `drain(ctx)` body and, rarely, a `reset`.
+
+`ThrottledDragInteraction` adds the two phases a drag has and the
+picker-hover interaction does not: `accumulate(DragInput)`
+(provided) and `commit_on_release_core(ReleaseCommit) ->
+ReleaseRefresh` (required, with `commit_on_release` as the
+provided renderer-facing shell). The core is required rather than
+the shell so a gesture cannot reach `&mut Renderer` from inside
+its commit, which is what keeps the release path testable.
+
+`ThrottledPending` (`throttled_interaction/pending.rs`) owns the
+pending half. Three disciplines cover every implementor, and each
+picks one at construction:
+
+- **delta-accumulate** — the drain applies an incremental
+  movement, so skipped samples sum;
+- **cursor-latch** — the drain projects an absolute position, so
+  only the last sample carries information;
+- **dirty flags** — nothing accumulates; a flag says the next
+  drain has work (the picker-hover interaction).
+
+`DragInput` carries one cursor sample in *both* forms — the
+canvas-space delta since the previous event and the absolute
+canvas-space position now — so the dispatcher never has to know
+which discipline the active gesture uses.
+
+`ReleaseRefresh` (`throttled_interaction/release.rs`) is the
+canvas work a commit owes once its model write has landed:
+`None`, `SceneOnly`, or `All`. Named rather than performed, so
+the commit body stays renderer-free.
+
 Variants:
 
 - `MovingNode(MovingNodeInteraction)`
@@ -2106,8 +2142,13 @@ Variants:
 - `PortalLabel(PortalLabelInteraction)`
 - `EdgeLabel(EdgeLabelInteraction)`
 
-`as_dyn_mut()` widens to `&mut dyn ThrottledInteraction` so the
-drain dispatcher does not need to know each kind.
+`as_dyn_mut()` / `as_dyn()` widen to
+`&mut dyn ThrottledDragInteraction` — the drag trait, which has
+`ThrottledInteraction` as a supertrait, so one ladder serves all
+three phases. Those two matches are the only per-variant matches
+in the crate: `event_cursor_moved`'s accumulate arm,
+`event_mouse_click`'s left-release arm and its right-release arm
+are each a single call through them.
 
 Touch gestures are the next obvious user — pinch
 zoom, two-finger pan, long-press selection — each a new

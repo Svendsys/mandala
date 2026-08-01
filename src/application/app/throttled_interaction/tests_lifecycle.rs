@@ -694,7 +694,7 @@ mod node_resize {
                     v2(i.pending.total_delta())
                 )
             },
-            |w| node_model(w),
+            node_model,
         )
     }
 
@@ -829,7 +829,7 @@ mod edge_handle {
                     v2(i.pending.total_delta())
                 )
             },
-            |w| cp_model(w),
+            cp_model,
         )
     }
 
@@ -940,7 +940,7 @@ mod portal_label {
                 }
             },
             |i| format!("cursor={}", opt_v2(i.pending.peek_cursor())),
-            |w| portal_model(w),
+            portal_model,
         )
     }
 
@@ -1027,7 +1027,7 @@ mod edge_label {
                 }
             },
             |i| format!("cursor={}", opt_v2(i.pending.peek_cursor())),
-            |w| label_model(w),
+            label_model,
         )
     }
 

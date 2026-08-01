@@ -394,6 +394,63 @@ pub(in crate::application) use interaction_mode::{
 #[cfg(test)]
 pub(in crate::application) use interaction_mode::ResizeTarget;
 
+/// Everything a left mouse-down captured, held until the cursor
+/// either crosses the drag threshold (promoting to a
+/// [`ThrottledDrag`]) or comes back up without moving (routing as a
+/// click). Boxed inside [`DragState::Pending`] — see there.
+#[cfg(not(target_arch = "wasm32"))]
+struct PendingPress {
+    start_pos: (f64, f64),
+    hit_node: Option<String>,
+    /// Index inside `hit_node.sections` when the press landed
+    /// on a specific section in a multi-section node. `None`
+    /// for empty-canvas, single-section, or non-node hits.
+    /// Threads through to `handle_click` on the release path
+    /// so the post-press selection update can reach for
+    /// `SelectionState::Section` when appropriate.
+    hit_section_idx: Option<usize>,
+    /// If an edge was selected at mouse-down time and the cursor
+    /// landed on one of that edge's grab-handles, this records
+    /// which handle the user is about to drag. Populated in
+    /// `MouseInput::Pressed`, consumed at the threshold-cross
+    /// transition in `CursorMoved`. Takes precedence over
+    /// `hit_node` — clicking a handle always wins over clicking
+    /// the node behind it.
+    hit_edge_handle: Option<(EdgeRef, baumhard::mindmap::tree_builder::EdgeHandleKind)>,
+    /// If the cursor landed on a portal marker at mouse-down,
+    /// this records `(edge_key, endpoint_node_id)` so a drag
+    /// past threshold transitions to `Throttled(PortalLabel)`.
+    /// Takes precedence over `hit_node` — the marker sits
+    /// above a node, but clicking the marker is "grab this
+    /// label," not "move this node." Independent of
+    /// `hit_edge_handle` because portal-mode edges don't
+    /// expose edge-handles in the first place.
+    hit_portal_label: Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    /// If the cursor landed on an edge-label AABB at
+    /// mouse-down, this records the owning edge key so a
+    /// drag past threshold transitions to
+    /// `Throttled(EdgeLabel)`. Takes precedence over
+    /// `hit_node` — a label hovering over a node behind
+    /// it should move as a label, not a node.
+    hit_edge_label: Option<baumhard::mindmap::scene_cache::EdgeKey>,
+    /// If a section is currently selected and the cursor
+    /// landed on one of its 8 resize handles, this records
+    /// `(node_id, section_idx, side)` so a drag past
+    /// threshold transitions to `Throttled(SectionResize)`.
+    /// Takes precedence over `hit_node` — a handle sits on
+    /// the section's edge and clicking it is a resize, not
+    /// a section drag.
+    hit_section_resize_handle: Option<(String, usize, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
+    /// If a node is currently `Single`-selected and the
+    /// cursor landed on one of its 8 resize handles, this
+    /// records `(node_id, side)` so a drag past threshold
+    /// transitions to `Throttled(NodeResize)`. Takes
+    /// precedence over `hit_node` — clicking a handle on
+    /// a selected node is a resize, not a re-selection or
+    /// a move-node drag.
+    hit_node_resize_handle: Option<(String, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
+}
+
 /// Tracks the current drag interaction state.
 ///
 /// Continuous, high-rate-input-driven drag variants
@@ -416,57 +473,13 @@ enum DragState {
     /// No drag in progress.
     None,
     /// Mouse is down but hasn't moved past the drag threshold yet.
-    Pending {
-        start_pos: (f64, f64),
-        hit_node: Option<String>,
-        /// Index inside `hit_node.sections` when the press landed
-        /// on a specific section in a multi-section node. `None`
-        /// for empty-canvas, single-section, or non-node hits.
-        /// Threads through to `handle_click` on the release path
-        /// so the post-press selection update can reach for
-        /// `SelectionState::Section` when appropriate.
-        hit_section_idx: Option<usize>,
-        /// If an edge was selected at mouse-down time and the cursor
-        /// landed on one of that edge's grab-handles, this records
-        /// which handle the user is about to drag. Populated in
-        /// `MouseInput::Pressed`, consumed at the threshold-cross
-        /// transition in `CursorMoved`. Takes precedence over
-        /// `hit_node` — clicking a handle always wins over clicking
-        /// the node behind it.
-        hit_edge_handle: Option<(EdgeRef, baumhard::mindmap::tree_builder::EdgeHandleKind)>,
-        /// If the cursor landed on a portal marker at mouse-down,
-        /// this records `(edge_key, endpoint_node_id)` so a drag
-        /// past threshold transitions to `Throttled(PortalLabel)`.
-        /// Takes precedence over `hit_node` — the marker sits
-        /// above a node, but clicking the marker is "grab this
-        /// label," not "move this node." Independent of
-        /// `hit_edge_handle` because portal-mode edges don't
-        /// expose edge-handles in the first place.
-        hit_portal_label: Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
-        /// If the cursor landed on an edge-label AABB at
-        /// mouse-down, this records the owning edge key so a
-        /// drag past threshold transitions to
-        /// `Throttled(EdgeLabel)`. Takes precedence over
-        /// `hit_node` — a label hovering over a node behind
-        /// it should move as a label, not a node.
-        hit_edge_label: Option<baumhard::mindmap::scene_cache::EdgeKey>,
-        /// If a section is currently selected and the cursor
-        /// landed on one of its 8 resize handles, this records
-        /// `(node_id, section_idx, side)` so a drag past
-        /// threshold transitions to `Throttled(SectionResize)`.
-        /// Takes precedence over `hit_node` — a handle sits on
-        /// the section's edge and clicking it is a resize, not
-        /// a section drag.
-        hit_section_resize_handle: Option<(String, usize, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
-        /// If a node is currently `Single`-selected and the
-        /// cursor landed on one of its 8 resize handles, this
-        /// records `(node_id, side)` so a drag past threshold
-        /// transitions to `Throttled(NodeResize)`. Takes
-        /// precedence over `hit_node` — clicking a handle on
-        /// a selected node is a resize, not a re-selection or
-        /// a move-node drag.
-        hit_node_resize_handle: Option<(String, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
-    },
+    ///
+    /// Boxed: the press-time hit chain is eight fields wide and made
+    /// this the widest `DragState` variant by a factor of five over
+    /// its nearest neighbor, which every other state — including the
+    /// `None` that is live almost all the time — would otherwise pay
+    /// for. One allocation per mouse-down.
+    Pending(Box<PendingPress>),
     /// Right-button is down + cursor hasn't moved past the drag
     /// threshold. Press-time hit captures the body of any node /
     /// section under the cursor (no edge-handle / portal-label /
@@ -518,7 +531,25 @@ enum DragState {
     /// see [`ThrottledDrag`] for variants. All share the same
     /// adaptive-throttle shell via
     /// [`throttled_interaction::ThrottledInteraction`].
-    Throttled(ThrottledDrag),
+    ///
+    /// Boxed: the widest `ThrottledDrag` variant carries a full
+    /// pre-drag `MindEdge` snapshot and is more than twice the size
+    /// of `Pending`, so an inline payload would make every
+    /// `DragState` — including the `None` that is live all but a
+    /// few seconds of a session — pay for it. One allocation per
+    /// gesture start, at the threshold cross.
+    Throttled(Box<ThrottledDrag>),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl DragState {
+    /// Enter a throttled drag. The boxing is an implementation
+    /// detail of the variant, not something the eight promotion
+    /// sites in `event_cursor_moved` / `dispatch::native` should
+    /// each have to spell.
+    fn throttled(drag: ThrottledDrag) -> Self {
+        Self::Throttled(Box::new(drag))
+    }
 }
 
 /// Application root — owns the launch options and (on WASM only)

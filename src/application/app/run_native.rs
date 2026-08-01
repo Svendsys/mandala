@@ -563,7 +563,8 @@ impl InitState {
         // the next drain after any competing rebuild.
         let is_moving_node = matches!(
             self.drag_state,
-            DragState::Throttled(super::throttled_interaction::ThrottledDrag::MovingNode(_)),
+            DragState::Throttled(ref d)
+                if matches!(**d, super::throttled_interaction::ThrottledDrag::MovingNode(_))
         );
 
         // Suppress the animation tick during drags that mutate
@@ -576,12 +577,14 @@ impl InitState {
         // document, not the tree.
         let is_drag_with_tree_mutation = matches!(
             self.drag_state,
-            DragState::Throttled(
-                super::throttled_interaction::ThrottledDrag::MovingNode(_)
-                    | super::throttled_interaction::ThrottledDrag::MovingSection(_)
-                    | super::throttled_interaction::ThrottledDrag::SectionResize(_)
-                    | super::throttled_interaction::ThrottledDrag::NodeResize(_),
-            ),
+            DragState::Throttled(ref d)
+                if matches!(
+                    **d,
+                    super::throttled_interaction::ThrottledDrag::MovingNode(_)
+                        | super::throttled_interaction::ThrottledDrag::MovingSection(_)
+                        | super::throttled_interaction::ThrottledDrag::SectionResize(_)
+                        | super::throttled_interaction::ThrottledDrag::NodeResize(_)
+                )
         );
 
         // Destructure the fields the two throttled-drive call sites

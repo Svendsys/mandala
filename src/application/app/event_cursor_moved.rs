@@ -100,12 +100,13 @@ pub(super) fn handle_cursor_moved(
     // gate matters on those targets. `cursor_icon_last` lives on
     // `InitState` — see its doc-comment for the rationale.
     let desired = match ctx.drag_state {
-        DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
-            Some(cursor_icon_for_resize_side(i.side))
-        }
-        DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-            Some(cursor_icon_for_resize_side(i.side))
-        }
+        DragState::Throttled(drag) => match &**drag {
+            ThrottledDrag::NodeResize(i) => Some(cursor_icon_for_resize_side(i.side)),
+            ThrottledDrag::SectionResize(i) => Some(cursor_icon_for_resize_side(i.side)),
+            // Every other throttled gesture keeps whatever cursor
+            // the gesture started with.
+            _ => None,
+        },
         DragState::None => {
             let over_button = match (ctx.document.as_ref(), ctx.mindmap_tree.as_mut()) {
                 (Some(doc), Some(tree)) => {
@@ -152,16 +153,17 @@ pub(super) fn handle_cursor_moved(
             let input = drag_input(ctx.renderer, prev_pos, cursor_pos_val);
             drag.as_dyn_mut().accumulate(input);
         }
-        DragState::Pending {
-            start_pos,
-            hit_node,
-            hit_section_idx,
-            hit_edge_handle,
-            hit_portal_label,
-            hit_edge_label,
-            hit_section_resize_handle,
-            hit_node_resize_handle,
-        } => {
+        DragState::Pending(press) => {
+            let super::PendingPress {
+                start_pos,
+                hit_node,
+                hit_section_idx,
+                hit_edge_handle,
+                hit_portal_label,
+                hit_edge_label,
+                hit_section_resize_handle,
+                hit_node_resize_handle,
+            } = &mut **press;
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
             if dist_x * dist_x + dist_y * dist_y > super::DRAG_THRESHOLD_SQ_PX {
@@ -211,7 +213,7 @@ pub(super) fn handle_cursor_moved(
                                 crate::application::document::EdgeLabelSel::new(edge_ref.clone()),
                             );
                             ctx.scene_cache.clear();
-                            *ctx.drag_state = DragState::Throttled(ThrottledDrag::EdgeLabel(
+                            *ctx.drag_state = DragState::throttled(ThrottledDrag::EdgeLabel(
                                 EdgeLabelInteraction::new(edge_ref, original),
                             ));
                             // `rebuild_after_selection_change` picks
@@ -255,7 +257,7 @@ pub(super) fn handle_cursor_moved(
                                     endpoint_node_id: endpoint.clone(),
                                 });
                             ctx.scene_cache.clear();
-                            *ctx.drag_state = DragState::Throttled(ThrottledDrag::PortalLabel(
+                            *ctx.drag_state = DragState::throttled(ThrottledDrag::PortalLabel(
                                 PortalLabelInteraction::new(edge_ref, endpoint, original),
                             ));
                             rebuild_all(
@@ -289,7 +291,7 @@ pub(super) fn handle_cursor_moved(
                                 .map(|(_, p)| p)
                                 .unwrap_or(canvas_pos);
                             ctx.scene_cache.clear();
-                            *ctx.drag_state = DragState::Throttled(ThrottledDrag::EdgeHandle(
+                            *ctx.drag_state = DragState::throttled(ThrottledDrag::EdgeHandle(
                                 EdgeHandleInteraction::new(edge_ref, handle_kind, original, start_handle_pos),
                             ));
                             return;
@@ -337,7 +339,7 @@ pub(super) fn handle_cursor_moved(
                                     );
                                 }
                                 ctx.scene_cache.clear();
-                                *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(
+                                *ctx.drag_state = DragState::throttled(ThrottledDrag::NodeResize(
                                     NodeResizeInteraction::new(
                                         node_id,
                                         side,
@@ -396,7 +398,7 @@ pub(super) fn handle_cursor_moved(
                                         );
                                     }
                                     ctx.scene_cache.clear();
-                                    *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(
+                                    *ctx.drag_state = DragState::throttled(ThrottledDrag::SectionResize(
                                         SectionResizeInteraction::new(
                                             node_id,
                                             section_idx,
@@ -451,7 +453,7 @@ pub(super) fn handle_cursor_moved(
                             }
                         }
                         ctx.scene_cache.clear();
-                        *ctx.drag_state = DragState::Throttled(ThrottledDrag::MovingSection(
+                        *ctx.drag_state = DragState::throttled(ThrottledDrag::MovingSection(
                             MovingSectionInteraction::new(node_id, section_idx, (ox, oy)),
                         ));
                         return;
@@ -504,7 +506,7 @@ pub(super) fn handle_cursor_moved(
                             }
                         }
                     }
-                    *ctx.drag_state = DragState::Throttled(ThrottledDrag::MovingNode(
+                    *ctx.drag_state = DragState::throttled(ThrottledDrag::MovingNode(
                         MovingNodeInteraction::new(node_ids, individual, descendant_ids),
                     ));
                 } else if ctx.modifiers.shift_key() {

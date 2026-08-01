@@ -13,8 +13,6 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use glam::Vec2;
-
 use crate::application::document::EdgeRef;
 
 use super::super::portal_label_drag::apply_portal_label_drag;
@@ -133,6 +131,7 @@ impl ThrottledDragInteraction for PortalLabelInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec2;
     use crate::application::app::throttled_interaction::test_utils::{
         drive_throttle_over_budget, fixture_edge, moved,
         trait_default_tests_for_throttled_interaction,
