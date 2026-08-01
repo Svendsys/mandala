@@ -52,10 +52,10 @@ pub fn format_doc_path(file_name: &str) -> PathBuf {
 ///
 /// Used for the reference docs outside `format/` (`CONCEPTS.md`,
 /// `CODE_CONVENTIONS.md`, `TEST_CONVENTIONS.md`), and for the
-/// workspace's own manifests by [`crate::util::manifests`] and
-/// `crate::util::log`'s tests, which each carried a private copy of
-/// this line until they stopped. [`format_doc_path`] is a thin
-/// wrapper over it.
+/// workspace's own manifests by `crate::util::manifests` and
+/// `crate::util::log`'s tests — both `cfg(test)`-only, hence no
+/// intra-doc links — which each carried a private copy of this line
+/// until they stopped. [`format_doc_path`] is a thin wrapper over it.
 ///
 /// Cost: one `PathBuf` allocation. No I/O.
 pub fn repo_path(relative: &str) -> PathBuf {
