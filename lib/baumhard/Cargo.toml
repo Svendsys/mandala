@@ -21,8 +21,6 @@ lazy_static = "1.5.0"
 # `compile_error!("multiple release_max_level_* features set")`
 # (`log-0.4.29/src/lib.rs:376-394`) fires on the unioned feature set.
 log = { version = "0.4.29", features = ["release_max_level_warn"] }
-env_logger = "0.11.10"
-smol_str = "0.3.6"
 indextree = {version = "4.8.1", features = ["serde"]}
 glam = {version = "0.32.1", features = ["serde"]}
 cosmic-text = "0.18.2"
@@ -31,9 +29,26 @@ unicode-segmentation = "1.13.2"
 rustc-hash = "2.1.2"
 strum = "0.28.0"
 strum_macros = "0.28.0"
-enumset = {version = "1.1.10", features = ["serde"]}
 ordered-float = {version = "5.3.0", features = ["serde"]}
 derivative = "2.2.0"
+
+# `env_logger` is load-bearing, not a leftover — and it is the native
+# half of a matched pair with `console_log` below. `util::log::init()`
+# is the workspace's single logger-installation point, and both
+# binaries that front this library (the app crate's `main` and
+# `maptool`) call it; since `log`'s `release_max_level_warn` above
+# keeps `warn!`/`error!` alive in release builds, a release run with
+# no logger installed would silently drop exactly the diagnostics
+# CODE_CONVENTIONS §9's "log and degrade" posture depends on.
+#
+# Declared per-target rather than feature-gated. A feature both
+# consumers would always enable is a switch with one position; the
+# real axis is the target, because `init()`'s two arms are already
+# `cfg(target_arch)`-split and `env_logger` has nothing to do on
+# wasm32. Placing it here says that in the manifest and stops the
+# browser build compiling it.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11.10"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = "1.0.0"

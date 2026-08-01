@@ -36,18 +36,21 @@ rustc-hash = "2.1.2"
 # `baumhard::util::grapheme_chad` (lib/baumhard/CONVENTIONS.md §B3);
 # leaving the crate out makes that containment compiler-enforced
 # rather than a review convention.
+# NOTE: `cosmic-text` is deliberately NOT a dependency of the app
+# crate either. `lib/baumhard/CONVENTIONS.md` §B5 concentrates every
+# cosmic-text touch in `lib/baumhard/src/font/`, which re-exports the
+# handful of types the renderer needs (`baumhard::font::Buffer`,
+# `::Color`, `::FontSystem`, ...). Leaving the crate out of this
+# manifest makes that containment compiler-enforced: a `use
+# cosmic_text::...` in `src/` no longer resolves.
 wgpu = { version = "29.0", features = ["webgl"] }
 bytemuck = "1.16"
 glyphon = "0.11.0"
-cosmic-text = "0.18.2"
-tinyvec = "1.11.0"
 # Alternative: https://crates.io/crates/ab_glyph
 glam = {version = "0.32.1", features = ["serde"]}
-futures = "0.3.32"
 winit = "0.30.13"
 serde = {version = "1.0.228", features = ["derive"]}
 serde_json = "1.0.149"
-lazy_static = "1.5.0"
 # `release_max_level_warn`: `warn!`/`error!` survive into release
 # builds so CODE_CONVENTIONS §9's "log and degrade" posture is real in
 # the binaries users run; `info!`/`debug!`/`trace!` still compile to
@@ -68,11 +71,9 @@ lazy_static = "1.5.0"
 # *wrong* level — a joint drift back to `off`, or the feature dropped
 # entirely (which uncaps to `Trace`). That is what those tests pin.
 log = { version = "0.4.29", features = ["release_max_level_warn"] }
-smol_str = "0.3.6"
 strum = "0.28.0"
 strum_macros = "0.28.0"
 indextree = {version = "4.8.1", features = ["serde"]}
-ttf-parser = "0.25.1"
 baumhard = {path="./lib/baumhard"}
 mandala_derive = {path="./lib/mandala_derive"}
 # Cross-platform `Instant` — on native re-exports `std::time::Instant`;
@@ -81,12 +82,14 @@ mandala_derive = {path="./lib/mandala_derive"}
 # ("time not implemented on this platform").
 web-time = "1.1.0"
 
-[build-dependencies]
-walkdir = "2.5.0"
-path-slash = "0.2.1"
-ttf-parser = "0.25.1"
-regex = "1.12.3"
-lazy_static = "1.5.0"
+# NOTE: no `[build-dependencies]` here on purpose — this crate has no
+# `build.rs`. The font-manifest generator that needs
+# walkdir/path-slash/ttf-parser is `lib/baumhard/build.rs`, and it
+# declares them itself. Cargo still resolves a `[build-dependencies]`
+# table on a crate with no build script — it lands in `Cargo.lock` and
+# participates in version unification — while nothing ever compiles
+# against it, so the block that used to sit here was pure carrying
+# cost. If a build script is ever added, declare its deps then.
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 num_cpus = "1.17.0"
