@@ -14,7 +14,11 @@ license.workspace = true
 
 [dependencies]
 rustc-hash = "2.1.2"
-unicode-segmentation = "1.13.2"
+# NOTE: `unicode-segmentation` is deliberately NOT a dependency of the
+# app crate. Every grapheme primitive lives in
+# `baumhard::util::grapheme_chad` (lib/baumhard/CONVENTIONS.md §B3);
+# leaving the crate out makes that containment compiler-enforced
+# rather than a review convention.
 wgpu = { version = "29.0", features = ["webgl"] }
 bytemuck = "1.16"
 glyphon = "0.11.0"
@@ -26,10 +30,27 @@ futures = "0.3.32"
 winit = "0.30.13"
 serde = {version = "1.0.228", features = ["derive"]}
 serde_json = "1.0.149"
-serde-lexpr = "0.1.3"
 lazy_static = "1.5.0"
-syn = "2.0.117"
-log = { version = "0.4.29", features = ["release_max_level_off"] }
+# `release_max_level_warn`: `warn!`/`error!` survive into release
+# builds so CODE_CONVENTIONS §9's "log and degrade" posture is real in
+# the binaries users run; `info!`/`debug!`/`trace!` still compile to
+# nothing so hot paths keep their zero-cost posture. Both this manifest
+# and `lib/baumhard/Cargo.toml` must agree, and the two cannot silently
+# *disagree*: cargo unions log's features across the workspace, and log
+# `compile_error!`s on "multiple release_max_level_* features set"
+# (`log-0.4.29/src/lib.rs:376-394`), so a mixed workspace fails to
+# build outright rather than resolving to something. That is a stronger
+# guarantee than a test could give — it is unskippable and it fires on
+# every build, not only in CI. It is worth knowing what it saves us
+# from: `STATIC_MAX_LEVEL` (`lib.rs:1611`) matches its arms in
+# declaration order, `off` first, so absent the guard a mixed
+# `off`/`warn` set would silently resolve to `Off` and delete the
+# channel. `baumhard::util::log::tests` pins the log version the guard
+# was read in, so a bump has to re-verify it rather than inherit it.
+# What has no compiler behind it is both manifests agreeing on the
+# *wrong* level — a joint drift back to `off`, or the feature dropped
+# entirely (which uncaps to `Trace`). That is what those tests pin.
+log = { version = "0.4.29", features = ["release_max_level_warn"] }
 smol_str = "0.3.6"
 strum = "0.28.0"
 strum_macros = "0.28.0"

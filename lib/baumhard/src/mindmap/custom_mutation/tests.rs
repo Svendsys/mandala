@@ -517,7 +517,7 @@ mod reach_tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_concepts_variant_count_matches_the_enum() {
-        use crate::util::doc_fixtures::{documented_section_text, repo_doc_path};
+        use crate::util::doc_fixtures::{repo_doc_path, section_text};
         use strum::IntoEnumIterator;
 
         const WORDS: [&str; 8] = ["Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
@@ -526,7 +526,7 @@ mod reach_tests {
             .get(count - 3)
             .unwrap_or_else(|| panic!("{count} variants is outside the range this test spells"));
 
-        let body = documented_section_text(&repo_doc_path("CONCEPTS.md"), "### Target scopes");
+        let body = section_text(&repo_doc_path("CONCEPTS.md"), "### Target scopes");
         let phrase = format!("{expected} variants");
         assert!(
             body.contains(&phrase),

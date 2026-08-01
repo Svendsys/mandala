@@ -657,7 +657,7 @@ fn mindnode_zoom_window_round_trips() {
         "id":"0","parent_id":null,
         "position":{"x":0,"y":0},
         "size":{"width":100,"height":100},
-        "text":"","text_runs":[],
+        "sections":[{"text":""}],
         "style":{
             "background_color":"#000","frame_color":"#000","text_color":"#fff",
             "shape":"rectangle","corner_radius_percent":0,"frame_thickness":0,

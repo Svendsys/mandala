@@ -900,8 +900,9 @@ The document root: nodes, edges, canvas configuration,
 palettes, custom mutations.
 
 Everything a user can save and reload is here.
-The `MindMap` is a plain serialisable struct — no derived state, no
-runtime caches. The loader deserialises it from JSON; the
+The `MindMap` is a plain serializable struct — no derived state, no
+runtime caches. The loader deserializes it from JSON, rejecting any
+key no field claims ([closed objects](#closed-objects)); the
 [canvas-role projection](#canvas-role-projection) and
 [tree builder](#tree-builder) turn it into renderable form;
 mutations transform it in place.
@@ -917,6 +918,49 @@ HashMap<String, Palette>`, and
 [`format/schema.md`](./format/schema.md) for the JSON surface and
 [`format/README.md`](./format/README.md) for a minimum-viable
 example.
+
+### Closed objects
+
+Every object in `.mindmap.json` is **closed**: a key no field claims
+is a load error, never a key the loader quietly ignores.
+
+The reason is on the save path, not the load path. Mandala is an
+editor — it loads the whole map, mutates it, and writes the whole
+model back — so a key dropped at load is a key **deleted from the
+file at the next save**, and for a hand-authored map that file was
+the only copy. A `log::warn!` nobody reads turns silent data loss
+into logged data loss; refusing the load is the only outcome that
+leaves the author holding what they wrote at the moment they find
+out. A typo (`"min_zoom_to_rendr"`) and a field that does not exist
+yet fail the same way, and the message names the part of the
+document that carries the key — `node "1.2"`, `edge[3]`,
+`palette "coral"` — rather than a byte offset.
+
+Mechanically it is `#[serde(deny_unknown_fields)]` on every type
+reachable from a load. That set is not written down anywhere: a
+hand-kept list of "types that must carry the attribute" is the twin
+surface `lib/baumhard/CONVENTIONS.md` §B4 warns about, so
+`lib/baumhard/src/util/serde_coverage.rs` walks baumhard's own
+sources with `syn` and
+`loader::tests::test_every_loadable_type_rejects_unknown_keys`
+fails until a newly reachable type opts in.
+
+Closedness is about **keys, not meanings**. An `edge_type` the
+renderer does not know still loads — open vocabularies stay open —
+and semantic violations (an edge pointing at no node, a
+`color_schema` naming a palette that is not there) are
+[`maptool verify`](#maptool-cli)'s business, not the loader's. The
+interiors of `macros` / `inline_macros` are deliberately opaque.
+The IPC boundary made the same call for the same reason
+([`format/ipc.md`](./format/ipc.md): unknown parameters are rejected
+with `invalid_params`).
+
+`lib/baumhard/src/mindmap/loader.rs`,
+`lib/baumhard/src/util/serde_coverage.rs`. See
+[`format/schema.md`](./format/schema.md) §"Unknown keys are
+rejected" for the policy as authors read it, and
+[`format/validation.md`](./format/validation.md) for the split
+between what the loader checks and what `verify` checks.
 
 ### `Canvas`
 

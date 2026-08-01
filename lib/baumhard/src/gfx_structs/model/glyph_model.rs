@@ -62,7 +62,7 @@ impl GlyphModel {
         &mut self.hitbox
     }
 
-    /// Append one [`GlyphLine`] to the matrix. O(1) amortised.
+    /// Append one [`GlyphLine`] to the matrix. O(1) amortized.
     pub fn add_line(&mut self, line: GlyphLine) {
         self.glyph_matrix.push(line);
     }

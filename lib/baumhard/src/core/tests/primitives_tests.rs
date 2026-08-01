@@ -210,6 +210,14 @@ pub fn do_split_and_separate_overflow_drops_the_whole_call() {
     assert_eq!(regions.num_regions(), 2);
     assert!(regions.get(Range::new(0, 8)).is_some());
     assert!(regions.get(Range::new(10, usize::MAX)).is_some());
+
+    // The control: without the `usize::MAX` region present, the very
+    // same call shifts. Otherwise "the set was left untouched" is
+    // indistinguishable from "the primitive does nothing".
+    let mut ordinary = ColorFontRegions::new_empty();
+    ordinary.submit_region(ColorFontRegion::new_key_only(Range::new(10, 15)));
+    ordinary.split_and_separate(Range::new(2, 5));
+    assert!(ordinary.get(Range::new(13, 18)).is_some());
 }
 
 #[test]
@@ -277,6 +285,144 @@ pub fn do_shift_regions_after_overflow_drops_the_whole_call() {
     ordinary.submit_region(ColorFontRegion::new_key_only(Range::new(10, 15)));
     ordinary.shift_regions_after(5, 3);
     assert!(ordinary.get(Range::new(13, 18)).is_some());
+}
+
+#[test]
+fn test_insertion_primitives_differ_only_at_the_three_seams() {
+    do_insertion_primitives_differ_only_at_the_three_seams();
+}
+
+/// The three insertion primitives are the same function everywhere
+/// except at the three positions that touch `idx`, and every caller
+/// needs exactly one of the three combinations. This pins all nine
+/// cells of that table side by side, so that choosing between them is
+/// a matter of reading one test rather than of already knowing all
+/// three exist:
+///
+/// | | `start == idx` | `end == idx` | straddling `idx` |
+/// |---|---|---|---|
+/// | `shift_regions_after` | stays | stays | stays |
+/// | `insert_regions_at` | shifts | absorbs | absorbs |
+/// | `split_and_separate` | shifts | stays | splits |
+///
+/// The straddling column is the one that matters most and was the
+/// last to be written down: `split_and_separate` and a `(idx,
+/// magnitude)`-shaped duplicate of it that briefly lived beside it
+/// agreed on every non-straddling region over an exhaustive 1 950-case
+/// sweep and disagreed on all 630 straddling ones, which is exactly
+/// why the duplicate was invisible to the suite until the column
+/// existed.
+pub fn do_insertion_primitives_differ_only_at_the_three_seams() {
+    // `end == idx` — the left-adjacent region.
+    let mut after = ColorFontRegions::new_empty();
+    after.submit_region(ColorFontRegion::new_key_only(Range::new(0, 4)));
+    after.shift_regions_after(4, 2);
+    assert!(
+        after.get(Range::new(0, 4)).is_some(),
+        "shift_regions_after leaves it"
+    );
+
+    let mut insert = ColorFontRegions::new_empty();
+    insert.submit_region(ColorFontRegion::new_key_only(Range::new(0, 4)));
+    assert!(insert.insert_regions_at(4, 2));
+    assert!(
+        insert.get(Range::new(0, 6)).is_some(),
+        "insert_regions_at absorbs the new cells into it"
+    );
+
+    let mut split = ColorFontRegions::new_empty();
+    split.submit_region(ColorFontRegion::new_key_only(Range::new(0, 4)));
+    split.split_and_separate(Range::new(4, 6));
+    assert!(
+        split.get(Range::new(0, 4)).is_some(),
+        "split_and_separate leaves it — the new cells belong to no run"
+    );
+
+    // `start == idx` — the region anchored exactly at the insertion.
+    let mut after = ColorFontRegions::new_empty();
+    after.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    after.shift_regions_after(4, 2);
+    assert!(
+        after.get(Range::new(4, 6)).is_some(),
+        "shift_regions_after's strict `>` leaves it behind"
+    );
+
+    let mut insert = ColorFontRegions::new_empty();
+    insert.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    assert!(!insert.insert_regions_at(4, 2));
+    assert!(
+        insert.get(Range::new(6, 8)).is_some(),
+        "insert_regions_at shifts it"
+    );
+
+    let mut split = ColorFontRegions::new_empty();
+    split.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    split.split_and_separate(Range::new(4, 6));
+    assert!(
+        split.get(Range::new(6, 8)).is_some(),
+        "split_and_separate shifts it — nothing at `idx` was displaced, so its text moved"
+    );
+
+    // Straddling (`start < idx < end`) — the column that tells
+    // `split_and_separate` apart from a mere `start >= idx` shift.
+    let mut after = ColorFontRegions::new_empty();
+    after.submit_region(ColorFontRegion::new_key_only(Range::new(2, 6)));
+    after.shift_regions_after(4, 4);
+    assert_eq!(after.num_regions(), 1);
+    assert!(
+        after.get(Range::new(2, 6)).is_some(),
+        "shift_regions_after leaves the straddler exactly as it was"
+    );
+
+    let mut insert = ColorFontRegions::new_empty();
+    insert.submit_region(ColorFontRegion::new_key_only(Range::new(2, 6)));
+    assert!(insert.insert_regions_at(4, 4));
+    assert_eq!(insert.num_regions(), 1);
+    assert!(
+        insert.get(Range::new(2, 10)).is_some(),
+        "insert_regions_at grows the straddler over the new cells"
+    );
+
+    let mut split = ColorFontRegions::new_empty();
+    split.submit_region(ColorFontRegion::new_key_only(Range::new(2, 6)));
+    split.split_and_separate(Range::new(4, 8));
+    assert_eq!(
+        split.num_regions(),
+        2,
+        "split_and_separate splits the straddler in two"
+    );
+    assert!(
+        split.get(Range::new(2, 4)).is_some(),
+        "the head keeps the two cells left of the insertion"
+    );
+    assert!(
+        split.get(Range::new(8, 10)).is_some(),
+        "and the two cells that moved are pushed past the four inserted ones, rather than the \
+         run swallowing all six"
+    );
+
+    // All three agree everywhere else: strictly left stays, strictly
+    // right shifts.
+    let mut both = ColorFontRegions::new_empty();
+    both.submit_region(ColorFontRegion::new_key_only(Range::new(0, 3)));
+    both.submit_region(ColorFontRegion::new_key_only(Range::new(5, 9)));
+    both.split_and_separate(Range::new(4, 6));
+    assert_eq!(both.num_regions(), 2);
+    assert!(both.get(Range::new(0, 3)).is_some());
+    assert!(both.get(Range::new(7, 11)).is_some());
+
+    // `idx == 0` shifts everything — the case `shift_regions_after`
+    // cannot express at all.
+    let mut all = ColorFontRegions::new_empty();
+    all.submit_region(ColorFontRegion::new_key_only(Range::new(0, 3)));
+    all.split_and_separate(Range::new(0, 2));
+    assert!(all.get(Range::new(2, 5)).is_some());
+
+    // Zero magnitude is a no-op.
+    let mut zero = ColorFontRegions::new_empty();
+    zero.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    zero.split_and_separate(Range::new(4, 4));
+    assert!(zero.get(Range::new(4, 6)).is_some());
 }
 
 #[test]
@@ -447,6 +593,66 @@ pub fn do_single_span_none_color_none_font() {
     let r = regions.get(Range::new(0, 3)).unwrap();
     assert_eq!(r.color, None);
     assert_eq!(r.font, None);
+}
+
+#[test]
+fn test_region_shift_and_shrink_disagree_at_the_seam() {
+    do_region_shift_and_shrink_disagree_at_the_seam();
+}
+
+/// `shift_regions_after` and `shrink_regions_after` are *not* mirrors
+/// of one another at `start == idx`, and a caller that pairs them must
+/// not assume they are.
+///
+/// A span anchored exactly at the edit position covers the text an
+/// *overwriting* edit is replacing. Growing, `shift_regions_after`
+/// leaves it alone: its "replace and shift" contract has the caller
+/// submit a fresh span for the new text, and moving the old one right
+/// would slide it off the cells it still describes onto the untouched
+/// tail. Shrinking, `shrink_regions_after` is describing a *deletion*
+/// — the cells that span covered are gone, so a span that lies wholly
+/// inside the cut collapses. Both answers are correct for their
+/// direction; what would be wrong is assuming one from the other, so
+/// this pins the seam in both directions.
+///
+/// `GlyphMatrix::place_in` used to be the caller that paired these
+/// two, and the asymmetry bit it: its grow side is a pure *insertion*
+/// at every non-zero x-offset, where nothing at `at` is displaced and
+/// leaving a span behind parks it on cells it never described. It now
+/// pairs `split_and_separate` with `shrink_regions_after`, which *are*
+/// mirrors at the seam — both treat a span anchored at `idx` as
+/// affected. `do_insertion_primitives_differ_only_at_the_three_seams`
+/// pins that side.
+pub fn do_region_shift_and_shrink_disagree_at_the_seam() {
+    let mut grown = ColorFontRegions::new_empty();
+    grown.submit_region(ColorFontRegion::new_key_only(Range::new(2, 3)));
+    grown.shift_regions_after(2, 1);
+    assert_eq!(grown.num_regions(), 1);
+    assert!(
+        grown.get(Range::new(2, 3)).is_some(),
+        "a span anchored at the edit position keeps the cells it describes across a grow"
+    );
+
+    let mut shrunk = ColorFontRegions::new_empty();
+    shrunk.submit_region(ColorFontRegion::new_key_only(Range::new(2, 3)));
+    shrunk.shrink_regions_after(2, 1);
+    assert_eq!(
+        shrunk.num_regions(),
+        0,
+        "the same span lies wholly inside the cut, and deleted text keeps no span"
+    );
+
+    // One cell further out the two do agree, which is the case
+    // `place_in`'s caller spans actually ride.
+    let mut grown_after = ColorFontRegions::new_empty();
+    grown_after.submit_region(ColorFontRegion::new_key_only(Range::new(3, 4)));
+    grown_after.shift_regions_after(2, 1);
+    assert!(grown_after.get(Range::new(4, 5)).is_some());
+
+    let mut shrunk_after = ColorFontRegions::new_empty();
+    shrunk_after.submit_region(ColorFontRegion::new_key_only(Range::new(3, 4)));
+    shrunk_after.shrink_regions_after(2, 1);
+    assert!(shrunk_after.get(Range::new(2, 3)).is_some());
 }
 
 #[test]

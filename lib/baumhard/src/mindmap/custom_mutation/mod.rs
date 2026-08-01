@@ -252,6 +252,7 @@ pub enum Trigger {
 
 /// Associates a Trigger with a CustomMutation, optionally filtered by platform.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TriggerBinding {
     /// Which trigger fires this binding.
     pub trigger: Trigger,

@@ -2,6 +2,130 @@
 
 Complete field reference for every type in `.mindmap.json`.
 
+## Unknown keys are rejected
+
+Every object in a `.mindmap.json` is **closed**. A key that no field
+claims is a load error, not a field the loader quietly ignores.
+
+The reason lives on the *save* path, not the load path. Mandala is an
+editor: it loads the whole map, mutates it, and writes the whole model
+back. A key dropped at load is therefore a key **deleted from the file
+at the next save** — and for a hand-authored map, that file was the
+only copy. A typo (`"min_zoom_to_rendr": 2.0`) and a field that does
+not exist yet (`"portal_form": { … }`) fail the same way, and both
+fail while the author still has what they wrote. The IPC boundary made
+the same call for the same reason: see [`ipc.md`](./ipc.md), "unknown
+parameters are rejected with `invalid_params`".
+
+This map does **not** load:
+
+```json
+{
+  "version": "1.0",
+  "name": "typo",
+  "canvas": { "background_color": "#000000" },
+  "nodes": {
+    "0": {
+      "id": "0",
+      "parent_id": null,
+      "position": { "x": 0.0, "y": 0.0 },
+      "size": { "width": 200.0, "height": 60.0 },
+      "sections": [ { "text": "Hello" } ],
+      "style": {
+        "background_color": "#141414",
+        "frame_color": "#30b082",
+        "text_color": "#ffffff",
+        "shape": "rectangle",
+        "corner_radius_percent": 10.0,
+        "frame_thickness": 4.0,
+        "show_frame": true,
+        "show_shadow": false
+      },
+      "layout": { "type": "map", "direction": "auto", "spacing": 50.0 },
+      "folded": false,
+      "notes": "",
+      "color_schema": null,
+      "channel": 0,
+      "min_zoom_to_rendr": 2.0
+    }
+  },
+  "edges": []
+}
+```
+
+```
+node "0": unknown field `min_zoom_to_rendr`, expected one of `id`,
+`parent_id`, `position`, `size`, `sections`, `style`, `layout`,
+`folded`, `notes`, `color_schema`, `channel`, `trigger_bindings`,
+`inline_mutations`, `inline_macros`, `min_zoom_to_render`,
+`max_zoom_to_render` — unknown keys are rejected, not dropped: a load
+that ignored this key would erase it from the file on the next save.
+See format/schema.md.
+```
+
+Fix the spelling and it loads:
+
+```json
+{
+  "version": "1.0",
+  "name": "typo-fixed",
+  "canvas": { "background_color": "#000000" },
+  "nodes": {
+    "0": {
+      "id": "0",
+      "parent_id": null,
+      "position": { "x": 0.0, "y": 0.0 },
+      "size": { "width": 200.0, "height": 60.0 },
+      "sections": [ { "text": "Hello" } ],
+      "style": {
+        "background_color": "#141414",
+        "frame_color": "#30b082",
+        "text_color": "#ffffff",
+        "shape": "rectangle",
+        "corner_radius_percent": 10.0,
+        "frame_thickness": 4.0,
+        "show_frame": true,
+        "show_shadow": false
+      },
+      "layout": { "type": "map", "direction": "auto", "spacing": 50.0 },
+      "folded": false,
+      "notes": "",
+      "color_schema": null,
+      "channel": 0,
+      "min_zoom_to_render": 2.0
+    }
+  },
+  "edges": []
+}
+```
+
+The converse is not a loss: a key written out at its own default
+value (`"color_schema": null`, `"text_runs": []`) may be *omitted*
+when the map is saved. Nothing that carries information disappears —
+reload the saved file and the model is the same one.
+
+The message names the **part of the document** that carries the key —
+`node "1.2"`, `edge[3]`, `palette "coral"`, `canvas`,
+`custom_mutations[0]` — rather than a byte offset, because a map runs
+to thousands of lines and the key is the thing you can search for.
+
+Two shapes get a better message than the generic one, because "unknown
+field `text`" is true but useless to someone holding a pre-refactor
+map: a top-level `portals` array and per-node `text` / `text_runs` are
+answered with the `maptool convert` verb that migrates them. See
+[`migration.md`](./migration.md).
+
+**What this does not cover.** Closedness is about *keys*, not
+*meanings*. An edge whose `to_id` names no node, a `color_schema`
+pointing at a palette that isn't there, a section that hangs outside
+its node — all of those are spelled correctly and all of them load.
+They are `maptool verify`'s job; see [`validation.md`](./validation.md).
+
+Values inside `macros` and a node's `inline_macros` are the deliberate
+exception: baumhard stores them as opaque JSON (the typed `Macro` lives
+in the application crate), so their interiors are carried through
+untouched rather than checked here. See [`macros.md`](./macros.md).
+
 ## Top-level object
 
 ```json

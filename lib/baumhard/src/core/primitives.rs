@@ -30,6 +30,7 @@ use crate::util::color::FloatRgba;
 /// range so two regions with the same bounds collide in the owning
 /// [`ColorFontRegions`] set regardless of color / font.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ColorFontRegion {
     /// Half-open grapheme-cluster span this region covers in the
     /// backing text. Sole key for `Eq` / `Ord` / `Hash` on the
@@ -114,6 +115,7 @@ impl ColorFontRegion {
 /// is a mutation primitive that keeps the set consistent under
 /// insertion / deletion of characters in the backing text.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
+#[serde(deny_unknown_fields)]
 pub struct ColorFontRegions {
     /// Sorted set of styled spans, keyed on
     /// [`ColorFontRegion::range`]. Stored in a `BTreeSet` so range
@@ -236,10 +238,38 @@ impl ColorFontRegions {
     /// region set from text runs satisfy it by construction; callers
     /// merging sets from elsewhere must enforce it themselves.
     ///
-    /// Contrast with [`Self::insert_regions_at`], where the straddling
-    /// region *absorbs* the insertion instead of splitting around it,
-    /// and with [`Self::shift_regions_after`], which shifts on
-    /// `start > idx` and leaves straddlers alone entirely.
+    /// It is one of the crate's three insertion primitives, and the
+    /// three differ **only** in what they do to the regions that touch
+    /// the insertion point. Every caller wants exactly one of the three
+    /// combinations:
+    ///
+    /// | | region with `start == idx` | region with `end == idx` | region **straddling** `idx` |
+    /// |---|---|---|---|
+    /// | [`Self::shift_regions_after`] | stays | stays | stays |
+    /// | [`Self::insert_regions_at`] | shifts | **absorbs** the new cells | **absorbs** the new cells |
+    /// | `split_and_separate` | shifts | stays | **splits around them** |
+    ///
+    /// (`idx` is `range.start` here; the two siblings take the
+    /// insertion point and the magnitude as separate arguments rather
+    /// than as one `Range`. Away from those three positions all three
+    /// primitives agree exactly — strictly left stays, strictly right
+    /// shifts.)
+    ///
+    /// Reach for this one when the inserted cells belong to **no
+    /// existing region**: structural filler that the caller will
+    /// describe itself or leave undescribed. `insert_regions_at`'s
+    /// absorption is for the typing case, where the new chars should
+    /// inherit the run they were typed into; `shift_regions_after`'s
+    /// "everything at or left of `idx` stays put" is for the overwrite
+    /// case, where the cells at `idx` are being *replaced* rather than
+    /// displaced, and the caller re-covers them itself.
+    ///
+    /// [`GlyphMatrix::place_in`](crate::gfx_structs::model::matrix::GlyphMatrix::place_in)
+    /// is the caller at both of its insertion points: the blanks it
+    /// pads a short row out to an x-offset with belong to the *next*
+    /// row's indent and to no component, and the cells a component
+    /// writes into an empty line tail displace a caller span anchored
+    /// there rather than overwriting it.
     ///
     /// Costs: O(n) over existing regions; one `Vec` of the resulting
     /// regions plus one `BTreeSet` rebuild. Regions are `Copy`, so
@@ -305,8 +335,36 @@ impl ColorFontRegions {
     /// Callers that want the surrounding region to absorb the insertion
     /// (the text-editor caret, user typing) should instead use
     /// [`Self::insert_regions_at`], which extends straddling regions
-    /// to cover the new chars. See the symmetric
-    /// [`Self::shrink_regions_after`] for the delete path.
+    /// to cover the new chars, and shifts on `start >= idx` rather
+    /// than `start > idx`. Callers that want neither — new cells that
+    /// belong to no existing region, with a region anchored exactly at
+    /// `idx` still moving and a straddler splitting around the new
+    /// cells rather than swallowing them — want
+    /// [`Self::split_and_separate`]. Its doc carries the full
+    /// three-primitive table. See [`Self::shrink_regions_after`] for
+    /// the delete path.
+    ///
+    /// **The `start == idx` seam is only defensible when the write
+    /// overwrites.** Leaving a region anchored exactly at `idx` in
+    /// place is right when the caller is *replacing* the cells that
+    /// region covers and is about to re-cover them with its own
+    /// `submit_region`. It is wrong when the write is a pure
+    /// *insertion* — then nothing at `idx` was displaced, the region's
+    /// text has moved right by `magnitude`, and leaving it behind
+    /// parks it on cells it never described (and, if the follow-up
+    /// `submit_region` uses the same range, evicts it outright, since
+    /// the set is keyed on the range alone). This primitive cannot
+    /// tell the two apart from `(idx, magnitude)`; the caller can, and
+    /// must pick [`Self::split_and_separate`] for the insertion case.
+    /// `GlyphMatrix::place_in` does exactly that.
+    ///
+    /// **The delete path is a companion, not a mirror, at that same
+    /// seam.** A region anchored exactly at `idx` survives this shift
+    /// untouched, while `shrink_regions_after` drops it, because there
+    /// the cut *removed* the text it covered. Both are right for their
+    /// direction; a caller pairing the two must not assume one from
+    /// the other. `do_region_shift_and_shrink_disagree_at_the_seam`
+    /// pins it.
     ///
     /// A shift that would carry a region's `end` past `usize::MAX` is
     /// dropped whole, leaving the set untouched rather than partly
@@ -362,7 +420,16 @@ impl ColorFontRegions {
     /// Contrast with [`Self::shift_regions_after`], whose "replace
     /// and shift" semantics leave straddling regions in place — that
     /// primitive exists for `GlyphMatrix::copy_from`, which explicitly
-    /// follows up with a `submit_region` for the inserted span.
+    /// follows up with a `submit_region` for the inserted span — and
+    /// with [`Self::split_and_separate`], which shares this
+    /// primitive's `start >= idx` shift but does **not** absorb: a
+    /// left-adjacent region stays put and a straddler splits around
+    /// the new cells instead of swallowing them. That doc carries the
+    /// full three-primitive table. Absorption is right when the new
+    /// chars were typed into an existing run and should inherit it; it
+    /// is wrong when they are structural filler that belongs to no
+    /// run, because the left-adjacent run then grows over cells it
+    /// never covered.
     ///
     /// A shift or absorption that would carry a region's `end` past
     /// `usize::MAX` drops the call whole — the set is left untouched
@@ -415,7 +482,9 @@ impl ColorFontRegions {
         absorbed
     }
 
-    /// Symmetric delete-path companion to [`Self::shift_regions_after`].
+    /// Delete-path companion to [`Self::shift_regions_after`] — a
+    /// companion rather than a mirror: at the `start == idx` seam the
+    /// two deliberately differ, and that doc comment says why.
     /// `magnitude` chars starting at position `idx` have been removed
     /// from the backing text; rewrite the region ranges to reflect
     /// that. Semantics, per region relative to the cut `[idx, idx+magnitude)`:
@@ -635,6 +704,7 @@ impl ApplyOperation {
 /// [`ColorFontRegion`] and any other span-of-chars payload in the
 /// core model. Totally ordered for `BTreeSet` storage.
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Range {
     /// Inclusive start index in grapheme clusters (not bytes, not
     /// chars). User-derived offsets land here.
@@ -862,6 +932,7 @@ pub enum AnchorBox {
 /// world / …), the point on the target this element pins to, and the
 /// point on the element itself that meets it.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Anchor {
     target: AnchorTarget,
     self_point: AnchorPoint,
@@ -938,6 +1009,7 @@ impl Default for Anchor {
 /// tree by `generation_offset` or `child_num`; `Window` / `Display` /
 /// `World` use global coordinate systems.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum AnchorTarget {
     /// Pin to an ancestor. `generation_offset == 0` is the
     /// immediate parent, `1` is the grandparent, and so on.

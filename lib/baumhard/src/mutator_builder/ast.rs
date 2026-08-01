@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 /// constructors; `Repeat` is a compact sugar for "expand to N children
 /// at consecutive channels".
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum MutatorNode {
     /// `GfxMutator::Void` — no mutation, just structural grouping.
     /// Children are expanded in declaration order.

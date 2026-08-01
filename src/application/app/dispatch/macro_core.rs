@@ -98,7 +98,7 @@ pub(in crate::application::app) fn dispatch_macro<T: MacroDispatchTarget>(
     let (mac, source) = match target.registry().get_with_source(macro_id) {
         Some((m, s)) => (m.clone(), s),
         None => {
-            log::warn!("dispatch_macro: unknown macro id '{}'", macro_id);
+            log::warn!("macros: dispatch of unknown macro id '{}'", macro_id);
             return false;
         }
     };
