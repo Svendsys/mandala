@@ -82,16 +82,26 @@ impl ModalEditor {
         }
     }
 
-    /// The editor currently stealing keyboard input, if any. The
-    /// single-line editor is checked first, matching the order the
-    /// keyboard handler has always used; the two are mutually
+    /// The editor currently stealing keyboard input, if any.
+    pub(super) fn stealing(ctx: &InputHandlerContext<'_>) -> Option<ModalEditor> {
+        ModalEditor::stealing_from(
+            ModalEditor::SingleLine.is_open(ctx),
+            ModalEditor::Text.is_open(ctx),
+        )
+    }
+
+    /// Pure half of [`Self::stealing`], over plain open-flags so the
+    /// steal *order* is pinnable without an event loop.
+    ///
+    /// The single-line editor is checked first, matching the order
+    /// the keyboard handler has always used; the two are mutually
     /// exclusive by construction anyway (a node selection opens the
     /// text editor, an edge-label / portal selection opens the
     /// single-line one).
-    pub(super) fn stealing(ctx: &InputHandlerContext<'_>) -> Option<ModalEditor> {
-        if ModalEditor::SingleLine.is_open(ctx) {
+    fn stealing_from(single_line_open: bool, text_open: bool) -> Option<ModalEditor> {
+        if single_line_open {
             Some(ModalEditor::SingleLine)
-        } else if ModalEditor::Text.is_open(ctx) {
+        } else if text_open {
             Some(ModalEditor::Text)
         } else {
             None
@@ -228,6 +238,107 @@ fn release_stays_inside(modal: ModalEditor, ctx: &mut InputHandlerContext<'_>) -
             target
                 .map(|t| t.release_stays_on_target(ctx.app_scene, release_canvas))
                 .unwrap_or(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Entry-point contracts for the modal ladder.
+    //!
+    //! Unit tests on the editors themselves cannot catch a caller
+    //! that resolves the modals in a different order or dispatches
+    //! one editor's commit while stealing in the other's context, so
+    //! the ordering and the per-modal wiring are pinned here rather
+    //! than only inside the editors.
+
+    use super::*;
+
+    /// Steal order: the single-line editor wins. The two are
+    /// mutually exclusive in practice, but the resolution order is
+    /// what decides which handler a keystroke reaches if that ever
+    /// stops holding, and it must stay the order the three
+    /// hand-written blocks used.
+    #[test]
+    fn test_steal_order_prefers_the_single_line_editor() {
+        assert_eq!(
+            ModalEditor::stealing_from(true, true),
+            Some(ModalEditor::SingleLine)
+        );
+        assert_eq!(
+            ModalEditor::stealing_from(true, false),
+            Some(ModalEditor::SingleLine)
+        );
+        assert_eq!(ModalEditor::stealing_from(false, true), Some(ModalEditor::Text));
+        assert_eq!(ModalEditor::stealing_from(false, false), None);
+    }
+
+    /// Release order: the node text editor is resolved first, which
+    /// is the order the release path used before the ladder existed.
+    /// The exhaustive `tag` match makes a new `ModalEditor` variant a
+    /// build error here, and this assertion then fails until the
+    /// variant is added to `LADDER` — so a new modal editor cannot
+    /// silently skip the click-outside commit.
+    #[test]
+    fn test_release_ladder_lists_every_variant_text_first() {
+        fn tag(m: ModalEditor) -> u8 {
+            match m {
+                ModalEditor::Text => 0,
+                ModalEditor::SingleLine => 1,
+            }
+        }
+        let tags: Vec<u8> = ModalEditor::LADDER.iter().copied().map(tag).collect();
+        assert_eq!(tags, vec![0, 1]);
+    }
+
+    /// Each modal resolves keys in its own context. Sharing one
+    /// would make the other editor's bindings fire while this one is
+    /// open.
+    #[test]
+    fn test_each_modal_steals_in_its_own_context() {
+        assert_eq!(ModalEditor::Text.context(), InputContext::TextEdit);
+        assert_eq!(ModalEditor::SingleLine.context(), InputContext::LabelEdit);
+    }
+
+    /// The action the release path dispatches must be one the steal
+    /// path recognizes as that same modal's commit. If the two ever
+    /// disagree, a click-outside would commit through an arm the
+    /// keyboard would not route to — the cross-wiring this pins.
+    #[test]
+    fn test_commit_action_is_owned_by_its_own_modal() {
+        for modal in ModalEditor::LADDER {
+            let commit = modal.commit_action();
+            assert!(
+                modal.owns_commit_or_cancel(&commit),
+                "{:?} dispatches {:?} on click-outside but does not claim it",
+                modal,
+                commit
+            );
+        }
+    }
+
+    /// Neither modal claims the other's commit / cancel pair, and
+    /// neither claims an unrelated action. Without this, a keystroke
+    /// bound in one editor's context could funnel the other editor's
+    /// close.
+    #[test]
+    fn test_modals_do_not_claim_each_others_commit_or_cancel() {
+        let text_pair = [Action::TextEditCommit, Action::TextEditCancel];
+        let single_pair = [Action::LabelEditCommit, Action::LabelEditCancel];
+        for a in &text_pair {
+            assert!(ModalEditor::Text.owns_commit_or_cancel(a));
+            assert!(!ModalEditor::SingleLine.owns_commit_or_cancel(a));
+        }
+        for a in &single_pair {
+            assert!(ModalEditor::SingleLine.owns_commit_or_cancel(a));
+            assert!(!ModalEditor::Text.owns_commit_or_cancel(a));
+        }
+        // A cursor primitive stays with the modal handler — it is
+        // rebindable and must not be swallowed by the funnel
+        // pre-filter.
+        for modal in ModalEditor::LADDER {
+            assert!(!modal.owns_commit_or_cancel(&Action::LabelEditCursorLeft));
+            assert!(!modal.owns_commit_or_cancel(&Action::Undo));
         }
     }
 }

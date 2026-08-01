@@ -289,7 +289,7 @@ Sometimes a visual element is more structured
 than a plain string — a grid, a menu, a composed diagram built of
 box-drawing pieces. `GlyphModel` is the answer: it is a child of a
 `GlyphArea` that contributes a matrix of lines of components, each
-component carrying its own text plus optional font and colour
+component carrying its own text plus optional font and color
 overrides. The model paints its contents *into* the owning
 `GlyphArea`'s buffer at shape time, so the whole thing shapes and
 renders as one cosmic-text pass while remaining structurally
@@ -325,13 +325,13 @@ No heap allocation, just metadata (channel, id, flags).
 ### `ColorFontRegions`
 
 A set of character-range spans, each with optional
-colour and font overrides, layered over a `GlyphArea`'s text.
+color and font overrides, layered over a `GlyphArea`'s text.
 
 A single node's text can have multiple styles —
 a bold first word, a red annotation, a smaller footnote. Rather
 than fragmenting text into per-style nodes, Baumhard carries
 **span tables**: `[start, end)` ranges that say "between these
-two positions, use this colour and/or this font". Any part of the
+two positions, use this color and/or this font". Any part of the
 text not covered by a span inherits the area-level defaults.
 The same primitive drives rich-text on mindmap nodes
 ([`text runs`](#text-runs)), highlight on selected regions, and
@@ -431,7 +431,7 @@ A *non-state-mutating* kind of mutator: instead of
 changing element data, it invokes callbacks subscribed to the
 element.
 
-Event-driven behaviour (button-like nodes,
+Event-driven behavior (button-like nodes,
 hover-response, keyboard dispatch to a focused node) does not
 belong in the mutation-first data pipeline — a keystroke is not
 a delta to a field. Events reuse the mutator infrastructure for
@@ -570,7 +570,7 @@ structures rather than plain text.
 Everything the area side offers
 ([`GlyphAreaField`](#glyphareafield-and-deltaglypharea),
 [`GlyphAreaCommand`](#glyphareacommand)), the model side needs
-too — position nudges, matrix inserts and replacements, colour
+too — position nudges, matrix inserts and replacements, color
 and font edits on individual components. Same operation vocab
 (`ApplyOperation`), same `Applicable` dispatch, same walker
 path; different target type.
@@ -601,7 +601,7 @@ emoji / ZWJ / combining-mark sequences survive intact.
 
 ### `OutlineStyle`
 
-A coloured halo behind text, rendered as eight stamp
+A colored halo behind text, rendered as eight stamp
 copies (four cardinals + four diagonals) around the main glyph.
 
 When glyphs sit on a busy background, legibility
@@ -628,7 +628,7 @@ one `contains_local` arm.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
-(normalised coordinates, `nx² + ny² ≤ 1`); degenerate bounds
+(normalized coordinates, `nx² + ny² ≤ 1`); degenerate bounds
 always return `false`. `intersects_local_aabb` supports
 rect-select with conservative approximation for ellipses.
 
@@ -802,7 +802,7 @@ twice.
 
 ### `RegionParams`, `RegionIndexer`, `RegionError`
 
-A grid-bucketed spatial index over colour/font
+A grid-bucketed spatial index over color/font
 regions for cheap hit-testing.
 
 Hit-testing "which region contains this point?"
@@ -851,7 +851,7 @@ expects to extend it with loop/reverse/chain semantics.
 ### Utilities — `grapheme_chad`, `color`, `geometry`
 
 The shared-primitive toolkit: grapheme-aware text
-operations, colour types and macros, and epsilon-aware 2D
+operations, color types and macros, and epsilon-aware 2D
 geometry helpers.
 
 Three small modules that the rest of the
@@ -870,7 +870,7 @@ own take:
   [`CODE_CONVENTIONS.md §1`](./CODE_CONVENTIONS.md) and
   [`lib/baumhard/CONVENTIONS.md §B3`](./lib/baumhard/CONVENTIONS.md).
 - **`color`** — `FloatRgba = [f32; 4]` and `Rgba = [u8; 4]`
-  colour types, `Palette = Vec<FloatRgba>`, plus compile-time
+  color types, `Palette = Vec<FloatRgba>`, plus compile-time
   macros `rgb!`, `rgba!`, and (non-const) `hex!`. Channel-index
   constants for consistency.
 - **`geometry`** — `almost_equal` (`|a - b| ≤ 1e-5`, the
@@ -965,13 +965,13 @@ between what the loader checks and what `verify` checks.
 ### `Canvas`
 
 The per-map shared rendering context: background
-colour, default node and connection styles, live theme-variable
+color, default node and connection styles, live theme-variable
 map, named theme presets.
 
 Some things are per-map rather than per-node:
-the canvas background colour, the defaults nodes and edges fall
+the canvas background color, the defaults nodes and edges fall
 back to when their fields are absent, the `var(--name)` theme
-variables colours reference, and the presets theme-switching
+variables colors reference, and the presets theme-switching
 mutations copy into those live variables. `Canvas` is that
 shared state. It sits on `MindMap` directly (`canvas: Canvas`)
 and is consulted at scene-build time for defaults and theme
@@ -1113,9 +1113,9 @@ declare "children whose channel is 1" without an inline predicate.
 
 ### Palettes
 
-Map-level named colour schemes; nodes reference them
+Map-level named color schemes; nodes reference them
 through `color_schema { palette, level, … }` rather than carrying
-colours inline.
+colors inline.
 
 The legacy miMind format stored full palette
 data on every node; the testament map alone duplicated the same
@@ -1132,7 +1132,7 @@ record with `palette: String` (the key into `map.palettes`),
 `level: usize` (which `ColorGroup` to pull from), and two
 flags — `starts_at_root` (does level 0 apply to the schema
 root or to its children?) and `connections_colored` (do edges
-inherit the palette stroke colour?). `resolve_theme_colors` on
+inherit the palette stroke color?). `resolve_theme_colors` on
 `MindMap` does the lookup; out-of-range `level` clamps to the
 last group rather than failing. Validation requires every
 referenced palette to exist with at least one group. Full
@@ -1145,14 +1145,14 @@ interpolate `ColorGroup` fields on a clock.
 ### Text runs
 
 Non-overlapping styled character ranges within a
-node's text — bold, italic, underline, font, size, colour,
+node's text — bold, italic, underline, font, size, color,
 hyperlink.
 
 A single node can have rich text without being
 fragmented into multiple nodes. Text runs are the mindmap-side
 surface that the renderer translates into `ColorFontRegions`
 spans for shaping. The user-visible effect is a per-span
-override: emphasis on the first word, a coloured annotation in
+override: emphasis on the first word, a colored annotation in
 the middle, a link at the end — all on one node.
 
 `lib/baumhard/src/mindmap/model/node.rs`.
@@ -1181,8 +1181,8 @@ intent vs. accident.
 
 ### Theme variables
 
-Document-level CSS-style named colours referenced as
-`var(--name)` from any colour field.
+Document-level CSS-style named colors referenced as
+`var(--name)` from any color field.
 
 Avoids hex repetition across hundreds of nodes
 and edges. A theme switch changes the variable; everything
@@ -1190,7 +1190,7 @@ referencing it updates. Theme variants (presets) can be stored
 under `canvas.theme_variants` and applied through the
 `SetThemeVariant` document action.
 
-Resolved at scene-build time in the colour
+Resolved at scene-build time in the color
 cascade — variable lookup, then fall through to a default if the
 name is unknown. Document actions
 [`SetThemeVariant`](#document-actions) and `SetThemeVariables`
@@ -1267,7 +1267,7 @@ readable both zoomed in and zoomed out.
 Fields: `body: String` (default mid-dot `·`), `cap_start` /
 `cap_end: Option<String>`, `font: Option<String>`, `font_size_pt:
 f32`, `min_font_size_pt` / `max_font_size_pt: Option<f32>`,
-`color: Option<String>`. Colour cascade priority (highest
+`color: Option<String>`. Color cascade priority (highest
 first): edge-label → `glyph_connection.color` → `edge.color`.
 `effective_font_size_pt(zoom)` is the helper callers reach for
 to derive the clamped screen-space size.
@@ -1301,7 +1301,7 @@ When two endpoints are far apart on the canvas,
 drawing a literal line between them is visually noisy and
 expensive (hundreds of glyphs). Portals decouple the visual link
 from the physical span: the user sees a small glyph at each end,
-recognises them as a pair (matching colour, matching text), and
+recognises them as a pair (matching color, matching text), and
 can double-click either to fly the camera to the partner.
 Portals share the underlying edge with line-mode — the only
 difference is `display_mode`.
@@ -1512,7 +1512,7 @@ silent no-ops — runtime ignores rather than panicking.
 The mutation framework is the primary extensibility seam. It spans
 both crates — the AST and walker live in Baumhard, the registry
 and dispatch live in Mandala — and is the answer to "how do I add
-behaviour to a mindmap without recompiling?" Everything from
+behavior to a mindmap without recompiling?" Everything from
 "grow font 2pt on the selected subtree" to size-aware layouts like
 `flower-layout` and `tree-cascade` flows through it.
 
@@ -1678,7 +1678,7 @@ overlay".
 Persistent: snapshot affected nodes, apply,
 sync back, push undo. The sync-back
 (`document/custom/sync.rs::sync_node_from_tree`) persists node
-position, section offset / size / text / colour+font runs, and
+position, section offset / size / text / color+font runs, and
 **font size** (the tree-side `scale` is distributed back across a
 section's run `size_pt` values as a delta, preserving relative
 run sizing); line-height is derived (`scale * 1.2`) so it needs no
@@ -1826,8 +1826,8 @@ everything substantive lives on `InitState`.
 `src/application/app/run_native.rs:48-130`.
 `InitState` carries `window: Arc<Window>`, an optional
 `document: Option<MindMapDocument>` (`None` before first file
-load), `drag_state`, `app_mode`, modal UI state (console,
-text/label/portal-text editors, color picker), `picker_hover`,
+load), `drag_state`, `app_mode`, modal UI state (console, node
+text editor, single-line editor, color picker), `picker_hover`,
 and the resolved keybind table. The `input_context()` method at
 line 137 produces a borrowed view of these fields per-event so
 handlers can borrow disjoint subsets without lifetime
@@ -1871,8 +1871,8 @@ registries.
 This is where every persistent piece of state
 lives. It is the only owner of the model and the undo stack; the
 renderer reads from it, never mutates. The dirty flag belongs to
-it. Transient previews (live colour picker, in-flight label edit,
-in-flight portal-text edit) belong to it too — read by the scene
+it. Transient previews (live color picker, in-flight label edit,
+in-flight portal-caption edit) belong to it too — read by the scene
 builder, never committed back without an explicit step.
 
 `src/application/document/mod.rs:64-151`. Fields include
@@ -1895,7 +1895,7 @@ Selection variants are mutually exclusive by
 construction — at most one thing is selected at a time. The
 variant tag is the routing key for everything operating on the
 selection: which clipboard channel a copy goes through, which
-colour field a colour command sets, which font field a font
+color field a color command sets, which font field a font
 command sets. The renderer uses it to apply the cyan highlight
 to the right element.
 
@@ -1911,7 +1911,7 @@ to the right element.
   `Single` so today's whole-node verbs keep firing on the whole
   node target). Per-section setters cover text
   (`set_section_text`, `set_section_text_and_runs`,
-  `set_section_text_preserving_runs`), colour
+  `set_section_text_preserving_runs`), color
   (`set_section_text_color`), font (`set_section_font_size`,
   `set_section_font_family`), position + size
   (`set_section_offset`, `set_section_size`), the
@@ -1930,7 +1930,7 @@ to the right element.
   possibly across distinct nodes. Built by shift+click on a
   section while another section (or section-set) is selected;
   each shift+click toggles the targeted section in / out of the
-  set. Per-section verbs (colour text, font size / family) fan
+  set. Per-section verbs (color text, font size / family) fan
   out via `selection_targets` and apply to every section in the
   set. Per-section gestures (drag-to-move, drag-to-resize) stay
   single-target — a `MultiSection` selection emits no resize
@@ -1970,8 +1970,8 @@ to the right element.
 
 The four edge-adjacent variants (`Edge`, `EdgeLabel`,
 `PortalLabel`, `PortalText`) each route to a different
-clipboard / colour / font channel: copy on a `PortalLabel` reads
-the icon colour; copy on a `PortalText` reads the text colour;
+clipboard / color / font channel: copy on a `PortalLabel` reads
+the icon color; copy on a `PortalText` reads the text color;
 font commands write to the corresponding field group.
 
 ### `EdgeRef`
@@ -2259,7 +2259,7 @@ specific change kind.
 Different changes invalidate different
 amounts of work. Editing a node's text might change its width
 (full rebuild); dragging a node only moves connection paths
-(connection-only rebuild); changing a portal endpoint colour
+(connection-only rebuild); changing a portal endpoint color
 only touches portal markers (portal-only rebuild). Each tier
 is dispatched explicitly so the cheapest one runs.
 
@@ -2492,40 +2492,84 @@ runs on grapheme-cluster indices throughout (via
 so emoji and combining marks behave as single units. Original
 text and regions are snapshotted on open; Esc restores them.
 
-### Inline edge-label editor
+### Inline single-line editor
 
-Single-line text editing for line-mode edge labels.
+Single-line text editing for the two one-line strings the model
+carries: a line-mode edge's label, and a portal endpoint's
+caption.
 
-Setting or changing an edge label without
-leaving the canvas. Same lifecycle as the node editor (commit
-on click outside the AABB, cancel on Esc) but restricted to one
-line.
+Setting or changing either without leaving the canvas. Same
+lifecycle as the node editor (commit on click outside, cancel on
+Esc) but restricted to one line. Portal captions are
+per-endpoint: selection and editing target one endpoint at a
+time, and the other endpoint's caption is unaffected.
 
-`src/application/app/label_edit.rs`.
-Native-only today. WASM users reach the same operation via the
+`src/application/app/single_line_edit/`. One `SingleLineEditor`
+holds `{target, buffer, cursor_grapheme_pos, original}`; a
+`SingleLineEditTarget` variant owns everything that differs
+between the two — where the current value lives, which preview
+slot on `MindMapDocument` feeds the renderer
+(`label_edit_preview` vs `portal_text_edit_preview`), which
+canvas role is re-projected per keystroke, which setter commits,
+and what "the release landed back on the thing I am editing"
+means. Adding a third single-line editable is a variant plus one
+arm per method; the lifecycle, the modal steal, the
+click-outside commit and the dispatch arms do not grow.
+
+The lifecycle core is renderer-free and returns an `EditRefresh`
+naming the canvas work it owes, so the whole open / type /
+commit / cancel sequence is driven directly in tests (§T8 keeps
+live wgpu out of the harness).
+
+One asymmetry survives on purpose: a portal caption stops being
+editable once its edge is deleted or leaves portal mode, and a
+mid-edit keystroke then closes the editor without committing.
+The edge-label target has never had that guard and keeps typing
+into a buffer whose edge is gone; its commit no-ops in
+`set_edge_label`. `SingleLineEditTarget::still_editable` is where
+the two answer differently, and the differential-oracle tests pin
+both columns.
+
+The `keybinds.json` vocabulary keeps its `label_edit_*` spelling
+(`Action::LabelEdit*`, `InputContext::LabelEdit`) — those are
+user-facing binding names, and both targets have always shared
+them.
+
+Native-only today. WASM users reach the same operations via the
 `label` console verb, which has full cross-platform parity.
 
-### Inline portal-text editor
+### Modal editor ladder
 
-Single-line text editing for portal-endpoint text.
+The steal / release shell both inline text editors sit in.
 
-Setting the text label that sits next to a
-portal icon. Selection and editing target one endpoint at a
-time; the other endpoint's text is unaffected.
+While a text editor is open it owns the keyboard: the key
+resolves in that editor's input context, its commit / cancel pair
+goes through the `dispatch_action` funnel, and everything else
+reaches the editor's own handler as a literal `winit::Key`. On a
+pointer release, a release inside the edited element keeps
+editing and consumes the release; a release outside commits
+through the funnel and lets the click route normally so the new
+selection lands.
 
-Mirrors the label editor shape; native-only
-today, console parity on WASM.
+`src/application/app/modal_editor.rs`. `ModalEditor` is that
+shell written once, over the node text editor and the single-line
+editor; `event_keyboard.rs` has one steal block and
+`event_mouse_click.rs` one click-outside-commit block rather than
+three each. Steal order prefers the single-line editor; the
+release ladder resolves the node text editor first. Both orders
+are pinned by tests, because they are the kind of caller-level
+contract a unit test on either editor cannot see.
 
 ### Glyph-wheel color picker
 
 A modal HSV picker rendered as a 24-glyph hue ring
 with sat/value crosshairs and theme-variable quick-pick chips.
 
-Picking a colour for the current selection
+Picking a color for the current selection
 without leaving the canvas. Hover live-previews through the
 `color_picker_preview` transient on `MindMapDocument`; the
 connection, label, and portal passes read it during projection
-and substitute the preview colour for the targeted element. Click commits, click
+and substitute the preview color for the targeted element. Click commits, click
 outside cancels. Keyboard: h/H nudges hue, s/S sat, v/V value,
 Tab cycles theme chips, Enter commits, Esc cancels.
 
@@ -2791,9 +2835,9 @@ Selection-routed clipboard: each
 Copying a node copies its style and text; copying a section
 copies a structured payload (text + per-run formatting + offset
 / size / channel / bindings); copying an edge copies the body
-colour; copying an edge label copies the label colour; copying
-a portal label copies the icon colour; copying a portal text
-copies the text colour. The font channel mirrors this routing
+color; copying an edge label copies the label color; copying
+a portal label copies the icon color; copying a portal text
+copies the text color. The font channel mirrors this routing
 for `font size= min= max=` writes.
 
 `src/application/clipboard.rs`. The OS

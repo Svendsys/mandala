@@ -21,12 +21,13 @@
 //! + default + arm, in that order; never inline a body in a
 //! handler.
 //!
-//! **Modal state machines.** `text_edit`, `label_edit`,
-//! `portal_text_edit`, `console_input`, and `color_picker_flow`
-//! steal keyboard input when open (the §3 carve-out for modals
-//! that own the literal `winit::Key` payload). Mouse handlers
-//! continue to run; modal commit / cancel routes through
-//! `Action::TextEditCommit` / `LabelEditCancel` etc.
+//! **Modal state machines.** `text_edit`, `single_line_edit`,
+//! `console_input`, and `color_picker_flow` steal keyboard input
+//! when open (the §3 carve-out for modals that own the literal
+//! `winit::Key` payload). Mouse handlers continue to run; modal
+//! commit / cancel routes through `Action::TextEditCommit` /
+//! `LabelEditCancel` etc. The two text editors share one steal /
+//! release ladder in `modal_editor`.
 //!
 //! **Cross-platform shape.** Pure logic (gesture recognition,
 //! viewport math, hit testing, `Action` resolution) lives in

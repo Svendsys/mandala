@@ -842,11 +842,12 @@ fn dispatch_picker_op(op: PickerOp, ctx: &mut InputHandlerContext<'_>) -> Dispat
     DispatchOutcome::Handled
 }
 
-/// Apply a LabelEdit cursor / delete primitive to a generic
-/// `(buffer, cursor)` pair. Both `LabelEditState` and
-/// `PortalTextEditState` share the same single-line semantics; this
-/// helper is generic over the carrier so the dispatch arms can fan
-/// out into either modal. Returns `true` when state changed.
+/// Apply a `LabelEdit*` cursor / delete primitive to a bare
+/// `(buffer, cursor)` pair.
+///
+/// Generic over the carrier so it serves both the single-line
+/// editor and any other buffer with grapheme-cursor semantics.
+/// Returns `true` when state changed.
 pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
     action: Action,
     buffer: &mut String,

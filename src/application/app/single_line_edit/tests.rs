@@ -83,6 +83,50 @@ fn test_resolve_single_line_target_declines_non_edge_selections() {
     }
 }
 
+// ── Press-hit identity (the double-click re-open guard) ─────
+//
+// A double-click on the element already under edit must NOT
+// re-open the editor: re-opening re-seeds the buffer from the
+// committed model value and silently destroys the in-progress
+// edit. The guard in `event_mouse_click` consumes press-time
+// hits and asks the open target whether one of them is it, so
+// this predicate is the whole guard.
+
+fn ek(from: &str, to: &str) -> baumhard::mindmap::scene_cache::EdgeKey {
+    baumhard::mindmap::scene_cache::EdgeKey::new(from, to, "cross_link")
+}
+
+#[test]
+fn test_matches_press_hit_edge_label_reads_only_the_edge_label_hit() {
+    let target = SingleLineEditTarget::EdgeLabel {
+        edge_ref: EdgeRef::new("a", "b", "cross_link"),
+    };
+    assert!(target.matches_press_hit(Some(&ek("a", "b")), None));
+    assert!(!target.matches_press_hit(Some(&ek("a", "c")), None));
+    assert!(!target.matches_press_hit(None, None));
+    // A portal-caption hit on the same edge is a different
+    // element; the edge-label editor must not claim it.
+    assert!(!target.matches_press_hit(None, Some(&(ek("a", "b"), "a".to_string()))));
+}
+
+#[test]
+fn test_matches_press_hit_portal_text_requires_the_same_endpoint() {
+    let target = SingleLineEditTarget::PortalText {
+        edge_ref: EdgeRef::new("a", "b", "cross_link"),
+        endpoint_node_id: "a".to_string(),
+    };
+    assert!(target.matches_press_hit(None, Some(&(ek("a", "b"), "a".to_string()))));
+    // The *other* endpoint of the same portal edge is a
+    // different element: clicking it commits this side and
+    // routes as a fresh selection, so the guard must let the
+    // double-click through.
+    assert!(!target.matches_press_hit(None, Some(&(ek("a", "b"), "b".to_string()))));
+    assert!(!target.matches_press_hit(None, Some(&(ek("a", "c"), "a".to_string()))));
+    assert!(!target.matches_press_hit(None, None));
+    // An edge-label hit belongs to the other role.
+    assert!(!target.matches_press_hit(Some(&ek("a", "b")), None));
+}
+
 // ── `clean` buffer seeding ──────────────────────────────────
 //
 // `Action::EditSelectionClean`'s empty-buffer contract. Before

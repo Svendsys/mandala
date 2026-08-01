@@ -452,7 +452,7 @@ where
 ///
 /// **Scope**: covers the doc-side state (`border_preview` and
 /// `selection`). App-side state — `TextEditState`,
-/// `DragState::Throttled(SectionResize)`, `LabelEditState` —
+/// `DragState::Throttled(SectionResize)`, `SingleLineEditor` —
 /// lives in `InitState` and is reachable only from the app
 /// layer; those concerns are handled at the console verb
 /// dispatch site (see `console::commands::section::mod.rs`).

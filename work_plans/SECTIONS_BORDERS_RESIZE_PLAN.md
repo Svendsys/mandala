@@ -265,7 +265,7 @@ the surfaces it didn't fully replace.
   inside NodeEdit).
 
 - **Modal stealers** (`ConsoleState`, `ColorPickerState`,
-  `LabelEditState`, `PortalTextEditState`, `TextEditState`) stay as
+  `SingleLineEditor`, `TextEditState`) stay as
   separate states. They steal *keystrokes*; modes drive *click
   routing and chrome*. The two systems are layered, not merged. This
   matches CODE_CONVENTIONS §3 carve-out for modal steals.
