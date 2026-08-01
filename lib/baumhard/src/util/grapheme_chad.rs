@@ -15,9 +15,8 @@ use unicode_segmentation::UnicodeSegmentation;
 /// line terminator, or to the end of `s` if no terminator follows.
 ///
 /// The terminator is a cluster ending in `\n` — the same rule
-/// [`line_bounds_at`], [`find_nth_line_grapheme_range`] and
-/// [`find_nth_line_byte_range`] apply, and this helper is the fourth
-/// member of that family: it is what
+/// [`line_bounds_at`] and [`find_nth_line_grapheme_range`] apply, and
+/// this helper is the third member of that family: it is what
 /// [`replace_graphemes_until_newline`] uses to decide how much of a
 /// line it may overwrite. Under UAX #29 `\r\n` is a single cluster, so
 /// cutting at the raw `\n` byte would leave the CR inside the returned
@@ -404,10 +403,9 @@ pub fn line_bounds_at(s: &str, cursor: usize) -> (usize, usize) {
 /// `\n` *characters* — a CRLF is one of each — so a caller that sizes
 /// a buffer with one and addresses it with the other stays in step.
 ///
-/// Four helpers in this module answer a "where does the line end"
-/// question and all four apply that rule: this one,
-/// [`find_nth_line_byte_range`], [`line_bounds_at`], and the
-/// crate-private `slice_to_newline` that
+/// Three helpers in this module answer a "where does the line end"
+/// question and all three apply that rule: this one,
+/// [`line_bounds_at`], and the crate-private `slice_to_newline` that
 /// [`replace_graphemes_until_newline`] writes through.
 ///
 /// Cost: O(n) grapheme walk plus a final `s.graphemes(true).count()`
@@ -438,52 +436,6 @@ pub fn find_nth_line_grapheme_range(s: &str, n: usize) -> Option<(usize, usize)>
         return None;
     }
     Some((last_line_start, s.graphemes(true).count()))
-}
-
-/// Byte span of the `n`-th newline-separated line in `s`, returned as
-/// `(start_byte, end_byte)`. `n = 0` is the first line. Returns
-/// `None` if `s` is empty or `n` is past the last line.
-///
-/// Line terminators follow the same rule as
-/// [`find_nth_line_grapheme_range`] and [`line_bounds_at`]: a CRLF is
-/// one terminator, and the CR is part of it rather than part of the
-/// preceding line's text. The byte walk cannot see clusters, so the
-/// CR is recognized by lookbehind instead — the outcome is identical.
-///
-/// Cost: O(n) byte-level walk via `char_indices()`. No allocation.
-pub fn find_nth_line_byte_range(s: &str, n: usize) -> Option<(usize, usize)> {
-    if s.is_empty() {
-        return None;
-    }
-    let mut line_head = 0;
-    let mut last_line_start = 0;
-    let mut new_line: bool = true;
-    let mut after_cr = false;
-    for (idx, ch) in s.char_indices() {
-        if new_line {
-            last_line_start = idx;
-            new_line = false;
-        }
-        if ch == '\n' {
-            // A CR immediately before the LF belongs to the
-            // terminator, not to the line — `\r` is one byte, so it
-            // starts at `idx - 1`.
-            let line_end = if after_cr { idx - 1 } else { idx };
-            if line_head == n {
-                // Newline that terminates the requested line — emit
-                // [last_line_start, line_end), i.e. without the
-                // terminator itself.
-                return Some((last_line_start, line_end));
-            }
-            new_line = true;
-            line_head += 1;
-        }
-        after_cr = ch == '\r';
-    }
-    if line_head < n || (line_head == n && new_line) {
-        return None;
-    }
-    Some((last_line_start, s.len()))
 }
 
 /// Append `n` newline characters to `s`. Convenience wrapper around
@@ -655,9 +607,13 @@ pub fn join_graphemes(s: &str, separator: &str) -> String {
         return String::new();
     }
     // One separator per cluster boundary, of which there are
-    // `clusters - 1`.
+    // `clusters - 1`. The early return above means `s` is non-empty
+    // and so `clusters >= 1`, but the saturating form keeps the
+    // reservation correct on its own terms rather than on a guard
+    // eight lines up: an exact reservation that underflows would ask
+    // for a `usize::MAX`-sized allocation.
     let clusters = count_grapheme_clusters(s);
-    let mut out = String::with_capacity(s.len() + separator.len() * (clusters - 1));
+    let mut out = String::with_capacity(s.len() + separator.len() * clusters.saturating_sub(1));
     let mut first = true;
     for g in s.graphemes(true) {
         if !first {

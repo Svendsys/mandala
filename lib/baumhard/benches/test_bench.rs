@@ -488,9 +488,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("first_non_whitespace_grapheme", |b| {
         b.iter(do_first_non_whitespace_grapheme)
     });
-    c.bench_function("find_nth_line_byte_indices", |b| {
-        b.iter(|| do_find_nth_line_byte_indices())
-    });
     c.bench_function("find_nth_line_grapheme_indices", |b| {
         b.iter(|| do_find_nth_line_grapheme_indices())
     });

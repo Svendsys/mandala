@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 
 use crate::util::grapheme_chad::{
     count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
-    delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_byte_range, find_nth_line_grapheme_range,
+    delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_grapheme_range,
     first_non_whitespace_grapheme, grapheme_display_width, insert_new_lines, insert_spaces,
     insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
     prev_word_boundary_ws, push_spaces, replace_graphemes_until_newline, scalar_display_width,
@@ -84,38 +84,6 @@ lazy_static! {
         ("\nho\nhi\nhello", 4),
         ("\n🙏🏻\n🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻\n🙏🏻\n🙏🏻\n\n\n\n\n\n\n\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n\n\n\n\n\n🙏🏻🙏🏻🙏🏻\n\n\n\n", 24),
         ("\nho\nhi\nhello🙏🏻🙏🏻🙏🏻\n\n\n🙏🏻\n\n\n🙏🏻\n\n\n🙏🏻\n\n\n\n\n🙏🏻\n\n\n\n🙏🏻\n\n", 24),
-    ];
-
-    pub static ref NTH_LINE_BYTE_INDICES_TEST: Vec<(&'static str, usize, Option<(usize, usize)>)> = vec![
-        ("\n", 0, Some((0, 0))),
-        ("", 0, None),
-        ("a", 0, Some((0,1))),
-        ("a\n", 1, None),
-        ("a\n", 0, Some((0,1))),
-        ("", 1, None),
-        ("Hello\nxxxxxxxxxxqqqqqqqqqqxxxxxxxxxxqqqqqqqqqq\n", 1, Some((6, 46))),
-        ("Hello\nxxxxxxxxxxqqqqqqqqqqxxxxxxxxxxqqqqqqqqqq", 1, Some((6, 46))),
-        ("\n\n", 1, Some((1, 1))),
-        ("\nhi\n", 1, Some((1, 3))),
-        ("\nhi\n", 2, None),
-        ("\nhi\na\nb\nc\nd", 4, Some((8, 9))),
-        ("\n🙏🏻\n🙏🏻\n", 2, Some((1+8+1, 1+8+1+8))),
-        ("🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻", 1, Some((8*10+1, (8*10+1)+8*10))),
-        ("🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻\n🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻🙏🏻", 2, Some((20*8 + 2, (20*8 + 2) + 10*8))),
-        // CRLF is one terminator, and the CR belongs to it — the byte
-        // walk has to agree with `find_nth_line_grapheme_range`, which
-        // sees `\r\n` as a single cluster (UAX #29).
-        ("AA\r\nBB", 0, Some((0, 2))),
-        ("AA\r\nBB", 1, Some((4, 6))),
-        ("AA\r\nBB", 2, None),
-        ("\r\n", 0, Some((0, 0))),
-        ("\r\n", 1, None),
-        ("\r\nx", 1, Some((2, 3))),
-        ("a\r\n\r\nb", 1, Some((3, 3))),
-        ("a\r\n\r\nb", 2, Some((5, 6))),
-        // A lone CR is not a line terminator under UAX #29 and must
-        // not split the line here either.
-        ("a\rb", 0, Some((0, 3))),
     ];
 
     pub static ref NTH_LINE_GRAPHEME_INDICES_TEST: Vec<(&'static str, usize, Option<(usize, usize)>)> = vec![
@@ -623,18 +591,6 @@ pub fn do_count_grapheme_clusters() {
     for (string, num_clusters) in COUNT_GRAPHEMES_TEST.clone() {
         let result = count_grapheme_clusters(string);
         assert_eq!(result, num_clusters);
-    }
-}
-
-#[test]
-pub fn test_find_nth_line_byte_indices() {
-    do_find_nth_line_byte_indices();
-}
-
-pub fn do_find_nth_line_byte_indices() {
-    for (str, n, idx) in NTH_LINE_BYTE_INDICES_TEST.clone() {
-        let result = find_nth_line_byte_range(str, n);
-        assert_eq!(result, idx);
     }
 }
 
