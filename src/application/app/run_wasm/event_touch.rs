@@ -16,10 +16,10 @@
 #![cfg(target_arch = "wasm32")]
 
 use crate::application::app::dispatch::{self, DispatchOutcome};
-use crate::application::app::touch_gesture::{Phase, RecognizedGesture};
+use crate::application::app::touch_gesture::Phase;
 use std::sync::atomic::{AtomicBool, Ordering};
 use web_time::Instant;
-use winit::event::{Touch, TouchPhase};
+use winit::event::Touch;
 
 /// One-shot warn-log latch: fires the first time a recognised
 /// touch gesture maps to an Action whose body is `NativeOnly`,
@@ -36,33 +36,32 @@ impl super::WasmApp {
     /// Started/Moved so future cursor-following overlays update;
     /// true for Ended only when a gesture was dispatched).
     pub(super) fn handle_touch_event(&mut self, touch: Touch) -> bool {
-        let phase = match touch.phase {
-            TouchPhase::Started => Phase::Started,
-            TouchPhase::Moved => Phase::Moved,
-            TouchPhase::Ended | TouchPhase::Cancelled => Phase::Ended,
-        };
+        let phase = dispatch::touch_phase(touch.phase);
         let pos = (touch.location.x, touch.location.y);
         let now = Instant::now();
-        // Recogniser ingest + tick happens under the input
-        // borrow; dispatch happens after the borrow drops so
-        // `self.dispatch_action` can re-borrow `self.input`.
         let mut input_borrow = self.input.borrow_mut();
         let mut renderer_borrow = self.renderer.borrow_mut();
         let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut())
         else {
             return false;
         };
-        let from_ingest = input.touch_recognizer.ingest(phase, touch.id, pos, now);
-        let from_tick = input.touch_recognizer.tick(now);
-        let recognised: Option<RecognizedGesture> = from_ingest.or(from_tick);
-        if let Some(g) = recognised {
+        // Phase translation, recognizer ingest + tick, and the
+        // gesture-to-Action lookup are the shared body native runs
+        // too. What is left below is the browser's own dispatch:
+        // `dispatch_compatible` plus the `NativeOnly` warn-log.
+        if let Some(d) = dispatch::drive_touch_event(
+            &mut input.touch_recognizer,
+            &self.keybinds,
+            phase,
+            touch.id,
+            pos,
+            now,
+        ) {
             // Move the cursor to the gesture's reported pos so the
-            // dispatched Action sees the right cursor. Mirrors
-            // `dispatch_touch_event` on native.
-            input.cursor_pos = g.pos();
-            let name = g.mouse_gesture().key_name();
-            let action = self.keybinds.action_for_gesture(name, false, false, false);
-            if let Some(a) = action {
+            // dispatched Action sees the right cursor.
+            input.cursor_pos = d.cursor_pos;
+            let name = d.gesture_name;
+            if let Some(a) = d.action {
                 let mut core = input.input_context_core(renderer, &self.keybinds);
                 let outcome = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
                 // Whole-PR review BLK-1: when the bound Action is

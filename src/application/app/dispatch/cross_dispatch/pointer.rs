@@ -25,6 +25,7 @@ use baumhard::mindmap::scene_cache::EdgeKey;
 
 use crate::application::app::input_context_core::InputContextCore;
 use crate::application::app::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
+use crate::application::app::touch_gesture::{Phase, TouchGestureRecognizer};
 use crate::application::app::ClickHit;
 
 use super::apply_create_orphan_node_and_edit;
@@ -285,6 +286,93 @@ pub(in crate::application::app) fn apply_double_click_activate(
     }
 }
 
+/// winit's touch phase in the recognizer's stable vocabulary.
+///
+/// `Cancelled` folds into `Ended`: from the recognizer's point of
+/// view a cancelled finger and a lifted finger both free the slot,
+/// and the difference is invisible to gesture recognition. Both
+/// targets translated this identically at their own boundary; it is
+/// here so a fourth winit phase cannot be handled on one target and
+/// forgotten on the other.
+pub(in crate::application::app) fn touch_phase(phase: winit::event::TouchPhase) -> Phase {
+    match phase {
+        winit::event::TouchPhase::Started => Phase::Started,
+        winit::event::TouchPhase::Moved => Phase::Moved,
+        winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => Phase::Ended,
+    }
+}
+
+/// A recognized touch gesture, resolved against the keybind table.
+///
+/// Returned by [`drive_touch_event`]; the caller performs the two
+/// effects, because they are the parts the two targets genuinely do
+/// differently (native dispatches through `dispatch_action` with the
+/// full native context, the browser through `dispatch_compatible`
+/// plus a `NativeOnly` warn-log).
+pub(in crate::application::app) struct TouchGestureDispatch {
+    /// Where the gesture happened. The caller assigns this to
+    /// `cursor_pos` **before** dispatching, so the Action reads the
+    /// position the finger was at rather than wherever the mouse
+    /// cursor last was.
+    pub(in crate::application::app) cursor_pos: (f64, f64),
+    /// Canonical gesture key name (`"LongPress"`, `"TwoFingerDrag"`,
+    /// …) — what the lookup used, and what the browser's warn-log
+    /// names.
+    pub(in crate::application::app) gesture_name: &'static str,
+    /// The bound Action, or `None` when the user has no binding for
+    /// this gesture. `None` still yields a `TouchGestureDispatch`
+    /// rather than collapsing to `None` at the outer level: both
+    /// targets moved the cursor as soon as a gesture was
+    /// *recognized*, before ever consulting the table, and folding
+    /// the two cases together would silently drop that move.
+    pub(in crate::application::app) action: Option<Action>,
+}
+
+/// Feed one touch event through the recognizer and resolve whatever
+/// it recognizes against the keybind table.
+///
+/// The whole of the ingest → tick → lookup sequence both runtimes
+/// ran as a near-copy. Returns `None` when the event drove no
+/// recognition — the caller then falls back to "redraw on
+/// Started/Moved" so cursor-following gesture chrome still updates.
+///
+/// Modifiers are fixed all-false at the lookup: touch devices have
+/// no modifier keys, and the `LongPress` / `TwoFingerDrag` bindings
+/// don't carry Ctrl/Shift/Alt either.
+///
+/// Either `ingest` or `tick` can produce at most one recognition per
+/// call. When both fire, ingest wins — it is the more recent
+/// transition — and the tick's emission is picked up on the next
+/// call. Both are always run: `tick` must not be short-circuited by
+/// an ingest hit, or the long-press timer would stall.
+///
+/// The "both fire" case is **not reachable** in the current
+/// recognizer, so the `or` ordering is unobservable and no test pins
+/// it: `tick` emits only from `OneFinger`, and the two `ingest`
+/// emissions come from `TwoFingers` (`TwoFingerDrag`) or return
+/// `None` (`OneFinger`'s `Moved`). The order is written down anyway
+/// because it is the answer the moment the vocabulary grows a
+/// one-finger ingest gesture, and getting it wrong then would
+/// silently delay a gesture by one event rather than fail loudly.
+pub(in crate::application::app) fn drive_touch_event(
+    recognizer: &mut TouchGestureRecognizer,
+    keybinds: &ResolvedKeybinds,
+    phase: Phase,
+    id: u64,
+    pos: (f64, f64),
+    now: web_time::Instant,
+) -> Option<TouchGestureDispatch> {
+    let from_ingest = recognizer.ingest(phase, id, pos, now);
+    let from_tick = recognizer.tick(now);
+    let gesture = from_ingest.or(from_tick)?;
+    let gesture_name = gesture.mouse_gesture().key_name();
+    Some(TouchGestureDispatch {
+        cursor_pos: gesture.pos(),
+        gesture_name,
+        action: keybinds.action_for_gesture(gesture_name, false, false, false),
+    })
+}
+
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
@@ -507,5 +595,189 @@ mod tests {
             &SelectionState::Section(SectionSel::new("n", 0)),
             &er
         ));
+    }
+
+    // -------------------------------------------------------------
+    // Touch driving
+    //
+    // `drive_touch_event` is the ingest -> tick -> lookup sequence
+    // both runtimes ran as a near-copy. It takes a recognizer and a
+    // keybind table and returns plain values, so the whole thing is
+    // reachable without an event loop.
+    // -------------------------------------------------------------
+
+    use crate::application::app::touch_gesture::TouchGestureRecognizer;
+    use crate::application::keybinds::MouseGesture;
+    use std::time::Duration;
+    use web_time::Instant;
+
+    /// Every winit phase maps to the recognizer's vocabulary, with
+    /// `Cancelled` folding onto `Ended`. `touch_phase` matches
+    /// exhaustively, so a new winit variant is a build error rather
+    /// than a phase silently handled on one target only.
+    #[test]
+    fn test_touch_phase_translates_every_winit_phase() {
+        use winit::event::TouchPhase as W;
+        assert_eq!(touch_phase(W::Started), Phase::Started);
+        assert_eq!(touch_phase(W::Moved), Phase::Moved);
+        assert_eq!(touch_phase(W::Ended), Phase::Ended);
+        assert_eq!(touch_phase(W::Cancelled), Phase::Ended);
+    }
+
+    /// A finger landing recognizes nothing yet — long-press needs
+    /// the clock to advance. `None` is what tells the caller to fall
+    /// back to "redraw on Started/Moved".
+    #[test]
+    fn test_drive_touch_event_recognizes_nothing_on_a_bare_start() {
+        let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
+        let kb = keybinds_default();
+        let out = drive_touch_event(&mut r, &kb, Phase::Started, 1, (5.0, 6.0), Instant::now());
+        assert!(out.is_none());
+    }
+
+    /// The long-press path end to end: a finger held past the
+    /// threshold is recognized by `tick` (not by `ingest`), reports
+    /// the finger's resting position, and resolves through the
+    /// keybind table to the default `LongPress` binding.
+    #[test]
+    fn test_drive_touch_event_resolves_a_long_press_through_the_keybind_table() {
+        let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
+        let kb = keybinds_default();
+        let t0 = Instant::now();
+        assert!(drive_touch_event(&mut r, &kb, Phase::Started, 1, (5.0, 6.0), t0).is_none());
+        // Same finger, same spot, clock advanced past the threshold.
+        let late = t0 + Duration::from_millis(50);
+        let d = drive_touch_event(&mut r, &kb, Phase::Moved, 1, (5.0, 6.0), late)
+            .expect("held past the long-press threshold");
+        assert_eq!(d.gesture_name, MouseGesture::LongPress.key_name());
+        assert_eq!(d.cursor_pos, (5.0, 6.0));
+        assert_eq!(d.action, Some(Action::EnterResizeMode));
+    }
+
+    /// An unbound gesture still yields a dispatch record. This is
+    /// the case that must not collapse to `None`: both targets moved
+    /// the cursor as soon as a gesture was *recognized*, before ever
+    /// consulting the table, so folding "no binding" into "no
+    /// gesture" would silently drop that move and leave the next
+    /// Action reading a stale cursor.
+    #[test]
+    fn test_drive_touch_event_reports_the_position_even_when_unbound() {
+        let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
+        let mut cfg = KeybindConfig::default();
+        cfg.enter_resize_mode = vec![];
+        let kb = cfg.resolve();
+        let t0 = Instant::now();
+        drive_touch_event(&mut r, &kb, Phase::Started, 1, (5.0, 6.0), t0);
+        let d = drive_touch_event(
+            &mut r,
+            &kb,
+            Phase::Moved,
+            1,
+            (5.0, 6.0),
+            t0 + Duration::from_millis(50),
+        )
+        .expect("gesture is still recognized when its Action is unbound");
+        assert_eq!(d.gesture_name, MouseGesture::LongPress.key_name());
+        assert_eq!(d.cursor_pos, (5.0, 6.0));
+        assert_eq!(d.action, None);
+    }
+
+    /// Rebinding the gesture is honored — the same touch now
+    /// resolves to a different Action. This is the acceptance
+    /// property for touch: the table, not the handler, decides.
+    #[test]
+    fn test_drive_touch_event_honors_a_rebound_gesture() {
+        let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
+        let mut cfg = KeybindConfig::default();
+        cfg.enter_resize_mode = vec![];
+        cfg.select_all = vec!["LongPress".into()];
+        let kb = cfg.resolve();
+        let t0 = Instant::now();
+        drive_touch_event(&mut r, &kb, Phase::Started, 1, (1.0, 2.0), t0);
+        let d = drive_touch_event(
+            &mut r,
+            &kb,
+            Phase::Moved,
+            1,
+            (1.0, 2.0),
+            t0 + Duration::from_millis(50),
+        )
+        .expect("held past the long-press threshold");
+        assert_eq!(d.action, Some(Action::SelectAll));
+    }
+
+    /// The other half of the vocabulary, and the half that comes out
+    /// of `ingest` rather than `tick` — so this is what proves the
+    /// ingest call is not dead. Two fingers down, then one drags the
+    /// centroid past the movement threshold.
+    ///
+    /// It also separates the two positions in play: the *event* is at
+    /// (40, 0) while the recognized gesture is the **centroid** at
+    /// (25, 0). `cursor_pos` must be the centroid — reporting the raw
+    /// event position would put the dispatched Action under the wrong
+    /// finger.
+    #[test]
+    fn test_drive_touch_event_recognizes_a_two_finger_drag_from_ingest() {
+        let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
+        let kb = keybinds_default();
+        let t0 = Instant::now();
+        assert!(drive_touch_event(&mut r, &kb, Phase::Started, 1, (0.0, 0.0), t0).is_none());
+        assert!(drive_touch_event(&mut r, &kb, Phase::Started, 2, (10.0, 0.0), t0).is_none());
+        // Centroid moves (5,0) -> (25,0): 20px, past the 8px threshold.
+        let d = drive_touch_event(&mut r, &kb, Phase::Moved, 1, (40.0, 0.0), t0)
+            .expect("centroid moved past the threshold");
+        assert_eq!(d.gesture_name, MouseGesture::TwoFingerDrag.key_name());
+        assert_eq!(d.cursor_pos, (25.0, 0.0));
+        assert_eq!(d.action, Some(Action::FastResizeStart));
+    }
+
+    /// The lookup passes all-false modifiers: touch devices have no
+    /// modifier keys. `action_for_gesture` falls back to the
+    /// unmodified binding when no exact-modifier match exists, so a
+    /// stray `true` would be invisible unless a *different* Action is
+    /// bound to the modified form — which is exactly what this sets
+    /// up. The bare binding must win.
+    #[test]
+    fn test_drive_touch_event_looks_up_with_no_modifiers() {
+        let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
+        let mut cfg = KeybindConfig::default();
+        cfg.enter_resize_mode = vec!["LongPress".into()];
+        cfg.select_all = vec!["Ctrl+LongPress".into()];
+        let kb = cfg.resolve();
+        let t0 = Instant::now();
+        drive_touch_event(&mut r, &kb, Phase::Started, 1, (1.0, 2.0), t0);
+        let d = drive_touch_event(
+            &mut r,
+            &kb,
+            Phase::Moved,
+            1,
+            (1.0, 2.0),
+            t0 + Duration::from_millis(50),
+        )
+        .expect("held past the long-press threshold");
+        assert_eq!(d.action, Some(Action::EnterResizeMode));
+    }
+
+    /// A lifted finger clears the slot and recognizes nothing. Pinned
+    /// because `ingest` returns `None` for `Ended` while `tick` still
+    /// runs — the `or` must not resurrect a stale emission.
+    #[test]
+    fn test_drive_touch_event_recognizes_nothing_after_the_finger_lifts() {
+        let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
+        let kb = keybinds_default();
+        let t0 = Instant::now();
+        drive_touch_event(&mut r, &kb, Phase::Started, 1, (5.0, 6.0), t0);
+        let late = t0 + Duration::from_millis(50);
+        assert!(drive_touch_event(&mut r, &kb, Phase::Ended, 1, (5.0, 6.0), late).is_none());
+        // And the now-idle recognizer keeps reporting nothing.
+        assert!(drive_touch_event(
+            &mut r,
+            &kb,
+            Phase::Moved,
+            1,
+            (5.0, 6.0),
+            late + Duration::from_millis(50)
+        )
+        .is_none());
     }
 }
