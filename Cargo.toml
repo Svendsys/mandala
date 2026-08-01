@@ -154,6 +154,17 @@ wasm-bindgen = "0.2.118"
 wasm-bindgen-futures = "0.4.68"
 js-sys = "0.3.95"
 web-sys = { version = "0.3.95", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response"] }
+# Load-bearing despite having no call site anywhere in `src/`, which
+# is exactly why it is worth a comment: this entry exists to turn a
+# *feature* on, and the next dead-dependency sweep will otherwise find
+# it and delete it. `getrandom` reaches the graph through
+# `baumhard`'s `rand`, and on `wasm32-unknown-unknown` it has no
+# default backend — without `wasm_js` it fails to compile its own
+# `backends` module (`cannot find function 'inner_u32' in module
+# 'backends'`, reproduced by removing this line and running the
+# `./test.sh` wasm32 gate). Cargo unions features across the
+# workspace, so declaring it in the crate that *is* the wasm binary
+# is what makes the browser build resolve.
 getrandom = { version = "0.4.2", features = ["wasm_js"] }
 
 # No `[dev-dependencies]`, and in particular no `criterion`: this
