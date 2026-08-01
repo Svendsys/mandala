@@ -768,6 +768,120 @@ mod flat_mutations_tests {
         }
     }
 
+    /// The agreement predicate has to be **reflexive**, or the two
+    /// helpers above stop agreeing with each other.
+    ///
+    /// `scope::self_and_descendants` clones one list into two `Macro`
+    /// nodes, so the rule compares a payload against itself. Derived
+    /// `PartialEq` over `f32` is not reflexive, so under `==` a `NaN`
+    /// made that comparison fail:
+    ///
+    /// ```text
+    /// PROBE NaN self_and_descendants => false   # declined
+    /// PROBE NaN self_only            => true    # same payload, applied
+    /// PROBE inf self_and_descendants => true    # infinities are fine
+    /// ```
+    ///
+    /// Two helpers differing only in scope must not differ in whether
+    /// the mutation runs at all — and neither is allowed to depend on
+    /// which float the author picked. `inf` is the control row: it is
+    /// reachable from JSON (an out-of-range literal) and it always
+    /// worked, so a fix that reached it would be over-broad.
+    #[test]
+    fn test_a_nan_payload_extracts_the_same_under_every_scope_helper() {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.0] {
+            let payload = || vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(value))];
+            for node in [
+                scope::self_only(payload()),
+                scope::descendants(payload()),
+                scope::self_and_descendants(payload()),
+            ] {
+                let got = flat_mutations(&node);
+                assert!(
+                    got.is_some(),
+                    "a {value} payload must extract under every scope helper; got {got:?}"
+                );
+                let got = got.expect("checked above");
+                assert_eq!(got.len(), 1, "one payload in, one payload out: {got:?}");
+                assert!(
+                    got[0].writes_the_same(&payload()[0]),
+                    "the extracted payload must be the authored one; got {got:?}"
+                );
+            }
+        }
+    }
+
+    /// The converse of the reflexivity fix: a genuine disagreement
+    /// still declines even when one side is a `NaN`. Restoring
+    /// reflexivity must not degrade into "anything unordered agrees".
+    #[test]
+    fn test_a_nan_payload_still_declines_against_a_different_payload() {
+        let nan = Mutation::area_command(GlyphAreaCommand::NudgeRight(f32::NAN));
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nan]),
+            children: vec![macro_child()],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "NaN and nudge(1) do not write the same thing; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
+    /// `0.0` and `-0.0` write the same thing, so they agree — the
+    /// reflexivity fix keeps IEEE equality as one of its two
+    /// disjuncts rather than replacing it with bit identity, which
+    /// would have turned this into a decline.
+    #[test]
+    fn test_signed_zero_payloads_agree() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(
+                0.0,
+            ))]),
+            children: vec![MutatorNode::Macro {
+                channel: 0,
+                mutations: MutationListSrc::Literal(vec![Mutation::area_command(
+                    GlyphAreaCommand::NudgeRight(-0.0),
+                )]),
+                children: vec![],
+            }],
+        };
+        assert_eq!(
+            flat_mutations(&node),
+            Some(vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(0.0))])
+        );
+    }
+
+    /// A `NaN` must not be allowed to agree with an `inf`. This is
+    /// why the agreement predicate is not defined over the
+    /// *serialized* form: `serde_json` writes every non-finite float
+    /// as `null`, and `inf` is reachable from a `.mindmap.json`, so
+    /// that definition would silently drop a real payload rather than
+    /// merely over-decline.
+    #[test]
+    fn test_a_nan_payload_does_not_agree_with_an_infinity() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(
+                f32::NAN,
+            ))]),
+            children: vec![MutatorNode::Macro {
+                channel: 0,
+                mutations: MutationListSrc::Literal(vec![Mutation::area_command(
+                    GlyphAreaCommand::NudgeRight(f32::INFINITY),
+                )]),
+                children: vec![],
+            }],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "NaN and inf must not collapse; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
     // ---- Payload equivalence, not mere extractability ----
     //
     // Four shapes that are *entirely* extractable node-by-node and
@@ -902,10 +1016,66 @@ mod flat_mutations_tests {
         assert_eq!(flat_mutations(&node), Some(vec![nudge()]));
     }
 
+    /// A `Void` passes an **agreeing** payload through: the shape
+    /// still extracts, so the `Void` neither swallowed the payload
+    /// nor declined on its own account.
+    ///
+    /// This is the half of the pair that
+    /// [`test_void_child_forwards_a_disagreeing_payload_and_declines`]
+    /// cannot observe. That test asserts `is_none()`, which any
+    /// decline satisfies — including "the `Void` declined for its own
+    /// reasons", the opposite of forwarding — so it survives a mutant
+    /// that reverts `Void` transparency outright. Together the two
+    /// distinguish forwarding from declining, which is what the other
+    /// test's name claims.
+    #[test]
+    fn test_void_child_forwards_an_agreeing_payload_and_extracts() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![MutatorNode::Void {
+                channel: 0,
+                children: vec![macro_child()],
+            }],
+        };
+        assert_eq!(flat_mutations(&node), Some(vec![nudge()]));
+    }
+
+    /// A `Void`'s channel is branch routing, not decoration: `build`
+    /// emits `GfxMutator::new_void(channel)` and the walker aligns
+    /// that node's children only against the target child on the
+    /// matching channel. The flat path has nothing to route on, so a
+    /// `Void` off channel 0 says something the flat list cannot say
+    /// and declines — the `7f3a87c` behavior for every `Void`, kept
+    /// for exactly the case where transparency would lose meaning.
+    ///
+    /// At `c445fab` this returned `Some([NudgeRight(1.0)])`.
+    #[test]
+    fn test_void_child_on_a_nonzero_channel_declines() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![MutatorNode::Void {
+                channel: 7,
+                children: vec![],
+            }],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "a channel-7 Void is a routing gate, not grouping; got {:?}",
+            flat_mutations(&node)
+        );
+    }
+
     /// A `Void` passes its children's payload through rather than
     /// swallowing it — grouping is not a payload boundary. Here the
     /// grouped list *disagrees* with the root's, and the disagreement
     /// still has to surface through the wrapper.
+    ///
+    /// Paired with
+    /// [`test_void_child_forwards_an_agreeing_payload_and_extracts`]:
+    /// `is_none()` alone cannot tell forwarding from declining, so
+    /// the two are only meaningful together.
     #[test]
     fn test_void_child_forwards_a_disagreeing_payload_and_declines() {
         let node = MutatorNode::Macro {
@@ -941,7 +1111,7 @@ mod flat_mutations_tests {
     /// has nowhere to put. Unlike `Void` it is not payload-free, so
     /// it declines.
     #[test]
-    fn test_single_child_is_not_flat_extractable() {
+    fn test_single_child_is_not_flat_extractable_with_a_runtime_hole() {
         use crate::mutator_builder::ChannelSrc;
         let node = MutatorNode::Macro {
             channel: 0,
@@ -952,6 +1122,32 @@ mod flat_mutations_tests {
             }],
         };
         assert!(flat_mutations(&node).is_none());
+    }
+
+    /// `Single { mutation: MutationSrc::None }` is as payload-free as
+    /// an empty `Void` and still declines — deliberately, and pinned
+    /// so the asymmetry with `Void` is a decision rather than an
+    /// oversight. `Single` is a *leaf* whose `ChannelSrc` selects the
+    /// target it writes; admitting the payload-free case would widen
+    /// the accepted set into the one node kind whose entire meaning
+    /// is the routing the flat path drops, to gain a node that does
+    /// nothing.
+    #[test]
+    fn test_payload_free_single_child_still_declines() {
+        use crate::mutator_builder::ChannelSrc;
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![MutatorNode::Single {
+                channel: ChannelSrc::Literal(0),
+                mutation: MutationSrc::None,
+            }],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "Single declines in every form; got {:?}",
+            flat_mutations(&node)
+        );
     }
 
     /// `MapChildren` has no flat equivalent — the flat path iterates

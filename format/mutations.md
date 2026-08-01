@@ -433,11 +433,22 @@ Four top-level variants:
     top to bottom and still declines, because one flat list cannot be
     both `L1` and `L2` — picking `L1` lands `L2` nowhere, which is the
     identical failure by a different road. So the rule is: every
-    payload anywhere in the AST must **equal** the one extracted.
-    `scope::self_and_descendants` satisfies it exactly (its root and
-    nested `Macro` carry two clones of the same list); nesting
-    *differing* payloads is declined, not merged. Concatenating them
-    instead would turn that helper into a double-apply.
+    payload anywhere in the AST must **agree with** the one
+    extracted. `scope::self_and_descendants` satisfies it exactly
+    (its root and nested `Macro` carry two clones of the same list);
+    nesting *differing* payloads is declined, not merged.
+    Concatenating them instead would turn that helper into a
+    double-apply.
+
+    "Agree" is *would write the same thing*, which is deliberately
+    not `==` on the payload: the numeric fields are `f32`, so `==`
+    is not reflexive and a `NaN` would make the duplicated payload
+    of `scope::self_and_descendants` disagree with **itself** and
+    decline, while the same payload under `scope::self_only` — with
+    nothing to compare — applied. Two payloads agree when they are
+    `==` **or** structurally identical, so `NaN` agrees with itself
+    and `0.0` still agrees with `-0.0`. `NaN` does not agree with
+    `inf`.
 
     Two corollaries of "every payload must agree":
 
@@ -445,12 +456,18 @@ Four top-level variants:
       `Runtime` hole or an `AreaDelta` per-cell template — is
       declined. Both are payloads the flat path provably cannot
       evaluate. The scope helpers all set `"mutation": "None"`.
-    - A `Void` is transparent, since it is pure structural grouping
-      and carries no payload of its own: an empty `Void` cannot lose
-      anything and does not decline, while a `Void` wrapping a
-      disagreeing payload still surfaces the disagreement. `Single`
-      is not transparent — it carries a real channel-targeted
-      mutation with nowhere to go on the flat path — and declines.
+    - A `Void` **on channel 0** is transparent, since it carries no
+      mutation of its own: an empty one cannot lose anything and does
+      not decline, while one wrapping a disagreeing payload still
+      surfaces the disagreement. Off channel 0 it declines — a
+      `Void`'s channel is branch routing (the walker aligns its
+      children only against the target child on that channel), and
+      the flat path produces one list applied to whole elements with
+      nothing to route on. All the scope helpers build on channel 0.
+      `Single` declines in every form, including
+      `"mutation": "None"`: it is a leaf whose `channel` selects the
+      target it writes, so admitting it would widen the flat path
+      into precisely the routing it cannot honor.
   - `RotateWhile(<f32>, <Predicate>)` — rotation stub (reserved).
   - `SpatialDescend(<OrderedVec2>)` — descend by AABB containment to
     the deepest node that holds the point, deliver the instruction's

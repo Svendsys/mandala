@@ -330,8 +330,17 @@ pub fn apply_mutations_to_element(
 ///    concatenating the descendant payloads instead would turn
 ///    [`scope::self_and_descendants`] — whose root and nested `Macro`
 ///    carry two clones of the *same* list — into a double-apply.
-///    Equality is what makes that helper's duplicate payload a no-op
-///    rather than a special case.
+///    Agreement is what makes that helper's duplicate payload a
+///    no-op rather than a special case.
+///
+///    "Agree" is
+///    [`Mutation::writes_the_same`](crate::gfx_structs::mutator::Mutation::writes_the_same),
+///    not `==`. Derived `PartialEq` over `f32` is not reflexive, so
+///    under `==` a `NaN` in that helper's duplicated payload would
+///    make it disagree with **itself** and decline, while the same
+///    payload under [`scope::self_only`] — which has nothing to
+///    compare — applied. Two helpers differing only in scope must
+///    not differ in whether the mutation runs.
 ///
 /// [`MutationSrc`](crate::mutator_builder::MutationSrc) payloads on an
 /// `Instruction` wrapper are unevaluatable by rule 1 for the same
@@ -341,19 +350,44 @@ pub fn apply_mutations_to_element(
 /// template. Both scope helpers that build wrappers set
 /// `mutation: MutationSrc::None`, so requiring it costs nothing.
 ///
-/// A [`MutatorNode::Void`]
-/// is *payload-free structure*, so it is transparent: it contributes
-/// nothing of its own and passes its children's payload through. An
-/// empty `Void` in particular can lose nothing, and declining on one
-/// would kill a mutator to save a payload that does not exist.
-/// `Single` is the opposite case and still declines — it carries a
-/// real channel-targeted `MutationSrc` the flat path cannot place.
+/// A [`MutatorNode::Void`] on **channel 0** carries no mutation, so
+/// it is transparent: it passes its children's payload through, and
+/// an empty one can lose nothing — declining on it would kill a
+/// mutator to save a payload that does not exist.
+///
+/// Channel 0 is the condition, not a formality. A `Void`'s channel is
+/// branch routing: [`build`](crate::mutator_builder::build) emits
+/// `GfxMutator::new_void(channel)` and the walker aligns that node's
+/// children only against the target child on the matching channel, so
+/// `Void{channel: 7}` is a routing gate rather than pure grouping.
+/// The flat path is channel-blind by construction — it produces one
+/// list applied to whole elements, with nothing to route on — and
+/// `Macro` has always inherited that limitation (load-bearing for the
+/// `SectionsOnly` fan-out, where a channel-0 `Macro` is deliberately
+/// applied to section-areas on channels 1..n). What is *not* on offer
+/// is widening the accepted set on the strength of a rationale that
+/// does not hold: a `Void` used off channel 0 says something the flat
+/// list cannot say, so it keeps the `7f3a87c` behavior and declines.
+/// Every scope helper builds on channel 0, so nothing this
+/// transparency was introduced for is affected.
+///
+/// `Single` declines in every form, including
+/// `Single { mutation: MutationSrc::None }` — which is as payload-free
+/// as an empty `Void` and could safely be admitted. It is not,
+/// because `Single`'s reason to exist is its `ChannelSrc`: unlike
+/// `Void` it is a *leaf* whose channel selects the target it writes,
+/// so admitting the payload-free case would be widening into the one
+/// node kind whose whole meaning is the routing the flat path drops,
+/// to gain a node that does nothing. Conservative on purpose.
 ///
 /// Costs: O(AST size). Clones each payload-bearing node's literal
 /// list once — including the clones it compares and discards — so a
-/// declined mutator still allocates. Called on every apply (three
-/// times: once by the unsupported-field warning and once per tree),
-/// plus once per animation start; none of those is a frame path.
+/// declined mutator still allocates. The comparison itself allocates
+/// only when two payloads are not `==` (see
+/// [`Mutation::writes_the_same`](crate::gfx_structs::mutator::Mutation::writes_the_same)).
+/// Called on every apply (three times: once by the unsupported-field
+/// warning and once per tree), plus once per animation start; none of
+/// those is a frame path.
 pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
     // The outer `Option` is the decline verdict; the inner one
     // distinguishes "carries this payload" from "payload-free
@@ -376,8 +410,10 @@ pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::m
 fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator::Mutation>>> {
     use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode as N};
     let (mut payload, children) = match node {
-        // Pure structural grouping — no payload of its own.
-        N::Void { children, .. } => (None, children.as_slice()),
+        // Pure structural grouping — no payload of its own. Channel
+        // 0 only: off channel 0 a `Void` is a routing gate the flat
+        // path cannot honor, so it falls through and declines.
+        N::Void { channel: 0, children } => (None, children.as_slice()),
         // The literal list is this node's payload; the children below
         // must agree with it.
         N::Macro {
@@ -422,8 +458,10 @@ fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator:
         // Everything else declines: `MapChildren` and the other
         // walking instructions have no flat equivalent, a
         // `MutationListSrc::Runtime` Macro needs a section context,
-        // `Single` carries a channel-targeted mutation the flat path
-        // cannot place, and `Repeat` expands at build time.
+        // `Single` is a leaf whose `ChannelSrc` selects the target it
+        // writes and the flat path has nowhere to put that, a `Void`
+        // off channel 0 is a routing gate for the same reason, and
+        // `Repeat` expands at build time.
         _ => return None,
     };
     for child in children {
@@ -434,11 +472,36 @@ fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator:
             (None, Some(list)) => payload = Some(list),
             // A second payload must say the same thing, or the flat
             // list cannot represent both — decline (rule 2 above).
-            (Some(have), Some(list)) if *have != list => return None,
+            (Some(have), Some(list)) if !lists_agree(have, &list) => return None,
             (Some(_), Some(_)) => {}
         }
     }
     Some(payload)
+}
+
+/// Whether two payload lists would write the same thing, element by
+/// element.
+///
+/// Element-wise
+/// [`Mutation::writes_the_same`](crate::gfx_structs::mutator::Mutation::writes_the_same)
+/// rather than `==` on the slices, because the derived `PartialEq`
+/// over `f32` is not reflexive and this predicate decides whether a
+/// mutator runs at all — see that method for why a `NaN` otherwise
+/// makes [`scope::self_and_descendants`] decline a payload
+/// [`scope::self_only`] applies.
+///
+/// Element-wise rather than whole-list so each element gets the
+/// full union: `[NaN, 0.0]` agrees with `[NaN, -0.0]`, where a
+/// list-level comparison would find neither disjunct true of the
+/// pair as a whole.
+///
+/// Cost: O(n) comparisons, no allocation unless an element
+/// disagrees under `==`.
+fn lists_agree(
+    a: &[crate::gfx_structs::mutator::Mutation],
+    b: &[crate::gfx_structs::mutator::Mutation],
+) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.writes_the_same(y))
 }
 
 /// Which node sets, relative to the anchor, the mutator AST could
