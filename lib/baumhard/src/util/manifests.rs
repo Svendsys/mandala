@@ -37,17 +37,50 @@
 //!
 //! ## On the parser
 //!
-//! It is line-oriented, not a TOML implementation, and it refuses
-//! rather than guesses: a dependency spread across several lines
-//! panics with the line that caused it instead of being silently
-//! skipped. That matters more than generality here, because a parser
-//! that quietly matched nothing would turn every test below into a
-//! test that cannot fail. [`tests`] therefore pins the parser
-//! against synthetic manifests — including ones that *must* be
-//! rejected — before pointing it at the real ones.
+//! It is line-oriented, not a TOML implementation, and the shape of
+//! its ignorance is the whole design. A parser that quietly matched
+//! nothing would turn every test below into a test that cannot fail,
+//! so the rule is: **a legal shape either parses or stops the run —
+//! it never deletes itself from the checked set.**
+//!
+//! Concretely:
+//!
+//! - Both spellings cargo offers for a dependency parse: the inline
+//!   `serde = { version = "1", features = [...] }` and the sub-table
+//!   header `[dependencies.serde]` with its keys on the lines below.
+//!   The second is what a `taplo fmt` or a long feature list turns
+//!   the first into, and it is a one-line way to re-split a version,
+//!   so it has to be seen rather than skipped.
+//! - A renamed dependency (`fast = { package = "rustc-hash", ... }`)
+//!   is recorded under the crate it actually pulls in, so a rename
+//!   cannot hide a split behind a different key.
+//! - A trailing `# comment` on a declaration is stripped, quotes
+//!   respected. Manifests in this workspace are heavily commented;
+//!   adding one more comment must not be able to fail a test.
+//! - A declaration wrapped across lines — a long `features` list, or
+//!   whatever a formatter does to the 190-column `web-sys` entry — is
+//!   rejoined before it is read. A line break cannot change which
+//!   crate is pulled in at which version, so it may not change the
+//!   answer given here.
+//! - Everything left **refuses**: a section header the reader has no
+//!   classification for, a table nested deeper under a dependency
+//!   table, a value that is neither a version string nor an inline
+//!   table. Each panics naming the file, the line, and what the
+//!   reader could not do with it.
+//!
+//! The refusal policy is weighted by risk on purpose, because it used
+//! to be weighted the other way: silence is for shapes that cannot
+//! change an answer, and noise is for anything that could be a
+//! dependency the rules never see.
+//!
+//! [`tests`] pins all of this against synthetic manifests — including
+//! ones that *must* be rejected, and shapes the real manifests do not
+//! yet use — before pointing the parser at the real ones. A fixture
+//! made only of shapes the manifests already contain could never
+//! discover a shape they could grow.
 
+use crate::util::doc_fixtures::repo_path;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 
 /// Which dependency table a declaration was found in. The string is
 /// the raw section header without its brackets, so
@@ -66,8 +99,15 @@ pub(crate) enum Table {
 /// One dependency declaration as written.
 #[derive(Debug, Clone)]
 pub(crate) struct Dep {
-    /// The crate name to the left of the `=`.
+    /// The key the declaration is written under — the name to the
+    /// left of the `=`, or the last segment of a
+    /// `[dependencies.<name>]` header. Not necessarily the crate:
+    /// see [`Dep::crate_name`].
     pub(crate) name: String,
+    /// The `package = "..."` override, when the declaration renames
+    /// the crate it pulls in. `None` for the ordinary case where the
+    /// key *is* the crate name.
+    pub(crate) package: Option<String>,
     /// The table it was declared in.
     pub(crate) table: Table,
     /// The version string, when the declaration names one. `None`
@@ -78,6 +118,19 @@ pub(crate) struct Dep {
     /// Whether the declaration is an intra-workspace `path = ` dep.
     /// Those carry no version and are exempt from every rule here.
     pub(crate) is_path: bool,
+}
+
+impl Dep {
+    /// The crate this declaration actually pulls in: the `package =`
+    /// rename when there is one, otherwise the key.
+    ///
+    /// Every rule below keys on this rather than on [`Dep::name`],
+    /// because the failure they exist to catch is *two versions of
+    /// one crate*, and cargo's dependency-renaming syntax lets that
+    /// happen under two different keys.
+    pub(crate) fn crate_name(&self) -> &str {
+        self.package.as_deref().unwrap_or(&self.name)
+    }
 }
 
 /// The dependency declarations of one manifest.
@@ -101,13 +154,6 @@ impl Manifest {
     pub(crate) fn workspace_deps(&self) -> impl Iterator<Item = &Dep> {
         self.deps.iter().filter(|d| matches!(d.table, Table::Workspace))
     }
-}
-
-/// Absolute path to something under the repo root, resolved from
-/// baumhard's own `CARGO_MANIFEST_DIR` the same way
-/// [`crate::util::doc_fixtures`] does.
-pub(crate) fn repo_path(relative: &str) -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(relative)
 }
 
 /// Every manifest in the workspace, repo-relative, root first.
@@ -150,8 +196,47 @@ pub(crate) fn workspace_manifests() -> Vec<Manifest> {
         .collect()
 }
 
+/// What a section header means to this reader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Section {
+    /// A dependency table proper: the lines under it are
+    /// `name = <value>` declarations.
+    Table(Table),
+    /// A per-dependency sub-table — `[dependencies.serde_json]`,
+    /// `[workspace.dependencies.serde]`,
+    /// `[target.'cfg(unix)'.dependencies.foo]`. The lines under it
+    /// are the *fields* of one declaration.
+    Dep { table: Table, name: String },
+    /// A section that cannot contain a dependency: `[package]`,
+    /// `[[bench]]`, `[profile.release-lto]`, `[workspace]`. Its lines
+    /// are skipped, and skipping them is safe precisely because the
+    /// classification is positive rather than a fallthrough.
+    Other,
+}
+
+/// Section roots that are known not to hold dependencies. The list is
+/// closed on purpose: an unrecognized header panics rather than being
+/// treated as harmless, because "harmless" is exactly what a missed
+/// dependency table looks like from here.
+const NON_DEPENDENCY_ROOTS: [&str; 14] = [
+    "package",
+    "lib",
+    "bin",
+    "bench",
+    "test",
+    "example",
+    "features",
+    "profile",
+    "workspace",
+    "lints",
+    "badges",
+    "patch",
+    "replace",
+    "target",
+];
+
 /// Classify a section header (already stripped of its brackets) as a
-/// dependency table, or `None` if it is something else entirely.
+/// dependency table, or `None` if it is not one.
 fn table_for(header: &str) -> Option<Table> {
     const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
 
@@ -171,45 +256,243 @@ fn table_for(header: &str) -> Option<Table> {
     None
 }
 
+/// The longest prefix of `header` that is a dependency table, paired
+/// with what follows it.
+///
+/// Split from the right so a cfg predicate containing dots
+/// (`target.'cfg(target_arch = "wasm32")'.dependencies`) is not cut
+/// in half before the real boundary is found.
+fn dependency_prefix(header: &str) -> Option<(Table, &str)> {
+    let mut cut = header.len();
+    while let Some(dot) = header[..cut].rfind('.') {
+        if let Some(table) = table_for(&header[..dot]) {
+            return Some((table, &header[dot + 1..]));
+        }
+        cut = dot;
+    }
+    None
+}
+
+/// Classify a section header, panicking on anything this reader has
+/// no positive answer for.
+///
+/// The panic is the point. `[dependencies.serde_json]` used to fall
+/// through to "not a dependency table", which silently deleted every
+/// key under it from the set the rules check — a legal, one-line way
+/// to re-split a version that the enforcement could not see. Nothing
+/// falls through now: a header is a dependency table, a dependency
+/// sub-table, a known non-dependency section, or a test failure.
+fn section_for(path: &str, header: &str) -> Section {
+    if let Some(table) = table_for(header) {
+        return Section::Table(table);
+    }
+    if let Some((table, rest)) = dependency_prefix(header) {
+        let name = rest.trim().trim_matches('"');
+        assert!(
+            !name.is_empty() && !name.contains('.'),
+            "{path}: section [{header}] nests something under a dependency table that \
+             `util::manifests` cannot read as one dependency. Teach the reader this \
+             shape rather than leaving the declarations under it unchecked."
+        );
+        return Section::Dep {
+            table,
+            name: name.to_string(),
+        };
+    }
+    let root = header.split('.').next().unwrap_or(header);
+    assert!(
+        NON_DEPENDENCY_ROOTS.contains(&root),
+        "{path}: section [{header}] is one `util::manifests` has no classification \
+         for. Either it can hold dependencies — in which case the rules in this \
+         module have stopped covering the workspace — or it cannot, in which case \
+         add its root to `NON_DEPENDENCY_ROOTS`. Guessing is how a dependency table \
+         goes unread."
+    );
+    Section::Other
+}
+
 /// Parse one manifest's dependency declarations.
 ///
-/// Panics on any dependency line it cannot read with confidence,
-/// naming the file and the line. Refusing is the point: a parser that
+/// Panics on any declaration it cannot read with confidence, naming
+/// the file and the line. Refusing is the point: a parser that
 /// shrugged at an unfamiliar shape would silently shrink the set
 /// every test here checks.
 pub(crate) fn parse(path: &str, text: &str) -> Manifest {
     let mut deps = Vec::new();
-    let mut table: Option<Table> = None;
+    let mut section = Section::Other;
+    // The declaration a `[dependencies.<name>]` header opened, filled
+    // in from the key lines below it and pushed when the section ends.
+    let mut pending: Option<Dep> = None;
 
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
+    for (line, raw) in logical_lines(text) {
+        let (line, raw) = (line.as_str(), raw.as_str());
         if line.starts_with('[') {
             // `[[bench]]` and friends end a dependency table just as
-            // any other header does; `table_for` returns None and the
-            // lines after it are ignored.
-            let header = line
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .trim()
-                .to_string();
-            table = table_for(&header);
+            // any other header does; `section_for` classifies them as
+            // `Other` and the lines after them are skipped.
+            let header = line.trim_start_matches('[').trim_end_matches(']').trim();
+            deps.extend(pending.take());
+            section = section_for(path, header);
+            if let Section::Dep { table, name } = &section {
+                pending = Some(Dep {
+                    name: name.clone(),
+                    package: None,
+                    table: table.clone(),
+                    version: None,
+                    inherits_workspace: false,
+                    is_path: false,
+                });
+            }
             continue;
         }
-        let Some(table) = table.clone() else { continue };
 
-        let (lhs, rhs) = line
-            .split_once('=')
-            .unwrap_or_else(|| panic!("{path}: cannot read dependency line {raw:?}"));
-        deps.push(parse_dep(path, raw, lhs.trim(), rhs.trim(), table));
+        let (lhs, rhs) = match line.split_once('=') {
+            Some(halves) => halves,
+            // Only refuse inside a dependency table; a `[package]` or
+            // `[features]` body may legally hold shapes with no `=`
+            // on the line (an array element, a closing bracket).
+            None if matches!(section, Section::Other) => continue,
+            None => panic!("{path}: cannot read dependency line {raw:?}"),
+        };
+        let (lhs, rhs) = (lhs.trim(), rhs.trim());
+
+        match &section {
+            Section::Other => continue,
+            Section::Table(table) => deps.push(parse_dep(path, raw, lhs, rhs, table.clone())),
+            Section::Dep { .. } => {
+                let dep = pending
+                    .as_mut()
+                    .expect("a `Section::Dep` header always installs a pending declaration");
+                apply_sub_table_key(dep, lhs, rhs);
+            }
+        }
     }
+    deps.extend(pending.take());
 
     Manifest {
         path: path.to_string(),
         deps,
     }
+}
+
+/// Fold one `key = value` line of a `[dependencies.<name>]` sub-table
+/// into the declaration it describes.
+///
+/// Keys this reader has no rule about (`features`,
+/// `default-features`, `optional`) are ignored rather than refused:
+/// none of them can turn one crate into two versions, which is the
+/// only thing the rules here are about.
+fn apply_sub_table_key(dep: &mut Dep, key: &str, value: &str) {
+    match key {
+        "version" => dep.version = Some(quoted(value)),
+        "workspace" => dep.inherits_workspace = value.starts_with("true"),
+        "path" => dep.is_path = true,
+        "package" => dep.package = Some(quoted(value)),
+        _ => {}
+    }
+}
+
+/// The manifest as *logical* lines: comments stripped, blank lines
+/// dropped, and a value whose brackets or braces are still open at
+/// end-of-line joined with the lines that close it.
+///
+/// Each entry is `(joined line, the first raw line it came from)`;
+/// the raw line is what error messages quote, so a refusal still
+/// points at a place in the file.
+///
+/// Joining is why a wrapped `features = [...]` list — or the whole
+/// 190-column `web-sys` declaration folded across four lines by a
+/// formatter — is an ordinary declaration here rather than five
+/// failing tests. Nothing about a line break changes which crate is
+/// pulled in at which version, so nothing about it may change the
+/// answer this module gives.
+fn logical_lines(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut buffer = String::new();
+    let mut first_raw = String::new();
+    let mut depth = 0;
+
+    for raw in text.lines() {
+        let line = strip_trailing_comment(raw.trim());
+        if line.is_empty() {
+            continue;
+        }
+        if depth == 0 {
+            buffer.clear();
+            first_raw = raw.to_string();
+        } else {
+            buffer.push(' ');
+        }
+        buffer.push_str(line);
+        depth += unclosed_delta(line);
+        if depth <= 0 {
+            depth = 0;
+            out.push((buffer.clone(), first_raw.clone()));
+        }
+    }
+    // An unbalanced tail is still handed on rather than dropped: the
+    // reader downstream refuses it by name, which beats a declaration
+    // disappearing because the file ended mid-table.
+    if depth > 0 {
+        out.push((buffer, first_raw));
+    }
+    out
+}
+
+/// Net openers minus closers on a line, counting `[`/`]` and `{`/`}`
+/// outside quotes.
+///
+/// A section header nets zero (`[dependencies]`), an inline table
+/// that closes on its own line nets zero, and only a value left open
+/// at end-of-line nets more.
+fn unclosed_delta(line: &str) -> i32 {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut depth = 0;
+    for c in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, c) {
+            (Some('"'), '\\') => escaped = true,
+            (Some(open), _) if c == open => quote = None,
+            (Some(_), _) => {}
+            (None, '"') | (None, '\'') => quote = Some(c),
+            (None, '[' | '{') => depth += 1,
+            (None, ']' | '}') => depth -= 1,
+            (None, _) => {}
+        }
+    }
+    depth
+}
+
+/// Drop a trailing `# comment` from a manifest line, leaving `#`
+/// inside a quoted string alone.
+///
+/// A comment on a dependency line used to take down five tests with
+/// advice that could not be followed — the declaration it complained
+/// was not "on one line" already was. Given how much commentary these
+/// manifests carry, adding one more comment is the likeliest edit
+/// they will receive, and it must not be able to fail anything.
+fn strip_trailing_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (at, c) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, c) {
+            (Some('"'), '\\') => escaped = true,
+            (Some(open), _) if c == open => quote = None,
+            (Some(_), _) => {}
+            (None, '"') | (None, '\'') => quote = Some(c),
+            (None, '#') => return line[..at].trim_end(),
+            (None, _) => {}
+        }
+    }
+    line
 }
 
 /// Read one `name = <value>` dependency line.
@@ -234,6 +517,7 @@ fn parse_dep(path: &str, raw: &str, lhs: &str, rhs: &str, table: Table) -> Dep {
         assert_eq!(rhs, "true", "{path}: {raw:?} — `{name}.workspace` must be `true`");
         return Dep {
             name,
+            package: None,
             table,
             version: None,
             inherits_workspace: true,
@@ -245,6 +529,7 @@ fn parse_dep(path: &str, raw: &str, lhs: &str, rhs: &str, table: Table) -> Dep {
     if let Some(version) = rhs.strip_prefix('"').and_then(|r| r.split_once('"')) {
         return Dep {
             name,
+            package: None,
             table,
             version: Some(version.0.to_string()),
             inherits_workspace: false,
@@ -252,21 +537,38 @@ fn parse_dep(path: &str, raw: &str, lhs: &str, rhs: &str, table: Table) -> Dep {
         };
     }
 
-    // An inline table. Multi-line tables are refused, not skipped —
-    // see the module docs on why silence is the dangerous answer.
+    // An inline table. Wrapping one across several lines is fine —
+    // `logical_lines` has already rejoined it — so reaching the panic
+    // means the value is genuinely not a shape this reader knows, and
+    // the message says which half failed rather than blaming the line
+    // count. Refusing, not skipping: see the module docs on why
+    // silence is the dangerous answer.
     let body = rhs
         .strip_prefix('{')
         .and_then(|r| r.strip_suffix('}'))
         .unwrap_or_else(|| {
+            let cause = if rhs.starts_with('{') {
+                "its inline table is never closed with `}`"
+            } else {
+                "its value is neither a quoted version string nor an inline table opening with `{`"
+            };
             panic!(
-                "{path}: {raw:?} is neither a bare version nor a single-line inline \
-                 table. `util::manifests` reads manifests line by line; either keep \
-                 the declaration on one line or teach the reader the new shape."
+                "{path}: the declaration starting at {raw:?} could not be read: \
+                 {cause}. `util::manifests` reads `{name} = \"1.2.3\"`, \
+                 `{name} = {{ ... }}` (wrapped across lines or not, with or without a \
+                 trailing `# comment`), `{name}.workspace = true`, and the \
+                 `[{table_header}.{name}]` sub-table form. Teach it this shape rather \
+                 than leaving the declaration unchecked. Read as: {rhs:?}",
+                table_header = match &table {
+                    Table::Workspace => "workspace.dependencies",
+                    Table::Member(header) => header,
+                }
             )
         });
 
     Dep {
         name,
+        package: inline_value(body, "package").map(quoted),
         table,
         version: inline_value(body, "version").map(quoted),
         inherits_workspace: inline_value(body, "workspace").is_some_and(|v| v.starts_with("true")),
@@ -315,7 +617,7 @@ pub(crate) fn workspace_table(manifests: &[Manifest]) -> BTreeSet<String> {
     manifests
         .iter()
         .flat_map(Manifest::workspace_deps)
-        .map(|d| d.name.clone())
+        .map(|d| d.crate_name().to_string())
         .collect()
 }
 
@@ -336,7 +638,7 @@ pub(crate) fn versions_declared_in_several_manifests(
                 continue;
             }
             sites
-                .entry(dep.name.clone())
+                .entry(dep.crate_name().to_string())
                 .or_default()
                 .insert(manifest.path.clone());
         }
@@ -356,9 +658,9 @@ pub(crate) fn workspace_entries_overridden(manifests: &[Manifest]) -> BTreeMap<S
     let mut overrides: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for manifest in manifests {
         for dep in manifest.member_deps() {
-            if dep.version.is_some() && shared.contains(&dep.name) {
+            if dep.version.is_some() && shared.contains(dep.crate_name()) {
                 overrides
-                    .entry(dep.name.clone())
+                    .entry(dep.crate_name().to_string())
                     .or_default()
                     .insert(manifest.path.clone());
             }
@@ -380,7 +682,7 @@ pub(crate) fn workspace_entry_consumers(manifests: &[Manifest]) -> BTreeMap<Stri
                 continue;
             }
             consumers
-                .entry(dep.name.clone())
+                .entry(dep.crate_name().to_string())
                 .or_default()
                 .insert(manifest.path.clone());
         }
@@ -475,16 +777,214 @@ harness = false
         );
     }
 
-    /// Refusing beats guessing: a multi-line declaration this reader
-    /// cannot follow must stop the test run, not vanish from the set
-    /// being checked.
+    /// The shapes the manifests do *not* yet use but legally could.
+    ///
+    /// This is the half a fixture built from the current manifests
+    /// cannot have: `[dependencies.<name>]` is standard cargo, is one
+    /// line away from any existing declaration, and used to be
+    /// invisible to this reader — a live version split written this
+    /// way passed all ten tests.
     #[test]
-    #[should_panic(expected = "single-line inline")]
-    fn test_parser_refuses_a_multi_line_dependency() {
+    fn test_parser_reads_a_dependency_written_as_a_sub_table() {
+        let m = fixture(
+            "fixture/Cargo.toml",
+            r#"
+[workspace.dependencies.serde]
+version = "1.0.228"
+features = ["derive"]
+
+[dependencies]
+regex = "1.12.3"
+
+[dependencies.serde_json]
+version = "1.0.149"
+
+[dependencies.serde]
+workspace = true
+features = [
+    "rc",
+]
+
+[dependencies.baumhard]
+path = "../../lib/baumhard"
+
+[build-dependencies.ttf-parser]
+version = "0.25.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.arboard]
+version = "3.6.1"
+
+[[bench]]
+name = "test_bench"
+"#,
+        );
+
+        let by_name = |name: &str| -> Dep {
+            m.deps
+                .iter()
+                .find(|d| d.name == name && !matches!(d.table, Table::Workspace))
+                .unwrap_or_else(|| panic!("{name} must be parsed out of the member tables"))
+                .clone()
+        };
+
+        assert_eq!(
+            workspace_table(std::slice::from_ref(&m)),
+            ["serde".to_string()].into(),
+            "`[workspace.dependencies.serde]` is the shared table, not a member \
+             declaration"
+        );
+        assert_eq!(
+            by_name("serde_json").version.as_deref(),
+            Some("1.0.149"),
+            "a sub-table's `version` key is the version, and missing it is how a \
+             re-split hid from these rules"
+        );
+        assert_eq!(by_name("regex").version.as_deref(), Some("1.12.3"));
+
+        let serde = by_name("serde");
+        assert!(
+            serde.inherits_workspace && serde.version.is_none(),
+            "`workspace = true` in a sub-table inherits, and the wrapped `features` \
+             list below it changes nothing"
+        );
+        assert!(by_name("baumhard").is_path);
+        assert_eq!(
+            by_name("ttf-parser").table,
+            Table::Member("build-dependencies".into())
+        );
+        assert_eq!(
+            by_name("arboard").table,
+            Table::Member("target.'cfg(not(target_arch = \"wasm32\"))'.dependencies".into()),
+            "a target-gated sub-table is still a member table"
+        );
+        assert!(
+            !m.deps.iter().any(|d| d.name == "name"),
+            "`[[bench]]` keys must not be mistaken for dependencies"
+        );
+    }
+
+    /// The B1 reproduction as a regression test: the exact edit that
+    /// used to leave all ten tests green.
+    #[test]
+    fn test_detector_catches_a_split_written_as_a_sub_table() {
+        let shadowed = [
+            fixture(
+                "Cargo.toml",
+                "[workspace.dependencies]\nserde_json = \"1.0.149\"\n",
+            ),
+            fixture(
+                "crates/maptool/Cargo.toml",
+                "[dependencies]\nregex = \"1.12.3\"\n\n[dependencies.serde_json]\nversion = \"1.0.149\"\n",
+            ),
+        ];
+        assert_eq!(
+            workspace_entries_overridden(&shadowed).keys().collect::<Vec<_>>(),
+            vec!["serde_json"],
+            "a member that re-versions a shared entry in section syntax is the same \
+             violation as one that does it inline"
+        );
+    }
+
+    /// A rename is a second way to write the same crate twice without
+    /// the two declarations looking alike.
+    #[test]
+    fn test_detector_catches_a_split_hidden_by_a_rename() {
+        let split = [
+            fixture("a/Cargo.toml", "[dependencies]\nstrum = \"0.27\"\n"),
+            fixture(
+                "b/Cargo.toml",
+                "[dependencies]\nenums = { package = \"strum\", version = \"0.28.0\" }\n",
+            ),
+        ];
+        assert_eq!(
+            versions_declared_in_several_manifests(&split)
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["strum"],
+            "the split must be reported under the crate that is actually pulled in \
+             twice, not under the two keys it is written behind"
+        );
+    }
+
+    /// A comment on a dependency line changes nothing about any rule
+    /// here, so it must change nothing about the parse either. It used
+    /// to fail five tests.
+    #[test]
+    fn test_parser_reads_a_commented_dependency_line() {
+        let m = fixture(
+            "fixture/Cargo.toml",
+            "[dependencies]\n\
+             ordered-float = {version = \"5.3.0\", features = [\"serde\"]} # total ordering for f32 keys\n\
+             rustc-hash = \"2.1.2\" # fast, non-cryptographic\n\
+             strum.workspace = true # unified in #106\n\
+             tag = \"1.0\" # a '#' in prose, and \"quoted\" text\n",
+        );
+        assert_eq!(m.deps.len(), 4, "every commented line is still a declaration");
+        assert_eq!(m.deps[0].version.as_deref(), Some("5.3.0"));
+        assert_eq!(m.deps[1].version.as_deref(), Some("2.1.2"));
+        assert!(m.deps[2].inherits_workspace);
+        assert_eq!(m.deps[3].version.as_deref(), Some("1.0"));
+    }
+
+    /// A `#` inside a quoted value is part of the value, not the
+    /// start of a comment.
+    #[test]
+    fn test_parser_keeps_a_hash_inside_a_quoted_value() {
+        let m = fixture("fixture/Cargo.toml", "[dependencies]\nfoo = \"1.0#beta\"\n");
+        assert_eq!(m.deps[0].version.as_deref(), Some("1.0#beta"));
+    }
+
+    /// A section header with no classification stops the run. This is
+    /// the general form of B1: the reader may not decide on its own
+    /// that an unfamiliar section holds nothing worth checking.
+    #[test]
+    #[should_panic(expected = "no classification for")]
+    fn test_parser_refuses_an_unclassified_section() {
         parse(
             "fixture/Cargo.toml",
-            "[dependencies]\nweb-sys = { version = \"0.3\", features = [\n  \"Window\",\n] }\n",
+            "[dependencies-of-tomorrow]\nstrum = \"0.27\"\n",
         );
+    }
+
+    /// ...and neither may it decide that about a table nested under a
+    /// dependency table.
+    #[test]
+    #[should_panic(expected = "cannot read as one dependency")]
+    fn test_parser_refuses_a_table_nested_under_a_dependency() {
+        parse(
+            "fixture/Cargo.toml",
+            "[dependencies.strum.metadata]\nversion = \"0.27\"\n",
+        );
+    }
+
+    /// A wrapped declaration is the same declaration. This is the
+    /// `web-sys` line — 190 columns in the root manifest — as a
+    /// formatter would leave it.
+    #[test]
+    fn test_parser_reads_a_wrapped_inline_table() {
+        let m = fixture(
+            "fixture/Cargo.toml",
+            "[dependencies]\n\
+             web-sys = { version = \"0.3.95\", features = [\n\
+             \x20   \"Window\",\n\
+             \x20   \"Document\",  # the two the renderer actually needs\n\
+             ] }\n\
+             wgpu = \"29.0\"\n",
+        );
+        assert_eq!(m.deps.len(), 2, "the wrapped entry is one declaration, not three");
+        assert_eq!(m.deps[0].name, "web-sys");
+        assert_eq!(m.deps[0].version.as_deref(), Some("0.3.95"));
+        assert_eq!(m.deps[1].version.as_deref(), Some("29.0"));
+    }
+
+    /// Refusing beats guessing: a value this reader cannot read must
+    /// stop the test run, not vanish from the set being checked — and
+    /// the message must name the value rather than blame the line
+    /// count, which is a cause the reader can no longer have.
+    #[test]
+    #[should_panic(expected = "neither a quoted version string nor an inline table")]
+    fn test_parser_refuses_a_value_it_cannot_read() {
+        parse("fixture/Cargo.toml", "[dependencies]\nstrum = 0.28\n");
     }
 
     /// The negative control for the headline rule. Without it, every
@@ -557,18 +1057,42 @@ harness = false
         }
     }
 
+    /// Exactly how many declarations each manifest holds.
+    ///
+    /// An exact count rather than a floor, and per manifest rather
+    /// than in total, because the failure this guards against is one
+    /// declaration going *unread* — a shape the parser skips deletes
+    /// itself from every rule below, and the loose `> 30` floor this
+    /// replaces could not have noticed thirteen of them vanishing,
+    /// let alone one. The cost is that adding or removing a
+    /// dependency updates a number here, which is the intended
+    /// trade: manifest edits in this workspace are rare and are
+    /// exactly what these tests exist to look at.
+    const DECLARATIONS_PER_MANIFEST: [(&str, usize); 4] = [
+        ("Cargo.toml", 23),
+        ("crates/maptool/Cargo.toml", 4),
+        ("lib/baumhard/Cargo.toml", 24),
+        ("lib/mandala_derive/Cargo.toml", 3),
+    ];
+
     /// A parse that found nothing would make every rule below vacuous.
     /// Pinned against the shared table specifically, since that is the
     /// structure the rules are about.
     #[test]
     fn test_the_real_manifests_parse_into_something_worth_checking() {
         let manifests = workspace_manifests();
-        let declared: usize = manifests.iter().map(|m| m.member_deps().count()).sum();
-        assert!(
-            declared > 30,
-            "only {declared} dependency declarations were read out of the workspace; \
-             `util::manifests` has stopped understanding the manifests and the checks \
-             below are no longer checking anything"
+        let found: BTreeMap<&str, usize> = manifests
+            .iter()
+            .map(|m| (m.path.as_str(), m.member_deps().count()))
+            .collect();
+        let expected: BTreeMap<&str, usize> = DECLARATIONS_PER_MANIFEST.into_iter().collect();
+        assert_eq!(
+            found, expected,
+            "the number of dependency declarations `util::manifests` reads out of the \
+             workspace has changed. If you added or removed a dependency, update \
+             `DECLARATIONS_PER_MANIFEST`. If you did not, the reader has stopped \
+             understanding a manifest and every rule below is now checking a smaller \
+             set than it appears to."
         );
 
         let shared = workspace_table(&manifests);

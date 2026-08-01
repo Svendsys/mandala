@@ -102,15 +102,7 @@ const VERIFIED_LOG_VERSIONS: &[&str] = &["0.4.29"];
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::{rust_log_is_effective, POLICY_HEADING, REQUIRED_LOG_LEVEL_FEATURE, VERIFIED_LOG_VERSIONS};
-    use crate::util::doc_fixtures::section_text;
-    use std::path::{Path, PathBuf};
-
-    /// Absolute path to a manifest under the repo root, resolved from
-    /// baumhard's own `CARGO_MANIFEST_DIR` the same way
-    /// [`crate::util::doc_fixtures::format_doc_path`] does.
-    fn repo_path(relative: &str) -> PathBuf {
-        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(relative)
-    }
+    use crate::util::doc_fixtures::{repo_path, section_text};
 
     /// Every line in the workspace that declares a `log` dependency,
     /// paired with the manifest it came from.
