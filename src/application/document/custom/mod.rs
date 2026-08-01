@@ -861,20 +861,41 @@ mod covers_reach_differential_tests {
     /// argument doesn't transfer. It gets
     /// [`sections_only_gate_is_sound_and_deliberately_conservative`]
     /// instead.
-    const NODE_SCOPES: [TargetScope; 6] = [
-        TargetScope::SelfOnly,
-        TargetScope::Children,
-        TargetScope::Descendants,
-        TargetScope::SelfAndDescendants,
-        TargetScope::Parent,
-        TargetScope::Siblings,
-    ];
+    ///
+    /// Derived from `TargetScope::iter()` with that one subtraction,
+    /// not hand-listed: an eighth variant has to be either covered
+    /// here or explicitly excluded, and the exclusion is one named
+    /// arm rather than a silent omission. A hand-typed array would
+    /// simply run six cases forever
+    /// ([`node_scopes_accounts_for_every_target_scope`] is the pin).
+    fn node_scopes() -> Vec<TargetScope> {
+        use strum::IntoEnumIterator;
+        TargetScope::iter()
+            .filter(|scope| !matches!(scope, TargetScope::SectionsOnly))
+            .collect()
+    }
 
-    const REACHES: [MutatorReach; 3] = [
-        MutatorReach::SelfOnly,
-        MutatorReach::Children,
-        MutatorReach::Descendants,
-    ];
+    fn reaches() -> Vec<MutatorReach> {
+        use strum::IntoEnumIterator;
+        MutatorReach::iter().collect()
+    }
+
+    /// Every `TargetScope` is either exercised by the differential
+    /// run or deliberately routed to the `SectionsOnly` test — no
+    /// variant may fall between the two.
+    #[test]
+    fn node_scopes_accounts_for_every_target_scope() {
+        use strum::IntoEnumIterator;
+        for scope in TargetScope::iter() {
+            let covered = node_scopes().contains(&scope) || scope == TargetScope::SectionsOnly;
+            assert!(
+                covered,
+                "TargetScope::{:?} is in neither the differential run nor the \
+                 SectionsOnly carve-out — give it a home before shipping it",
+                scope
+            );
+        }
+    }
 
     /// Reference model: the model nodes a mutator of `reach`, anchored
     /// at `anchor`, can write to. `MutatorReach` is cumulative
@@ -953,8 +974,8 @@ mod covers_reach_differential_tests {
         None
     }
 
-    /// The differential run: 6 scopes x 3 reaches, gate verdict
-    /// against reference verdict, both directions.
+    /// The differential run: every node scope x every reach, gate
+    /// verdict against reference verdict, both directions.
     #[test]
     fn covers_reach_matches_structural_closure_on_the_testament_map() {
         let doc = load_test_doc();
@@ -967,8 +988,8 @@ mod covers_reach_differential_tests {
         // rebuilding it per call is an O(N) scan each time.
         let index = doc.mindmap.child_index();
         let mut mismatches: Vec<String> = Vec::new();
-        for scope in NODE_SCOPES {
-            for reach in REACHES {
+        for scope in node_scopes() {
+            for reach in reaches() {
                 let witness = closure_witness(&doc, &index, scope.clone(), reach);
                 let reference_says_safe = witness.is_none();
                 let gate_says_safe = scope.covers_reach(reach);

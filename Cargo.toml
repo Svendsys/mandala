@@ -31,8 +31,8 @@ lazy_static = "1.5.0"
 syn = "2.0.117"
 log = { version = "0.4.29", features = ["release_max_level_off"] }
 smol_str = "0.3.6"
-strum = "0.27"
-strum_macros = "0.27"
+strum = "0.28.0"
+strum_macros = "0.28.0"
 indextree = {version = "4.8.1", features = ["serde"]}
 ttf-parser = "0.25.1"
 baumhard = {path="./lib/baumhard"}

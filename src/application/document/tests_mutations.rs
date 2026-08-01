@@ -358,40 +358,16 @@ fn test_collect_affected_node_ids_parent_of_root_is_empty() {
     assert!(ids.is_empty(), "Root node has no parent; should return empty");
 }
 
-#[test]
-fn test_collect_affected_node_ids_siblings() {
-    let doc = load_test_doc();
-    // Find a child node and verify its siblings list excludes itself
-    let child_id = doc
-        .mindmap
-        .nodes
-        .values()
-        .find(|n| n.parent_id.is_some())
-        .map(|n| n.id.clone())
-        .expect("testament map has child nodes");
-    let parent_id = doc
-        .mindmap
-        .nodes
-        .get(&child_id)
-        .unwrap()
-        .parent_id
-        .clone()
-        .unwrap();
-    let all_children = doc.mindmap.children_of(&parent_id);
-
-    let ids = doc.collect_affected_node_ids(&child_id, &TS::Siblings);
-    // Siblings = parent's children minus self
-    assert_eq!(ids.len(), all_children.len() - 1);
-    assert!(!ids.contains(&child_id), "Siblings should not include self");
-}
-
-#[test]
-fn test_collect_affected_node_ids_siblings_of_root_is_empty() {
-    let doc = load_test_doc();
-    // Root has no parent, so no siblings
-    let ids = doc.collect_affected_node_ids("0", &TS::Siblings);
-    assert!(ids.is_empty());
-}
+// The two `Siblings` cases that used to sit here — "siblings exclude
+// self" and "a root has no siblings" — now live in
+// `custom::covers_reach_differential_tests` as
+// `siblings_excludes_the_trigger_node` and
+// `siblings_of_a_root_node_is_the_empty_set`. Those versions sweep
+// *every* qualifying node and *every* root of the testament map
+// rather than the first child found and the hard-coded id `"0"`, so
+// they strictly subsume these; keeping both would be the §10
+// duplicate shape (one property, two homes, only one of them
+// maintained).
 
 /// `SectionsOnly` returns the triggering node id only — section-
 /// level fan-out happens inside `apply_to_tree`, but the undo

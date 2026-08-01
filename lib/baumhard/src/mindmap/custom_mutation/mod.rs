@@ -185,7 +185,16 @@ pub enum MutationBehavior {
 /// The mutation payload [`CustomMutation::mutator`] performs the
 /// actual tree edits; this enum just tells the app layer which set
 /// of MindNodes are in the reach.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+///
+/// `EnumIter` is load-bearing, not decoration. Adding a variant here
+/// must fail the suite rather than leave a hand-kept list one row
+/// short: the `covers_reach` table pin, the serde round-trip, the
+/// differential harness's scope list, and the `target_scope` value
+/// list published in `format/schema.md` are all driven off
+/// `TargetScope::iter()`, so none of them can silently omit a new
+/// variant (CLAUDE.md §5 — make the drift impossible, don't fix it
+/// once).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum TargetScope {
     /// Apply to the triggering node itself.
     SelfOnly,
@@ -438,7 +447,11 @@ fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator:
 /// authoring mistakes where the undo-snapshot scope is narrower
 /// than the mutator's actual reach (which silently loses edits on
 /// undo). Ordered from narrowest to widest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// `EnumIter` for the same reason as [`TargetScope`]: the
+/// `covers_reach` table is pinned over both axes, so a new reach can
+/// no more slip past the tests than a new scope can.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, strum_macros::EnumIter)]
 pub enum MutatorReach {
     /// Only the anchor node. Every non-empty mutator reaches this.
     SelfOnly,

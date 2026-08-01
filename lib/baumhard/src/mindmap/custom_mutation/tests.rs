@@ -208,21 +208,11 @@ fn mutation_behavior_default_is_persistent() {
     assert_eq!(cm.behavior, MutationBehavior::Persistent);
 }
 
-#[test]
-fn all_target_scopes_serialize() {
-    for scope in [
-        TargetScope::SelfOnly,
-        TargetScope::Children,
-        TargetScope::Descendants,
-        TargetScope::SelfAndDescendants,
-        TargetScope::Parent,
-        TargetScope::Siblings,
-    ] {
-        let json = serde_json::to_string(&scope).unwrap();
-        let back: TargetScope = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, scope);
-    }
-}
+// The `all_target_scopes_serialize` that used to live here listed
+// six of the seven variants by hand — it never covered
+// `SectionsOnly`. Replaced by
+// `reach_tests::every_target_scope_variant_serializes`, which is
+// driven off `TargetScope::iter()` and cannot be one variant short.
 
 #[test]
 fn all_triggers_serialize() {
@@ -297,16 +287,21 @@ mod reach_tests {
         assert!(TargetScope::SelfAndDescendants.covers_reach(MutatorReach::Descendants));
     }
 
-    /// Whole-table pin: every `(scope, reach)` cell in one place so a
-    /// future edit to one arm can't quietly widen another. The
-    /// closure argument is spelled out in
+    /// The `(scope, reach)` cells this table is expected to cover —
+    /// one row per cell of the full cross product, spelled out by
+    /// hand so a future edit to one `covers_reach` arm can't quietly
+    /// widen another. The closure argument behind each row is in
     /// [`TargetScope::covers_reach`]'s doc table; the differential
     /// harness in `src/application/document/custom/mod.rs` derives
     /// the same table from real tree structure rather than by hand.
-    #[test]
-    fn covers_reach_table_is_exhaustive_and_stable() {
+    ///
+    /// Hand-written *values*, machine-checked *coverage*: the table
+    /// is the pin, and
+    /// [`covers_reach_table_covers_every_variant_pair`] is what makes
+    /// the word "exhaustive" true rather than aspirational.
+    fn covers_reach_expected_table() -> Vec<(TargetScope, MutatorReach, bool)> {
         use MutatorReach::{Children, Descendants, SelfOnly};
-        let expected: &[(TargetScope, MutatorReach, bool)] = &[
+        vec![
             (TargetScope::SelfOnly, SelfOnly, true),
             (TargetScope::SelfOnly, Children, false),
             (TargetScope::SelfOnly, Descendants, false),
@@ -328,11 +323,17 @@ mod reach_tests {
             (TargetScope::SectionsOnly, SelfOnly, true),
             (TargetScope::SectionsOnly, Children, false),
             (TargetScope::SectionsOnly, Descendants, false),
-        ];
-        for (scope, reach, want) in expected {
+        ]
+    }
+
+    /// Whole-table pin: every listed `(scope, reach)` cell agrees
+    /// with [`TargetScope::covers_reach`].
+    #[test]
+    fn covers_reach_table_is_stable() {
+        for (scope, reach, want) in covers_reach_expected_table() {
             assert_eq!(
-                scope.covers_reach(*reach),
-                *want,
+                scope.covers_reach(reach),
+                want,
                 "covers_reach({:?}, {:?}) should be {}",
                 scope,
                 reach,
@@ -341,11 +342,134 @@ mod reach_tests {
         }
     }
 
+    /// What makes [`covers_reach_table_is_stable`] *exhaustive*
+    /// rather than merely long.
+    ///
+    /// A hand-typed table is green the day an eighth `TargetScope`
+    /// lands with zero rows naming it: the compiler catches the
+    /// missing production arms, but nothing catches the missing test
+    /// coverage. So the table is checked against
+    /// `TargetScope::iter() x MutatorReach::iter()` — every cell of
+    /// the cross product present, exactly once, and no row naming a
+    /// pair that no longer exists.
+    ///
+    /// The drive-by finding of this PR is that hand-kept lists drift;
+    /// this is that lesson applied to the list the PR itself added
+    /// (CLAUDE.md §5).
+    #[test]
+    fn covers_reach_table_covers_every_variant_pair() {
+        use std::collections::BTreeSet;
+        use strum::IntoEnumIterator;
+
+        let table = covers_reach_expected_table();
+        let listed: Vec<(String, String)> = table
+            .iter()
+            .map(|(scope, reach, _)| (format!("{:?}", scope), format!("{:?}", reach)))
+            .collect();
+
+        let mut missing: Vec<String> = Vec::new();
+        for scope in TargetScope::iter() {
+            for reach in MutatorReach::iter() {
+                let cell = (format!("{:?}", scope), format!("{:?}", reach));
+                let rows = listed.iter().filter(|c| **c == cell).count();
+                if rows != 1 {
+                    missing.push(format!("({:?}, {:?}) appears {} time(s)", scope, reach, rows));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "covers_reach_expected_table must name every (TargetScope, MutatorReach) \
+             pair exactly once. Offending cells:\n  {}",
+            missing.join("\n  ")
+        );
+
+        let cross = TargetScope::iter().count() * MutatorReach::iter().count();
+        assert_eq!(
+            table.len(),
+            cross,
+            "the table has {} rows but the cross product is {} — a row names a pair \
+             that no longer exists",
+            table.len(),
+            cross
+        );
+        // Guard the guard: a `BTreeSet` collapse proves the rows are
+        // distinct, so `cross` rows really are `cross` cells.
+        let distinct: BTreeSet<_> = listed.iter().collect();
+        assert_eq!(distinct.len(), table.len(), "duplicate rows in the table");
+    }
+
+    /// Every `TargetScope` variant round-trips through serde. Driven
+    /// off `EnumIter` — the hand-written list this replaces was
+    /// missing `SectionsOnly`, which is precisely the variant this
+    /// PR had to add to three prose surfaces by hand.
+    #[test]
+    fn every_target_scope_variant_serializes() {
+        use strum::IntoEnumIterator;
+        let mut seen = 0usize;
+        for scope in TargetScope::iter() {
+            let json = serde_json::to_string(&scope).unwrap();
+            let back: TargetScope = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, scope);
+            seen += 1;
+        }
+        assert!(seen >= 7, "expected at least the seven documented scopes");
+    }
+
     #[test]
     fn scope_descendants_covers_everything() {
         assert!(TargetScope::Descendants.covers_reach(MutatorReach::SelfOnly));
         assert!(TargetScope::Descendants.covers_reach(MutatorReach::Children));
         assert!(TargetScope::Descendants.covers_reach(MutatorReach::Descendants));
+    }
+
+    /// The spec surfaces that publish the `TargetScope` vocabulary
+    /// must name **every** variant.
+    ///
+    /// `format/` is normative: a `target_scope` value the code
+    /// accepts but the schema never lists is a value no author can
+    /// discover, and one the schema lists but the code rejects is a
+    /// map that fails to load. This PR had to hand-repair exactly
+    /// that drift — `SectionsOnly` was missing from
+    /// `format/schema.md`'s value list, from `format/mutations.md`'s
+    /// scope table, and from CONCEPTS §4's variant sentence, which
+    /// still read "Six variants". Hand-repairing it again next time
+    /// is not the fix; failing the suite is (CLAUDE.md §5).
+    ///
+    /// Reads the docs themselves rather than a copy of them, per
+    /// [`crate::util::doc_fixtures`] — so editing the doc is what
+    /// moves the test, not editing a string literal beside it.
+    ///
+    /// Native-only: the specs live on the filesystem and wasm32 has
+    /// no filesystem to read them from (`TEST_CONVENTIONS.md` §T9).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn every_target_scope_variant_is_published_by_the_format_specs() {
+        use crate::util::doc_fixtures::{documented_section_text, format_doc_path};
+        use strum::IntoEnumIterator;
+
+        // (spec file, heading whose body publishes the vocabulary)
+        let surfaces = [
+            ("schema.md", "## CustomMutation"),
+            ("mutations.md", "## `target_scope`"),
+        ];
+        let mut gaps: Vec<String> = Vec::new();
+        for (file, heading) in surfaces {
+            let path = format_doc_path(file);
+            let body = documented_section_text(&path, heading);
+            for scope in TargetScope::iter() {
+                let name = format!("{:?}", scope);
+                if !body.contains(&name) {
+                    gaps.push(format!("format/{} §{} never names {:?}", file, heading, scope));
+                }
+            }
+        }
+        assert!(
+            gaps.is_empty(),
+            "a TargetScope variant exists that the normative spec does not publish:\n  {}\n\
+             Add it to the spec — the docs are the contract, this test only reads them.",
+            gaps.join("\n  ")
+        );
     }
 
     #[test]

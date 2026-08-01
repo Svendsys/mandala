@@ -108,6 +108,51 @@ pub fn documented_json_block(path: &Path, heading: &str, nth: usize) -> String {
     );
 }
 
+/// Return the full body text of the Markdown section headed by
+/// `heading` in the file at `path` — every line after the heading up
+/// to the next heading of the *same or shallower* depth, headings of
+/// deeper sections included.
+///
+/// The prose counterpart of [`documented_json_block`], for the doc
+/// surfaces that publish a **vocabulary** rather than a wire shape: a
+/// list of the values an enum field accepts, a table with one row per
+/// variant. A test can then assert the section names every variant
+/// the code defines, so adding a variant fails the suite instead of
+/// leaving the spec a row short — the drift a hand-kept list in the
+/// test itself would not catch.
+///
+/// `heading` is matched exactly as written, `#` markers and all, same
+/// as [`documented_json_block`]. Panics — never returns a fallback —
+/// when the file is unreadable or the heading is absent, because the
+/// caller is a test whose whole purpose is to notice the doc moved.
+///
+/// Cost: one full read of the Markdown file plus a single line scan —
+/// O(file_size), paid once per test that pins a section.
+pub fn documented_section_text(path: &Path, heading: &str) -> String {
+    let doc =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+
+    let heading_depth = heading_depth_of(heading).unwrap_or_else(|| {
+        panic!("{heading:?} is not a Markdown heading — pass it with its leading '#' markers")
+    });
+
+    let mut lines = doc.lines();
+    lines
+        .find(|line| line.trim_end() == heading)
+        .unwrap_or_else(|| panic!("{} no longer publishes the heading {heading:?}", path.display()));
+
+    let mut body: Vec<&str> = Vec::new();
+    for line in lines {
+        if let Some(depth) = heading_depth_of(line.trim_end()) {
+            if depth <= heading_depth {
+                break;
+            }
+        }
+        body.push(line);
+    }
+    body.join("\n").trim().to_string()
+}
+
 /// Depth of a Markdown ATX heading (`## x` → 2), or `None` when the
 /// line is not a heading. A run of `#` must be followed by a space
 /// to count, so a `#[derive(...)]` inside a fenced block cannot be
@@ -195,6 +240,33 @@ mod tests {
         let dir = TempDir::new("doc-fixtures-missing");
         let path = write_doc(&dir, SAMPLE);
         let err = std::panic::catch_unwind(|| documented_json_block(&path, "## Absent", 0))
+            .expect_err("a missing heading must panic, not fall back");
+        let msg = err.downcast_ref::<String>().expect("panic payload is a String");
+        assert!(msg.contains("no longer publishes the heading"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_documented_section_text_returns_the_whole_section() {
+        let dir = TempDir::new("doc-fixtures-section");
+        let path = write_doc(&dir, SAMPLE);
+        let body = documented_section_text(&path, "## First");
+        assert!(body.contains("{ \"a\": 1 }"), "got: {body}");
+        assert!(
+            body.contains("{ \"a\": 3 }"),
+            "deeper sections belong to it: {body}"
+        );
+        assert!(
+            !body.contains("{ \"b\": 1 }"),
+            "must stop at the next sibling heading: {body}"
+        );
+        assert!(body.contains("### Nested"), "deeper headings are kept: {body}");
+    }
+
+    #[test]
+    fn test_documented_section_text_panics_when_the_heading_is_gone() {
+        let dir = TempDir::new("doc-fixtures-section-missing");
+        let path = write_doc(&dir, SAMPLE);
+        let err = std::panic::catch_unwind(|| documented_section_text(&path, "## Absent"))
             .expect_err("a missing heading must panic, not fall back");
         let msg = err.downcast_ref::<String>().expect("panic payload is a String");
         assert!(msg.contains("no longer publishes the heading"), "got: {msg}");
