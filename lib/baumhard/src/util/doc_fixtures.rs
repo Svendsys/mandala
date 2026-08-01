@@ -16,8 +16,8 @@
 //! reads its inline-code example straight out of
 //! `format/mutations.md` for exactly this reason. This module
 //! generalizes that idea so every doc pin shares one reader:
-//! [`documented_json_block`] for a fenced example,
-//! [`section_text`] for the prose of a named section. Both are
+//! [`documented_json_block`](crate::util::doc_fixtures::documented_json_block) for a fenced example,
+//! [`section_text`](crate::util::doc_fixtures::section_text) for the prose of a named section. Both are
 //! section-scoped, which is the property a whole-file `contains()`
 //! lacks — it keeps passing after the thing it claims to pin has
 //! moved somewhere else entirely.
