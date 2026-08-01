@@ -28,11 +28,7 @@ use super::text_edit::insert_caret;
 /// shadowed user config.
 ///
 /// Returns `true` iff a printable character was inserted.
-pub(super) fn route_label_edit_key(
-    logical_key: &Key,
-    buffer: &mut String,
-    cursor: &mut usize,
-) -> bool {
+pub(super) fn route_label_edit_key(logical_key: &Key, buffer: &mut String, cursor: &mut usize) -> bool {
     if let Key::Character(c) = logical_key {
         // Control chars (and any non-printing payload winit attaches
         // to a structural key) are filtered, which mirrors the
@@ -197,6 +193,166 @@ fn seed_edit_buffer(clean: bool, original: Option<&str>) -> (String, usize) {
     (buffer, cursor)
 }
 
+/// What a single-line editor lifecycle step owes the renderer.
+///
+/// The `*_core` functions below are renderer-free: they mutate the
+/// model, the editor state and the preview slot, then *name* the
+/// canvas work their caller must run instead of running it. The
+/// shells (`open_*` / `handle_*` / `close_*`) are the only place
+/// that touches `Renderer` / `AppScene`.
+///
+/// Splitting the decree from its execution is what lets the whole
+/// editor lifecycle be driven in tests — TEST_CONVENTIONS §T8 keeps
+/// live wgpu out of the harness, so a lifecycle that only exists
+/// inside a `&mut Renderer` signature cannot be tested at all.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum EditRefresh {
+    /// Nothing observable changed; skip the canvas work entirely.
+    None,
+    /// Re-project only the canvas the live preview feeds — the
+    /// connection-label role for an edge label, the portal role for
+    /// portal text. The rest of the scene cannot have changed,
+    /// which is what keeps per-keystroke typing cheap.
+    Preview,
+    /// Full `rebuild_all`: the model changed, or the editor stopped
+    /// existing, so the preview override has to leave every pass.
+    All,
+}
+
+/// One editing primitive reaching an open single-line buffer.
+///
+/// The two arms are the two halves of CODE_CONVENTIONS §3's modal
+/// carve-out: rebindable cursor / delete verbs arrive as a resolved
+/// [`crate::application::keybinds::Action`], while character
+/// insertion arrives as the literal winit key payload because no
+/// `Action` body can carry an IME cluster.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub(in crate::application::app) enum EditInput<'k> {
+    /// A resolved `LabelEdit*` cursor / delete action.
+    Action(crate::application::keybinds::Action),
+    /// A literal key payload — printable characters and IME /
+    /// dead-key clusters.
+    Key(&'k Key),
+}
+
+/// Renderer-free half of [`open_label_edit`]. Returns the canvas
+/// work the caller owes, or [`EditRefresh::None`] when the edge
+/// vanished and the editor stayed closed.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_label_edit_core(
+    edge_ref: &crate::application::document::EdgeRef,
+    clean: bool,
+    doc: &mut MindMapDocument,
+    label_edit_state: &mut LabelEditState,
+) -> EditRefresh {
+    let edge = match doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)) {
+        Some(e) => e,
+        None => {
+            log::warn!(
+                "open_label_edit: edge {}→{} ({}) not found; editor stays closed",
+                edge_ref.from_id,
+                edge_ref.to_id,
+                edge_ref.edge_type
+            );
+            return EditRefresh::None;
+        }
+    };
+    let original = edge.label.clone();
+    let (buffer, cursor_grapheme_pos) = seed_edit_buffer(clean, original.as_deref());
+    *label_edit_state = LabelEditState::Open {
+        edge_ref: edge_ref.clone(),
+        buffer: buffer.clone(),
+        cursor_grapheme_pos,
+        original,
+    };
+    // Store the preview on the document so every subsequent
+    // `doc.frame_overrides` call picks it up automatically — no
+    // renderer field, no read-time override, no belt-and-suspenders
+    // branch.
+    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(edge_ref);
+    doc.label_edit_preview = Some((edge_key, insert_caret(&buffer, cursor_grapheme_pos)));
+    EditRefresh::Preview
+}
+
+/// Renderer-free half of [`handle_label_edit_key`].
+#[cfg(not(target_arch = "wasm32"))]
+fn handle_label_edit_key_core(
+    input: EditInput<'_>,
+    label_edit_state: &mut LabelEditState,
+    doc: &mut MindMapDocument,
+) -> EditRefresh {
+    let changed = match input {
+        EditInput::Action(a) => {
+            crate::application::app::dispatch::apply_label_edit_action(a, label_edit_state)
+        }
+        EditInput::Key(logical_key) => {
+            let Some((buffer, cursor)) = (match label_edit_state {
+                LabelEditState::Open {
+                    buffer,
+                    cursor_grapheme_pos,
+                    ..
+                } => Some((buffer, cursor_grapheme_pos)),
+                LabelEditState::Closed => None,
+            }) else {
+                return EditRefresh::None;
+            };
+            route_label_edit_key(logical_key, buffer, cursor)
+        }
+    };
+
+    if !changed {
+        return EditRefresh::None;
+    }
+
+    // Refresh the preview on the document so the caret + edited text
+    // render on the next frame. The connection-label tree's in-place
+    // mutator path picks up the new text without rebuilding the
+    // arena because the per-edge identity sequence stays constant
+    // during a label edit.
+    if let LabelEditState::Open {
+        edge_ref,
+        buffer,
+        cursor_grapheme_pos,
+        ..
+    } = label_edit_state
+    {
+        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&*edge_ref);
+        doc.label_edit_preview = Some((edge_key, insert_caret(buffer, *cursor_grapheme_pos)));
+        return EditRefresh::Preview;
+    }
+    EditRefresh::None
+}
+
+/// Renderer-free half of [`close_label_edit`].
+#[cfg(not(target_arch = "wasm32"))]
+fn close_label_edit_core(
+    commit: bool,
+    doc: &mut MindMapDocument,
+    label_edit_state: &mut LabelEditState,
+) -> EditRefresh {
+    let (edge_ref, buffer, original) = match std::mem::replace(label_edit_state, LabelEditState::Closed) {
+        LabelEditState::Open {
+            edge_ref,
+            buffer,
+            original,
+            ..
+        } => (edge_ref, buffer, original),
+        LabelEditState::Closed => return EditRefresh::None,
+    };
+    doc.label_edit_preview = None;
+    if commit {
+        let new_val = if buffer.is_empty() { None } else { Some(buffer) };
+        // Only push undo if the committed value actually differs from the
+        // pre-edit original — avoids a dead undo entry on unchanged text.
+        if new_val != original {
+            doc.set_edge_label(&edge_ref, new_val);
+        }
+    }
+    EditRefresh::All
+}
+
 /// Transition into inline label edit mode for the given edge. Seeds
 /// the buffer from the edge's current label (or the empty string)
 /// and installs a preview override on the renderer so the caret
@@ -220,32 +376,9 @@ pub(in crate::application::app) fn open_label_edit(
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
-    let edge = match doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)) {
-        Some(e) => e,
-        None => {
-            log::warn!(
-                "open_label_edit: edge {}→{} ({}) not found; editor stays closed",
-                edge_ref.from_id,
-                edge_ref.to_id,
-                edge_ref.edge_type
-            );
-            return;
-        }
-    };
-    let original = edge.label.clone();
-    let (buffer, cursor_grapheme_pos) = seed_edit_buffer(clean, original.as_deref());
-    *label_edit_state = LabelEditState::Open {
-        edge_ref: edge_ref.clone(),
-        buffer: buffer.clone(),
-        cursor_grapheme_pos,
-        original,
-    };
-    // Store the preview on the document so every subsequent
-    // `doc.frame_overrides` call picks it up automatically — no
-    // renderer field, no read-time override, no belt-and-suspenders
-    // branch.
-    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(edge_ref);
-    doc.label_edit_preview = Some((edge_key, insert_caret(&buffer, cursor_grapheme_pos)));
+    if open_label_edit_core(edge_ref, clean, doc, label_edit_state) == EditRefresh::None {
+        return;
+    }
     // Rebuild the connection-label canvas so the caret is visible
     // immediately. The caller already ran `rebuild_all` before this,
     // so the rest of the canvas is fresh. We deliberately touch only
@@ -288,50 +421,18 @@ pub(in crate::application::app) fn handle_label_edit_key(
     let name = key_name.as_deref();
     let action = name.and_then(|n| keybinds.action_for_context(InputContext::LabelEdit, n, ctrl, shift, alt));
     // `LabelEditCommit` / `LabelEditCancel` are funneled via the
-    // keyboard handler's pre-filter (`event_keyboard.rs:85-103`).
-    // This handler reaches only the literal-Key character + cursor
-    // primitive paths.
-
+    // keyboard handler's pre-filter. This handler reaches only the
+    // literal-Key character + cursor primitive paths.
+    //
     // Action-driven path: cursor / delete primitives route through
-    // `dispatch::apply_label_edit_action`. Falls through to the
-    // legacy `route_label_edit_key` for character input + structural
-    // keys not bound to an Action (the route helper handles
-    // Backspace / Delete / Arrow* / Home / End and printable-char
-    // insertion uniformly).
-    let changed = if let Some(a) = action {
-        crate::application::app::dispatch::apply_label_edit_action(a, label_edit_state)
-    } else {
-        let Some((buffer, cursor)) = (match label_edit_state {
-            LabelEditState::Open {
-                buffer,
-                cursor_grapheme_pos,
-                ..
-            } => Some((buffer, cursor_grapheme_pos)),
-            LabelEditState::Closed => None,
-        }) else {
-            return;
-        };
-        route_label_edit_key(logical_key, buffer, cursor)
+    // `dispatch::apply_label_edit_action`. Falls through to
+    // `route_label_edit_key` for character input not bound to an
+    // Action.
+    let input = match action {
+        Some(a) => EditInput::Action(a),
+        None => EditInput::Key(logical_key),
     };
-
-    if !changed {
-        return;
-    }
-
-    // Refresh the preview on the document so the caret + edited text
-    // render on the next frame. The connection-label tree's in-place
-    // mutator path picks up the new text without rebuilding the
-    // arena because the per-edge identity sequence stays constant
-    // during a label edit.
-    if let LabelEditState::Open {
-        edge_ref,
-        buffer,
-        cursor_grapheme_pos,
-        ..
-    } = label_edit_state
-    {
-        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&*edge_ref);
-        doc.label_edit_preview = Some((edge_key, insert_caret(buffer, *cursor_grapheme_pos)));
+    if handle_label_edit_key_core(input, label_edit_state, doc) == EditRefresh::Preview {
         // Same scope as `open_label_edit`: only the connection-
         // label canvas reads `label_edit_preview`, so every other
         // role stays untouched on every keystroke. Resize-handle
@@ -364,27 +465,19 @@ pub(in crate::application::app) fn close_label_edit(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    let (edge_ref, buffer, original) = match std::mem::replace(label_edit_state, LabelEditState::Closed) {
-        LabelEditState::Open {
-            edge_ref,
-            buffer,
-            original,
-            ..
-        } => (edge_ref, buffer, original),
-        LabelEditState::Closed => return,
-    };
-    doc.label_edit_preview = None;
-    if commit {
-        let new_val = if buffer.is_empty() { None } else { Some(buffer) };
-        // Only push undo if the committed value actually differs from the
-        // pre-edit original — avoids a dead undo entry on unchanged text.
-        if new_val != original {
-            doc.set_edge_label(&edge_ref, new_val);
-        }
+    if close_label_edit_core(commit, doc, label_edit_state) == EditRefresh::None {
+        return;
     }
     // Rebuild so the label reflects the model state (or vanishes if
     // the buffer was empty + original was None).
-    rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
+    rebuild_all(
+        doc,
+        interaction_mode,
+        mindmap_tree,
+        app_scene,
+        renderer,
+        scene_cache,
+    );
 }
 
 /// Inline-edit state for a portal label's text. Parallel to
@@ -445,6 +538,164 @@ impl PortalTextEditState {
     }
 }
 
+/// Renderer-free half of [`open_portal_text_edit`].
+#[cfg(not(target_arch = "wasm32"))]
+fn open_portal_text_edit_core(
+    edge_ref: &crate::application::document::EdgeRef,
+    endpoint_node_id: &str,
+    clean: bool,
+    doc: &mut MindMapDocument,
+    state: &mut PortalTextEditState,
+) -> EditRefresh {
+    // Verify the edge + endpoint still exist before entering
+    // edit mode. If either vanished between the selection and
+    // the open gesture (e.g. an undo raced with EditSelection),
+    // log and return rather than install a stale editor.
+    let edge = match doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)) {
+        Some(e) => e,
+        None => {
+            log::warn!(
+                "open_portal_text_edit: edge {}→{} ({}) not found; editor stays closed",
+                edge_ref.from_id,
+                edge_ref.to_id,
+                edge_ref.edge_type
+            );
+            return EditRefresh::None;
+        }
+    };
+    if endpoint_node_id != edge.from_id && endpoint_node_id != edge.to_id {
+        log::warn!(
+            "open_portal_text_edit: endpoint {} is neither from ({}) nor to ({}); editor stays closed",
+            endpoint_node_id,
+            edge.from_id,
+            edge.to_id,
+        );
+        return EditRefresh::None;
+    }
+    let original =
+        baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id).and_then(|s| s.text.clone());
+    let (buffer, cursor_grapheme_pos) = seed_edit_buffer(clean, original.as_deref());
+    *state = PortalTextEditState::Open {
+        edge_ref: edge_ref.clone(),
+        endpoint_node_id: endpoint_node_id.to_string(),
+        buffer: buffer.clone(),
+        cursor_grapheme_pos,
+        original,
+    };
+    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(edge_ref);
+    doc.portal_text_edit_preview = Some((
+        edge_key,
+        endpoint_node_id.to_string(),
+        insert_caret(&buffer, cursor_grapheme_pos),
+    ));
+    EditRefresh::Preview
+}
+
+/// Renderer-free half of [`handle_portal_text_edit_key`], including
+/// the mid-edit `edge_still_valid` guard.
+#[cfg(not(target_arch = "wasm32"))]
+fn handle_portal_text_edit_key_core(
+    input: EditInput<'_>,
+    state: &mut PortalTextEditState,
+    doc: &mut MindMapDocument,
+) -> EditRefresh {
+    // If the edge disappeared or flipped out of portal mode
+    // while the editor was open (e.g. an Undo popped the edge,
+    // or a console command switched `display_mode` to line),
+    // close the editor without committing. Without this guard a
+    // commit would silently no-op via `set_portal_label_text`'s
+    // edge-not-found path, and the preview would keep re-
+    // installing a dangling buffer on every keystroke.
+    let edge_still_valid = match state {
+        PortalTextEditState::Open {
+            edge_ref,
+            endpoint_node_id,
+            ..
+        } => doc
+            .mindmap
+            .edges
+            .iter()
+            .find(|e| edge_ref.matches(e))
+            .map(|e| {
+                baumhard::mindmap::model::is_portal_edge(e)
+                    && (endpoint_node_id == &e.from_id || endpoint_node_id == &e.to_id)
+            })
+            .unwrap_or(false),
+        PortalTextEditState::Closed => return EditRefresh::None,
+    };
+    if !edge_still_valid {
+        return close_portal_text_edit_core(false, doc, state);
+    }
+
+    let changed = {
+        let Some((buffer, cursor)) = (match state {
+            PortalTextEditState::Open {
+                buffer,
+                cursor_grapheme_pos,
+                ..
+            } => Some((buffer, cursor_grapheme_pos)),
+            PortalTextEditState::Closed => None,
+        }) else {
+            return EditRefresh::None;
+        };
+        match input {
+            EditInput::Action(a) => {
+                crate::application::app::dispatch::apply_label_edit_action_to_buffer(a, buffer, cursor)
+            }
+            EditInput::Key(logical_key) => route_label_edit_key(logical_key, buffer, cursor),
+        }
+    };
+    if !changed {
+        return EditRefresh::None;
+    }
+
+    if let PortalTextEditState::Open {
+        edge_ref,
+        endpoint_node_id,
+        buffer,
+        cursor_grapheme_pos,
+        ..
+    } = state
+    {
+        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&*edge_ref);
+        doc.portal_text_edit_preview = Some((
+            edge_key,
+            endpoint_node_id.clone(),
+            insert_caret(buffer, *cursor_grapheme_pos),
+        ));
+        return EditRefresh::Preview;
+    }
+    EditRefresh::None
+}
+
+/// Renderer-free half of [`close_portal_text_edit`].
+#[cfg(not(target_arch = "wasm32"))]
+fn close_portal_text_edit_core(
+    commit: bool,
+    doc: &mut MindMapDocument,
+    state: &mut PortalTextEditState,
+) -> EditRefresh {
+    let (edge_ref, endpoint_node_id, buffer, original) =
+        match std::mem::replace(state, PortalTextEditState::Closed) {
+            PortalTextEditState::Open {
+                edge_ref,
+                endpoint_node_id,
+                buffer,
+                original,
+                ..
+            } => (edge_ref, endpoint_node_id, buffer, original),
+            PortalTextEditState::Closed => return EditRefresh::None,
+        };
+    doc.portal_text_edit_preview = None;
+    if commit {
+        let new_val = if buffer.is_empty() { None } else { Some(buffer) };
+        if new_val != original {
+            doc.set_portal_label_text(&edge_ref, &endpoint_node_id, new_val);
+        }
+    }
+    EditRefresh::All
+}
+
 /// Transition into inline portal-text edit mode for the given
 /// endpoint. Seeds the buffer from the endpoint's current text,
 /// installs a preview override on the document so the caret
@@ -463,49 +714,11 @@ pub(in crate::application::app) fn open_portal_text_edit(
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
-    // Verify the edge + endpoint still exist before entering
-    // edit mode. If either vanished between the selection and
-    // the open gesture (e.g. an undo raced with EditSelection),
-    // log and return rather than install a stale editor.
     // Callers read `state.is_open()` to detect the skipped-open
     // case; they don't need a return value to disambiguate.
-    let edge = match doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)) {
-        Some(e) => e,
-        None => {
-            log::warn!(
-                "open_portal_text_edit: edge {}→{} ({}) not found; editor stays closed",
-                edge_ref.from_id,
-                edge_ref.to_id,
-                edge_ref.edge_type
-            );
-            return;
-        }
-    };
-    if endpoint_node_id != edge.from_id && endpoint_node_id != edge.to_id {
-        log::warn!(
-            "open_portal_text_edit: endpoint {} is neither from ({}) nor to ({}); editor stays closed",
-            endpoint_node_id,
-            edge.from_id,
-            edge.to_id,
-        );
+    if open_portal_text_edit_core(edge_ref, endpoint_node_id, clean, doc, state) == EditRefresh::None {
         return;
     }
-    let original =
-        baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id).and_then(|s| s.text.clone());
-    let (buffer, cursor_grapheme_pos) = seed_edit_buffer(clean, original.as_deref());
-    *state = PortalTextEditState::Open {
-        edge_ref: edge_ref.clone(),
-        endpoint_node_id: endpoint_node_id.to_string(),
-        buffer: buffer.clone(),
-        cursor_grapheme_pos,
-        original,
-    };
-    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(edge_ref);
-    doc.portal_text_edit_preview = Some((
-        edge_key,
-        endpoint_node_id.to_string(),
-        insert_caret(&buffer, cursor_grapheme_pos),
-    ));
     let offsets = std::collections::HashMap::new();
     CanvasFrame::new(
         doc,
@@ -541,88 +754,40 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
     let name = key_name.as_deref();
     let action = name.and_then(|n| keybinds.action_for_context(InputContext::LabelEdit, n, ctrl, shift, alt));
 
-    // If the edge disappeared or flipped out of portal mode
-    // while the editor was open (e.g. an Undo popped the edge,
-    // or a console command switched `display_mode` to line),
-    // close the editor without committing. Without this guard a
-    // commit would silently no-op via `set_portal_label_text`'s
-    // edge-not-found path, and the preview would keep re-
-    // installing a dangling buffer on every keystroke.
-    let edge_still_valid = match state {
-        PortalTextEditState::Open {
-            edge_ref,
-            endpoint_node_id,
-            ..
-        } => doc
-            .mindmap
-            .edges
-            .iter()
-            .find(|e| edge_ref.matches(e))
-            .map(|e| {
-                baumhard::mindmap::model::is_portal_edge(e)
-                    && (endpoint_node_id == &e.from_id || endpoint_node_id == &e.to_id)
-            })
-            .unwrap_or(false),
-        PortalTextEditState::Closed => return,
-    };
-    if !edge_still_valid {
-        close_portal_text_edit(false, doc, interaction_mode, state, mindmap_tree, app_scene, renderer, scene_cache);
-        return;
-    }
-
     // `LabelEditCommit` / `LabelEditCancel` are funneled via the
-    // keyboard handler's pre-filter (`event_keyboard.rs:109-127`).
-    // The portal-text editor reuses `LabelEdit*` Actions (it shares
-    // `InputContext::LabelEdit`); the dispatch arm picks the open
-    // state. The edge-validity guard above stays inline (pre-funnel
+    // keyboard handler's pre-filter. The portal-text editor reuses
+    // `LabelEdit*` Actions (it shares `InputContext::LabelEdit`);
+    // the dispatch arm picks the open state. The edge-validity
+    // guard inside the core stays out of the funnel (pre-funnel
     // state-machine bookkeeping per CODE_CONVENTIONS §3 carve-out).
-
-    // Route through dispatch's buffer-generic helper when an Action
-    // matched (cursor/delete primitives), else fall back to the
-    // legacy character-input router.
-    let changed = {
-        let Some((buffer, cursor)) = (match state {
-            PortalTextEditState::Open {
-                buffer,
-                cursor_grapheme_pos,
-                ..
-            } => Some((buffer, cursor_grapheme_pos)),
-            PortalTextEditState::Closed => None,
-        }) else {
-            return;
-        };
-        if let Some(a) = action {
-            crate::application::app::dispatch::apply_label_edit_action_to_buffer(a, buffer, cursor)
-        } else {
-            route_label_edit_key(logical_key, buffer, cursor)
-        }
+    let input = match action {
+        Some(a) => EditInput::Action(a),
+        None => EditInput::Key(logical_key),
     };
-    if !changed {
-        return;
-    }
-
-    if let PortalTextEditState::Open {
-        edge_ref,
-        endpoint_node_id,
-        buffer,
-        cursor_grapheme_pos,
-        ..
-    } = state
-    {
-        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&*edge_ref);
-        doc.portal_text_edit_preview = Some((
-            edge_key,
-            endpoint_node_id.clone(),
-            insert_caret(buffer, *cursor_grapheme_pos),
-        ));
-        let offsets = std::collections::HashMap::new();
-        CanvasFrame::new(
-            doc,
-            &offsets,
-            crate::application::document::InteractionModeOverrides::none(),
-            renderer.camera_zoom(),
-        )
-        .update_portal_tree(app_scene);
+    match handle_portal_text_edit_key_core(input, state, doc) {
+        EditRefresh::None => {}
+        EditRefresh::Preview => {
+            let offsets = std::collections::HashMap::new();
+            CanvasFrame::new(
+                doc,
+                &offsets,
+                crate::application::document::InteractionModeOverrides::none(),
+                renderer.camera_zoom(),
+            )
+            .update_portal_tree(app_scene);
+        }
+        // The `edge_still_valid` guard tripped and the core closed
+        // the editor without committing.
+        EditRefresh::All => {
+            rebuild_all(
+                doc,
+                interaction_mode,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+            );
+        }
     }
 }
 
@@ -641,25 +806,17 @@ pub(in crate::application::app) fn close_portal_text_edit(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    let (edge_ref, endpoint_node_id, buffer, original) =
-        match std::mem::replace(state, PortalTextEditState::Closed) {
-            PortalTextEditState::Open {
-                edge_ref,
-                endpoint_node_id,
-                buffer,
-                original,
-                ..
-            } => (edge_ref, endpoint_node_id, buffer, original),
-            PortalTextEditState::Closed => return,
-        };
-    doc.portal_text_edit_preview = None;
-    if commit {
-        let new_val = if buffer.is_empty() { None } else { Some(buffer) };
-        if new_val != original {
-            doc.set_portal_label_text(&edge_ref, &endpoint_node_id, new_val);
-        }
+    if close_portal_text_edit_core(commit, doc, state) == EditRefresh::None {
+        return;
     }
-    rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
+    rebuild_all(
+        doc,
+        interaction_mode,
+        mindmap_tree,
+        app_scene,
+        renderer,
+        scene_cache,
+    );
 }
 
 #[cfg(test)]
@@ -989,5 +1146,450 @@ mod tests {
         assert!(!changed);
         assert_eq!(buf, "abc");
         assert_eq!(cursor, 1);
+    }
+
+    // ── Differential oracle over the editor lifecycle ───────────
+    //
+    // Every scenario below drives a *renderer-free* editor core
+    // over a scripted input sequence and renders one line per step
+    // describing everything the step could observably change:
+    // the refresh decree, the editor's buffer + grapheme cursor,
+    // the target's committed model value, the staged preview
+    // string, and the undo-stack depth.
+    //
+    // The expected traces are the oracle. They were authored
+    // against the two separate `LabelEditState` /
+    // `PortalTextEditState` implementations; a refactor that
+    // unifies them has to reproduce them line for line.
+    mod oracle {
+        use super::super::*;
+        use crate::application::document::{EdgeRef, MindMapDocument};
+        use crate::application::keybinds::Action;
+        use crate::application::platform::input::{Key, SmolStr};
+
+        const FROM_ID: &str = "node-a";
+        const TO_ID: &str = "node-b";
+        const EDGE_TYPE: &str = "cross_link";
+        /// Pre-edit text on both targets, so an edge-label trace and
+        /// a portal-text trace over the same script are directly
+        /// comparable.
+        const SEED_TEXT: &str = "hi";
+
+        /// Which single-line editor a scenario drives.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum TargetKind {
+            EdgeLabel,
+            PortalText,
+        }
+
+        /// One scripted step. `DeleteEdge` / `FlipToLine` are
+        /// environment mutations that model something happening
+        /// *underneath* an open editor (an undo popping the edge, a
+        /// console command flipping `display_mode`).
+        #[derive(Debug, Clone)]
+        enum Step {
+            Open { clean: bool },
+            Type(&'static str),
+            Act(Action),
+            DeleteEdge,
+            FlipToLine,
+            Close { commit: bool },
+        }
+
+        fn edge_ref() -> EdgeRef {
+            EdgeRef::new(FROM_ID, TO_ID, EDGE_TYPE)
+        }
+
+        fn key(s: &str) -> Key {
+            Key::Character(SmolStr::new(s))
+        }
+
+        /// Two nodes plus one edge carrying [`SEED_TEXT`] on the
+        /// field the `kind`'s editor owns.
+        fn fixture_doc(kind: TargetKind) -> MindMapDocument {
+            use crate::application::document::defaults::{default_cross_link_edge, default_orphan_node};
+            use glam::Vec2;
+
+            let mut edge = default_cross_link_edge(FROM_ID, TO_ID);
+            match kind {
+                TargetKind::EdgeLabel => edge.label = Some(SEED_TEXT.to_string()),
+                TargetKind::PortalText => {
+                    edge.display_mode = Some(baumhard::mindmap::model::DISPLAY_MODE_PORTAL.to_string());
+                    edge.portal_from = Some(baumhard::mindmap::model::PortalEndpointState {
+                        text: Some(SEED_TEXT.to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
+            let json = serde_json::json!({
+                "version": "1.0",
+                "name": "oracle",
+                "canvas": {"background_color": "#000000"},
+                "nodes": {
+                    FROM_ID: default_orphan_node(FROM_ID, Vec2::new(0.0, 0.0)),
+                    TO_ID: default_orphan_node(TO_ID, Vec2::new(400.0, 0.0)),
+                },
+                "edges": [edge],
+            })
+            .to_string();
+            MindMapDocument::from_json_str(&json, None).expect("oracle fixture JSON must parse")
+        }
+
+        /// The target's committed model value.
+        fn model_value(kind: TargetKind, doc: &MindMapDocument) -> Option<String> {
+            let edge = doc.mindmap.edges.first()?;
+            match kind {
+                TargetKind::EdgeLabel => edge.label.clone(),
+                TargetKind::PortalText => edge.portal_from.as_ref().and_then(|s| s.text.clone()),
+            }
+        }
+
+        /// The preview string staged for the renderer, if any.
+        fn preview(kind: TargetKind, doc: &MindMapDocument) -> Option<String> {
+            match kind {
+                TargetKind::EdgeLabel => doc.label_edit_preview.as_ref().map(|(_, s)| s.clone()),
+                TargetKind::PortalText => doc.portal_text_edit_preview.as_ref().map(|(_, _, s)| s.clone()),
+            }
+        }
+
+        fn render(
+            refresh: EditRefresh,
+            editor: Option<(&str, usize)>,
+            value: Option<String>,
+            prev: Option<String>,
+            undo: usize,
+        ) -> String {
+            let editor = match editor {
+                Some((buf, cur)) => format!("open[{}]@{}", buf, cur),
+                None => "closed".to_string(),
+            };
+            // Rendered by hand rather than through `{:?}` on the
+            // `Option<String>`s: `Debug` escapes ZWJ / combining
+            // marks, which would make a grapheme trace unreadable
+            // in exactly the case it exists to pin.
+            let opt = |v: Option<String>| match v {
+                Some(s) => format!("\"{}\"", s),
+                None => "-".to_string(),
+            };
+            format!(
+                "{:?} {} value={} preview={} undo={}",
+                refresh,
+                editor,
+                opt(value),
+                opt(prev),
+                undo
+            )
+        }
+
+        /// Drive `script` against `kind`'s editor core, one trace
+        /// line per step.
+        fn run(kind: TargetKind, script: &[Step]) -> Vec<String> {
+            let mut doc = fixture_doc(kind);
+            let mut label = LabelEditState::Closed;
+            let mut portal = PortalTextEditState::Closed;
+            let mut trace = Vec::new();
+            for step in script {
+                let refresh = match step {
+                    Step::DeleteEdge => {
+                        doc.mindmap.edges.clear();
+                        EditRefresh::None
+                    }
+                    Step::FlipToLine => {
+                        for e in doc.mindmap.edges.iter_mut() {
+                            e.display_mode = None;
+                        }
+                        EditRefresh::None
+                    }
+                    Step::Open { clean } => match kind {
+                        TargetKind::EdgeLabel => {
+                            open_label_edit_core(&edge_ref(), *clean, &mut doc, &mut label)
+                        }
+                        TargetKind::PortalText => {
+                            open_portal_text_edit_core(&edge_ref(), FROM_ID, *clean, &mut doc, &mut portal)
+                        }
+                    },
+                    Step::Type(s) => {
+                        let k = key(s);
+                        match kind {
+                            TargetKind::EdgeLabel => {
+                                handle_label_edit_key_core(EditInput::Key(&k), &mut label, &mut doc)
+                            }
+                            TargetKind::PortalText => {
+                                handle_portal_text_edit_key_core(EditInput::Key(&k), &mut portal, &mut doc)
+                            }
+                        }
+                    }
+                    Step::Act(a) => match kind {
+                        TargetKind::EdgeLabel => {
+                            handle_label_edit_key_core(EditInput::Action(a.clone()), &mut label, &mut doc)
+                        }
+                        TargetKind::PortalText => handle_portal_text_edit_key_core(
+                            EditInput::Action(a.clone()),
+                            &mut portal,
+                            &mut doc,
+                        ),
+                    },
+                    Step::Close { commit } => match kind {
+                        TargetKind::EdgeLabel => close_label_edit_core(*commit, &mut doc, &mut label),
+                        TargetKind::PortalText => close_portal_text_edit_core(*commit, &mut doc, &mut portal),
+                    },
+                };
+                let editor = match kind {
+                    TargetKind::EdgeLabel => match &label {
+                        LabelEditState::Open {
+                            buffer,
+                            cursor_grapheme_pos,
+                            ..
+                        } => Some((buffer.as_str(), *cursor_grapheme_pos)),
+                        LabelEditState::Closed => None,
+                    },
+                    TargetKind::PortalText => match &portal {
+                        PortalTextEditState::Open {
+                            buffer,
+                            cursor_grapheme_pos,
+                            ..
+                        } => Some((buffer.as_str(), *cursor_grapheme_pos)),
+                        PortalTextEditState::Closed => None,
+                    },
+                };
+                trace.push(render(
+                    refresh,
+                    editor,
+                    model_value(kind, &doc),
+                    preview(kind, &doc),
+                    doc.undo_stack.len(),
+                ));
+            }
+            trace
+        }
+
+        /// Assert a script produces `expected` on **both** editors.
+        /// Every scenario the two editors are supposed to agree on
+        /// goes through here, so the pair is pinned as one editor
+        /// even while two implementations exist.
+        fn assert_both(script: &[Step], expected: &[&str]) {
+            for kind in [TargetKind::EdgeLabel, TargetKind::PortalText] {
+                assert_eq!(
+                    run(kind, script),
+                    expected,
+                    "{:?} diverged from the shared single-line editor trace",
+                    kind
+                );
+            }
+        }
+
+        #[test]
+        fn test_oracle_open_type_commit() {
+            assert_both(
+                &[
+                    Step::Open { clean: false },
+                    Step::Type("!"),
+                    Step::Close { commit: true },
+                ],
+                &[
+                    r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                    r#"Preview open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                    r#"All closed value="hi!" preview=- undo=1"#,
+                ],
+            );
+        }
+
+        #[test]
+        fn test_oracle_open_type_cancel_restores_and_pushes_no_undo() {
+            assert_both(
+                &[
+                    Step::Open { clean: false },
+                    Step::Type("!"),
+                    Step::Close { commit: false },
+                ],
+                &[
+                    r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                    r#"Preview open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                    r#"All closed value="hi" preview=- undo=0"#,
+                ],
+            );
+        }
+
+        /// `Action::EditSelectionClean`'s empty-buffer contract all
+        /// the way through commit.
+        #[test]
+        fn test_oracle_clean_open_replaces_the_value() {
+            assert_both(
+                &[
+                    Step::Open { clean: true },
+                    Step::Type("x"),
+                    Step::Close { commit: true },
+                ],
+                &[
+                    r#"Preview open[]@0 value="hi" preview="|" undo=0"#,
+                    r#"Preview open[x]@1 value="hi" preview="x|" undo=0"#,
+                    r#"All closed value="x" preview=- undo=1"#,
+                ],
+            );
+        }
+
+        /// Cursor / delete primitives arriving as resolved Actions
+        /// move the same buffer the literal-key path does.
+        #[test]
+        fn test_oracle_cursor_primitives() {
+            assert_both(
+                &[
+                    Step::Open { clean: false },
+                    Step::Act(Action::LabelEditCursorLeft),
+                    Step::Act(Action::LabelEditDeleteBack),
+                    Step::Close { commit: true },
+                ],
+                &[
+                    r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                    r#"Preview open[hi]@1 value="hi" preview="h|i" undo=0"#,
+                    r#"Preview open[i]@0 value="hi" preview="|i" undo=0"#,
+                    r#"All closed value="i" preview=- undo=1"#,
+                ],
+            );
+        }
+
+        /// An unchanged commit must not leave a dead undo entry.
+        #[test]
+        fn test_oracle_unchanged_commit_pushes_no_undo() {
+            assert_both(
+                &[Step::Open { clean: false }, Step::Close { commit: true }],
+                &[
+                    r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                    r#"All closed value="hi" preview=- undo=0"#,
+                ],
+            );
+        }
+
+        /// Committing an empty buffer clears the model value (both
+        /// setters normalize `Some("")` to `None`).
+        #[test]
+        fn test_oracle_empty_commit_clears_the_value() {
+            assert_both(
+                &[Step::Open { clean: true }, Step::Close { commit: true }],
+                &[
+                    r#"Preview open[]@0 value="hi" preview="|" undo=0"#,
+                    r#"All closed value=- preview=- undo=1"#,
+                ],
+            );
+        }
+
+        /// A ZWJ family sequence is one grapheme: the cursor
+        /// advances by 1, not by the codepoint count.
+        #[test]
+        fn test_oracle_zwj_cluster_advances_one_grapheme() {
+            assert_both(
+                &[
+                    Step::Open { clean: false },
+                    Step::Type("\u{1F469}\u{200D}\u{1F467}"),
+                    Step::Close { commit: true },
+                ],
+                &[
+                    r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                    "Preview open[hi\u{1F469}\u{200D}\u{1F467}]@3 value=\"hi\" \
+                     preview=\"hi\u{1F469}\u{200D}\u{1F467}|\" undo=0",
+                    "All closed value=\"hi\u{1F469}\u{200D}\u{1F467}\" preview=- undo=1",
+                ],
+            );
+        }
+
+        /// The edge is deleted underneath an open editor and the
+        /// user then commits. Both editors keep the buffer, both
+        /// find nothing to write, and neither pushes an undo entry.
+        #[test]
+        fn test_oracle_edge_deleted_underneath_then_commit() {
+            assert_both(
+                &[
+                    Step::Open { clean: false },
+                    Step::Type("!"),
+                    Step::DeleteEdge,
+                    Step::Close { commit: true },
+                ],
+                &[
+                    r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                    r#"Preview open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                    r#"None open[hi!]@3 value=- preview="hi!|" undo=0"#,
+                    r#"All closed value=- preview=- undo=0"#,
+                ],
+            );
+        }
+
+        /// **The one intentional behavioral asymmetry.** A keystroke
+        /// arriving after the edge vanished trips the portal
+        /// editor's `edge_still_valid` guard — it closes without
+        /// committing, so the following commit is a no-op on a
+        /// closed editor. The edge-label editor has no such guard
+        /// and keeps typing into a buffer whose target is gone;
+        /// its commit then no-ops inside `set_edge_label`.
+        ///
+        /// Unifying the two editors must preserve *both* columns.
+        /// Deleting the guard makes the portal column look like the
+        /// edge-label one, which is exactly what this pins.
+        #[test]
+        fn test_oracle_keystroke_after_edge_deleted_diverges_by_design() {
+            let script = [
+                Step::Open { clean: false },
+                Step::Type("!"),
+                Step::DeleteEdge,
+                Step::Type("?"),
+                Step::Close { commit: true },
+            ];
+            let shared_prefix = [
+                r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                r#"Preview open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                r#"None open[hi!]@3 value=- preview="hi!|" undo=0"#,
+            ];
+
+            let mut edge_label = shared_prefix.to_vec();
+            edge_label.push(r#"Preview open[hi!?]@4 value=- preview="hi!?|" undo=0"#);
+            edge_label.push(r#"All closed value=- preview=- undo=0"#);
+            assert_eq!(run(TargetKind::EdgeLabel, &script), edge_label);
+
+            let mut portal = shared_prefix.to_vec();
+            portal.push(r#"All closed value=- preview=- undo=0"#);
+            portal.push(r#"None closed value=- preview=- undo=0"#);
+            assert_eq!(run(TargetKind::PortalText, &script), portal);
+        }
+
+        /// Second half of the `edge_still_valid` guard: the edge
+        /// survives but leaves portal mode, so the endpoint text the
+        /// editor is bound to stops existing as a rendered element.
+        /// The guard closes the editor without committing, leaving
+        /// the pre-edit value intact.
+        #[test]
+        fn test_oracle_portal_edge_flipped_to_line_mode_closes_without_commit() {
+            assert_eq!(
+                run(
+                    TargetKind::PortalText,
+                    &[
+                        Step::Open { clean: false },
+                        Step::Type("!"),
+                        Step::FlipToLine,
+                        Step::Type("?"),
+                        Step::Close { commit: true },
+                    ],
+                ),
+                vec![
+                    r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                    r#"Preview open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                    r#"None open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                    r#"All closed value="hi" preview=- undo=0"#,
+                    r#"None closed value="hi" preview=- undo=0"#,
+                ]
+            );
+        }
+
+        /// Opening on a target that already vanished leaves the
+        /// editor closed and stages no preview.
+        #[test]
+        fn test_oracle_open_on_missing_target_is_a_noop() {
+            assert_both(
+                &[Step::DeleteEdge, Step::Open { clean: false }, Step::Type("x")],
+                &[
+                    "None closed value=- preview=- undo=0",
+                    "None closed value=- preview=- undo=0",
+                    "None closed value=- preview=- undo=0",
+                ],
+            );
+        }
     }
 }
