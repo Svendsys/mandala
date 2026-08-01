@@ -41,7 +41,7 @@ pub mod primes;
 /// dev-dependency and a shipped build has no business carrying a
 /// parser for its own source.
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub mod serde_coverage;
+pub(crate) mod serde_coverage;
 /// Collision-free scratch directories for filesystem tests, so
 /// concurrent `cargo test` runs cannot race on a shared path.
 /// Native-only — there is no filesystem to scratch on under wasm32.

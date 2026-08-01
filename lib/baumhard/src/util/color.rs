@@ -79,6 +79,7 @@ pub type FloatRgba = [f32; 4];
 /// [`Color`] and by hex parsing. Plain array, zero allocation,
 /// `Copy`.
 pub type Rgba = [u8; 4];
+
 /// Index of the alpha channel in an [`Rgba`] / [`FloatRgba`] quad.
 pub const ALPHA_IDX: usize = 3;
 /// Index of the blue channel in an [`Rgba`] / [`FloatRgba`] quad.

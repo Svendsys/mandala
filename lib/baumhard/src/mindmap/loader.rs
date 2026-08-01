@@ -56,9 +56,18 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// nothing that walks the text again. The raw string is not even in
 /// scope below the parse — every remaining invariant is expressed
 /// against the typed map, which is what keeps that property true as
-/// the invariant list grows. A failed parse pays a second
-/// `serde_json::Value` parse to say *where* the failure is; that is a
-/// cost the load is not going to complete anyway.
+/// the invariant list grows.
+///
+/// Cost on the failure path: roughly **2× the happy path**, and
+/// worth naming because it is more than the extra `Value` parse it
+/// looks like. `diagnose_rejected_json` pays that parse *plus*
+/// `locate_typed_failure`, which re-deserializes the canvas, then
+/// every palette, then every node, then every edge, then every
+/// custom mutation, stopping at the first that fails. When the
+/// offending key is in the last node, that second stage has typed the
+/// whole document a second time. The trade is deliberate: the load is
+/// not going to complete, and a node id beats a byte offset into a
+/// 545 KB file.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     let map = match serde_json::from_str::<MindMap>(json) {
         Ok(map) => map,
@@ -99,9 +108,7 @@ fn check_invariants(map: MindMap) -> Result<MindMap, String> {
 fn detect_zero_section_node(map: &MindMap) -> Option<String> {
     let mut ids: Vec<&String> = map.nodes.keys().collect();
     ids.sort();
-    let id = ids
-        .into_iter()
-        .find(|id| map.nodes[*id].sections.is_empty())?;
+    let id = ids.into_iter().find(|id| map.nodes[*id].sections.is_empty())?;
     Some(format!(
         "node {:?} ships zero sections — every renderable node \
          needs at least one. Run `maptool convert --sections <file>` \
@@ -128,8 +135,13 @@ fn detect_zero_section_node(map: &MindMap) -> Option<String> {
 /// 3. neither — the failure is at the top level, where serde's own
 ///    message already names the key.
 ///
-/// Only reached when the load has already failed, so the extra parse
-/// costs nothing anybody gets to keep.
+/// Cost: the `Value` parse (O(file_size), one allocation per JSON
+/// node) plus, in the worst case, a full typed re-deserialization of
+/// every addressable part — the `Value` is borrowed, not cloned, but
+/// step 2 stops only at the first part that fails, so a failure in
+/// the last node types the whole document again. Call it 2× a
+/// successful load. Only reached when the load has already failed, so
+/// it costs nothing anybody gets to keep.
 fn diagnose_rejected_json(json: &str, error: &serde_json::Error) -> String {
     let Ok(raw) = serde_json::from_str::<Value>(json) else {
         // Not valid JSON at all. serde's message carries the line and
@@ -571,7 +583,7 @@ mod tests {
     /// merely tightening a check.
     #[test]
     fn test_every_loadable_type_rejects_unknown_keys() {
-        use crate::util::serde_coverage::{crate_src_root, TypeGraph};
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
 
         let graph = TypeGraph::build(&crate_src_root());
         let mut missing: Vec<String> = Vec::new();
@@ -581,7 +593,15 @@ mod tests {
                 continue;
             }
             if !info.denies_unknown_fields {
-                missing.push(format!("{} — {}", info.name, info.file.display()));
+                // Naming the item kind matters for an enum: the
+                // attribute goes on the enum, not on the struct
+                // variant whose keys serde actually rejected.
+                let kind = match info.kind {
+                    TypeKind::Struct => "struct",
+                    TypeKind::Enum => "enum",
+                    TypeKind::Alias => "type",
+                };
+                missing.push(format!("{kind} {} — {}", info.name, info.file.display()));
             }
         }
         assert!(
@@ -1466,11 +1486,18 @@ mod tests {
         )
     }
 
-    /// Every `/`-joined key path in a JSON tree. Array indices
-    /// collapse to `[]` so the comparison is about *which keys
-    /// exist*, not how many elements carry them — the question a
-    /// round-trip has to answer is "did any authored key stop being
-    /// written", and an index would answer a different one.
+    /// Every `/`-joined key path in a JSON tree, with array indices
+    /// **collapsed** to `[]`.
+    ///
+    /// This answers "which keys exist at all". It is deliberately
+    /// blind to how many elements carry a key, which makes it the
+    /// wrong tool for the second question and the right tool for the
+    /// first: a key that stops being written *anywhere* shows up here
+    /// no matter which element used to hold it.
+    ///
+    /// [`indexed_key_values`] answers the other half, and the two are
+    /// used together — see
+    /// [`assert_load_save_loses_no_authored_key`].
     fn key_paths(value: &serde_json::Value, prefix: &str, out: &mut std::collections::BTreeSet<String>) {
         match value {
             serde_json::Value::Object(members) => {
@@ -1497,26 +1524,199 @@ mod tests {
         out
     }
 
+    /// Every `/`-joined key path in a JSON tree with array indices
+    /// **preserved** (`/nodes/3.7/sections[0]/offset`), mapped to the
+    /// value found there.
+    ///
+    /// The index is the point. Under [`key_paths`], `sections[0]` and
+    /// `sections[1]` are the same path, so a key dropped from one
+    /// element is invisible whenever a sibling keeps it — and that is
+    /// not hypothetical: `maps/testament.mindmap.json` really does
+    /// lose `/nodes/3.7/sections[0]/offset` on save, while
+    /// `sections[1]/offset` survives. The value comes along because
+    /// knowing a key vanished is only half an answer; whether it held
+    /// anything is the other half.
+    fn indexed_key_values<'a>(
+        value: &'a serde_json::Value,
+        prefix: &str,
+        out: &mut std::collections::BTreeMap<String, &'a serde_json::Value>,
+    ) {
+        match value {
+            serde_json::Value::Object(members) => {
+                for (key, child) in members {
+                    let path = format!("{prefix}/{key}");
+                    indexed_key_values(child, &path, out);
+                    out.insert(path, child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    let path = format!("{prefix}[{index}]");
+                    indexed_key_values(child, &path, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// One `skip_serializing_if` predicate modeled at the JSON level:
+    /// the predicate path exactly as the source writes it, and a test
+    /// for the values it leaves out.
+    type OmissionRule = (&'static str, fn(&serde_json::Value) -> bool);
+
+    /// **The complete set of reasons a key present on the way in may
+    /// be absent on the way out**, each paired with the JSON values
+    /// its predicate omits.
+    ///
+    /// `skip_serializing_if` is the only sanctioned omission: the
+    /// field held its own default, so writing it out carries no
+    /// information the reload would not recover. Anything else is
+    /// data loss. Modeling the predicates by hand is what lets the
+    /// indexed pass be strict — "this path disappeared *and* it held
+    /// something" is a failure, full stop — and
+    /// `test_every_skip_serializing_if_predicate_is_modeled` is what
+    /// keeps the hand-modeling honest: it walks the source and fails
+    /// the moment a predicate appears that is not on this list.
+    const OMITTABLE_WHEN: &[OmissionRule] = &[
+        ("HashMap::is_empty", |v| {
+            v.as_object().is_some_and(serde_json::Map::is_empty)
+        }),
+        ("Option::is_none", serde_json::Value::is_null),
+        ("String::is_empty", |v| v.as_str().is_some_and(str::is_empty)),
+        ("Vec::is_empty", |v| v.as_array().is_some_and(|a| a.is_empty())),
+        ("is_default_position", |v| {
+            v.as_object().is_some_and(|o| {
+                o.len() == 2
+                    && ["x", "y"]
+                        .iter()
+                        .all(|k| o.get(*k).and_then(serde_json::Value::as_f64) == Some(0.0))
+            })
+        }),
+        ("is_zero_u32", |v| v.as_u64() == Some(0)),
+    ];
+
+    /// Assert that saving `source` as `saved` lost nothing an author
+    /// wrote, along **both** dimensions:
+    ///
+    /// 1. *which keys exist* — the collapsed pass, which catches a
+    ///    key that stopped being written anywhere;
+    /// 2. *which elements carry them* — the indexed pass, which
+    ///    catches a key dropped from one array element while a
+    ///    sibling keeps it. A path may disappear here only when the
+    ///    value it held is one [`OMITTABLE_WHEN`] accounts for.
+    ///
+    /// Neither pass subsumes the other: the collapsed one is the only
+    /// one that would notice a whole field going away when every
+    /// element's value happens to be a default, and the indexed one
+    /// is the only one that sees per-element loss at all.
+    fn assert_load_save_loses_no_authored_key(source: &str, saved: &str) {
+        let before_keys = key_path_set(source);
+        let after_keys = key_path_set(saved);
+        let lost: Vec<&String> = before_keys.difference(&after_keys).collect();
+        assert!(lost.is_empty(), "load → save dropped authored keys: {lost:?}");
+
+        let before_value: serde_json::Value = serde_json::from_str(source).expect("valid JSON");
+        let after_value: serde_json::Value = serde_json::from_str(saved).expect("valid JSON");
+        let mut before = std::collections::BTreeMap::new();
+        let mut after = std::collections::BTreeMap::new();
+        indexed_key_values(&before_value, "", &mut before);
+        indexed_key_values(&after_value, "", &mut after);
+
+        // A key's children go with it, so only the *outermost* lost
+        // path at each site is evidence: reporting
+        // `…/offset/x` under a lost `…/offset` would demand a
+        // predicate for a value nobody chose to omit.
+        let lost: std::collections::BTreeSet<&str> = before
+            .keys()
+            .filter(|path| !after.contains_key(*path))
+            .map(String::as_str)
+            .collect();
+        let unexplained: Vec<String> = lost
+            .iter()
+            .filter(|path| !has_lost_ancestor(path, &lost))
+            .filter(|path| {
+                let value = before[**path];
+                !OMITTABLE_WHEN.iter().any(|(_, omits)| omits(value))
+            })
+            .map(|path| format!("{path} = {}", before[*path]))
+            .collect();
+        assert!(
+            unexplained.is_empty(),
+            "load → save dropped key(s) that held something, and no \
+             `skip_serializing_if` predicate accounts for the value:\n  {}",
+            unexplained.join("\n  ")
+        );
+    }
+
+    /// Whether some proper ancestor of `path` is itself in `lost`.
+    ///
+    /// Ancestors are found by trimming back to the last `/` or `[`,
+    /// which is exact for these paths: [`indexed_key_values`] builds
+    /// them by appending `/key` and `[index]`, and no key in the
+    /// format contains either character.
+    fn has_lost_ancestor(path: &str, lost: &std::collections::BTreeSet<&str>) -> bool {
+        let mut rest = path;
+        while let Some(cut) = rest.rfind(['/', '[']) {
+            rest = &rest[..cut];
+            if rest.is_empty() {
+                return false;
+            }
+            if lost.contains(rest) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// **The policy, spelled out where authors read it.**
     /// `format/schema.md` publishes one map that must be rejected
-    /// for a mistyped key and one that must load once the spelling
-    /// is fixed. Both are read out of the spec rather than restated
-    /// here, so the pin follows the doc when the doc moves instead
-    /// of agreeing with a copy of its old self.
+    /// for a mistyped key, the rejection message it produces, and
+    /// one map that must load once the spelling is fixed. All three
+    /// are read out of the spec rather than restated here, so the
+    /// pin follows the doc when the doc moves instead of agreeing
+    /// with a copy of its old self.
+    ///
+    /// The published message is compared for **equality**, not
+    /// containment: the doc presents it as verbatim loader output,
+    /// and its `expected one of` clause is an enumeration of
+    /// `MindNode`'s keys that a hand-author reads as the field list.
+    /// A substring check would let a new field land, change the real
+    /// message, and leave the spec publishing a list that is missing
+    /// it — with the suite green. Only line wrapping is normalized
+    /// away ([`doc_fixtures::unwrapped`]): the doc wraps to the
+    /// column limit, the loader emits one line, and where the breaks
+    /// fall carries no meaning.
     #[test]
     fn test_documented_unknown_key_rejection_matches_the_spec() {
-        let doc = crate::util::doc_fixtures::format_doc_path("schema.md");
+        use crate::util::doc_fixtures::{
+            documented_json_block, documented_plain_block, format_doc_path, unwrapped,
+        };
+        let doc = format_doc_path("schema.md");
         let heading = "## Unknown keys are rejected";
 
-        let rejected = crate::util::doc_fixtures::documented_json_block(&doc, heading, 0);
-        let err = load_from_str(&rejected)
-            .expect_err("the spec's mistyped-key example must not load:\n{rejected}");
+        let rejected = documented_json_block(&doc, heading, 0);
+        let err = match load_from_str(&rejected) {
+            Err(err) => err,
+            Ok(map) => {
+                panic!("the spec's mistyped-key example must not load:\n{rejected}\nbut it loaded: {map:?}")
+            }
+        };
         assert!(
             err.contains("min_zoom_to_rendr"),
             "the error must name the key the author wrote: {err}"
         );
 
-        let accepted = crate::util::doc_fixtures::documented_json_block(&doc, heading, 1);
+        let published = documented_plain_block(&doc, heading, 0);
+        assert_eq!(
+            unwrapped(&err),
+            unwrapped(&published),
+            "format/schema.md §{heading} publishes this rejection as verbatim loader \
+             output and it no longer is. Re-wrap the block to match, or the spec is \
+             publishing a stale list of a node's keys.\n\
+             \n  loader: {err}\n  spec:   {published}\n"
+        );
+
+        let accepted = documented_json_block(&doc, heading, 1);
         let map = load_from_str(&accepted)
             .unwrap_or_else(|e| panic!("the spec's corrected example must load: {e}\n{accepted}"));
         assert_eq!(map.nodes["0"].min_zoom_to_render, Some(2.0));
@@ -1537,10 +1737,7 @@ mod tests {
             err.contains("rejected, not dropped"),
             "must state the policy, not just the symptom: {err}"
         );
-        assert!(
-            err.contains("format/schema.md"),
-            "must point at the spec: {err}"
-        );
+        assert!(err.contains("format/schema.md"), "must point at the spec: {err}");
         assert!(
             err.contains("expected one of") && err.contains("`inline_mutations`"),
             "must list what the loader would have accepted: {err}"
@@ -1610,7 +1807,10 @@ mod tests {
     /// nothing at all and came back out of `save_to_file` deleted.
     ///
     /// Key *paths* rather than bytes, because saving is allowed to
-    /// reorder keys and re-indent — but never to lose one.
+    /// reorder keys and re-indent — but never to lose one. Both the
+    /// collapsed and the index-preserving pass run; see
+    /// [`assert_load_save_loses_no_authored_key`] for why one is not
+    /// enough.
     #[test]
     fn test_no_authored_key_is_lost_across_load_and_save() {
         let source = std::fs::read_to_string(test_map_path()).expect("read fixture");
@@ -1621,12 +1821,49 @@ mod tests {
         save_to_file(&saved_path, &map).expect("save failed");
         let saved = std::fs::read_to_string(&saved_path).expect("read resaved");
 
-        let before = key_path_set(&source);
-        let after = key_path_set(&saved);
-        let lost: Vec<&String> = before.difference(&after).collect();
+        assert_load_save_loses_no_authored_key(&source, &saved);
+    }
+
+    /// **The hand-modeled half of the round trip, held to the
+    /// source.** [`OMITTABLE_WHEN`] enumerates the predicates that
+    /// excuse a missing key, and a list of predicates is exactly the
+    /// twin surface `lib/baumhard/CONVENTIONS.md` §B4 warns about: a
+    /// new `skip_serializing_if` would start omitting keys that the
+    /// round-trip test then has no model for — and, worse, an
+    /// unmodeled predicate makes the indexed pass fail on a
+    /// legitimate omission, which is the kind of noise that gets a
+    /// test deleted.
+    ///
+    /// So the set is not written down twice. `serde_coverage` walks
+    /// the same reachable graph the `deny_unknown_fields` drift test
+    /// uses and reports every predicate a loadable type actually
+    /// names; this fails until the two agree in both directions.
+    #[test]
+    fn test_every_skip_serializing_if_predicate_is_modeled() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph};
+
+        let graph = TypeGraph::build(&crate_src_root());
+        let in_source = graph.omit_predicates_from("MindMap");
+        let modeled: std::collections::BTreeSet<String> = OMITTABLE_WHEN
+            .iter()
+            .map(|(predicate, _)| (*predicate).to_string())
+            .collect();
+
+        let unmodeled: Vec<&String> = in_source.difference(&modeled).collect();
         assert!(
-            lost.is_empty(),
-            "load → save dropped authored keys: {lost:?}"
+            unmodeled.is_empty(),
+            "these `skip_serializing_if` predicates are reachable from a \
+             `.mindmap.json` load and the round-trip test has no model for the \
+             values they omit — add each to OMITTABLE_WHEN with the JSON values it \
+             leaves out: {unmodeled:?}"
+        );
+
+        let stale: Vec<&String> = modeled.difference(&in_source).collect();
+        assert!(
+            stale.is_empty(),
+            "OMITTABLE_WHEN models predicate(s) no loadable type names any more; \
+             leaving them in silently widens what the round-trip test forgives: \
+             {stale:?}"
         );
     }
 
@@ -1647,10 +1884,7 @@ mod tests {
         save_to_file(&saved_path, &map).expect("save failed");
         let saved = std::fs::read_to_string(&saved_path).expect("read resaved");
 
-        let before = key_path_set(&json);
-        let after = key_path_set(&saved);
-        let lost: Vec<&String> = before.difference(&after).collect();
-        assert!(lost.is_empty(), "load → save dropped authored keys: {lost:?}");
+        assert_load_save_loses_no_authored_key(&json, &saved);
         let reloaded = load_from_str(&saved).expect("resaved map loads");
         assert_eq!(reloaded.nodes["0"].min_zoom_to_render, Some(0.25));
         assert_eq!(reloaded.nodes["0"].max_zoom_to_render, Some(4.0));
@@ -1670,8 +1904,8 @@ mod tests {
                 {"start":0,"end":1,"bold":true,"italic":false,"underline":false,
                  "font":"LiberationSans","size_pt":14,"color":"#fff","hyperlink":null}]}]"##,
         );
-        let map = load_from_str(&map_json_with_nodes(&styled))
-            .expect("a styled section is not a legacy shape");
+        let map =
+            load_from_str(&map_json_with_nodes(&styled)).expect("a styled section is not a legacy shape");
         assert_eq!(map.nodes["0"].sections[0].text_runs.len(), 1);
     }
 
