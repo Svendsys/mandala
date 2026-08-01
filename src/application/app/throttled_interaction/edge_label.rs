@@ -21,6 +21,7 @@ use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::edge_label_drag::apply_edge_label_drag;
 use super::super::scene_rebuild::{flush_canvas_scene_buffers, CanvasFrame};
+use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Drag state for repositioning one line-mode edge's label along
@@ -48,6 +49,33 @@ impl EdgeLabelInteraction {
             pending_cursor: None,
             throttle: MutationFrequencyThrottle::with_default_budget(),
         }
+    }
+
+    /// Release-commit body, renderer-free. See [`super::release`].
+    ///
+    /// Flushes the final cursor if one is buffered — see the portal
+    /// counterpart for the rationale. The undo entry is skipped
+    /// when nothing actually moved.
+    ///
+    /// The decree is [`ReleaseRefresh::SceneOnly`]: every per-frame
+    /// drain already narrowed to the label tree because node trees
+    /// are untouched by a label move, and the release commit is the
+    /// same story.
+    pub(in crate::application::app) fn commit_on_release_core(
+        &mut self,
+        c: ReleaseCommit<'_>,
+    ) -> ReleaseRefresh {
+        let pending_cursor = self.pending_cursor.take();
+        if let (Some(doc), Some(cursor)) = (c.document.as_mut(), pending_cursor) {
+            apply_edge_label_drag(doc, &self.edge_ref, cursor);
+        }
+        let Some(doc) = c.document.as_mut() else {
+            return ReleaseRefresh::None;
+        };
+        doc.commit_throttled_edge_drag(&self.edge_ref, self.original.clone(), |c, o| {
+            c.label_config != o.label_config
+        });
+        ReleaseRefresh::SceneOnly
     }
 }
 

@@ -33,9 +33,12 @@ pub(in crate::application::app) mod moving_node;
 pub(in crate::application::app) mod moving_section;
 pub(in crate::application::app) mod node_resize;
 pub(in crate::application::app) mod portal_label;
+pub(in crate::application::app) mod release;
 pub(in crate::application::app) mod section_resize;
 #[cfg(test)]
 mod test_utils;
+#[cfg(test)]
+mod tests_lifecycle;
 
 pub(in crate::application::app) use color_picker_hover::ColorPickerHoverInteraction;
 pub(in crate::application::app) use edge_handle::EdgeHandleInteraction;
@@ -44,6 +47,7 @@ pub(in crate::application::app) use moving_node::MovingNodeInteraction;
 pub(in crate::application::app) use moving_section::MovingSectionInteraction;
 pub(in crate::application::app) use node_resize::NodeResizeInteraction;
 pub(in crate::application::app) use portal_label::PortalLabelInteraction;
+pub(in crate::application::app) use release::ReleaseCommit;
 pub(in crate::application::app) use section_resize::SectionResizeInteraction;
 
 /// Mutable references into the persistent app state every drain

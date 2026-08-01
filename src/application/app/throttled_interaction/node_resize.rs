@@ -12,6 +12,7 @@ use crate::application::document::apply_node_resize_to_tree;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_node_resize_handle_tree_from_slice};
+use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Per-frame drains apply a side-aware delta to the node's
@@ -63,6 +64,57 @@ impl NodeResizeInteraction {
     pub fn resolve(&self, total_delta: Vec2) -> (Position, Size) {
         self.side
             .resolve_aabb(self.start_position, self.start_size, total_delta)
+    }
+
+    /// Which gesture produced this drag, for the log lines below.
+    /// Users grepping logs for "rejected" can tell a handle-driven
+    /// left-button resize from a right-button corner-anchored one.
+    fn gesture_label(&self) -> &'static str {
+        if self.started_with_right {
+            "fast-resize node"
+        } else {
+            "node resize"
+        }
+    }
+
+    /// Release-commit body, renderer-free. See [`super::release`].
+    ///
+    /// Writes the resolved `(position, size)` through
+    /// `set_node_aabb` (atomic, single `EditNodeAabb` undo entry).
+    /// Rejection (NaN, non-positive size, astronomical) logs and
+    /// falls through to [`ReleaseRefresh::All`] from the unchanged
+    /// model, so the node snaps back to its pre-drag AABB.
+    ///
+    /// Single-source for both the left-release and right-release
+    /// finalization paths — pre-fix, the two arms held byte-near
+    /// duplicates of this body. CODE_CONVENTIONS §5.
+    pub(in crate::application::app) fn commit_on_release_core(
+        &mut self,
+        c: ReleaseCommit<'_>,
+    ) -> ReleaseRefresh {
+        let Some(doc) = c.document.as_mut() else {
+            return ReleaseRefresh::None;
+        };
+        let (new_position, new_size) = self.resolve(self.total_delta);
+        match doc.set_node_aabb(&self.node_id, new_position, new_size) {
+            Ok(true) => {}
+            Ok(false) => {
+                log::debug!(
+                    "{} release committed no-op on '{}'",
+                    self.gesture_label(),
+                    self.node_id
+                );
+            }
+            Err(msg) => {
+                log::info!(
+                    "{} release rejected: {} (snapping back)",
+                    self.gesture_label(),
+                    msg
+                );
+            }
+        }
+        c.scene_cache.clear();
+        ReleaseRefresh::All
     }
 }
 

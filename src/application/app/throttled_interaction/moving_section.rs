@@ -11,6 +11,7 @@ use crate::application::document::apply_section_drag_delta_and_collect_patches;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_section_resize_handle_tree_from_slice};
+use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Per-frame drains mutate the section's tree subtree only; the
@@ -50,6 +51,41 @@ impl MovingSectionInteraction {
             pending_delta: Vec2::ZERO,
             throttle: MutationFrequencyThrottle::with_default_budget(),
         }
+    }
+
+    /// Release-commit body, renderer-free. See [`super::release`].
+    ///
+    /// A single setter call; AABB overflow rejection logs and falls
+    /// through to [`ReleaseRefresh::All`], which rebuilds the tree
+    /// from the unchanged model and snaps the section back.
+    pub(in crate::application::app) fn commit_on_release_core(
+        &mut self,
+        c: ReleaseCommit<'_>,
+    ) -> ReleaseRefresh {
+        let Some(doc) = c.document.as_mut() else {
+            return ReleaseRefresh::None;
+        };
+        let new_x = self.start_offset.0 + self.total_delta.x as f64;
+        let new_y = self.start_offset.1 + self.total_delta.y as f64;
+        match doc.set_section_offset(&self.node_id, self.section_idx, new_x, new_y) {
+            Ok(true) => {}
+            Ok(false) => {
+                log::debug!(
+                    "section drag committed no-op offset on '{}' section[{}]",
+                    self.node_id,
+                    self.section_idx
+                );
+            }
+            Err(msg) => {
+                log::info!("section drag release rejected: {} (snapping back)", msg);
+            }
+        }
+        // Unconditional clear so the rebuild resamples from the
+        // authoritative model — the per-frame drain mutated the
+        // tree (and therefore stale scene-cache samples) regardless
+        // of which arm above ran.
+        c.scene_cache.clear();
+        ReleaseRefresh::All
     }
 }
 

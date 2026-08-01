@@ -20,6 +20,7 @@ use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::portal_label_drag::apply_portal_label_drag;
 use super::super::scene_rebuild::{flush_canvas_scene_buffers, CanvasFrame};
+use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Drag state for repositioning one portal endpoint along its
@@ -53,6 +54,35 @@ impl PortalLabelInteraction {
             pending_cursor: None,
             throttle: MutationFrequencyThrottle::with_default_budget(),
         }
+    }
+
+    /// Release-commit body, renderer-free. See [`super::release`].
+    ///
+    /// Flushes the final cursor if one is buffered. `None` means
+    /// the last drain already consumed it; `Some` means the
+    /// throttle skipped that cursor and release must commit the
+    /// user's actual drop position rather than wherever the prior
+    /// drain happened to land. Bypasses the throttle — there is no
+    /// "next frame" after release.
+    ///
+    /// The no-op check compares only the two fields this drag
+    /// touches (`portal_from` / `portal_to`) — whole-edge
+    /// `PartialEq` would fold in float-fragile `control_points`.
+    pub(in crate::application::app) fn commit_on_release_core(
+        &mut self,
+        c: ReleaseCommit<'_>,
+    ) -> ReleaseRefresh {
+        let pending_cursor = self.pending_cursor.take();
+        if let (Some(doc), Some(cursor)) = (c.document.as_mut(), pending_cursor) {
+            apply_portal_label_drag(doc, &self.edge_ref, &self.endpoint_node_id, cursor);
+        }
+        let Some(doc) = c.document.as_mut() else {
+            return ReleaseRefresh::None;
+        };
+        doc.commit_throttled_edge_drag(&self.edge_ref, self.original.clone(), |c, o| {
+            c.portal_from != o.portal_from || c.portal_to != o.portal_to
+        });
+        ReleaseRefresh::All
     }
 }
 

@@ -12,6 +12,7 @@ use crate::application::document::apply_section_resize_to_tree;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_section_resize_handle_tree_from_slice};
+use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Per-frame drains apply a side-aware delta to the section's
@@ -71,6 +72,57 @@ impl SectionResizeInteraction {
     pub fn resolve(&self, total_delta: Vec2) -> (Position, Size) {
         self.side
             .resolve_aabb(self.start_offset, self.start_size, total_delta)
+    }
+
+    /// Which gesture produced this drag — see
+    /// [`super::node_resize::NodeResizeInteraction`]'s counterpart.
+    fn gesture_label(&self) -> &'static str {
+        if self.started_with_right {
+            "fast-resize section"
+        } else {
+            "section resize"
+        }
+    }
+
+    /// Release-commit body, renderer-free. See [`super::release`].
+    ///
+    /// Routes through `set_section_aabb`, which validates the
+    /// post-mutation `(offset, size)` against the parent in one
+    /// step, so a W-grow gesture (shrink offset, grow width) passes
+    /// the right-edge guard the two-step `set_section_size` +
+    /// `set_section_offset` path rejected (intermediate state had
+    /// new size at old offset, overflowing). Pushes an
+    /// `EditNodeStyle` undo entry via the section's parent node
+    /// (sections share their owning node's style undo envelope —
+    /// see `mutate_section_with_style_undo` in `nodes/`).
+    pub(in crate::application::app) fn commit_on_release_core(
+        &mut self,
+        c: ReleaseCommit<'_>,
+    ) -> ReleaseRefresh {
+        let Some(doc) = c.document.as_mut() else {
+            return ReleaseRefresh::None;
+        };
+        let (new_offset, new_size) = self.resolve(self.total_delta);
+        match doc.set_section_aabb(&self.node_id, self.section_idx, new_offset, new_size) {
+            Ok(true) => {}
+            Ok(false) => {
+                log::debug!(
+                    "{} release committed no-op on '{}' section[{}]",
+                    self.gesture_label(),
+                    self.node_id,
+                    self.section_idx
+                );
+            }
+            Err(msg) => {
+                log::info!(
+                    "{} release rejected: {} (snapping back)",
+                    self.gesture_label(),
+                    msg
+                );
+            }
+        }
+        c.scene_cache.clear();
+        ReleaseRefresh::All
     }
 }
 

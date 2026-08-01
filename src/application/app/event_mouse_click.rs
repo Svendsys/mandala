@@ -6,22 +6,18 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use glam::Vec2;
-
 use crate::application::platform::input::{ElementState, MouseButton};
 
 use super::click::handle_click;
 use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_click, PickerClick};
 use super::console_input::save_console_history;
-use super::edge_drag::apply_edge_handle_drag;
 use super::input_context::InputHandlerContext;
 use super::modal_editor::commit_modal_editors_on_release;
-use super::portal_label_drag::apply_portal_label_drag;
-use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all, rebuild_scene_only};
+use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::ThrottledDrag;
 use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
-use crate::application::document::{apply_drag_delta, rect_select, SelectionState, UndoAction};
+use crate::application::document::{rect_select, SelectionState};
 use crate::application::keybinds::Action;
 
 /// Dispatch a `WindowEvent::MouseInput`. Persistent state arrives
@@ -476,225 +472,41 @@ pub(super) fn handle_mouse_input(
                             );
                         }
                     }
-                    DragState::Throttled(ThrottledDrag::MovingNode(i)) => {
-                        // Flush any remaining pending delta to the tree before drop.
-                        // This always runs regardless of the throttle — on release
-                        // we want the final position committed in full, even if
-                        // the throttle was mid-stretch skipping intermediate drains.
-                        let had_pending = i.pending_delta != Vec2::ZERO;
-                        if had_pending {
-                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
-                                for nid in &i.node_ids {
-                                    apply_drag_delta(
-                                        tree,
-                                        nid,
-                                        i.pending_delta.x,
-                                        i.pending_delta.y,
-                                        !i.individual,
-                                    );
-                                }
-                            }
-                        }
-                        // Drop: sync to model, full rebuild, push undo
-                        if let Some(doc) = ctx.document.as_mut() {
-                            let dx = i.total_delta.x as f64;
-                            let dy = i.total_delta.y as f64;
-                            let undo_data = doc.apply_move_multiple(&i.node_ids, dx, dy, i.individual);
-                            doc.undo_stack.push(UndoAction::MoveNodes {
-                                original_positions: undo_data,
-                            });
-                            doc.dirty = true;
-
-                            // Under rapid drag the throttle can skip the last
-                            // drain or two, leaving `pending_delta` stranded
-                            // in the accumulator. The flush above syncs the
-                            // tree and `apply_move_multiple` above syncs the
-                            // model, but the `SceneConnectionCache`'s
-                            // `pre_clip_positions` still reflect the
-                            // second-to-last drain's `offsets` (short of the
-                            // committed position by `pending_delta`). The
-                            // subsequent `rebuild_all` → `rebuild_scene_only`
-                            // runs with empty offsets, so the cache's fast
-                            // path returns those stale samples and the edges
-                            // appear glued to the node's pre-flush position
-                            // until the next cache-invalidating event
-                            // (mutation or zoom). Clearing here forces a
-                            // resample from the now-authoritative model.
-                            if had_pending {
-                                ctx.scene_cache.clear();
-                            }
-
-                            // Full rebuild from model
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                    // Seven throttled drag variants, one release
+                    // shape: flush whatever the throttle left
+                    // pending, commit to the model with its undo
+                    // entry, clear the scene cache if the per-frame
+                    // drains left stale samples, then run the
+                    // canvas decree the commit hands back. The
+                    // gesture-specific half lives in each
+                    // interaction's `commit_on_release_core`.
+                    DragState::Throttled(ThrottledDrag::MovingNode(mut i)) => {
+                        let refresh = i.commit_on_release_core(ctx.release_commit());
+                        refresh.execute(ctx.drain_context());
                     }
-                    DragState::Throttled(ThrottledDrag::MovingSection(i)) => {
-                        // Single setter call on release; AABB
-                        // overflow rejection logs and falls
-                        // through to `rebuild_all`, which
-                        // rebuilds the tree from the unchanged
-                        // model and snaps the section back.
-                        if let Some(doc) = ctx.document.as_mut() {
-                            let new_x = i.start_offset.0 + i.total_delta.x as f64;
-                            let new_y = i.start_offset.1 + i.total_delta.y as f64;
-                            match doc.set_section_offset(&i.node_id, i.section_idx, new_x, new_y) {
-                                Ok(true) => {}
-                                Ok(false) => {
-                                    log::debug!(
-                                        "section drag committed no-op offset on '{}' section[{}]",
-                                        i.node_id,
-                                        i.section_idx
-                                    );
-                                }
-                                Err(msg) => {
-                                    log::info!("section drag release rejected: {} (snapping back)", msg);
-                                }
-                            }
-                            // Unconditional clear so the
-                            // rebuild_all path resamples from
-                            // the authoritative model — the
-                            // per-frame drain mutated the tree
-                            // (and therefore stale scene-cache
-                            // samples) regardless of which
-                            // arm above ran.
-                            ctx.scene_cache.clear();
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                    DragState::Throttled(ThrottledDrag::MovingSection(mut i)) => {
+                        let refresh = i.commit_on_release_core(ctx.release_commit());
+                        refresh.execute(ctx.drain_context());
                     }
-                    DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
-                        finalize_node_resize_release(&i, "node resize", ctx);
+                    DragState::Throttled(ThrottledDrag::NodeResize(mut i)) => {
+                        let refresh = i.commit_on_release_core(ctx.release_commit());
+                        refresh.execute(ctx.drain_context());
                     }
-                    DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-                        finalize_section_resize_release(&i, "section resize", ctx);
+                    DragState::Throttled(ThrottledDrag::SectionResize(mut i)) => {
+                        let refresh = i.commit_on_release_core(ctx.release_commit());
+                        refresh.execute(ctx.drain_context());
                     }
-                    DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
-                        // The drain loop has been writing
-                        // each new edge state directly
-                        // into the model. Before release,
-                        // flush one last write using the
-                        // full `total_delta` (independent
-                        // of any throttled pending drain)
-                        // so the final committed state
-                        // matches the cursor position
-                        // exactly. Reaching this branch
-                        // means the drag threshold was
-                        // crossed, so push an EditEdge
-                        // undo with the pre-drag snapshot
-                        // unconditionally.
-                        let super::throttled_interaction::EdgeHandleInteraction {
-                            edge_ref,
-                            handle,
-                            original,
-                            start_handle_pos,
-                            total_delta,
-                            ..
-                        } = i;
-                        if let Some(doc) = ctx.document.as_mut() {
-                            apply_edge_handle_drag(doc, &edge_ref, handle, start_handle_pos, total_delta);
-                            // Crossing the drag threshold guarantees a
-                            // state change, so commit unconditionally.
-                            doc.commit_throttled_edge_drag(&edge_ref, original, |_, _| true);
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                    DragState::Throttled(ThrottledDrag::EdgeHandle(mut i)) => {
+                        let refresh = i.commit_on_release_core(ctx.release_commit());
+                        refresh.execute(ctx.drain_context());
                     }
-                    DragState::Throttled(ThrottledDrag::PortalLabel(i)) => {
-                        // Flush the final cursor if one is buffered.
-                        // When `pending_cursor` is `None` the last
-                        // drain already consumed it and no flush is
-                        // needed; when `Some`, the throttle skipped
-                        // that cursor and release must commit the
-                        // user's actual drop position rather than
-                        // wherever the prior drain happened to land.
-                        // Bypasses the throttle — there is no "next
-                        // frame" after release.
-                        let super::throttled_interaction::PortalLabelInteraction {
-                            edge_ref,
-                            endpoint_node_id,
-                            original,
-                            pending_cursor,
-                            ..
-                        } = i;
-                        if let (Some(doc), Some(cursor)) = (ctx.document.as_mut(), pending_cursor) {
-                            apply_portal_label_drag(doc, &edge_ref, &endpoint_node_id, cursor);
-                        }
-                        // Commit with a single EditEdge undo
-                        // carrying the pre-drag snapshot, matching
-                        // the EdgeHandle release path. The no-op
-                        // check compares only the two fields this
-                        // drag touches (`portal_from` /
-                        // `portal_to`) — whole-edge `PartialEq`
-                        // would fold in float-fragile
-                        // `control_points`.
-                        if let Some(doc) = ctx.document.as_mut() {
-                            doc.commit_throttled_edge_drag(&edge_ref, original, |c, o| {
-                                c.portal_from != o.portal_from || c.portal_to != o.portal_to
-                            });
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                    DragState::Throttled(ThrottledDrag::PortalLabel(mut i)) => {
+                        let refresh = i.commit_on_release_core(ctx.release_commit());
+                        refresh.execute(ctx.drain_context());
                     }
-                    DragState::Throttled(ThrottledDrag::EdgeLabel(i)) => {
-                        // Flush the final cursor if one is buffered.
-                        // See the portal release arm above for the
-                        // rationale — `None` means the last drain
-                        // already caught it, `Some` means the
-                        // throttle skipped the final CursorMoved.
-                        let super::throttled_interaction::EdgeLabelInteraction {
-                            edge_ref,
-                            original,
-                            pending_cursor,
-                            ..
-                        } = i;
-                        if let (Some(doc), Some(cursor)) = (ctx.document.as_mut(), pending_cursor) {
-                            super::edge_label_drag::apply_edge_label_drag(doc, &edge_ref, cursor);
-                        }
-                        // Commit with a single `EditEdge` carrying
-                        // the pre-drag snapshot, skipping the undo
-                        // entry if nothing actually moved.
-                        if let Some(doc) = ctx.document.as_mut() {
-                            doc.commit_throttled_edge_drag(&edge_ref, original, |c, o| {
-                                c.label_config != o.label_config
-                            });
-                            // Scene-only rebuild: every per-frame
-                            // drain already used `rebuild_scene_only`
-                            // because node trees are untouched by a
-                            // label move; the release commit is
-                            // the same story.
-                            rebuild_scene_only(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                    DragState::Throttled(ThrottledDrag::EdgeLabel(mut i)) => {
+                        let refresh = i.commit_on_release_core(ctx.release_commit());
+                        refresh.execute(ctx.drain_context());
                     }
                     DragState::SelectingRect {
                         start_canvas,
@@ -755,10 +567,10 @@ pub(super) fn handle_mouse_input(
 ///    nothing; users opt in. State resets to `None`.
 /// 2. `Throttled(NodeResize | SectionResize)` (threshold-cross
 ///    promoted to fast-resize via `Action::FastResizeStart`) —
-///    finalize via [`finalize_node_resize_release`] /
-///    [`finalize_section_resize_release`], the same helpers the
-///    left-button release path uses. Single-source commit shape
-///    regardless of which button started the gesture.
+///    finalize through the interaction's own
+///    `commit_on_release_core`, the same body the left-button
+///    release path runs. Single-source commit shape regardless of
+///    which button started the gesture.
 fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mut InputHandlerContext<'_>) {
     if state == ElementState::Pressed {
         // Mode + modal guards: don't arm a fast-resize gesture
@@ -858,11 +670,13 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
             // accidental right-click during a left-button-driven
             // handle drag doesn't terminate the resize: the
             // left-button release is the rightful finalizer.
-            DragState::Throttled(ThrottledDrag::NodeResize(i)) if i.started_with_right => {
-                finalize_node_resize_release(&i, "fast-resize node", ctx);
+            DragState::Throttled(ThrottledDrag::NodeResize(mut i)) if i.started_with_right => {
+                let refresh = i.commit_on_release_core(ctx.release_commit());
+                refresh.execute(ctx.drain_context());
             }
-            DragState::Throttled(ThrottledDrag::SectionResize(i)) if i.started_with_right => {
-                finalize_section_resize_release(&i, "fast-resize section", ctx);
+            DragState::Throttled(ThrottledDrag::SectionResize(mut i)) if i.started_with_right => {
+                let refresh = i.commit_on_release_core(ctx.release_commit());
+                refresh.execute(ctx.drain_context());
             }
             // Left-button-driven Throttled resize that survived
             // a stray right-release — restore the state and let
@@ -902,110 +716,6 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
 /// `hit_node` is the click hit's owning node id (`None` for empty
 /// canvas). `cursor_pos_val` is screen-space; we project to canvas
 /// inside.
-/// Finalize a `Throttled(NodeResize)` drag: write the resolved
-/// `(position, size)` through `set_node_aabb` (atomic, single
-/// `EditNodeAabb` undo entry), clear the scene cache, rebuild
-/// the scene from the authoritative model.
-///
-/// `gesture_label` distinguishes the log-line origin
-/// ("node resize" for handle-driven left-button drags vs
-/// "fast-resize node" for right-button corner-anchored drags) —
-/// users grepping logs for "rejected" can tell the two apart.
-/// Rejection (NaN, non-positive size, astronomical) logs and
-/// falls through to `rebuild_all` from the unchanged model so
-/// the node snaps back to its pre-drag AABB.
-///
-/// Single-source for both the left-release and right-release
-/// finalization paths — pre-fix, the two arms held byte-near
-/// duplicates of this body. CODE_CONVENTIONS §5: "If a function
-/// is needed in two or more places, the answer is never to copy
-/// it, but to use a single function called in two or more
-/// places." C6 of the 9-agent review.
-#[cfg(not(target_arch = "wasm32"))]
-fn finalize_node_resize_release(
-    interaction: &super::throttled_interaction::NodeResizeInteraction,
-    gesture_label: &str,
-    ctx: &mut InputHandlerContext<'_>,
-) {
-    let Some(doc) = ctx.document.as_mut() else {
-        return;
-    };
-    let (new_position, new_size) = interaction.resolve(interaction.total_delta);
-    match doc.set_node_aabb(&interaction.node_id, new_position, new_size) {
-        Ok(true) => {}
-        Ok(false) => {
-            log::debug!(
-                "{} release committed no-op on '{}'",
-                gesture_label,
-                interaction.node_id
-            );
-        }
-        Err(msg) => {
-            log::info!("{} release rejected: {} (snapping back)", gesture_label, msg);
-        }
-    }
-    ctx.scene_cache.clear();
-    rebuild_all(
-        doc,
-        ctx.interaction_mode,
-        ctx.mindmap_tree,
-        ctx.app_scene,
-        ctx.renderer,
-        ctx.scene_cache,
-    );
-}
-
-/// Finalize a `Throttled(SectionResize)` drag — see
-/// [`finalize_node_resize_release`] for the shape rationale.
-/// Routes through `set_section_aabb` which validates the
-/// post-mutation `(offset, size)` against the parent in one
-/// step, so a W-grow gesture (shrink offset, grow width) passes
-/// the right-edge guard the two-step `set_section_size` +
-/// `set_section_offset` path rejected (intermediate state had
-/// new size at old offset, overflowing). Pushes an
-/// `EditNodeStyle` undo entry via the section's parent node
-/// (sections share their owning node's style undo envelope —
-/// see `mutate_section_with_style_undo` in `nodes/`).
-#[cfg(not(target_arch = "wasm32"))]
-fn finalize_section_resize_release(
-    interaction: &super::throttled_interaction::SectionResizeInteraction,
-    gesture_label: &str,
-    ctx: &mut InputHandlerContext<'_>,
-) {
-    let Some(doc) = ctx.document.as_mut() else {
-        return;
-    };
-    let (new_offset, new_size) = interaction.resolve(interaction.total_delta);
-    match doc.set_section_aabb(
-        &interaction.node_id,
-        interaction.section_idx,
-        new_offset,
-        new_size,
-    ) {
-        Ok(true) => {}
-        Ok(false) => {
-            log::debug!(
-                "{} release committed no-op on '{}' section[{}]",
-                gesture_label,
-                interaction.node_id,
-                interaction.section_idx
-            );
-        }
-        Err(msg) => {
-            log::info!("{} release rejected: {} (snapping back)", gesture_label, msg);
-        }
-    }
-    ctx.scene_cache.clear();
-    rebuild_all(
-        doc,
-        ctx.interaction_mode,
-        ctx.mindmap_tree,
-        ctx.app_scene,
-        ctx.renderer,
-        ctx.scene_cache,
-    );
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn maybe_exit_node_edit_on_outside_click(
     ctx: &mut InputHandlerContext<'_>,

@@ -22,6 +22,7 @@ use super::super::edge_drag::apply_edge_handle_drag;
 use super::super::scene_rebuild::{
     flush_canvas_scene_buffers, CanvasFrame,
 };
+use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Drag-to-reshape state for one edge's grab-handle.
@@ -64,6 +65,39 @@ impl EdgeHandleInteraction {
             pending_delta: Vec2::ZERO,
             throttle: MutationFrequencyThrottle::with_default_budget(),
         }
+    }
+
+    /// Release-commit body, renderer-free. See [`super::release`].
+    ///
+    /// The drain loop has been writing each new edge state directly
+    /// into the model. Before release, flush one last write using
+    /// the full `total_delta` (independent of any throttled pending
+    /// drain) so the final committed state matches the cursor
+    /// position exactly. Reaching this path means the drag
+    /// threshold was crossed, so the `EditEdge` undo entry carrying
+    /// the pre-drag snapshot is pushed unconditionally.
+    ///
+    /// `original` is cloned rather than moved out so the body can
+    /// take `&mut self` like every other release commit; one clone
+    /// per gesture end.
+    pub(in crate::application::app) fn commit_on_release_core(
+        &mut self,
+        c: ReleaseCommit<'_>,
+    ) -> ReleaseRefresh {
+        let Some(doc) = c.document.as_mut() else {
+            return ReleaseRefresh::None;
+        };
+        apply_edge_handle_drag(
+            doc,
+            &self.edge_ref,
+            self.handle,
+            self.start_handle_pos,
+            self.total_delta,
+        );
+        // Crossing the drag threshold guarantees a state change, so
+        // commit unconditionally.
+        doc.commit_throttled_edge_drag(&self.edge_ref, self.original.clone(), |_, _| true);
+        ReleaseRefresh::All
     }
 }
 

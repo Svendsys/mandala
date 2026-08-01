@@ -17,12 +17,15 @@ use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
-use crate::application::document::apply_drag_delta_and_collect_patches;
+use crate::application::document::{
+    apply_drag_delta, apply_drag_delta_and_collect_patches, UndoAction,
+};
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{
     flush_canvas_scene_buffers, CanvasFrame,
 };
+use super::release::{ReleaseCommit, ReleaseRefresh};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Drag-to-move state for one or more nodes. `individual = true`
@@ -71,6 +74,62 @@ impl MovingNodeInteraction {
             throttle: MutationFrequencyThrottle::with_default_budget(),
             descendant_ids,
         }
+    }
+
+    /// Release-commit body, renderer-free. See
+    /// [`super::release`] for why the canvas work comes back as a
+    /// decree instead of running here.
+    ///
+    /// The pending flush is unconditional on the throttle: on
+    /// release the final position must be committed in full even
+    /// if the throttle was mid-stretch skipping intermediate
+    /// drains.
+    pub(in crate::application::app) fn commit_on_release_core(
+        &mut self,
+        c: ReleaseCommit<'_>,
+    ) -> ReleaseRefresh {
+        let had_pending = self.pending_delta != Vec2::ZERO;
+        if had_pending {
+            if let Some(tree) = c.mindmap_tree.as_mut() {
+                for nid in &self.node_ids {
+                    apply_drag_delta(
+                        tree,
+                        nid,
+                        self.pending_delta.x,
+                        self.pending_delta.y,
+                        !self.individual,
+                    );
+                }
+            }
+        }
+        let Some(doc) = c.document.as_mut() else {
+            return ReleaseRefresh::None;
+        };
+        // Sync to model, push undo.
+        let dx = self.total_delta.x as f64;
+        let dy = self.total_delta.y as f64;
+        let undo_data = doc.apply_move_multiple(&self.node_ids, dx, dy, self.individual);
+        doc.undo_stack.push(UndoAction::MoveNodes {
+            original_positions: undo_data,
+        });
+        doc.dirty = true;
+
+        // Under rapid drag the throttle can skip the last drain or
+        // two, leaving `pending_delta` stranded in the accumulator.
+        // The flush above syncs the tree and `apply_move_multiple`
+        // syncs the model, but the `SceneConnectionCache`'s
+        // `pre_clip_positions` still reflect the second-to-last
+        // drain's `offsets` (short of the committed position by
+        // `pending_delta`). The subsequent rebuild runs with empty
+        // offsets, so the cache's fast path returns those stale
+        // samples and the edges appear glued to the node's
+        // pre-flush position until the next cache-invalidating
+        // event (mutation or zoom). Clearing here forces a resample
+        // from the now-authoritative model.
+        if had_pending {
+            c.scene_cache.clear();
+        }
+        ReleaseRefresh::All
     }
 }
 
