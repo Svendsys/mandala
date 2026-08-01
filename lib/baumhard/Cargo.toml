@@ -20,8 +20,8 @@ syn = "2.0.117"
 # report, while the chatty walker `debug!`/`trace!` instrumentation
 # still compiles to nothing. Naming a *different* level here than the
 # root does is a build failure, not a silent override — log's
-# `compile_error!("multiple release_max_level_* features set")` fires
-# on the unioned feature set.
+# `compile_error!("multiple release_max_level_* features set")`
+# (`log-0.4.29/src/lib.rs:376-394`) fires on the unioned feature set.
 log = { version = "0.4.29", features = ["release_max_level_warn"] }
 env_logger = "0.11.10"
 smol_str = "0.3.6"

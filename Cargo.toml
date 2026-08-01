@@ -35,11 +35,19 @@ syn = "2.0.117"
 # nothing so hot paths keep their zero-cost posture. Both this manifest
 # and `lib/baumhard/Cargo.toml` must agree, and the two cannot silently
 # *disagree*: cargo unions log's features across the workspace, and log
-# itself `compile_error!`s on "multiple release_max_level_* features
-# set", so a mixed workspace fails to build outright. What can still
-# happen quietly is both manifests agreeing on the *wrong* level — a
-# joint drift back to `off`, or the feature dropped entirely (which
-# uncaps to `Trace`). That is what `baumhard::util::log::tests` pins.
+# `compile_error!`s on "multiple release_max_level_* features set"
+# (`log-0.4.29/src/lib.rs:376-394`), so a mixed workspace fails to
+# build outright rather than resolving to something. That is a stronger
+# guarantee than a test could give — it is unskippable and it fires on
+# every build, not only in CI. It is worth knowing what it saves us
+# from: `STATIC_MAX_LEVEL` (`lib.rs:1611`) matches its arms in
+# declaration order, `off` first, so absent the guard a mixed
+# `off`/`warn` set would silently resolve to `Off` and delete the
+# channel. `baumhard::util::log::tests` pins the log version the guard
+# was read in, so a bump has to re-verify it rather than inherit it.
+# What has no compiler behind it is both manifests agreeing on the
+# *wrong* level — a joint drift back to `off`, or the feature dropped
+# entirely (which uncaps to `Trace`). That is what those tests pin.
 log = { version = "0.4.29", features = ["release_max_level_warn"] }
 smol_str = "0.3.6"
 strum = "0.27"

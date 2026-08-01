@@ -86,9 +86,23 @@ const REQUIRED_LOG_LEVEL_FEATURE: &str = "release_max_level_warn";
 #[cfg(all(test, not(target_arch = "wasm32")))]
 const POLICY_HEADING: &str = "## §9 Error handling";
 
+/// `log` versions in which the
+/// `compile_error!("multiple release_max_level_* features set")` guard
+/// the manifest comments lean on was *read*, not assumed —
+/// `log-0.4.29/src/lib.rs:376-394`.
+///
+/// The manifests both request `"0.4.29"`, which is a caret
+/// requirement, so `cargo update` can move the resolved version
+/// underneath that text without touching either manifest. Pinning the
+/// *lockfile* is therefore the only place the claim can be held.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+const VERIFIED_LOG_VERSIONS: &[&str] = &["0.4.29"];
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::{POLICY_HEADING, REQUIRED_LOG_LEVEL_FEATURE, rust_log_is_effective};
+    use super::{
+        POLICY_HEADING, REQUIRED_LOG_LEVEL_FEATURE, VERIFIED_LOG_VERSIONS, rust_log_is_effective,
+    };
     use crate::util::doc_fixtures::section_text;
     use std::path::{Path, PathBuf};
 
@@ -153,6 +167,80 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The version of `log` the lockfile actually resolves to.
+    fn locked_log_version() -> String {
+        let lock = std::fs::read_to_string(repo_path("Cargo.lock"))
+            .unwrap_or_else(|e| panic!("Cargo.lock must be readable: {e}"));
+        lock.split("[[package]]")
+            .find(|block| block.lines().any(|l| l.trim() == r#"name = "log""#))
+            .and_then(|block| {
+                block
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix(r#"version = ""#))
+                    .and_then(|v| v.strip_suffix('"'))
+                    .map(str::to_string)
+            })
+            .expect("Cargo.lock must resolve a `log` package with a version")
+    }
+
+    /// The manifest comments justify the two-manifest lockstep rule by
+    /// pointing at a `compile_error!` inside `log` — a claim about a
+    /// *dependency's source*, which nothing in this workspace would
+    /// otherwise notice going stale.
+    ///
+    /// Both manifests request `"0.4.29"`, a caret requirement, so
+    /// `cargo update` alone can move the resolved crate to a version
+    /// whose guard nobody has read while the manifests, the comments
+    /// and every other test stay green. This fails instead, and the
+    /// fix is deliberately manual: open the new `log`'s `src/lib.rs`,
+    /// confirm the `compile_error!("multiple release_max_level_*
+    /// features set")` is still there, then add the version here.
+    ///
+    /// Deleting this test to make a bump pass is the one wrong answer
+    /// — the comments would then be citing a file no one has opened.
+    #[test]
+    fn test_locked_log_version_has_a_verified_mixed_feature_guard() {
+        let version = locked_log_version();
+        assert!(
+            VERIFIED_LOG_VERSIONS.contains(&version.as_str()),
+            "Cargo.lock resolves `log` {version}, which is not in the verified set \
+             {VERIFIED_LOG_VERSIONS:?}. `Cargo.toml` and `lib/baumhard/Cargo.toml` \
+             both cite log's `compile_error!(\"multiple release_max_level_* features \
+             set\")` as the reason the two manifests cannot silently disagree. \
+             Re-read `log-{version}/src/lib.rs`, confirm the guard is still there, \
+             and add {version:?} to `VERIFIED_LOG_VERSIONS` — do not delete this test."
+        );
+    }
+
+    /// The end-to-end pin: not what the manifests *say*, but what the
+    /// unified feature set actually resolves `log::STATIC_MAX_LEVEL`
+    /// to in the profile this test was compiled for.
+    ///
+    /// `STATIC_MAX_LEVEL` selects on `cfg!(debug_assertions)`, so the
+    /// release half of the policy is only observable under
+    /// `cargo test --release`; `./test.sh` runs the dev profile and
+    /// exercises the `Trace` half. Both halves are asserted rather
+    /// than only the interesting one, because a `max_level_*` feature
+    /// arriving from some future dependency would cap debug builds
+    /// too and silently delete the instrumentation this repo debugs
+    /// with.
+    #[test]
+    fn test_static_max_level_resolves_to_the_documented_boundary() {
+        let expected = if cfg!(debug_assertions) {
+            log::LevelFilter::Trace
+        } else {
+            log::LevelFilter::Warn
+        };
+        assert_eq!(
+            log::STATIC_MAX_LEVEL, expected,
+            "the unioned `log` feature set resolves the compile-time cap to {:?}, not \
+             {expected:?}; debug builds must stay uncapped and release builds must stop \
+             at `{REQUIRED_LOG_LEVEL_FEATURE}` so CODE_CONVENTIONS §9's warn/error \
+             channel survives",
+            log::STATIC_MAX_LEVEL
+        );
     }
 
     /// The conventions document is the policy's only prose home, and
