@@ -775,4 +775,79 @@ mod oracle {
             ],
         );
     }
+
+    /// **A recorded behavior change, not a side effect.** A
+    /// `LabelEdit*` cursor / delete action is `Step::Act`, and the
+    /// funnel arm in `dispatch/native.rs` now routes it through the
+    /// same `handle_input_core` a keystroke takes. That means it
+    /// meets `still_editable` first, where on `main` the arm was a
+    /// bare buffer mutation with no validity guard on any path.
+    ///
+    /// So an `Action` reaching an invalidated portal caption — from
+    /// a macro, the console or IPC, the three callers that can send
+    /// one without a keystroke — closes the editor and **discards
+    /// the buffer uncommitted**, exactly as a keystroke does. On
+    /// `main` it moved the caret in a buffer that survived until
+    /// Enter or a click outside.
+    ///
+    /// It is the more consistent behavior — one entry point, one
+    /// guard — and it is pinned here so it stays a decision.
+    #[test]
+    fn test_oracle_funnel_action_on_an_invalidated_portal_caption_discards_the_buffer() {
+        assert_eq!(
+            run(
+                TargetKind::PortalText,
+                &[
+                    Step::Open { clean: false },
+                    Step::Type("!"),
+                    Step::FlipToLine,
+                    Step::Act(Action::LabelEditCursorLeft),
+                    Step::Close { commit: true },
+                ],
+            ),
+            vec![
+                r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                r#"Preview open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                r#"None open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                // The caret move never happens: the guard fires
+                // first, the editor closes, `hi!` is gone and the
+                // `All` decree is a full rebuild.
+                r#"All closed value="hi" preview=- undo=0"#,
+                r#"None closed value="hi" preview=- undo=0"#,
+            ]
+        );
+    }
+
+    /// The other column of the same asymmetry, on the funnel path:
+    /// the edge-label target has no `still_editable` guard, so the
+    /// same action on a deleted edge moves the caret in a live
+    /// buffer and the editor stays open.
+    ///
+    /// Together with the test above this is the funnel counterpart
+    /// of `test_oracle_keystroke_after_edge_deleted_diverges_by_design`
+    /// — the two entry points now agree per target, which is the
+    /// whole point of the unification, and the targets still
+    /// disagree with each other, which is deliberate.
+    #[test]
+    fn test_oracle_funnel_action_on_a_deleted_edge_label_keeps_the_buffer() {
+        assert_eq!(
+            run(
+                TargetKind::EdgeLabel,
+                &[
+                    Step::Open { clean: false },
+                    Step::Type("!"),
+                    Step::DeleteEdge,
+                    Step::Act(Action::LabelEditCursorLeft),
+                    Step::Close { commit: true },
+                ],
+            ),
+            vec![
+                r#"Preview open[hi]@2 value="hi" preview="hi|" undo=0"#,
+                r#"Preview open[hi!]@3 value="hi" preview="hi!|" undo=0"#,
+                r#"None open[hi!]@3 value=- preview="hi!|" undo=0"#,
+                r#"Preview open[hi!]@2 value=- preview="hi|!" undo=0"#,
+                r#"All closed value=- preview=- undo=0"#,
+            ]
+        );
+    }
 }

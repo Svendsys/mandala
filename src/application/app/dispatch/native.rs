@@ -626,6 +626,34 @@ pub(in crate::application::app) fn dispatch_action(
         }
 
         // ── LabelEdit cursor primitives ───────────────────────
+        //
+        // Three declared behavior changes live on this arm, all of
+        // them consequences of routing the funnel through the same
+        // `handle_input_core` a keystroke takes instead of mutating
+        // the buffer directly. Macros, the console and IPC are the
+        // callers that reach it without a keystroke.
+        //
+        // 1. The preview is refreshed after the caret moves; before,
+        //    it wrote state and painted nothing.
+        // 2. It reaches the portal caption at all; before, it wrote
+        //    to the edge-label state only.
+        // 3. It meets `still_editable` first — so one of these
+        //    actions arriving while the portal caption editor is
+        //    open on an edge that has since been deleted or left
+        //    portal mode now closes the editor and **discards the
+        //    buffer uncommitted**, where before the buffer survived
+        //    until Enter or a click outside. That guard existed on
+        //    `main` only on the keystroke path; unifying the entry
+        //    points widened its reach here. It is the consistent
+        //    behavior — one editor, one guard — and it is pinned by
+        //    `single_line_edit::tests::oracle::
+        //    test_oracle_funnel_action_on_an_invalidated_portal_caption_discards_the_buffer`
+        //    so it stays a decision rather than a side effect.
+        //
+        // The `if let Some(doc)` gate also makes these actions
+        // no-ops with no document loaded, where before they still
+        // mutated the buffer. Unobservable — an open editor implies
+        // a document — noted so the audit is complete.
         Action::LabelEditCursorLeft
         | Action::LabelEditCursorRight
         | Action::LabelEditCursorHome
