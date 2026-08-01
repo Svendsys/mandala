@@ -286,8 +286,12 @@ rationale.
 - **Renaming or deleting a `do_*()` is a two-file change.**
   `benches/test_bench.rs` imports them by path. The bench file is
   not compiled under `cfg(test)`, so `cargo test` will not tell you it
-  has drifted — only `cargo bench` or `./test.sh --bench` will.
-  Update both files in the same commit.
+  has drifted. `./test.sh` will: it ends with
+  `cargo check --workspace --benches`, which compiles the bench
+  targets without executing anything — the only mechanism left, since
+  `AGENTS.md` forbids `cargo bench` and `./test.sh --bench` to the
+  agents who write most of this code. Update both files in the same
+  commit.
 - **Do not "fix" the missing `#[cfg(test)]` on Baumhard test
   modules.** It is load-bearing. Removing it breaks the bench harness.
 

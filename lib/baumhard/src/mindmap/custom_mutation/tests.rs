@@ -470,7 +470,7 @@ mod reach_tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_every_target_scope_variant_is_published_by_the_docs() {
-        use crate::util::doc_fixtures::{documented_paragraph, names_token, repo_doc_path};
+        use crate::util::doc_fixtures::{documented_paragraph, names_token, repo_path};
         use strum::IntoEnumIterator;
 
         // (doc path relative to the repo root, heading, and the line
@@ -491,7 +491,7 @@ mod reach_tests {
         ];
         let mut gaps: Vec<String> = Vec::new();
         for (doc, heading, marker) in surfaces {
-            let body = documented_paragraph(&repo_doc_path(doc), heading, marker);
+            let body = documented_paragraph(&repo_path(doc), heading, marker);
             for scope in TargetScope::iter() {
                 let name = format!("{:?}", scope);
                 if !names_token(&body, &name) {
@@ -517,7 +517,7 @@ mod reach_tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_concepts_variant_count_matches_the_enum() {
-        use crate::util::doc_fixtures::{repo_doc_path, section_text};
+        use crate::util::doc_fixtures::{repo_path, section_text};
         use strum::IntoEnumIterator;
 
         const WORDS: [&str; 8] = ["Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
@@ -526,7 +526,7 @@ mod reach_tests {
             .get(count - 3)
             .unwrap_or_else(|| panic!("{count} variants is outside the range this test spells"));
 
-        let body = section_text(&repo_doc_path("CONCEPTS.md"), "### Target scopes");
+        let body = section_text(&repo_path("CONCEPTS.md"), "### Target scopes");
         let phrase = format!("{expected} variants");
         assert!(
             body.contains(&phrase),

@@ -93,22 +93,35 @@ the parity trajectory (or why none is owed):
 
 ## Common tasks
 
-- **Run tests**: `./test.sh` runs the full suite across both crates,
-  prints a test count, then type-checks `wasm32-unknown-unknown` so
-  cross-platform drift fails the run. Flags: `--coverage` (runs under
-  `cargo-llvm-cov`, outputs `target/llvm-cov/html/index.html`),
-  `--lint` (advisory `cargo fmt --check` + `cargo clippy`), `--bench`
-  (runs the criterion benches after tests).
-- **Build releases**: `./build.sh` cleans prior output and builds both
-  the native binary (`target/release/mandala`) and the WASM bundle
-  (`dist/` via `trunk build --release`). `--debug` builds dev profile
-  on both sides; `--fat` switches native to `release-lto`. Requires
-  `trunk` on `PATH` and the `wasm32-unknown-unknown` target installed.
+- **Run tests**: `./test.sh` runs `cargo test --workspace` — all four
+  members, `mandala`, `baumhard`, `mandala_derive` and `maptool` —
+  prints a test count, then type-checks the benchmark targets
+  (`cargo check --workspace --benches`, which runs no benchmark) and
+  `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
+  cross-platform drift can pass a green run. Flags: `--coverage`
+  (runs under `cargo-llvm-cov`, outputs
+  `target/llvm-cov/html/index.html`), `--lint` (advisory
+  `cargo fmt --check` + `cargo clippy`), `--bench` (runs the criterion
+  benches after tests — **maintainers only**; §7 and `AGENTS.md`
+  forbid it to agents, who need the type-check above and nothing
+  else).
+- **Build releases**: `./build.sh` builds both the native binary
+  (`target/release/mandala`) and the WASM bundle (`dist/` via
+  `trunk build --release`), replacing prior output for the chosen
+  profile — each output directory is set aside and discarded only
+  once its replacement exists, so a failed build leaves the artifacts
+  you already had intact, at the cost of holding a second copy of the
+  output tree for the duration. `--debug` builds dev profile
+  on both sides; `--fat` switches native to `release-lto`;
+  `--no-keep` deletes the prior output up front instead, for when the
+  disk matters more than the safety net. Requires `trunk` on `PATH`
+  and the `wasm32-unknown-unknown` target installed.
 - **Run the app**: `./run.sh [map.mindmap.json]` launches the release
   binary and `trunk serve --release` in parallel; Ctrl+C stops both.
   For one-off iteration use `cargo run -- maps/testament.mindmap.json`
   (native) or `trunk serve` (WASM) directly.
-- **Target a specific test**: `cargo test -p baumhard --lib <pattern>` or
-  `cargo test -p mandala --lib <pattern>`.
+- **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
+  `cargo test -p mandala --lib <pattern>`,
+  `cargo test -p mandala_derive` or `cargo test -p maptool`.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
