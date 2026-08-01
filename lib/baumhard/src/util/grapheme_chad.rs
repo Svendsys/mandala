@@ -842,11 +842,14 @@ pub fn delete_front_unicode(s: &mut String, n: usize) {
 /// `Vec<&str>` over the **whole** buffer (per `CONVENTIONS §B7`
 /// hot-path posture).
 ///
-/// `is_alphanumeric` is applied to the grapheme's *first* scalar.
-/// For ZWJ clusters and combining-mark sequences this matches the
-/// human-perceived base character; for regional-indicator pairs
-/// (flag emoji) the first scalar is non-alphanumeric so the cluster
-/// counts as a boundary.
+/// A cluster is part of a word when *any* of its scalars is
+/// `char::is_alphanumeric`. For ZWJ clusters and combining-mark
+/// sequences that is the human-perceived base character; for
+/// regional-indicator pairs (flag emoji) no scalar is alphanumeric, so
+/// the cluster counts as a boundary. Reading only the *first* scalar
+/// gives the same answer everywhere except UAX #29 `Prepend`
+/// sequences, where it reads an invisible formatting scalar instead of
+/// the character the reader sees — see `grapheme_is_word`.
 pub fn word_left(buffer: &str, cursor: usize) -> usize {
     scan_back(buffer, cursor, grapheme_is_word, true)
 }
@@ -1004,10 +1007,25 @@ pub fn word_right(buffer: &str, cursor: usize) -> usize {
 }
 
 /// Whether a grapheme is part of a "word" for word-boundary cursor
-/// motion (`word_left` / `word_right`). Reads the grapheme's first
-/// scalar and applies `char::is_alphanumeric`.
+/// motion (`word_left` / `word_right`). A cluster is a word cluster
+/// when *any* scalar in it is `char::is_alphanumeric` — the mirror of
+/// [`grapheme_is_not_whitespace`]'s "a cluster separates only when
+/// every scalar does", and the same reasoning: the cursor moves over
+/// what the reader sees, and a cluster is one thing on screen.
+///
+/// The first-scalar rule this replaces agreed on every cluster whose
+/// base is the visible character — ZWJ families, skin tones,
+/// combining-mark sequences, regional-indicator pairs (no scalar in a
+/// flag is alphanumeric, so it stays a boundary under both rules) —
+/// and disagreed on exactly one class: UAX #29 `Prepend`, where GB9b
+/// glues an *invisible* formatting scalar to the front of the
+/// character it applies to. U+0600 ARABIC NUMBER SIGN before a digit
+/// is the everyday case; the first-scalar rule reads the invisible
+/// prefix, calls the cluster a boundary, and walks the cursor straight
+/// through a number as though it were punctuation. Reading any scalar
+/// finds the digit.
 fn grapheme_is_word(g: &str) -> bool {
-    g.chars().next().map(char::is_alphanumeric).unwrap_or(false)
+    g.chars().any(char::is_alphanumeric)
 }
 
 /// Whether a grapheme is part of a whitespace-delimited token

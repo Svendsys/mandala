@@ -950,10 +950,22 @@ pub fn do_word_left() {
     let cafe_nfd = "cafe\u{0301}";
     assert_eq!(word_left(cafe_nfd, 4), 0);
 
-    // Regional-indicator pair (🇺🇸 = two scalars, one cluster) —
-    // first scalar `'\u{1F1FA}'` is non-alphanumeric, cluster is
-    // a boundary. `"foo🇺🇸bar"` cursor=7 → 4.
+    // Regional-indicator pair (🇺🇸 = two scalars, one cluster) — no
+    // scalar in a flag is alphanumeric, so the cluster is a
+    // boundary. `"foo🇺🇸bar"` cursor=7 → 4.
     assert_eq!(word_left("foo🇺🇸bar", 7), 4);
+
+    // UAX #29 `Prepend`: U+0600 ARABIC NUMBER SIGN is glued to the
+    // digit after it by GB9b, so `"ab \u{600}5"` is four clusters —
+    // "a", "b", " ", "\u{600}5". The cluster is a *number* on screen;
+    // only its invisible first scalar is non-alphanumeric. A
+    // first-scalar predicate calls it a boundary and walks the cursor
+    // through the whole token back to the start of "ab"; reading any
+    // scalar stops at the number where the reader expects it to.
+    let prepend = "ab \u{600}5";
+    assert_eq!(count_grapheme_clusters(prepend), 4);
+    assert_eq!(word_left(prepend, 4), 3);
+    assert_eq!(word_left(prepend, 3), 0);
 }
 
 #[test]
@@ -998,6 +1010,17 @@ pub fn do_word_right() {
 
     // Regional-indicator pair — `"foo🇺🇸bar"` cursor=3 → 7.
     assert_eq!(word_right("foo🇺🇸bar", 3), 7);
+
+    // The `Prepend` case from `do_word_left`, walked the other way.
+    // `"ab \u{600}5 cd"` is "a", "b", " ", "\u{600}5", " ", "c", "d".
+    // From the space at 2 the motion must stop past the number; a
+    // first-scalar predicate treats the number as punctuation, skips
+    // it with the spaces around it, and overshoots into "cd".
+    let prepend = "ab \u{600}5 cd";
+    assert_eq!(count_grapheme_clusters(prepend), 7);
+    assert_eq!(word_right(prepend, 2), 4);
+    assert_eq!(word_right(prepend, 4), 7);
+    assert_eq!(word_right(prepend, 0), 2);
 }
 
 lazy_static! {
