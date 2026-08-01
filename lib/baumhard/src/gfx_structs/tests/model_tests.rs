@@ -542,6 +542,94 @@ pub fn matrix_place_in_multiline_component() {
     // arithmetic cannot keep the index while losing the text.
     let span_start = find_byte_index_of_grapheme(&padded, 11).unwrap();
     assert_eq!(&padded[span_start..], "YYYY");
+
+    // The same paint with the caller span anchored **exactly at** the
+    // padding point rather than after it. This is the case that tells
+    // the two candidate primitives apart: the padding lands at cell 4
+    // and the span starts at cell 4, so `start >= idx` moves it and
+    // `shift_regions_after`'s strict `start > idx` does not. The span
+    // above starts at 5 and rides either rule, which is why swapping
+    // `place_in`'s padding call for `shift_regions_after` used to
+    // leave the whole suite green.
+    //
+    // The component's own write is the second half of the same
+    // question. It lands at cell 8 into an *empty* line tail — a pure
+    // insertion, not an overwrite — so the caller span, now sitting at
+    // 8..10, has to move again. `shift_regions_after` left it at 8..10
+    // and the component's `submit_region(8..10)` then evicted it: the
+    // region set is keyed on the range alone, so the caller's pin
+    // vanished from a buffer that still contained its text.
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new(
+        Range::new(4, 6),
+        Some(AppFont::Evilz),
+        Some(Color::black().to_float()),
+    ));
+    let mut at_pad = String::from("XXXX\r\nYYYY");
+    x_offset.place_in(&mut at_pad, &mut regions, (8, 0));
+    assert_eq!(at_pad, "XXXX    AB\r\nYYYY");
+    assert_eq!(
+        regions.num_regions(),
+        2,
+        "the caller's span and the component's span both survive; neither evicts the other"
+    );
+    assert!(
+        regions.get(Range::new(10, 12)).is_some(),
+        "a caller span anchored at the padding point rides the four padding cells and then the \
+         two the component inserted: 4..6 -> 8..10 -> 10..12"
+    );
+    assert!(
+        regions.get(Range::new(8, 10)).is_some(),
+        "the component still owns exactly the two cells it wrote"
+    );
+    let span_start = find_byte_index_of_grapheme(&at_pad, 10).unwrap();
+    let span_end = find_byte_index_of_grapheme(&at_pad, 12).unwrap();
+    assert_eq!(
+        &at_pad[span_start..span_end],
+        "\r\nY",
+        "and it still covers the same two clusters it started on"
+    );
+
+    // The padding must *shift* spans without letting one that merely
+    // ends at the padding point absorb the blanks. The blanks are the
+    // indent of the row about to be painted — they belong to no run
+    // and to no component — so absorbing them stretches a span across
+    // a line terminator onto another row's leading whitespace.
+    //
+    // Three rows, the first of which is a bare CR, painted at x-offset
+    // 2. Row 0's component lands at cell 2, fuses with the padding LF
+    // into one `"\r\n"` cluster, and correctly owns 2..3. Row 1 then
+    // needs two indent cells at cell 3 — exactly where row 0's span
+    // ends. `insert_regions_at`'s left-adjacent absorption grew it to
+    // 2..5, pinning row 0's font and color onto row 1's indent.
+    let mut cr_rows = GlyphMatrix::new();
+    for text in ["\r", "", ""] {
+        cr_rows.push(GlyphLine::new_with(GlyphComponent::text(
+            text,
+            AppFont::Evilz,
+            Color::black(),
+        )));
+    }
+    let mut regions = ColorFontRegions::new_empty();
+    let mut cr_padded = String::new();
+    cr_rows.place_in(&mut cr_padded, &mut regions, (2, 0));
+    assert_eq!(cr_padded, "  \r\n  \n  ");
+    assert_eq!(
+        regions.num_regions(),
+        1,
+        "only row 0 wrote a cell; the two empty rows own nothing and emit nothing"
+    );
+    assert!(
+        regions.get(Range::new(2, 3)).is_some(),
+        "row 0's span must stop at its own terminator, not absorb row 1's indent"
+    );
+    let span_start = find_byte_index_of_grapheme(&cr_padded, 2).unwrap();
+    let span_end = find_byte_index_of_grapheme(&cr_padded, 3).unwrap();
+    assert_eq!(
+        &cr_padded[span_start..span_end],
+        "\r\n",
+        "the CR the component wrote plus the LF it fused with — and nothing of the next row"
+    );
 }
 
 #[test]
@@ -601,10 +689,76 @@ pub fn matrix_place_in_fusing_component() {
         "\"ab\" owns the two cells it wrote, including the one the accent joined"
     );
     assert!(
-        regions.get(Range::new(2, 2)).is_some(),
-        "a component that only extends the cell before it owns no cell of its own, so its span is empty — \
-         and above all is not 2..3, which is a different component's text"
+        regions.get(Range::new(2, 2)).is_none(),
+        "a component that only extends the cell before it owns no cell of its own, so no region is \
+         emitted for it at all — a degenerate `2..2` would violate the region primitives' \
+         \"non-degenerate\" precondition by construction"
     );
+    assert_eq!(
+        regions.num_regions(),
+        2,
+        "one component span plus the caller's, and nothing else"
+    );
+
+    // A third component makes the *head* observable. Until this row
+    // existed, `comp_head` could be reverted to `comp_head +=
+    // component.length()` — isolated cluster arithmetic, the exact
+    // quantity the measured span replaced — and the suite stayed
+    // green, because the fusing component was last in its line and
+    // nothing ever consumed the head it left behind.
+    let mut matrix = GlyphMatrix::new();
+    let mut line = GlyphLine::new();
+    line.push(GlyphComponent::text("ab", AppFont::Evilz, Color::black()));
+    line.push(GlyphComponent::text("\u{301}", AppFont::Evilz, Color::black()));
+    line.push(GlyphComponent::text("Z", AppFont::Evilz, Color::black()));
+    matrix.push(line);
+
+    let mut regions = ColorFontRegions::new_empty();
+    let mut buffer = String::from("XXXXXXXX");
+    matrix.place_in(&mut buffer, &mut regions, (0, 0));
+
+    assert_eq!(buffer, "ab\u{301}ZXXXX");
+    assert_eq!(
+        regions.num_regions(),
+        2,
+        "\"ab\" and \"Z\"; the accent owns no cell"
+    );
+    assert!(regions.get(Range::new(0, 2)).is_some());
+    assert!(
+        regions.get(Range::new(2, 3)).is_some(),
+        "\"Z\" lands on cell 2, the cell after the fused one. With an arithmetic head the accent \
+         would have advanced it to 3 and \"Z\" would claim a cell of the target instead"
+    );
+    let span_start = find_byte_index_of_grapheme(&buffer, 2).unwrap();
+    let span_end = find_byte_index_of_grapheme(&buffer, 3).unwrap();
+    assert_eq!(&buffer[span_start..span_end], "Z");
+
+    // Two components that both fuse into the same cell. Both own no
+    // cell, so both emit nothing — which is also what keeps the region
+    // set free of key collisions: while `place_in` emitted a
+    // degenerate `k..k` for each, the second silently evicted the
+    // first's font and color pin from the set, because
+    // `ColorFontRegions` is keyed on the range alone.
+    let mut matrix = GlyphMatrix::new();
+    let mut line = GlyphLine::new();
+    line.push(GlyphComponent::text("ab", AppFont::Evilz, Color::black()));
+    line.push(GlyphComponent::text("\u{301}", AppFont::African, Color::white()));
+    line.push(GlyphComponent::text("\u{302}", AppFont::Evilz, Color::black()));
+    matrix.push(line);
+
+    let mut regions = ColorFontRegions::new_empty();
+    let mut buffer = String::from("XXXXXXXX");
+    matrix.place_in(&mut buffer, &mut regions, (0, 0));
+
+    assert_eq!(buffer, "ab\u{301}\u{302}XXXX");
+    assert_eq!(
+        regions.num_regions(),
+        1,
+        "only \"ab\" owns cells; two cell-less components collapsed into one set slot before, \
+         which discarded a pin that had been submitted"
+    );
+    assert!(regions.get(Range::new(0, 2)).is_some());
+    assert!(regions.get(Range::new(2, 2)).is_none());
 }
 
 #[test]

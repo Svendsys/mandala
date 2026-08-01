@@ -306,18 +306,32 @@ impl ColorFontRegions {
     /// (the text-editor caret, user typing) should instead use
     /// [`Self::insert_regions_at`], which extends straddling regions
     /// to cover the new chars, and shifts on `start >= idx` rather
-    /// than `start > idx`. See [`Self::shrink_regions_after`] for the
-    /// delete path.
+    /// than `start > idx`. Callers that want neither — new cells that
+    /// belong to no existing region, with a region anchored exactly at
+    /// `idx` still moving — want [`Self::shift_regions_from`]. See
+    /// [`Self::shrink_regions_after`] for the delete path.
     ///
-    /// **The delete path is a companion, not a mirror, at the
-    /// `start == idx` seam.** A region anchored exactly at `idx`
-    /// survives a shift untouched (it still describes the cells the
-    /// caller is about to re-cover with its own `submit_region`),
-    /// while `shrink_regions_after` drops the same region, because
-    /// there the cut *removed* the text it covered. Both are right for
-    /// their direction; a caller pairing the two — `GlyphMatrix::place_in`
-    /// does — must not assume one from the other.
-    /// `do_region_shift_and_shrink_disagree_at_the_seam` pins it.
+    /// **The `start == idx` seam is only defensible when the write
+    /// overwrites.** Leaving a region anchored exactly at `idx` in
+    /// place is right when the caller is *replacing* the cells that
+    /// region covers and is about to re-cover them with its own
+    /// `submit_region`. It is wrong when the write is a pure
+    /// *insertion* — then nothing at `idx` was displaced, the region's
+    /// text has moved right by `magnitude`, and leaving it behind
+    /// parks it on cells it never described (and, if the follow-up
+    /// `submit_region` uses the same range, evicts it outright, since
+    /// the set is keyed on the range alone). This primitive cannot
+    /// tell the two apart from `(idx, magnitude)`; the caller can, and
+    /// must pick [`Self::shift_regions_from`] for the insertion case.
+    /// `GlyphMatrix::place_in` does exactly that.
+    ///
+    /// **The delete path is a companion, not a mirror, at that same
+    /// seam.** A region anchored exactly at `idx` survives this shift
+    /// untouched, while `shrink_regions_after` drops it, because there
+    /// the cut *removed* the text it covered. Both are right for their
+    /// direction; a caller pairing the two must not assume one from
+    /// the other. `do_region_shift_and_shrink_disagree_at_the_seam`
+    /// pins it.
     ///
     /// A shift that would carry a region's `end` past `usize::MAX` is
     /// dropped whole, leaving the set untouched rather than partly
@@ -350,6 +364,63 @@ impl ColorFontRegions {
         self.regions.extend(copy_of_regions);
     }
 
+    /// Pure-insertion primitive: `magnitude` cells that belong to **no
+    /// existing region** were inserted at `idx`. Shift every region
+    /// whose `start >= idx` right by `magnitude`; leave every other
+    /// region — including one that *ends* exactly at `idx` — exactly
+    /// as it is.
+    ///
+    /// It is the third point of the triangle its two siblings leave
+    /// open, and every caller wants exactly one of the three:
+    ///
+    /// | | region with `start == idx` | region with `end == idx` |
+    /// |---|---|---|
+    /// | [`Self::shift_regions_after`] | stays | stays |
+    /// | [`Self::insert_regions_at`] | shifts | **absorbs** the new cells |
+    /// | `shift_regions_from` | shifts | stays |
+    ///
+    /// Reach for this one when the inserted cells are structural
+    /// filler that no run owns and the caller is going to describe
+    /// them itself (or leave them undescribed) — as opposed to
+    /// `insert_regions_at`'s typing case, where the new chars should
+    /// inherit the run they were typed into, and
+    /// `shift_regions_after`'s overwrite case, where the cells at
+    /// `idx` are being replaced rather than displaced.
+    /// `GlyphMatrix::place_in` is the caller on both counts: the
+    /// blanks it pads a short row out to an x-offset with belong to
+    /// the *next* row's indent and to no component, and the cells a
+    /// component writes into an empty line tail displace a caller span
+    /// anchored there rather than overwriting it.
+    ///
+    /// A shift that would carry a region's `end` past `usize::MAX` is
+    /// dropped whole, leaving the set untouched rather than partly
+    /// shifted — same posture as [`Self::shift_regions_after`] and
+    /// [`Self::split_and_separate`]. `magnitude == 0` is a no-op.
+    ///
+    /// **Precondition: the region set is non-degenerate and
+    /// non-overlapping** — see [`Self::split_and_separate`], which
+    /// carries the same precondition for the same reason.
+    ///
+    /// Costs: O(n) over existing regions; one full clone of the
+    /// BTreeSet to decouple from the iterator.
+    pub fn shift_regions_from(&mut self, idx: usize, magnitude: usize) {
+        if magnitude == 0 {
+            return;
+        }
+        let mut copy_of_regions: Vec<_> = self.regions.iter().copied().collect();
+        for region in &mut copy_of_regions {
+            if region.range.start >= idx && !region.range.checked_push_right(magnitude) {
+                warn!(
+                    "shift_regions_from dropped: shifting region {}..{} right by {} overflows usize",
+                    region.range.start, region.range.end, magnitude
+                );
+                return;
+            }
+        }
+        self.regions.clear();
+        self.regions.extend(copy_of_regions);
+    }
+
     /// Text-edit insertion primitive: `magnitude` chars were inserted
     /// at position `idx` in the backing text; rewrite the region ranges
     /// to reflect that so the inserted chars inherit the surrounding
@@ -373,7 +444,13 @@ impl ColorFontRegions {
     /// Contrast with [`Self::shift_regions_after`], whose "replace
     /// and shift" semantics leave straddling regions in place — that
     /// primitive exists for `GlyphMatrix::copy_from`, which explicitly
-    /// follows up with a `submit_region` for the inserted span.
+    /// follows up with a `submit_region` for the inserted span — and
+    /// with [`Self::shift_regions_from`], which shares this
+    /// primitive's `start >= idx` shift but does **not** absorb.
+    /// Absorption is right when the new chars were typed into an
+    /// existing run and should inherit it; it is wrong when they are
+    /// structural filler that belongs to no run, because the
+    /// left-adjacent run then grows over cells it never covered.
     ///
     /// A shift or absorption that would carry a region's `end` past
     /// `usize::MAX` drops the call whole — the set is left untouched

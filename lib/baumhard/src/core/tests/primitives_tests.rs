@@ -280,6 +280,131 @@ pub fn do_shift_regions_after_overflow_drops_the_whole_call() {
 }
 
 #[test]
+fn test_shift_regions_from_is_the_third_point_of_the_triangle() {
+    do_shift_regions_from_is_the_third_point_of_the_triangle();
+}
+
+/// The three insertion primitives differ only in what they do to the
+/// two regions that touch `idx`, and every caller needs exactly one
+/// of the three combinations. This pins all six cells of that table
+/// in one place, because the whole reason
+/// [`ColorFontRegions::shift_regions_from`] exists is that neither
+/// sibling has its combination:
+///
+/// | | `start == idx` | `end == idx` |
+/// |---|---|---|
+/// | `shift_regions_after` | stays | stays |
+/// | `insert_regions_at` | shifts | absorbs |
+/// | `shift_regions_from` | shifts | stays |
+pub fn do_shift_regions_from_is_the_third_point_of_the_triangle() {
+    // `end == idx` — the left-adjacent region.
+    let mut after = ColorFontRegions::new_empty();
+    after.submit_region(ColorFontRegion::new_key_only(Range::new(0, 4)));
+    after.shift_regions_after(4, 2);
+    assert!(
+        after.get(Range::new(0, 4)).is_some(),
+        "shift_regions_after leaves it"
+    );
+
+    let mut insert = ColorFontRegions::new_empty();
+    insert.submit_region(ColorFontRegion::new_key_only(Range::new(0, 4)));
+    assert!(insert.insert_regions_at(4, 2));
+    assert!(
+        insert.get(Range::new(0, 6)).is_some(),
+        "insert_regions_at absorbs the new cells into it"
+    );
+
+    let mut from = ColorFontRegions::new_empty();
+    from.submit_region(ColorFontRegion::new_key_only(Range::new(0, 4)));
+    from.shift_regions_from(4, 2);
+    assert!(
+        from.get(Range::new(0, 4)).is_some(),
+        "shift_regions_from leaves it — the new cells belong to no run"
+    );
+
+    // `start == idx` — the region anchored exactly at the insertion.
+    let mut after = ColorFontRegions::new_empty();
+    after.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    after.shift_regions_after(4, 2);
+    assert!(
+        after.get(Range::new(4, 6)).is_some(),
+        "shift_regions_after's strict `>` leaves it behind"
+    );
+
+    let mut insert = ColorFontRegions::new_empty();
+    insert.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    assert!(!insert.insert_regions_at(4, 2));
+    assert!(
+        insert.get(Range::new(6, 8)).is_some(),
+        "insert_regions_at shifts it"
+    );
+
+    let mut from = ColorFontRegions::new_empty();
+    from.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    from.shift_regions_from(4, 2);
+    assert!(
+        from.get(Range::new(6, 8)).is_some(),
+        "shift_regions_from shifts it — nothing at `idx` was displaced, so its text moved"
+    );
+
+    // All three agree everywhere else: strictly left stays, strictly
+    // right shifts.
+    let mut both = ColorFontRegions::new_empty();
+    both.submit_region(ColorFontRegion::new_key_only(Range::new(0, 3)));
+    both.submit_region(ColorFontRegion::new_key_only(Range::new(5, 9)));
+    both.shift_regions_from(4, 2);
+    assert_eq!(both.num_regions(), 2);
+    assert!(both.get(Range::new(0, 3)).is_some());
+    assert!(both.get(Range::new(7, 11)).is_some());
+
+    // A straddler (`start < idx < end`) is left alone, like
+    // `shift_regions_after` and unlike `insert_regions_at`.
+    let mut straddle = ColorFontRegions::new_empty();
+    straddle.submit_region(ColorFontRegion::new_key_only(Range::new(2, 9)));
+    straddle.shift_regions_from(4, 2);
+    assert!(straddle.get(Range::new(2, 9)).is_some());
+
+    // `idx == 0` shifts everything — the case `shift_regions_after`
+    // cannot express at all.
+    let mut all = ColorFontRegions::new_empty();
+    all.submit_region(ColorFontRegion::new_key_only(Range::new(0, 3)));
+    all.shift_regions_from(0, 2);
+    assert!(all.get(Range::new(2, 5)).is_some());
+
+    // Zero magnitude is a no-op.
+    let mut zero = ColorFontRegions::new_empty();
+    zero.submit_region(ColorFontRegion::new_key_only(Range::new(4, 6)));
+    zero.shift_regions_from(4, 0);
+    assert!(zero.get(Range::new(4, 6)).is_some());
+}
+
+#[test]
+fn test_shift_regions_from_overflow_drops_the_whole_call() {
+    do_shift_regions_from_overflow_drops_the_whole_call();
+}
+
+/// [`ColorFontRegions::shift_regions_from`] carries the same
+/// all-or-nothing overflow posture as every sibling: the set is left
+/// exactly as it was rather than partly shifted.
+pub fn do_shift_regions_from_overflow_drops_the_whole_call() {
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new_key_only(Range::new(0, 8)));
+    regions.submit_region(ColorFontRegion::new_key_only(Range::new(10, usize::MAX)));
+
+    regions.shift_regions_from(5, 3);
+
+    assert_eq!(regions.num_regions(), 2);
+    assert!(regions.get(Range::new(0, 8)).is_some());
+    assert!(regions.get(Range::new(10, usize::MAX)).is_some());
+
+    // The ordinary path still shifts.
+    let mut ordinary = ColorFontRegions::new_empty();
+    ordinary.submit_region(ColorFontRegion::new_key_only(Range::new(10, 15)));
+    ordinary.shift_regions_from(5, 3);
+    assert!(ordinary.get(Range::new(13, 18)).is_some());
+}
+
+#[test]
 fn test_insert_regions_at_overflow_drops_the_whole_call() {
     do_insert_regions_at_overflow_drops_the_whole_call();
 }
@@ -454,21 +579,29 @@ fn test_region_shift_and_shrink_disagree_at_the_seam() {
     do_region_shift_and_shrink_disagree_at_the_seam();
 }
 
-/// The grow and shrink primitives are *not* mirrors of one another at
-/// `start == idx`, and the two callers that pair them —
-/// `GlyphMatrix::place_in` and the text-edit delete path — depend on
-/// the difference rather than on a symmetry.
+/// `shift_regions_after` and `shrink_regions_after` are *not* mirrors
+/// of one another at `start == idx`, and a caller that pairs them must
+/// not assume they are.
 ///
-/// A span anchored exactly at the edit position covers the text the
-/// edit is overwriting. Growing, `shift_regions_after` leaves it
-/// alone: its "replace and shift" contract has the caller submit a
-/// fresh span for the new text, and moving the old one right would
-/// slide it off the cells it still describes onto the untouched tail.
-/// Shrinking, `shrink_regions_after` is describing a *deletion* — the
-/// cells that span covered are gone, so a span that lies wholly inside
-/// the cut collapses. Both answers are correct for their direction;
-/// what would be wrong is assuming one from the other, so this pins
-/// the seam in both directions.
+/// A span anchored exactly at the edit position covers the text an
+/// *overwriting* edit is replacing. Growing, `shift_regions_after`
+/// leaves it alone: its "replace and shift" contract has the caller
+/// submit a fresh span for the new text, and moving the old one right
+/// would slide it off the cells it still describes onto the untouched
+/// tail. Shrinking, `shrink_regions_after` is describing a *deletion*
+/// — the cells that span covered are gone, so a span that lies wholly
+/// inside the cut collapses. Both answers are correct for their
+/// direction; what would be wrong is assuming one from the other, so
+/// this pins the seam in both directions.
+///
+/// `GlyphMatrix::place_in` used to be the caller that paired these
+/// two, and the asymmetry bit it: its grow side is a pure *insertion*
+/// at every non-zero x-offset, where nothing at `at` is displaced and
+/// leaving a span behind parks it on cells it never described. It now
+/// pairs `shift_regions_from` with `shrink_regions_after`, which *are*
+/// mirrors at the seam — both treat a span anchored at `idx` as
+/// affected. `do_shift_regions_from_is_the_third_point_of_the_triangle`
+/// pins that side.
 pub fn do_region_shift_and_shrink_disagree_at_the_seam() {
     let mut grown = ColorFontRegions::new_empty();
     grown.submit_region(ColorFontRegion::new_key_only(Range::new(2, 3)));
