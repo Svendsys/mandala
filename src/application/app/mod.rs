@@ -552,9 +552,9 @@ enum DragState {
 #[cfg(not(target_arch = "wasm32"))]
 impl DragState {
     /// Enter a throttled drag. The boxing is an implementation
-    /// detail of the variant, not something the eight promotion
-    /// sites in `event_cursor_moved` / `dispatch::native` should
-    /// each have to spell.
+    /// detail of the variant, not something the nine promotion
+    /// sites — seven in `event_cursor_moved`, two in
+    /// `dispatch::native` — should each have to spell.
     fn throttled(drag: ThrottledDrag) -> Self {
         Self::Throttled(Box::new(drag))
     }
