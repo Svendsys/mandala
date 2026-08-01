@@ -100,9 +100,7 @@ const VERIFIED_LOG_VERSIONS: &[&str] = &["0.4.29"];
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::{
-        POLICY_HEADING, REQUIRED_LOG_LEVEL_FEATURE, VERIFIED_LOG_VERSIONS, rust_log_is_effective,
-    };
+    use super::{rust_log_is_effective, POLICY_HEADING, REQUIRED_LOG_LEVEL_FEATURE, VERIFIED_LOG_VERSIONS};
     use crate::util::doc_fixtures::section_text;
     use std::path::{Path, PathBuf};
 
@@ -234,7 +232,8 @@ mod tests {
             log::LevelFilter::Warn
         };
         assert_eq!(
-            log::STATIC_MAX_LEVEL, expected,
+            log::STATIC_MAX_LEVEL,
+            expected,
             "the unioned `log` feature set resolves the compile-time cap to {:?}, not \
              {expected:?}; debug builds must stay uncapped and release builds must stop \
              at `{REQUIRED_LOG_LEVEL_FEATURE}` so CODE_CONVENTIONS §9's warn/error \
@@ -288,8 +287,7 @@ mod tests {
         // whitespace collapsed so a re-wrap of the paragraph does not
         // fail the test, but an inverted claim does.
         let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
-        let boundary =
-            "`warn!` and `error!` survive into release; `info!`, `debug!` and `trace!` do not.";
+        let boundary = "`warn!` and `error!` survive into release; `info!`, `debug!` and `trace!` do not.";
         assert!(
             flat.contains(boundary),
             "CODE_CONVENTIONS.md {POLICY_HEADING} must state the boundary in the \
@@ -307,8 +305,14 @@ mod tests {
     fn test_empty_rust_log_is_treated_as_unset() {
         assert!(rust_log_is_effective(Some("debug")));
         assert!(rust_log_is_effective(Some("mandala=trace,warn")));
-        assert!(!rust_log_is_effective(None), "unset must fall back to the default");
+        assert!(
+            !rust_log_is_effective(None),
+            "unset must fall back to the default"
+        );
         assert!(!rust_log_is_effective(Some("")), "`RUST_LOG=` must fall back too");
-        assert!(!rust_log_is_effective(Some("   ")), "whitespace-only is not a directive");
+        assert!(
+            !rust_log_is_effective(Some("   ")),
+            "whitespace-only is not a directive"
+        );
     }
 }

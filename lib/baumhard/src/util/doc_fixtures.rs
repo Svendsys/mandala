@@ -270,8 +270,14 @@ mod tests {
         let path = write_doc(&dir, SAMPLE);
         let first = section_text(&path, "## First");
         assert!(first.contains("{ \"a\": 1 }"), "got: {first}");
-        assert!(first.contains("### Nested"), "deeper headings stay in; got: {first}");
-        assert!(!first.contains("{ \"b\": 1 }"), "## Second must not leak in; got: {first}");
+        assert!(
+            first.contains("### Nested"),
+            "deeper headings stay in; got: {first}"
+        );
+        assert!(
+            !first.contains("{ \"b\": 1 }"),
+            "## Second must not leak in; got: {first}"
+        );
     }
 
     /// A `#`-prefixed line inside a fence is content, not a heading,
@@ -284,7 +290,10 @@ mod tests {
             "## Only\n\n```sh\n# not a heading\n```\n\ntail line\n\n## Next\n\nother\n",
         );
         let body = section_text(&path, "## Only");
-        assert!(body.contains("tail line"), "fence must not end the section; got: {body}");
+        assert!(
+            body.contains("tail line"),
+            "fence must not end the section; got: {body}"
+        );
         assert!(!body.contains("other"), "## Next must not leak in; got: {body}");
     }
 
