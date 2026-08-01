@@ -163,6 +163,89 @@ pub fn documented_section_text(path: &Path, heading: &str) -> String {
     body.join("\n").trim().to_string()
 }
 
+/// Return the blank-line-delimited block *inside* `heading`'s
+/// section that contains the line `marker` — the value list, the
+/// table, the "Variants:" sentence — with the block's own line
+/// breaks preserved.
+///
+/// A vocabulary pin run over a whole section is weaker than it
+/// looks: prose elsewhere in the section mentions the variants in
+/// passing, so deleting a variant from the construct that actually
+/// *publishes* it leaves the section still naming it and the pin
+/// still green. Deleting the `Descendants` row from the
+/// `target_scope` table in `format/mutations.md` is the concrete
+/// case — two later
+/// paragraphs discuss `Descendants` by name. Narrowing to the
+/// publishing block is what makes the deletion fail the suite.
+///
+/// `marker` is matched as a substring of a line, so pass the
+/// distinguishing part of the block's first line (`"Variants:"`,
+/// `"| Value |"`). Panics — never falls back — when the heading or
+/// the marker is gone, per this module's contract: the caller is a
+/// test whose purpose is to notice the doc moved.
+///
+/// Cost: one [`documented_section_text`] read plus a line scan of
+/// the section — O(file_size).
+pub fn documented_paragraph(path: &Path, heading: &str, marker: &str) -> String {
+    let section = documented_section_text(path, heading);
+    let mut block: Vec<&str> = Vec::new();
+    let mut found = false;
+    for line in section.lines() {
+        if line.trim().is_empty() {
+            if found {
+                return block.join("\n");
+            }
+            block.clear();
+        } else {
+            block.push(line);
+            found |= line.contains(marker);
+        }
+    }
+    if found {
+        return block.join("\n");
+    }
+    panic!(
+        "{} §{heading} no longer holds a block containing {marker:?} — the doc moved, \
+         so the pin has to move with it.",
+        path.display()
+    );
+}
+
+/// Whether `body` names `token` as a **whole word** — at least one
+/// occurrence with a non-identifier character (or nothing at all) on
+/// each side.
+///
+/// The companion of [`documented_section_text`] for vocabulary pins,
+/// and the reason it exists is that `str::contains` is a substring
+/// test while enum variant names nest. `Descendants` is a substring
+/// of `SelfAndDescendants`, so a `contains` pin calls the narrow
+/// variant published the moment a section names the wide one. That
+/// is not hypothetical: with `contains`, `Descendants` could be
+/// deleted from all three normative `target_scope` surfaces —
+/// `format/schema.md`, `format/mutations.md`, `CONCEPTS.md` — and
+/// the suite stayed green.
+///
+/// An identifier character is `[A-Za-z0-9_]`, so every delimiter the
+/// specs actually put around a variant name counts as a boundary:
+/// backtick, quote, comma, pipe, space, line end. No surface has to
+/// agree with another on how it wraps the name, which is what makes
+/// this usable across three docs that each wrap differently
+/// (`` `Descendants` `` in two of them, `` `"Descendants"` `` in the
+/// third).
+///
+/// Cost: O(body_len × token_len) worst case, no allocation.
+pub fn names_token(body: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    body.match_indices(token).any(|(at, _)| {
+        let before = body[..at].chars().next_back();
+        let after = body[at + token.len()..].chars().next();
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
+}
+
 /// Depth of a Markdown ATX heading (`## x` → 2), or `None` when the
 /// line is not a heading. A run of `#` must be followed by a space
 /// to count, so a `#[derive(...)]` inside a fenced block cannot be
@@ -280,6 +363,101 @@ mod tests {
             .expect_err("a missing heading must panic, not fall back");
         let msg = err.downcast_ref::<String>().expect("panic payload is a String");
         assert!(msg.contains("no longer publishes the heading"), "got: {msg}");
+    }
+
+    const VOCAB: &str = "\
+# Title
+
+## Scopes
+
+Intro prose that mentions Descendants in passing.
+
+Variants: `SelfOnly`, `Descendants`, `SelfAndDescendants`.
+
+Trailing prose about Descendants again.
+";
+
+    /// The block, not the section: the surrounding prose names
+    /// `Descendants` too, and a pin that sees it there cannot notice
+    /// the listing losing an entry.
+    #[test]
+    fn test_documented_paragraph_returns_only_the_marked_block() {
+        let dir = TempDir::new("doc-fixtures-paragraph");
+        let path = write_doc(&dir, VOCAB);
+        let block = documented_paragraph(&path, "## Scopes", "Variants:");
+        assert_eq!(
+            block,
+            "Variants: `SelfOnly`, `Descendants`, `SelfAndDescendants`."
+        );
+    }
+
+    #[test]
+    fn test_documented_paragraph_panics_when_the_marker_is_gone() {
+        let dir = TempDir::new("doc-fixtures-paragraph-missing");
+        let path = write_doc(&dir, VOCAB);
+        let err = std::panic::catch_unwind(|| documented_paragraph(&path, "## Scopes", "Values:"))
+            .expect_err("a missing marker must panic, not fall back");
+        let msg = err.downcast_ref::<String>().expect("panic payload is a String");
+        assert!(msg.contains("no longer holds a block containing"), "got: {msg}");
+    }
+
+    /// A block that runs to the end of the section has no trailing
+    /// blank line to close it.
+    #[test]
+    fn test_documented_paragraph_handles_a_block_at_the_end_of_a_section() {
+        let dir = TempDir::new("doc-fixtures-paragraph-last");
+        let path = write_doc(
+            &dir,
+            "## Scopes\n\nprose\n\n| Value | Meaning |\n|---|---|\n| `A` | a |\n",
+        );
+        let block = documented_paragraph(&path, "## Scopes", "| Value |");
+        assert!(block.starts_with("| Value | Meaning |"), "got: {block}");
+        assert!(block.ends_with("| `A` | a |"), "got: {block}");
+        assert!(!block.contains("prose"), "got: {block}");
+    }
+
+    /// The case [`names_token`] exists for: a substring test cannot
+    /// tell "the doc publishes `Descendants`" from "the doc
+    /// publishes `SelfAndDescendants`, which happens to contain the
+    /// letters". The first assertion is the one `contains` gets
+    /// wrong.
+    #[test]
+    fn test_names_token_rejects_a_name_nested_inside_a_longer_one() {
+        let body = "| `SelfAndDescendants` | Anchor + all descendants. |";
+        assert!(
+            body.contains("Descendants"),
+            "precondition: this is exactly what a substring pin sees"
+        );
+        assert!(!names_token(body, "Descendants"));
+        assert!(names_token(body, "SelfAndDescendants"));
+    }
+
+    /// Every delimiter the three normative surfaces actually wrap a
+    /// variant name in has to read as a boundary, or the pin fails
+    /// on a doc that is correct.
+    #[test]
+    fn test_names_token_accepts_every_delimiter_the_specs_use() {
+        for body in [
+            "| `Descendants` | All descendants recursively. |",
+            "one of `\"SelfOnly\"`, `\"Descendants\"`, `\"Parent\"`.",
+            "`Descendants` (not the anchor), `SelfAndDescendants`,",
+            "Descendants",
+            "wide scopes: Descendants, SelfAndDescendants",
+        ] {
+            assert!(names_token(body, "Descendants"), "must match in: {body}");
+        }
+    }
+
+    /// Boundaries are symmetric, and an underscore is an identifier
+    /// character — `self_only_scope` does not publish `self_only`.
+    #[test]
+    fn test_names_token_requires_a_boundary_on_both_sides() {
+        assert!(!names_token("Descendantsly", "Descendants"));
+        assert!(!names_token("xDescendants", "Descendants"));
+        assert!(!names_token("self_only_scope", "self_only"));
+        assert!(names_token("self_only scope", "self_only"));
+        assert!(!names_token("nothing here", "Descendants"));
+        assert!(!names_token("anything", ""), "an empty token names nothing");
     }
 
     /// The `format/` docs this module exists to read are reachable

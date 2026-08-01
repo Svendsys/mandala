@@ -403,17 +403,20 @@ mod reach_tests {
     /// off `EnumIter` — the hand-written list this replaces was
     /// missing `SectionsOnly`, which is precisely the variant this
     /// PR had to add to three prose surfaces by hand.
+    ///
+    /// No count assertion: `iter()` visiting every variant is the
+    /// guarantee `EnumIter` provides, so a floor would be a magic
+    /// number that can only go stale and an `==` against
+    /// `iter().count()` would be a tautology. Coverage of the enum
+    /// is the derive's job; this test's job is the round trip.
     #[test]
     fn test_every_target_scope_variant_serializes() {
         use strum::IntoEnumIterator;
-        let mut seen = 0usize;
         for scope in TargetScope::iter() {
             let json = serde_json::to_string(&scope).unwrap();
             let back: TargetScope = serde_json::from_str(&json).unwrap();
             assert_eq!(back, scope);
-            seen += 1;
         }
-        assert!(seen >= 7, "expected at least the seven documented scopes");
     }
 
     #[test]
@@ -440,28 +443,58 @@ mod reach_tests {
     /// [`crate::util::doc_fixtures`] — so editing the doc is what
     /// moves the test, not editing a string literal beside it.
     ///
+    /// Two ways this pin could be green while a surface is missing a
+    /// variant, both closed here because both were real:
+    ///
+    /// 1. **Substring matching.** `Descendants` is a substring of
+    ///    `SelfAndDescendants`, so `contains` reported the narrow
+    ///    variant as published on the strength of the wide one — and
+    ///    `Descendants` could be deleted from all three surfaces
+    ///    with the suite green. Matched with
+    ///    [`names_token`](crate::util::doc_fixtures::names_token)
+    ///    instead, which requires a word boundary.
+    /// 2. **Section-wide matching.** Every one of these sections
+    ///    also discusses the variants in prose, so deleting a
+    ///    variant from the construct that *publishes* it left the
+    ///    section still naming it. Narrowed to the publishing block
+    ///    with
+    ///    [`documented_paragraph`](crate::util::doc_fixtures::documented_paragraph):
+    ///    schema's value sentence, mutations' table, CONCEPTS'
+    ///    `Variants:` listing.
+    ///
+    /// A pin that cannot fail is worse than no pin, because it is
+    /// trusted.
+    ///
     /// Native-only: the specs live on the filesystem and wasm32 has
     /// no filesystem to read them from (`TEST_CONVENTIONS.md` §T9).
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_every_target_scope_variant_is_published_by_the_docs() {
-        use crate::util::doc_fixtures::{documented_section_text, repo_doc_path};
+        use crate::util::doc_fixtures::{documented_paragraph, names_token, repo_doc_path};
         use strum::IntoEnumIterator;
 
-        // (doc path relative to the repo root, heading whose body
-        // publishes the vocabulary). All three are surfaces this PR
-        // had to repair by hand.
+        // (doc path relative to the repo root, heading, and the line
+        // that opens the block publishing the vocabulary). All three
+        // are surfaces this PR had to repair by hand.
         let surfaces = [
-            ("format/schema.md", "## CustomMutation"),
-            ("format/mutations.md", "## `target_scope`"),
-            ("CONCEPTS.md", "### Target scopes"),
+            (
+                "format/schema.md",
+                "## CustomMutation",
+                "`target_scope` is one of",
+            ),
+            (
+                "format/mutations.md",
+                "## `target_scope`",
+                "| Value | Nodes snapshotted / synced |",
+            ),
+            ("CONCEPTS.md", "### Target scopes", "Variants:"),
         ];
         let mut gaps: Vec<String> = Vec::new();
-        for (doc, heading) in surfaces {
-            let body = documented_section_text(&repo_doc_path(doc), heading);
+        for (doc, heading, marker) in surfaces {
+            let body = documented_paragraph(&repo_doc_path(doc), heading, marker);
             for scope in TargetScope::iter() {
                 let name = format!("{:?}", scope);
-                if !body.contains(&name) {
+                if !names_token(&body, &name) {
                     gaps.push(format!("{} §{} never names {:?}", doc, heading, scope));
                 }
             }
