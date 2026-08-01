@@ -20,6 +20,7 @@ use baumhard::mindmap::scene_cache::SceneConnectionCache;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 use crate::application::document::MindMapDocument;
+use crate::application::platform::input::MouseButton;
 
 use super::super::scene_rebuild::{rebuild_all, rebuild_scene_only};
 use super::DrainContext;
@@ -61,6 +62,41 @@ pub(in crate::application::app) enum ReleaseRefresh {
     All,
 }
 
+/// What a pointer release does with the throttled drag it found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum ThrottledRelease {
+    /// Run the gesture's commit and let the drag state stay `None`.
+    Commit,
+    /// Put the drag state back untouched — this button is not the
+    /// one that started the gesture, and terminating it here would
+    /// end a drag the user is still performing.
+    PutBack,
+}
+
+/// Resolve a release against the button that produced it.
+///
+/// Pure, and separated from the two dispatchers for exactly the
+/// reason PR #91 in this epic needed: unit tests on the interactions
+/// cannot see a caller that finalizes the wrong gestures, and both
+/// dispatchers need a live renderer, which TEST_CONVENTIONS §T8
+/// keeps out of the harness. The four cases are the whole contract.
+///
+/// The left button finalizes unconditionally: a left-started gesture
+/// is the common case, and a right-started one is unreachable here
+/// (a left press during an in-flight drag replaces the drag state
+/// with `Pending` rather than reaching the release path). The right
+/// button finalizes only what it started, so a stray right-click
+/// mid-drag does not end a left-button gesture.
+pub(in crate::application::app) fn resolve_release(
+    released: MouseButton,
+    started_with_right: bool,
+) -> ThrottledRelease {
+    match released {
+        MouseButton::Right if !started_with_right => ThrottledRelease::PutBack,
+        _ => ThrottledRelease::Commit,
+    }
+}
+
 impl ReleaseRefresh {
     /// Run the decree against the live renderer.
     pub(in crate::application::app) fn execute(self, ctx: DrainContext<'_>) {
@@ -92,5 +128,51 @@ impl ReleaseRefresh {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// All four cases of the release resolver. The three-Commit /
+    /// one-PutBack shape is the whole gate: widen it and a stray
+    /// right-click ends a left-button drag mid-gesture; narrow it
+    /// and a fast-resize never commits at all.
+    #[test]
+    fn test_resolve_release_covers_both_buttons_and_both_origins() {
+        assert_eq!(
+            resolve_release(MouseButton::Left, false),
+            ThrottledRelease::Commit,
+            "a left release finalizes a left-started drag"
+        );
+        assert_eq!(
+            resolve_release(MouseButton::Left, true),
+            ThrottledRelease::Commit,
+            "a left release still finalizes rather than stranding the gesture"
+        );
+        assert_eq!(
+            resolve_release(MouseButton::Right, true),
+            ThrottledRelease::Commit,
+            "a right release finalizes the fast-resize it started"
+        );
+        assert_eq!(
+            resolve_release(MouseButton::Right, false),
+            ThrottledRelease::PutBack,
+            "a stray right-click must not end a left-button drag"
+        );
+    }
+
+    /// The middle button never reaches the throttled release path —
+    /// its own arm resets the drag state — but the resolver must not
+    /// answer `PutBack` for it if that ever changes, because a
+    /// put-back with the state already replaced would strand the
+    /// gesture invisibly.
+    #[test]
+    fn test_resolve_release_treats_any_non_right_button_as_a_finalizer() {
+        assert_eq!(
+            resolve_release(MouseButton::Middle, false),
+            ThrottledRelease::Commit
+        );
     }
 }

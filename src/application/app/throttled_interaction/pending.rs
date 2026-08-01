@@ -46,6 +46,25 @@ pub(in crate::application::app) struct DragInput {
     pub cursor: Vec2,
 }
 
+impl DragInput {
+    /// Build a sample from the two canvas-space projections of one
+    /// `CursorMoved` event.
+    ///
+    /// The delta is `cursor - prev`, not the reverse: a rightward
+    /// move must produce a positive x so the delta drags move *with*
+    /// the pointer. Split out of the dispatcher so the sign, and the
+    /// fact that the absolute half is the newer of the two
+    /// projections, are pinned without a live renderer — the
+    /// dispatcher itself needs one and TEST_CONVENTIONS §T8 keeps
+    /// that out of the harness.
+    pub(in crate::application::app) fn between(prev: Vec2, cursor: Vec2) -> Self {
+        Self {
+            delta: cursor - prev,
+            cursor,
+        }
+    }
+}
+
 /// The three pending disciplines. Private: a gesture picks one at
 /// construction through [`ThrottledPending`]'s constructors and
 /// never names the variant again.
@@ -246,6 +265,27 @@ mod tests {
             delta: Vec2::new(dx, dy),
             cursor: Vec2::new(cx, cy),
         }
+    }
+
+    /// The dispatcher's whole arithmetic contract: the delta points
+    /// the way the pointer went, and the absolute half is where the
+    /// pointer is *now*, not where it was.
+    #[test]
+    fn test_between_takes_the_delta_forwards_and_latches_the_new_cursor() {
+        let input = DragInput::between(Vec2::new(10.0, 4.0), Vec2::new(13.0, 9.0));
+        assert_eq!(input.delta, Vec2::new(3.0, 5.0));
+        assert_eq!(input.cursor, Vec2::new(13.0, 9.0));
+    }
+
+    /// A cursor event that did not move produces no delta — the
+    /// pending accumulator stays idle rather than being flipped to
+    /// "drain me" by a zero.
+    #[test]
+    fn test_between_a_stationary_cursor_is_a_zero_delta() {
+        let at = Vec2::new(7.0, -2.0);
+        let mut p = ThrottledPending::accumulating_deltas();
+        p.accumulate(DragInput::between(at, at));
+        assert!(!p.has_pending());
     }
 
     #[test]

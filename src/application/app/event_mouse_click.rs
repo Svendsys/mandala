@@ -13,6 +13,8 @@ use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_cli
 use super::console_input::save_console_history;
 use super::input_context::InputHandlerContext;
 use super::modal_editor::commit_modal_editors_on_release;
+use super::throttled_interaction::release::{resolve_release, ThrottledRelease};
+use super::throttled_interaction::ThrottledDrag;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
@@ -481,8 +483,12 @@ pub(super) fn handle_mouse_input(
                     // gesture-specific half lives in each
                     // interaction's `commit_on_release_core`, so an
                     // eighth variant does not grow this ladder.
-                    DragState::Throttled(mut drag) => {
-                        drag.as_dyn_mut().commit_on_release(ctx.drain_context());
+                    //
+                    // Whether *this* button finalizes at all is
+                    // `resolve_release`'s call, not this arm's — see
+                    // there for why the left button always does.
+                    DragState::Throttled(drag) => {
+                        finalize_or_put_back(MouseButton::Left, drag, ctx);
                     }
                     DragState::SelectingRect {
                         start_canvas,
@@ -642,21 +648,11 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
             }
             // Threshold-cross promoted `PendingRight` to a
             // Throttled variant — finalize through the same
-            // `commit_on_release` the left-button release runs.
-            // Gated on `started_with_right` so an accidental
-            // right-click during a left-button-driven drag doesn't
-            // terminate it: the left-button release is the rightful
-            // finalizer, and the state goes back untouched.
-            DragState::Throttled(mut drag) => {
-                if drag.as_dyn().started_with_right() {
-                    drag.as_dyn_mut().commit_on_release(ctx.drain_context());
-                } else {
-                    log::debug!(
-                        "right-release on a left-button drag ignored; the left-button \
-                         release will finalize"
-                    );
-                    *ctx.drag_state = DragState::Throttled(drag);
-                }
+            // `commit_on_release` the left-button release runs, and
+            // through the same resolver, which is what keeps the
+            // right button from ending a left-button drag.
+            DragState::Throttled(drag) => {
+                finalize_or_put_back(MouseButton::Right, drag, ctx);
             }
             // Any other state on right-release: put it back. Right-
             // button release shouldn't terminate a panning gesture
@@ -664,6 +660,35 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
             other => {
                 *ctx.drag_state = other;
             }
+        }
+    }
+}
+
+/// Run `released` against an in-flight throttled drag: either commit
+/// the gesture, or put the drag state back because this button did
+/// not start it.
+///
+/// The caller has already `mem::replace`d the drag state with `None`,
+/// so the put-back branch has to restore it — that restore and the
+/// commit are the only two outcomes, and which one applies is
+/// [`resolve_release`]'s pure decision.
+#[cfg(not(target_arch = "wasm32"))]
+fn finalize_or_put_back(
+    released: MouseButton,
+    mut drag: Box<ThrottledDrag>,
+    ctx: &mut InputHandlerContext<'_>,
+) {
+    match resolve_release(released, drag.as_dyn().started_with_right()) {
+        ThrottledRelease::Commit => {
+            drag.as_dyn_mut().commit_on_release(ctx.drain_context());
+        }
+        ThrottledRelease::PutBack => {
+            log::debug!(
+                "{:?}-button release on a drag it did not start; the originating \
+                 button's release will finalize",
+                released
+            );
+            *ctx.drag_state = DragState::Throttled(drag);
         }
     }
 }

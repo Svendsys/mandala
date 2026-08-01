@@ -673,12 +673,10 @@ fn drag_input(
     prev: (f64, f64),
     curr: (f64, f64),
 ) -> DragInput {
-    let prev_canvas = renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32);
-    let cursor = renderer.screen_to_canvas(curr.0 as f32, curr.1 as f32);
-    DragInput {
-        delta: cursor - prev_canvas,
-        cursor,
-    }
+    DragInput::between(
+        renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32),
+        renderer.screen_to_canvas(curr.0 as f32, curr.1 as f32),
+    )
 }
 
 /// Whether the `LeftDrag`-on-empty threshold-crossing frame should
