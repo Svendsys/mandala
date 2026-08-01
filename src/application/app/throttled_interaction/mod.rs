@@ -255,8 +255,8 @@ pub(in crate::application::app) trait ThrottledInteraction {
 /// coming up.
 ///
 /// Split from [`ThrottledInteraction`] rather than folded into it so
-/// `commit_on_release` stays a required method. A default that did
-/// nothing would let a new drag variant compile with no release
+/// `commit_on_release_core` stays a required method. A default that
+/// did nothing would let a new drag variant compile with no release
 /// behavior at all — silently losing the user's gesture at mouse-up,
 /// which is the least visible way this could break.
 pub(in crate::application::app) trait ThrottledDragInteraction:
@@ -279,16 +279,26 @@ pub(in crate::application::app) trait ThrottledDragInteraction:
     /// canvas work that leaves owing.
     ///
     /// Required rather than the renderer-facing
-    /// [`commit_on_release`](Self::commit_on_release) so the split
-    /// holds by construction: a gesture cannot reach `&mut Renderer`
-    /// from inside its commit even if it wants to, which is what
-    /// keeps the whole release ladder testable (see [`release`]).
+    /// [`commit_on_release`](Self::commit_on_release), which is what
+    /// keeps the release ladder testable (see [`release`]).
+    ///
+    /// What that buys is precise, and less than "by construction":
+    /// *requiring* the core means a new variant cannot compile with
+    /// no release behavior at all, and makes the renderer-free half
+    /// the path of least resistance. It does **not** wall the
+    /// renderer off — the trait is unsealed and
+    /// [`commit_on_release`](Self::commit_on_release) is a provided
+    /// method taking a [`DrainContext`], so an implementor that
+    /// overrides it does reach `&mut Renderer` and does compile.
+    /// Not overriding it is a convention, not a guarantee.
     fn commit_on_release_core(&mut self, commit: ReleaseCommit<'_>) -> ReleaseRefresh;
 
     /// The renderer-facing shell around
     /// [`commit_on_release_core`](Self::commit_on_release_core).
     /// Not meant to be overridden — overriding it is how a gesture
-    /// would quietly acquire a second, untested release path.
+    /// would quietly acquire a second, untested release path. That
+    /// is a convention and nothing enforces it: the trait is
+    /// unsealed and this signature hands out a [`DrainContext`].
     fn commit_on_release(&mut self, mut ctx: DrainContext<'_>) {
         self.commit_on_release_core(ctx.release_commit()).execute(ctx);
     }
@@ -309,7 +319,7 @@ pub(in crate::application::app) trait ThrottledDragInteraction:
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge, moved,
+        drive_throttle_over_budget, fixture_edge, moved, sample,
     };
     use crate::application::document::EdgeRef;
     use baumhard::mindmap::model::{Position, Size};
@@ -404,12 +414,18 @@ mod tests {
     /// The accumulate half of the lifecycle, through the same single
     /// `as_dyn_mut()` call the cursor-move dispatcher makes.
     ///
-    /// Every variant must go from idle to pending on one sample. A
-    /// gesture wired to the wrong pending discipline — cursor-latch
-    /// where the drain wants a summed delta, or the reverse — still
-    /// compiles and is still handed samples; it would just never
-    /// report pending, and the drag would silently do nothing. This
-    /// is the entry-point pin for that class of bug.
+    /// What this pins is the *routing*: every variant is reachable
+    /// through the widening match, and one sample through it lands
+    /// in the real struct's pending state rather than a temporary.
+    /// A variant left out of `as_dyn_mut` — or wired to a sibling's
+    /// interaction — fails here.
+    ///
+    /// It deliberately does **not** pin the pending discipline: the
+    /// `moved` sample carries both halves, so a gesture wired either
+    /// way reports pending on it. Discipline is
+    /// [`test_a_stationary_pointer_separates_the_two_disciplines`]
+    /// below, plus the per-impl
+    /// `test_pending_uses_the_*_discipline` pair.
     #[test]
     fn test_accumulate_through_as_dyn_mut_flips_every_variant_to_pending() {
         for mut drag in every_variant() {
@@ -419,6 +435,48 @@ mod tests {
             assert!(
                 drag.as_dyn().has_pending(),
                 "{name} did not accept a cursor sample through accumulate()"
+            );
+        }
+    }
+
+    /// Which discipline each variant is wired to, named through an
+    /// exhaustive `match` so a new variant has to answer the
+    /// question rather than inherit an answer. `true` is
+    /// cursor-latch, `false` delta-accumulate; the picker-hover's
+    /// dirty-flag discipline is not a [`ThrottledDrag`].
+    fn latches_the_cursor(drag: &ThrottledDrag) -> bool {
+        match drag {
+            ThrottledDrag::MovingNode(_) => false,
+            ThrottledDrag::MovingSection(_) => false,
+            ThrottledDrag::SectionResize(_) => false,
+            ThrottledDrag::NodeResize(_) => false,
+            ThrottledDrag::EdgeHandle(_) => false,
+            ThrottledDrag::PortalLabel(_) => true,
+            ThrottledDrag::EdgeLabel(_) => true,
+        }
+    }
+
+    /// The entry-point pin for a gesture wired to the wrong pending
+    /// discipline.
+    ///
+    /// A stationary pointer is the one sample that separates them:
+    /// the delta is `ZERO` but the absolute position is not, so a
+    /// cursor-latch gesture goes pending and a delta-accumulate one
+    /// does not. Swap any variant's `ThrottledPending` constructor
+    /// and this fails on that variant's row — which is the failure
+    /// the production symptom would otherwise be: a drag that is
+    /// handed every sample, compiles, and silently never drains.
+    #[test]
+    fn test_a_stationary_pointer_separates_the_two_disciplines() {
+        for mut drag in every_variant() {
+            let name = variant_name(&drag);
+            let latches = latches_the_cursor(&drag);
+            drag.as_dyn_mut()
+                .accumulate(sample(Vec2::ZERO, Vec2::new(5.0, 5.0)));
+            assert_eq!(
+                drag.as_dyn().has_pending(),
+                latches,
+                "{name} answered the stationary-pointer sample as the wrong discipline"
             );
         }
     }

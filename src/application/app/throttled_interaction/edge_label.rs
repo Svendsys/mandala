@@ -104,6 +104,10 @@ impl ThrottledDragInteraction for EdgeLabelInteraction {
     /// drain already narrowed to the label tree because node trees
     /// are untouched by a label move, and the release commit is the
     /// same story.
+    ///
+    /// `original` is cloned rather than moved out so the body can
+    /// take `&mut self` like every other release commit; one clone
+    /// per gesture end.
     fn commit_on_release_core(&mut self, c: ReleaseCommit<'_>) -> ReleaseRefresh {
         let pending_cursor = self.pending.take_cursor();
         if let (Some(doc), Some(cursor)) = (c.document.as_mut(), pending_cursor) {
@@ -123,7 +127,8 @@ impl ThrottledDragInteraction for EdgeLabelInteraction {
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge, moved, trait_default_tests_for_throttled_interaction,
+        drive_throttle_over_budget, fixture_edge, moved, sample,
+        trait_default_tests_for_throttled_interaction,
     };
     use glam::Vec2;
 
@@ -143,11 +148,17 @@ mod tests {
     /// This gesture is wired to the cursor-latch discipline, not
     /// the delta accumulator: its drain projects an absolute
     /// position, so a summed delta would be meaningless input.
+    ///
+    /// The sample is the discriminating one — zero delta, non-zero
+    /// absolute position, the shape a stationary pointer produces.
+    /// A delta-wired gesture reports no pending state at all on it,
+    /// so this fails loudly rather than reading back the same
+    /// numbers from the wrong half.
     #[test]
     fn test_pending_uses_the_cursor_latch_discipline() {
         let mut i = fixture_interaction();
         assert!(!i.has_pending());
-        i.accumulate(moved(0.5, 0.5));
+        i.accumulate(sample(Vec2::ZERO, Vec2::new(0.5, 0.5)));
         assert!(i.has_pending());
         assert_eq!(i.pending.peek_cursor(), Some(Vec2::new(0.5, 0.5)));
         assert_eq!(i.pending.total_delta(), Vec2::ZERO);
@@ -158,15 +169,15 @@ mod tests {
         // Label target is a function of the final cursor only, so
         // intermediate writes must be discarded rather than queued.
         let mut i = fixture_interaction();
-        i.accumulate(moved(1.0, 1.0));
-        i.accumulate(moved(42.0, -7.0));
+        i.accumulate(sample(Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0)));
+        i.accumulate(sample(Vec2::new(41.0, -8.0), Vec2::new(42.0, -7.0)));
         assert_eq!(i.pending.peek_cursor(), Some(Vec2::new(42.0, -7.0)));
     }
 
     #[test]
     fn test_reset_preserves_pending_cursor() {
         let mut i = fixture_interaction();
-        i.accumulate(moved(8.0, 9.0));
+        i.accumulate(sample(Vec2::new(3.0, 3.0), Vec2::new(8.0, 9.0)));
         drive_throttle_over_budget(&mut i.pending.throttle);
         assert!(i.pending.throttle.current_n() > 1);
 

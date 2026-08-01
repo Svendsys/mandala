@@ -30,14 +30,39 @@ use std::time::Duration;
 
 use super::pending::DragInput;
 
-/// One cursor sample whose delta and absolute cursor are the same
-/// pair of numbers. Enough for the impl-side tests, which care only
-/// that the gesture kept the half its discipline says it should.
+/// One cursor sample, both halves stated. The production
+/// constructor is `DragInput::between(prev, cursor)`, where the two
+/// halves are unrelated numbers; a test that wants to tell the
+/// disciplines apart has to say so explicitly, which is what this is
+/// for.
+///
+/// `sample(Vec2::ZERO, c)` is the sharpest of them: a stationary
+/// pointer still reports an absolute position, so a cursor-latch
+/// gesture goes pending on it and a delta-accumulate gesture does
+/// not. Nothing else separates the two on a single sample.
+pub fn sample(delta: Vec2, cursor: Vec2) -> DragInput {
+    DragInput { delta, cursor }
+}
+
+/// Offset between the two halves of a [`moved`] sample.
+///
+/// Non-zero on purpose. When the halves were equal, an assertion
+/// reading back `(x, y)` could not say *which* half it had read, so
+/// a gesture wired to the wrong discipline satisfied it either way.
+const MOVED_CURSOR_OFFSET: f32 = 100.0;
+
+/// One cursor sample that moved `(x, y)` and now sits at
+/// `(x, y) + MOVED_CURSOR_OFFSET` — the two halves deliberately
+/// distinguishable, so an assertion about one of them cannot be
+/// satisfied by the other.
+///
+/// Use [`sample`] where the delta and the absolute position need to
+/// be pinned independently.
 pub fn moved(x: f32, y: f32) -> DragInput {
-    DragInput {
-        delta: Vec2::new(x, y),
-        cursor: Vec2::new(x, y),
-    }
+    sample(
+        Vec2::new(x, y),
+        Vec2::new(x + MOVED_CURSOR_OFFSET, y + MOVED_CURSOR_OFFSET),
+    )
 }
 
 /// Push the throttle's average over-budget until `n > 1`. Returns

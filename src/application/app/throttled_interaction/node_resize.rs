@@ -295,7 +295,7 @@ mod tests {
     /// terminate the resize prematurely (gated in
     /// `event_mouse_click.rs`'s right-release path).
     #[test]
-    fn left_handle_drag_marks_started_with_right_false() {
+    fn test_left_handle_drag_marks_started_with_right_false() {
         let i = fixture(ResizeHandleSide::SE);
         assert!(!i.started_with_right);
         // ...and the trait predicate the right-release path reads
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn fast_resize_marks_started_with_right_true() {
+    fn test_fast_resize_marks_started_with_right_true() {
         let i = NodeResizeInteraction::new(
             "n".to_string(),
             ResizeHandleSide::SE,
