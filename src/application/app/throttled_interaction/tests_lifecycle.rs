@@ -1085,11 +1085,18 @@ mod edge_label {
 /// besides, and no per-interaction test can see that: every commit
 /// body is perfectly correct in isolation. The bug lives entirely in
 /// which of them runs.
+///
+/// The gate owes two things, and both are pinned here: *whether* a
+/// commit runs (the four button × origin cells) and *what it hands
+/// back* once one has. The second needs a gesture whose decree is
+/// not the majority answer, or a gate that ignored its core and
+/// returned a constant `Some(All)` would pass every cell — hence the
+/// `EdgeLabel` row at the end.
 mod release_gate {
     use super::*;
     use crate::application::app::throttled_interaction::release::commit_if_resolved;
     use crate::application::app::throttled_interaction::{
-        MovingNodeInteraction, NodeResizeInteraction, ThrottledDrag,
+        EdgeLabelInteraction, MovingNodeInteraction, NodeResizeInteraction, ThrottledDrag,
     };
     use crate::application::platform::input::MouseButton;
     use baumhard::mindmap::model::{Position, Size};
@@ -1110,6 +1117,20 @@ mod release_gate {
             cursor: Vec2::new(30.0, 0.0),
         });
         ThrottledDrag::MovingNode(i)
+    }
+
+    /// A left-started edge-label drag with a latched cursor — the
+    /// one gesture of the seven whose commit answers anything other
+    /// than [`ReleaseRefresh::All`]. Takes the world because the
+    /// interaction is constructed from the edge it will rewrite.
+    fn edge_label_drag(world: &World) -> ThrottledDrag {
+        let original = only_edge(world).expect("fixture carries one edge").clone();
+        let mut i = EdgeLabelInteraction::new(edge_ref(), original);
+        i.accumulate(DragInput {
+            delta: Vec2::ZERO,
+            cursor: Vec2::new(200.0, 30.0),
+        });
+        ThrottledDrag::EdgeLabel(i)
     }
 
     /// A right-started fast-resize: the one shape the right button
@@ -1239,5 +1260,32 @@ mod release_gate {
 
         assert_eq!(refresh, Some(ReleaseRefresh::All));
         assert_eq!(undo_depth(&world), 1);
+    }
+
+    /// **The gate carries the decree it is handed, it does not
+    /// invent one.** The four cases above pin *whether* a commit
+    /// runs, and both of the gestures they drive answer
+    /// [`ReleaseRefresh::All`] — so a gate that ignored its core and
+    /// returned a constant `Some(All)` would be indistinguishable
+    /// from the shipped one in every other test in this crate.
+    ///
+    /// `EdgeLabel` is the only gesture of the seven that asks for
+    /// anything else, and the disagreement is the point: an
+    /// edge-label move touches nothing but the scene projection, so
+    /// committing it must rebuild the scene and not walk the node
+    /// trees. Running it through the gate is what pins the carry.
+    #[test]
+    fn test_the_gate_carries_the_scene_only_decree_of_an_edge_label_release() {
+        let mut world = edge_world(false);
+        let mut drag = edge_label_drag(&world);
+
+        let refresh = commit_if_resolved(MouseButton::Left, &mut drag, world.commit());
+
+        assert_eq!(
+            refresh,
+            Some(ReleaseRefresh::SceneOnly),
+            "the gate must hand back the core's own decree, not a constant"
+        );
+        assert_eq!(undo_depth(&world), 1, "the label move is still committed");
     }
 }
