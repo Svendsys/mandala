@@ -590,6 +590,53 @@ pub fn matrix_place_in_multiline_component() {
         "and it still covers the same two clusters it started on"
     );
 
+    // The same paint with the caller span **straddling** the padding
+    // point. This is the third seam, and the one a `start >= idx`
+    // shift gets wrong: the padding lands at cell 4 in the middle of a
+    // span covering 2..6, so two of the cells it describes stay where
+    // they are and two move four cells right. Shifting the whole span
+    // is not an option (its head did not move) and leaving it whole is
+    // not either — it would then cover `"XX  "`, two of its own cells
+    // plus two indent blanks, and drop the `"\r\nY"` that moved. The
+    // run has to split around the blanks, which is what
+    // `split_and_separate` is for.
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new(
+        Range::new(2, 6),
+        Some(AppFont::Evilz),
+        Some(Color::black().to_float()),
+    ));
+    let mut straddling = String::from("XXXX\r\nYYYY");
+    x_offset.place_in(&mut straddling, &mut regions, (8, 0));
+    assert_eq!(straddling, "XXXX    AB\r\nYYYY");
+    assert_eq!(
+        regions.num_regions(),
+        3,
+        "the caller's span is now two — head and tail — plus the component's own"
+    );
+    assert!(
+        regions.get(Range::new(2, 4)).is_some(),
+        "the head keeps the two cells left of the padding, which never moved"
+    );
+    assert!(
+        regions.get(Range::new(10, 12)).is_some(),
+        "and the two that did move ride the four padding cells and then the two the component \
+         inserted: 4..6 -> 8..10 -> 10..12"
+    );
+    assert!(
+        regions.get(Range::new(8, 10)).is_some(),
+        "the component still owns exactly the two cells it wrote"
+    );
+    // Spelled out against the buffer: head plus tail is the caller's
+    // original "XX\r\nY", with the indent blanks it never covered
+    // excluded rather than swallowed.
+    let head_start = find_byte_index_of_grapheme(&straddling, 2).unwrap();
+    let head_end = find_byte_index_of_grapheme(&straddling, 4).unwrap();
+    let tail_start = find_byte_index_of_grapheme(&straddling, 10).unwrap();
+    let tail_end = find_byte_index_of_grapheme(&straddling, 12).unwrap();
+    assert_eq!(&straddling[head_start..head_end], "XX");
+    assert_eq!(&straddling[tail_start..tail_end], "\r\nY");
+
     // The padding must *shift* spans without letting one that merely
     // ends at the padding point absorb the blanks. The blanks are the
     // indent of the row about to be painted — they belong to no run

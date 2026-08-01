@@ -671,11 +671,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("insert_regions_at_overflow_drops_the_whole_call", |b| {
         b.iter(do_insert_regions_at_overflow_drops_the_whole_call)
     });
-    c.bench_function("shift_regions_from_is_the_third_point_of_the_triangle", |b| {
-        b.iter(do_shift_regions_from_is_the_third_point_of_the_triangle)
-    });
-    c.bench_function("shift_regions_from_overflow_drops_the_whole_call", |b| {
-        b.iter(do_shift_regions_from_overflow_drops_the_whole_call)
+    c.bench_function("insertion_primitives_differ_only_at_the_three_seams", |b| {
+        b.iter(do_insertion_primitives_differ_only_at_the_three_seams)
     });
     c.bench_function("submit_region_drops_inverted_range", |b| {
         b.iter(|| do_submit_region_drops_inverted_range())

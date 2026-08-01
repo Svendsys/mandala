@@ -196,12 +196,19 @@ impl GlyphMatrix {
     ///
     /// Padding inserted for a non-zero x-offset is reported to
     /// `regions` too, so caller spans on the rows below survive it. It
-    /// goes through `ColorFontRegions::shift_regions_from`, which
+    /// goes through `ColorFontRegions::split_and_separate`, which
     /// shifts a span anchored at the padding point without letting a
     /// span that merely *ends* there absorb the blanks: those blanks
     /// are the next row's indent and belong to no component, so
     /// absorbing them would pin one row's font onto another row's
-    /// leading whitespace.
+    /// leading whitespace. A span that *straddles* the padding point
+    /// splits around the blanks for the same reason.
+    ///
+    /// A caller span straddling a **component's** write splits too,
+    /// which is unambiguously right when that write is a pure
+    /// insertion into an empty line tail and merely accepted when it
+    /// overwrites a non-empty one — the comment at the call site
+    /// states what is claimed and what is not.
     ///
     /// # Costs
     ///
@@ -261,22 +268,26 @@ impl GlyphMatrix {
                         // after it — so the region table has to be
                         // told, or every caller span below this row
                         // stops pointing at its text.
-                        // `shift_regions_from` is the exact semantics:
+                        // `split_and_separate` is the exact semantics:
                         // a span starting *at* the insertion point
                         // must move (`start >= idx`, which
                         // `shift_regions_after`'s replace-and-shift
-                        // rule deliberately does not do), and a span
+                        // rule deliberately does not do), a span
                         // *ending* there must not absorb the blanks
-                        // (which `insert_regions_at` would do). These
+                        // (which `insert_regions_at` would do), and a
+                        // span *straddling* the point must split
+                        // around them rather than swallow them. These
                         // blanks are the indent of the row about to be
                         // painted; they belong to no run and to no
                         // component. Absorbing them stretched the
                         // previous row's own emitted span across the
                         // line terminator and onto the next row's
                         // indent, pinning a component's font to cells
-                        // it never wrote.
+                        // it never wrote. This site is a pure
+                        // insertion of cells nothing owns, which is
+                        // the primitive's contract verbatim.
                         insert_spaces(string, line_graph_range.1, pad);
-                        regions.shift_regions_from(line_graph_range.1, pad);
+                        regions.split_and_separate(Range::new(line_graph_range.1, line_graph_range.1 + pad));
                     }
                 } else {
                     // Important that this is done before pushing spaces.
@@ -300,7 +311,7 @@ impl GlyphMatrix {
                 // extends the cluster before it fuses with it and the
                 // buffer *shrinks*.
                 //
-                // The grow side is `shift_regions_from`, not
+                // The grow side is `split_and_separate`, not
                 // `shift_regions_after`. At every non-zero x-offset —
                 // and for every component after the first on a line
                 // whose tail the previous one already consumed — the
@@ -321,10 +332,33 @@ impl GlyphMatrix {
                 // With `>=` on the grow side the pairing with
                 // `shrink_regions_after` is a true mirror at the seam:
                 // both treat a span anchored at `at` as affected.
+                //
+                // A caller span *straddling* `at` is **split**: the
+                // head keeps `[start, at)`, the tail is pushed to
+                // `[at + growth, end + growth)`, and the cells the
+                // component wrote are left uncovered for its own
+                // `submit_region` below. Where the write is the pure
+                // insertion described above, that is exactly right —
+                // the inserted cells belong to no run. Where it is not
+                // — a component overwriting a non-empty line tail,
+                // with the buffer merely growing on net — no rule is
+                // right: the cells from `at` on no longer carry the
+                // caller's text, so neither splitting the span nor
+                // leaving it whole describes the buffer. What the
+                // split buys there is an exact head: `[start, at)`
+                // really is the part of the caller's run the write did
+                // not touch, whereas leaving the span whole parks it
+                // over cells the component just replaced. That is the
+                // behavior as accepted, not as claimed correct — the
+                // correct answer needs the cell model to settle who
+                // owns a cell whose text was overwritten, the same
+                // question the fusion note in this method's doc leaves
+                // open, and it is not settled here.
                 match replacement.growth.cmp(&0) {
-                    Ordering::Greater => {
-                        regions.shift_regions_from(replacement.at, replacement.growth as usize)
-                    }
+                    Ordering::Greater => regions.split_and_separate(Range::new(
+                        replacement.at,
+                        replacement.at + replacement.growth as usize,
+                    )),
                     Ordering::Less => {
                         regions.shrink_regions_after(replacement.at, replacement.growth.unsigned_abs())
                     }
@@ -348,17 +382,16 @@ impl GlyphMatrix {
                 // the cell before it and owns no cell at all, and no
                 // region is emitted for it. `Range::new(k, k)` would
                 // violate the "the region set is non-degenerate"
-                // precondition that `insert_regions_at`,
-                // `shift_regions_from` and `split_and_separate` all
-                // document, by construction — and it is worse than
-                // useless: `ColorFontRegions` is keyed on the range
-                // alone, so two components that both fuse into the same
-                // cell collapse into one set slot and the second
-                // silently evicts the first's font and color, while
-                // neither has a cell to put them on. The fused cell
-                // keeps the identity of the component that contributed
-                // its base scalar, which is the only answer the cell
-                // model can give.
+                // precondition that `insert_regions_at` and
+                // `split_and_separate` both document, by construction —
+                // and it is worse than useless: `ColorFontRegions` is
+                // keyed on the range alone, so two components that both
+                // fuse into the same cell collapse into one set slot
+                // and the second silently evicts the first's font and
+                // color, while neither has a cell to put them on. The
+                // fused cell keeps the identity of the component that
+                // contributed its base scalar, which is the only
+                // answer the cell model can give.
                 if replacement.written_end > replacement.at {
                     regions.submit_region(ColorFontRegion::new(
                         Range::new(replacement.at, replacement.written_end),
