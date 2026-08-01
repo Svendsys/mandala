@@ -14,12 +14,12 @@ use winit::window::Window;
 use crate::application::platform::input::Modifiers as ModifiersState;
 
 use super::console_input::load_console_history;
-use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native::InitState;
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice,
-    warm_handle_tree_arenas, CanvasFrame,
+    flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice, warm_handle_tree_arenas,
+    CanvasFrame,
 };
+use super::single_line_edit::SingleLineEditor;
 use super::text_edit::TextEditState;
 use super::{DragState, InteractionMode, Options};
 use crate::application::common::RenderDecree;
@@ -237,8 +237,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         interaction_mode: InteractionMode::Default,
         console_state: ConsoleState::Closed,
         console_history,
-        label_edit_state: LabelEditState::Closed,
-        portal_text_edit_state: PortalTextEditState::Closed,
+        single_line_edit_state: SingleLineEditor::Closed,
         text_edit_state: TextEditState::Closed,
         color_picker_state: crate::application::color_picker::ColorPickerState::Closed,
         last_click: None,
@@ -269,4 +268,3 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
     }
 }
-

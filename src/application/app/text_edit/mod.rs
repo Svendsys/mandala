@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Inline node text editor: state, grapheme-aware cursor helpers
-//! shared with [`super::label_edit`]. Lifecycle in [`editor`].
+//! shared with [`super::single_line_edit`]. Lifecycle in [`editor`].
 
 use baumhard::util::grapheme_chad;
 
@@ -88,12 +88,12 @@ pub(in crate::application::app) enum TextEditState {
         /// editor). On close, the closer flips `interaction_mode`
         /// back to `Default` rather than leaving the user in
         /// NodeEdit on a single-section node — there's nothing
-        /// else to edit there, and a stranded NodeEdit + dimming
-        /// + status bar reads as a UX dead-end. Multi-section
-        /// opens (where the user explicitly entered NodeEdit and
-        /// then asked to edit a specific section) keep the
-        /// `false` value so `close_text_edit` returns to NodeEdit
-        /// for further section-picking.
+        /// else to edit there, and a stranded NodeEdit + dimming +
+        /// status bar reads as a UX dead-end. Multi-section opens
+        /// (where the user explicitly entered NodeEdit and then
+        /// asked to edit a specific section) keep the `false` value
+        /// so `close_text_edit` returns to NodeEdit for further
+        /// section-picking.
         exit_to_default_on_close: bool,
     },
 }

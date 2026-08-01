@@ -12,8 +12,8 @@
 //!   `dispatch_action` takes post-Track-C; both targets' keyboard
 //!   handlers can construct one and call the same dispatcher.
 //! - [`NativeContextExt`] holds the 10 native-only fields (drag_state,
-//!   interaction_mode, console_state, console_history, label_edit_state,
-//!   portal_text_edit_state, color_picker_state, hovered_node,
+//!   interaction_mode, console_state, console_history,
+//!   single_line_edit_state, color_picker_state, hovered_node,
 //!   cursor_is_hand, picker_hover) — modal / console / picker state
 //!   that doesn't exist in the browser. Cfg-gated to native.
 //!
@@ -124,10 +124,9 @@ pub(in crate::application::app) struct NativeContextExt<'a> {
     pub console_state: &'a mut crate::application::console::ConsoleState,
     /// Console command-history ring.
     pub console_history: &'a mut Vec<String>,
-    /// Inline edge-label editor state.
-    pub label_edit_state: &'a mut super::label_edit::LabelEditState,
-    /// Inline portal-text editor state.
-    pub portal_text_edit_state: &'a mut super::label_edit::PortalTextEditState,
+    /// Inline single-line editor state (edge label / portal
+    /// caption).
+    pub single_line_edit_state: &'a mut super::single_line_edit::SingleLineEditor,
     /// Glyph-wheel color-picker state.
     pub color_picker_state: &'a mut crate::application::color_picker::ColorPickerState,
     /// The node the cursor is currently over, if any.
