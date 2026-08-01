@@ -25,6 +25,7 @@ use std::ops::{AddAssign, Index, IndexMut, MulAssign, SubAssign};
 /// matrix auto-expands with empty lines, so callers can write into
 /// arbitrary coordinates without pre-sizing.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GlyphMatrix {
     /// Ordered lines. Index 0 is the top-most visual line.
     pub matrix: Vec<GlyphLine>,

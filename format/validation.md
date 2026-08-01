@@ -13,6 +13,13 @@ Exit code 0 if clean, or if only warnings are found. Nonzero with a
 list of violations if any error is found. Warnings are still printed so
 a CI recipe that captures stderr can see them.
 
+The split is between *spelling* and *meaning*. Spelling is the
+loader's: every object in the format is closed, so a key no field
+claims fails the load outright rather than being dropped and then
+erased at the next save — see [schema.md](./schema.md#unknown-keys-are-rejected).
+Everything below is about correctly-spelled files that still say
+something incoherent, and that is `verify`'s.
+
 ## What gets checked
 
 ### Tree structure

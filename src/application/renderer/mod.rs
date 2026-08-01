@@ -278,6 +278,14 @@ pub struct Renderer {
     /// (otherwise re-preparing the single text renderer would
     /// race with the pass's already-recorded draw commands).
     console_text_renderer: TextRenderer,
+    /// Whether the current glyphon-`prepare` fault episode has already
+    /// been reported. Set when either `prepare()` fails, cleared on
+    /// the next fully successful prepare, so a *persistent* fault —
+    /// `PrepareError::AtlasFull` is permanent once the atlas hits
+    /// `max_texture_dimension_2d` — logs one line instead of one per
+    /// frame. A failed prepare skips `present()` too, so the frame
+    /// takes no vsync backpressure and the loop can spin at CPU rate.
+    prepare_fault_logged: bool,
     redraw_mode: RedrawMode,
     run: bool,
     should_render: bool,
@@ -677,6 +685,7 @@ impl Renderer {
             last_render_time: Duration::from_millis(16),
             text_renderer,
             console_text_renderer,
+            prepare_fault_logged: false,
             should_render: false,
             fps: None,
             redraw_mode: RedrawMode::NoLimit,
