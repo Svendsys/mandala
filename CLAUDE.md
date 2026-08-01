@@ -12,6 +12,14 @@ not whatever is the default. Opus or if available Mythos
 
 §6 Use American English for consistency, not British English
 
+§7 NEVER run benchmarks — no `cargo bench`, no `./bench.sh`, no `./test.sh --bench`. Run the tests.
+`./test.sh` is the gate. Changing benchmark code is fine (§B3 requires a bench entry alongside a new
+primitive); executing it is not — `cargo check --benches` proves the target still builds. Make no
+performance claims: §B7 wants a main-against-main control row you will not have, and control runs on
+identical code swing ±10–25% at p=0.00 on this hardware, so an uncontrolled number is indistinguishable
+from noise. State work removed as a structural fact visible in the diff, never as a measured win.
+See `AGENTS.md`, which carries this same rule for agents on other harnesses.
+
 "API error: Stream idle timeout - partial response received" is an error that occurs regularly these days. 
 To avoid it, please make sure that any large files such as (but not limited to) plan files are written in 
 smaller pieces first, and then finally combined into the full file.
