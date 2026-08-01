@@ -66,6 +66,59 @@ pub fn format_doc_path(file_name: &str) -> PathBuf {
 /// Cost: one full read of the Markdown file plus a single line scan
 /// — O(file_size), paid once per test that pins a block.
 pub fn documented_json_block(path: &Path, heading: &str, nth: usize) -> String {
+    documented_block(path, heading, nth, "json")
+}
+
+/// Return the `nth` (0-based) **untagged** fenced block (a bare
+/// ```` ``` ```` with no language after it) under the heading
+/// `heading` in the file at `path`.
+///
+/// The blocks this reads are the ones a spec uses to publish program
+/// *output* rather than input: an error message, a CLI transcript.
+/// Those are as much a contract as a JSON example and drift the same
+/// way — a published error that no longer matches the one the code
+/// emits is a spec that lies. Tagged blocks (```` ```json ````,
+/// ```` ```rust ````) are skipped entirely, so the index counts only
+/// untagged ones and adding a JSON example above cannot repoint a pin.
+///
+/// Same rules as [`documented_json_block`] otherwise: `heading` is
+/// matched as a whole line including its `#` markers, the search
+/// stops at the next heading of the same or shallower depth, and
+/// every failure panics naming the file and the heading.
+///
+/// A caller comparing this against a runtime message should normalize
+/// whitespace on both sides — a doc wraps its fences to the column
+/// limit and the emitted message does not.
+///
+/// Cost: one full read of the Markdown file plus a single line scan
+/// — O(file_size), paid once per test that pins a block.
+pub fn documented_plain_block(path: &Path, heading: &str, nth: usize) -> String {
+    documented_block(path, heading, nth, "")
+}
+
+/// Collapse every run of whitespace to a single space and trim, so a
+/// wrapped doc block can be compared against an unwrapped runtime
+/// string for equality.
+///
+/// A `format/` doc hard-wraps its fences to the column limit; the
+/// message the code emits is one long line. Comparing the two
+/// verbatim would pin the test against the doc's *line breaks* —
+/// a typesetting decision — and force a re-flow every time the
+/// message changes length. Everything that carries meaning (wording,
+/// key order, punctuation, which keys are listed) still has to match
+/// exactly.
+///
+/// Cost: one allocation sized to the input.
+pub fn unwrapped(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Shared fence scanner behind [`documented_json_block`] and
+/// [`documented_plain_block`]. `info` is the language tag a block
+/// must carry to be counted (`""` for untagged blocks); blocks with
+/// any other tag are read past and never counted, so the two indexes
+/// are independent of each other.
+fn documented_block(path: &Path, heading: &str, nth: usize, info: &str) -> String {
     let doc =
         std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
 
@@ -79,34 +132,41 @@ pub fn documented_json_block(path: &Path, heading: &str, nth: usize) -> String {
         .unwrap_or_else(|| panic!("{} no longer publishes the heading {heading:?}", path.display()));
 
     let mut seen = 0usize;
-    let mut current: Option<Vec<&str>> = None;
+    // `Some((language tag, body))` while inside a fence.
+    let mut current: Option<(String, Vec<&str>)> = None;
     for line in lines {
-        // A heading at the same or a shallower level ends the
-        // section; anything past it belongs to a different concept.
+        let trimmed = line.trim_end();
         if current.is_none() {
-            if let Some(depth) = heading_depth_of(line.trim_end()) {
+            // A heading at the same or a shallower level ends the
+            // section; anything past it belongs to a different
+            // concept. Only checked outside a fence, so a `# comment`
+            // inside a block cannot end the search.
+            if let Some(depth) = heading_depth_of(trimmed) {
                 if depth <= heading_depth {
                     break;
                 }
             }
+            if let Some(tag) = trimmed.strip_prefix("```") {
+                current = Some((tag.trim().to_string(), Vec::new()));
+            }
+            continue;
         }
-
-        match (&mut current, line.trim_end()) {
-            (None, "```json") => current = Some(Vec::new()),
-            (Some(_), "```") => {
-                let block = current.take().expect("in-block by construction");
+        if trimmed == "```" {
+            let (tag, body) = current.take().expect("in-block by construction");
+            if tag == info {
                 if seen == nth {
-                    return block.join("\n").trim().to_string();
+                    return body.join("\n").trim().to_string();
                 }
                 seen += 1;
             }
-            (Some(body), _) => body.push(line),
-            (None, _) => {}
+        } else if let Some((_, body)) = &mut current {
+            body.push(line);
         }
     }
 
+    let label = if info.is_empty() { "untagged" } else { info };
     panic!(
-        "{} §{heading} publishes {seen} json block(s); block {nth} was requested. \
+        "{} §{heading} publishes {seen} {label} block(s); block {nth} was requested. \
          Update the doc or the test — they are meant to move together.",
         path.display()
     );
@@ -249,6 +309,58 @@ mod tests {
             .expect_err("block 3 is under ## Second and must not be found");
         let msg = err.downcast_ref::<String>().expect("panic payload is a String");
         assert!(msg.contains("publishes 3 json block(s)"), "got: {msg}");
+    }
+
+    const MIXED: &str = "\
+# Title
+
+## Output
+
+```json
+{ \"a\": 1 }
+```
+
+```
+first plain
+```
+
+```rust
+let x = 1;
+```
+
+```
+second plain
+```
+
+## Second
+
+```
+elsewhere
+```
+";
+
+    /// The two indexes are independent: a JSON example added above an
+    /// error transcript must not shift which transcript a pin reads.
+    #[test]
+    fn test_documented_plain_block_counts_only_untagged_fences() {
+        let dir = TempDir::new("doc-fixtures-plain");
+        let path = write_doc(&dir, MIXED);
+        assert_eq!(documented_plain_block(&path, "## Output", 0), "first plain");
+        assert_eq!(documented_plain_block(&path, "## Output", 1), "second plain");
+        assert_eq!(documented_json_block(&path, "## Output", 0), "{ \"a\": 1 }");
+    }
+
+    /// A tagged fence is read past rather than treated as an opener
+    /// and a closer, so its body can never be mistaken for a plain
+    /// block of its own.
+    #[test]
+    fn test_documented_plain_block_stops_at_the_next_sibling_heading() {
+        let dir = TempDir::new("doc-fixtures-plain-stop");
+        let path = write_doc(&dir, MIXED);
+        let err = std::panic::catch_unwind(|| documented_plain_block(&path, "## Output", 2))
+            .expect_err("block 2 is under ## Second and must not be found");
+        let msg = err.downcast_ref::<String>().expect("panic payload is a String");
+        assert!(msg.contains("publishes 2 untagged block(s)"), "got: {msg}");
     }
 
     #[test]

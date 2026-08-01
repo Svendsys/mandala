@@ -15,6 +15,7 @@ use std::ops::{AddAssign, Index, IndexMut, MulAssign, SubAssign};
 /// controls how `*Assign` operators treat leading whitespace in the
 /// rhs during matrix composition.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GlyphLine {
     /// Ordered list of colored/fonted text runs that together form
     /// the line.

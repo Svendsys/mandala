@@ -4,6 +4,16 @@
 //! `.mindmap.json` and the document layer mutates. This module
 //! owns the top-level `MindMap` struct plus its tree-shape queries
 //! (root / ancestry / descendants).
+//!
+//! **Every deserializable type here is closed**
+//! (`#[serde(deny_unknown_fields)]`), and so is every type reachable
+//! from one. The app resaves the whole model, so a key serde ignored
+//! at load is a key erased from the author's file at save; rejecting
+//! it is the only outcome that leaves the file intact. The rule is
+//! not maintained by hand — `mindmap::loader`'s
+//! `test_every_loadable_type_rejects_unknown_keys` walks the model's
+//! own source and fails until a newly reachable type opts in. See
+//! `format/schema.md` §"Unknown keys are rejected".
 
 pub mod canvas;
 pub mod edge;
@@ -43,6 +53,7 @@ use std::collections::{HashMap, HashSet};
 /// with [`Self::fold_hidden_set`] once rather than paying the
 /// per-call cost repeatedly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MindMap {
     pub version: String,
     pub name: String,

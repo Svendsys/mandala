@@ -26,9 +26,7 @@ futures = "0.3.32"
 winit = "0.30.13"
 serde = {version = "1.0.228", features = ["derive"]}
 serde_json = "1.0.149"
-serde-lexpr = "0.1.3"
 lazy_static = "1.5.0"
-syn = "2.0.117"
 # `release_max_level_warn`: `warn!`/`error!` survive into release
 # builds so CODE_CONVENTIONS §9's "log and degrade" posture is real in
 # the binaries users run; `info!`/`debug!`/`trace!` still compile to
