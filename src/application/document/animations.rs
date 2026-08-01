@@ -255,7 +255,7 @@ impl MindMapDocument {
         // projection relies on: `cm.timing` must be Some with a
         // non-zero duration, else the caller should have taken
         // the instant-mutation path.
-        if !cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+        if cm.timing.as_ref().is_none_or(|t| t.duration_ms == 0) {
             return;
         }
 
@@ -490,7 +490,7 @@ impl MindMapDocument {
             // `from_node`) leaves any unrelated edit made to the node
             // during the animation intact.
             if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
-                node.position = anim.from_node.position.clone();
+                node.position = anim.from_node.position;
             }
             *tree = self.build_tree();
             self.apply_custom_mutation(&anim.cm, &anim.target_id, Some(tree));
@@ -505,7 +505,7 @@ impl MindMapDocument {
             // flag the document dirty.
             let moved = anim.to_node.position != anim.from_node.position;
             if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
-                node.position = anim.to_node.position.clone();
+                node.position = anim.to_node.position;
             }
             if moved {
                 self.undo_stack.push(UndoAction::CustomMutation {
@@ -528,8 +528,8 @@ impl MindMapDocument {
     /// suppression interval (e.g. a tree-mutating drag during
     /// which `tick_animations` was skipped). Without this the
     /// next post-suppression tick observes a wall-clock-elapsed
-    /// >= `total` and snaps the animation to its `to` state in
-    /// one frame.
+    /// value `>= total` and snaps the animation to its `to` state
+    /// in one frame.
     pub fn shift_active_animations_start_ms(&mut self, by_ms: u64) {
         if by_ms == 0 {
             return;

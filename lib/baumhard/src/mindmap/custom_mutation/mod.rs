@@ -341,7 +341,7 @@ pub fn apply_mutations_to_element(
 /// template. Both scope helpers that build wrappers set
 /// `mutation: MutationSrc::None`, so requiring it costs nothing.
 ///
-/// A [`MutatorNode::Void`](crate::mutator_builder::MutatorNode::Void)
+/// A [`MutatorNode::Void`]
 /// is *payload-free structure*, so it is transparent: it contributes
 /// nothing of its own and passes its children's payload through. An
 /// empty `Void` in particular can lose nothing, and declining on one
