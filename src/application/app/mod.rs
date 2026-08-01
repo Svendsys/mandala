@@ -17,9 +17,9 @@
 //! `event_cursor_moved` on native; the per-arm methods of
 //! `run_wasm::WasmApp` on WASM) recognize an input gesture,
 //! resolve it to an [`crate::application::keybinds::Action`],
-//! and call into the funnel. Adding a new behavior is variant
-//! + default + arm, in that order; never inline a body in a
-//! handler.
+//! and call into the funnel. Adding a new behavior is
+//! variant + default + arm, in that order; never inline a body
+//! in a handler.
 //!
 //! **Modal state machines.** `text_edit`, `single_line_edit`,
 //! `console_input`, and `color_picker_flow` steal keyboard input
@@ -229,7 +229,7 @@ fn is_double_click(
     new_hit: &ClickHit,
 ) -> bool {
     let elapsed = new_time_ms - prev.time;
-    if elapsed < 0.0 || elapsed >= DOUBLE_CLICK_MS {
+    if !(0.0..DOUBLE_CLICK_MS).contains(&elapsed) {
         return false;
     }
     let dx = new_screen_pos.0 - prev.screen_pos.0;

@@ -132,9 +132,8 @@ impl<'a> InputHandlerContext<'a> {
                 text_edit_state: &mut *self.text_edit_state,
                 last_click: &mut *self.last_click,
                 cursor_pos: &mut *self.cursor_pos,
-                modifiers: &*self.modifiers,
+                modifiers: self.modifiers,
                 keybinds: self.keybinds,
-
                 macros: &mut *self.macros,
                 interaction_mode: &mut *self.interaction_mode,
             },

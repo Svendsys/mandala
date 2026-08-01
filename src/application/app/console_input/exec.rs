@@ -28,6 +28,7 @@ use super::{push_scrollback_error, push_scrollback_output, push_scrollback_outpu
 /// Appends the result to the scrollback; rebuilds the scene on any
 /// document mutation.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::application::app) fn execute_console_line(
     line: &str,
     console_state: &mut ConsoleState,

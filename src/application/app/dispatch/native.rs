@@ -1088,6 +1088,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
 /// - section's `size` is `None` (fill-parent — can't resize)
 /// - node / section vanished between press and threshold (e.g.
 ///   the user deleted via console while right-button was held)
+///
 /// In each case the state resets to `None` so the cursor doesn't
 /// re-fire the threshold-cross.
 fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit>) {
