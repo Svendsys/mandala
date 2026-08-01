@@ -10,15 +10,16 @@
 //!    has-pending → should-drain → record-duration dance around the
 //!    per-gesture `drain` body.
 //! 3. **Commit on release** —
-//!    [`ThrottledDragInteraction::commit_on_release`] flushes what
-//!    the throttle left pending, writes the model with its undo
-//!    entry, and runs the canvas decree its renderer-free core hands
-//!    back (see [`release`]).
+//!    [`ThrottledDragInteraction::commit_on_release_core`] flushes
+//!    what the throttle left pending, writes the model with its undo
+//!    entry, and *names* the canvas decree it owes rather than
+//!    running it; [`release::ReleaseRefresh::execute`] is what runs
+//!    it, off the gesture trait entirely (see [`release`]).
 //!
 //! An implementor supplies four things: the accessor pair for its
 //! [`ThrottledPending`], a `drain` body, and — if it is a drag — a
-//! `commit_on_release` body. `has_pending`, `throttle`, `accumulate`
-//! and the whole drive shell follow. Adding a new throttled drag is
+//! `commit_on_release_core` body. `has_pending`, `throttle`,
+//! `accumulate` and the whole drive shell follow. Adding a new throttled drag is
 //! one struct, one trait impl and one [`ThrottledDrag`] variant;
 //! neither event-file dispatcher grows.
 //!
