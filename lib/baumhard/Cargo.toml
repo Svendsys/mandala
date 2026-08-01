@@ -16,28 +16,26 @@ autobenches = false
 
 [dependencies]
 rand = "0.10.1"
-serde = {version = "1.0.228", features = ["derive"]}
-serde_json = "1.0.149"
+serde.workspace = true
+serde_json.workspace = true
 slab = "0.4.12"
 lazy_static = "1.5.0"
-# Must stay in lockstep with the root `Cargo.toml` — see the note
-# there. `release_max_level_warn` keeps `warn!`/`error!` alive in
-# release so baumhard's §9 degrade paths (unknown font id, UTF-8
-# conversion failure, corrupt-region drop) are diagnosable from a user
-# report, while the chatty walker `debug!`/`trace!` instrumentation
-# still compiles to nothing. Naming a *different* level here than the
-# root does is a build failure, not a silent override — log's
-# `compile_error!("multiple release_max_level_* features set")`
-# (`log-0.4.29/src/lib.rs:376-394`) fires on the unioned feature set.
-log = { version = "0.4.29", features = ["release_max_level_warn"] }
-indextree = {version = "4.8.1", features = ["serde"]}
-glam = {version = "0.32.1", features = ["serde"]}
+# `release_max_level_warn` is what keeps baumhard's §9 degrade paths
+# (unknown font id, UTF-8 conversion failure, corrupt-region drop)
+# diagnosable from a user report while the chatty walker
+# `debug!`/`trace!` instrumentation still compiles to nothing. It is
+# declared once, in the root `[workspace.dependencies]` table — there
+# is no longer a second manifest for this one to fall out of lockstep
+# with.
+log.workspace = true
+indextree.workspace = true
+glam.workspace = true
 cosmic-text = "0.18.2"
 tinyvec = "1.11.0"
 unicode-segmentation = "1.13.2"
-rustc-hash = "2.1.2"
-strum = "0.28.0"
-strum_macros = "0.28.0"
+rustc-hash.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
 ordered-float = {version = "5.3.0", features = ["serde"]}
 derivative = "2.2.0"
 
@@ -75,7 +73,11 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # than a list of the model as it once was. `full` is what adds the
 # item / expression parsers `syn::parse_file` needs; keeping the
 # dependency test-only means a shipped build never links it.
-syn = { version = "2.0.117", features = ["full"] }
+#
+# `features` on a workspace dependency is additive, so this asks for
+# `full` on top of the default set the root table declares without
+# forcing it on `mandala_derive`, whose macro needs only the defaults.
+syn = { workspace = true, features = ["full"] }
 
 [[bench]]
 name = "test_bench"

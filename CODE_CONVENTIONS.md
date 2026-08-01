@@ -232,6 +232,21 @@ decision, not a drive-by edit.
   `include_bytes!` content can be tagged `App`; user-modifiable
   paths (XDG data dirs etc.) tag as `User` or below.
 
+- **One version per dependency, written once.** A crate that two or
+  more workspace members need is declared in the root manifest's
+  `[workspace.dependencies]`, and each member writes
+  `dep.workspace = true` — with `features` beside it when that member
+  needs more, since features are additive on top of the shared entry.
+  A crate only one member uses stays in that member's manifest. The
+  reason this is an invariant and not a preference: cargo raises no
+  objection when two members name the same crate at different
+  versions, it simply builds both, and the symptom is two mutually
+  incompatible copies of the same types. `strum` sat at 0.27 and 0.28
+  simultaneously until it was unified by hand.
+  `baumhard::util::manifests` enforces all three clauses of the rule
+  against the real manifests, so the next split fails a test rather
+  than shipping.
+
 ## §4 Cross-platform as first class
 
 Native desktop, browser on desktop, and browser on mobile are three
