@@ -785,7 +785,7 @@ pub const MAX_BORDER_SIDE_BYTES: usize = 1024 * 1024;
 /// Total over hostile inputs: a non-finite or non-positive advance
 /// yields zero copies rather than a saturating cast into the push
 /// loop. Cost: a few float ops, no allocation.
-fn fill_copies(
+pub(crate) fn fill_copies(
     available_pt: f32,
     cluster_w: f32,
     cluster_len: usize,

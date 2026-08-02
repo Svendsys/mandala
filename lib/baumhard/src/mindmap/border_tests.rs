@@ -509,3 +509,43 @@ mod tests {
         assert!((resolve_border_font_size_pt(None, None) - 14.0).abs() < f32::EPSILON);
     }
 }
+
+/// **The border side caps, which are the sampler's twin.** Both take
+/// an authored numerator over an authored denominator and size an
+/// allocation with the quotient, so both need the same pinning: that
+/// the cap binds rather than falling through, and that it binds in
+/// *both* units — a grapheme is not a byte, and a side pattern is an
+/// author-supplied string.
+#[test]
+fn test_border_side_fill_is_capped_in_both_units() {
+    use crate::mindmap::border::{MAX_BORDER_SIDE_BYTES, MAX_BORDER_SIDE_GLYPHS};
+
+    // Grapheme ceiling: a single-byte cluster against an enormous
+    // width. `available / cluster_w` is astronomically larger than
+    // the cap, so the cap is what decides.
+    assert_eq!(
+        crate::mindmap::border::fill_copies(1.0e9, 0.001, 1, 1),
+        MAX_BORDER_SIDE_GLYPHS,
+        "the grapheme ceiling must bind, not fall through to a degenerate count"
+    );
+
+    // Byte ceiling: one cluster that is one grapheme but many bytes.
+    // The grapheme cap alone would allow 100k copies; the byte cap
+    // must bind first.
+    let fat_cluster_bytes = 64;
+    assert_eq!(
+        crate::mindmap::border::fill_copies(1.0e9, 0.001, 1, fat_cluster_bytes),
+        MAX_BORDER_SIDE_BYTES / fat_cluster_bytes,
+        "a grapheme is not a byte — the byte ceiling must bind when it is the tighter one"
+    );
+
+    // Non-finite and non-positive inputs yield no copies rather than
+    // a saturating cast into the push loop.
+    assert_eq!(crate::mindmap::border::fill_copies(f32::NAN, 1.0, 1, 1), 0);
+    assert_eq!(crate::mindmap::border::fill_copies(1.0e9, f32::NAN, 1, 1), 0);
+    assert_eq!(crate::mindmap::border::fill_copies(1.0e9, 0.0, 1, 1), 0);
+    assert_eq!(crate::mindmap::border::fill_copies(-5.0, 1.0, 1, 1), 0);
+
+    // An ordinary rail is untouched by any of it.
+    assert_eq!(crate::mindmap::border::fill_copies(100.0, 10.0, 1, 1), 10);
+}

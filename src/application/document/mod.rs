@@ -247,13 +247,6 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     clamp_node_size_to_ceiling(node);
 }
 
-/// Pure floor-compute extracted from [`grow_one_node_to_fit_text`]
-/// so the explicit-shrink path
-/// [`MindMapDocument::fit_node_to_content`] can read the floor
-/// without triggering the max-wins-grow side effect. Each
-/// section contributes the larger of its measured text and its
-/// pinned `size + offset` — pin survives when text fits;
-/// overflow grows the parent so nothing visually clips.
 /// How many lines of one section are actually laid out when
 /// measuring its text floor.
 ///
@@ -289,6 +282,13 @@ pub(super) fn measured_prefix(text: &str, max_lines: usize) -> (&str, usize) {
     (&text[..end], total)
 }
 
+/// Pure floor-compute extracted from [`grow_one_node_to_fit_text`]
+/// so the explicit-shrink path
+/// [`MindMapDocument::fit_node_to_content`] can read the floor
+/// without triggering the max-wins-grow side effect. Each
+/// section contributes the larger of its measured text and its
+/// pinned `size + offset` — pin survives when text fits;
+/// overflow grows the parent so nothing visually clips.
 pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindNode) -> (f64, f64) {
     use baumhard::font::fonts::{
         acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
@@ -348,7 +348,14 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
             let mut fs = acquire_font_system_write("compute_one_node_text_floor");
             measure_text_block_unbounded(&mut fs, measured, scale, line_height, measure_font)
         };
-        block.height = total_lines as f32 * line_height;
+        if measured.len() < section.text.len() {
+            // Only when the prefix was actually cut. Under budget the
+            // shaper's own line count is authoritative and a byte scan
+            // must not second-guess it: `str::lines()` and cosmic-text
+            // disagree by exactly one on text ending in a newline, and
+            // that would shorten every such node by a line.
+            block.height = total_lines as f32 * line_height;
+        }
 
         // Section dimension contribution: text needs `block + pad`
         // at minimum, but a `Some`-size section also pins a user-

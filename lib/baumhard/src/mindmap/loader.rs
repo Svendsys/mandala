@@ -2228,8 +2228,17 @@ mod tests {
             .spawn(move || {
                 let hidden = map.fold_hidden_set().len();
                 let descendants = map.all_descendants("n0").len();
-                let tree = crate::mindmap::tree_builder::build_mindmap_tree(&map);
-                (hidden, descendants, tree.tree.arena.count())
+                let mut tree = crate::mindmap::tree_builder::build_mindmap_tree(&map);
+                let arena_nodes = tree.tree.arena.count();
+                // The scene build alone does not reach the two
+                // walkers that made this crash land on a *mouse
+                // move*: `compute_subtree_aabbs` is gated behind the
+                // dirty flag and `bvh_find` only runs on a hit test.
+                // `descendant_at` is what drives both, so the probe
+                // has to ask for a hit or the highest-impact half of
+                // the conversion goes untested.
+                let _hit = tree.tree.descendant_at(glam::Vec2::new(10.0, 10.0));
+                (hidden, descendants, arena_nodes)
             })
             .expect("spawn the small-stack walker")
             .join()
@@ -2439,6 +2448,39 @@ mod tests {
         let motif = edge_json_with(r#", "glyph_connection": {"body": "◈··"}"#);
         let map = load_from_str(&map_json(&nodes, &motif)).expect("a short motif is ordinary");
         assert_eq!(map.edges.len(), 1);
+    }
+
+    /// **Both doors carry the size ceiling, and that is the point.**
+    /// The first version of this cap stat-ed the file and nothing
+    /// else, which left the browser — where the map arrives as a
+    /// string and goes straight to `load_from_str` — completely
+    /// unguarded. A test that only exercised the filesystem path
+    /// would not have caught that, so this drives both.
+    #[test]
+    fn test_oversized_maps_are_refused_at_both_doors() {
+        // The text door. A string over the ceiling is refused before
+        // serde is asked to build anything from it.
+        let oversized = " ".repeat(MAX_MAP_BYTES as usize + 1);
+        let err = load_from_str(&oversized).expect_err("an oversized string must be refused");
+        assert!(err.contains("over the"), "must name the limit: {err}");
+        assert!(
+            !err.contains("expected value"),
+            "must refuse before parsing, not report a parse error: {err}"
+        );
+
+        // The inspection door inherits it — it still has to read the
+        // bytes, so it carries the same commitment.
+        assert!(parse_for_inspection(&oversized).is_err());
+
+        // The filesystem door, checked by `stat` before the read.
+        let dir = TempDir::new("oversize-cap");
+        let path = dir.join("huge.mindmap.json");
+        std::fs::write(&path, &oversized).expect("seed the oversized file");
+        let err = load_from_file(&path).expect_err("an oversized file must be refused");
+        assert!(err.contains("over the"), "must name the limit: {err}");
+
+        // And an ordinary map is untouched by any of it.
+        load_from_str(&map_json_with_nodes(&node_json("0", "null"))).expect("a normal map still loads");
     }
 
     /// A valid 3-generation chain (no cycle) must load without error

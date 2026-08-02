@@ -983,11 +983,15 @@ fn test_sample_path_caps_hostile_geometry() {
         start: Vec2::ZERO,
         end: Vec2::new(1.0e9, 0.0),
     };
+    // Equality, not `<=`: the cap must *bind* here. A sampler that
+    // bailed to a single point on any large quotient — an easy
+    // mistake, since `sample_count` already returns 1 on four guard
+    // paths — would satisfy `<=` while silently drawing nothing.
     let samples = sample_path(&far, 0.001);
-    assert!(
-        samples.len() <= MAX_PATH_SAMPLES,
-        "a long path at fine spacing must stay capped, got {}",
-        samples.len()
+    assert_eq!(
+        samples.len(),
+        MAX_PATH_SAMPLES,
+        "a long path at fine spacing must saturate the cap, not fall through it"
     );
 
     let curved = ConnectionPath::CubicBezier {
@@ -996,7 +1000,7 @@ fn test_sample_path_caps_hostile_geometry() {
         control2: Vec2::new(2.0e8, -1.0e8),
         end: Vec2::new(1.0e9, 0.0),
     };
-    assert!(sample_path(&curved, 0.001).len() <= MAX_PATH_SAMPLES);
+    assert_eq!(sample_path(&curved, 0.001).len(), MAX_PATH_SAMPLES);
 }
 
 /// A non-finite length or spacing must not reach the allocation
