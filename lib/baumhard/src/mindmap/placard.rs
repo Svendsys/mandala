@@ -295,7 +295,7 @@ mod tests {
     /// message is exactly the part that would go missing.
     #[test]
     fn test_placard_run_covers_every_grapheme_of_the_text() {
-        let map = load_failure(SOURCE, "unknown field `colour` 👨‍👩‍👧 日本語");
+        let map = load_failure(SOURCE, "node \"0.3\" 👨‍👩‍👧 日本語 ships zero sections");
         let section = &map.nodes[PLACARD_NODE_ID].sections[0];
         assert_eq!(section.text_runs.len(), 1);
         assert_eq!(section.text_runs[0].start, 0);

@@ -1691,7 +1691,10 @@ pub fn do_wrap_to_display_width() {
     // recovers every non-whitespace grapheme of the input in order.
     for (input, width) in [
         ("the quick brown fox jumps over the lazy dog", 7usize),
-        ("Failed to parse mindmap JSON: unknown field `colour`", 24),
+        (
+            "Failed to parse mindmap JSON: expected value at line 1 column 1",
+            24,
+        ),
         ("/home/user/maps/a-very-long-file-name.mindmap.json", 12),
         ("👨‍👩‍👧 family 🇺🇸 flag 日本語 text", 6),
         ("   leading and trailing   ", 5),
