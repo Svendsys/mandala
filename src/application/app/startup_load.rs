@@ -1030,7 +1030,38 @@ mod tests {
     /// The three spellings of "this statement can end the process",
     /// as they appear in source. `.unwrap_or…` is deliberately not
     /// one of them: it is the opposite of a panic.
+    ///
+    /// Index panics — `formats[0]`, `rgba[0..3]` — are not spellings
+    /// and are not here. They end the process just as thoroughly;
+    /// recognizing them means telling a slice index from a tuple
+    /// field from a generic argument in text, which this reader does
+    /// not attempt. Named so the gap is a decision rather than an
+    /// oversight.
     const PANICKING: &[&str] = &[".expect(", ".unwrap()", "panic!("];
+
+    /// **Every** spelling in [`PANICKING`] that `statement` carries,
+    /// in [`PANICKING`] order.
+    ///
+    /// All of them, not the first: `PANICKING.iter().find(…)` returns
+    /// index 0, `.expect(`, for a statement carrying both an
+    /// `.expect(` and a bare `unwrap()`, so the `unwrap()` was never
+    /// looked at and
+    ///
+    /// ```text
+    /// required_limits: …using_resolution(Some(adapter.limits()).unwrap()),
+    /// ```
+    ///
+    /// left the suite green. That is the same defect as the `;`-split
+    /// this module already fixed, one level in: the chunk was right,
+    /// and the choice *within* the chunk was not. A statement is a
+    /// unit of grouping, never a unit of "one panic".
+    fn panicking_spellings_in(statement: &str) -> Vec<&'static str> {
+        PANICKING
+            .iter()
+            .copied()
+            .filter(|spelling| statement.contains(spelling))
+            .collect()
+    }
 
     /// Backticked words in the `expect` bullet that are Rust
     /// *vocabulary* rather than startup sites — they are what the
@@ -1367,9 +1398,10 @@ mod tests {
     /// the process must call something the roster names as a site
     /// that `expect`s. Two consequences worth naming:
     ///
-    /// - a bare `unwrap()` anywhere on the startup path fails here,
-    ///   which is §9's "bare `unwrap()` outside tests is a bug" made
-    ///   executable for the phase where it matters most;
+    /// - a bare `unwrap()` anywhere on the startup path fails here —
+    ///   *anywhere*, including beside an `.expect(` in the same
+    ///   statement, which is what [`panicking_spellings_in`] is for
+    ///   and what this sentence used to overstate;
     /// - `startup_load.rs` is on the list and must therefore panic
     ///   *nowhere*, which is §9's carve-out checked from the code
     ///   side rather than restated.
@@ -1393,12 +1425,13 @@ mod tests {
         for (relative, phase) in STARTUP_FILES {
             let code = production_code(relative);
             for statement in statements(&code) {
-                let Some(how) = PANICKING.iter().find(|p| statement.contains(**p)) else {
+                let hits = panicking_spellings_in(&statement);
+                if hits.is_empty() {
                     continue;
-                };
+                }
                 seen += 1;
-                assert_ne!(
-                    *how, ".unwrap()",
+                assert!(
+                    !hits.contains(&".unwrap()"),
                     "{relative} ({phase}) ends the process with a bare `unwrap()`. \
                      CODE_CONVENTIONS §9: startup panics carry `expect(\"<reason>\")`, \
                      because the message is the only thing the person holding the \
@@ -1425,5 +1458,56 @@ mod tests {
              reader is not reaching them",
             STARTUP_FILES.len()
         );
+    }
+
+    /// **A statement carrying two spellings carries both of them.**
+    ///
+    /// The sweep above reads whatever
+    /// [`panicking_spellings_in`] hands back, and for as long as that
+    /// was `PANICKING.iter().find(…)` it handed back index 0 —
+    /// `.expect(` — for a statement holding an `.expect(` and a bare
+    /// `unwrap()` alike. No statement in the startup files carries
+    /// two today, so the sweep cannot notice: it would go green on a
+    /// `find` and on a `filter` both, which is exactly the shape that
+    /// let the defect ship. The rule is therefore pinned here,
+    /// against statements written for the purpose, rather than left
+    /// to a tree that happens not to contain one.
+    ///
+    /// The first row is the mutation that survived: real code from
+    /// `renderer/pipeline.rs` with a bare `unwrap()` folded into the
+    /// argument of a call whose statement ends in an `.expect(`.
+    #[test]
+    fn test_every_panicking_spelling_in_a_statement_is_read() {
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "required_limits: wgpu::Limits::downlevel_defaults() \
+                 .using_resolution(Some(adapter.limits()).unwrap()), }) .await \
+                 .expect(\"Failed to create device\")",
+                &[".expect(", ".unwrap()"],
+            ),
+            ("let w = EventLoop::new().expect(\"no loop\")", &[".expect("]),
+            ("let w = EventLoop::new().unwrap()", &[".unwrap()"]),
+            ("panic!(\"poisoned\")", &["panic!("]),
+            // `PANICKING` order, not statement order — the caller
+            // asks "is `.unwrap()` among these", never "which came
+            // first".
+            (
+                "if x { panic!(\"a\") } else { y.unwrap() }",
+                &[".unwrap()", "panic!("],
+            ),
+            // `unwrap_or_default` is the opposite of a panic and must
+            // not read as one, which is why `.unwrap()` carries its
+            // parentheses.
+            ("let n = maybe.unwrap_or_default()", &[]),
+            ("let n = maybe.unwrap_or_else(|| 0)", &[]),
+            ("let n = plain_call(a, b)", &[]),
+        ];
+        for (statement, expected) in cases {
+            assert_eq!(
+                panicking_spellings_in(statement),
+                *expected,
+                "panicking_spellings_in({statement:?})"
+            );
+        }
     }
 }
