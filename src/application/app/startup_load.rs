@@ -252,6 +252,46 @@ mod tests {
         );
     }
 
+    /// **[`adopt`] still logs.** The placard is an addition to the
+    /// stderr line, not a replacement for it — a terminal user and a
+    /// bug report both want the line, and removing it would make
+    /// this change a net loss for anyone who *does* have a terminal.
+    ///
+    /// Deleting that one statement is the only mutation of this
+    /// module a runtime assertion cannot see: `log::error!` writes
+    /// through a process-global logger the suite does not install,
+    /// and standing one up would be a second logging sink for the
+    /// tests to keep in step (TEST_CONVENTIONS §T10). So it is
+    /// pinned against the source, the same way the parity of the two
+    /// init paths is below.
+    ///
+    /// Only the half of the file above `#[cfg(test)]` is searched.
+    /// That is not tidiness: the needle appears verbatim in this
+    /// test's own body, so a whole-file scan would match itself and
+    /// pass with `adopt` gutted — which is exactly the shape of
+    /// non-test this exercise exists to catch. Whitespace-flattened
+    /// so a re-wrap does not fail it; the prefix is asserted too,
+    /// because §9 requires `"<area>: message"` and a bare message is
+    /// what the old `run_native_init` arm emitted.
+    #[test]
+    fn test_adopt_still_reports_the_message_to_the_log() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/application/app/startup_load.rs");
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+        let production = source
+            .split_once("#[cfg(test)]")
+            .map(|(before, _)| before)
+            .expect("this file declares a `#[cfg(test)]` module");
+        let flat = production.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains(r#"log::error!("startup: {}", message);"#),
+            "`adopt` must still write the loader's message to the log under the \
+             `\"<area>: message\"` prefix — the placard is an addition to that line, \
+             not a replacement for it"
+        );
+    }
+
     /// **§9 records the decision, in the direction the code
     /// implements it.**
     ///
