@@ -72,9 +72,10 @@ use crate::util::grapheme_chad;
 /// one walk per boundary. An out-of-order region falls back to its
 /// own walk and costs O(n_text) for itself — correct, just not
 /// linear. Plus one `font_system.db().face()` lookup per region
-/// carrying a font id, and the two `Vec`s
-/// `region_byte_bounds` builds — the flattened boundary list and
-/// the resolved pairs, both sized to the region count.
+/// carrying a font id, and the three `Vec`s `region_byte_bounds`
+/// builds — the flattened boundary list and the resolved indices,
+/// each twice the region count, plus the returned pairs at the
+/// region count.
 ///
 /// The caller is expected to hold the `FONT_SYSTEM` write lock for
 /// the same scope it uses the returned list — that's how the
@@ -127,7 +128,9 @@ pub fn attrs_list_from_regions(
 /// An index past the end resolves to `text.len()`, which the
 /// callers' `start >= end` guard then drops.
 ///
-/// Cost: O(text + regions), two small `Vec`s.
+/// Cost: O(text + regions) and three `Vec`s — the flattened
+/// boundary list and the resolved indices, both `2 × regions`, plus
+/// the returned pairs at `regions`.
 fn region_byte_bounds<'r>(
     text: &str,
     ranges: impl Iterator<Item = &'r crate::core::primitives::Range>,

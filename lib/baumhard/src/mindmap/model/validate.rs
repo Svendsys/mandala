@@ -292,7 +292,7 @@ fn first_or_ok(messages: Vec<String>) -> Result<(), String> {
 /// pair to a clamp, and `f32::clamp` panics rather than saturating
 /// when its bounds cross. The clamp sites order the pair defensively
 /// (`font::fonts::clamp_to_font_window`), so this is the author-facing
-/// half of a defence that no longer depends on it.
+/// half of a defense that no longer depends on it.
 const INVERTED_SIZE_WINDOW: &str =
     "the size cascades clamp with this pair, and a crossed pair is not a window";
 
@@ -526,8 +526,12 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
     // accepts — and rejecting it here would mean the editor could
     // write a map it then refused to reopen. The hazard it looked
     // like (a step that never advances) is already total at the
-    // sampler: `sample_count` returns a single point for any
-    // non-positive step rather than looping.
+    // sampler: `sample_path` refuses a non-positive spacing up
+    // front and emits no samples at all, so the loop is never
+    // entered. (`sample_count` carries its own non-positive guard
+    // returning a single point, but `sample_path` short-circuits
+    // before reaching it — that arm covers the non-finite cases,
+    // which do get through, because `NaN <= 0.0` is false.)
     out.extend(bounded(label, "spacing", conn.spacing as f64, MAX_NODE_AXIS));
     out
 }
@@ -602,10 +606,15 @@ pub fn zoom_window_violations(label: &str, min: Option<f32>, max: Option<f32>) -
     let mut out = Vec::new();
     out.extend(finite(label, "min_zoom_to_render", min));
     out.extend(finite(label, "max_zoom_to_render", max));
-    for (field, value) in [("min_zoom_to_render", min), ("max_zoom_to_render", max)] {
+    // Through `field()` rather than `format!("{label}.{name}")`:
+    // node- and edge-level windows pass an empty label, and the
+    // direct form spells that ".min_zoom_to_render is negative",
+    // with a leading dot and no subject. Avoiding exactly that is
+    // what `field()` is for.
+    for (name, value) in [("min_zoom_to_render", min), ("max_zoom_to_render", max)] {
         if let Some(value) = value {
             if value.is_finite() && value < 0.0 {
-                out.push(format!("{label}.{field} is negative ({value})"));
+                out.push(format!("{} is negative ({value})", field(label, name)));
             }
         }
     }
@@ -718,10 +727,19 @@ pub fn section_numeric_violations(idx: usize, section: &MindSection, parent_size
 /// its own geometry, its style and layout numbers, its border
 /// override, and each of its sections.
 ///
-/// Cost: O(sections + text runs) on the node. Labels are built only
-/// on the failing arm, so a well-formed node allocates nothing at
-/// all — which matters because this runs over every node of every
-/// map at load, and `maptool verify` runs it again.
+/// Cost: O(sections + text runs) on the node.
+///
+/// *Field* labels are built only on the failing arm — `field()`
+/// formats `prefix.name` lazily — but the *part* prefixes are not:
+/// `section_numeric_violations` and `text_run_violations` each build
+/// theirs up front, so a well-formed node still allocates one
+/// `String` per section and one per text run. The empty `Vec`s
+/// threaded through cost nothing (`Vec::new` does not allocate).
+///
+/// That is a load-time cost on a path that has just parsed the whole
+/// document, and `maptool verify` runs it again on the same terms.
+/// Making the prefixes lazy too would mean passing the index down to
+/// every helper instead of a `&str`; it has not been worth that.
 pub fn node_numeric_violations(node: &MindNode) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(bounded("position", "x", node.position.x, MAX_CANVAS_COORD));
@@ -884,8 +902,14 @@ pub fn mutation_numeric_violations(mutation: &CustomMutation) -> Vec<String> {
 /// deterministic across `HashMap` iteration order, the same reason
 /// the zero-section and section-cap checks sort.
 ///
-/// Cost: O(nodes + sections + runs + edges + control points), one
-/// pass, allocating only on the failure it reports.
+/// Cost: O(n log n) in the node count for the sort, plus
+/// O(sections + runs + edges + control points).
+///
+/// It allocates on a clean map, not only on the failure it reports:
+/// the sort needs a `Vec` of borrows, and each section and text run
+/// costs one `String` for its label prefix — see
+/// [`node_numeric_violations`]. Per-*field* labels are lazy, built
+/// only on the arm that fails.
 pub fn map_numeric_domain(map: &MindMap) -> Option<String> {
     if let Some(message) = canvas_numeric_violations(&map.canvas).into_iter().next() {
         return Some(format!("canvas: {message}"));

@@ -802,15 +802,6 @@ pub(crate) fn side_pattern_bytes_per_row(pattern: &SidePattern) -> usize {
 /// orders of magnitude and still bounded.
 pub const MAX_BORDER_SIDE_GLYPHS: usize = 100_000;
 
-/// How many whole copies of a `cluster_w`-wide, `cluster_len`-long
-/// cluster fit in `available_pt`, clamped so one side can never
-/// emit more than [`MAX_BORDER_SIDE_GLYPHS`] graphemes.
-///
-/// Total over hostile inputs: a non-finite or non-positive advance
-/// yields zero copies rather than a saturating cast into the push
-/// loop.
-///
-/// Cost: a few float ops, no allocation.
 /// Ceiling on the byte length of one border side's emitted string.
 ///
 /// [`MAX_BORDER_SIDE_GLYPHS`] bounds the *grapheme* count, which is

@@ -1013,21 +1013,55 @@ fn test_sample_path_survives_non_finite_geometry() {
         start: Vec2::ZERO,
         end: Vec2::new(f32::INFINITY, 0.0),
     };
-    assert!(sample_path(&infinite, 1.0).len() <= MAX_PATH_SAMPLES);
+    // Asserted as an exact count, not `<= MAX_PATH_SAMPLES`. The
+    // bound is satisfied by *any* result including an empty one, so
+    // it holds whether or not `sample_count`'s guards exist and
+    // certifies nothing. One point is the documented outcome.
+    assert_eq!(
+        sample_path(&infinite, 1.0).len(),
+        1,
+        "an infinite length must resolve to a single point"
+    );
 
     let nan = ConnectionPath::Straight {
         start: Vec2::ZERO,
         end: Vec2::new(f32::NAN, 0.0),
     };
-    assert!(sample_path(&nan, 1.0).len() <= MAX_PATH_SAMPLES);
+    assert_eq!(
+        sample_path(&nan, 1.0).len(),
+        1,
+        "a NaN length must resolve to a single point"
+    );
 
     // A non-finite spacing is the same hazard from the other side.
     let ordinary = ConnectionPath::Straight {
         start: Vec2::ZERO,
         end: Vec2::new(100.0, 0.0),
     };
-    assert!(sample_path(&ordinary, f32::NAN).len() <= MAX_PATH_SAMPLES);
-    assert!(sample_path(&ordinary, f32::INFINITY).len() <= MAX_PATH_SAMPLES);
+    assert_eq!(
+        sample_path(&ordinary, f32::NAN).len(),
+        1,
+        "a NaN spacing must resolve to a single point"
+    );
+    assert_eq!(
+        sample_path(&ordinary, f32::INFINITY).len(),
+        1,
+        "an infinite spacing must resolve to a single point"
+    );
+    // A non-positive spacing is refused by `sample_path` itself,
+    // before `sample_count` is consulted — so the answer is no
+    // samples at all rather than the single point the non-finite
+    // cases resolve to. Asserted because the two guards are easy to
+    // conflate: `sample_count`'s own `spacing <= 0.0` arm is
+    // unreachable through this entry point.
+    assert!(
+        sample_path(&ordinary, 0.0).is_empty(),
+        "a zero spacing yields no samples, not one"
+    );
+    assert!(
+        sample_path(&ordinary, -5.0).is_empty(),
+        "a negative spacing yields no samples, not one"
+    );
 
     // The ordinary case still samples the way it always did.
     assert_eq!(sample_path(&ordinary, 10.0).len(), 11);

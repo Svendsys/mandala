@@ -220,8 +220,7 @@ mod tests {
         }
     }
 
-    /// The canonical fixture is the control: it loads through the
-    /// strict door, so it must produce nothing here.
+    /// A well-formed map produces nothing here.
     #[test]
     fn test_numeric_check_is_silent_on_a_valid_map() {
         let mut map = MindMap::new_blank("t");
@@ -230,6 +229,32 @@ mod tests {
         assert!(
             check(&map).is_empty(),
             "a well-formed map has no numeric violations"
+        );
+    }
+
+    /// The canonical fixture is the real control: hundreds of nodes
+    /// with authored borders, connections, palettes and zoom windows,
+    /// and it loads through the strict door — so every number in it
+    /// is in domain by construction and this must stay silent.
+    ///
+    /// The synthetic map above cannot make that argument. It has two
+    /// bare nodes and exercises almost none of the fields `check`
+    /// walks, so it would stay silent under a rule that rejected half
+    /// of real authored content. Over-rejection is the failure mode
+    /// a shared numeric domain invites, and this is what would catch
+    /// it.
+    #[test]
+    fn test_numeric_check_is_silent_on_the_canonical_fixture() {
+        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.pop();
+        p.pop();
+        p.push("maps/testament.mindmap.json");
+        let map = baumhard::mindmap::loader::load_from_file(&p)
+            .expect("the canonical fixture must load through the strict door");
+        let violations = check(&map);
+        assert!(
+            violations.is_empty(),
+            "the canonical fixture must produce no numeric violations: {violations:?}"
         );
     }
 }

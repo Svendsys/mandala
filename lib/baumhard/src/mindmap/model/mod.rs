@@ -193,7 +193,9 @@ impl MindMap {
         false
     }
 
-    /// Collect all descendant IDs of a node (recursive), not including the node itself.
+    /// Collect all descendant IDs of a node, not including the node
+    /// itself. The walk is iterative — see
+    /// [`ChildIndex::all_descendant_ids`], which it delegates to.
     ///
     /// Cost: builds a [`ChildIndex`] once (O(N)) then walks the subtree
     /// in O(descendants). Prefer [`ChildIndex::all_descendant_ids`] when
@@ -384,8 +386,9 @@ impl<'a> ChildIndex<'a> {
         self.by_parent.get(parent_id).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// Collect all descendant IDs of `node_id` (recursive), not
-    /// including `node_id` itself.
+    /// Collect all descendant IDs of `node_id`, not including
+    /// `node_id` itself. Iterative, carrying its frontier on the
+    /// heap — see the note on the walk below.
     ///
     /// `budget` bounds the walk as defense in depth against a
     /// `parent_id` cycle; a valid tree never reaches the budget.

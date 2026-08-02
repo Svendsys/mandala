@@ -253,14 +253,14 @@ warning: sections @ 0: channel 0 shared by sections [0, 1]; ...
 Examples:
 
 ```
-tree @ 1.2: parent_id "9.9" references a node that does not exist
-ids @ 1.2.3: parent_id "1.0" does not match derived parent "1.2"
-references @ edge[0]: from_id "5.5" is not a node
-edges @ edge[3]: duplicate edge (from_id="0", to_id="1", type="cross_link") first seen at edge[0]
-palettes @ 0: palette "sunset" is not defined in map.palettes
-enums @ 0: style.shape "oblong" is not a known shape
-text_runs @ 0: section[0].run[1] overlaps previous run (start 3 < previous end 5)
-zoom_bounds @ edge[0]: min_zoom_to_render 2 > max_zoom_to_render 0.5
+tree @ 0.0: parent_id "ghost" references a node that does not exist
+ids @ 0.0: parent_id "ghost" does not match derived parent "0"
+ids @ 1: HashMap key "1" does not match node.id "DIFFERENT"
+references @ edge[0]: to_id "nowhere" is not a node
+palettes @ 0: palette "nonexistent" is not defined in map.palettes
+enums @ 0: style.shape "oblong" is not one of ["rectangle", "rounded_rectangle", "ellipse", "circle", "diamond", "parallelogram", "hexagon"]
+numeric @ 0: zoom: min (2) is above max (0.5) — no zoom satisfies both bounds, so this never renders at any zoom level
+numeric @ 0: section[0].text_runs[1] overlaps previous run (start 3 < previous end 5) — overlapping runs re-emit the same graphemes once per covering run
 ```
 
 Each violation names its category, the location inside the file, and what

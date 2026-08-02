@@ -56,7 +56,7 @@ mod tests {
     // run the whole pipeline rather than this module alone. A
     // section's own shape moved to `verify::numeric` (via the shared
     // `validate::section_extent_violations`) when the duplicate
-    // reporting was removed; the user-visible behaviour did not
+    // reporting was removed; the user-visible behavior did not
     // change, and pinning it at the pipeline is what proves that.
     use crate::verify::test_helpers::node;
     use baumhard::mindmap::model::{MindSection, Position, Size, MAX_SECTIONS_PER_NODE};

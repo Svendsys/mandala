@@ -250,7 +250,7 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
 /// How many lines of one section are actually laid out when
 /// measuring its text floor.
 ///
-/// The largest section in the canonical fixture is 26 lines, so this
+/// The largest section in the canonical fixture is 33 lines, so this
 /// is orders of magnitude above real authored content and never
 /// binds on a map anyone wrote. It binds on a map written to be
 /// expensive — see [`measured_prefix`].

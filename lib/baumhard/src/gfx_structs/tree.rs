@@ -237,8 +237,13 @@ impl Tree<GfxElement, GfxMutator> {
     ///
     /// O(branching_factor × depth) when subtrees are spatially
     /// disjoint; O(n) worst case when subtree AABBs fully overlap.
-    /// One `Vec` allocation on the first call after a mutation (for
-    /// the subtree AABB computation pass); O(1) on subsequent calls.
+    ///
+    /// Two `Vec` allocations on the first call after a mutation, one
+    /// on every call after that. The AABB computation pass runs only
+    /// while its cache is dirty, but `bvh_find` carries its descent
+    /// frontier on the heap and so allocates per call — the price of
+    /// not recursing over a depth a `.mindmap.json` chooses. The
+    /// frontier holds a branching width, not a subtree.
     ///
     /// When multiple areas contain the point, the smallest by area
     /// wins — the "innermost first" convention.

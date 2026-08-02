@@ -566,8 +566,8 @@ fn apply_repeat_while_to_children(
 /// # Algorithm
 ///
 /// 1. Ensure subtree AABBs are fresh.
-/// 2. Recursively descend from `target_id`: for each child, prune
-///    if its `subtree_aabb` does not contain the point.
+/// 2. Descend from `target_id` over an explicit stack: for each
+///    child, prune if its `subtree_aabb` does not contain the point.
 /// 3. Among all candidate nodes whose own AABB contains the point,
 ///    pick the smallest by area (innermost-first convention).
 /// 4. Apply the instruction's attached mutation to that node.

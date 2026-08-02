@@ -196,9 +196,19 @@ pub fn parse_file_for_inspection(path: &Path) -> Result<MindMap, String> {
 /// see `mindmap::model::validate` for why that is a rejection rather
 /// than a repair.
 ///
-/// Cost: O(nodes + edges + sections + runs) — one sorted pass for the
-/// zero-section and section-cap checks, one memoized parent walk, one
-/// edge-tuple scan, and one domain sweep.
+/// Cost: O(n log n) in the node count, plus O(edges + sections +
+/// runs). The log factor is five separate sorts, not one: each of
+/// the four `detect_*` checks sorts the nodes itself, and
+/// `map_numeric_domain` sorts them again. Every one of them
+/// allocates its own `Vec` of borrows to do it.
+///
+/// That is deliberate rather than overlooked. Each check reports the
+/// *first* offending node, and "first" has to mean the same node on
+/// every run or the error message depends on `HashMap` iteration
+/// order. Sharing one sorted list across all five would need the
+/// order threaded through checks that are otherwise independent and
+/// individually testable. This runs once per file open, against a
+/// parse that already cost several times more.
 fn check_invariants(map: MindMap) -> Result<MindMap, String> {
     if let Some(err) = detect_zero_section_node(&map) {
         return Err(err);
@@ -2512,7 +2522,9 @@ mod tests {
 
         // The same shape on a cap glyph, so the loop covers every
         // field rather than only the one the exploit used.
-        let cap = edge_json_with(&format!(r#", "glyph_connection": {{"cap_end": "{fat_cluster}"}}"#));
+        let cap = edge_json_with(&format!(
+            r#", "glyph_connection": {{"cap_end": "{fat_cluster}"}}"#
+        ));
         let err = load_from_str(&map_json(&nodes, &cap)).expect_err("cap glyphs carry the same ceiling");
         assert!(err.contains("cap_end"), "must name the field: {err}");
 
@@ -2548,8 +2560,7 @@ mod tests {
         // 256 MiB of spaces, which serde rejects as "EOF while
         // parsing a value" whether or not the cap exists, so a bare
         // `is_err()` here certifies nothing.
-        let err =
-            parse_for_inspection(&oversized).expect_err("the inspection door carries the cap too");
+        let err = parse_for_inspection(&oversized).expect_err("the inspection door carries the cap too");
         assert!(
             err.contains("refusing to load it"),
             "must refuse on the cap, not on a parse error: {err}"

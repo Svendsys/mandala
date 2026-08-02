@@ -2226,3 +2226,56 @@ pub fn do_font_metric_setters_clamp_to_the_shaper_domain() {
     area.grow_font(&6.0);
     assert_eq!(area.scale.into_inner(), 30.0);
 }
+
+/// The same invariant on the **delta** path, which is a different
+/// door into the same two fields.
+///
+/// `apply_operation` is what a map-carried `CustomMutation` reaches
+/// — a `GlyphAreaField::Scale` under `ApplyOperation::Add` — and it
+/// composes into a local before storing, so `Add` still adds while
+/// the *result* is what gets bounded. `area_block_commands` drives
+/// this path but only with in-domain values, where the clamp is the
+/// identity function; this is the case that makes it bind.
+#[test]
+fn test_apply_operation_clamps_the_shaper_metrics() {
+    do_apply_operation_clamps_the_shaper_metrics();
+}
+
+pub fn do_apply_operation_clamps_the_shaper_metrics() {
+    use crate::core::primitives::ApplyOperation;
+    use crate::font::fonts::{MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT};
+    use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea};
+    use glam::Vec2;
+
+    let fresh = || GlyphArea::new(14.0, 16.8, Vec2::ZERO, Vec2::new(100.0, 40.0));
+
+    // An additive delta far past the ceiling.
+    let mut area = fresh();
+    area.apply_operation(&DeltaGlyphArea::new(vec![
+        GlyphAreaField::Operation(ApplyOperation::Add),
+        GlyphAreaField::Scale(ordered_float::OrderedFloat::from(1.0e9)),
+        GlyphAreaField::LineHeight(ordered_float::OrderedFloat::from(1.0e9)),
+    ]));
+    assert_eq!(area.scale.into_inner(), MAX_FONT_SIZE_PT);
+    assert_eq!(area.line_height.into_inner(), MAX_FONT_SIZE_PT);
+
+    // And past the floor, which is the value that aborts the
+    // process inside cosmic-text rather than merely looking wrong.
+    let mut area = fresh();
+    area.apply_operation(&DeltaGlyphArea::new(vec![
+        GlyphAreaField::Operation(ApplyOperation::Add),
+        GlyphAreaField::Scale(ordered_float::OrderedFloat::from(-1.0e9)),
+        GlyphAreaField::LineHeight(ordered_float::OrderedFloat::from(-1.0e9)),
+    ]));
+    assert_eq!(area.scale.into_inner(), MIN_FONT_SIZE_PT);
+    assert_eq!(area.line_height.into_inner(), MIN_FONT_SIZE_PT);
+
+    // An in-domain delta still composes additively — the clamp
+    // bounds the result, it does not replace the operation.
+    let mut area = fresh();
+    area.apply_operation(&DeltaGlyphArea::new(vec![
+        GlyphAreaField::Operation(ApplyOperation::Add),
+        GlyphAreaField::Scale(ordered_float::OrderedFloat::from(6.0)),
+    ]));
+    assert_eq!(area.scale.into_inner(), 20.0);
+}
