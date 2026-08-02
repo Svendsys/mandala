@@ -29,6 +29,7 @@
 
 use std::collections::HashMap;
 
+use crate::mindmap::custom_mutation::CustomMutation;
 use crate::util::grapheme_chad::count_grapheme_clusters;
 
 use super::{
@@ -37,22 +38,11 @@ use super::{
     MAX_SECTIONS_PER_NODE,
 };
 
-/// Floor for any authored font size, in points.
-///
-/// Zero is the dangerous value — cosmic-text's `Buffer::new`
-/// asserts `line_height != 0.0` and aborts the process — but a
-/// merely *tiny* size is its own denial of service: the border
-/// fill fitter divides a node's width by the glyph advance, so
-/// `font_size_pt = 1e-6` asks for hundreds of millions of glyphs in
-/// one `String`. Half a point is already invisible at any zoom the
-/// camera reaches, so nothing authorable is lost below it.
-pub const MIN_FONT_SIZE_PT: f32 = 0.5;
-
-/// Ceiling for any authored font size, in points. Generous enough
-/// for a glyph used as a full-screen design element (the canonical
-/// fixture's largest run is 74pt) and small enough that a single
-/// rasterized glyph cannot exhaust the atlas.
-pub const MAX_FONT_SIZE_PT: f32 = 4096.0;
+/// The font-metric domain, defined beside the text shaper that
+/// enforces it (`crate::font::fonts`) and re-exported here so the
+/// document trust boundary and the runtime mutation path cannot
+/// drift to two different numbers.
+pub use crate::font::fonts::{MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT};
 
 /// Ceiling on the magnitude of an authored canvas coordinate —
 /// node positions, section offsets, and Bezier control points.
@@ -678,6 +668,49 @@ pub fn canvas_numeric_violations(canvas: &Canvas) -> Vec<String> {
     out
 }
 
+/// Ceiling on an authored animation envelope, in milliseconds.
+///
+/// While any animation is live the event loop holds
+/// `ControlFlow::Poll` — it must, to produce frames — so the
+/// envelope is also how long a map can keep the process off its
+/// idle path. `u32` milliseconds reaches roughly 49 days per field,
+/// and a maxed *delay* renders nothing at all, so the app looks
+/// idle while spinning a core and submitting frames. A minute is
+/// far beyond any authorable UI transition and bounds the worst
+/// case at something a user would sit through rather than a season.
+pub const MAX_ANIMATION_MS: u32 = 60_000;
+
+/// Numeric-domain violations on one [`CustomMutation`].
+///
+/// **Mutations are the second way numbers enter the model**, and
+/// they arrive after the loader has finished. A map carries its own
+/// `custom_mutations`, a node carries `inline_mutations`, and a
+/// trigger binding fires one on a click — so a payload skipped here
+/// is a number that reaches the same shaper and the same event loop
+/// as authored geometry, just one interaction later. The scene-side
+/// metrics are additionally clamped where they land
+/// (`GlyphArea`'s scale setters, `font::fonts::clamp_font_metric`),
+/// because console verbs, macros, and IPC write there too and never
+/// pass this function at all.
+pub fn mutation_numeric_violations(mutation: &CustomMutation) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(timing) = mutation.timing.as_ref() {
+        for (field, value) in [
+            ("duration_ms", timing.duration_ms),
+            ("delay_ms", timing.delay_ms),
+        ] {
+            if value > MAX_ANIMATION_MS {
+                out.push(format!(
+                    "{:?}: timing.{field} ({value}ms) is over the {MAX_ANIMATION_MS}ms ceiling — \
+                     an animation holds the event loop off its idle path for its whole envelope",
+                    mutation.id
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// The whole-map numeric-domain sweep the loader runs, returning
 /// the first violation stamped with the document part that carries
 /// it — `canvas`, `node "1.2"`, `edge[3]` — matching how the
@@ -693,11 +726,24 @@ pub fn map_numeric_domain(map: &MindMap) -> Option<String> {
     if let Some(message) = canvas_numeric_violations(&map.canvas).into_iter().next() {
         return Some(format!("canvas: {message}"));
     }
+    for (idx, mutation) in map.custom_mutations.iter().enumerate() {
+        if let Some(message) = mutation_numeric_violations(mutation).into_iter().next() {
+            return Some(format!("custom_mutations[{idx}]: {message}"));
+        }
+    }
     let mut nodes: Vec<&MindNode> = map.nodes.values().collect();
     nodes.sort_by(|a, b| a.id.cmp(&b.id));
     for node in nodes {
         if let Some(message) = node_numeric_violations(node).into_iter().next() {
             return Some(format!("node {:?}: {message}", node.id));
+        }
+        for (idx, mutation) in node.inline_mutations.iter().enumerate() {
+            if let Some(message) = mutation_numeric_violations(mutation).into_iter().next() {
+                return Some(format!(
+                    "node {:?}: inline_mutations[{idx}]: {message}",
+                    node.id
+                ));
+            }
         }
     }
     for (idx, edge) in map.edges.iter().enumerate() {

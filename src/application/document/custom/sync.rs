@@ -16,6 +16,7 @@
 
 use baumhard::core::primitives::ColorFontRegion;
 use baumhard::font::fonts::{app_font_by_family, family_name_of};
+use baumhard::mindmap::model::validate;
 use baumhard::mindmap::model::TextRun;
 use baumhard::mindmap::tree_builder::MindMapTree;
 use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
@@ -68,6 +69,24 @@ pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = {
 /// and render invisible, un-regrowable text. Clamp to 1pt so a
 /// shrunk run stays legible and can be grown back.
 pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
+
+/// Clamp a reverse-converted `size_pt` into the domain the loader
+/// would accept on the way back in.
+///
+/// **The two directions have to agree.** The loader rejects a run
+/// whose `size_pt` is zero or past
+/// [`validate::MAX_FONT_SIZE_PT`], so a reverse converter that can
+/// write outside that range produces a model the editor itself
+/// would refuse to reopen — and gets there in one click, since a
+/// `grow-font` mutation adds an unbounded delta and the `as u32`
+/// cast saturates rather than wrapping. The floor and the ceiling
+/// are the same clamp; only the floor had an opinion before.
+fn clamp_run_size_pt(size_pt: f32) -> u32 {
+    if size_pt.is_nan() {
+        return MIN_TEXT_RUN_SIZE_PT;
+    }
+    size_pt.clamp(MIN_TEXT_RUN_SIZE_PT as f32, validate::MAX_FONT_SIZE_PT) as u32
+}
 
 /// Push the tree-side font `scale` back onto a section's model
 /// runs — the reverse of the forward path's
@@ -142,7 +161,7 @@ fn sync_section_font_size(
             // would be dropped by `clamp_runs_to_text` anyway.
             return false;
         }
-        let size_pt = tree_scale.round().max(MIN_TEXT_RUN_SIZE_PT as f32) as u32;
+        let size_pt = clamp_run_size_pt(tree_scale.round());
         let color = if default_color.is_empty() {
             DEFAULT_TEXT_RUN_COLOR.to_string()
         } else {
@@ -164,9 +183,7 @@ fn sync_section_font_size(
 
     let mut changed = false;
     for run in section.text_runs.iter_mut() {
-        let new_size = (run.size_pt as f32 + delta)
-            .round()
-            .max(MIN_TEXT_RUN_SIZE_PT as f32) as u32;
+        let new_size = clamp_run_size_pt((run.size_pt as f32 + delta).round());
         if new_size != run.size_pt {
             run.size_pt = new_size;
             changed = true;

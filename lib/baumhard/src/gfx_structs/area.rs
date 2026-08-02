@@ -402,12 +402,48 @@ impl GlyphArea {
 
     /// Add `value` to the font scale. O(1).
     pub fn grow_font(&mut self, value: &f32) {
-        self.scale += value;
+        self.set_scale_clamped(self.scale.into_inner() + value);
+    }
+
+
+    /// Write `scale`, forced into the shaper's usable range.
+    ///
+    /// **Every mutator that touches the font scale lands here**, and
+    /// that is the point. The scale becomes a `cosmic_text::Metrics`
+    /// term, where zero trips an `assert!` that aborts the process
+    /// and a huge value asks the rasterizer for a glyph the atlas
+    /// cannot hold. The document loader screens the numbers it can
+    /// see (`mindmap::model::validate`), but it only sees *authored
+    /// geometry* — a `CustomMutation` payload carried by the same
+    /// file writes here later, on a click, and so do console verbs,
+    /// macros, and IPC. Clamping at the field rather than at each
+    /// caller is what makes the invariant hold for writers that do
+    /// not exist yet.
+    ///
+    /// Cost: O(1).
+    fn set_scale_clamped(&mut self, value: f32) {
+        self.scale = OrderedFloat::from(crate::font::fonts::clamp_font_metric(
+            value,
+            self.scale.into_inner(),
+        ));
+    }
+
+    /// Write `line_height`, forced into the same range as
+    /// [`Self::set_scale_clamped`] and for the same reason — it is
+    /// the other half of `Metrics::new`, and the half the
+    /// zero-line-height assert actually names.
+    ///
+    /// Cost: O(1).
+    fn set_line_height_clamped(&mut self, value: f32) {
+        self.line_height = OrderedFloat::from(crate::font::fonts::clamp_font_metric(
+            value,
+            self.line_height.into_inner(),
+        ));
     }
 
     /// Subtract `value` from the font scale. O(1).
     pub fn shrink_font(&mut self, value: &f32) {
-        self.scale -= value;
+        self.set_scale_clamped(self.scale.into_inner() - value);
     }
 
     /// Replace the render bounds with `(width, height)`. O(1).
@@ -456,23 +492,23 @@ impl GlyphArea {
 
     /// Replace the font scale with `size`. O(1).
     pub fn set_font_size(&mut self, size: &f32) {
-        self.scale = OrderedFloat::from(*size);
+        self.set_scale_clamped(*size);
     }
 
     /// Replace the line-height multiplier with `line_height`. O(1).
     pub fn set_line_height(&mut self, line_height: &f32) {
-        self.line_height = OrderedFloat::from(*line_height);
+        self.set_line_height_clamped(*line_height);
     }
 
     /// Add `line_height` to the current line-height multiplier. O(1).
     pub fn grow_line_height(&mut self, line_height: &f32) {
-        self.line_height += line_height;
+        self.set_line_height_clamped(self.line_height.into_inner() + line_height);
     }
 
     /// Subtract `line_height` from the current line-height
     /// multiplier. O(1).
     pub fn shrink_line_height(&mut self, line_height: &f32) {
-        self.line_height -= line_height;
+        self.set_line_height_clamped(self.line_height.into_inner() - line_height);
     }
 
     /// Position as a plain `Vec2`. O(1).

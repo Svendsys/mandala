@@ -2332,6 +2332,63 @@ mod tests {
         assert_eq!(map.nodes["0"].sections[0].text_runs.len(), 2);
     }
 
+    /// **The envelope that pins the event loop.** While an
+    /// animation is live the loop holds `ControlFlow::Poll`, so a
+    /// `u32` millisecond field is also how long a map can keep the
+    /// process off its idle path — about 49 days per field. A maxed
+    /// *delay* draws nothing at all, so the app looks idle while
+    /// spinning a core.
+    #[test]
+    fn test_absurd_animation_envelope_is_rejected() {
+        let mutation = |timing: &str| {
+            format!(
+                r#"{{"id":"spin","name":"spin","description":"","contexts":["map.node"],
+                     "target_scope":"SelfOnly","timing":{timing}}}"#
+            )
+        };
+        let map_with = |body: String| {
+            map_json_with_nodes(&node_json("0", "null"))
+                .replace(r#""edges": []"#, &format!(r#""edges": [], "custom_mutations": [{body}]"#))
+        };
+
+        let err = load_from_str(&map_with(mutation(r#"{"duration_ms": 4000000000}"#)))
+            .expect_err("an absurd animation duration must be rejected");
+        assert!(err.contains("custom_mutations[0]"), "must name the mutation: {err}");
+        assert!(err.contains("duration_ms"), "must name the field: {err}");
+
+        let err = load_from_str(&map_with(mutation(r#"{"duration_ms": 200, "delay_ms": 4000000000}"#)))
+            .expect_err("an absurd animation delay must be rejected");
+        assert!(err.contains("delay_ms"), "the delay is the invisible half: {err}");
+
+        // An ordinary transition is untouched.
+        load_from_str(&map_with(mutation(r#"{"duration_ms": 250}"#)))
+            .expect("a quarter-second transition is ordinary and must load");
+    }
+
+    /// **The trust boundary reaches the mutation payloads too.** A
+    /// map's own `custom_mutations` and a node's `inline_mutations`
+    /// enter the model alongside its geometry but take effect later,
+    /// on a click — so a payload the sweep skipped would be a number
+    /// arriving at the same shaper one interaction after the load
+    /// the checks were supposed to gate.
+    #[test]
+    fn test_inline_mutation_payloads_are_screened_too() {
+        let node = node_json_with(
+            "0",
+            "null",
+            r#", "inline_mutations": [{"id":"n.spin","name":"","description":"",
+                 "contexts":["map.node"],"target_scope":"SelfOnly",
+                 "timing":{"duration_ms": 4000000000}}]"#,
+        );
+        let err = load_from_str(&map_json_with_nodes(&node))
+            .expect_err("a hostile inline mutation payload must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(
+            err.contains("inline_mutations[0]"),
+            "must name the mutation: {err}"
+        );
+    }
+
     /// A valid 3-generation chain (no cycle) must load without error
     /// — pairs with the cycle-rejection tests to confirm the checker
     /// doesn't false-positive on an ordinary tree.

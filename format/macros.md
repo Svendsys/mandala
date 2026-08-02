@@ -131,11 +131,71 @@ owns the flag exactly as they own this file. Macros fired *via* IPC
 never escalates, and the fail-closed gates above run unchanged.
 Rationale: `work_plans/LLM_IPC.md` §D4.
 
+### The load-time trust boundary
+
+The privilege gates above answer "what may a map *do*". They are
+only half the question, because a map does not need a capability to
+kill the editor — it only needs a number the renderer trusts. Every
+`f32` in the format ends up in something that is not defensive:
+cosmic-text asserts a line height is non-zero, `f32::clamp` panics
+on inverted bounds, and the border and connection builders size a
+`String` and a `Vec` from authored geometry. None of those degrade;
+an `assert!` inside the scene build and an allocator abort are not
+panics, so CODE_CONVENTIONS §9's "log and keep running" has nothing
+to run.
+
+So the numbers are screened once, at the door, by
+`lib/baumhard/src/mindmap/model/validate.rs`, which the loader runs
+as its last invariant. It **rejects rather than repairs** — the same
+posture the loader already took for structure — and the message
+names the part to fix. What it covers:
+
+- **Font metrics** — every `font_size_pt`, `size_pt`, and min/max
+  pair on borders, connections, labels, portals, and text runs must
+  be finite and within `[0.5, 4096]`pt. Zero is what aborts the
+  shaper; a sub-point size asks the border fitter for millions of
+  glyphs.
+- **Inverted clamps** — a `min > max` pair is refused, because the
+  size cascades hand one straight to `f32::clamp`.
+- **Geometry** — node sizes, positions, section offsets, and Bezier
+  control points must be finite and bounded. JSON has no `Infinity`
+  literal, but `1e39` does not fit an `f32` and arrives as one.
+- **Text runs** — sorted, non-overlapping, non-empty, inside the
+  section's text. These were always the model's assumption;
+  overlapping runs made the styled-span bridge re-emit the same
+  graphemes once per covering run.
+- **Identity** — a `nodes` key must equal its node's `id`. The two
+  spellings address different graphs (the cycle check walks keys,
+  `ChildIndex` walks `node.id`), and a mismatch let a self-loop past
+  the cycle rejection into a scene build that never terminates.
+- **Mutation payloads** — `custom_mutations` and `inline_mutations`
+  are walked too, since a map's own mutation fires on a click and
+  would otherwise deliver its numbers one interaction after the
+  checks.
+- **File size** — `MAX_MAP_BYTES`, checked by `stat` before the read
+  commits to the allocation.
+
+Two structural defenses sit behind it. Every walker over `parent_id`
+depth is **iterative** — a linear chain is a legal acyclic tree, and
+recursing over one exhausted the stack and killed the process from
+`fold_hidden_set`, the scene build, the subtree-AABB pass, and the
+BVH hit-test. And the font metric is **clamped where it lands**
+(`GlyphArea`'s scale setters), not only at the door, because console
+verbs, macros, and IPC write there without passing the loader at
+all.
+
+`maptool verify` deliberately does *not* inherit this door: it uses
+`loader::parse_for_inspection`, because the files worth asking about
+are exactly the ones the editor refuses, and "cannot load" is the
+one answer the user already has.
+
 ### Threat model
 
-Map and Inline tiers ship today; **opening any `.mindmap.json` from
-an untrusted source IS a privilege event**. Treat third-party
-mindmap files as code, not data:
+Map and Inline tiers ship today, and **a third-party
+`.mindmap.json` is still a privilege event** — a smaller one than it
+was, but the capability surface above is what decides that, not the
+numeric screening. Treat third-party mindmap files as code, not
+data:
 
 - A hostile mindmap can bind any non-destructive Action to a hotkey
   the user is likely to press (Enter, Tab, etc.).
@@ -145,6 +205,29 @@ mindmap files as code, not data:
   exfiltration).
 - A hostile mindmap CANNOT run console verbs, save the file, delete
   selection, or touch the clipboard — those are all gated above.
+- A hostile mindmap can no longer *crash* the editor with a number:
+  the cases that did — a zero font size, an inverted clamp, absurd
+  geometry, a deep `parent_id` chain, a key that disagreed with its
+  node's `id` — are refused at load or bounded where they land. See
+  the trust boundary above.
+
+**What is not yet closed**, so nobody reads the section above as a
+finished job:
+
+- The resource caps are **per element**, and element count is not
+  capped. One border side cannot emit more than 100k glyphs and one
+  edge cannot sample more than 100k points, but a map may carry a
+  great many of each; the aggregate per frame is still unbounded.
+  A frame budget is the real answer and does not exist yet.
+- The `OnClick` trigger path consults no `SourceTier`. Today's two
+  `DocumentAction` variants are pure in-memory theme writes, so the
+  reachable damage is bounded — but the gate the privilege model
+  describes lives on the macro dispatcher only, and a new variant
+  would widen this silently. `DocumentAction`'s `#[non_exhaustive]`
+  is the reminder; an `allows_document_action` sibling to
+  `allows_action` is the fix.
+- `MAX_FONT_SIZE_PT` combined with the maximum camera zoom can still
+  ask the rasterizer for a very large glyph.
 
 If a future contributor adds a `DocumentAction` variant that
 performs file I/O, network access, or arbitrary content load, the
