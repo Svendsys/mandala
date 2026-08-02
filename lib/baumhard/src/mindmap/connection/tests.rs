@@ -1028,3 +1028,39 @@ fn test_sample_path_survives_non_finite_geometry() {
     // The ordinary case still samples the way it always did.
     assert_eq!(sample_path(&ordinary, 10.0).len(), 11);
 }
+
+/// **The clamp that must not panic on a window the cascade built
+/// backwards.**
+///
+/// `f32::clamp` panics when its bounds cross, and a size window is
+/// not assembled from one place: a label may set only
+/// `min_font_size_pt` and inherit `max` from its edge. Validating
+/// each struct's own pair at load therefore cannot see every window
+/// the cascade can produce — the halves are individually valid and
+/// jointly inverted — so the ordering is enforced where the window
+/// is used.
+#[test]
+fn test_font_window_tolerates_an_inverted_cascade() {
+    use crate::font::fonts::{clamp_to_font_window, MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT};
+
+    // Inverted: read as the window the author described.
+    assert_eq!(clamp_to_font_window(50.0, 40.0, 8.0), 40.0);
+    assert_eq!(clamp_to_font_window(4.0, 40.0, 8.0), 8.0);
+    assert_eq!(clamp_to_font_window(20.0, 40.0, 8.0), 20.0);
+
+    // Ordinary window is untouched.
+    assert_eq!(clamp_to_font_window(20.0, 8.0, 40.0), 20.0);
+    assert_eq!(clamp_to_font_window(100.0, 8.0, 40.0), 40.0);
+
+    // Non-finite bounds are pulled into the shaper's domain first,
+    // so neither the clamp nor the shaper ever sees one. A window
+    // with nothing usable in it widens to the whole domain rather
+    // than collapsing, so an ordinary size passes through.
+    assert_eq!(clamp_to_font_window(20.0, f32::NAN, f32::NAN), 20.0);
+    assert_eq!(clamp_to_font_window(0.0, f32::NAN, f32::NAN), MIN_FONT_SIZE_PT);
+    assert_eq!(clamp_to_font_window(1.0e9, f32::NAN, f32::NAN), MAX_FONT_SIZE_PT);
+    assert!(clamp_to_font_window(1.0e9, 8.0, f32::INFINITY) <= MAX_FONT_SIZE_PT);
+
+    // A NaN size takes the floor rather than propagating.
+    assert_eq!(clamp_to_font_window(f32::NAN, 8.0, 40.0), 8.0);
+}

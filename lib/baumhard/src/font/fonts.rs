@@ -128,6 +128,34 @@ pub fn clamp_font_metric(value: f32, fallback: f32) -> f32 {
     value.clamp(MIN_FONT_SIZE_PT, MAX_FONT_SIZE_PT)
 }
 
+/// Clamp a screen-space font size into the window `[min, max]`,
+/// tolerating a window the document got backwards.
+///
+/// **`f32::clamp` panics when its bounds cross**, and the size
+/// cascades hand it a `min` and a `max` that need not come from the
+/// same place: a label may set only `min_font_size_pt` and inherit
+/// `max` from its edge, a portal endpoint from its config. Checking
+/// each struct's own pair at load therefore cannot see every window
+/// the cascade can build — the two halves are individually valid and
+/// jointly inverted.
+///
+/// So the ordering is enforced where the window is actually used.
+/// An inverted pair is read as the window the author described
+/// rather than a crash, both bounds are pulled into the shaper's
+/// domain first, and a `NaN` size takes the floor instead of
+/// propagating.
+///
+/// Cost: O(1).
+pub fn clamp_to_font_window(value: f32, min: f32, max: f32) -> f32 {
+    let min = clamp_font_metric(min, MIN_FONT_SIZE_PT);
+    let max = clamp_font_metric(max, MAX_FONT_SIZE_PT);
+    let (low, high) = if min <= max { (min, max) } else { (max, min) };
+    if value.is_nan() {
+        return low;
+    }
+    value.clamp(low, high)
+}
+
 pub fn init() {
     ensure_warm();
 }

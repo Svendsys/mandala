@@ -501,7 +501,11 @@ impl GlyphConnectionConfig {
     /// failure mode at extreme zoom levels.
     pub fn effective_font_size_pt(&self, camera_zoom: f32) -> f32 {
         let z = camera_zoom.max(f32::EPSILON);
-        let target_screen = (self.font_size_pt * z).clamp(self.min_font_size_pt, self.max_font_size_pt);
+        let target_screen = crate::font::fonts::clamp_to_font_window(
+            self.font_size_pt * z,
+            self.min_font_size_pt,
+            self.max_font_size_pt,
+        );
         target_screen / z
     }
 
@@ -647,7 +651,7 @@ impl EdgeLabelConfig {
             .and_then(|c| c.max_font_size_pt)
             .unwrap_or(body.max_font_size_pt);
         let z = camera_zoom.max(f32::EPSILON);
-        let target_screen = (base * z).clamp(min, max);
+        let target_screen = crate::font::fonts::clamp_to_font_window(base * z, min, max);
         target_screen / z
     }
 }
