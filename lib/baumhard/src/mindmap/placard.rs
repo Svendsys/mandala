@@ -8,7 +8,8 @@
 //! association — there is no terminal attached, so `stderr` is not
 //! merely unread, it is gone. The answer here is to hand the shell a
 //! *map* rather than a special-cased overlay: a placard is an
-//! ordinary one-node [`MindMap`] carrying the loader's own message as
+//! ordinary one-node [`MindMap`](crate::mindmap::model::MindMap)
+//! carrying the loader's own message as
 //! its text, so it renders through the same tree projection as any
 //! other document (CODE_CONVENTIONS §3 "Render document content
 //! through the Baumhard tree") and needs no second pipeline, no
