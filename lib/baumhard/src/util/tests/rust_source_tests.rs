@@ -11,7 +11,9 @@
 //! *and* the code around it survived.
 
 use crate::util::doc_fixtures::repo_path;
-use crate::util::rust_source::{above_test_modules, braced_block_after, production_code, strip_comments};
+use crate::util::rust_source::{
+    above_test_modules, braced_block_after, production_code, string_literals, strip_comments,
+};
 use std::path::{Path, PathBuf};
 
 /// The attribute header spellings that sit over an inline module in
@@ -321,6 +323,51 @@ pub fn do_braced_block_after_matches_one_item() {
     assert!(braced_block_after(src, "fn absent(").is_none());
 }
 
+/// Every literal in the source comes back, with its delimiters gone
+/// and its contents untouched; nothing that is not a literal does.
+///
+/// The consumer is a test *deriving* a list the code owns — the seven
+/// messages `startup_load::fetch_map_json` can return — so both
+/// directions are failures with teeth: a missed literal shortens the
+/// list the caller then checks, and a spurious one adds a message the
+/// code never emits.
+pub fn do_string_literals_returns_every_literal() {
+    let cases: &[(&str, &[&str])] = &[
+        // The ordinary case, in source order.
+        (
+            r#"Err(format!("HTTP {} {}", a, b)).or("bare")"#,
+            &["HTTP {} {}", "bare"],
+        ),
+        // An escaped quote does not end the literal, and the contents
+        // come back exactly as written — un-escaping them would stop
+        // the caller from matching source text against source text.
+        (r#"let s = "a \" b"; let t = "c";"#, &[r#"a \" b"#, "c"]),
+        // Raw strings: the hashes go, the inner quotes stay.
+        (r####"let s = r#"a "b" c"#;"####, &[r#"a "b" c"#]),
+        (r#"let s = r"c:\path";"#, &[r"c:\path"]),
+        (r#"let s = b"bytes";"#, &["bytes"]),
+        // A lifetime is not a literal, and neither is a `'"'` char —
+        // but the quote inside that char literal must not open one.
+        (
+            r#"fn f<'a>(x: &'a str) { let q = '"'; let s = "kept"; }"#,
+            &["kept"],
+        ),
+        // An empty literal is a literal.
+        (r#"let s = "";"#, &[""]),
+        // No literals at all.
+        ("fn f() { g(); }", &[]),
+        // Unterminated: everything to the end, and no panic.
+        (r#"let s = "never closed"#, &["never closed"]),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(
+            &string_literals(source),
+            expected,
+            "string_literals disagreed on {source:?}"
+        );
+    }
+}
+
 /// The reader, end to end, against a file that is in the tree and
 /// stays there: this module's own source.
 ///
@@ -607,6 +654,11 @@ fn test_above_test_modules_cuts_at_the_module_only() {
 #[test]
 fn test_braced_block_after_matches_one_item() {
     do_braced_block_after_matches_one_item();
+}
+
+#[test]
+fn test_string_literals_returns_every_literal() {
+    do_string_literals_returns_every_literal();
 }
 
 #[test]

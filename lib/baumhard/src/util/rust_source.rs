@@ -70,12 +70,15 @@
 //! [`production_code`](crate::util::rust_source::production_code), on
 //! the same precedent as [`crate::util::doc_fixtures`]: it is file
 //! I/O on a cold test path, and a benchmark of it would measure the
-//! page cache. The three pure scanners do carry bench entries
+//! page cache — and none for the tree-wide sweep in
+//! `util::tests::rust_source_tests`, which is several hundred of
+//! them. The four pure scanners do carry bench entries
 //! (`lib/baumhard/CONVENTIONS.md` §B7):
 //! [`strip_comments`](crate::util::rust_source::strip_comments),
-//! [`above_test_modules`](crate::util::rust_source::above_test_modules)
+//! [`above_test_modules`](crate::util::rust_source::above_test_modules),
+//! [`braced_block_after`](crate::util::rust_source::braced_block_after)
 //! and
-//! [`braced_block_after`](crate::util::rust_source::braced_block_after).
+//! [`string_literals`](crate::util::rust_source::string_literals).
 
 use crate::util::doc_fixtures::repo_path;
 
@@ -484,6 +487,72 @@ pub fn strip_comments(src: &str) -> String {
     out
 }
 
+/// The contents of every string literal in `src`, in source order,
+/// with the quotes and any `r#` hashes removed.
+///
+/// **Why a scan and not a hand-rolled `split('"')`.** The tests that
+/// need this need it to *derive* a list the code owns instead of
+/// restating it — the seven messages `startup_load::fetch_map_json`
+/// can return, say, which no runtime assertion can reach because the
+/// function only compiles for `wasm32` (`TEST_CONVENTIONS.md` §T9). A
+/// restated list is a list that drifts: that one was documented as
+/// five and tested as six while the code produced seven, and every
+/// one of those three numbers looked checked.
+///
+/// Splitting on `"` gets that right only until the body grows an
+/// escaped quote or a raw string. This shares
+/// [`strip_comments`]'s literal walk instead, so:
+///
+/// - `"a \" b"` is one literal whose contents are `a \" b` —
+///   *unescaped*, because the caller is matching source text against
+///   source text and un-escaping would break that;
+/// - `r#"a "b" c"#` is one literal, contents `a "b" c`;
+/// - `b"bytes"` is a literal like any other;
+/// - `'x'` is not one, and neither is the `'a` in `&'a str`;
+/// - an unterminated literal yields everything to the end of `src`
+///   rather than swallowing the scan.
+///
+/// Pass comment-free text — [`production_code`] or
+/// [`strip_comments`] — or the `"` in a doc comment's prose will be
+/// read as code.
+///
+/// Cost: one pass over `src`, and one `Vec` of borrowed slices.
+pub fn string_literals(src: &str) -> Vec<&str> {
+    let bytes = src.as_bytes();
+    let mut found = Vec::new();
+    let mut i = 0usize;
+    while i < src.len() {
+        if let Some((start, content_end, end)) = raw_string_at(src, i) {
+            found.push(&src[start..content_end]);
+            i = end;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            let end = quoted_end(src, i, '"');
+            // `quoted_end` returns the end of `src` for an
+            // unterminated literal, in which case there is no closing
+            // quote to step back over.
+            let content_end = if src[..end].ends_with('"') && end > i + 1 {
+                end - 1
+            } else {
+                end
+            };
+            found.push(&src[i + 1..content_end]);
+            i = end;
+            continue;
+        }
+        if bytes[i] == b'\'' {
+            if let Some(next) = char_literal_end(src, i) {
+                i = next;
+                continue;
+            }
+        }
+        let ch = src[i..].chars().next().expect("in-bounds by the loop guard");
+        i += ch.len_utf8();
+    }
+    found
+}
+
 /// Consume the nested block comment starting at `from` (which points
 /// at `/*`), pushing one space plus every newline it spanned into
 /// `out`. Returns the byte offset just past the comment, or the end
@@ -540,11 +609,19 @@ fn quoted_end(src: &str, from: usize, delim: char) -> usize {
 /// If a raw string (`r"`, `r#"`, `br##"`, …) starts at `from`,
 /// return the byte offset just past its closing `"#…#`. Otherwise
 /// `None`.
+fn raw_string_end(src: &str, from: usize) -> Option<usize> {
+    raw_string_at(src, from).map(|(_, _, end)| end)
+}
+
+/// If a raw string starts at `from`, return where its contents begin,
+/// where they end, and where the whole literal ends. Otherwise
+/// `None`.
 ///
 /// The leading `r` / `br` must not be the tail of a longer
 /// identifier — `for r in ...` is not a raw string — so the byte
-/// before it is checked.
-fn raw_string_end(src: &str, from: usize) -> Option<usize> {
+/// before it is checked. An unterminated literal runs to the end of
+/// `src`, contents and all.
+fn raw_string_at(src: &str, from: usize) -> Option<(usize, usize, usize)> {
     let bytes = src.as_bytes();
     if from > 0 {
         let prev = bytes[from - 1];
@@ -575,8 +652,8 @@ fn raw_string_end(src: &str, from: usize) -> Option<usize> {
         terminator.push('#');
     }
     match src[i..].find(&terminator) {
-        Some(at) => Some(i + at + terminator.len()),
-        None => Some(src.len()),
+        Some(at) => Some((i, i + at, i + at + terminator.len())),
+        None => Some((i, src.len(), src.len())),
     }
 }
 

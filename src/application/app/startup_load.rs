@@ -34,13 +34,23 @@
 //!
 //! What stays browser-only is `fetch_map_json` and the two-line
 //! `wasm_startup_document` wrapper — `cargo test` runs the native
-//! leg only (`TEST_CONVENTIONS.md` §T9), so neither can be reached at
+//! leg only (`TEST_CONVENTIONS.md` §T9), and `wasm-bindgen-test` is
+//! not a tool this repo has (§T10), so neither can be reached at
 //! runtime from here. The composition between them is therefore
 //! lifted into [`browser_load`], which is target-independent,
 //! compiled on native and tested there against the exact error
-//! strings the fetch produces. The residue — one `.await` and one
-//! call — is pinned against the source by
-//! `test_both_targets_go_through_one_startup_call`.
+//! strings the fetch produces.
+//!
+//! The residue is pinned against the source, **in this file**:
+//! `test_the_browser_entry_point_adds_nothing_of_its_own` holds
+//! `wasm_startup_document`'s two statements by *equality*, and
+//! `test_the_fetch_returns_a_real_diagnosis_that_never_names_the_url`
+//! reads `fetch_map_json`'s messages out of its own body. Both were
+//! once claimed for `test_both_targets_go_through_one_startup_call`,
+//! which reads the two *init* files and never opens this one — so the
+//! privacy of [`StartupSurface`] closed the init sites while the
+//! module's own browser leg stayed open, and blanking the URL one
+//! level in was still a one-line change under a green suite.
 
 use crate::application::document::MindMapDocument;
 
@@ -120,7 +130,12 @@ fn browser_load(url: &str, fetched: Result<String, String>) -> Result<MindMapDoc
 /// initial load, and the module that owns the initial load is the one
 /// whose tests pin it.
 ///
-/// **None of the five messages names `url`.** They do not have to:
+/// **None of these messages names `url`, and how many there are is
+/// not written down here.** It was — as "five", while the code
+/// returned seven and a test checked six, all three of which looked
+/// checked. The list is now read out of this body by
+/// `tests::fetch_error_messages` and every pin over it runs from
+/// there. The messages do not have to name the URL:
 /// [`report_line`] puts the source in front of whatever comes back,
 /// once, for both targets — so a 404 reads `startup: could not load
 /// 'maps/x.mindmap.json': HTTP 404 Not Found` rather than the bare
@@ -229,7 +244,7 @@ fn resolve(surface: StartupSurface) -> (MindMapDocument, Option<String>) {
 mod tests {
     use super::*;
     use baumhard::mindmap::placard;
-    use baumhard::util::rust_source::{braced_block_after, production_code};
+    use baumhard::util::rust_source::{braced_block_after, production_code, string_literals};
 
     /// This module's own path, for the pins that read it.
     const THIS_FILE: &str = "src/application/app/startup_load.rs";
@@ -283,6 +298,151 @@ mod tests {
             .cloned()
             .expect("the zero-section fixture must be rejected");
         (message, result)
+    }
+
+    /// The exact body `wasm_startup_document` is allowed to have,
+    /// whitespace-flattened.
+    ///
+    /// Equality, not `contains`. This is the browser's *whole* entry
+    /// point, and the reason the module is shaped the way it is: the
+    /// privacy of [`StartupSurface`] stops an init site interposing,
+    /// but nothing stopped these two lines from doing it themselves.
+    /// `fetch_map_json(url).await.map_err(|_| String::new())` and
+    /// `startup_surface("", …)` each left 13/13 green and
+    /// `cargo check --target wasm32-unknown-unknown` clean while the
+    /// browser got a blank diagnosis and no URL. Two statements is
+    /// small enough that "these two and nothing else" is a statement
+    /// a test can make.
+    const WASM_ENTRY_BODY: &str = "{ let fetched = fetch_map_json(url).await; \
+                                   adopt(startup_surface(url, browser_load(url, fetched))) }";
+
+    /// `code` with every run of whitespace collapsed to one space.
+    fn flatten(code: &str) -> String {
+        code.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// The body of `item` in this module's production code, or a
+    /// panic naming it — a pin whose subject has moved has found
+    /// something, and must not pass quietly.
+    fn body_of(item: &str) -> String {
+        let code = production_code(THIS_FILE);
+        let body = braced_block_after(&code, item)
+            .unwrap_or_else(|| panic!("{THIS_FILE} must still declare `{item}`"));
+        flatten(body)
+    }
+
+    /// The messages `fetch_map_json` can return, **read out of its
+    /// body** rather than restated here.
+    ///
+    /// Every string literal in that function is one of its `Err`
+    /// values; it has no other literals. Deriving them is the point:
+    /// the list was documented as five and tested as six while the
+    /// code produced seven, and all three numbers looked checked. A
+    /// list a test writes down is a list that goes stale the next
+    /// time the function grows an arm.
+    ///
+    /// Each comes back with its format placeholders filled by a
+    /// stand-in, so `"HTTP {} {}"` reads as a message rather than as
+    /// a template — what a reader of the log would see.
+    fn fetch_error_messages() -> Vec<String> {
+        let body = body_of("async fn fetch_map_json(");
+        let literals = string_literals(&body);
+        assert!(
+            !literals.is_empty(),
+            "no literals found in `fetch_map_json` — its messages are gone, or the reader is"
+        );
+        literals
+            .into_iter()
+            .map(|literal| {
+                assert!(
+                    !literal.trim().is_empty(),
+                    "`fetch_map_json` returns a blank diagnosis — the browser then reports \
+                     `startup: could not load '<url>': ` and the placard says nothing"
+                );
+                let mut filled = String::with_capacity(literal.len());
+                let mut rest = literal;
+                while let Some(open) = rest.find('{') {
+                    let close = rest[open..]
+                        .find('}')
+                        .unwrap_or_else(|| panic!("unclosed format placeholder in {literal:?}"));
+                    filled.push_str(&rest[..open]);
+                    filled.push_str("JsValue(TypeError)");
+                    rest = &rest[open + close + 1..];
+                }
+                filled.push_str(rest);
+                filled
+            })
+            .collect()
+    }
+
+    /// **The browser's entry point hands the URL and the loader's
+    /// words straight through.**
+    ///
+    /// The module docs used to claim this residue was pinned by
+    /// `test_both_targets_go_through_one_startup_call`. It was not —
+    /// that test reads the two *init* files and never opens this one,
+    /// so the privacy argument covered the init sites and nothing
+    /// covered the module's own wasm-gated body. It is the one place
+    /// `cargo test` cannot reach at runtime (`TEST_CONVENTIONS.md`
+    /// §T9), and `wasm-bindgen-test` is not an option here (§T10), so
+    /// it is read from the source like [`adopt`]'s log line.
+    ///
+    /// Both halves are pinned by equality against
+    /// [`WASM_ENTRY_BODY`]: what the two statements *are*, which
+    /// catches an interposed `.map_err`, a blanked `url`, or a third
+    /// statement appearing between them.
+    #[test]
+    fn test_the_browser_entry_point_adds_nothing_of_its_own() {
+        assert_eq!(
+            body_of("async fn wasm_startup_document("),
+            flatten(WASM_ENTRY_BODY),
+            "`wasm_startup_document` is the browser's whole startup path and `cargo test` \
+             never runs it. Anything in it other than the fetch and the one call into \
+             `adopt` is a place the browser can report a failure differently from native \
+             (CODE_CONVENTIONS §4) under a green suite"
+        );
+    }
+
+    /// **Every message the fetch can return is a real diagnosis, and
+    /// none of them names the URL.**
+    ///
+    /// The second half is why [`report_line`] exists, and it is
+    /// checked rather than asserted in prose: if a fetch message ever
+    /// did name the URL, the log line would say it twice.
+    ///
+    /// `fetch_map_json` is browser-only, so this reads its body —
+    /// [`fetch_error_messages`] derives the list — and then the two
+    /// tests below run that derived list through the code that
+    /// carries it.
+    #[test]
+    fn test_the_fetch_returns_a_real_diagnosis_that_never_names_the_url() {
+        let body = body_of("async fn fetch_map_json(");
+        let messages = fetch_error_messages();
+        assert!(
+            messages.len() >= 7,
+            "`fetch_map_json` now returns {} distinct messages, fewer than the seven it had \
+             — an arm has stopped saying what went wrong. Seen: {messages:#?}",
+            messages.len()
+        );
+        for message in &messages {
+            assert!(
+                !message.contains("url"),
+                "{message:?} names the URL, and `report_line` puts the URL in front of it — \
+                 the log line would then carry it twice"
+            );
+        }
+        // The URL reaches the network and nothing else. A second
+        // mention would be the message that names it.
+        assert_eq!(
+            body.matches("url").count(),
+            1,
+            "`fetch_map_json` mentions `url` more than once; the only use it has for it is \
+             `fetch_with_str(url)`. Body seen: {body}"
+        );
+        assert!(
+            body.contains("fetch_with_str(url)"),
+            "`fetch_map_json` no longer fetches the URL it was given: {body}"
+        );
     }
 
     /// A load that succeeded is installed untouched — no placard, no
@@ -354,18 +514,14 @@ mod tests {
         );
 
         // Every shape the browser's fetch can produce is a bare
-        // diagnosis with no URL in it. Same guarantee, same line.
-        for bare in [
-            "HTTP 404 Not Found",
-            "fetch failed: JsValue(TypeError)",
-            "fetch did not return a Response",
-            "Response::text() failed: JsValue(TypeError)",
-            "reading response body failed: JsValue(TypeError)",
-            "response body was not a string",
-        ] {
-            let line = report_line("maps/testament.mindmap.json", bare);
+        // diagnosis with no URL in it. Same guarantee, same line —
+        // and the list is read out of `fetch_map_json` rather than
+        // copied, so an arm added there is covered here without
+        // anyone remembering to add it.
+        for bare in fetch_error_messages() {
+            let line = report_line("maps/testament.mindmap.json", &bare);
             assert!(
-                line.contains("maps/testament.mindmap.json") && line.contains(bare),
+                line.contains("maps/testament.mindmap.json") && line.contains(&bare),
                 "{bare:?} must reach the log with its source attached, got {line:?}"
             );
         }
@@ -378,24 +534,18 @@ mod tests {
     ///
     /// [`browser_load`] is the whole of that leg apart from the
     /// `await`, and it is target-independent precisely so this can be
-    /// *executed* rather than scanned: each of the six strings the
-    /// fetch can return, and a parse failure of a body that did
+    /// *executed* rather than scanned: every string the fetch can
+    /// return — the list [`fetch_error_messages`] reads out of
+    /// `fetch_map_json` — and a parse failure of a body that did
     /// arrive, must come out the far end intact.
     #[test]
     fn test_the_browser_leg_carries_every_fetch_message_through() {
         const URL: &str = "maps/from-the-query-string.mindmap.json";
-        for bare in [
-            "HTTP 404 Not Found",
-            "fetch failed: JsValue(TypeError)",
-            "fetch did not return a Response",
-            "Response::text() failed: JsValue(TypeError)",
-            "reading response body failed: JsValue(TypeError)",
-            "response body was not a string",
-        ] {
-            let (_, report) = resolve(startup_surface(URL, browser_load(URL, Err(bare.to_string()))));
+        for bare in fetch_error_messages() {
+            let (_, report) = resolve(startup_surface(URL, browser_load(URL, Err(bare.clone()))));
             let report = report.expect("a failed fetch must report");
             assert!(
-                report.contains(bare) && report.contains(URL),
+                report.contains(&bare) && report.contains(URL),
                 "the browser leg lost {bare:?} or its URL: {report}"
             );
         }
