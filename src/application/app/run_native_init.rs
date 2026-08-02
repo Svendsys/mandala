@@ -95,7 +95,6 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // above settled the zoom, which that helper reads.
     warm_scene_at_load(&doc, &mut app_scene, &mut renderer, &mut scene_cache);
 
-
     // `InitState.mindmap_tree` is optional (the console's
     // document-replace path drops it), and `rebuild_all` takes it as
     // `&mut Option`. `doc` stays owned to the end of this function —
