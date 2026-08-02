@@ -16,7 +16,6 @@ use cosmic_text::FontSystem;
 use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, SwashCache};
 use lazy_static::lazy_static;
 use log::debug;
-use rand::seq::IteratorRandom;
 use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
 
@@ -161,9 +160,11 @@ fn build_family_index() -> Vec<(String, AppFont)> {
         }
     }
 
-    let font_system = FONT_SYSTEM
-        .read()
-        .expect("FONT_SYSTEM lock poisoned during family-index build");
+    // One line so the roster in `startup_load`'s tests can name this
+    // site as `FONT_SYSTEM.read`: it reads whitespace-flattened
+    // statements, and a wrapped receiver would leave the site
+    // spellable only as a bare `read`.
+    let font_system = FONT_SYSTEM.read().expect("FONT_SYSTEM lock poisoned during family-index build");
     let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
     let mut out: Vec<(String, AppFont)> = Vec::new();
     for face in font_system.db().faces() {
@@ -421,18 +422,14 @@ where
     }
 }
 
-/// Clone out the `fontdb::Source` for a named compiled-in font.
-/// Panics if `name` is not in [`FONT_SOURCES`].
-pub fn get_font_source(name: &AppFont) -> Source {
-    return FONT_SOURCES.get(name).unwrap().clone();
-}
-
-/// Pick a random compiled-in font source. **Test-only helper** —
-/// production paths should pick fonts deterministically.
-pub fn get_some_font() -> Source {
-    let mut rng = rand::rng();
-    return FONT_SOURCES.values().choose(&mut rng).unwrap().clone();
-}
+// `get_font_source` and `get_some_font` stood here: two `pub`
+// helpers, each a bare `unwrap()` on the way to a `Source`, and
+// neither called from anywhere in the workspace — not the app, not
+// maptool, not the benches, not a test. CODE_CONVENTIONS §9 makes a
+// bare `unwrap()` outside tests a bug, and §10 says to delete rather
+// than to deprecate; dressing two dead functions in `expect` messages
+// nobody will ever read is the other thing. `do_for_all_sources`
+// above is the live way to reach [`FONT_SOURCES`].
 
 /// Opaque black. The default foreground color for newly-built
 /// `AttrsList`s.

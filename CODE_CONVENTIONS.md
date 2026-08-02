@@ -360,19 +360,26 @@ industrial cost/benefit reasoning. This is not license for speculation.
   the winit event loop and its window, the renderer bootstrap,
   `fonts::init`, and — in the browser — hanging a canvas off the page
   and reading `?map=` from its URL. What can fail says so where it
-  happens, in three groups. **The window:** `EventLoop::new`,
+  happens, in four groups. **The window:** `EventLoop::new`,
   `create_window`, and `run_app`, whose `Err` is the loop itself
-  giving out. **The renderer bootstrap:** `create_surface`, then
+  giving out — the first two on both targets, since `Application::new`
+  creates them for the browser rather than its run module doing so.
+  **The renderer bootstrap:** `create_surface`, then
   `request_adapter` and `request_device` — no GPU, no program —
   reached from both `Renderer::bootstrap_native` and
   `Renderer::bootstrap_wasm`. **The page, in the browser:**
   `web_sys::window`, the `document`, `body` and `canvas` hung off it,
   the `append_child` that attaches one to the other, and the
   `inner_width` / `inner_height` the first surface is sized from —
-  any one of them missing means there is no page to draw on. Two
+  any one of them missing means there is no page to draw on. **The
+  font system, behind `fonts::init`:** the `FONT_SYSTEM.read` the
+  family index is built under, and the `panic!` that a poisoned or
+  unavailable write guard raises — a message rather than an
+  `expect` only because there is no `Result` left to `expect` on by
+  the time a `TryLockError` has been matched. Two
   things in the phase list cannot fail, and are inside the boundary
-  rather than exceptions to it: `fonts::init` returns `()`, and the
-  query-string extractor is infallible by construction —
+  rather than exceptions to it: `fonts::init` itself returns `()`, and
+  the query-string extractor is infallible by construction —
   `search().unwrap_or_default()` then `strip_prefix`, with no
   failure to report. What that extractor *feeds* is fallible, and is
   the next bullet — which is also why the map fetch asks

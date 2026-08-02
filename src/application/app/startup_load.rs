@@ -929,13 +929,54 @@ mod tests {
     /// `request_device` came to `expect` on every launch of both
     /// targets, unlisted, for as long as this list did not exist.
     ///
-    /// The residual, plainly: §9's phase list is prose, and resolving
-    /// it to files is done here by hand. A *seventh* startup file
-    /// nobody adds is out of reach of any test — but a panicking call
-    /// added to any of these six is not, and neither is a roster
-    /// entry pointing at a file that is not on the list.
+    /// ## The residual, and why it is a list rather than a derivation
+    ///
+    /// §9's phase list is prose, and resolving it to files is done
+    /// here by hand. A startup file nobody adds is out of reach of
+    /// every test below — but a panicking call added to one that *is*
+    /// here is not, and neither is a roster entry pointing at a file
+    /// that is not on the list.
+    ///
+    /// **That residual is not hypothetical, and saying it was cost
+    /// two live files.** Round 3 disclosed the missing file as
+    /// something nobody had written yet. Two already existed: the
+    /// browser's `Application::new` in `src/application/app/mod.rs`,
+    /// which creates the event loop and the window with two
+    /// `.expect(`s that the roster attributed to `run_native.rs`; and
+    /// `fonts.rs`'s family-index build, which §9's phase list names
+    /// as `fonts::init` and which nothing here resolved to a file.
+    /// Turning the browser's `create_window` `.expect(` into a bare
+    /// `unwrap()` left 17/17 green. Both are on the list now.
+    ///
+    /// **Can it be derived instead?** Not by anything available here,
+    /// and the reasons are worth writing down so the question is not
+    /// re-opened by guesswork:
+    ///
+    /// - The set wanted is "files reachable from `main` before the
+    ///   first frame". That is a call graph across two crates and two
+    ///   `cfg` worlds. [`production_code`] is a text scanner; it
+    ///   cannot resolve a name to a definition, so it cannot walk one.
+    /// - Dropping the startup restriction and sweeping the workspace
+    ///   for bare `unwrap()` does not work either, and not for a small
+    ///   reason: baumhard declares its test trees as plain `pub mod
+    ///   tests;` on purpose (`lib/baumhard/CONVENTIONS.md` §B8, so
+    ///   criterion can reuse the bodies), so they carry no `cfg(test)`
+    ///   for [`above_test_modules`] to cut at. A sweep of every `.rs`
+    ///   file counts **1680** bare `unwrap()`s in 66 files, essentially
+    ///   all of them in tests that are entitled to them. Deriving the
+    ///   startup set would first require deriving the test set, which
+    ///   §B8 has deliberately made underivable.
+    ///
+    /// So it is a list, maintained by inspection, and its weakness is
+    /// stated rather than engineered away. What holds it: the three
+    /// directions below, and the fact that a file's *absence* is the
+    /// only thing they cannot see.
     const STARTUP_FILES: &[(&str, &str)] = &[
         ("src/main.rs", "the CLI parse"),
+        (
+            "src/application/app/mod.rs",
+            "`Application::new` — the browser's event loop and window",
+        ),
         (
             "src/application/app/run_native.rs",
             "the winit event loop and its window",
@@ -952,6 +993,10 @@ mod tests {
         (
             "src/application/renderer/pipeline.rs",
             "the adapter and the device that bootstrap asks wgpu for",
+        ),
+        (
+            "lib/baumhard/src/font/fonts.rs",
+            "what `fonts::init` reaches — the font-system lock and the family index",
         ),
         (
             "src/application/app/startup_load.rs",
@@ -977,6 +1022,12 @@ mod tests {
     const STARTUP_SITES: &[(&str, &str, bool, &str)] = &[
         ("EventLoop::new", "src/application/app/run_native.rs", true, ""),
         ("create_window", "src/application/app/run_native.rs", true, ""),
+        // The browser creates both in `Application::new` rather than
+        // in `run_wasm`, so the same two names need a row per file —
+        // an entry keyed only by name reads as covered while the
+        // browser's copy is not.
+        ("EventLoop::new", "src/application/app/mod.rs", true, ""),
+        ("create_window", "src/application/app/mod.rs", true, ""),
         ("run_app", "src/application/app/run_native.rs", true, ""),
         ("create_surface", "src/application/renderer/mod.rs", true, ""),
         (
@@ -1017,6 +1068,25 @@ mod tests {
             false,
             "the query-string extractor is infallible by construction",
         ),
+        (
+            "Application::new",
+            "src/main.rs",
+            false,
+            "the failures are one level in, at the browser's `EventLoop::new` and \
+             `create_window`; the native arm of it cannot fail at all",
+        ),
+        (
+            "FONT_SYSTEM.read",
+            "lib/baumhard/src/font/fonts.rs",
+            true,
+            "",
+        ),
+        // The one roster name that is a macro rather than a call.
+        // `acquire_font_system_write_with_timeout` is where the
+        // decision lives, but the statement that ends the process is
+        // the `panic!` itself, and the sweep matches on the statement
+        // — so the site is spelled the way the code spells it.
+        ("panic!", "lib/baumhard/src/font/fonts.rs", true, ""),
         (
             "web_sys::window",
             "src/application/app/startup_load.rs",
@@ -1067,7 +1137,7 @@ mod tests {
     /// *vocabulary* rather than startup sites — they are what the
     /// rule is about, or the type it is stated in, not entries in
     /// its list.
-    const NOT_A_SITE: &[&str] = &["expect", "unwrap", "Err"];
+    const NOT_A_SITE: &[&str] = &["expect", "unwrap", "Err", "Result", "TryLockError"];
 
     /// The bold lead of §9's `expect` bullet, verbatim.
     const EXPECT_LEAD: &str = "**Startup paths use `expect(\"<reason>\")` with a human-readable message.**";
@@ -1245,13 +1315,21 @@ mod tests {
             // `bootstrap_wasm`; an `any` here would let one of the
             // two stop saying why it died while §9 goes on claiming
             // both do.
-            let all_expect = calls.iter().all(|s| s.contains(".expect("));
+            // "Says why it died", in either spelling that can. §9's
+            // demand is a human-readable message, and
+            // `panic!("<reason>")` carries one exactly as
+            // `expect("<reason>")` does — `fonts.rs` reaches its two
+            // through a `match` on `TryLockError`, where there is no
+            // `Result` left to `expect` on. A bare `unwrap()` carries
+            // neither and still fails, here and in
+            // [`test_no_startup_file_panics_outside_the_roster`].
+            let all_expect = calls.iter().all(|s| s.contains(".expect(") || s.contains("panic!("));
             assert_eq!(
                 all_expect,
                 *expects,
                 "§9 classes `{name}` in {relative} as {}, and the code says otherwise: a \
-                 site that `expect`s is one whose *every* call carries an \
-                 `.expect(\"<reason>\")`.{} Calls seen: {calls:#?}",
+                 site that `expect`s is one whose *every* call says why it died, with an \
+                 `.expect(\"<reason>\")` or a `panic!(\"<reason>\")`.{} Calls seen: {calls:#?}",
                 if *expects {
                     "a site that says why it died"
                 } else {
