@@ -705,10 +705,26 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 pub fn to_json_value(map: &MindMap) -> Result<Value, String> {
     let mut value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
     map.unknown_keys.splice_into(&mut value);
-    // Strictly afterwards: the captured keys' routes were resolved
-    // against a document the skipped constructs had already been
-    // lifted out of, so restoring the constructs first would slide
-    // every one of those routes onto the wrong element.
+    // Keys first, constructs second, and the reason is narrower than
+    // it looks. A captured key's positional route was resolved against
+    // a document the skipped constructs had already been lifted out
+    // of, so its index counts the *shortened* array; re-inserting the
+    // constructs first would make that index name a different element.
+    // What stops that being a data-loss bug in the general case is not
+    // this ordering — it is the element fingerprints
+    // `UnknownKeys::splice_into` carries, which re-find the element
+    // whichever length the array is. The ordering is what keeps the
+    // fingerprints from having to: it holds the array in the shape the
+    // route was recorded against, so the common path is an exact match
+    // at the recorded index rather than a search.
+    //
+    // It stops being merely defensive exactly where the fingerprints
+    // run out — two elements that serialize identically, where a
+    // search cannot say which one the key came from. Then this
+    // ordering is the whole difference between writing the key where
+    // it belongs and dropping it with a warning, and
+    // `tests::test_the_splice_order_decides_when_two_elements_are_alike`
+    // is that case.
     map.skipped_constructs.splice_into(&mut value);
     Ok(value)
 }
@@ -2860,6 +2876,93 @@ mod tests {
             .map(|entry| entry["id"].as_str().expect("id"))
             .collect();
         assert_eq!(ids, ["first", "mid", "last"]);
+    }
+
+
+    /// **Where the splice order stops being defensive and decides the
+    /// outcome.**
+    ///
+    /// `to_json_value` writes captured keys before skipped constructs
+    /// because a key's positional route counts the array *after* the
+    /// constructs were lifted out. For almost every map that ordering
+    /// is belt-and-braces: the element fingerprints
+    /// [`UnknownKeys::splice_into`](crate::mindmap::unknown_keys::UnknownKeys::splice_into)
+    /// carries re-find the element whichever length the array is, so
+    /// swapping the two lines changes nothing observable. That was a
+    /// surviving mutant, and the comment on those two lines used to
+    /// claim a guarantee the ordering was not the thing providing.
+    ///
+    /// This is the shape where it *is* the thing providing it. Two
+    /// custom mutations serialize identically — same id, same name,
+    /// same scope — so the fingerprint of the one that carried the key
+    /// matches in two places and a search cannot say which. With the
+    /// array at the length the route was recorded against, no search is
+    /// needed: the recorded index matches exactly. Re-insert the
+    /// skipped construct first and the index names the construct, the
+    /// fingerprint matches twice, the lengths no longer agree, and the
+    /// key is dropped with a warning instead of written.
+    ///
+    /// Duplicate entries are not hypothetical hygiene: nothing in the
+    /// loader or in `format/validation.md` makes a `custom_mutations`
+    /// id unique, and a map assembled by concatenating two files has
+    /// them by construction.
+    #[test]
+    fn test_the_splice_order_decides_when_two_elements_are_alike() {
+        // Two entries this build reads and cannot tell apart, and one
+        // it cannot read at all sitting in front of them.
+        let twin = r#"{"id": "dup", "name": "dup", "target_scope": "SelfOnly"}"#;
+        let unreadable = r#"{"id": "future", "name": "future", "target_scope": "SelfOnly",
+             "mutator": {"zzTieGlow": {"channel": 0}}}"#;
+        let carrying = r#"{"id": "dup", "name": "dup", "target_scope": "SelfOnly",
+             "zzambiguous_note": 1}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}, {carrying}, {twin}]"#),
+        );
+
+        let map = load_from_str(&json).expect("the map loads around the unreadable entry");
+        assert_eq!(map.custom_mutations.len(), 2, "the two twins survive the load");
+        assert_eq!(map.skipped_constructs.len(), 1);
+        assert_eq!(map.unknown_keys.len(), 1);
+
+        // **The premise, checked rather than assumed.** The whole test
+        // rests on this build being unable to tell the two entries
+        // apart. A field added to the written shape that happens to
+        // differ between them would make the fingerprint search
+        // succeed, the ordering stop mattering, and this test go on
+        // passing while proving nothing.
+        let written = serde_json::to_value(&map).expect("the model serializes");
+        let written = written["custom_mutations"].as_array().expect("an array");
+        assert_eq!(
+            written[0], written[1],
+            "the two entries have to be indistinguishable on the wire for this to be \
+             testing the splice order at all"
+        );
+
+        let saved = to_json_value(&map).expect("serializes");
+        let entries = saved["custom_mutations"].as_array().expect("an array");
+        assert_eq!(entries.len(), 3, "everything authored comes back: {saved}");
+
+        // The construct returns to the index it was authored at …
+        assert!(
+            entries[0]["mutator"].get("zzTieGlow").is_some(),
+            "the skipped construct belongs at index 0: {}",
+            entries[0]
+        );
+        // … and the key returns to the twin that carried it, not to
+        // its indistinguishable neighbor and not to nowhere.
+        assert_eq!(
+            entries[1]["zzambiguous_note"],
+            serde_json::json!(1),
+            "the preserved key belongs on the first twin: {saved}"
+        );
+        assert_eq!(
+            entries[2].get("zzambiguous_note"),
+            None,
+            "and on no other element: {saved}"
+        );
     }
 
     /// A trigger binding is the other unit — on a node and on a
