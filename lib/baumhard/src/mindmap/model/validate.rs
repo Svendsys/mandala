@@ -251,6 +251,21 @@ fn first_or_ok(messages: Vec<String>) -> Result<(), String> {
 
 // ---- Numeric-domain primitives ------------------------------------
 
+/// What an inverted font-size window costs: the cascades hand the
+/// pair to a clamp, and `f32::clamp` panics rather than saturating
+/// when its bounds cross. The clamp sites order the pair defensively
+/// (`font::fonts::clamp_to_font_window`), so this is the author-facing
+/// half of a defence that no longer depends on it.
+const INVERTED_SIZE_WINDOW: &str =
+    "the size cascades clamp with this pair, and a crossed pair is not a window";
+
+/// What an inverted zoom window costs: nothing crashes — the bounds
+/// are two independent comparisons — but no zoom satisfies both, so
+/// the element is invisible at every zoom level, which is rarely what
+/// an author meant to write.
+const INVERTED_ZOOM_WINDOW: &str =
+    "no zoom satisfies both bounds, so this never renders at any zoom level";
+
 /// Join a label prefix and a field name, tolerating an empty prefix
 /// so a top-level field reads `min_zoom_to_render` rather than
 /// `.min_zoom_to_render`. The prefix is the *document part* the
@@ -314,19 +329,18 @@ fn finite(label: &str, value: Option<f32>) -> Option<String> {
     }
 }
 
-/// `Some(message)` when a min / max pair is inverted.
+/// `Some(message)` when a min / max pair is inverted, explaining the
+/// consequence the caller actually suffers.
 ///
-/// This is the [`f32::clamp`] contract, and it is a `panic!`, not a
-/// saturation: every size cascade in the edge, label, and portal
-/// builders resolves a pair out of the document and clamps with it,
-/// so one inverted pair in a file is a crash on the next frame.
-fn ordered_pair(label: &str, min: Option<f32>, max: Option<f32>) -> Option<String> {
+/// `consequence` is a parameter because the two callers do not share
+/// one: a font-size window is handed to a clamp, while a zoom window
+/// is two independent comparisons that are total for any ordering.
+/// Reporting the wrong one would tell an author to fear a crash that
+/// cannot happen, or shrug at an element that silently never renders.
+fn ordered_pair(label: &str, min: Option<f32>, max: Option<f32>, consequence: &str) -> Option<String> {
     let (min, max) = (min?, max?);
     if min > max {
-        return Some(format!(
-            "{label}: min ({min}) is above max ({max}) — the size clamp panics on an \
-             inverted pair"
-        ));
+        return Some(format!("{label}: min ({min}) is above max ({max}) — {consequence}"));
     }
     None
 }
@@ -394,22 +408,24 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
         label,
         Some(conn.min_font_size_pt),
         Some(conn.max_font_size_pt),
+        INVERTED_SIZE_WINDOW,
     ));
     // Spacing is added to the glyph advance to derive the sample
-    // step; a negative one cancels the advance and a non-finite one
-    // poisons the count.
+    // step, so only its finiteness and magnitude matter here.
+    //
+    // A *negative* spacing is deliberately allowed. It tightens the
+    // rail below the `tight` preset into overlapping glyphs, which
+    // is a real authoring choice the `spacing` console verb already
+    // accepts — and rejecting it here would mean the editor could
+    // write a map it then refused to reopen. The hazard it looked
+    // like (a step that never advances) is already total at the
+    // sampler: `sample_count` returns a single point for any
+    // non-positive step rather than looping.
     out.extend(bounded(
         &field(label, "spacing"),
         conn.spacing as f64,
         MAX_NODE_AXIS,
     ));
-    if conn.spacing.is_finite() && conn.spacing < 0.0 {
-        out.push(format!(
-            "{label}.spacing is negative ({}) — a negative gap cancels the glyph \
-             advance and the sampler never advances along the path",
-            conn.spacing
-        ));
-    }
     out
 }
 
@@ -425,7 +441,12 @@ pub fn label_config_violations(label: &str, cfg: &EdgeLabelConfig) -> Vec<String
         &field(label, "max_font_size_pt"),
         cfg.max_font_size_pt,
     ));
-    out.extend(ordered_pair(label, cfg.min_font_size_pt, cfg.max_font_size_pt));
+    out.extend(ordered_pair(
+        label,
+        cfg.min_font_size_pt,
+        cfg.max_font_size_pt,
+        INVERTED_SIZE_WINDOW,
+    ));
     out.extend(finite(&field(label, "position_t"), cfg.position_t));
     out.extend(finite(
         &field(label, "perpendicular_offset"),
@@ -458,6 +479,7 @@ pub fn portal_endpoint_violations(label: &str, portal: &PortalEndpointState) -> 
         &field(label, "text"),
         portal.text_min_font_size_pt,
         portal.text_max_font_size_pt,
+        INVERTED_SIZE_WINDOW,
     ));
     out.extend(finite(&field(label, "border_t"), portal.border_t));
     out.extend(finite(
@@ -491,7 +513,7 @@ pub fn zoom_window_violations(label: &str, min: Option<f32>, max: Option<f32>) -
             }
         }
     }
-    out.extend(ordered_pair(&field(label, "zoom"), min, max));
+    out.extend(ordered_pair(&field(label, "zoom"), min, max, INVERTED_ZOOM_WINDOW));
     out
 }
 

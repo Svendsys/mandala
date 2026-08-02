@@ -8,6 +8,7 @@
 mod edges;
 mod enums;
 mod ids;
+mod numeric;
 mod palettes;
 mod references;
 mod sections;
@@ -99,6 +100,7 @@ pub fn verify(map: &MindMap) -> Vec<Violation> {
     out.extend(text_runs::check(map));
     out.extend(sections::check(map));
     out.extend(zoom_bounds::check(map));
+    out.extend(numeric::check(map));
     out
 }
 

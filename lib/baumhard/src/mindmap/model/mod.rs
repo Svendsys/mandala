@@ -400,13 +400,18 @@ impl<'a> ChildIndex<'a> {
     /// attacker-controlled, and a recursive walk over it overflows
     /// the stack and aborts the process rather than degrading.
     ///
-    /// `budget` bounds the *result*, which also bounds the walk —
-    /// every visited node pushes exactly one id.
+    /// `budget` bounds the result *and* the frontier — both, for the
+    /// reason [`MindMap::mark_hidden_with_index`] spells out: capping
+    /// only the visited count would let each of `budget` pops enqueue
+    /// a fresh fan-out first, so the pending vector could still reach
+    /// `budget × width`. In a valid tree every node is enqueued
+    /// exactly once and neither bound binds.
     fn collect_descendants(&self, node_id: &str, result: &mut Vec<String>, budget: usize) {
         // Children are pushed in reverse so the lowest-sorted one
         // pops first, preserving the order the recursive walk
         // produced — callers index into this vector.
         let mut pending: Vec<&'a MindNode> = self.children_of(node_id).iter().rev().copied().collect();
+        let mut enqueued = pending.len();
         while let Some(node) = pending.pop() {
             if result.len() >= budget {
                 log::error!(
@@ -419,6 +424,16 @@ impl<'a> ChildIndex<'a> {
             }
             result.push(node.id.clone());
             for child in self.children_of(&node.id).iter().rev() {
+                if enqueued > budget {
+                    log::error!(
+                        "mindmap: descendant walk from node {:?} enqueued more than its {} \
+                         node budget; parent_id cycle suspected, truncating",
+                        node_id,
+                        budget
+                    );
+                    return;
+                }
+                enqueued += 1;
                 pending.push(child);
             }
         }

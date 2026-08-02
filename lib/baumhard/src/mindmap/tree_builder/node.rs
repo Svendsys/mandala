@@ -383,7 +383,9 @@ pub(super) fn append_node_sections(
 /// key on.
 ///
 /// Cost: O(visible descendants). One heap vector holding the
-/// frontier — the widest sibling set on the path, not the subtree.
+/// frontier — the sum of the unprocessed sibling rows along the
+/// current path, so O(depth) for a chain and O(n) for a shallow
+/// wide tree.
 // `clippy::too_many_arguments`: an arena walk threading four
 // out-parameters (`tree`, `node_map`, `section_map`, `id_counter`)
 // plus the read-only `(map, index, parent)` triple. Bundling the

@@ -728,20 +728,6 @@ fn side_pattern_first_grapheme(pattern: &SidePattern) -> String {
     }
 }
 
-/// Fit `pattern` into `available_pt` of horizontal space, given
-/// the active face's measured per-grapheme advances. Returns
-/// `(rendered_text, cluster_count, rendered_width_pt)`. The
-/// rendered width is **always ≤ available_pt** — `floor()`
-/// rather than `round()` so the fill never overshoots its
-/// allocated span and clips into the corner glyph next to it.
-///
-/// For the demo's `Atomic-repeat` node (size 360×110,
-/// font_size_pt 18, top `+=##=+`, corners `┌`/`┐`): the cache
-/// returns the actual measured widths of each grapheme in
-/// LiberationSans, the sum gives the cluster's true width, and
-/// `floor(available / cluster_w)` picks the largest N copies
-/// that fit. The leftover sub-cluster pixels stay blank, so the
-/// rail terminates flush with the right corner.
 /// Hard ceiling on the grapheme count one border side may emit.
 ///
 /// The copy count is `available width / cluster advance`, and
@@ -804,6 +790,20 @@ fn fill_copies_bounded(
     (copies as usize).min(by_graphemes).min(by_bytes)
 }
 
+/// Fit `pattern` into `available_pt` of horizontal space, given
+/// the active face's measured per-grapheme advances. Returns
+/// `(rendered_text, cluster_count, rendered_width_pt)`. The
+/// rendered width is **always ≤ available_pt** — `floor()`
+/// rather than `round()` so the fill never overshoots its
+/// allocated span and clips into the corner glyph next to it.
+///
+/// For the demo's `Atomic-repeat` node (size 360×110,
+/// font_size_pt 18, top `+=##=+`, corners `┌`/`┐`): the cache
+/// returns the actual measured widths of each grapheme in
+/// LiberationSans, the sum gives the cluster's true width, and
+/// `floor(available / cluster_w)` picks the largest N copies
+/// that fit. The leftover sub-cluster pixels stay blank, so the
+/// rail terminates flush with the right corner.
 fn fit_pattern_to_width(
     font_system: &mut FontSystem,
     pattern: &SidePattern,

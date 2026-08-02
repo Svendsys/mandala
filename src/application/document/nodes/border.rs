@@ -869,7 +869,18 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
         }
     }
     changed |= apply_option_edit(&edits.font, &mut cfg.font, |v| v.clone());
-    changed |= apply_value_set(&edits.font_size_pt, &mut cfg.font_size_pt);
+    // Clamp rather than pass through: the loader rejects a border
+    // font size outside the shaper's domain, so an unclamped write
+    // here would let the editor author a map it then refused to
+    // reopen. Same posture as the reverse converter's
+    // `clamp_run_size_pt`.
+    if let crate::application::document::OptionEdit::Set(requested) = &edits.font_size_pt {
+        let clamped = baumhard::font::fonts::clamp_font_metric(*requested, cfg.font_size_pt);
+        if cfg.font_size_pt != clamped {
+            cfg.font_size_pt = clamped;
+            changed = true;
+        }
+    }
     changed |= apply_option_edit(&edits.color, &mut cfg.color, |v| v.clone());
     changed |= apply_value_set(&edits.padding, &mut cfg.padding);
     changed |= apply_option_edit(&edits.color_palette, &mut cfg.color_palette, |v| v.clone());

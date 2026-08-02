@@ -85,6 +85,10 @@ lazy_static! {
 /// caller ever holds `FONT_SYSTEM.write()` while invoking the tree
 /// builder, the lazy path would deadlock. Eager init at startup
 /// makes that impossible.
+pub fn init() {
+    ensure_warm();
+}
+
 /// Floor for any font metric handed to the text shaper, in points.
 ///
 /// Zero is the value that kills the process: cosmic-text's
@@ -156,9 +160,6 @@ pub fn clamp_to_font_window(value: f32, min: f32, max: f32) -> f32 {
     value.clamp(low, high)
 }
 
-pub fn init() {
-    ensure_warm();
-}
 
 /// Force the font lazy-statics a `FONT_SYSTEM` write acquire depends
 /// on to build **now** — `COMPILED_FONT_ID_MAP` (via `load_fonts`,

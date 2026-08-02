@@ -27,12 +27,11 @@ pub fn mindmap_to_markdown(map: &MindMap) -> String {
 /// growing with `depth`.
 ///
 /// **Iterative**, for the same reason every `parent_id` walk in
-/// baumhard is: the depth comes from a `.mindmap.json`, which is
-/// untrusted input, and a linear chain of N nodes is a legal acyclic
-/// tree. Recursing over one exhausts the stack and aborts the
-/// process — and `export` is a verb you reach for precisely when a
-/// map is suspect, so it must survive the files the editor will not
-/// open.
+/// baumhard is: a linear chain of N nodes is a legal acyclic tree
+/// that the loader *accepts*, so arbitrary depth arrives through the
+/// ordinary strict door `export` already uses — no inspection path
+/// required. Recursing over it exhausts the stack and aborts the
+/// process.
 ///
 /// Pending entries are pushed reversed so the first sibling is
 /// emitted first, preserving document order.

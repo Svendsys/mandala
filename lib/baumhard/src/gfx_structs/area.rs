@@ -292,12 +292,23 @@ impl GlyphArea {
             operation.apply(&mut self.render_bounds.y, bounds.y);
         }
 
+        // The delta path writes the same two shaper metrics the
+        // setters do, so it takes the same clamp. Applying into a
+        // local first keeps the operation semantics (`Add` still
+        // adds, `Multiply` still multiplies) while the *result* is
+        // what gets bounded — otherwise a `GlyphAreaField::Scale`
+        // delta, which a map-carried CustomMutation can carry, walks
+        // straight past the invariant the setters exist to hold.
         if let Some(line_height) = delta.line_height() {
-            operation.apply(&mut self.line_height, OrderedFloat::from(line_height));
+            let mut next = self.line_height;
+            operation.apply(&mut next, OrderedFloat::from(line_height));
+            self.set_line_height_clamped(next.into_inner());
         }
 
         if let Some(scale) = delta.scale() {
-            operation.apply(&mut self.scale, OrderedFloat::from(scale));
+            let mut next = self.scale;
+            operation.apply(&mut next, OrderedFloat::from(scale));
+            self.set_scale_clamped(next.into_inner());
         }
 
         if let Some(x) = delta.color_font_regions() {

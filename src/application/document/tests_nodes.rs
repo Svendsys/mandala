@@ -3392,3 +3392,75 @@ fn test_measured_prefix_bounds_layout_but_not_the_line_count() {
     assert_eq!(measured_prefix("", MEASURED_LINE_BUDGET), ("", 0));
     assert_eq!(measured_prefix("solo", MEASURED_LINE_BUDGET), ("solo", 1));
 }
+
+/// **A file the editor writes must be a file the editor can reopen.**
+///
+/// The loader now rejects rather than repairs, which makes every
+/// writer that can exceed the new domain a lockout candidate: the
+/// user edits, saves, and their own map stops opening. The console
+/// parsers are deliberately permissive (`parse_finite_pt` accepts
+/// `0.001`, the `spacing` verb accepts any finite float), so the
+/// clamps have to live at the document setters — the same posture
+/// the reverse converter takes with `clamp_run_size_pt`.
+///
+/// This drives the setters with values well outside the domain and
+/// then round-trips through the real save and the real strict load.
+#[test]
+fn test_extreme_editor_writes_still_reload() {
+    use crate::application::document::{BorderConfigEdits, OptionEdit};
+    use baumhard::mindmap::loader::{load_from_file, save_to_file};
+
+    let mut doc = load_test_doc();
+    let node_id = doc.mindmap.root_nodes()[0].id.clone();
+
+    // A decorative hairline and an absurd ceiling, from the two
+    // ends the console will happily parse.
+    for requested in [0.001_f32, 5000.0] {
+        let edits = BorderConfigEdits {
+            font_size_pt: OptionEdit::Set(requested),
+            visible: Some(true),
+            ..Default::default()
+        };
+        doc.set_node_border_config(&node_id, edits);
+    }
+
+    // A negative gap is a legitimate tightening, so it must survive
+    // the round trip unchanged rather than be clamped away.
+    let edge_ref = doc
+        .mindmap
+        .edges
+        .first()
+        .map(|e| crate::application::document::EdgeRef {
+            from_id: e.from_id.clone(),
+            to_id: e.to_id.clone(),
+            edge_type: e.edge_type.clone(),
+        })
+        .expect("fixture has edges");
+    doc.set_edge_spacing(&edge_ref, -2.0);
+
+    let dir = baumhard::util::test_temp::TempDir::new("editor-write-reload");
+    let path = dir.join("written.mindmap.json");
+    save_to_file(&path, &doc.mindmap).expect("save must succeed");
+
+    let reloaded = load_from_file(&path).unwrap_or_else(|e| {
+        panic!("the editor wrote a map its own loader refuses — this is the lockout case: {e}")
+    });
+
+    let border = reloaded.nodes[&node_id]
+        .style
+        .border
+        .as_ref()
+        .expect("border override was authored");
+    assert!(
+        border.font_size_pt >= baumhard::font::fonts::MIN_FONT_SIZE_PT
+            && border.font_size_pt <= baumhard::font::fonts::MAX_FONT_SIZE_PT,
+        "the setter must clamp into the domain the loader accepts, got {}",
+        border.font_size_pt
+    );
+    let spacing = reloaded.edges[0]
+        .glyph_connection
+        .as_ref()
+        .map(|c| c.spacing)
+        .expect("spacing override was authored");
+    assert_eq!(spacing, -2.0, "a negative gap is authorable and must survive");
+}

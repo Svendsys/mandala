@@ -344,7 +344,9 @@ impl Tree<GfxElement, GfxMutator> {
     /// editor on the first mouse move across the canvas.
     ///
     /// Cost: O(n), plus one heap vector holding the post-order
-    /// frontier — the depth plus the widest sibling set along it.
+    /// frontier — the sum of the unprocessed sibling rows along the
+    /// current path, so O(depth) for a chain and O(n) for a shallow
+    /// wide tree.
     /// That vector is a deliberate trade against §B7's
     /// allocation-free preference: the recursive shape did not avoid
     /// the storage, it put the same data on the call stack, where

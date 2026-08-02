@@ -585,7 +585,7 @@ fn spatial_descend(
 
     // BVH descent to find the hit node.
     let mut best: Option<(NodeId, f32)> = None;
-    spatial_descend_recurse(&gfx_tree.arena, target_id, point_vec, &mut best);
+    spatial_descend_best(&gfx_tree.arena, target_id, point_vec, &mut best);
 
     // Apply the instruction's mutation to the hit node.
     let Some((hit_id, _)) = best else {
@@ -609,12 +609,12 @@ fn spatial_descend(
     }
 }
 
-/// Recursive BVH descent helper for [`spatial_descend`]. Read-only
-/// arena traversal that collects the best (smallest-area) hit.
+/// BVH descent helper for [`spatial_descend`]. Read-only arena
+/// traversal that collects the best (smallest-area) hit, with no
+/// slack and no shape refinement — the exact-hit case.
 ///
-/// Uses `first_child` / `next_sibling` iteration to avoid
-/// allocating a `Vec` on every recursive call (§B7).
-fn spatial_descend_recurse(
+/// Cost: [`bvh_find`]'s, which it forwards to unchanged.
+fn spatial_descend_best(
     arena: &Arena<GfxElement>,
     node_id: NodeId,
     point: Vec2,
@@ -635,11 +635,21 @@ fn spatial_descend_recurse(
 ///    hit, optionally refine via `area.shape.contains_local` so an
 ///    ellipse hit-tests against its actual shape rather than its
 ///    bounding rectangle.
-/// 3. Recurse into the child's children.
+/// 3. Descend into the child's children.
 ///
 /// Smallest-area wins on tie (so a smaller element stacked over a
-/// bigger one is the hit). Uses `first_child` / `next_sibling`
-/// iteration to avoid per-call `Vec` allocation (§B7).
+/// bigger one is the hit), and the *first* candidate of an equal
+/// area keeps the slot — which is why the descent order below is
+/// preserved exactly rather than merely being some depth-first
+/// order.
+///
+/// Cost: O(visited), plus one heap `Vec` holding the pending
+/// frontier — the sum of the unprocessed sibling rows along the
+/// current path, so O(depth) for a chain and O(n) for a shallow
+/// wide tree. That allocation is a deliberate trade against §B7:
+/// the previous shape did not avoid the storage, it kept the same
+/// data on the call stack, where a `.mindmap.json` deep enough to
+/// exhaust it aborted the process instead of merely costing memory.
 pub(crate) fn bvh_find(
     arena: &Arena<GfxElement>,
     node_id: NodeId,
