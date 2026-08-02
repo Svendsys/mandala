@@ -31,9 +31,7 @@
 //! ([`MAX_NODE_AXIS`](crate::mindmap::model::MAX_NODE_AXIS)) is the
 //! backstop if that ever stops being true.
 
-use crate::mindmap::model::{
-    MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun,
-};
+use crate::mindmap::model::{MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun};
 use crate::util::grapheme_chad::{count_grapheme_clusters, grapheme_display_width, wrap_to_display_width};
 
 /// `MindMap::name` every placard carries. Distinct from any name a
@@ -105,8 +103,7 @@ const PLACARD_LINE_HEIGHT_FRAC: f64 = 1.3;
 pub fn load_failure(source: &str, message: &str) -> MindMap {
     let text = load_failure_text(source, message);
     let mut map = MindMap::new_blank(PLACARD_MAP_NAME);
-    map.nodes
-        .insert(PLACARD_NODE_ID.to_string(), placard_node(text));
+    map.nodes.insert(PLACARD_NODE_ID.to_string(), placard_node(text));
     map
 }
 
@@ -240,14 +237,16 @@ mod tests {
         let long_path = format!("/home/user/{}/map.mindmap.json", "d".repeat(200));
         for (source, message) in [
             (SOURCE, MESSAGE),
-            (long_path.as_str(), "Failed to parse mindmap JSON: EOF while parsing a value at line 1 column 0"),
+            (
+                long_path.as_str(),
+                "Failed to parse mindmap JSON: EOF while parsing a value at line 1 column 0",
+            ),
             ("", ""),
         ] {
             let text = load_failure_text(source, message);
             for line in text.lines() {
                 assert!(
-                    grapheme_display_width(line) <= PLACARD_COLUMNS
-                        || count_grapheme_clusters(line) == 1,
+                    grapheme_display_width(line) <= PLACARD_COLUMNS || count_grapheme_clusters(line) == 1,
                     "line {line:?} exceeds {PLACARD_COLUMNS} columns"
                 );
             }
@@ -300,10 +299,7 @@ mod tests {
         let section = &map.nodes[PLACARD_NODE_ID].sections[0];
         assert_eq!(section.text_runs.len(), 1);
         assert_eq!(section.text_runs[0].start, 0);
-        assert_eq!(
-            section.text_runs[0].end,
-            count_grapheme_clusters(&section.text)
-        );
+        assert_eq!(section.text_runs[0].end, count_grapheme_clusters(&section.text));
     }
 
     /// The node box grows with the message. A fixed box would clip a

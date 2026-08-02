@@ -15,12 +15,12 @@ use crate::application::platform::input::Modifiers as ModifiersState;
 
 use super::console_input::load_console_history;
 use super::run_native::InitState;
-use super::startup_load;
 use super::scene_rebuild::{
     flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice, warm_handle_tree_arenas,
     CanvasFrame,
 };
 use super::single_line_edit::SingleLineEditor;
+use super::startup_load;
 use super::text_edit::TextEditState;
 use super::{DragState, InteractionMode, Options};
 use crate::application::common::RenderDecree;

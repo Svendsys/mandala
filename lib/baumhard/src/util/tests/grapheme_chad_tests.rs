@@ -1647,7 +1647,10 @@ pub fn do_wrap_to_display_width() {
 
     // Indentation is content and survives on the first line; the
     // continuation is flush left.
-    assert_eq!(wrap_to_display_width("  hello world", 7), vec!["  hello", "world"]);
+    assert_eq!(
+        wrap_to_display_width("  hello world", 7),
+        vec!["  hello", "world"]
+    );
 
     // Trailing whitespace is trimmed rather than pushing the line
     // over its width or spilling into a blank continuation.
@@ -1667,10 +1670,7 @@ pub fn do_wrap_to_display_width() {
     // skin-toned emoji each stay whole across a break — each counts
     // as one cell, since `scalar_display_width`'s wide table is
     // East-Asian blocks only and deliberately does not claim emoji.
-    assert_eq!(
-        wrap_to_display_width("👨‍👩‍👧🇺🇸🙏🏻", 2),
-        vec!["👨‍👩‍👧🇺🇸", "🙏🏻"]
-    );
+    assert_eq!(wrap_to_display_width("👨‍👩‍👧🇺🇸🙏🏻", 2), vec!["👨‍👩‍👧🇺🇸", "🙏🏻"]);
     // A combining acute rides with its base rather than starting a
     // line of its own.
     assert_eq!(wrap_to_display_width("e\u{0301}xy", 2), vec!["e\u{0301}x", "y"]);

@@ -76,16 +76,32 @@ pub(crate) fn startup_surface(source: &str, load: Result<MindMapDocument, String
 /// message on the way past when there was one.
 ///
 /// The single place either target turns a [`StartupSurface`] into a
-/// document. `error!` still fires — a terminal user and a bug report
-/// both want the line, and the placard is an addition to it, not a
+/// document. The log line still fires — a terminal user and a bug
+/// report both want it, and the placard is an addition to it, not a
 /// replacement for it.
+///
+/// Three lines long on purpose: everything that *decides* lives in
+/// [`resolve`], which is pure and pinned, so the only thing not
+/// covered by a test here is the `log::error!` invocation itself.
 pub(crate) fn adopt(surface: StartupSurface) -> MindMapDocument {
+    let (document, report) = resolve(surface);
+    if let Some(message) = report {
+        log::error!("startup: {}", message);
+    }
+    document
+}
+
+/// The document to render, and the line to report if there is one.
+///
+/// The exhaustive match: a new [`StartupSurface`] variant is a
+/// compile error here, not a silent fallthrough back to the empty
+/// window #107 is about. Pure, so both halves of the answer — which
+/// document, and what gets said about it — are assertable without a
+/// logger or a device.
+fn resolve(surface: StartupSurface) -> (MindMapDocument, Option<String>) {
     match surface {
-        StartupSurface::Loaded(document) => document,
-        StartupSurface::Rejected { placard, message } => {
-            log::error!("startup: {}", message);
-            placard
-        }
+        StartupSurface::Loaded(document) => (document, None),
+        StartupSurface::Rejected { placard, message } => (placard, Some(message)),
     }
 }
 
@@ -144,10 +160,27 @@ mod tests {
 
         let surface = startup_surface("maps/testament.mindmap.json", Ok(doc));
         assert!(matches!(surface, StartupSurface::Loaded(_)));
-        let adopted = adopt(surface);
+        let (adopted, report) = resolve(surface);
+        assert!(report.is_none(), "a successful load reports nothing: {report:?}");
         assert_eq!(adopted.mindmap.name, name);
         assert_eq!(adopted.mindmap.nodes.len(), nodes);
         assert!(adopted.file_path.is_some(), "a real load stays bound to its file");
+    }
+
+    /// A rejected load reports the loader's message verbatim, under
+    /// §9's `"<area>: message"` prefix idiom once [`adopt`] stamps
+    /// it. The canvas is the surface #107 is about, but the log line
+    /// is what a terminal user and a bug report still get, so it is
+    /// pinned to the same words rather than left to drift.
+    #[test]
+    fn test_rejected_load_reports_the_loader_message_verbatim() {
+        let (message, result) = rejected();
+        let (_, report) = resolve(startup_surface("broken.mindmap.json", result));
+        assert_eq!(
+            report.as_deref(),
+            Some(message.as_str()),
+            "the reported line must be the loader's message, not a paraphrase"
+        );
     }
 
     /// **The fix, stated as a test.** A rejected load does not leave
