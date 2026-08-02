@@ -160,11 +160,9 @@ fn build_family_index() -> Vec<(String, AppFont)> {
         }
     }
 
-    // One line so the roster in `startup_load`'s tests can name this
-    // site as `FONT_SYSTEM.read`: it reads whitespace-flattened
-    // statements, and a wrapped receiver would leave the site
-    // spellable only as a bare `read`.
-    let font_system = FONT_SYSTEM.read().expect("FONT_SYSTEM lock poisoned during family-index build");
+    let font_system = FONT_SYSTEM
+        .read()
+        .expect("FONT_SYSTEM lock poisoned during family-index build");
     let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
     let mut out: Vec<(String, AppFont)> = Vec::new();
     for face in font_system.db().faces() {

@@ -382,7 +382,12 @@ mod tests {
             // A source that is its own path component in the message.
             (SOURCE, read_error, true, "the read error names the whole path"),
             // The regression: `map` inside `mindmap`.
-            ("map", PARSE_MESSAGE, false, "a substring of a longer word is not a name"),
+            (
+                "map",
+                PARSE_MESSAGE,
+                false,
+                "a substring of a longer word is not a name",
+            ),
             // The same short source, genuinely named.
             (
                 "map",
@@ -406,7 +411,12 @@ mod tests {
                 "a prefix of a longer filename is not that filename",
             ),
             // The relative spelling a shell hands over.
-            ("./map", PARSE_MESSAGE, false, "the parse message names no file at all"),
+            (
+                "./map",
+                PARSE_MESSAGE,
+                false,
+                "the parse message names no file at all",
+            ),
             (
                 "./map",
                 "Failed to read file ./map: No such file or directory (os error 2)",
@@ -414,7 +424,12 @@ mod tests {
                 "the read error names the relative path as given",
             ),
             // End of string bounds as well as whitespace does.
-            ("broken.json", "cannot open broken.json", true, "the end of the message bounds"),
+            (
+                "broken.json",
+                "cannot open broken.json",
+                true,
+                "the end of the message bounds",
+            ),
             // A drive letter is inside the source, not beside it.
             (
                 r"C:\maps\x.mindmap.json",
@@ -424,7 +439,12 @@ mod tests {
             ),
             // A blank source has nothing to be named by.
             ("", PARSE_MESSAGE, false, "an empty source is never named"),
-            ("", "", false, "an empty source is never named, even by an empty message"),
+            (
+                "",
+                "",
+                false,
+                "an empty source is never named, even by an empty message",
+            ),
             // The residual, asserted rather than merely described: a
             // file whose whole name is a word of the loader's prose.
             // No textual predicate separates this from a real mention.

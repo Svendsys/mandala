@@ -1075,12 +1075,7 @@ mod tests {
             "the failures are one level in, at the browser's `EventLoop::new` and \
              `create_window`; the native arm of it cannot fail at all",
         ),
-        (
-            "FONT_SYSTEM.read",
-            "lib/baumhard/src/font/fonts.rs",
-            true,
-            "",
-        ),
+        ("FONT_SYSTEM.read", "lib/baumhard/src/font/fonts.rs", true, ""),
         // The one roster name that is a macro rather than a call.
         // `acquire_font_system_write_with_timeout` is where the
         // decision lives, but the statement that ends the process is
@@ -1211,7 +1206,16 @@ mod tests {
     /// matches `create_surface_config(` — which is infallible, and
     /// would answer "does every call of this carry an `.expect(`"
     /// with the wrong answer.
+    ///
+    /// Whitespace around a `.` is closed up first, so a roster name
+    /// may be a receiver plus a method — `FONT_SYSTEM.read` — and
+    /// still match after rustfmt has broken the chain over three
+    /// lines. Rust does not care where the newline falls and neither
+    /// should the roster: the alternative is either a bare `read`,
+    /// which says nothing about *which* lock, or production code
+    /// squeezed onto one line to suit a test.
     fn statement_calls(statement: &str, name: &str) -> bool {
+        let statement = statement.replace(" .", ".").replace(". ", ".");
         let needle = format!("{name}(");
         let mut from = 0usize;
         while let Some(offset) = statement[from..].find(&needle) {
@@ -1323,7 +1327,9 @@ mod tests {
             // `Result` left to `expect` on. A bare `unwrap()` carries
             // neither and still fails, here and in
             // [`test_no_startup_file_panics_outside_the_roster`].
-            let all_expect = calls.iter().all(|s| s.contains(".expect(") || s.contains("panic!("));
+            let all_expect = calls
+                .iter()
+                .all(|s| s.contains(".expect(") || s.contains("panic!("));
             assert_eq!(
                 all_expect,
                 *expects,
