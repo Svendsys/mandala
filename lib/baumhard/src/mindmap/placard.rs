@@ -171,12 +171,65 @@ pub fn load_failure_text(source: &str, message: &str) -> String {
 /// the error, and it stays right if a second message ever grows a
 /// path.
 ///
-/// An empty `source` is never "named": `"".contains("")` is true, and
-/// a placard built from a blank source must still say what it has.
+/// **A substring is not a name, and the difference is user-visible.**
+/// `mandala map` on a malformed file named `map` produces `Failed to
+/// parse mindmap JSON: expected ident at line 1 column 2`, which
+/// contains `map` — inside the word *mindmap*. A plain `contains`
+/// answered yes, so the placard dropped its source line and the log
+/// line dropped its prefix, and neither surface said which file had
+/// failed. That is exactly the emptiness this module exists to
+/// replace, reached by a shorter path.
 ///
-/// Cost: one substring search.
+/// So the occurrence has to be *bounded*: the characters on either
+/// side of it must be ones that cannot continue a path. Alphanumerics
+/// continue a name (`map` inside `mindmap`), and `_ - . / \ ~`
+/// continue a path (`map` inside `map.mindmap.json`, or inside
+/// `maps/map` — a different file from `map`, and one the message
+/// therefore does not name). Everything else — whitespace, `:`,
+/// quotes, the ends of the string — bounds it. A Windows `C:\maps\x`
+/// still works: `:` bounds, and the drive letter is inside the source
+/// rather than beside it.
+///
+/// **The residual, stated exactly.** A source whose whole name is a
+/// word of the loader's own prose — a file called `mindmap`, `file`,
+/// or `JSON` — is still read as named, and its source line is still
+/// dropped. No purely textual predicate can do better: at that point
+/// the message really does contain the source, bounded, and only
+/// knowing that the loader wrote the word rather than interpolated
+/// the path would separate them. Erring the other way costs a
+/// duplicated path on a screen that already failed; erring this way
+/// costs the filename entirely, so the bound is set where the
+/// realistic collisions are and the exotic one is written down.
+///
+/// An empty `source` is never named: `"".contains("")` is true, and a
+/// placard built from a blank source must still say what it has.
+///
+/// Cost: one substring search per occurrence of `source` in
+/// `message`, and two character lookups per occurrence.
 pub fn message_names_source(source: &str, message: &str) -> bool {
-    !source.is_empty() && message.contains(source)
+    if source.is_empty() {
+        return false;
+    }
+    let mut from = 0usize;
+    while let Some(offset) = message[from..].find(source) {
+        let at = from + offset;
+        let before = message[..at].chars().next_back();
+        let after = message[at + source.len()..].chars().next();
+        if !before.is_some_and(continues_a_path) && !after.is_some_and(continues_a_path) {
+            return true;
+        }
+        // Past the first character of this occurrence, so an
+        // overlapping one is still reached.
+        from = at + message[at..].chars().next().map_or(1, char::len_utf8);
+    }
+    false
+}
+
+/// Whether `c` could be part of the same path as the character next
+/// to it — the test [`message_names_source`] applies to the two
+/// characters bounding a candidate occurrence.
+fn continues_a_path(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '\\' | '~')
 }
 
 /// The placard's single node, sized to its own text and styled to
@@ -303,6 +356,113 @@ mod tests {
             assert!(text.starts_with(PLACARD_HEADLINE));
             assert!(text.ends_with(PLACARD_FOOTER));
         }
+    }
+
+    /// The loader's parse message, which names no file. Short enough
+    /// to collide with a short source, which is the point.
+    const PARSE_MESSAGE: &str = "Failed to parse mindmap JSON: expected ident at line 1 column 2";
+
+    /// **"Names" means bounded, not merely present.**
+    ///
+    /// The row that put this test here is the second one: `mandala
+    /// map` on a malformed file called `map` matched the `map` inside
+    /// *mindmap*, so both surfaces dropped the source and neither
+    /// said which file had failed — the empty screen #107 is about,
+    /// via a shorter route. Every row is a spelling of the same
+    /// question, and the three the fix has to get right are a short
+    /// source, a source that is a substring of a longer word, and a
+    /// source that legitimately appears as its own path component.
+    #[test]
+    fn test_message_names_source_bounds_the_occurrence() {
+        let read_error = concat!(
+            "Failed to read file /home/user/maps/broken.mindmap.json: ",
+            "No such file or directory (os error 2)"
+        );
+        let cases: &[(&str, &str, bool, &str)] = &[
+            // A source that is its own path component in the message.
+            (SOURCE, read_error, true, "the read error names the whole path"),
+            // The regression: `map` inside `mindmap`.
+            ("map", PARSE_MESSAGE, false, "a substring of a longer word is not a name"),
+            // The same short source, genuinely named.
+            (
+                "map",
+                "Failed to read file map: No such file or directory (os error 2)",
+                true,
+                "a short source bounded by a space and a colon is named",
+            ),
+            // A path component of a *different* path.
+            (
+                "map",
+                "Failed to read file maps/map.mindmap.json: No such file or directory (os error 2)",
+                false,
+                "`maps/map.mindmap.json` is a different file from `map`",
+            ),
+            // `.` continues a path, so a prefix of a longer filename
+            // is not the filename.
+            (
+                "broken.json",
+                "Failed to read file broken.json.bak: No such file or directory (os error 2)",
+                false,
+                "a prefix of a longer filename is not that filename",
+            ),
+            // The relative spelling a shell hands over.
+            ("./map", PARSE_MESSAGE, false, "the parse message names no file at all"),
+            (
+                "./map",
+                "Failed to read file ./map: No such file or directory (os error 2)",
+                true,
+                "the read error names the relative path as given",
+            ),
+            // End of string bounds as well as whitespace does.
+            ("broken.json", "cannot open broken.json", true, "the end of the message bounds"),
+            // A drive letter is inside the source, not beside it.
+            (
+                r"C:\maps\x.mindmap.json",
+                r"Failed to read file C:\maps\x.mindmap.json: No such file or directory",
+                true,
+                "a Windows path is bounded by the space and the colon after it",
+            ),
+            // A blank source has nothing to be named by.
+            ("", PARSE_MESSAGE, false, "an empty source is never named"),
+            ("", "", false, "an empty source is never named, even by an empty message"),
+            // The residual, asserted rather than merely described: a
+            // file whose whole name is a word of the loader's prose.
+            // No textual predicate separates this from a real mention.
+            (
+                "mindmap",
+                PARSE_MESSAGE,
+                true,
+                "documented residual — a source named exactly like a word of the message",
+            ),
+        ];
+        for (source, message, expected, why) in cases {
+            assert_eq!(
+                message_names_source(source, message),
+                *expected,
+                "message_names_source({source:?}, {message:?}) — {why}"
+            );
+        }
+    }
+
+    /// The end-to-end half of the row above: a short source the
+    /// message does not name still reaches the canvas.
+    ///
+    /// The predicate is shared with `startup_load::report_line`, so
+    /// this pins the surface a user sees rather than only the
+    /// decision behind it — the regression was visible here first.
+    #[test]
+    fn test_placard_names_a_short_source_the_message_does_not() {
+        let text = load_failure_text("map", PARSE_MESSAGE);
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(
+            lines.contains(&"map"),
+            "the placard for a short source dropped it, and nothing on it says which \
+             file failed:\n{text}"
+        );
+        assert!(
+            text.contains(PARSE_MESSAGE),
+            "the loader's own message must survive alongside the source:\n{text}"
+        );
     }
 
     /// No line of the placard runs past its column, except where a

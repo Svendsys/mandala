@@ -609,6 +609,51 @@ mod tests {
         }
     }
 
+    /// **A source too short to be a path of its own still reaches
+    /// both surfaces.**
+    ///
+    /// The pin above uses a long absolute path, and so did every
+    /// other one here — which is how the "once" rule shipped with a
+    /// hole in it. `mandala map` on a malformed file called `map`
+    /// draws the loader's `Failed to parse mindmap JSON: …`, and the
+    /// old predicate found `map` inside the word **mindmap**. Both
+    /// surfaces concluded the message had already named the file and
+    /// dropped it, so neither said which file failed: the empty
+    /// screen #107 is about, reached by a shorter route than #107's.
+    ///
+    /// Short sources are not exotic — a map in the working directory
+    /// is typed as its bare name. The predicate lives in
+    /// `baumhard::mindmap::placard`, which pins the decision itself
+    /// across a dozen spellings; this pins the two surfaces that ask
+    /// it, because a predicate can be right while a caller drops its
+    /// answer on the floor.
+    #[test]
+    fn test_a_short_source_reaches_both_surfaces() {
+        let short = "map";
+        let message = MindMapDocument::from_json_str("map", None)
+            .err()
+            .expect("a bare word is not a mindmap and must not load");
+        assert!(
+            message.contains(short),
+            "fixture assumption broken — this test is about a message that contains the \
+             source as a fragment rather than as a name: {message}"
+        );
+
+        let line = report_line(short, &message);
+        assert!(
+            line.contains(&format!("'{short}'")) && line.contains(&message),
+            "the log line for a short source must name it and keep the loader's words, \
+             got {line:?}"
+        );
+
+        let canvas = placard::load_failure_text(short, &message);
+        assert!(
+            canvas.lines().any(|line| line == short),
+            "the placard for a short source dropped it, leaving nothing on the canvas \
+             that says which file failed:\n{canvas}"
+        );
+    }
+
     /// **The browser leg keeps the loader's words.** Blanking the
     /// message on that leg alone used to be a one-line edit at the
     /// init site that no test could see, because `cargo test` runs
