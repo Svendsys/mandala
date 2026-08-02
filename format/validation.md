@@ -13,12 +13,19 @@ Exit code 0 if clean, or if only warnings are found. Nonzero with a
 list of violations if any error is found. Warnings are still printed so
 a CI recipe that captures stderr can see them.
 
-The split is between *spelling* and *meaning*. Spelling is the
-loader's: every object in the format is closed, so a key no field
-claims fails the load outright rather than being dropped and then
-erased at the next save — see [schema.md](./schema.md#unknown-keys-are-rejected).
-Everything below is about correctly-spelled files that still say
-something incoherent, and that is `verify`'s.
+The split used to be between *spelling* and *meaning*, with spelling
+the loader's business. It is not any more, and the reason matters: a
+key no field claims is now **kept**, so an older build can open a
+newer map without losing what it does not understand
+— see [schema.md](./schema.md#unknown-keys-are-kept). The loader
+warns about such a key once, into a log, and carries on.
+
+That makes the spelling half `verify`'s too. A warning at load is not
+a moment at which anybody finds out; a nonzero exit is. So an
+unrecognized key is an **error** here, reported at the part of the
+document that carries it, even though the map loads and renders fine.
+Everything below is about files that are either misspelled or spelled
+correctly and still saying something incoherent — both are `verify`'s.
 
 ## What gets checked
 
@@ -137,6 +144,24 @@ edit and a `verify` violation read identically.
 window — the render-time check still terminates cleanly, but an
 element that never renders at any zoom is almost always a typo. See
 [zoom-bounds.md](./zoom-bounds.md).
+
+### Unknown keys
+
+- Every key the loader kept without recognizing it, reported at the
+  part of the document that carries it — `node "1.2"`, `edge[3]`,
+  `palette "coral"`, `canvas`, `custom_mutations[0]`, or `map` —
+  followed by the field path inside that part
+
+**Why**: the load keeps such a key so a newer map is not damaged by an
+older build, and warns about it once. Nothing else ever mentions it
+again: it is written back at every save and read by nothing. A typo
+(`min_zoom_to_rendr`) and a genuinely newer field look identical from
+here, and both are worth a nonzero exit — one to fix, the other to
+tell you the build is behind the file. See
+[schema.md](./schema.md#unknown-keys-are-kept).
+
+Interiors of `macros` and a node's `inline_macros` are exempt: they
+are opaque JSON by design and nothing in them is ever unrecognized.
 
 ## What's not checked
 

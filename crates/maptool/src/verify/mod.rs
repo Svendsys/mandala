@@ -2,8 +2,9 @@
 
 //! Structural invariants for `.mindmap.json`: tree shape, Dewey IDs,
 //! edge references, palette references, named enums, text-run
-//! bounds, zoom-bound ordering. Each check returns `Vec<Violation>`;
-//! `verify()` runs them all.
+//! bounds, zoom-bound ordering, and keys the loader kept without
+//! understanding. Each check returns `Vec<Violation>`; `verify()`
+//! runs them all.
 
 mod edges;
 mod enums;
@@ -13,6 +14,7 @@ mod references;
 mod sections;
 mod text_runs;
 mod tree;
+mod unknown_keys;
 mod zoom_bounds;
 
 #[cfg(test)]
@@ -99,6 +101,7 @@ pub fn verify(map: &MindMap) -> Vec<Violation> {
     out.extend(text_runs::check(map));
     out.extend(sections::check(map));
     out.extend(zoom_bounds::check(map));
+    out.extend(unknown_keys::check(map));
     out
 }
 
