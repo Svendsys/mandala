@@ -675,6 +675,19 @@ mod tests {
     ///   buffer the object into serde's own `Content` and replay it
     ///   through a deserializer the capture is not wrapping.
     ///
+    /// The four split into two classes over **two different sets of
+    /// types**, and conflating them is what left a hole here once
+    /// already. `deny_unknown_fields` and `flatten` act on a named
+    /// member no field claimed, so they are asked only of types that
+    /// have named fields — which is also all serde permits. `untagged`
+    /// and `tag` act on the whole value, buffering it through
+    /// `Content` regardless of whether any variant has a field name in
+    /// it, so they are asked of **every** reachable Deserialize type.
+    /// Guarding both behind `has_named_fields` — correct in the
+    /// `deny_unknown_fields` era, never revisited when the predicate
+    /// grew — excluded 24 of the 70 reachable types, and a planted
+    /// `#[serde(untagged)]` on `Mutation` sailed through.
+    ///
     /// The set of types this applies to is not written down here.
     /// [`crate::util::serde_coverage`] parses baumhard's own sources
     /// and walks outward from `MindMap` through every deserializable
@@ -691,16 +704,34 @@ mod tests {
         let graph = TypeGraph::build(&crate_src_root());
         let mut offenders: Vec<String> = Vec::new();
         for info in graph.reachable_from("MindMap") {
-            if !info.derives_deserialize || !info.has_named_fields || info.deserialize_proxy.is_some() {
+            if !info.derives_deserialize || info.deserialize_proxy.is_some() {
                 continue;
             }
             let mut reasons: Vec<String> = Vec::new();
-            if info.denies_unknown_fields {
-                reasons.push("`deny_unknown_fields` (fails the load)".to_string());
+            // `deny_unknown_fields` and `flatten` act on *named
+            // members*: they decide what happens to a key no declared
+            // field claimed. A type with no named fields anywhere —
+            // an enum whose variants are all newtype, tuple, or unit
+            // — has no such key to decide about, and serde rejects
+            // both attributes there anyway.
+            if info.has_named_fields {
+                if info.denies_unknown_fields {
+                    reasons.push("`deny_unknown_fields` (fails the load)".to_string());
+                }
+                for field in &info.flattened_fields {
+                    reasons.push(format!("`flatten` on `{field}` (absorbs the key)"));
+                }
             }
-            for field in &info.flattened_fields {
-                reasons.push(format!("`flatten` on `{field}` (absorbs the key)"));
-            }
+            // `untagged` and `tag = "…"` act on the *whole value*:
+            // serde buffers the object into its own `Content` and
+            // replays it through a deserializer the capture is not
+            // wrapping. Variant shape has nothing to do with it — a
+            // newtype-only enum buffers exactly the same way — so
+            // these two are asked of every reachable type. The
+            // `has_named_fields` guard above used to sit in front of
+            // them, which left 24 of the 70 reachable types unchecked
+            // and let a planted `#[serde(untagged)]` on `Mutation`
+            // through.
             if info.untagged {
                 reasons.push("`untagged` (replays through a buffered Content)".to_string());
             }
@@ -729,8 +760,34 @@ mod tests {
             offenders.is_empty(),
             "these types are reachable from a `.mindmap.json` load and can hide an \
              unrecognized key from the loader's capture, so it would neither be warned \
-             about nor survive the next save:\n  {}",
+             about nor survive the next save:\n  {}\n\n\
+             Two classes of attribute, checked over different sets, and the difference \
+             is load-bearing — do not re-narrow one to match the other:\n  \
+             * `deny_unknown_fields` / `flatten` decide what happens to a named member \
+             no field claimed, so they are asked only of types that have named fields.\n  \
+             * `untagged` / `tag = \"...\"` buffer the whole value through serde's \
+             `Content` and replay it outside the capture, which has nothing to do with \
+             variant shape, so they are asked of every reachable Deserialize type.",
             offenders.join("\n  ")
+        );
+
+        // The `Content`-buffering half of the check is the half that
+        // was silently switched off, and an empty check passes just
+        // as loudly as a real one. So the walk has to prove it
+        // reached a type the old guard skipped.
+        let shapeless: Vec<&str> = graph
+            .reachable_from("MindMap")
+            .iter()
+            .filter(|info| {
+                info.derives_deserialize && info.deserialize_proxy.is_none() && !info.has_named_fields
+            })
+            .map(|info| info.name.as_str())
+            .collect();
+        assert!(
+            !shapeless.is_empty(),
+            "the `untagged` / `tag` check is supposed to cover types with no named \
+             fields, and the walk reached none — either the model changed shape \
+             completely or the predicate narrowed again"
         );
     }
 
@@ -2121,6 +2178,423 @@ mod tests {
         let saved = std::fs::read_to_string(&saved_path).expect("read resaved");
 
         assert_load_save_loses_no_authored_key(&source, &saved);
+    }
+
+
+    /// The serialization verbs that put bytes somewhere — a file, a
+    /// socket, a string that is about to become one.
+    const PERSISTING_VERBS: &[&str] = &[
+        "to_string_pretty",
+        "to_string",
+        "to_vec_pretty",
+        "to_vec",
+        "to_writer_pretty",
+        "to_writer",
+        "to_value",
+    ];
+
+    /// Whether a name reads as holding a map: `map`, `mind_map`,
+    /// `stress_map`.
+    fn reads_as_a_map(name: &str) -> bool {
+        name.to_ascii_lowercase().ends_with("map")
+    }
+
+    /// Names bound by a `let` whose right-hand side is a map and whose
+    /// right-hand side is not the contract.
+    ///
+    /// One hop, because one hop is what a bypass looks like when it is
+    /// written by hand: `let value = map.clone();` followed by
+    /// `serde_json::to_string_pretty(&value)` puts a raw map on disk
+    /// while naming nothing map-shaped at the call site. A scan that
+    /// only looked at the argument would miss it, and did — it was a
+    /// surviving mutant before this existed.
+    fn map_aliases(shipped: &str) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for line in shipped.lines() {
+            let Some(binding) = line.trim().strip_prefix("let ") else {
+                continue;
+            };
+            let Some((name, value)) = binding.split_once('=') else {
+                continue;
+            };
+            let name = name.trim().trim_start_matches("mut ").trim();
+            if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            // *Is* the map, not merely reaches through one:
+            // `let value = map.clone()` renames it, `let node =
+            // map.nodes[id]` does not. Anything more elaborate than a
+            // borrow and a clone is out of scope for a source scan and
+            // says so rather than guessing.
+            let renamed = value
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .trim_start_matches(['&', '*'])
+                .trim()
+                .trim_end_matches(".to_owned()")
+                .trim_end_matches(".clone()");
+            if reads_as_a_map(renamed) && renamed.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                out.insert(name.to_string());
+            }
+        }
+        out
+    }
+
+    /// Whether `line` serializes something map-shaped with one of
+    /// [`PERSISTING_VERBS`] — `serde_json::to_string_pretty(&map)` and
+    /// its neighbors, matched on the argument's *name* rather than its
+    /// type, which a source scan cannot see.
+    fn serializes_a_map(line: &str, aliases: &std::collections::BTreeSet<String>) -> bool {
+        let mut rest = line;
+        while let Some(at) = rest.find("serde_json::to_") {
+            rest = &rest[at + "serde_json::".len()..];
+            let Some(open) = rest.find('(') else { break };
+            let verb = &rest[..open];
+            let argument = rest[open + 1..].trim_start().trim_start_matches('&').trim_start();
+            let name: String = argument
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if PERSISTING_VERBS.contains(&verb) && (reads_as_a_map(&name) || aliases.contains(&name)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// **The one place a `MindMap` may be turned into bytes.**
+    ///
+    /// [`to_json_value`] says so in prose, and prose does not fail a
+    /// build: `bin/generate_stress_map.rs` wrote a `.mindmap.json`
+    /// with a bare `serde_json::to_string_pretty(&map)` for as long as
+    /// the sentence has existed. It happened to be harmless — the map
+    /// is built in memory, so it carries no preserved keys to lose —
+    /// but a contract with a known exception is exactly the twin
+    /// surface `lib/baumhard/CONVENTIONS.md` §B4 is about, and the
+    /// next writer would not have been harmless.
+    ///
+    /// So the exception is gone and this is what keeps it gone. A
+    /// source scan, because the question is "does another call site
+    /// exist", which no runtime test can answer.
+    ///
+    /// Deliberately blunt in two directions, and both are the safe
+    /// direction. It matches on the argument's *name* — a scan cannot
+    /// see types — so a `MindMap` in a variable called something else
+    /// slips through; and it flags any map-shaped name, so a
+    /// `HashMap` called `map` would be a false positive, which is a
+    /// reader deciding rather than a silent gap. Test sources are
+    /// excluded: a test that serializes a map to compare it against
+    /// something is not a persistence path.
+    #[test]
+    fn test_every_mindmap_write_goes_through_the_contract() {
+        let workspace = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        let mut offenders: Vec<String> = Vec::new();
+        let mut scanned = 0usize;
+        for root in ["lib/baumhard/src", "src", "crates"] {
+            let mut files = Vec::new();
+            collect_rust_sources(&workspace.join(root), &mut files);
+            files.sort();
+            for file in files {
+                // `loader.rs` is the contract; it is allowed to be the
+                // one place that calls `serde_json::to_value` on a map.
+                if file.ends_with("mindmap/loader.rs") {
+                    continue;
+                }
+                scanned += 1;
+                let text = std::fs::read_to_string(&file).expect("readable source");
+                // Test modules hang off the end of a file in this
+                // workspace; nothing after the gate is a shipped path.
+                let shipped = text.split("#[cfg(test)]").next().unwrap_or_default();
+                let aliases = map_aliases(shipped);
+                for (number, line) in shipped.lines().enumerate() {
+                    if serializes_a_map(line, &aliases) {
+                        offenders.push(format!(
+                            "{}:{}: {}",
+                            file.display(),
+                            number + 1,
+                            line.trim()
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            scanned > 100,
+            "the scan found only {scanned} source files — it is looking in the wrong \
+             place and would pass no matter what the code did"
+        );
+        assert!(
+            offenders.is_empty(),
+            "these serialize a map outside `loader::to_json_value`, which is the only \
+             thing that puts the keys a load preserved back into the document — \
+             anything else writes a file with a newer build's data deleted from it. \
+             Route it through `to_json_value`:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// Every non-test `.rs` file under `dir`, recursively.
+    fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            if path.is_dir() {
+                if name != "tests" && name != "target" {
+                    collect_rust_sources(&path, out);
+                }
+            } else if name.ends_with(".rs")
+                && !name.starts_with("test")
+                && !name.ends_with("_tests.rs")
+                && !name.ends_with("_test.rs")
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// **The capture drives the deserializer by hand, and a
+    /// hand-driven `serde_json::Deserializer` does not check that the
+    /// document ended.** `serde_json::from_str` calls `end()` for you;
+    /// `unknown_keys::deserialize_capturing` has to call it itself,
+    /// and without that one line a `.mindmap.json` with a second
+    /// document glued onto the back of it loads clean — `maptool
+    /// verify` says `valid` and exits 0 where `main` exits 1. Nothing
+    /// in the suite noticed the line was load-bearing until this.
+    #[test]
+    fn test_trailing_content_after_the_document_is_rejected() {
+        let source = map_json_with_nodes(&node_json("0", "null"));
+        let doubled = format!("{source}\n{{\"and\": \"another document\"}}\n");
+        let error = load_from_str(&doubled)
+            .expect_err("a file with a second document after the map must not load");
+        assert!(
+            error.contains("trailing characters"),
+            "the reader has to be told what is wrong with the file, got: {error}"
+        );
+    }
+
+    /// A whole map with one node, built so that every slot a
+    /// [`unknown_key_shapes`] case needs is a parameter rather than a
+    /// string edit.
+    fn shape_map(canvas_extra: &str, node_json: &str, edges_json: &str, tail: &str) -> String {
+        format!(
+            r##"{{
+                "version": "1.0",
+                "name": "unknown-key-shapes",
+                "canvas": {{"background_color": "#000"{canvas_extra}}},
+                "nodes": {{{node_json}}},
+                "edges": [{edges_json}]{tail}
+            }}"##
+        )
+    }
+
+    /// A node whose `sections` array is spelled out, so a case can put
+    /// an unrecognized key inside a section rather than only on the
+    /// node.
+    fn node_with_sections(sections_json: &str) -> String {
+        format!(
+            r##""0": {{
+                "id": "0", "parent_id": null,
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{sections_json}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": ""
+            }}"##
+        )
+    }
+
+    /// One `custom_mutations` entry around whatever payload the case
+    /// is about.
+    fn custom_mutation_tail(body: &str) -> String {
+        format!(
+            r##", "custom_mutations": [
+                {{"id": "m", "name": "m", "target_scope": "SelfOnly"{body}}}
+            ]"##
+        )
+    }
+
+    /// **Every place an unrecognized key can sit, and the reason each
+    /// one is here.**
+    ///
+    /// The shapes are not a sample. Each row is a distinct way the
+    /// route from the document root to a captured key can fail to
+    /// survive serialization, and the table exists because the first
+    /// implementation of this mechanism survived a fixture round trip
+    /// while losing keys in four of these positions:
+    ///
+    /// - a container the saver omits because it holds its own default
+    ///   (`sections[0].offset`) — the route simply is not there any
+    ///   more, on a save with **no edit at all**;
+    /// - an externally tagged enum, whose variant level serde's
+    ///   ignored-key path does not report;
+    /// - the same, where the payload carries a key spelled like the
+    ///   variant, which a member-count guess resolves backwards;
+    /// - a key below a `#[serde(from = "…")]` proxy, where what the
+    ///   load reads (`mutations`) is not what the save writes
+    ///   (`mutator`).
+    ///
+    /// The rest pin the ordinary positions so a fix for the four
+    /// cannot quietly cost one of them.
+    fn unknown_key_shapes() -> Vec<(&'static str, String)> {
+        let plain_node = node_json("0", "null");
+        vec![
+            (
+                "a key at the top level",
+                shape_map("", &plain_node, "", r#", "authors": ["ada"]"#),
+            ),
+            (
+                "a key on the canvas",
+                shape_map(r#", "grid_snap": 8"#, &plain_node, "", ""),
+            ),
+            (
+                "a key on a node",
+                shape_map("", &node_json_with("0", "null", r#", "hologram": true"#), "", ""),
+            ),
+            (
+                "a key inside a node's style",
+                shape_map(
+                    "",
+                    &node_json("0", "null").replace(r#""show_shadow":false"#, r#""show_shadow":false,"glow":3"#),
+                    "",
+                    "",
+                ),
+            ),
+            (
+                "a key on a section",
+                shape_map("", &node_with_sections(r#"{"text": "n", "txet": "typo"}"#), "", ""),
+            ),
+            (
+                "a key inside a section offset that holds its default",
+                shape_map(
+                    "",
+                    &node_with_sections(r#"{"text": "n", "offset": {"x": 0.0, "y": 0.0, "grid_hint": 7}}"#),
+                    "",
+                    "",
+                ),
+            ),
+            (
+                "a key inside a section's text run",
+                shape_map(
+                    "",
+                    &node_with_sections(
+                        r##"{"text": "n", "text_runs": [{"start":0,"end":1,"bold":false,
+                            "italic":false,"underline":false,"font":"","size_pt":12,
+                            "color":"#fff","hyperlink":null,"tracking":2}]}"##,
+                    ),
+                    "",
+                    "",
+                ),
+            ),
+            (
+                "a key on an edge",
+                shape_map(
+                    "",
+                    &plain_node,
+                    &edge_json_with(r#", "authored_note": "keep me""#).replace(r#""to_id": "b""#, r#""to_id": "0""#).replace(r#""from_id": "a""#, r#""from_id": "0""#),
+                    "",
+                ),
+            ),
+            (
+                "a key on a palette",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    r#", "palettes": {"coral": {"groups": [], "hue": 12}}"#,
+                ),
+            ),
+            (
+                "a key on a custom mutation",
+                shape_map("", &plain_node, "", &custom_mutation_tail(r#", "flavor": "sour""#)),
+            ),
+            (
+                "a key inside an externally tagged variant payload",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(r#", "mutator": {"Void": {"channel": 0, "surprise": 7}}"#),
+                ),
+            ),
+            (
+                "a key inside a variant payload spelled like the variant",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(r#", "mutator": {"Void": {"channel": 0, "Void": 99}}"#),
+                ),
+            ),
+            (
+                "a key below a serde `from` proxy, in the legacy mutation list",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(
+                        r#", "mutations": [{"AreaDelta": {"fields": {}, "legacy_note": 1}}]"#,
+                    ),
+                ),
+            ),
+        ]
+    }
+
+    /// **A load followed by a save, with nothing touched in between,
+    /// must not lose a single authored key — in any of the places one
+    /// can sit.**
+    ///
+    /// That is issue #115's acceptance criterion, and it is the one
+    /// the first implementation of the capture failed: a key nested
+    /// inside a container the saver omits (a section `offset` holding
+    /// its own default) was warned about as "kept as written and saved
+    /// back unchanged" and then dropped by the very next save, with no
+    /// user action of any kind.
+    ///
+    /// Table-driven rather than one case per position on purpose. The
+    /// positions are a *set* — the property is "everywhere", and a
+    /// hand-picked case is exactly how four of them went unnoticed.
+    #[test]
+    fn test_a_zero_edit_round_trip_keeps_every_authored_key() {
+        let mut failures: Vec<String> = Vec::new();
+        for (what, source) in unknown_key_shapes() {
+            let map = match load_from_str(&source) {
+                Ok(map) => map,
+                Err(e) => {
+                    failures.push(format!("{what}: the fixture does not even load: {e}"));
+                    continue;
+                }
+            };
+            assert!(
+                !map.unknown_keys.is_empty(),
+                "{what}: the fixture is supposed to carry an unrecognized key, \
+                 and the loader found none — the shape stopped testing anything"
+            );
+            let saved = to_json_value(&map).expect("serializing a loaded map");
+            let before = key_path_set(&source);
+            let after = key_path_set(&serde_json::to_string(&saved).expect("render"));
+            let lost: Vec<&String> = before.difference(&after).collect();
+            if !lost.is_empty() {
+                failures.push(format!("{what}: lost {lost:?}"));
+            }
+            // A preserved key is worth nothing if the file it lands in
+            // no longer loads.
+            if let Err(e) = load_from_str(&serde_json::to_string(&saved).expect("render")) {
+                failures.push(format!("{what}: the saved document no longer loads: {e}"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "a load → save with no edit lost authored keys:\n  {}",
+            failures.join("\n  ")
+        );
     }
 
     /// **The hand-modeled half of the round trip, held to the

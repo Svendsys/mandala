@@ -147,6 +147,7 @@ exception: baumhard stores them as opaque JSON (the typed `Macro` lives
 in the application crate), so their interiors are carried through
 untouched and never reported as unrecognized. See
 [`macros.md`](./macros.md).
+
 ## Top-level object
 
 ```json

@@ -1235,6 +1235,86 @@ mod tests {
         assert_eq!(test_logger::lines_containing("zz-note").len(), 1);
     }
 
+    /// Two elements that look alike are not evidence. When the
+    /// fingerprint matches in more than one place the array cannot say
+    /// which one the key came from, and guessing the first is how a
+    /// key ends up on the wrong element.
+    #[test]
+    fn test_two_matching_elements_are_not_an_identification() {
+        let mut document = serde_json::json!({"sections": [
+            {"text": "a", "zz-twin": 1},
+            {"text": "a"},
+            {"text": "b"}
+        ]});
+        let probe = serde_json::json!({"sections": [{"text": "a"}, {"text": "a"}, {"text": "b"}]});
+        let captured = take_from(
+            &mut document,
+            Some(&probe),
+            vec![route(serde_json::json!(["sections", 0, "zz-twin"]))],
+        );
+        // Element 0 replaced, and the `b` at the end swapped for
+        // another `a`: the fingerprint now matches twice and matches
+        // nothing at index 0.
+        let mut saved = serde_json::json!({"sections": [{"text": "x"}, {"text": "a"}, {"text": "a"}]});
+        test_logger::install();
+        captured.splice_into(&mut saved);
+        assert_eq!(
+            saved,
+            serde_json::json!({"sections": [{"text": "x"}, {"text": "a"}, {"text": "a"}]}),
+            "an ambiguous match must place nothing"
+        );
+        assert_eq!(test_logger::lines_containing("zz-twin").len(), 1);
+    }
+
+    /// The index is trusted only when everything around it is
+    /// untouched, which is what proves the element at it is the same
+    /// element. Once a sibling changed too, position is no longer
+    /// evidence of identity — an element could have been removed and
+    /// another appended — so the key is dropped rather than written
+    /// onto whatever is there.
+    #[test]
+    fn test_the_index_is_not_trusted_once_a_sibling_changed_too() {
+        let mut document = serde_json::json!({"sections": [
+            {"text": "a", "zz-shifted": 1},
+            {"text": "b"}
+        ]});
+        let probe = serde_json::json!({"sections": [{"text": "a"}, {"text": "b"}]});
+        let captured = take_from(
+            &mut document,
+            Some(&probe),
+            vec![route(serde_json::json!(["sections", 0, "zz-shifted"]))],
+        );
+        let mut saved = serde_json::json!({"sections": [{"text": "x"}, {"text": "y"}]});
+        test_logger::install();
+        captured.splice_into(&mut saved);
+        assert_eq!(
+            saved,
+            serde_json::json!({"sections": [{"text": "x"}, {"text": "y"}]}),
+            "neither element is identifiable, so neither may receive the key"
+        );
+        assert_eq!(test_logger::lines_containing("zz-shifted").len(), 1);
+    }
+
+    /// The model has to *agree* that a level is a one-member wrapper
+    /// spelled that way. When it does not, the document and the model
+    /// have stopped corresponding and the walk stops — descending on
+    /// the author's word alone is the guess this replaced.
+    #[test]
+    fn test_the_walk_stops_where_the_model_disagrees_about_the_wrapper() {
+        let document = serde_json::json!({"mutator": {"Void": {"surprise": 1}}});
+        let probe = serde_json::json!({"mutator": {"Macro": {"channel": 0}}});
+        assert!(
+            expand_route(
+                &document,
+                Some(&probe),
+                &route(serde_json::json!(["mutator", "surprise"]))
+            )
+            .is_none(),
+            "the model names a different variant here; the walk has no business \
+             descending past a level it cannot corroborate"
+        );
+    }
+
     /// The location stamp is what the reader has to open, and each
     /// addressable part is stamped the way `maptool verify` stamps
     /// it.

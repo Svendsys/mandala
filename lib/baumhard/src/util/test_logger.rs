@@ -27,33 +27,87 @@
 //! a needle they made unique, and simply do not care what else is in
 //! it. [`lines_containing`] is that search.
 //!
+//! **What it costs, and the two bounds on it.** Being process-global
+//! means every record from every test in the binary is formatted and
+//! retained, and the search is linear in what has accumulated. Two
+//! things keep that finite: only `warn!` and above are recorded
+//! ([`RECORDED_LEVEL`]), and the buffer stops at [`CAPACITY`] rather
+//! than growing or forgetting. Both failure modes this could have —
+//! a logger conflict at install time and a full buffer at search time
+//! — panic with what actually went wrong, because either one
+//! otherwise turns into "the code under test did not warn", which is
+//! a wrong answer pointing at innocent code.
+//!
 //! Native-only, like the rest of `#[cfg(test)]` support here: the
 //! browser build installs `console_log` and has no use for a buffer.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
+
+/// How many lines the buffer keeps before it stops recording.
+///
+/// The recorder is process-global for the whole lib-test binary, so
+/// without a bound it accumulates a formatted `String` for every
+/// record every test emits and holds them all under one mutex, and
+/// [`lines_containing`] — which is O(lines) — gets slower for every
+/// test that ran before it. Trimming the *oldest* lines instead would
+/// be worse than a bound: the line a test is about to look for could
+/// be the one trimmed, and the failure would read as "the loader did
+/// not warn".
+///
+/// So the buffer stops instead of forgetting, and
+/// [`lines_containing`] refuses to answer once it has. Sized well
+/// above what a full run produces at [`RECORDED_LEVEL`] — reaching it
+/// means something started logging in a loop, which is a thing to
+/// find out about rather than absorb.
+const CAPACITY: usize = 8192;
+
+/// The level the recorder keeps.
+///
+/// `warn!` and `error!` are what CODE_CONVENTIONS §9 makes part of a
+/// degrade path's behavior, and they are what every caller here
+/// asserts on. Keeping only those is what makes [`CAPACITY`] a
+/// generous bound rather than a tight one. A test that needs to read
+/// an `info!` or a `debug!` raises this one constant — deliberately,
+/// and with the volume it implies visible in the diff.
+const RECORDED_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
 
 /// Every line the recording logger has been handed, formatted the way
 /// a reader sees it: `"<LEVEL> <message>"`.
 fn buffer() -> &'static Mutex<Vec<String>> {
     static BUFFER: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-    BUFFER.get_or_init(|| Mutex::new(Vec::new()))
+    BUFFER.get_or_init(|| Mutex::new(Vec::with_capacity(64)))
 }
 
-/// The sink itself. Records everything and prints nothing — a test
-/// run should not gain a stderr flood because one test wanted to read
-/// a warning.
+/// Set once the buffer filled up and started dropping records.
+static OVERFLOWED: AtomicBool = AtomicBool::new(false);
+
+/// Set once [`install`] has actually put the recorder in place.
+/// Distinct from "install was called": the difference is exactly the
+/// failure this flag exists to make loud.
+static RECORDING: AtomicBool = AtomicBool::new(false);
+
+/// The sink itself. Records and prints nothing — a test run should
+/// not gain a stderr flood because one test wanted to read a warning.
 struct Recorder;
 
 impl log::Log for Recorder {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= RECORDED_LEVEL
     }
 
     fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
         // A poisoned buffer means some other test panicked mid-push.
         // Recording is not what that test failed at, so recover the
         // lock rather than turning one failure into many.
         let mut lines = buffer().lock().unwrap_or_else(|e| e.into_inner());
+        if lines.len() >= CAPACITY {
+            OVERFLOWED.store(true, Ordering::Relaxed);
+            return;
+        }
         lines.push(format!("{} {}", record.level(), record.args()));
     }
 
@@ -63,22 +117,46 @@ impl log::Log for Recorder {
 /// Install the recorder, once per process.
 ///
 /// Idempotent and safe to call from every test that wants to read a
-/// log line. A second `set_logger` would fail — and does, harmlessly,
-/// if something else got there first; the `Once` is what keeps the
-/// common case from even trying.
+/// log line.
+///
+/// **Panics if the recorder cannot be installed.** `log::set_logger`
+/// fails when something else got there first, and the `Once` means it
+/// is never retried — so a silent failure would leave every
+/// `lines_containing` returning nothing forever, and every logging
+/// test would fail as "the code under test did not warn". That is a
+/// wrong diagnosis pointing at innocent code, which is worse than no
+/// test. Nothing installs a competing logger in a test target today;
+/// if something ever does, this says so by name.
 ///
 /// Cost: one atomic check after the first call.
 pub(crate) fn install() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
-        // `warn!`/`error!` are all a release build keeps
-        // (`release_max_level_warn`), but a test build keeps
-        // everything, and a test that wants to read a `debug!` should
-        // be able to.
         if log::set_logger(&Recorder).is_ok() {
-            log::set_max_level(log::LevelFilter::Trace);
+            log::set_max_level(RECORDED_LEVEL);
+            RECORDING.store(true, Ordering::Relaxed);
         }
     });
+    assert_recording(RECORDING.load(Ordering::Relaxed));
+}
+
+/// Turn "the recorder is not installed" into a panic that says so.
+///
+/// A free function rather than an inline `assert!` because it is the
+/// only part of the failure path a test can reach: installing a
+/// competing logger to provoke the real thing would break every other
+/// logging test in the binary, and the `Once` means the situation
+/// cannot be un-done once it happens. So the *diagnosis* is tested
+/// here directly and the trigger is left to the real world.
+fn assert_recording(recording: bool) {
+    assert!(
+        recording,
+        "util::test_logger could not install itself — `log::set_logger` failed, which \
+         means another logger is already installed in this test binary. Every \
+         assertion about a log line will now fail as though the code under test said \
+         nothing. Find the competing `set_logger` rather than the test that reported \
+         this."
+    );
 }
 
 /// Every recorded line containing `needle`, oldest first.
@@ -92,11 +170,24 @@ pub(crate) fn install() {
 /// deliberately does not clear it: clearing would race with those
 /// tests instead of merely coexisting with them.
 ///
+/// Only `warn!` and `error!` are recorded — see [`RECORDED_LEVEL`].
+///
+/// **Panics if the buffer overflowed.** Past [`CAPACITY`] the
+/// recorder stops, so "not found" would stop meaning "not logged";
+/// saying so beats letting an unrelated test fail with a wrong
+/// reason.
+///
 /// Cost: O(lines recorded so far) per call, under one mutex
 /// acquisition.
 pub(crate) fn lines_containing(needle: &str) -> Vec<String> {
     install();
     let lines = buffer().lock().unwrap_or_else(|e| e.into_inner());
+    assert!(
+        !OVERFLOWED.load(Ordering::Relaxed),
+        "util::test_logger recorded {CAPACITY} lines and stopped; a search of the \
+         buffer can no longer tell 'never logged' from 'logged and dropped'. \
+         Something in this run is logging in a loop."
+    );
     lines
         .iter()
         .filter(|line| line.contains(needle))
@@ -133,5 +224,35 @@ mod tests {
     fn test_an_unlogged_needle_finds_nothing() {
         install();
         assert!(lines_containing("never-logged-needle-0c37").is_empty());
+    }
+
+    /// **A failed install must be loud.** If `log::set_logger` ever
+    /// loses a race, the `Once` never retries and every search comes
+    /// back empty forever — so every logging test in the binary would
+    /// fail as "the code under test did not warn", which points the
+    /// reader at innocent code. The condition cannot be provoked
+    /// without wrecking the binary for every other test, so the
+    /// diagnosis is exercised on its own.
+    #[test]
+    #[should_panic(expected = "another logger is already installed")]
+    fn test_a_failed_install_says_what_actually_went_wrong() {
+        assert_recording(false);
+    }
+
+    /// The recorder keeps warnings and errors and drops the rest, so
+    /// the whole suite's `debug!` traffic does not accumulate in a
+    /// process-global buffer behind one mutex. A test that needs a
+    /// lower level raises [`RECORDED_LEVEL`] on purpose; until then
+    /// this pins what "recorded" means.
+    #[test]
+    fn test_levels_below_the_recorded_one_are_not_kept() {
+        install();
+        log::info!("test_logger: below-threshold-needle-77b2 happened");
+        log::error!("test_logger: above-threshold-needle-77b2 happened");
+        assert!(
+            lines_containing("below-threshold-needle-77b2").is_empty(),
+            "an info! must not reach the buffer"
+        );
+        assert_eq!(lines_containing("above-threshold-needle-77b2").len(), 1);
     }
 }
