@@ -243,7 +243,9 @@ impl Tree<GfxElement, GfxMutator> {
     /// while its cache is dirty, but `bvh_find` carries its descent
     /// frontier on the heap and so allocates per call — the price of
     /// not recursing over a depth a `.mindmap.json` chooses. The
-    /// frontier holds a branching width, not a subtree.
+    /// frontier holds the unprocessed sibling rows along its current
+    /// path — O(depth) for a chain, O(n) for a shallow wide tree —
+    /// rather than a whole subtree.
     ///
     /// When multiple areas contain the point, the smallest by area
     /// wins — the "innermost first" convention.

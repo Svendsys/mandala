@@ -2536,6 +2536,71 @@ mod tests {
         assert_eq!(map.edges.len(), 1);
     }
 
+    /// **The corners were bounded in no unit at all.** The two side
+    /// patterns each got a ceiling on what they *emit*, but the four
+    /// corner glyphs are copied verbatim out of the file into their
+    /// run specs and handed to `glyph_ink_with` — four cosmic-text
+    /// shaping calls per node per frame, over a string the map
+    /// chose. A multi-megabyte corner is therefore not a one-off
+    /// allocation but an unbounded shape call on every frame, which
+    /// is the same "opening a map cannot kill the editor" property
+    /// the rest of this module exists to hold.
+    ///
+    /// All eight authored glyph fields carry both ceilings, because
+    /// the sides are an authored string too and the emitted-side cap
+    /// bounds the repetition rather than its source.
+    #[test]
+    fn test_overlong_border_glyphs_are_rejected() {
+        let many = "\u{25c8}".repeat(validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+        // One cluster, past the byte ceiling: the case a cluster
+        // count cannot see.
+        let fat = format!("a{}", "\u{0301}".repeat(validate::MAX_BORDER_GLYPH_BYTES));
+
+        for glyph_field in [
+            "top",
+            "bottom",
+            "left",
+            "right",
+            "top_left",
+            "top_right",
+            "bottom_left",
+            "bottom_right",
+        ] {
+            let node = node_json("0", "null").replace(
+                r#""show_shadow":false"#,
+                &format!(r#""show_shadow":false,"border":{{"glyphs":{{"{glyph_field}":"{many}"}}}}"#),
+            );
+            let err = load_from_str(&map_json_with_nodes(&node))
+                .expect_err("an overlong border glyph must be rejected");
+            assert!(err.contains(glyph_field), "must name the field: {err}");
+            assert!(
+                err.contains("grapheme clusters"),
+                "must reject on the cluster ceiling: {err}"
+            );
+
+            let node = node_json("0", "null").replace(
+                r#""show_shadow":false"#,
+                &format!(r#""show_shadow":false,"border":{{"glyphs":{{"{glyph_field}":"{fat}"}}}}"#),
+            );
+            let err = load_from_str(&map_json_with_nodes(&node))
+                .expect_err("a single-cluster overlong border glyph must be rejected");
+            assert!(err.contains(glyph_field), "must name the field: {err}");
+            assert!(
+                err.contains("bytes"),
+                "must reject on the byte ceiling, not the cluster one: {err}"
+            );
+        }
+
+        // The longest glyph authored anywhere in this repository is
+        // six clusters, so an ordinary decorative border is nowhere
+        // near either ceiling and must still load.
+        let ordinary = node_json("0", "null").replace(
+            r#""show_shadow":false"#,
+            r#""show_shadow":false,"border":{"glyphs":{"top":"◆·","top_left":"◆"}}"#,
+        );
+        load_from_str(&map_json_with_nodes(&ordinary)).expect("an ordinary authored border still loads");
+    }
+
     /// **Both doors carry the size ceiling, and that is the point.**
     /// The first version of this cap stat-ed the file and nothing
     /// else, which left the browser — where the map arrives as a

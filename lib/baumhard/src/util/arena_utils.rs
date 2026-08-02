@@ -26,9 +26,13 @@ use indextree::{Arena, NodeId};
 /// caller sees.
 ///
 /// Costs: O(n) in the descendant count, one `T::clone()` per node,
-/// one `Arena` slot allocation per node in `destination`, plus the
-/// one `Vec` the frontier grows to the source's maximum branching
-/// width. Benched as `arena_utils_clone`.
+/// one `Arena` slot allocation per node in `destination`, plus one
+/// heap vector holding the frontier — the sum of the unprocessed
+/// sibling rows along the current path, so O(depth) for a chain and
+/// O(n) for a shallow wide tree. (Not a branching width: this
+/// test module's own seven-node fixture reaches four entries
+/// against a branching width of three.) Benched as
+/// `arena_utils_clone`.
 pub fn clone_subtree<T: Clone>(
     source: &Arena<T>,
     source_node_id: NodeId,

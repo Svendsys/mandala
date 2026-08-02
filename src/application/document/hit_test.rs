@@ -485,9 +485,13 @@ pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32,
 ///
 /// O(moved_nodes) — no text shaping, no font-system lock. Walks via
 /// `first_child` / `next_sibling` rather than collecting the whole
-/// descendant set into a `Vec` (§B7); the only buffer it carries is
-/// `walk_drag_subtree`'s frontier, which holds a branching width
-/// rather than a subtree.
+/// descendant set into a `Vec` (§B7); the buffers it carries are
+/// `walk_drag_subtree`'s frontiers, each holding the unprocessed
+/// sibling rows along its current path. Plural because
+/// `include_descendants == false` routes through
+/// `walk_drag_node_and_sections`, which calls `walk_drag_subtree`
+/// once per `Flag::SectionRoot` child — one frontier per section,
+/// per drag tick.
 pub fn apply_drag_delta_and_collect_patches(
     tree: &mut MindMapTree,
     node_id: &str,
@@ -789,10 +793,13 @@ fn walk_drag_node_and_sections(
 /// produced. That ordering is observable: `patches` is consumed
 /// positionally by `patch_drag_positions`.
 ///
-/// Costs: O(n) in the subtree size, plus the one `Vec` the frontier
-/// grows to the tree's maximum branching width. §B7 — the previous
-/// doc claimed zero allocations, which the recursive form bought at
-/// the price of the stack.
+/// Costs: O(n) in the subtree size, plus one heap vector holding
+/// the frontier — the sum of the unprocessed sibling rows along the
+/// current path, so O(depth) for a chain and O(n) for a shallow
+/// wide tree. §B7 — the previous doc claimed zero allocations,
+/// which the recursive form bought at the price of the stack, and
+/// then claimed a branching width, which is what a *breadth*-first
+/// frontier would hold rather than this one.
 fn walk_drag_subtree(
     arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
     node_id: indextree::NodeId,

@@ -524,7 +524,7 @@ fn test_border_side_fill_is_capped_in_both_units() {
     // width. `available / cluster_w` is astronomically larger than
     // the cap, so the cap is what decides.
     assert_eq!(
-        crate::mindmap::border::fill_copies(1.0e9, 0.001, 1, 1),
+        crate::mindmap::border::fill_copies(1.0e9, 0.001, 1, 1, 0),
         MAX_BORDER_SIDE_GLYPHS,
         "the grapheme ceiling must bind, not fall through to a degenerate count"
     );
@@ -534,20 +534,20 @@ fn test_border_side_fill_is_capped_in_both_units() {
     // must bind first.
     let fat_cluster_bytes = 64;
     assert_eq!(
-        crate::mindmap::border::fill_copies(1.0e9, 0.001, 1, fat_cluster_bytes),
+        crate::mindmap::border::fill_copies(1.0e9, 0.001, 1, fat_cluster_bytes, 0),
         MAX_BORDER_SIDE_BYTES / fat_cluster_bytes,
         "a grapheme is not a byte — the byte ceiling must bind when it is the tighter one"
     );
 
     // Non-finite and non-positive inputs yield no copies rather than
     // a saturating cast into the push loop.
-    assert_eq!(crate::mindmap::border::fill_copies(f32::NAN, 1.0, 1, 1), 0);
-    assert_eq!(crate::mindmap::border::fill_copies(1.0e9, f32::NAN, 1, 1), 0);
-    assert_eq!(crate::mindmap::border::fill_copies(1.0e9, 0.0, 1, 1), 0);
-    assert_eq!(crate::mindmap::border::fill_copies(-5.0, 1.0, 1, 1), 0);
+    assert_eq!(crate::mindmap::border::fill_copies(f32::NAN, 1.0, 1, 1, 0), 0);
+    assert_eq!(crate::mindmap::border::fill_copies(1.0e9, f32::NAN, 1, 1, 0), 0);
+    assert_eq!(crate::mindmap::border::fill_copies(1.0e9, 0.0, 1, 1, 0), 0);
+    assert_eq!(crate::mindmap::border::fill_copies(-5.0, 1.0, 1, 1, 0), 0);
 
     // An ordinary rail is untouched by any of it.
-    assert_eq!(crate::mindmap::border::fill_copies(100.0, 10.0, 1, 1), 10);
+    assert_eq!(crate::mindmap::border::fill_copies(100.0, 10.0, 1, 1, 0), 10);
 }
 
 /// **The rail cycles the whole pattern, so the byte ceiling has to
@@ -621,5 +621,63 @@ mod side_rail_byte_ceiling_tests {
         // zero or reporting a free row.
         let empty = SidePattern::AtomicRepeat { cluster: vec![] };
         assert_eq!(crate::mindmap::border::side_pattern_bytes_per_row(&empty), 1);
+    }
+}
+
+/// **A ceiling that prices only the repeating part is not a ceiling.**
+///
+/// `SidePattern::render` writes a `PrefixFillSuffix` pattern's prefix
+/// and suffix once each around the repeated fill. Both were outside
+/// the byte ceiling entirely: `fill_copies` never saw them, so no
+/// value of `MAX_BORDER_SIDE_BYTES` could constrain them and an
+/// authored prefix rode straight through. Charging the fixed part
+/// first is what makes the constant bound the emitted string.
+#[cfg(test)]
+mod fixed_part_ceiling_tests {
+    use crate::mindmap::border::{
+        fill_copies, side_pattern_fixed_bytes, MAX_BORDER_SIDE_BYTES,
+    };
+    use crate::mindmap::border_pattern::SidePattern;
+
+    #[test]
+    fn test_fixed_bytes_reads_prefix_and_suffix() {
+        // "AB(c)DE" — prefix AB, fill c, suffix DE.
+        let p = SidePattern::parse("AB(c)DE").expect("parses");
+        assert_eq!(
+            side_pattern_fixed_bytes(&p),
+            4,
+            "prefix and suffix are two clusters each, one byte apiece"
+        );
+
+        // An atomic pattern has no fixed part.
+        let atomic = SidePattern::parse("+=#").expect("parses");
+        assert_eq!(side_pattern_fixed_bytes(&atomic), 0);
+    }
+
+    #[test]
+    fn test_fixed_bytes_are_charged_before_the_repeats() {
+        // With no fixed part the full ceiling is available.
+        let free = fill_copies(1.0e9, 0.001, 1, 1, 0);
+        // With the ceiling already spent, no repeats are allowed —
+        // and it saturates rather than underflowing.
+        let spent = fill_copies(1.0e9, 0.001, 1, 1, MAX_BORDER_SIDE_BYTES);
+        let over = fill_copies(1.0e9, 0.001, 1, 1, MAX_BORDER_SIDE_BYTES * 4);
+        assert!(free > 0, "a pattern with no fixed part still repeats");
+        assert_eq!(spent, 0, "a fixed part at the ceiling leaves no repeats");
+        assert_eq!(over, 0, "a fixed part past the ceiling must not underflow");
+
+        // Half the ceiling spent leaves half the byte budget. Priced
+        // at 64 bytes per cluster so the *byte* ceiling is the one
+        // that binds — at one byte per cluster the grapheme ceiling
+        // (100,000) is tighter and this would measure that instead.
+        const FAT: usize = 64;
+        let whole = fill_copies(1.0e9, 0.001, 1, FAT, 0);
+        let half = fill_copies(1.0e9, 0.001, 1, FAT, MAX_BORDER_SIDE_BYTES / 2);
+        assert_eq!(whole, MAX_BORDER_SIDE_BYTES / FAT, "the byte ceiling must be the binding one");
+        assert_eq!(
+            half,
+            (MAX_BORDER_SIDE_BYTES - MAX_BORDER_SIDE_BYTES / 2) / FAT,
+            "the remaining budget is what decides the repeat count"
+        );
     }
 }

@@ -433,6 +433,67 @@ pub fn border_config_violations(label: &str, border: &GlyphBorderConfig) -> Vec<
     // matter, since the border geometry adds it to an axis already
     // bounded by MAX_NODE_AXIS.
     out.extend(bounded(label, "padding", border.padding as f64, MAX_NODE_AXIS));
+    if let Some(glyphs) = border.glyphs.as_ref() {
+        for (field, glyph) in [
+            ("top", &glyphs.top),
+            ("bottom", &glyphs.bottom),
+            ("left", &glyphs.left),
+            ("right", &glyphs.right),
+            ("top_left", &glyphs.top_left),
+            ("top_right", &glyphs.top_right),
+            ("bottom_left", &glyphs.bottom_left),
+            ("bottom_right", &glyphs.bottom_right),
+        ] {
+            out.extend(border_glyph_violations(label, field, glyph));
+        }
+    }
+    out
+}
+
+/// Ceiling on the grapheme length of one authored border glyph.
+///
+/// A border glyph is a motif: the four sides are patterns repeated
+/// to fill an edge, and the four corners are single marks. The
+/// longest one authored anywhere in this repository is six clusters
+/// (`+=#(\(\))#=+`), so this is generous by an order of magnitude
+/// and still bounded.
+pub const MAX_BORDER_GLYPH_CLUSTERS: usize = 64;
+
+/// Ceiling on the byte length of one authored border glyph.
+///
+/// Paired with [`MAX_BORDER_GLYPH_CLUSTERS`] for the reason
+/// [`MAX_CONNECTION_GLYPH_BYTES`] is paired with its cluster count:
+/// a single extended grapheme cluster can carry any number of
+/// combining marks, so a cluster ceiling alone bounds the shape of
+/// the motif and not its cost.
+///
+/// The cost here is not only the repetition — `MAX_BORDER_SIDE_BYTES`
+/// bounds what a side rail *emits*. It is the corners, which are
+/// copied verbatim into their run specs and handed to
+/// `glyph_ink_with` four times per node per frame, so an unbounded
+/// corner is an unbounded shape call on every frame rather than a
+/// one-off allocation.
+pub const MAX_BORDER_GLYPH_BYTES: usize = 1024;
+
+/// Both ceilings on one authored border glyph.
+fn border_glyph_violations(label: &str, name: &str, glyph: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let where_ = field(label, &format!("glyphs.{name}"));
+    let clusters = count_grapheme_clusters(glyph);
+    if clusters > MAX_BORDER_GLYPH_CLUSTERS {
+        out.push(format!(
+            "{where_} is {clusters} grapheme clusters, over the {MAX_BORDER_GLYPH_CLUSTERS} \
+             ceiling — a border glyph is a motif repeated to fill an edge, not a paragraph"
+        ));
+    }
+    let bytes = glyph.len();
+    if bytes > MAX_BORDER_GLYPH_BYTES {
+        out.push(format!(
+            "{where_} is {bytes} bytes, over the {MAX_BORDER_GLYPH_BYTES} byte ceiling — a \
+             single grapheme cluster can carry any number of combining marks, and a corner \
+             glyph is shaped once per node per frame"
+        ));
+    }
     out
 }
 

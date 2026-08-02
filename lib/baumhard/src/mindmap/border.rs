@@ -603,12 +603,14 @@ pub fn border_run_specs_with(
         left_line_h,
         1,
         side_pattern_bytes_per_row(&border_style.side_patterns.left),
+        side_pattern_fixed_bytes(&border_style.side_patterns.left),
     );
     let right_row_count = fill_copies(
         side_avail,
         right_line_h,
         1,
         side_pattern_bytes_per_row(&border_style.side_patterns.right),
+        side_pattern_fixed_bytes(&border_style.side_patterns.right),
     );
     let left_text = border_style.left_column_text(left_row_count.max(1));
     let right_text = border_style.right_column_text(right_row_count.max(1));
@@ -766,8 +768,12 @@ fn side_pattern_first_grapheme(pattern: &SidePattern) -> String {
 /// `total_bytes` is `rows × total_bytes / unit`. Rounded up so the
 /// ceiling never under-charges a row.
 ///
-/// The horizontal fill does not need this — `fit_pattern_to_width`
-/// already sums every cluster in the pattern.
+/// This prices only the **repeating** part. A `PrefixFillSuffix`
+/// pattern also emits a prefix and a suffix once each, which do not
+/// scale with the row count and are charged separately — see
+/// [`side_pattern_fixed_bytes`]. The horizontal fitter sums its own
+/// fill clusters but has the same fixed part, and takes the same
+/// treatment.
 ///
 /// Cost: one pass over the pattern's clusters, no allocation.
 pub(crate) fn side_pattern_bytes_per_row(pattern: &SidePattern) -> usize {
@@ -782,6 +788,28 @@ pub(crate) fn side_pattern_bytes_per_row(pattern: &SidePattern) -> usize {
     }
     let total: usize = clusters.iter().map(|g| g.len()).sum();
     total.div_ceil(unit).max(1)
+}
+
+/// Bytes a rail emits **regardless** of its row count.
+///
+/// `SidePattern::render` writes a `PrefixFillSuffix` pattern's
+/// `prefix` and `suffix` once each, around the repeated fill, so
+/// neither scales with rows and neither is priced by
+/// [`side_pattern_bytes_per_row`]. Charging them separately is what
+/// keeps [`MAX_BORDER_SIDE_BYTES`] a bound on the emitted string
+/// rather than on its repeating part only.
+///
+/// An `AtomicRepeat` pattern has no fixed part and reports 0.
+///
+/// Cost: one pass over the fixed clusters, no allocation.
+pub(crate) fn side_pattern_fixed_bytes(pattern: &SidePattern) -> usize {
+    use crate::mindmap::border_pattern::SidePattern;
+    match pattern {
+        SidePattern::AtomicRepeat { .. } => 0,
+        SidePattern::PrefixFillSuffix { prefix, suffix, .. } => {
+            prefix.iter().map(|g| g.len()).sum::<usize>() + suffix.iter().map(|g| g.len()).sum::<usize>()
+        }
+    }
 }
 
 /// Hard ceiling on the grapheme count one border side may emit.
@@ -825,14 +853,25 @@ pub const MAX_BORDER_SIDE_BYTES: usize = 1024 * 1024;
 /// caller can default — a caller that passed the grapheme count here
 /// would silently disable the byte ceiling.
 ///
+/// `fixed_bytes` is what the rail emits **regardless** of the copy
+/// count — the `prefix` and `suffix` of a `PrefixFillSuffix`
+/// pattern, which `render` writes once each around the repeated
+/// fill. It is charged against the byte ceiling before the repeats
+/// are, because a ceiling that only prices the repeating part does
+/// not bound the emitted string: an authored prefix rides straight
+/// through it. Pass 0 for a pattern with no fixed part.
+///
 /// Total over hostile inputs: a non-finite or non-positive advance
 /// yields zero copies rather than a saturating cast into the push
-/// loop. Cost: a few float ops, no allocation.
+/// loop, and a `fixed_bytes` at or over the ceiling yields zero
+/// repeats rather than underflowing. Cost: a few float ops, no
+/// allocation.
 pub(crate) fn fill_copies(
     available_pt: f32,
     cluster_w: f32,
     cluster_len: usize,
     cluster_bytes: usize,
+    fixed_bytes: usize,
 ) -> usize {
     if !available_pt.is_finite() || !cluster_w.is_finite() || cluster_w <= 0.0 || cluster_len == 0 {
         return 0;
@@ -842,7 +881,8 @@ pub(crate) fn fill_copies(
         return 0;
     }
     let by_graphemes = MAX_BORDER_SIDE_GLYPHS / cluster_len;
-    let by_bytes = MAX_BORDER_SIDE_BYTES / cluster_bytes.max(1);
+    let byte_budget = MAX_BORDER_SIDE_BYTES.saturating_sub(fixed_bytes);
+    let by_bytes = byte_budget / cluster_bytes.max(1);
     (copies as usize).min(by_graphemes).min(by_bytes)
 }
 
@@ -888,7 +928,8 @@ fn fit_pattern_to_width(
                 return (String::new(), 0, 0.0);
             }
             let cluster_bytes: usize = cluster.iter().map(|g| g.len()).sum();
-            let full_copies = fill_copies(available_pt, cluster_w, cluster.len(), cluster_bytes);
+            // AtomicRepeat has no fixed prefix/suffix.
+            let full_copies = fill_copies(available_pt, cluster_w, cluster.len(), cluster_bytes, 0);
             let mut emitted_w = full_copies as f32 * cluster_w;
             let mut text = String::new();
             for _ in 0..full_copies {
@@ -935,7 +976,20 @@ fn fit_pattern_to_width(
             }
             let between_avail = available_pt - prefix_w - suffix_w;
             let fill_bytes: usize = fill.iter().map(|g| g.len()).sum();
-            let full_copies = fill_copies(between_avail, fill_cluster_w, fill.len(), fill_bytes);
+            // The prefix and suffix are emitted unconditionally below,
+            // so they are charged against the ceiling before the
+            // repeats are — otherwise an authored prefix rides
+            // straight past a cap that claims to bound the whole
+            // emitted string.
+            let fixed_bytes: usize =
+                prefix.iter().map(|g| g.len()).sum::<usize>() + suffix.iter().map(|g| g.len()).sum::<usize>();
+            let full_copies = fill_copies(
+                between_avail,
+                fill_cluster_w,
+                fill.len(),
+                fill_bytes,
+                fixed_bytes,
+            );
 
             let mut text = String::new();
             let mut cluster_count = 0;

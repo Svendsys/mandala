@@ -542,11 +542,32 @@ impl MindMapDocument {
 /// negative coordinates are legal — a node can sit at a negative
 /// canvas-x to the left of the origin.
 fn validate_node_position(pos: baumhard::mindmap::model::Position) -> Result<(), String> {
+    use baumhard::mindmap::model::validate::MAX_CANVAS_COORD;
     if !pos.x.is_finite() || !pos.y.is_finite() {
         return Err(format!(
             "node.position has non-finite component (x={}, y={})",
             pos.x, pos.y
         ));
+    }
+    // Magnitude too, not just finiteness. The loader bounds
+    // `node.position` at `MAX_CANVAS_COORD`, so a setter that took
+    // any finite `f64` let the editor write a map it would then
+    // refuse to reopen — `set_node_aabb` with `x: 1e30` returned
+    // `Ok(true)` and the saved file would not load.
+    //
+    // Rejected rather than clamped, unlike the font metrics: this
+    // guard already returns `Result` and its callers already refuse
+    // a bad position, so silently relocating a node to the boundary
+    // would be a bigger surprise than declining the write. (It is
+    // also why `validate::clamp_to_bound` is not used here — it
+    // takes `f32` and these coordinates are `f64`.)
+    for (name, value) in [("x", pos.x), ("y", pos.y)] {
+        if value.abs() > MAX_CANVAS_COORD {
+            return Err(format!(
+                "node.position.{name} ({value}) is outside the ±{MAX_CANVAS_COORD} bound the \
+                 loader enforces"
+            ));
+        }
     }
     Ok(())
 }

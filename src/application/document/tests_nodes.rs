@@ -414,7 +414,8 @@ fn test_set_node_size_below_text_floor_lands_at_floor() {
     assert!(
         after.width > 5.0 && after.height > 5.0,
         "floor-respect must grow both axes above the tiny target ({}x{})",
-        after.width, after.height
+        after.width,
+        after.height
     );
 }
 
@@ -560,7 +561,9 @@ fn test_set_node_size_rejects_astronomical_typo() {
         width: 2_000_000.0,
         height: 10.0,
     };
-    assert!(doc.set_node_size(&id, huge).is_err_and(|m| m.contains("exceeds the")));
+    assert!(doc
+        .set_node_size(&id, huge)
+        .is_err_and(|m| m.contains("exceeds the")));
 }
 
 /// `set_node_aabb` writes both fields atomically and pushes one
@@ -751,10 +754,7 @@ fn test_compute_one_node_text_floor_skips_non_finite_offset() {
     let id = first_testament_node_id(&doc);
     {
         let n = doc.mindmap.nodes.get_mut(&id).unwrap();
-        n.sections[0].offset = baumhard::mindmap::model::Position {
-            x: f64::NAN,
-            y: 0.0,
-        };
+        n.sections[0].offset = baumhard::mindmap::model::Position { x: f64::NAN, y: 0.0 };
     }
     let (w, h) = compute_one_node_text_floor(&doc.mindmap.nodes[&id]);
     assert!(w.is_finite());
@@ -889,14 +889,12 @@ fn test_fit_node_to_content_rejects_unmeasurable_floor() {
     {
         let n = doc.mindmap.nodes.get_mut(&id).unwrap();
         n.sections.clear();
-        n.sections.push(baumhard::mindmap::model::MindSection::new_default(
-            "x".into(),
-            Vec::new(),
-        ));
-        n.sections[0].offset = baumhard::mindmap::model::Position {
-            x: f64::NAN,
-            y: 0.0,
-        };
+        n.sections
+            .push(baumhard::mindmap::model::MindSection::new_default(
+                "x".into(),
+                Vec::new(),
+            ));
+        n.sections[0].offset = baumhard::mindmap::model::Position { x: f64::NAN, y: 0.0 };
     }
     let result = doc.fit_node_to_content(&id);
     assert!(
@@ -1724,7 +1722,7 @@ fn test_set_node_font_family_wide_face_grows_more_than_narrow() {
     let measure_floor = |fam: &str| -> f64 {
         let mut doc = load_test_doc();
         let nid = first_testament_node_id(&doc);
-    doc.selection = SelectionState::Single(nid.clone());
+        doc.selection = SelectionState::Single(nid.clone());
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.size.width = 1.0;
         node.size.height = 1.0;
@@ -1980,9 +1978,7 @@ fn test_set_section_text_color_range_undo_round_trip() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
     set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
-    let pre = doc.mindmap.nodes.get(&id).unwrap().sections[0]
-        .text_runs
-        .clone();
+    let pre = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs.clone();
     assert!(doc.set_section_text_color_range(&id, 0, 1, 9, "#abcdef".into()));
     assert!(doc.undo());
     let post = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
@@ -2052,15 +2048,10 @@ fn test_set_section_text_color_range_fills_gap() {
         // Shrink the run to [0, 3) so [3, 10) is a gap.
         s.text_runs[0].end = 3;
     }
-    let runs_before = doc.mindmap.nodes.get(&id).unwrap().sections[0]
-        .text_runs
-        .len();
+    let runs_before = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs.len();
     assert!(doc.set_section_text_color_range(&id, 0, 5, 8, "#123456".into()));
     let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
-    assert!(
-        runs.len() > runs_before,
-        "gap-fill must add at least one run"
-    );
+    assert!(runs.len() > runs_before, "gap-fill must add at least one run");
     let new_run = runs.iter().find(|r| r.start == 5 && r.end == 8);
     assert!(new_run.is_some(), "expected a new run covering [5, 8)");
     assert_eq!(new_run.unwrap().color, "#123456");
@@ -2072,12 +2063,7 @@ fn test_set_section_text_color_range_fills_gap() {
 /// deterministic grapheme count — `first_testament_node_id` runs
 /// over `HashMap` iteration order, which isn't stable across
 /// test orderings, so the fixture's text length varies.
-fn set_section_zero_text_and_single_run(
-    doc: &mut MindMapDocument,
-    node_id: &str,
-    text: &str,
-    font: &str,
-) {
+fn set_section_zero_text_and_single_run(doc: &mut MindMapDocument, node_id: &str, text: &str, font: &str) {
     let total = count_grapheme_clusters(text);
     let n = doc.mindmap.nodes.get_mut(node_id).expect("node exists");
     let s = &mut n.sections[0];
@@ -2116,9 +2102,7 @@ fn set_section_zero_text_and_single_run(
 /// is a transient runtime substitution, not a model edit.
 #[test]
 fn test_border_preview_does_not_push_undo_or_dirty() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2133,7 +2117,14 @@ fn test_border_preview_does_not_push_undo_or_dirty() {
     assert_eq!(doc.undo_stack.len(), undo_depth);
     assert!(!doc.dirty);
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().map(|c| c.preset.clone()),
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .map(|c| c.preset.clone()),
         before_node.style.border.as_ref().map(|c| c.preset.clone()),
         "model border slot must be byte-identical to pre-preview state"
     );
@@ -2145,9 +2136,7 @@ fn test_border_preview_does_not_push_undo_or_dirty() {
 /// `test_color_picker_preview_cleared_returns_to_committed`.
 #[test]
 fn test_border_preview_cleared_returns_to_committed() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2165,7 +2154,14 @@ fn test_border_preview_cleared_returns_to_committed() {
     assert!(!doc.dirty);
     assert_eq!(doc.undo_stack.len(), undo_depth);
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().map(|c| c.preset.clone()),
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .map(|c| c.preset.clone()),
         before_node.style.border.as_ref().map(|c| c.preset.clone()),
         "model unchanged after preview-then-cancel"
     );
@@ -2176,9 +2172,7 @@ fn test_border_preview_cleared_returns_to_committed() {
 /// slot is cleared.
 #[test]
 fn test_border_preview_commit_pushes_undo_and_dirty() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2192,7 +2186,10 @@ fn test_border_preview_commit_pushes_undo_and_dirty() {
 
     assert!(outcome.changed);
     assert!(doc.dirty);
-    assert!(doc.undo_stack.len() > undo_depth, "commit pushes at least one undo entry");
+    assert!(
+        doc.undo_stack.len() > undo_depth,
+        "commit pushes at least one undo entry"
+    );
     let cfg = doc
         .mindmap
         .nodes
@@ -2209,9 +2206,7 @@ fn test_border_preview_commit_pushes_undo_and_dirty() {
 /// returns `None` because no preview is active.
 #[test]
 fn test_border_preview_commit_clears_preview_slot() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2230,9 +2225,7 @@ fn test_border_preview_commit_clears_preview_slot() {
 /// atomically. The new preview's edits are what commit will apply.
 #[test]
 fn test_border_preview_replaces_prior_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2267,9 +2260,7 @@ fn test_border_preview_replaces_prior_preview() {
 /// arm uses to decide whether the keystroke should fall through.
 #[test]
 fn test_border_preview_cancel_returns_true_when_active_and_false_when_inactive() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2298,9 +2289,7 @@ fn test_border_preview_cancel_returns_true_when_active_and_false_when_inactive()
 /// committing `border preset=heavy top=…`.
 #[test]
 fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2328,9 +2317,7 @@ fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
 /// next `set_*` / `cancel_*` / `commit_*` call (defer-clear).
 #[test]
 fn test_border_preview_drift_clears_on_selection_change() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState};
     let mut doc = load_test_doc();
     let nid_a = first_testament_node_id(&doc);
     // Pick any other node id distinct from `nid_a`.
@@ -2377,9 +2364,7 @@ fn test_border_preview_drift_clears_on_selection_change() {
 /// `set_canvas_default_section_frame_border_config`.
 #[test]
 fn test_committing_set_node_border_config_clears_active_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2404,7 +2389,15 @@ fn test_committing_set_node_border_config_clears_active_preview() {
         "committing edit must clear an active preview"
     );
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().unwrap().preset,
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .unwrap()
+            .preset,
         "double",
         "the direct edit's value lands, not the preview's"
     );
@@ -2426,9 +2419,7 @@ fn test_committing_set_node_border_config_clears_active_preview() {
 /// turns `BorderConfigEdits` into `BorderConfigEditsView`.
 #[test]
 fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit};
     // The application-side slot helper lives in
     // `document/nodes/border.rs` as `pub(crate)`. The module is
     // private; re-export through `document/mod.rs` would be
@@ -2526,12 +2517,26 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
         if let (Some(c), Some(p)) = (commit_slot.as_ref(), preview_slot.as_ref()) {
             assert_eq!(c.preset, p.preset, "[{}] preset", label);
             assert_eq!(c.font, p.font, "[{}] font", label);
-            assert_eq!(c.font_size_pt.to_bits(), p.font_size_pt.to_bits(), "[{}] font_size_pt", label);
+            assert_eq!(
+                c.font_size_pt.to_bits(),
+                p.font_size_pt.to_bits(),
+                "[{}] font_size_pt",
+                label
+            );
             assert_eq!(c.color, p.color, "[{}] color", label);
             assert_eq!(c.padding.to_bits(), p.padding.to_bits(), "[{}] padding", label);
             assert_eq!(c.color_palette, p.color_palette, "[{}] color_palette", label);
-            assert_eq!(c.color_palette_field, p.color_palette_field, "[{}] color_palette_field", label);
-            assert_eq!(c.glyphs.is_some(), p.glyphs.is_some(), "[{}] glyphs Option shape", label);
+            assert_eq!(
+                c.color_palette_field, p.color_palette_field,
+                "[{}] color_palette_field",
+                label
+            );
+            assert_eq!(
+                c.glyphs.is_some(),
+                p.glyphs.is_some(),
+                "[{}] glyphs Option shape",
+                label
+            );
             if let (Some(cg), Some(pg)) = (c.glyphs.as_ref(), p.glyphs.as_ref()) {
                 assert_eq!(cg.top, pg.top, "[{}] glyphs.top", label);
                 assert_eq!(cg.bottom, pg.bottom, "[{}] glyphs.bottom", label);
@@ -2540,7 +2545,11 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
                 assert_eq!(cg.top_left, pg.top_left, "[{}] glyphs.top_left", label);
                 assert_eq!(cg.top_right, pg.top_right, "[{}] glyphs.top_right", label);
                 assert_eq!(cg.bottom_left, pg.bottom_left, "[{}] glyphs.bottom_left", label);
-                assert_eq!(cg.bottom_right, pg.bottom_right, "[{}] glyphs.bottom_right", label);
+                assert_eq!(
+                    cg.bottom_right, pg.bottom_right,
+                    "[{}] glyphs.bottom_right",
+                    label
+                );
             }
         }
     }
@@ -2573,7 +2582,15 @@ fn test_border_preview_commit_force_shows_frame_on_hidden_node() {
          (otherwise the user sees the preview render then commit hides it)"
     );
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().unwrap().preset,
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .unwrap()
+            .preset,
         "heavy",
         "the preset still committed"
     );
@@ -2606,9 +2623,7 @@ fn test_border_preview_commit_explicit_visibility_overrides_auto_flip() {
 /// by the underlying setter at commit time.
 #[test]
 fn test_border_preview_undo_after_commit_restores_pre_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2653,9 +2668,7 @@ fn test_border_preview_undo_after_commit_restores_pre_preview() {
 /// documented on `commit_border_preview`).
 #[test]
 fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let ids = first_n_testament_node_ids(&doc, 3);
     // Clear baseline border slots so the post-commit assertion
@@ -2677,7 +2690,15 @@ fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
     // Every node should now carry the staged preset.
     for id in &ids {
         assert_eq!(
-            doc.mindmap.nodes.get(id).unwrap().style.border.as_ref().unwrap().preset,
+            doc.mindmap
+                .nodes
+                .get(id)
+                .unwrap()
+                .style
+                .border
+                .as_ref()
+                .unwrap()
+                .preset,
             "heavy",
             "commit must fan out to every node in Multi(ids); missed {}",
             id
@@ -2697,10 +2718,7 @@ fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
     // Outcome's `changed` reflects the fan-out total — pinned
     // so a future "merge into one undo entry" change doesn't
     // silently regress the user-visible commit count.
-    assert!(
-        outcome.changed,
-        "outcome.changed must be true after Multi commit"
-    );
+    assert!(outcome.changed, "outcome.changed must be true after Multi commit");
 }
 
 /// **C20 regression** — commit on a `SectionRange` selection
@@ -2709,9 +2727,7 @@ fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
 /// section_idx) pair; each pushes its own undo entry.
 #[test]
 fn test_border_preview_commit_fans_out_to_section_range() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SectionSel,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit, SectionSel};
     let mut doc = load_test_doc();
     // Pick a node with at least 2 sections — testament's node 3.7
     // has multiple by construction; fall back to any node with
@@ -2726,7 +2742,7 @@ fn test_border_preview_commit_fans_out_to_section_range() {
         .expect("testament map has a multi-section node");
     let n_sections = doc.mindmap.nodes.get(&node_id).unwrap().sections.len();
     let last_section_idx = (n_sections - 1).min(2); // up to 3 sections
-    // Clear baseline frame_border slots on the targeted range.
+                                                    // Clear baseline frame_border slots on the targeted range.
     for i in 0..=last_section_idx {
         doc.mindmap.nodes.get_mut(&node_id).unwrap().sections[i].frame_border = None;
     }
@@ -2740,9 +2756,7 @@ fn test_border_preview_commit_fans_out_to_section_range() {
     doc.undo_stack.clear();
     doc.dirty = false;
 
-    let pairs: Vec<(String, usize)> = (0..=last_section_idx)
-        .map(|i| (node_id.clone(), i))
-        .collect();
+    let pairs: Vec<(String, usize)> = (0..=last_section_idx).map(|i| (node_id.clone(), i)).collect();
     let mut edits = BorderConfigEdits::default();
     edits.preset = OptionEdit::Set("heavy".into());
     let _ = doc.set_border_preview(BorderPreviewTarget::Sections(pairs.clone()), edits);
@@ -2784,9 +2798,7 @@ fn test_border_preview_commit_fans_out_to_section_range() {
 /// `BorderPreviewTarget::Nodes` against the live selection.
 #[test]
 fn test_border_preview_target_kind_node_resolves_against_live_selection() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState};
     let mut doc = load_test_doc();
     let ids = first_n_testament_node_ids(&doc, 2);
     doc.selection = SelectionState::Multi(ids.clone());
@@ -2795,11 +2807,9 @@ fn test_border_preview_target_kind_node_resolves_against_live_selection() {
     // `BorderPreviewTargetKind::Node`: ids come from
     // `nodes_in_selection(&doc.selection, ...)` and feed
     // `BorderPreviewTarget::Nodes(...)`.
-    let resolved_ids = crate::application::console::commands::border::nodes_in_selection(
-        &doc.selection,
-        "border preview",
-    )
-    .expect("Multi selection resolves to ids");
+    let resolved_ids =
+        crate::application::console::commands::border::nodes_in_selection(&doc.selection, "border preview")
+            .expect("Multi selection resolves to ids");
     assert_eq!(resolved_ids.len(), ids.len(), "all selected ids carried through");
     for id in &ids {
         assert!(
@@ -2833,9 +2843,7 @@ fn test_border_preview_target_kind_node_resolves_against_live_selection() {
 /// the border they just hid still on screen.
 #[test]
 fn test_border_on_off_clears_active_node_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -3654,7 +3662,11 @@ fn test_extreme_editor_writes_still_reload() {
     let reloaded = round_trip("node-font-size", &move |doc| {
         doc.set_node_font_size(&id, 5000.0);
     });
-    for run in reloaded.nodes[&node_id].sections.iter().flat_map(|s| s.text_runs.iter()) {
+    for run in reloaded.nodes[&node_id]
+        .sections
+        .iter()
+        .flat_map(|s| s.text_runs.iter())
+    {
         assert!(
             run.size_pt <= max_run_pt,
             "set_node_font_size must clamp into the loader's run domain, got {}",
