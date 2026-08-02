@@ -210,20 +210,7 @@ impl UnknownKey {
     ///
     /// Cost: one `String` allocation.
     pub fn path_within_location(&self) -> String {
-        let (_, rest) = location_of(&self.route);
-        let mut out = String::new();
-        for step in rest {
-            match step {
-                Step::Key(key) => {
-                    if !out.is_empty() {
-                        out.push('.');
-                    }
-                    out.push_str(key);
-                }
-                Step::Index(index) => out.push_str(&format!("[{index}]")),
-            }
-        }
-        out
+        render_path(location_of(&self.route).1)
     }
 
     /// The value the key held in the authored file — exactly what a
@@ -284,6 +271,226 @@ fn location_of(route: &[Step]) -> (String, &[Step]) {
         [Step::Key(head), rest @ ..] if head == "canvas" => ("canvas".to_string(), rest),
         rest => ("map".to_string(), rest),
     }
+}
+
+/// One construct this build cannot name, lifted out of the document
+/// so the rest of the map can load, and written back untouched at
+/// save.
+///
+/// **Why a whole construct rather than the part that failed.** An
+/// unrecognized *key* has no meaning to this build, so ignoring it
+/// changes nothing about what the map does. An unrecognized
+/// **variant** is the opposite: it is the thing that was supposed to
+/// happen. Dropping one `Mutation` out of a macro leaves a mutation
+/// that still appears in `mutation list`, still fires, and now does
+/// two of the three things it says it does — a silent partial
+/// behavior the user has no way to see. So the unit is the nearest
+/// container whose absence reads *as absence*: the whole custom
+/// mutation, or the whole trigger binding. What this build cannot
+/// carry out, it does not half carry out; it says it skipped it, and
+/// keeps the bytes so a build that understands them still has them.
+#[derive(Debug, Clone)]
+pub struct SkippedConstruct {
+    /// Route of the array element that was lifted out. The last step
+    /// is the index it had **in the authored document**, which is
+    /// where the save puts it back.
+    route: Vec<Step>,
+    /// The element exactly as it was authored.
+    value: Value,
+    /// What the typed read said when it refused it — the variant name
+    /// and the ones this build knows, straight from serde.
+    reason: String,
+}
+
+impl SkippedConstruct {
+    /// Where the construct sat, stamped the way `maptool verify`
+    /// stamps a location. Cost: one `String` allocation.
+    pub fn location(&self) -> String {
+        let (part, rest) = location_of(&self.route);
+        let within = render_path(rest);
+        if within.is_empty() {
+            part
+        } else {
+            format!("{part}: {within}")
+        }
+    }
+
+    /// serde's own account of why this build could not read it.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    /// The construct as authored — exactly what a save writes back.
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    /// The single line the loader logs for this construct.
+    ///
+    /// Says the three things the reader needs and nothing else: what
+    /// was skipped, **what the consequence is** — it will not run —
+    /// and that the file still has it.
+    ///
+    /// Cost: one `String` allocation.
+    pub fn warning(&self) -> String {
+        format!(
+            "loader: {}: this build cannot read this construct ({}), so it is skipped — \
+             it does not appear in the model and nothing it describes will run. It is \
+             written back to the file unchanged, so a build that understands it still \
+             has it. See format/schema.md.",
+            self.location(),
+            self.reason
+        )
+    }
+}
+
+/// Every construct one load had to skip, in document order.
+///
+/// Lives on [`MindMap`](crate::mindmap::model::MindMap) beside
+/// [`UnknownKeys`], for the same reason and with the same
+/// `#[serde(skip)]`: the constructs go back at their own routes, not
+/// into a side object.
+#[derive(Debug, Clone, Default)]
+pub struct SkippedConstructs {
+    entries: Vec<SkippedConstruct>,
+}
+
+impl SkippedConstructs {
+    /// Whether the load understood the whole document. O(1).
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// How many constructs were skipped. O(1).
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// The skipped constructs, in document order. O(1).
+    pub fn iter(&self) -> std::slice::Iter<'_, SkippedConstruct> {
+        self.entries.iter()
+    }
+
+    /// Record one construct the typed read refused.
+    ///
+    /// `route` must end in the element's authored index.
+    pub fn push(&mut self, route: Vec<Step>, value: Value, reason: String) {
+        self.entries.push(SkippedConstruct {
+            route,
+            value,
+            reason,
+        });
+    }
+
+    /// Put every skipped construct back into a freshly serialized
+    /// document, at the index it was authored at.
+    ///
+    /// **Runs after [`UnknownKeys::splice_into`], not before.** The
+    /// captured keys' routes were resolved against a document the
+    /// constructs had already been lifted out of, so their indices
+    /// are the shortened ones; re-inserting first would slide every
+    /// one of them onto the wrong element. Restoring afterwards puts
+    /// the array back to its authored length with both sets of data
+    /// already where they belong.
+    ///
+    /// A construct whose array is gone — the node it hung off was
+    /// deleted — is reported rather than dropped in silence. An index
+    /// past the end of a shortened array lands at the end, which is
+    /// the only honest answer once the elements it used to sit
+    /// between are gone.
+    ///
+    /// Cost: O(constructs × route length), plus one `Value` clone
+    /// each. Nothing at all for a map this build understood.
+    pub fn splice_into(&self, document: &mut Value) {
+        for entry in &self.entries {
+            let Some((Step::Index(index), parent)) = entry.route.split_last() else {
+                continue;
+            };
+            // The array itself may be gone from the saved document:
+            // every one of these lists is `skip_serializing_if =
+            // "Vec::is_empty"`, and skipping the only element a map
+            // had leaves the model with an empty one. Re-create it —
+            // without this the acute case of the whole feature (a map
+            // whose *single* custom mutation is the one from the
+            // future) loses the construct on the very next save.
+            restore_empty_list(document, parent);
+            let Some(array) = array_at_mut(document, parent) else {
+                log::warn!(
+                    "loader: {}: the construct this build could not read has nowhere to go \
+                     back to — the part of the document it sat in is gone. It is dropped \
+                     from the saved file.",
+                    entry.location()
+                );
+                continue;
+            };
+            let at = (*index).min(array.len());
+            array.insert(at, entry.value.clone());
+        }
+    }
+}
+
+/// Put an empty array back at `route` when the saver omitted it.
+///
+/// Every list a construct can be skipped out of carries
+/// `#[serde(skip_serializing_if = "Vec::is_empty")]`, so a map whose
+/// only custom mutation was the unreadable one serializes with no
+/// `custom_mutations` member at all. Adding the empty list back costs
+/// nothing when the model has entries of its own (the member is
+/// already there and this does nothing) and is the difference between
+/// preserving the construct and losing it when it does not.
+fn restore_empty_list(document: &mut Value, route: &[Step]) {
+    let Some((Step::Key(name), owner)) = route.split_last() else {
+        return;
+    };
+    let Some(owner) = value_at_mut(document, owner).and_then(Value::as_object_mut) else {
+        return;
+    };
+    if !owner.contains_key(name) {
+        owner.insert(name.clone(), Value::Array(Vec::new()));
+    }
+}
+
+/// [`value_at`], mutably.
+fn value_at_mut<'v>(root: &'v mut Value, route: &[Step]) -> Option<&'v mut Value> {
+    let mut current = root;
+    for step in route {
+        current = match (current, step) {
+            (Value::Object(members), Step::Key(key)) => members.get_mut(key)?,
+            (Value::Array(items), Step::Index(index)) => items.get_mut(*index)?,
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
+/// Follow a literal route and hand back the array at the end of it.
+fn array_at_mut<'v>(document: &'v mut Value, route: &[Step]) -> Option<&'v mut Vec<Value>> {
+    let mut current = document;
+    for step in route {
+        current = match (current, step) {
+            (Value::Object(members), Step::Key(key)) => members.get_mut(key)?,
+            (Value::Array(items), Step::Index(index)) => items.get_mut(*index)?,
+            _ => return None,
+        };
+    }
+    current.as_array_mut()
+}
+
+/// Render route steps as a field path — `sections[0].trigger_bindings[1]`.
+fn render_path(steps: &[Step]) -> String {
+    let mut out = String::new();
+    for step in steps {
+        match step {
+            Step::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(key);
+            }
+            Step::Index(index) => out.push_str(&format!("[{index}]")),
+        }
+    }
+    out
 }
 
 /// Every unrecognized key one load found, in the order the
@@ -951,6 +1158,85 @@ mod tests {
                 "Void"
             ])),
             "the key inside the payload is the unrecognized one, not the variant tag"
+        );
+    }
+
+    /// **Every variant of every externally tagged enum a load can
+    /// reach, not the two somebody tried.**
+    ///
+    /// The collision that broke the old member-count guess —
+    /// a payload key spelled like the enclosing variant — is a
+    /// property of the *name*, so the only honest coverage is all the
+    /// names. They come from the same source walk the
+    /// swallow-a-key drift test uses, so a new variant is covered the
+    /// day it is declared and a renamed one cannot leave a stale case
+    /// behind.
+    ///
+    /// Both directions per variant: the ordinary key inside a payload
+    /// (which needs the elided tag level put back) and the key spelled
+    /// like the variant (which needs the walk to keep going past a
+    /// level the model writes).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_every_reachable_variant_name_resolves_both_ways() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
+
+        let graph = TypeGraph::build(&crate_src_root());
+        let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for info in graph.reachable_from("MindMap") {
+            if info.kind != TypeKind::Enum || !info.derives_deserialize {
+                continue;
+            }
+            names.extend(info.variants.iter().cloned());
+        }
+        assert!(
+            names.len() > 40,
+            "the walk found only {} variant names reachable from MindMap, which is \
+             too few to be the real model — the table stopped testing anything",
+            names.len()
+        );
+
+        let mut failures: Vec<String> = Vec::new();
+        for variant in &names {
+            let probe = serde_json::json!({"field": {variant.clone(): {"known": 0}}});
+
+            let ordinary = serde_json::json!({"field": {variant.clone(): {"known": 0, "zz": 1}}});
+            let expanded = expand_route(
+                &ordinary,
+                Some(&probe),
+                &route(serde_json::json!(["field", "zz"])),
+            );
+            let want = Some(route(
+                serde_json::json!(["field", variant.clone(), "zz"]),
+            ));
+            if expanded != want {
+                failures.push(format!("{variant}: a key inside the payload resolved to {expanded:?}"));
+            }
+
+            let collided =
+                serde_json::json!({"field": {variant.clone(): {"known": 0, variant.clone(): 99}}});
+            let expanded = expand_route(
+                &collided,
+                Some(&probe),
+                &route(serde_json::json!(["field", variant.clone()])),
+            );
+            let want = Some(route(serde_json::json!([
+                "field",
+                variant.clone(),
+                variant.clone()
+            ])));
+            if expanded != want {
+                failures.push(format!(
+                    "{variant}: a payload key spelled like the variant resolved to {expanded:?}"
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "the route expansion got these variant names wrong — a key reported at \
+             one of them would be named, located, valued and written back \
+             incorrectly:\n  {}",
+            failures.join("\n  ")
         );
     }
 

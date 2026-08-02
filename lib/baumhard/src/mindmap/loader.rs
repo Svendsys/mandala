@@ -34,7 +34,7 @@
 //! everything else expensive lives on the failure path, where the raw
 //! JSON is re-examined only to explain a parse that already failed.
 
-use crate::mindmap::custom_mutation::CustomMutation;
+use crate::mindmap::custom_mutation::{CustomMutation, TriggerBinding};
 use crate::mindmap::model::{validate, Canvas, MindEdge, MindMap, MindNode, Palette};
 use crate::mindmap::unknown_keys::{self, Step};
 use serde::Deserialize;
@@ -91,7 +91,13 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     let (mut map, routes): (MindMap, Vec<Vec<Step>>) = match unknown_keys::deserialize_capturing(json) {
         Ok(parsed) => parsed,
-        Err(e) => return Err(diagnose_rejected_json(json, &e)),
+        Err(e) => {
+            // A construct from a newer build must not take the whole
+            // document down with it — see
+            // `load_skipping_unreadable_constructs`.
+            return load_skipping_unreadable_constructs(json)
+                .unwrap_or_else(|| Err(diagnose_rejected_json(json, &e)));
+        }
     };
     if !routes.is_empty() {
         map.unknown_keys = adopt_unknown_keys(json, &map, routes)?;
@@ -145,6 +151,202 @@ fn adopt_unknown_keys(
         log::warn!("{}", entry.warning());
     }
     Ok(captured)
+}
+
+
+/// Load the map around the constructs this build cannot read, or
+/// `None` when there is nothing of the kind to skip.
+///
+/// **The motivating scenario for #115, in its acute form.** An
+/// unrecognized *key* is inert — this build has no field for it, so
+/// ignoring it changes nothing. An unrecognized **enum variant** is
+/// not: `{"mutator": {"Glow": …}}` from a newer build made the whole
+/// document unloadable, so opening a newer map in an older build gave
+/// an empty window and the newer feature was one accidental save away
+/// from being gone. The maintainer's rule is that this build can
+/// *offer to load what it knows how to handle*: the map appears, the
+/// construct it cannot name does not, and the file keeps it.
+///
+/// # What gets skipped, and why that unit
+///
+/// Two, and only two: a whole `CustomMutation` (map-level
+/// `custom_mutations[i]` or a node's `inline_mutations[i]`) and a
+/// whole `TriggerBinding` (on a node or on one of its sections).
+///
+/// The unit is not "the part that failed", and the reason is the
+/// difference between a missing key and a missing instruction.
+/// Dropping one `Mutation` from a macro's list leaves a custom
+/// mutation that still shows up in `mutation list`, still fires, and
+/// silently does less than it says — a behavior change with no
+/// symptom. Dropping the whole entry is *visible as absence*: it is
+/// not in the registry, nothing triggers it, and the load said so.
+/// Neither drop violates a `format/validation.md` invariant — a
+/// `trigger_bindings.mutation_id` pointing at a mutation that is not
+/// there is already a documented runtime no-op — so the choice is
+/// made on which failure a user can see, and partial execution is the
+/// one they cannot.
+///
+/// Nothing else is skippable. A node, an edge, the canvas, a palette:
+/// removing any of them changes the map the reader is looking at
+/// rather than one thing it can do, so an unreadable one still fails
+/// the load with the message it always had.
+///
+/// # What it does not soften
+///
+/// **Loading and validating are different questions.** Every skipped
+/// construct is carried on
+/// [`MindMap::skipped_constructs`](crate::mindmap::model::MindMap::skipped_constructs),
+/// and `maptool verify` reports each as a violation and exits
+/// nonzero, naming the variant serde refused. A typo is still caught
+/// at the moment it is a typo; it just no longer costs the author the
+/// whole document while they find it.
+///
+/// # Cost
+///
+/// Nothing on a load that succeeds — this is only reached after the
+/// typed parse has already failed. When it is reached: one `Value`
+/// parse, one typed re-read of each custom mutation and trigger
+/// binding, and one more full deserialization of the remainder.
+fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, String>> {
+    let mut raw: Value = serde_json::from_str(json).ok()?;
+    // A pre-refactor spelling has a migration verb, and the message
+    // that names it is more use than a partial load would be.
+    if detect_legacy_shape(&raw).is_some() {
+        return None;
+    }
+    let skipped = excise_unreadable_constructs(&mut raw);
+    if skipped.is_empty() {
+        return None;
+    }
+    // The remainder still has to load on its own terms. If it does
+    // not, the failure was never about a construct we could skip, and
+    // the caller's ordinary diagnosis is the better answer.
+    let (mut map, routes): (MindMap, Vec<Vec<Step>>) =
+        unknown_keys::deserialize_value_capturing(&raw).ok()?;
+    for entry in skipped.iter() {
+        log::warn!("{}", entry.warning());
+    }
+    map.skipped_constructs = skipped;
+    if !routes.is_empty() {
+        let probe = serde_json::to_value(&map).ok();
+        let captured = unknown_keys::take_from(&mut raw, probe.as_ref(), routes);
+        for entry in captured.iter() {
+            log::warn!("{}", entry.warning());
+        }
+        map.unknown_keys = captured;
+    }
+    Some(check_invariants(map))
+}
+
+/// Lift every custom mutation and trigger binding the typed model
+/// cannot read out of `document`, in document order.
+///
+/// Refused for **any** reason, not only an unknown variant. Sorting
+/// serde's message into "a variant from the future" and "a typo"
+/// would mean parsing that message, which is the twin surface
+/// `lib/baumhard/CONVENTIONS.md` §B4 is about — and it would be
+/// sorting on the wrong axis anyway. The load's question is "can I
+/// carry this out?", and the answer is no in both cases;
+/// `maptool verify`'s question is "is this file right?", and it
+/// reports both. So the load skips whatever it cannot read and says
+/// what serde said, and the two questions stay separate.
+///
+/// Cost: one typed re-read per custom mutation and per trigger
+/// binding in the document. Only reached on a load that has already
+/// failed.
+fn excise_unreadable_constructs(document: &mut Value) -> unknown_keys::SkippedConstructs {
+    let mut skipped = unknown_keys::SkippedConstructs::default();
+    excise_from::<CustomMutation>(document, &[Step::Key("custom_mutations".to_string())], &mut skipped);
+
+    let mut node_ids: Vec<String> = document
+        .get("nodes")
+        .and_then(Value::as_object)
+        .map(|nodes| nodes.keys().cloned().collect())
+        .unwrap_or_default();
+    // Sorted so the warnings a reader sees come out in the same order
+    // every time, whatever the object's own iteration order is.
+    node_ids.sort();
+    for id in node_ids {
+        let node = [
+            Step::Key("nodes".to_string()),
+            Step::Key(id.clone()),
+        ];
+        let at = |field: &str| {
+            let mut route = node.to_vec();
+            route.push(Step::Key(field.to_string()));
+            route
+        };
+        excise_from::<CustomMutation>(document, &at("inline_mutations"), &mut skipped);
+        excise_from::<TriggerBinding>(document, &at("trigger_bindings"), &mut skipped);
+
+        let section_count = value_at(document, &at("sections"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        for index in 0..section_count {
+            let mut route = at("sections");
+            route.push(Step::Index(index));
+            route.push(Step::Key("trigger_bindings".to_string()));
+            excise_from::<TriggerBinding>(document, &route, &mut skipped);
+        }
+    }
+    skipped
+}
+
+/// Remove every element of the array at `route` that does not
+/// deserialize as `T`, recording each with the index it was authored
+/// at.
+///
+/// Indices are recorded **before** anything is removed, so a save
+/// puts the elements back where the author had them rather than where
+/// the shortened array happened to leave a gap.
+fn excise_from<T: serde::de::DeserializeOwned>(
+    document: &mut Value,
+    route: &[Step],
+    skipped: &mut unknown_keys::SkippedConstructs,
+) {
+    let Some(items) = value_at_mut(document, route).and_then(Value::as_array_mut) else {
+        return;
+    };
+    let mut refused: Vec<(usize, Value, String)> = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        if let Err(e) = T::deserialize(item) {
+            refused.push((index, item.clone(), e.to_string()));
+        }
+    }
+    for (index, _, _) in refused.iter().rev() {
+        items.remove(*index);
+    }
+    for (index, value, reason) in refused {
+        let mut full = route.to_vec();
+        full.push(Step::Index(index));
+        skipped.push(full, value, reason);
+    }
+}
+
+/// Follow a literal route through a document without modifying it.
+fn value_at<'v>(root: &'v Value, route: &[Step]) -> Option<&'v Value> {
+    let mut current = root;
+    for step in route {
+        current = match (current, step) {
+            (Value::Object(members), Step::Key(key)) => members.get(key)?,
+            (Value::Array(items), Step::Index(index)) => items.get(*index)?,
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
+/// [`value_at`], mutably.
+fn value_at_mut<'v>(root: &'v mut Value, route: &[Step]) -> Option<&'v mut Value> {
+    let mut current = root;
+    for step in route {
+        current = match (current, step) {
+            (Value::Object(members), Step::Key(key)) => members.get_mut(key)?,
+            (Value::Array(items), Step::Index(index)) => items.get_mut(*index)?,
+            _ => return None,
+        };
+    }
+    Some(current)
 }
 
 /// Post-parse invariants that live in the typed model rather than in
@@ -503,6 +705,11 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 pub fn to_json_value(map: &MindMap) -> Result<Value, String> {
     let mut value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
     map.unknown_keys.splice_into(&mut value);
+    // Strictly afterwards: the captured keys' routes were resolved
+    // against a document the skipped constructs had already been
+    // lifted out of, so restoring the constructs first would slide
+    // every one of those routes onto the wrong element.
+    map.skipped_constructs.splice_into(&mut value);
     Ok(value)
 }
 
@@ -1558,6 +1765,7 @@ mod tests {
             custom_mutations: Vec::new(),
             macros: Vec::new(),
             unknown_keys: Default::default(),
+            skipped_constructs: Default::default(),
         };
 
         let dir = TempDir::new("inline-macros-round-trip");
@@ -2545,6 +2753,190 @@ mod tests {
                 ),
             ),
         ]
+    }
+
+
+    /// **The scenario #115 was opened for.** A map authored by a newer
+    /// build names a mutator variant this one has never heard of. It
+    /// used to take the whole document down — an empty window, and the
+    /// newer feature one accidental save away from gone. Now the map
+    /// opens, the construct is named in a warning that says it will not
+    /// run, and the bytes are still there.
+    #[test]
+    fn test_a_map_with_an_unknown_variant_loads_around_it() {
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &custom_mutation_tail(r#", "mutator": {"zzWarnGlow": {"channel": 0, "intensity": 3}}"#),
+        );
+        crate::util::test_logger::install();
+        let map = load_from_str(&json).expect("the rest of the map must still load");
+
+        assert_eq!(map.nodes.len(), 1, "the document around it is untouched");
+        assert_eq!(map.nodes["0"].sections[0].text, "n");
+        assert!(
+            map.custom_mutations.is_empty(),
+            "a construct this build cannot carry out must not appear in the model"
+        );
+        assert_eq!(map.skipped_constructs.len(), 1);
+
+        let reported = crate::util::test_logger::lines_containing("zzWarnGlow");
+        assert_eq!(reported.len(), 1, "expected one warning, got {reported:?}");
+        let line = &reported[0];
+        assert!(line.contains("custom_mutations[0]"), "{line}");
+        assert!(
+            line.contains("nothing it describes will run"),
+            "the consequence is the part the reader needs: {line}"
+        );
+    }
+
+    /// The construct comes back out of a save byte-for-byte, including
+    /// when the model has **no** custom mutations left to write —
+    /// `custom_mutations` carries `skip_serializing_if =
+    /// "Vec::is_empty"`, so the list the construct belongs in is not
+    /// even in the saved document until the splice puts it back. That
+    /// is the acute case of the whole feature: a map whose single
+    /// custom mutation is the one from the future.
+    #[test]
+    fn test_a_skipped_construct_survives_a_save_that_writes_no_others() {
+        let authored = r#"{"id": "glow-it", "name": "Glow it", "target_scope": "SelfOnly",
+             "mutator": {"zzSaveGlow": {"channel": 0, "intensity": 3}}}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(r#", "custom_mutations": [{authored}]"#),
+        );
+        let map = load_from_str(&json).expect("loads around the construct");
+        let saved = to_json_value(&map).expect("serializes");
+
+        assert_eq!(
+            saved["custom_mutations"],
+            serde_json::from_str::<serde_json::Value>(&format!("[{authored}]")).expect("valid"),
+            "the construct has to come back exactly as it was authored"
+        );
+        let reloaded = load_from_str(&serde_json::to_string(&saved).expect("render"))
+            .expect("the saved document still loads");
+        assert_eq!(reloaded.skipped_constructs.len(), 1, "and still carries it");
+    }
+
+    /// A skipped construct goes back at the index it was authored at,
+    /// between the entries the model does write, rather than at
+    /// whatever position the shortened list left behind.
+    #[test]
+    fn test_a_skipped_construct_goes_back_where_it_was_authored() {
+        let readable = |id: &str| {
+            format!(r#"{{"id": "{id}", "name": "{id}", "target_scope": "SelfOnly"}}"#)
+        };
+        let unreadable =
+            r#"{"id": "mid", "name": "mid", "target_scope": "SelfOnly", "mutator": {"zzOrderGlow": {}}}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(
+                r#", "custom_mutations": [{}, {unreadable}, {}]"#,
+                readable("first"),
+                readable("last")
+            ),
+        );
+        let map = load_from_str(&json).expect("loads around the construct");
+        assert_eq!(map.custom_mutations.len(), 2);
+
+        let saved = to_json_value(&map).expect("serializes");
+        let ids: Vec<&str> = saved["custom_mutations"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|entry| entry["id"].as_str().expect("id"))
+            .collect();
+        assert_eq!(ids, ["first", "mid", "last"]);
+    }
+
+    /// A trigger binding is the other unit — on a node and on a
+    /// section, both of which a newer build can attach a trigger kind
+    /// to.
+    #[test]
+    fn test_an_unknown_trigger_variant_costs_only_its_binding() {
+        let node = node_with_sections(
+            r#"{"text": "n", "trigger_bindings": [{"trigger": "zzOnGaze", "mutation_id": "m"}]}"#,
+        )
+        .replace(
+            r#""folded": false"#,
+            r#""trigger_bindings": [{"trigger": "OnClick", "mutation_id": "keep"}], "folded": false"#,
+        );
+        let json = shape_map("", &node, "", "");
+        let map = load_from_str(&json).expect("the node must still load");
+
+        assert_eq!(map.nodes["0"].sections.len(), 1, "the section is still there");
+        assert!(map.nodes["0"].sections[0].trigger_bindings.is_empty());
+        assert_eq!(
+            map.nodes["0"].trigger_bindings.len(),
+            1,
+            "a binding this build *can* read is untouched"
+        );
+        assert_eq!(map.skipped_constructs.len(), 1);
+
+        let saved = to_json_value(&map).expect("serializes");
+        assert_eq!(
+            saved["nodes"]["0"]["sections"][0]["trigger_bindings"][0]["trigger"],
+            serde_json::json!("zzOnGaze")
+        );
+    }
+
+    /// **Skipping is for constructs, not for the map.** A node this
+    /// build cannot read is not a thing the reader can be shown
+    /// "around" — the map they get would be missing part of itself
+    /// with no sign of which part. So the load still refuses, with the
+    /// message it always had.
+    #[test]
+    fn test_an_unreadable_node_still_fails_the_whole_load() {
+        let json = shape_map(
+            "",
+            &node_json("0", "null").replace(r#""folded": false"#, r#""folded": "yes-please""#),
+            "",
+            "",
+        );
+        let error = load_from_str(&json).expect_err("an unreadable node must not be skipped");
+        assert!(error.contains("node \"0\""), "got: {error}");
+    }
+
+    /// **Every enum a load can meet has to sit inside something the
+    /// loader can skip**, or a variant from the future in it is still
+    /// a dead document. The two skippable units are hand-named in
+    /// `excise_unreadable_constructs`, which is exactly the twin
+    /// surface §B4 warns about — so the source walk checks the claim
+    /// rather than the comment asserting it.
+    #[test]
+    fn test_every_variant_bearing_enum_sits_inside_a_skippable_construct() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
+
+        let graph = TypeGraph::build(&crate_src_root());
+        let mut skippable: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for root in ["CustomMutation", "CustomMutationIn", "TriggerBinding"] {
+            skippable.extend(graph.reachable_from(root).iter().map(|info| info.name.as_str()));
+        }
+        let stranded: Vec<&str> = graph
+            .reachable_from("MindMap")
+            .iter()
+            .filter(|info| {
+                info.kind == TypeKind::Enum
+                    && info.derives_deserialize
+                    && !info.variants.is_empty()
+                    && !skippable.contains(info.name.as_str())
+            })
+            .map(|info| info.name.as_str())
+            .collect();
+        assert!(
+            stranded.is_empty(),
+            "these enums are reachable from a `.mindmap.json` load but not from any \
+             construct the loader can skip, so a variant a newer build adds to one of \
+             them still makes the whole document unloadable. Either widen the skippable \
+             set in `excise_unreadable_constructs` — and say why the new unit's absence \
+             is visible rather than a silent partial behavior — or record why this one \
+             cannot be skipped: {stranded:?}"
+        );
     }
 
     /// **A load followed by a save, with nothing touched in between,

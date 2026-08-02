@@ -118,6 +118,16 @@ pub struct TypeInfo {
     /// least one struct variant. Tuple and unit shapes have no field
     /// names for a stray key to hide in.
     pub has_named_fields: bool,
+    /// Every variant name an enum declares, in source order; empty
+    /// for a struct or an alias.
+    ///
+    /// An externally tagged enum writes its variant as the single
+    /// member of a wrapper object, which is a JSON level serde's
+    /// ignored-key path does not report — so
+    /// `mindmap::unknown_keys::expand_route` has to put it back. The
+    /// names are here so a test can drive that over **every** variant
+    /// the model can meet rather than the two somebody thought of.
+    pub variants: Vec<String>,
     /// Every type name mentioned by a deserializable field, in
     /// source order and de-duplicated by the walk rather than here.
     pub referenced: Vec<String>,
@@ -306,6 +316,7 @@ impl TypeGraph {
                         internally_tagged: serde.internally_tagged,
                         flattened_fields: flattened_fields(&item.fields),
                         has_named_fields: matches!(item.fields, Fields::Named(_)),
+                        variants: Vec::new(),
                         referenced: referenced_types(&item.fields),
                         omit_predicates: omit_predicates(&item.fields),
                     });
@@ -316,7 +327,9 @@ impl TypeGraph {
                     let mut predicates = Vec::new();
                     let mut flattened = Vec::new();
                     let mut has_named_fields = false;
+                    let mut variants = Vec::new();
                     for variant in &item.variants {
+                        variants.push(variant.ident.to_string());
                         has_named_fields |= matches!(variant.fields, Fields::Named(_));
                         referenced.extend(referenced_types(&variant.fields));
                         predicates.extend(omit_predicates(&variant.fields));
@@ -334,6 +347,7 @@ impl TypeGraph {
                         internally_tagged: serde.internally_tagged,
                         flattened_fields: flattened,
                         has_named_fields,
+                        variants,
                         referenced,
                         omit_predicates: predicates,
                     });
@@ -353,6 +367,7 @@ impl TypeGraph {
                         internally_tagged: false,
                         flattened_fields: Vec::new(),
                         has_named_fields: false,
+                        variants: Vec::new(),
                         referenced,
                         omit_predicates: Vec::new(),
                     });

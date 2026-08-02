@@ -99,6 +99,20 @@ pub struct MindMap {
     /// [`crate::mindmap::unknown_keys`].
     #[serde(skip)]
     pub unknown_keys: crate::mindmap::unknown_keys::UnknownKeys,
+    /// Constructs the loaded file carried that this build cannot read
+    /// at all — an enum variant a newer build introduced — lifted out
+    /// whole so the rest of the map could load, and written back
+    /// untouched at save.
+    ///
+    /// Not part of the on-disk shape (`#[serde(skip)]`), for the same
+    /// reason [`Self::unknown_keys`] is not: each construct goes back
+    /// at the index it was authored at. A map built in memory rather
+    /// than loaded carries none. `maptool verify` reports every entry
+    /// here as a violation — loading a map and validating it are
+    /// different questions, and a misspelled variant has to still be
+    /// caught. See [`crate::mindmap::unknown_keys::SkippedConstructs`].
+    #[serde(skip)]
+    pub skipped_constructs: crate::mindmap::unknown_keys::SkippedConstructs,
 }
 
 impl MindMap {
@@ -126,6 +140,7 @@ impl MindMap {
             custom_mutations: Vec::new(),
             macros: Vec::new(),
             unknown_keys: Default::default(),
+            skipped_constructs: Default::default(),
         }
     }
 

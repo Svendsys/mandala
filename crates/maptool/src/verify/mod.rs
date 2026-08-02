@@ -102,6 +102,7 @@ pub fn verify(map: &MindMap) -> Vec<Violation> {
     out.extend(sections::check(map));
     out.extend(zoom_bounds::check(map));
     out.extend(unknown_keys::check(map));
+    out.extend(unknown_keys::check_skipped_constructs(map));
     out
 }
 
