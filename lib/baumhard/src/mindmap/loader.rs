@@ -94,7 +94,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
         Err(e) => return Err(diagnose_rejected_json(json, &e)),
     };
     if !routes.is_empty() {
-        map.unknown_keys = adopt_unknown_keys(json, routes)?;
+        map.unknown_keys = adopt_unknown_keys(json, &map, routes)?;
     }
     check_invariants(map)
 }
@@ -115,10 +115,23 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
 /// `expect`ed, because `load_from_str` sits on the interactive
 /// `console open` path (CODE_CONVENTIONS §9).
 ///
-/// Cost: one `serde_json::Value` parse of `json`, one route resolution
-/// per captured key, and one `log::warn!` per captured key.
+/// **The model's own serialization is taken here too**, and handed to
+/// the capture as its oracle. It answers two questions nothing else
+/// can: which JSON levels are enum-variant wrappers serde's path
+/// elides (a key the model writes at a level is not the key serde
+/// ignored there), and which containers the saver will leave out, so
+/// the save can rebuild them rather than lose the keys nested inside.
+/// See [`crate::mindmap::unknown_keys`]. Serializing cannot fail for a
+/// value that just deserialized, but the failure degrades to "no
+/// oracle" rather than failing a load the user asked for
+/// (CODE_CONVENTIONS §9).
+///
+/// Cost: one `serde_json::Value` parse of `json`, one serialization of
+/// `map`, one route resolution per captured key, and one `log::warn!`
+/// per captured key.
 fn adopt_unknown_keys(
     json: &str,
+    map: &MindMap,
     routes: Vec<Vec<Step>>,
 ) -> Result<crate::mindmap::unknown_keys::UnknownKeys, String> {
     let mut raw: Value = serde_json::from_str(json)
@@ -126,7 +139,8 @@ fn adopt_unknown_keys(
     if let Some(message) = detect_legacy_shape(&raw) {
         return Err(message);
     }
-    let captured = unknown_keys::take_from(&mut raw, routes);
+    let probe = serde_json::to_value(map).ok();
+    let captured = unknown_keys::take_from(&mut raw, probe.as_ref(), routes);
     for entry in captured.iter() {
         log::warn!("{}", entry.warning());
     }
