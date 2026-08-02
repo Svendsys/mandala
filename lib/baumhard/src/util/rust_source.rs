@@ -20,16 +20,25 @@
 //!   `// this used to be log::error!("startup: {}", message);` keeps
 //!   the scan green while the behavior is gone. That is not a
 //!   contrived mutation — it is the ordinary shape of a removal.
-//! - **The test's own body, or a later `#[cfg(test)]` module.** The
-//!   needle a test asserts on is spelled out inside that test, so a
-//!   whole-file scan of the file the test lives in matches itself.
-//!   Appending a test module to a *different* file does the same to a
-//!   scan of that file.
+//! - **The test's own body, or a later test module.** The needle a
+//!   test asserts on is spelled out inside that test, so a whole-file
+//!   scan of the file the test lives in matches itself. Appending a
+//!   test module to a *different* file does the same to a scan of
+//!   that file. This is the one a reviewer got past: the recognizer
+//!   wanted `mod` as the immediate next token, so this workspace's
+//!   own `#[cfg(test)] #[cfg(not(target_arch = "wasm32"))] mod tests
+//!   {` idiom — seven live occurrences — was handed back as
+//!   production code, and a two-line shim underneath it revived a
+//!   mutation four pins had killed. What the recognizer accepts is
+//!   spelled out on
+//!   [`above_test_modules`](crate::util::rust_source::above_test_modules),
+//!   and held against every shape *in this tree* — not against
+//!   invented ones — by the sweep in `util::tests::rust_source_tests`.
 //!
 //! [`production_code`](crate::util::rust_source::production_code)
 //! closes both: it replaces every comment with a space
 //! ([`strip_comments`](crate::util::rust_source::strip_comments)) and
-//! drops everything from the first `#[cfg(test)]` module onward
+//! drops everything from the first test module onward
 //! ([`above_test_modules`](crate::util::rust_source::above_test_modules)),
 //! so what comes back is the code that ships.
 //! [`braced_block_after`](crate::util::rust_source::braced_block_after)
@@ -70,10 +79,15 @@
 
 use crate::util::doc_fixtures::repo_path;
 
-/// The attribute [`above_test_modules`] looks for. Spelled as a
-/// `concat!` so this file's own text does not contain the literal it
-/// searches for: `production_code("lib/baumhard/src/util/rust_source.rs")`
-/// would otherwise truncate itself at this constant.
+/// The call [`above_test_modules`] scans for. Every `cfg` attribute
+/// in the file is a candidate; `attribute_opening_at` sorts the ones
+/// that are attributes from the ones that are not, and `implies_test`
+/// decides which of those gate on `test`.
+///
+/// Spelled as a `concat!` so this file's own text does not contain
+/// the literal it searches for:
+/// `production_code("lib/baumhard/src/util/rust_source.rs")` would
+/// otherwise stop to parse its own constant.
 ///
 /// Searched **after** comments are stripped, so the many prose
 /// mentions of the attribute in files like this one do not truncate
@@ -81,7 +95,31 @@ use crate::util::doc_fixtures::repo_path;
 /// occurrence inside a *string literal* still truncates early, which
 /// is the safe direction — a pin then scans less code and fails
 /// rather than passing on text it should not have seen.
-const TEST_ATTRIBUTE: &str = concat!("#[cfg(", "test)]");
+const CFG_CALL: &str = concat!("cfg", "(");
+
+/// The two ways a `cfg` can be written as an attribute: `#[cfg(…)]`
+/// on the item below it, and `#![cfg(…)]` on the module — or file —
+/// it is written inside. Both gate code; only the second gates a
+/// whole file, and this workspace writes two of those.
+///
+/// Anything else spelled `cfg(` — a `cfg!` macro, a function of that
+/// name, a fragment of a string literal — matches neither and is
+/// skipped.
+const ATTRIBUTE_OPENINGS: &[(&str, AttributeScope)] = &[
+    (concat!("#", "["), AttributeScope::Item),
+    (concat!("#!", "["), AttributeScope::Enclosing),
+];
+
+/// What a `cfg` attribute gates: the item written after it, or
+/// everything inside the module it is written in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AttributeScope {
+    /// `#[cfg(…)]` — the next item.
+    Item,
+    /// `#![cfg(…)]` — the rest of the enclosing module. At the top
+    /// of a file that is the whole file.
+    Enclosing,
+}
 
 /// Read `<repo>/<relative>` and return the part of it that ships:
 /// [`strip_comments`], then [`above_test_modules`].
@@ -109,12 +147,46 @@ pub fn production_code(relative: &str) -> String {
     above_test_modules(&strip_comments(&source)).to_string()
 }
 
-/// `code` up to its first **inline** `#[cfg(test)]` module, or all of
-/// it when there is none.
+/// `code` up to its first test module, or all of it when there is
+/// none.
 ///
-/// Only one shape hides text inside *this* file, and it is the only
-/// shape that truncates. The two near-misses each cost a real pin
-/// before they were handled:
+/// A test module here is either an inline `mod name { … }` carrying a
+/// `cfg` attribute that implies `test`, or — via `#![cfg(test)]` —
+/// the file itself. Every part of that sentence is a hole this
+/// function has fallen into, so each is spelled out.
+///
+/// ## Which `cfg`s count
+///
+/// `implies_test`, not a match on the literal `#[cfg(test)]`. This
+/// workspace writes `#[cfg(all(test, not(target_arch = "wasm32")))]`
+/// on six live items — `util::log`'s test module among them — and a
+/// literal match sees none of them.
+///
+/// ## What may sit between the `cfg` and the `mod`
+///
+/// **Any run of further attributes.** `#[cfg(test)]
+/// #[cfg(not(target_arch = "wasm32"))] mod tests {` is the house
+/// idiom for a test module that cannot build for the browser, with
+/// seven live occurrences, all under `src/application/app/` — the
+/// subtree the startup pins read. While `mod` had to be the
+/// *immediate* next token, all seven were reported as production
+/// code, and appending
+///
+/// ```text
+/// #[cfg(test)]
+/// #[allow(dead_code)]
+/// mod tests_shim { const SHIM: &str = "…the needle…"; }
+/// ```
+///
+/// to any scanned file satisfied every pin built on this reader while
+/// the code it pinned was gutted. One attribute line was the whole
+/// difference between that and a red suite.
+///
+/// ## Why the `{` is load-bearing
+///
+/// Only an inline module hides text inside *this* file, and it is the
+/// only shape that truncates. The two near-misses each cost a real
+/// pin before they were handled:
 ///
 /// - **`#[cfg(test)] use …`, or any smaller item.**
 ///   `src/application/renderer/mod.rs` opens with a test-only import
@@ -133,7 +205,24 @@ pub fn production_code(relative: &str) -> String {
 /// front of it is accepted, since a benchmark-reusable test tree is
 /// declared `pub mod tests;` (`lib/baumhard/CONVENTIONS.md` §B8).
 ///
-/// **What this deliberately does not remove:** a `#[cfg(test)]` on a
+/// ## The one thing that does truncate to (almost) nothing
+///
+/// `#![cfg(test)]` — the *inner* form, written at the top of a file
+/// that is nothing but tests. `src/application/macros/tests.rs` and
+/// `src/application/app/dispatch/cross_dispatch/selection/tests.rs`
+/// each open with it, and each is declared by a bare `mod tests;`
+/// with no attribute on it, so the gate lives nowhere else.
+///
+/// Cutting there really does leave nothing, and that is the honest
+/// answer rather than the dangerous one: the file ships no code, so
+/// reporting its test bodies as production code is the same hole the
+/// rest of this function closes. It does mean a *negative* assertion
+/// over such a file passes vacuously, so a caller that scans a file
+/// it did not choose keeps the non-vacuity guard
+/// `test_the_placard_is_not_announced_as_a_loaded_map` uses — assert
+/// something you expect to find, first.
+///
+/// **What this deliberately does not remove:** a test `cfg` on a
 /// smaller item. Those are code that exists rather than prose that
 /// does not, so a needle inside one is a needle in a real function,
 /// and the narrower pins built on [`braced_block_after`] do not reach
@@ -142,25 +231,161 @@ pub fn production_code(relative: &str) -> String {
 /// `code` should already be comment-free; a mention of the attribute
 /// in prose would otherwise truncate a file at its own module docs.
 ///
-/// Cost: one substring search plus a few bytes of lookahead per hit.
+/// Cost: one substring search per `cfg(` in the file, plus a
+/// balanced-paren walk of each predicate and a few bytes of lookahead
+/// past the ones that imply `test`.
 pub fn above_test_modules(code: &str) -> &str {
     let mut from = 0usize;
-    while let Some(offset) = code[from..].find(TEST_ATTRIBUTE) {
-        let at = from + offset;
-        let after = &code[at + TEST_ATTRIBUTE.len()..];
-        if opens_an_inline_module(after) {
-            return &code[..at];
+    while let Some(offset) = code[from..].find(CFG_CALL) {
+        let call = from + offset;
+        // `CFG_CALL` ends with its own `(`, so the last byte of the
+        // match is the delimiter the predicate is wrapped in.
+        let open = call + CFG_CALL.len() - 1;
+        from = call + CFG_CALL.len();
+        let Some((at, scope)) = attribute_opening_at(code, call) else {
+            continue;
+        };
+        let Some(close) = matching_delimiter(code, open, b'(', b')') else {
+            continue;
+        };
+        if !implies_test(&code[open + 1..close]) {
+            continue;
         }
-        from = at + TEST_ATTRIBUTE.len();
+        let Some(after) = code[close + 1..].trim_start().strip_prefix(']') else {
+            continue;
+        };
+        match scope {
+            // Everything from here down is inside the gated module.
+            AttributeScope::Enclosing => return &code[..at],
+            AttributeScope::Item if opens_an_inline_module(after) => return &code[..at],
+            AttributeScope::Item => {}
+        }
     }
     code
 }
 
-/// Whether `after` — the text immediately following a `#[cfg(test)]`
-/// — opens an *inline* module: an optional visibility, `mod`, a name,
-/// then `{` rather than `;`.
+/// Where the attribute wrapping the `cfg(` at `call` begins, and what
+/// it gates — or `None` when the `cfg(` is not an attribute at all.
+///
+/// The distinction is what keeps a `cfg!(test)` macro, a local
+/// binding named `cfg`, or the word inside a string literal from
+/// truncating a file.
+fn attribute_opening_at(code: &str, call: usize) -> Option<(usize, AttributeScope)> {
+    ATTRIBUTE_OPENINGS
+        .iter()
+        .find(|(opening, _)| code[..call].ends_with(opening))
+        .map(|(opening, scope)| (call - opening.len(), *scope))
+}
+
+/// Whether a `cfg` predicate — the text between the parentheses of
+/// `#[cfg(…)]` — is true only when `test` is set.
+///
+/// Written as the implication rather than as a list of spellings,
+/// because the list is what drifted: `#[cfg(test)]` was matched
+/// literally and `#[cfg(all(test, not(target_arch = "wasm32")))]`,
+/// which this workspace also writes, was not.
+///
+/// - `test` implies itself;
+/// - `all(…)` implies `test` when **any** operand does — every
+///   operand has to hold, so one of them being `test` is enough;
+/// - `any(…)` implies `test` only when **every** operand does, since
+///   the predicate holds as soon as one of them does. An empty
+///   `any()` is `false`, which implies everything, but treating it as
+///   a test gate would cut a file at a predicate that disables code
+///   on all targets — so it is excluded;
+/// - everything else, `not(…)` included, does not.
+///
+/// Erring in either direction costs something, which is why this is
+/// an implication check and not a heuristic: saying "yes" too often
+/// truncates a file early and makes a negative assertion pass
+/// vacuously, and saying "no" too often hands a test module to a
+/// caller as shipped code.
+fn implies_test(predicate: &str) -> bool {
+    let predicate = predicate.trim();
+    if predicate == "test" {
+        return true;
+    }
+    if let Some(operands) = combinator_operands(predicate, "all") {
+        return operands.iter().any(|operand| implies_test(operand));
+    }
+    if let Some(operands) = combinator_operands(predicate, "any") {
+        return !operands.is_empty() && operands.iter().all(|operand| implies_test(operand));
+    }
+    false
+}
+
+/// The comma-separated operands of `name(…)` when `predicate` is
+/// exactly that call, else `None`. A trailing comma contributes no
+/// operand.
+fn combinator_operands<'a>(predicate: &'a str, name: &str) -> Option<Vec<&'a str>> {
+    let inner = predicate.strip_prefix(name)?.trim_start();
+    let close = matching_delimiter(inner, 0, b'(', b')')?;
+    // `all(x) && y` is not a bare combinator; only the whole
+    // predicate being the call may be split.
+    if !inner[close + 1..].trim().is_empty() {
+        return None;
+    }
+    Some(
+        split_top_level(&inner[1..close])
+            .into_iter()
+            .filter(|operand| !operand.is_empty())
+            .collect(),
+    )
+}
+
+/// `list` split on the commas that are not inside a nested
+/// parenthesis or a literal, each piece trimmed.
+fn split_top_level(list: &str) -> Vec<&str> {
+    let bytes = list.as_bytes();
+    let mut pieces = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < list.len() {
+        if let Some(next) = raw_string_end(list, i) {
+            i = next;
+            continue;
+        }
+        match bytes[i] {
+            b'"' => {
+                i = quoted_end(list, i, '"');
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                pieces.push(list[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        let ch = list[i..].chars().next().expect("in-bounds by the loop guard");
+        i += ch.len_utf8();
+    }
+    pieces.push(list[start..].trim());
+    pieces
+}
+
+/// Whether `after` — the text following a test-gating `cfg`
+/// attribute — opens an *inline* module: any run of further
+/// attributes, an optional visibility, `mod`, a name, then `{` rather
+/// than `;`.
 fn opens_an_inline_module(after: &str) -> bool {
-    let rest = after.trim_start();
+    let mut rest = after.trim_start();
+    // The attribute run. `#[cfg(test)] #[cfg(not(target_arch =
+    // "wasm32"))] mod tests {` is the workspace's own idiom for a
+    // test module the browser build cannot compile, and requiring
+    // `mod` immediately is what let a shim under one of those revive
+    // a killed mutation.
+    while rest.starts_with("#[") {
+        // From the `[`, so the offset handed to the matcher is the
+        // delimiter it is told to match.
+        let bracketed = &rest[1..];
+        let Some(close) = matching_delimiter(bracketed, 0, b'[', b']') else {
+            return false;
+        };
+        rest = bracketed[close + 1..].trim_start();
+    }
     let rest = match rest.strip_prefix("pub") {
         // `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`.
         Some(tail) => match tail.strip_prefix('(') {
@@ -403,33 +628,55 @@ fn char_literal_end(src: &str, from: usize) -> Option<usize> {
 pub fn braced_block_after<'a>(src: &'a str, header: &str) -> Option<&'a str> {
     let at = src.find(header)?;
     let open = at + src[at..].find('{')?;
+    let close = matching_delimiter(src, open, b'{', b'}')?;
+    Some(&src[open..=close])
+}
+
+/// Byte offset of the delimiter closing the `open` at `from`, or
+/// `None` when `src[from]` is not `open` or the run never closes.
+///
+/// String, byte-string, raw-string and character literals are
+/// skipped, so a `"}"` in a message or a `']'` in `#[doc = "]"]`
+/// cannot close a run early. That is the property
+/// [`braced_block_after`] is built on, and it is shared with the
+/// attribute and `cfg`-predicate walks in [`above_test_modules`]
+/// rather than written three times.
+///
+/// `open` and `close` must differ; a same-delimiter run is not a
+/// nesting problem and has no business here.
+///
+/// Cost: one pass from `from` to the close.
+fn matching_delimiter(src: &str, from: usize, open: u8, close: u8) -> Option<usize> {
+    debug_assert_ne!(open, close, "a delimiter cannot close itself");
     let bytes = src.as_bytes();
+    if bytes.get(from) != Some(&open) {
+        return None;
+    }
     let mut depth = 0usize;
-    let mut i = open;
+    let mut i = from;
     while i < src.len() {
         if let Some(next) = raw_string_end(src, i) {
             i = next;
             continue;
         }
-        match bytes[i] {
-            b'"' => {
-                i = quoted_end(src, i, '"');
+        let byte = bytes[i];
+        if byte == b'"' {
+            i = quoted_end(src, i, '"');
+            continue;
+        }
+        if byte == b'\'' {
+            if let Some(next) = char_literal_end(src, i) {
+                i = next;
                 continue;
             }
-            b'\'' => {
-                if let Some(next) = char_literal_end(src, i) {
-                    i = next;
-                    continue;
-                }
+        }
+        if byte == open {
+            depth += 1;
+        } else if byte == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
             }
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&src[open..=i]);
-                }
-            }
-            _ => {}
         }
         let ch = src[i..].chars().next().expect("in-bounds by the loop guard");
         i += ch.len_utf8();

@@ -10,7 +10,66 @@
 //! case below therefore asserts both halves: the comment is gone
 //! *and* the code around it survived.
 
+use crate::util::doc_fixtures::repo_path;
 use crate::util::rust_source::{above_test_modules, braced_block_after, production_code, strip_comments};
+use std::path::{Path, PathBuf};
+
+/// The attribute header spellings that sit over an inline module in
+/// this workspace, and whether each one makes it a test module that
+/// [`above_test_modules`] must cut.
+///
+/// **Enumerated from the tree, not invented.** Every `true` row is a
+/// shape some file here actually writes, and the row that made this
+/// list necessary is the second one:
+/// `#[cfg(test)] #[cfg(not(target_arch = "wasm32"))] mod tests {`,
+/// the house idiom for a test module the browser build cannot
+/// compile, with seven live occurrences — five inline — all under
+/// `src/application/app/`. It was silently reported as production
+/// code for as long as the recognizer wanted `mod` as the immediate
+/// next token, which is what let a two-line shim revive a mutation
+/// four separate pins had killed.
+///
+/// The `false` rows are the near-misses that must survive: a `cfg`
+/// that has nothing to do with `test`, and the two combinator shapes
+/// where `test` appears but does not have to hold.
+///
+/// [`do_above_test_modules_knows_every_shape_in_this_tree`] is what
+/// keeps the `true` rows in step with the tree as it grows; this
+/// list is what states the answer for each shape in one place.
+const TEST_MODULE_HEADERS: &[(&str, bool)] = &[
+    // The plain form: 111 inline occurrences.
+    (concat!("#[cfg(", "test)]"), true),
+    // `src/application/app/text_edit/editor.rs` and six others.
+    (
+        concat!("#[cfg(", "test)]\n#[cfg(not(target_arch = \"wasm32\"))]"),
+        true,
+    ),
+    // The same thing said the other way round.
+    (
+        concat!("#[cfg(not(target_arch = \"wasm32\"))]\n#[cfg(", "test)]"),
+        true,
+    ),
+    // `lib/baumhard/src/util/log.rs` and five others in `util/`.
+    ("#[cfg(all(test, not(target_arch = \"wasm32\")))]", true),
+    // A non-`cfg` attribute in between — the shim's spelling.
+    (concat!("#[cfg(", "test)]\n#[allow(dead_code)]"), true),
+    // …and a run of them, including one whose argument holds a `]`.
+    (
+        concat!("#[cfg(", "test)]\n#[allow(dead_code)]\n#[doc = \"a ] bracket\"]"),
+        true,
+    ),
+    // `all` nests.
+    ("#[cfg(all(not(miri), all(test, unix)))]", true),
+    // `any` holds only when every arm does.
+    ("#[cfg(any(test, feature = \"x\"))]", false),
+    ("#[cfg(any(test, all(test, unix)))]", true),
+    // A `cfg` with no `test` in it at all cuts nothing…
+    ("#[cfg(not(target_arch = \"wasm32\"))]", false),
+    ("#[cfg(feature = \"testing\")]", false),
+    // …and neither does one that is true precisely when `test` is
+    // *not* set.
+    ("#[cfg(not(test))]", false),
+];
 
 /// Every comment shape in the workspace disappears; nothing that is
 /// not a comment moves.
@@ -134,6 +193,12 @@ pub fn do_strip_comments_survives_unterminated_input() {
 /// - `src/application/document/mod.rs` declares fourteen
 ///   `#[cfg(test)] mod tests_*;` **before its first real item**.
 ///   None of that text is in the file, so there is nothing to cut.
+///
+/// The *positive* cases are enumerated from this tree rather than
+/// invented — see `TEST_MODULE_HEADERS` for where each spelling
+/// occurs and [`do_above_test_modules_knows_every_shape_in_this_tree`]
+/// for the sweep that keeps that enumeration honest as the tree
+/// grows.
 pub fn do_above_test_modules_cuts_at_the_module_only() {
     let attribute = concat!("#[cfg(", "test)]");
 
@@ -161,6 +226,7 @@ pub fn do_above_test_modules_cuts_at_the_module_only() {
         "pub mod tests {",
         "pub(crate) mod tests {",
         "pub(super) mod tests {",
+        "pub(in crate::application::console) mod tests {",
     ] {
         let src =
             format!("fn ships() {{ keep(); }}\n{attribute}\n{module}\n  fn hidden() {{ needle(); }}\n}}\n");
@@ -174,6 +240,37 @@ pub fn do_above_test_modules_cuts_at_the_module_only() {
             "{module}: the test module survived"
         );
     }
+
+    // Every attribute *header* this tree writes over an inline test
+    // module, positive and negative. The header is the whole risk:
+    // requiring `mod` as the immediate next token silently reported
+    // seven live test modules as production code.
+    for (header, cuts) in TEST_MODULE_HEADERS {
+        let src =
+            format!("fn ships() {{ keep(); }}\n{header}\nmod tests {{\n  fn hidden() {{ needle(); }}\n}}\n");
+        let production = above_test_modules(&src);
+        assert!(
+            production.contains("fn ships()"),
+            "{header}: production code was cut away"
+        );
+        assert_eq!(
+            !production.contains("needle()"),
+            *cuts,
+            "{header}: expected the module to {} cut, and it was not. Production seen: {production:?}",
+            if *cuts { "be" } else { "not be" }
+        );
+    }
+
+    // A `]` inside an attribute's own string argument does not end
+    // the attribute, so the `mod` after it is still found.
+    let quoted_bracket =
+        format!("fn ships() {{ keep(); }}\n{attribute}\n#[doc = \"]\"]\nmod tests {{ fn hidden() {{ needle(); }} }}\n");
+    let production = above_test_modules(&quoted_bracket);
+    assert!(production.contains("fn ships()"));
+    assert!(
+        !production.contains("needle()"),
+        "a `]` inside an attribute argument hid the module: {production:?}"
+    );
 
     // Declarations first, then an inline module: the inline one is
     // still the cut, and the declarations above it do not move it.
@@ -249,6 +346,244 @@ pub fn do_production_code_returns_code_without_prose() {
     );
 }
 
+/// **No test module in this tree is reported as production code.**
+///
+/// The unit cases above are the shapes someone thought of. This is
+/// the one that answers the question they cannot: *is there a shape
+/// in this repository the recognizer does not know?* A shape present
+/// here that [`above_test_modules`] misses is a live hole, not a
+/// hypothetical — the reviewer who found the last one used the
+/// workspace's own `#[cfg(test)] #[cfg(not(target_arch = "wasm32"))]
+/// mod tests {` idiom, seven live occurrences, and every pin built on
+/// this reader went quiet.
+///
+/// The property, over every `.rs` file in the workspace: **the
+/// production half holds no `#[test]`.** A `#[test]` is the marker
+/// only test code carries, so one that survives the cut is a test
+/// module a pin would be free to read.
+///
+/// Two classes of file are test code *in their entirety*, so there is
+/// no module inside them to cut and the whole file legitimately comes
+/// back. Both are derived from the tree rather than listed, because a
+/// hand-written exclusion list is exactly the thing that goes stale
+/// while looking maintained:
+///
+/// - **Reached only under a `test` `cfg`.** `mod tests_nodes;` and
+///   friends, resolved through the parent module that declares them —
+///   see `reached_only_under_test_cfg`, which asks
+///   [`above_test_modules`] the question rather than re-deciding it.
+/// - **Reached through a module named `tests`.** Baumhard exposes its
+///   test bodies as an un-gated `pub mod tests;` on purpose, so
+///   `benches/test_bench.rs` can call the `do_*()` functions
+///   (`lib/baumhard/CONVENTIONS.md` §B8). That carve-out is *checked*
+///   rather than merely applied: it may only be what keeps a file out
+///   under `lib/baumhard/`, since §B8 is a baumhard rule and an
+///   un-gated `tests` module in the app crate would be a different
+///   thing entirely.
+///
+/// Not a `do_*()` with a bench entry, on the same ground as
+/// [`do_production_code_returns_code_without_prose`]: it is several
+/// hundred file reads, and timing it would time the page cache.
+pub fn do_above_test_modules_knows_every_shape_in_this_tree() {
+    let root = repo_path(".");
+    let sources = workspace_sources();
+    assert!(
+        sources.len() > 400,
+        "the source walk found only {} files — it is not reaching the tree",
+        sources.len()
+    );
+
+    let test_attribute = concat!("#[", "test]");
+    let mut cut = 0usize;
+    let mut all_test_code = 0usize;
+    let mut leaked: Vec<String> = Vec::new();
+    for path in &sources {
+        let source = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+        let stripped = strip_comments(&source);
+        let production = above_test_modules(&stripped);
+        if production.len() < stripped.len() {
+            cut += 1;
+        }
+        let relative = path.strip_prefix(&root).unwrap_or(path).display().to_string();
+        let named_tests = path.components().any(|c| c.as_os_str() == "tests");
+        let gated = reached_only_under_test_cfg(path);
+        if named_tests && !gated {
+            assert!(
+                relative.starts_with("lib/baumhard/"),
+                "{relative} is kept out of this sweep only by the §B8 `pub mod tests;` \
+                 carve-out, which is a baumhard rule — an un-gated `tests` module outside \
+                 that crate is test code with nothing declaring it so"
+            );
+        }
+        if named_tests || gated {
+            all_test_code += 1;
+            continue;
+        }
+        if production.contains(test_attribute) {
+            leaked.push(relative);
+        }
+    }
+
+    assert!(
+        leaked.is_empty(),
+        "these files ship production code and still hand a `#[test]` back to every pin \
+         built on this reader — the recognizer does not know the shape they use:\n  {}",
+        leaked.join("\n  ")
+    );
+    // Non-vacuity, both halves: the walk found test modules to cut,
+    // and it found files that are all test code.
+    assert!(cut > 100, "only {cut} files were cut — the recognizer went quiet");
+    assert!(
+        all_test_code > 50,
+        "only {all_test_code} whole-file test sources were resolved — the parent-module walk \
+         is not resolving declarations, and the sweep is passing because it excluded everything"
+    );
+
+    // The three real shapes, each named where it actually occurs, so
+    // a regression says which one came back rather than only that
+    // something did.
+    for (relative, shape) in [
+        (
+            "src/application/app/startup_load.rs",
+            concat!("#[cfg(", "test)] mod tests {"),
+        ),
+        (
+            "src/application/app/text_edit/editor.rs",
+            concat!(
+                "#[cfg(",
+                "test)] #[cfg(not(target_arch = \"wasm32\"))] mod tests {"
+            ),
+        ),
+        (
+            "lib/baumhard/src/util/log.rs",
+            "#[cfg(all(test, not(target_arch = \"wasm32\")))] mod tests {",
+        ),
+        ("src/application/macros/tests.rs", concat!("#![cfg(", "test)]")),
+    ] {
+        let source = std::fs::read_to_string(repo_path(relative))
+            .unwrap_or_else(|e| panic!("{relative} must be readable: {e}"));
+        let stripped = strip_comments(&source);
+        assert!(
+            stripped.contains(test_attribute),
+            "{relative} no longer holds a `#[test]`, so it can no longer witness `{shape}`"
+        );
+        assert!(
+            !above_test_modules(&stripped).contains(test_attribute),
+            "`{shape}` is back: {relative} hands its test bodies to every pin that reads it"
+        );
+    }
+}
+
+/// Every `.rs` file under the workspace's three source roots, sorted
+/// so a failure names the same file every run.
+///
+/// Read off the filesystem rather than off `[workspace] members`,
+/// because the question is "what Rust is in this tree" and a file
+/// nobody declares is exactly the kind of thing worth seeing.
+fn workspace_sources() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for root in ["src", "lib", "crates"] {
+        collect_rust_files(&repo_path(root), &mut found);
+    }
+    found.sort();
+    found
+}
+
+/// Push every `.rs` file under `dir` into `out`, recursively.
+/// Build output and dotted directories are skipped; nothing else is.
+fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries =
+        std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{} must be readable: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("directory entry").path();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        if path.is_dir() {
+            if name != "target" && !name.starts_with('.') {
+                collect_rust_files(&path, out);
+            }
+        } else if name.ends_with(".rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Whether `path`'s module — or any module above it — is declared
+/// under a `cfg` that implies `test`, so the file is test code
+/// through and through and has no inner module for
+/// [`above_test_modules`] to cut.
+///
+/// **The recognizer answers this, rather than a second parser.** The
+/// declaration is external (`mod tests_nodes;`), which
+/// [`above_test_modules`] deliberately never cuts at, so the question
+/// is put to it in the shape it does answer: take the parent's
+/// production code, rewrite the declaration into `mod tests_nodes {
+/// }`, and see whether the cut moves. Any attribute run in front of
+/// the declaration is then read by exactly the code this sweep
+/// exists to check — which is the point. A recognizer that stopped
+/// seeing a gate would stop excluding the file and the sweep would
+/// go *red*, never quiet.
+///
+/// The parent is searched in the two places Rust looks (`dir/mod.rs`
+/// and `dir.rs`) plus the crate roots, and only files that exist are
+/// followed, which is also what terminates the walk.
+fn reached_only_under_test_cfg(path: &Path) -> bool {
+    let Some((parents, name)) = parent_modules_of(path) else {
+        return false;
+    };
+    for parent in parents {
+        if parent == path || !parent.is_file() {
+            continue;
+        }
+        if reached_only_under_test_cfg(&parent) {
+            return true;
+        }
+        let source = std::fs::read_to_string(&parent)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", parent.display()));
+        let production = above_test_modules(&strip_comments(&source)).to_string();
+        let Some(at) = production.find(&format!("mod {name};")) else {
+            continue;
+        };
+        let inlined = format!("{}mod {name} {{ }}", &production[..at]);
+        if above_test_modules(&inlined).len() < inlined.len() {
+            return true;
+        }
+    }
+    false
+}
+
+/// The files that may declare `path` as a module, and the name it
+/// would be declared under. `None` for a crate root, which nothing
+/// declares.
+fn parent_modules_of(path: &Path) -> Option<(Vec<PathBuf>, String)> {
+    let stem = path.file_stem()?.to_string_lossy().into_owned();
+    let directory = path.parent()?;
+    let (name, from) = if stem == "mod" {
+        // `a/b/mod.rs` is module `b`, declared one level further up.
+        (
+            directory.file_name()?.to_string_lossy().into_owned(),
+            directory.parent()?.to_path_buf(),
+        )
+    } else if stem == "lib" || stem == "main" {
+        return None;
+    } else {
+        (stem, directory.to_path_buf())
+    };
+    Some((
+        vec![
+            from.join("mod.rs"),
+            from.with_extension("rs"),
+            from.join("lib.rs"),
+            from.join("main.rs"),
+        ],
+        name,
+    ))
+}
+
 #[test]
 fn test_strip_comments_removes_only_comments() {
     do_strip_comments_removes_only_comments();
@@ -277,4 +612,9 @@ fn test_braced_block_after_matches_one_item() {
 #[test]
 fn test_production_code_returns_code_without_prose() {
     do_production_code_returns_code_without_prose();
+}
+
+#[test]
+fn test_above_test_modules_knows_every_shape_in_this_tree() {
+    do_above_test_modules_knows_every_shape_in_this_tree();
 }

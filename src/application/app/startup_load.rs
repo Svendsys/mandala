@@ -566,7 +566,9 @@ mod tests {
     /// [`braced_block_after`]. Comments are gone, so gutting `adopt`
     /// and leaving `// this used to be log::error!(…)` fails — that
     /// is not a contrived mutation, it is the ordinary shape of a
-    /// deletion. Test modules are gone, so the needle spelled out in
+    /// deletion. Test modules are gone — including the ones written
+    /// under a run of attributes, which is the shape that let a shim
+    /// supply a needle for a while — so the needle spelled out in
     /// this very body cannot satisfy the scan. And the search is the
     /// body of `adopt` alone, so moving the statement out of the
     /// function it belongs to fails too. Whitespace-flattened so a
