@@ -1625,4 +1625,167 @@ fn test_apply_node_resize_to_tree_unknown_node_no_op() {
     apply_node_resize_to_tree(&mut tree, "nope", Vec2::ZERO, Vec2::new(10.0, 10.0), Vec2::ZERO);
 }
 
+/// A long `parent_id` chain is legal and acyclic, so the loader
+/// accepts it and the scene tree inherits its depth.
+/// `walk_drag_subtree` used to recurse over that depth, so opening
+/// such a map and dragging a node killed the process with `SIGABRT`
+/// — not a panic, so nothing could catch, log, or degrade it.
+///
+/// This is the same class the loader-side walkers were converted
+/// for, on the one walker that conversion missed. It sits on the far
+/// side of both: the load and the scene build already succeed on
+/// this map because they are iterative, and the *drag* was what
+/// died — which is exactly what made it easy to miss.
+///
+/// The walk runs on a 256 KiB stack rather than a test thread's
+/// default couple of megabytes. That is what keeps this both fast
+/// and honest: 20,000 nodes is cheap to build, and any reintroduced
+/// recursion blows a stack that small long before the chain ends,
+/// while the iterative form is indifferent to it.
+///
+/// A failure here aborts the test binary rather than failing an
+/// assertion — that is what a stack overflow does, and it is
+/// precisely the outcome under test.
+#[test]
+fn test_deep_chain_drag_does_not_exhaust_the_stack() {
+    const DEPTH: usize = 20_000;
+    const SMALL_STACK: usize = 256 * 1024;
+
+    let nodes = (0..DEPTH)
+        .map(|i| {
+            let parent = if i == 0 {
+                "null".to_string()
+            } else {
+                format!("\"n{}\"", i - 1)
+            };
+            format!(
+                r##""n{i}": {{
+                    "id": "n{i}", "parent_id": {parent},
+                    "position": {{"x": 0, "y": 0}},
+                    "size": {{"width": 100, "height": 50}},
+                    "sections": [{{"text": "n"}}],
+                    "style": {{"background_color":"#000","frame_color":"#000",
+                              "text_color":"#fff","shape":"rectangle",
+                              "corner_radius_percent":0,"frame_thickness":0,
+                              "show_frame":false,"show_shadow":false}},
+                    "layout": {{"type":"map","direction":"auto","spacing":0}},
+                    "folded": false, "notes": ""
+                }}"##
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!(
+        r##"{{
+            "version": "1.0",
+            "name": "deep",
+            "canvas": {{"background_color": "#000"}},
+            "nodes": {{{nodes}}},
+            "edges": []
+        }}"##
+    );
+    let map = baumhard::mindmap::loader::load_from_str(&json).expect("a deep chain is acyclic and loads");
+
+    let moved = std::thread::Builder::new()
+        .stack_size(SMALL_STACK)
+        .spawn(move || {
+            let mut tree = baumhard::mindmap::tree_builder::build_mindmap_tree(&map);
+            let arena_nodes = tree.tree.arena.count();
+            // `include_descendants = true` is the whole point: it is
+            // what routes into `walk_drag_subtree` and inherits the
+            // chain's depth. The patch-collecting variant shares that
+            // body, so covering one covers both.
+            let mut patches = Vec::new();
+            apply_drag_delta_and_collect_patches(&mut tree, "n0", 1.0, 2.0, true, &mut patches);
+            (arena_nodes, patches.len())
+        })
+        .expect("spawn the small-stack drag")
+        .join()
+        .expect("the drag walk must not exhaust a 256 KiB stack");
+
+    let (arena_nodes, patched) = moved;
+    assert!(
+        arena_nodes >= DEPTH,
+        "the scene tree must carry every node: {arena_nodes} < {DEPTH}"
+    );
+    assert!(
+        patched >= DEPTH,
+        "dragging the root must move every descendant: {patched} < {DEPTH}"
+    );
+}
+
+/// The recursive form `walk_drag_subtree` replaced, kept as the
+/// oracle for the test below.
+///
+/// Deliberately recursive in a file whose subject is removing
+/// recursion: it is the specification the iterative rewrite has to
+/// match, and it is only ever called on the small fixture tree, so
+/// its depth is a handful of levels. Do not call it on a
+/// caller-supplied map.
+fn reference_recursive_walk(
+    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
+    node_id: indextree::NodeId,
+    dx: f32,
+    dy: f32,
+    mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
+) {
+    if let Some(node) = arena.get_mut(node_id) {
+        let elem = node.get_mut();
+        if let Some(area) = elem.glyph_area_mut() {
+            area.move_position(dx, dy);
+            if let Some(p) = patches.as_deref_mut() {
+                let pos = elem.position();
+                p.push((elem.unique_id(), (pos.x, pos.y)));
+            }
+        }
+    }
+    let mut child = arena.get(node_id).and_then(|n| n.first_child());
+    while let Some(cid) = child {
+        child = arena.get(cid).and_then(|n| n.next_sibling());
+        reference_recursive_walk(arena, cid, dx, dy, patches.as_deref_mut());
+    }
+}
+
+/// The iterative drag walk must emit exactly the sequence the
+/// recursion emitted — not merely the same set.
+///
+/// Order is observable: `patches` is consumed positionally by
+/// `patch_drag_positions`, so a walk that visited the same nodes in
+/// a different order would still move every element to the right
+/// place while handing the renderer a differently-ordered buffer.
+/// A green suite does not catch that, which is why this compares
+/// against the previous implementation rather than against a
+/// property.
+///
+/// Zero delta is included on purpose: it makes the test sensitive to
+/// visit order alone, with no positional arithmetic to mask a
+/// divergence.
+#[test]
+fn test_iterative_drag_matches_the_recursive_order() {
+    for (dx, dy) in [(1.0f32, 2.0f32), (-7.5, 0.25), (0.0, 0.0)] {
+        for id in ["0", "1", "2"] {
+            let mut iterative_tree = load_test_tree();
+            let mut reference_tree = load_test_tree();
+            let Some(root) = reference_tree.arena_id_for(id) else {
+                continue;
+            };
+
+            let mut got = Vec::new();
+            apply_drag_delta_and_collect_patches(&mut iterative_tree, id, dx, dy, true, &mut got);
+
+            let mut want = Vec::new();
+            reference_recursive_walk(&mut reference_tree.tree.arena, root, dx, dy, Some(&mut want));
+
+            assert_eq!(
+                got, want,
+                "patch sequence diverged for node {id} at delta ({dx}, {dy})"
+            );
+            assert!(
+                !got.is_empty(),
+                "node {id} must produce patches, or this proves nothing"
+            );
+        }
+    }
+}
+
 // --- Custom mutation registry & application tests ---

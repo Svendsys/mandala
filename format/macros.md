@@ -185,7 +185,14 @@ Two structural defenses sit behind it. Every walker over `parent_id`
 depth is **iterative** — a linear chain is a legal acyclic tree, and
 recursing over one exhausted the stack and killed the process from
 `fold_hidden_set`, the scene build, the subtree-AABB pass, and the
-BVH hit-test. And the font metric is **clamped where it lands**
+BVH hit-test. Two more sit outside `baumhard` and are held to the
+same rule: `walk_drag_subtree`
+(`src/application/document/hit_test.rs`), which died on the first
+*drag* over a deep map — after the load and the scene build had both
+survived, which is exactly what made it easy to miss — and
+`arena_utils::clone_subtree`, which no shipping path reaches today
+but is `pub`, with the undo stack as its named consumer. And the
+font metric is **clamped where it lands**
 (`GlyphArea`'s scale setters), not only at the door, because console
 verbs, macros, and IPC write there without passing the loader at
 all.
