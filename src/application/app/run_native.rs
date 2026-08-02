@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Event, KeyEvent, MouseScrollDelta, StartCause, WindowEvent};
+use winit::event::{ElementState, Event, KeyEvent, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{CursorIcon, Window, WindowId};
@@ -304,27 +304,25 @@ impl InitState {
     pub(super) fn dispatch_touch_event(&mut self, touch: winit::event::Touch) -> bool {
         use super::touch_gesture::Phase;
         use web_time::Instant;
-        use winit::event::TouchPhase;
-        let phase = match touch.phase {
-            TouchPhase::Started => Phase::Started,
-            TouchPhase::Moved => Phase::Moved,
-            TouchPhase::Ended | TouchPhase::Cancelled => Phase::Ended,
-        };
+        // Phase translation, recognizer ingest + tick, and the
+        // gesture-to-Action lookup are `cross_dispatch::pointer`'s
+        // `drive_touch_event`; the browser runs the same body. Only
+        // the dispatch below is native's own — it goes through
+        // `dispatch_action` so `NativeOnly` gesture Actions
+        // (`EnterResizeMode`, `FastResizeStart`) reach their arms.
+        let phase = super::dispatch::touch_phase(touch.phase);
         let pos = (touch.location.x, touch.location.y);
-        let now = Instant::now();
-        let from_ingest = self.touch_recognizer.ingest(phase, touch.id, pos, now);
-        let from_tick = self.touch_recognizer.tick(now);
-        // Either ingest or tick can produce at most one
-        // recognition per call. If both fired the ingest one
-        // wins (it's the more recent transition); the tick's
-        // emission is queued for the next call.
-        let recognized = from_ingest.or(from_tick);
-        if let Some(g) = recognized {
-            self.cursor_pos = g.pos();
-            let mut ctx = self.input_context();
-            let name = g.mouse_gesture().key_name();
-            let action = ctx.keybinds.action_for_gesture(name, false, false, false);
-            if let Some(a) = action {
+        if let Some(d) = super::dispatch::drive_touch_event(
+            &mut self.touch_recognizer,
+            &self.keybinds,
+            phase,
+            touch.id,
+            pos,
+            Instant::now(),
+        ) {
+            self.cursor_pos = d.cursor_pos;
+            if let Some(a) = d.action {
+                let mut ctx = self.input_context();
                 let _ = super::dispatch::dispatch_action(a, &mut ctx, None);
                 return true;
             }
@@ -411,10 +409,7 @@ impl InitState {
                 event: WindowEvent::MouseWheel { delta, .. },
                 ..
             } => {
-                let scroll_y = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64,
-                    MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
-                };
+                let scroll_y = crate::application::app::wheel_lines(delta);
                 // While the console is open, the wheel scrolls the
                 // scrollback rather than zooming the canvas — mouse
                 // events should follow keyboard focus. Fractional
@@ -455,11 +450,7 @@ impl InitState {
                     // both to `ZoomIn` / `ZoomOut`. If the user
                     // explicitly clears the bindings, wheel events are
                     // silently ignored.
-                    let gesture_name = if scroll_y > 0.0 {
-                        crate::application::keybinds::MouseGesture::WheelUp.key_name()
-                    } else {
-                        crate::application::keybinds::MouseGesture::WheelDown.key_name()
-                    };
+                    let gesture_name = crate::application::app::wheel_gesture(scroll_y).key_name();
                     // `action_for_gesture` falls back to the unmodified
                     // binding when no exact-modifier match exists, so
                     // `Ctrl+Wheel` keeps zooming even though only

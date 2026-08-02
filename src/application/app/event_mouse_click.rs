@@ -209,19 +209,16 @@ pub(super) fn handle_mouse_input(
                 // `open_single_line_edit` a second time, which
                 // re-seeds the buffer from the committed model
                 // value and silently destroys the in-progress edit.
-                let already_editing_same_target = {
-                    let node_match = ctx
-                        .text_edit_state
-                        .node_id()
-                        .map(|id| hit_node.as_deref() == Some(id))
-                        .unwrap_or(false);
-                    let single_line_match = ctx
-                        .single_line_edit_state
-                        .target()
-                        .map(|t| t.matches_press_hit(edge_label_hit.as_ref(), portal_text_hit.as_ref()))
-                        .unwrap_or(false);
-                    node_match || single_line_match
-                };
+                let single_line_match = ctx
+                    .single_line_edit_state
+                    .target()
+                    .map(|t| t.matches_press_hit(edge_label_hit.as_ref(), portal_text_hit.as_ref()))
+                    .unwrap_or(false);
+                let already_editing_same_target = super::already_editing_same_target(
+                    ctx.text_edit_state.node_id(),
+                    hit_node.as_deref(),
+                    single_line_match,
+                );
                 let is_dblclick = !already_editing_same_target
                     && ctx
                         .last_click
@@ -741,21 +738,15 @@ fn maybe_exit_node_edit_on_outside_click(
         return;
     }
     // Empty-canvas hit: confirm the cursor is actually outside the
-    // active node's AABB before exiting (overflowing sections
-    // count as inside). `ensure_subtree_aabbs` is needed because
-    // post-mutation AABB caches go dirty; same shape as the
-    // text-editor's click-outside-commit gate.
+    // active node's AABB before exiting (overflowing sections count
+    // as inside). Same refresh-then-contain body the text editor's
+    // click-outside-commit gate runs — the AABB refresh is the step
+    // that must not be forgotten, so it lives in one place.
     let release_canvas = ctx
         .renderer
         .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-    if let Some(tree) = ctx.mindmap_tree.as_mut() {
-        tree.tree.ensure_subtree_aabbs();
-    }
-    let inside = ctx
-        .mindmap_tree
-        .as_ref()
-        .map(|tree| crate::application::document::point_in_node_aabb(release_canvas, &active_node, tree))
-        .unwrap_or(false);
+    let inside =
+        super::text_edit::point_inside_node_fresh_aabb(&active_node, ctx.mindmap_tree, release_canvas);
     if !inside {
         let _ = super::dispatch::dispatch_action(Action::ExitMode, ctx, None);
     }
