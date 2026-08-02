@@ -90,6 +90,34 @@ the parity trajectory (or why none is owed):
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").
+- **Single-line editor** (`src/application/app/single_line_edit/`)
+  — edge-label and portal-caption inline editing is native-only;
+  the browser has no single-line editor yet. Consequence for
+  input: an edge-label double-click commits the selection on both
+  targets and opens the editor only on native, surfaced as
+  `DoubleClickResidual::OpenEdgeLabelEditor` rather than a `cfg`,
+  and logged at `debug!` on the browser side so the stop is
+  observable. Parity unblocks `Action::DoubleClickActivate` and
+  `Action::EditSelection*` flipping to `Compatible`; tracked in
+  `work_plans/WASM_CONVERGENCE.md`.
+- **Per-frame animation drain**
+  (`src/application/app/drain_frame.rs`) — native-only, so
+  *animated* `CustomMutation`s (`timing.duration_ms > 0`) start on
+  the browser and never tick: `drain_animation_tick` is the only
+  advance site and there is no browser rAF-driven equivalent
+  wired to it. Instant mutations are unaffected and work on both
+  targets. Two browser entry points stall, through **two
+  different bodies**: the `custom_mutation_bindings` keystroke
+  tier (`run_wasm/event_keyboard.rs`) reaches
+  `apply_keybind_custom_mutation`'s `start_animation` branch,
+  while `click_triggers::fire_onclick_triggers` carries its own
+  copy of the animated-vs-instant routing and calls
+  `start_animation_at`. That duplication predates this work and
+  is named at both sites; unifying it is a behavior decision
+  rather than a refactor, because the two copies disagree about
+  the no-tree case. Parity for the stall itself is a browser
+  drain loop hung off the existing rAF render loop, pumping the
+  same `drain_animation_tick` body; not yet scheduled.
 
 ## Common tasks
 
@@ -101,7 +129,21 @@ the parity trajectory (or why none is owed):
   cross-platform drift can pass a green run. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
   `target/llvm-cov/html/index.html`), `--lint` (advisory
-  `cargo fmt --check` + `cargo clippy`), `--bench` (runs the criterion
+  `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt` runs
+  **once** — rustfmt parses rather than compiles, so it is
+  target-independent and there is no wasm32 leg for it. `clippy` and
+  `doc` run **twice**, on the host target and on
+  `wasm32-unknown-unknown`: a host-target compile drops everything
+  under `#[cfg(target_arch = "wasm32")]`, so without the second leg the
+  browser half of the app — its lints and its intra-doc links alike —
+  is invisible. The wasm32 clippy leg is `--workspace` so baumhard is
+  covered too, minus `--all-targets` (criterion and rayon refuse to
+  build for wasm32); the wasm32 doc leg is `-p mandala`, the same
+  invocation as the host one with only the target changed, because
+  baumhard cannot be documented standalone for wasm32 — its `rand` →
+  `getrandom` edge needs the `wasm_js` feature that only the root
+  manifest declares. Both wasm32 legs are skipped with a note when the
+  target isn't installed), `--bench` (runs the criterion
   benches after tests — **maintainers only**; §7 and `AGENTS.md`
   forbid it to agents, who need the type-check above and nothing
   else).

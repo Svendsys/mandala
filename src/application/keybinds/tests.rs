@@ -588,30 +588,45 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
 }
 
 /// Mixed-branch Actions (whose dispatch arm reads/writes
-/// different state per branch) classify as NativeOnly per the
-/// "ANY NativeOnly branch ⇒ NativeOnly" rule. Locks the
-/// classification so a future contributor can't silently
-/// downgrade the rule to "the WASM-reachable branch is
-/// reachable in practice" — that's the looser semantic the
-/// reviewer flagged as a forward-compat trap.
+/// different state per branch) classify per the "ANY NativeOnly
+/// branch ⇒ NativeOnly" rule. Locks the classification so a future
+/// contributor can't silently downgrade the rule to "the
+/// WASM-reachable branch is reachable in practice" — that's the
+/// looser semantic the reviewer flagged as a forward-compat trap.
+///
+/// The set is not written out here: it is
+/// [`MIXED_BRANCH_ACTIONS`](crate::application::keybinds::MIXED_BRANCH_ACTIONS),
+/// the same constant `lift_mixed_branch_for_wasm_macro` reads. Two
+/// hand-written copies drifted — this test named three members and
+/// the lift named four — so there is one list now and adding a member
+/// obliges both consumers.
+///
+/// The classification travels *with* each member because it is not
+/// uniform: `ExitMode` is mixed-branch and `Compatible` (its native
+/// leftover is a step, not a branch reaching native-only state).
+/// Asserting a blanket `NativeOnly` is what made a shared list look
+/// impossible.
 #[test]
 fn test_wasm_compatibility_mixed_branch_actions_are_native_only() {
-    use crate::application::keybinds::WasmCompatibility::NativeOnly;
-    for a in [
-        // EdgeLabel branch reaches `open_single_line_edit`
-        // (NativeOnly state).
-        Action::DoubleClickActivate,
-        // EdgeLabel + Portal* selection branches reach NativeOnly editors.
-        Action::EditSelection,
-        Action::EditSelectionClean,
-    ] {
+    use crate::application::keybinds::MIXED_BRANCH_ACTIONS;
+    for (a, expected) in MIXED_BRANCH_ACTIONS {
         assert_eq!(
             a.wasm_compatibility(),
-            NativeOnly,
-            "{:?} should be NativeOnly under the 'ANY NativeOnly branch' rule",
-            a
+            expected,
+            "{:?} should classify {:?} under the 'ANY NativeOnly branch' rule",
+            a,
+            expected,
         );
     }
+    // The rule has to bite somewhere: at least one member must be
+    // NativeOnly, or the loop above would pass against a list that
+    // had quietly become all-Compatible.
+    assert!(
+        MIXED_BRANCH_ACTIONS
+            .iter()
+            .any(|(_, c)| *c == crate::application::keybinds::WasmCompatibility::NativeOnly),
+        "the mixed-branch set must contain at least one NativeOnly member",
+    );
 }
 
 /// Exhaustiveness pin: every variant kind classifies cleanly under

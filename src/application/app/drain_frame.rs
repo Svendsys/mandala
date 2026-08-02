@@ -8,17 +8,11 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::collections::HashMap;
-
 use glam::Vec2;
 
 use super::now_ms;
-use super::scene_rebuild::{
-    flush_canvas_scene_buffers, overlay_tree, rebuild_all, CanvasFrame,
-};
-use crate::application::document::{
-    rect_select, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
-};
+use super::scene_rebuild::{overlay_tree, rebuild_all, rebuild_camera_geometry};
+use crate::application::document::{rect_select, MindMapDocument, SelectionState, HIGHLIGHT_COLOR};
 use crate::application::renderer::Renderer;
 
 pub(super) fn drain_selecting_rect(
@@ -94,43 +88,25 @@ pub(super) fn drain_camera_geometry_rebuild(
     let geometry_dirty = renderer.take_connection_geometry_dirty();
     if geometry_dirty && !is_moving_node {
         if let Some(doc) = document.as_ref() {
-            // `ensure_zoom` inside the connection pass would also
-            // catch this, but clearing explicitly here keeps the
-            // ordering readable next to the rebuild.
-            scene_cache.clear();
-            let offsets = HashMap::new();
-            let frame = CanvasFrame::new(
-                doc,
-                &offsets,
-                interaction_mode.resize_handle_overrides(),
-                renderer.camera_zoom(),
-            );
-            // Only the zoom-dependent roles. Borders, section
-            // frames, and resize handles are canvas-space and
-            // zoom-independent, so re-projecting them here would be
-            // pure waste on every scroll tick. Edge handles *are*
-            // in the list: scroll-wheel zoom with a selected edge
-            // used to leave them pinned to stale screen positions
-            // until the next full rebuild (they ride along with
-            // `update_connection_trees`).
-            frame.update_connection_trees(scene_cache, app_scene);
-            frame.update_connection_label_tree(app_scene);
-            frame.update_portal_tree(app_scene);
-            flush_canvas_scene_buffers(app_scene, renderer);
+            // Body is `scene_rebuild::rebuild_camera_geometry` —
+            // WASM's wheel handler runs the same one, under the same
+            // dirty flag, because the browser has no per-frame drain
+            // to hang it off.
+            rebuild_camera_geometry(doc, interaction_mode, app_scene, renderer, scene_cache);
         }
     }
 }
 
 /// Tick any active animations. Each tick lerps the from / to
 /// snapshots into the model and (on completion) routes the final
-/// state through `apply_custom_mutation` so the standard model-sync
-/// + undo-push runs once. Drives `rebuild_all` only when something
-/// actually advanced. The event loop's `ControlFlow::Wait` /
-/// `ControlFlow::Poll` choice is decided in `NativeApp::about_to_wait`
-/// from `InitState::needs_continuation`, which factors in
-/// `has_active_animations` — so when no animations are active and
-/// no other source needs continuation, the loop parks until the
-/// next OS event.
+/// state through `apply_custom_mutation` so the standard
+/// model-sync + undo-push runs once. Drives `rebuild_all` only
+/// when something actually advanced. The event loop's
+/// `ControlFlow::Wait` / `ControlFlow::Poll` choice is decided in
+/// `NativeApp::about_to_wait` from `InitState::needs_continuation`,
+/// which factors in `has_active_animations` — so when no animations
+/// are active and no other source needs continuation, the loop
+/// parks until the next OS event.
 pub(super) fn drain_animation_tick(
     document: &mut Option<MindMapDocument>,
     interaction_mode: &super::InteractionMode,
