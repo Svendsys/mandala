@@ -307,9 +307,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 // `NativeContextExt`. Native's fall-through finishes
                 // it; WASM has no single-line editor yet and stops
                 // here with the label selected.
-                super::cross_dispatch::DoubleClickResidual::OpenEdgeLabelEditor => {
-                    DispatchOutcome::Unhandled
-                }
+                super::cross_dispatch::DoubleClickResidual::OpenEdgeLabelEditor => DispatchOutcome::Unhandled,
             };
         }
         _ => {}
@@ -748,7 +746,8 @@ mod tests {
 
     #[test]
     fn edit_selection_clean_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(&Action::EditSelectionClean, None, DispatchOutcome::Unhandled);
+        let out =
+            lift_mixed_branch_for_wasm_macro(&Action::EditSelectionClean, None, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
@@ -779,11 +778,8 @@ mod tests {
     /// to the custom-mutation tier on WASM. It must.
     #[test]
     fn test_double_click_activate_unhandled_without_a_hit_stays_unhandled() {
-        let out = lift_mixed_branch_for_wasm_macro(
-            &Action::DoubleClickActivate,
-            None,
-            DispatchOutcome::Unhandled,
-        );
+        let out =
+            lift_mixed_branch_for_wasm_macro(&Action::DoubleClickActivate, None, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Unhandled);
     }
 

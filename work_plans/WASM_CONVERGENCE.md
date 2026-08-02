@@ -181,10 +181,29 @@ Three funnel gaps closed with them:
   `double_click_activate` was silently ignored in the browser.
 - **Wheel zoom goes through the funnel on WASM.** It used to hardcode
   `factor = 1.1` and emit `CameraZoom` directly, bypassing
-  `action_for_gesture` entirely.
+  `action_for_gesture` entirely. The post-zoom rebuild converges on
+  native's narrow set too: base WASM ran `rebuild_scene_only` (all
+  seven canvas roles) and now runs `rebuild_camera_geometry` (three).
+  The four dropped roles — borders, section frames, and both
+  resize-handle trees — are canvas-space and zoom-independent, so a
+  zoom cannot move them; §4's mobile budget is the reason to converge
+  on the narrow set rather than the wide one. Two consequences the
+  call site spells out: `CameraPan` does not set
+  `connection_geometry_dirty` (only `CameraZoom` does), so a wheel
+  rebound to a pan Action reprojects nothing — identically to native;
+  and there is no `!is_moving_node` term in the browser's guard,
+  which is safe only while `WasmInputState` carries no `drag_state`.
 - **The keyboard chain reaches the custom-mutation tier on WASM.** It
   stopped at Macro, so a `custom_mutation_bindings` entry worked on
-  the desktop and was dead on the web.
+  the desktop and was dead on the web. **Instant mutations only** —
+  an entry with `timing.duration_ms > 0` takes
+  `apply_keybind_custom_mutation`'s `start_animation` branch, which
+  only queues the envelope. `drain_animation_tick` is the sole
+  advance site and `drain_frame.rs` is native-gated, so a browser
+  animation starts and never ticks. Pre-existing on the click-trigger
+  path; the keystroke tier widens it. Registered in CLAUDE.md's
+  "Dual-target status"; parity is a browser drain hung off the
+  existing rAF render loop, pumping the same body.
 
 `DoubleClickActivate` stays `wasm = NativeOnly`: its `EdgeLabel`
 branch still reaches the single-line editor, and the "ANY NativeOnly
