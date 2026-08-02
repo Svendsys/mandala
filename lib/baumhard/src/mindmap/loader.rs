@@ -1947,6 +1947,43 @@ mod tests {
         );
     }
 
+    /// **The warning is emitted, not merely available.** Every other
+    /// test here reads `map.unknown_keys`, which stays true of a
+    /// loader that captured the key and told nobody — deleting the
+    /// `log::warn!` leaves them all green.
+    ///
+    /// So this one reads the log. `crate::util::test_logger` is a
+    /// real `log::Log` sink rather than a mock (TEST_CONVENTIONS
+    /// §T10): it receives exactly what a real run sends. It is
+    /// process-global and the suite runs in parallel, so the key name
+    /// is deliberately one nothing else in the repository could
+    /// produce, and the search is for that needle rather than for
+    /// "the last line logged".
+    #[test]
+    fn test_the_unrecognized_key_warning_is_actually_logged() {
+        crate::util::test_logger::install();
+        let json = map_json_with_nodes(&node_json_with("7.7", "null", r#", "gnomon_bearing_9f31": 1"#));
+        let map = load_from_str(&json).expect("an unrecognized node key must not fail the load");
+
+        let logged = crate::util::test_logger::lines_containing("gnomon_bearing_9f31");
+        assert_eq!(
+            logged.len(),
+            1,
+            "the loader must warn exactly once per unrecognized key, logged: {logged:?}"
+        );
+        assert!(
+            logged[0].starts_with("WARN "),
+            "an unrecognized key is a `warn!`, not instrumentation: {}",
+            logged[0]
+        );
+        assert!(
+            logged[0].ends_with(&captured(&map, "gnomon_bearing_9f31").warning()),
+            "the logged line must be the one `UnknownKey::warning` builds, so the \
+             wording lives in one place: {}",
+            logged[0]
+        );
+    }
+
     /// The same report reaches keys nested inside a node — a typo in
     /// `style` is as invisible as one at the node level, and the
     /// message still resolves to the node the author has to open,

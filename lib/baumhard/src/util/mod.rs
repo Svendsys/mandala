@@ -48,6 +48,11 @@ pub mod primes;
 /// parser for its own source.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod serde_coverage;
+/// A recording `log::Log` sink, so a test can assert that a degrade
+/// path emitted the `warn!` CODE_CONVENTIONS §9 promises. Test-only
+/// and native-only — the browser build installs `console_log`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod test_logger;
 /// Collision-free scratch directories for filesystem tests, so
 /// concurrent `cargo test` runs cannot race on a shared path.
 /// Native-only — there is no filesystem to scratch on under wasm32.
