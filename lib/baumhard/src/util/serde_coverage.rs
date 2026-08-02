@@ -4,13 +4,18 @@
 //! "which types can this deserializer actually be handed?" and get an
 //! answer that stays true as the model grows.
 //!
-//! The problem this exists to solve: `serde(deny_unknown_fields)` is
-//! the thing that stops a hand-authored `.mindmap.json` key from
-//! being dropped on load and destroyed on the next save. It is a
-//! per-type opt-in. A hand-maintained list of "types that must carry
-//! it" is exactly the sort of twin surface that drifts the moment
-//! somebody adds a field — the same failure mode
-//! `lib/baumhard/CONVENTIONS.md` §B4 records for the field-tag enums.
+//! The problem this exists to solve: a `.mindmap.json` key this build
+//! has no field for is captured at load and written back at save
+//! (`mindmap::unknown_keys`), and that only works while no type
+//! between the document root and the key can absorb it first.
+//! `#[serde(deny_unknown_fields)]` aborts the load; `#[serde(flatten)]`
+//! swallows the key before `deserialize_ignored_any` is ever reached.
+//! Neither produces a compile error, and the two even combine — with
+//! `deny` silently winning and the flattened map left empty. A
+//! hand-maintained list of "types that must not do that" is exactly
+//! the sort of twin surface that drifts the moment somebody adds a
+//! field — the same failure mode `lib/baumhard/CONVENTIONS.md` §B4
+//! records for the field-tag enums.
 //!
 //! So nothing is listed. [`TypeGraph::build`] parses every non-test
 //! `.rs` file under baumhard's `src/` with `syn`, indexes every
@@ -73,8 +78,16 @@ pub struct TypeInfo {
     pub kind: TypeKind,
     /// `true` when the item's derive list includes `Deserialize`.
     pub derives_deserialize: bool,
-    /// `true` when the item carries `#[serde(deny_unknown_fields)]`.
+    /// `true` when the item carries `#[serde(deny_unknown_fields)]` —
+    /// which turns an unrecognized key into a load failure instead of
+    /// letting the loader capture and preserve it.
     pub denies_unknown_fields: bool,
+    /// Every field marked `#[serde(flatten)]`, by name. A flattened
+    /// field consumes the members no declared field matched, so the
+    /// keys never reach `deserialize_ignored_any` and the loader's
+    /// capture never sees them. Collected for enums too, across all
+    /// variants.
+    pub flattened_fields: Vec<String>,
     /// The proxy named by `#[serde(from = "...")]` /
     /// `#[serde(try_from = "...")]`, if any. Such a type never
     /// deserializes its own shape — the proxy does — so the
@@ -85,14 +98,21 @@ pub struct TypeInfo {
     /// the *write* path's contract lives on the proxy. Followed only
     /// by [`TypeGraph::omit_predicates_from`], never by
     /// [`TypeGraph::reachable_from`]: a serialize-only proxy is never
-    /// handed to a deserializer and has no business in the
-    /// `deny_unknown_fields` coverage set.
+    /// handed to a deserializer and has no business in the load-path
+    /// coverage set.
     pub serialize_proxy: Option<String>,
-    /// `true` when the item carries `#[serde(untagged)]`. Untagged
-    /// enums decide a variant by trial deserialization, so denying
-    /// unknown fields on them changes which variant matches rather
-    /// than merely tightening a check.
+    /// `true` when the item carries `#[serde(untagged)]`. An untagged
+    /// enum decides its variant by trial deserialization, which means
+    /// serde buffers the object into a `Content` value and replays it
+    /// through a deserializer of its own — one the loader's capture
+    /// wrapper is not part of. Keys a variant does not claim are
+    /// dropped inside that replay.
     pub untagged: bool,
+    /// `true` when the item carries `#[serde(tag = "…")]`, with or
+    /// without a `content`. Internally and adjacently tagged enums
+    /// buffer through `Content` for the same reason an untagged one
+    /// does, and hide unrecognized keys the same way.
+    pub internally_tagged: bool,
     /// `true` when some part of the item can consume named JSON
     /// object keys: a struct with named fields, or an enum with at
     /// least one struct variant. Tuple and unit shapes have no field
@@ -283,6 +303,8 @@ impl TypeGraph {
                         deserialize_proxy: serde.proxy,
                         serialize_proxy: serde.into_proxy,
                         untagged: serde.untagged,
+                        internally_tagged: serde.internally_tagged,
+                        flattened_fields: flattened_fields(&item.fields),
                         has_named_fields: matches!(item.fields, Fields::Named(_)),
                         referenced: referenced_types(&item.fields),
                         omit_predicates: omit_predicates(&item.fields),
@@ -292,11 +314,13 @@ impl TypeGraph {
                     let serde = SerdeAttrs::read(&item.attrs);
                     let mut referenced = Vec::new();
                     let mut predicates = Vec::new();
+                    let mut flattened = Vec::new();
                     let mut has_named_fields = false;
                     for variant in &item.variants {
                         has_named_fields |= matches!(variant.fields, Fields::Named(_));
                         referenced.extend(referenced_types(&variant.fields));
                         predicates.extend(omit_predicates(&variant.fields));
+                        flattened.extend(flattened_fields(&variant.fields));
                     }
                     self.insert(TypeInfo {
                         name: item.ident.to_string(),
@@ -307,6 +331,8 @@ impl TypeGraph {
                         deserialize_proxy: serde.proxy,
                         serialize_proxy: serde.into_proxy,
                         untagged: serde.untagged,
+                        internally_tagged: serde.internally_tagged,
+                        flattened_fields: flattened,
                         has_named_fields,
                         referenced,
                         omit_predicates: predicates,
@@ -324,6 +350,8 @@ impl TypeGraph {
                         deserialize_proxy: None,
                         serialize_proxy: None,
                         untagged: false,
+                        internally_tagged: false,
+                        flattened_fields: Vec::new(),
                         has_named_fields: false,
                         referenced,
                         omit_predicates: Vec::new(),
@@ -419,6 +447,8 @@ fn derives_deserialize(attrs: &[Attribute]) -> bool {
 struct SerdeAttrs {
     deny_unknown_fields: bool,
     untagged: bool,
+    /// `#[serde(tag = "…")]`, with or without `content`.
+    internally_tagged: bool,
     /// `#[serde(from = "…")]` / `#[serde(try_from = "…")]`.
     proxy: Option<String>,
     /// `#[serde(into = "…")]`.
@@ -442,6 +472,9 @@ impl SerdeAttrs {
                     out.deny_unknown_fields = true;
                 } else if meta.path.is_ident("untagged") {
                     out.untagged = true;
+                } else if meta.path.is_ident("tag") {
+                    out.internally_tagged = true;
+                    let _: syn::LitStr = meta.value()?.parse()?;
                 } else if meta.path.is_ident("from") || meta.path.is_ident("try_from") {
                     let literal: syn::LitStr = meta.value()?.parse()?;
                     out.proxy = Some(last_path_segment(&literal.value()));
@@ -498,6 +531,41 @@ fn omit_predicates(fields: &Fields) -> Vec<String> {
                 if meta.path.is_ident("skip_serializing_if") {
                     let literal: syn::LitStr = meta.value()?.parse()?;
                     out.push(literal.value());
+                } else if meta.input.peek(syn::Token![=]) {
+                    let value = meta.value()?;
+                    value.parse::<syn::Expr>()?;
+                }
+                Ok(())
+            });
+        }
+    }
+    out
+}
+
+/// The names of the fields marked `#[serde(flatten)]`.
+///
+/// A flattened field is the one shape that makes an unrecognized key
+/// invisible to the loader's capture: serde routes every member no
+/// declared field claimed into it instead of handing the value to
+/// `deserialize_ignored_any`. Unnamed fields report as `<unnamed>` —
+/// serde rejects `flatten` on a tuple field, so the name is only ever
+/// missing on source that will not compile anyway, and losing the
+/// entry would be worse than an ugly one.
+fn flattened_fields(fields: &Fields) -> Vec<String> {
+    let mut out = Vec::new();
+    for field in fields {
+        for attr in &field.attrs {
+            if !attr.path().is_ident("serde") {
+                continue;
+            }
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("flatten") {
+                    out.push(
+                        field
+                            .ident
+                            .as_ref()
+                            .map_or_else(|| "<unnamed>".to_string(), ToString::to_string),
+                    );
                 } else if meta.input.peek(syn::Token![=]) {
                     let value = meta.value()?;
                     value.parse::<syn::Expr>()?;
@@ -667,7 +735,7 @@ mod tests {
             "the reachability walk stops at {} name(s) nobody has vetted. Each is \
              either a primitive (add it to EXPECTED_TERMINATORS) or a type that is \
              part of the on-disk contract and is silently missing from the \
-             deny_unknown_fields coverage — the case `AppFont` is on the list for:\n  {}",
+             unknown-key coverage — the case `AppFont` is on the list for:\n  {}",
             unexpected.len(),
             unexpected.join("\n  ")
         );
@@ -760,7 +828,7 @@ mod tests {
             .collect();
         assert!(
             !read_side.contains(&"CustomMutationOut"),
-            "a serialize-only proxy must stay out of the deny_unknown_fields coverage set"
+            "a serialize-only proxy must stay out of the load-path coverage set"
         );
         assert!(
             graph.omit_predicates_from("MindMap").contains("String::is_empty"),

@@ -5,15 +5,22 @@
 //! owns the top-level `MindMap` struct plus its tree-shape queries
 //! (root / ancestry / descendants).
 //!
-//! **Every deserializable type here is closed**
-//! (`#[serde(deny_unknown_fields)]`), and so is every type reachable
-//! from one. The app resaves the whole model, so a key serde ignored
-//! at load is a key erased from the author's file at save; rejecting
-//! it is the only outcome that leaves the file intact. The rule is
-//! not maintained by hand — `mindmap::loader`'s
-//! `test_every_loadable_type_rejects_unknown_keys` walks the model's
-//! own source and fails until a newly reachable type opts in. See
-//! `format/schema.md` §"Unknown keys are rejected".
+//! **Every deserializable type here is open, and none of them may
+//! swallow a key.** A map authored by a newer build carries keys this
+//! one has no field for; the load keeps them rather than failing, and
+//! the save writes them back, so an older build can open, edit and
+//! resave a newer map without destroying the newer features. The keys
+//! do not live on these types — they live on
+//! [`MindMap::unknown_keys`], captured at the deserializer by
+//! `mindmap::unknown_keys`, which is what lets the guarantee cover
+//! types that cannot hold a `#[serde(flatten)]` catch-all because they
+//! derive `Copy`, `Eq` or `Hash`. What these types owe the mechanism
+//! is only that they do not absorb a key before it is seen: no
+//! `deny_unknown_fields`, no `flatten`, no `untagged` or `tag`. That
+//! rule is not maintained by hand — `mindmap::loader`'s
+//! `test_no_loadable_type_can_swallow_an_unknown_key` walks the
+//! model's own source and fails the moment one appears. See
+//! `format/schema.md` §"Unknown keys are kept".
 
 pub mod canvas;
 pub mod edge;
@@ -53,7 +60,6 @@ use std::collections::{HashMap, HashSet};
 /// with [`Self::fold_hidden_set`] once rather than paying the
 /// per-call cost repeatedly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MindMap {
     pub version: String,
     pub name: String,
@@ -81,6 +87,17 @@ pub struct MindMap {
     /// application's `dispatch_macro`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub macros: Vec<serde_json::Value>,
+    /// Keys the loaded file carried that this build has no field for,
+    /// with the route back to where each one sat.
+    ///
+    /// Not part of the on-disk shape — `#[serde(skip)]` — because the
+    /// keys are written back at their own routes rather than collected
+    /// into a side object. `mindmap::loader::save_to_file` splices them
+    /// into the serialized document; a map built in memory rather than
+    /// loaded carries none. See
+    /// [`crate::mindmap::unknown_keys`].
+    #[serde(skip)]
+    pub unknown_keys: crate::mindmap::unknown_keys::UnknownKeys,
 }
 
 impl MindMap {
@@ -107,6 +124,7 @@ impl MindMap {
             edges: Vec::new(),
             custom_mutations: Vec::new(),
             macros: Vec::new(),
+            unknown_keys: Default::default(),
         }
     }
 

@@ -2,22 +2,24 @@
 
 Complete field reference for every type in `.mindmap.json`.
 
-## Unknown keys are rejected
+## Unknown keys are kept
 
-Every object in a `.mindmap.json` is **closed**. A key that no field
-claims is a load error, not a field the loader quietly ignores.
+Every object in a `.mindmap.json` is **open**. A key that no field
+claims is not a load error and it is not quietly dropped: the loader
+warns once, naming where it found it, and writes the key back
+unchanged the next time the map is saved.
 
-The reason lives on the *save* path, not the load path. Mandala is an
-editor: it loads the whole map, mutates it, and writes the whole model
-back. A key dropped at load is therefore a key **deleted from the file
-at the next save** — and for a hand-authored map, that file was the
-only copy. A typo (`"min_zoom_to_rendr": 2.0`) and a field that does
-not exist yet (`"portal_form": { … }`) fail the same way, and both
-fail while the author still has what they wrote. The IPC boundary made
-the same call for the same reason: see [`ipc.md`](./ipc.md), "unknown
-parameters are rejected with `invalid_params`".
+The reason is version skew in both directions. A map authored by a
+newer build carries keys an older build has never heard of. Refusing
+the document would leave the reader with nothing at all — the map they
+can mostly render, they cannot see. Loading it and forgetting the keys
+is worse: Mandala is an editor, it writes the whole model back, and a
+key dropped at load is a key **deleted from the file at the next
+save**. For a hand-authored map that file was the only copy. So the
+loader keeps what it does not understand, and an older build can open,
+edit and resave a newer map without destroying the newer features.
 
-This map does **not** load:
+This map loads:
 
 ```json
 {
@@ -53,17 +55,19 @@ This map does **not** load:
 }
 ```
 
+and says so:
+
 ```
-node "0": unknown field `min_zoom_to_rendr`, expected one of `id`,
-`parent_id`, `position`, `size`, `sections`, `style`, `layout`,
-`folded`, `notes`, `color_schema`, `channel`, `trigger_bindings`,
-`inline_mutations`, `inline_macros`, `min_zoom_to_render`,
-`max_zoom_to_render` — unknown keys are rejected, not dropped: a load
-that ignored this key would erase it from the file on the next save.
-See format/schema.md.
+loader: node "0": unrecognized key `min_zoom_to_rendr` — this build
+has no field for it, so it is kept as written and saved back
+unchanged. Check the spelling if you meant an existing key; see
+format/schema.md.
 ```
 
-Fix the spelling and it loads:
+The node renders, `min_zoom_to_render` is unset because nothing set
+it, and `min_zoom_to_rendr` is still in the file after the next save.
+That last part is the whole policy: a key you keep is a key you can
+still fix. Fix the spelling and the warning stops:
 
 ```json
 {
@@ -99,23 +103,40 @@ Fix the spelling and it loads:
 }
 ```
 
-The converse is not a loss: a key written out at its own default
-value (`"color_schema": null`, `"text_runs": []`) may be *omitted*
-when the map is saved. Nothing that carries information disappears —
-reload the saved file and the model is the same one.
+A warning is easy to miss, so `maptool verify` reports the same keys
+as violations and exits non-zero — that is where a typo is meant to be
+caught, alongside every other thing that is spelled fine and means
+nothing. See [`validation.md`](./validation.md).
 
-The message names the **part of the document** that carries the key —
+The warning names the **part of the document** that carries the key —
 `node "1.2"`, `edge[3]`, `palette "coral"`, `canvas`,
-`custom_mutations[0]` — rather than a byte offset, because a map runs
-to thousands of lines and the key is the thing you can search for.
+`custom_mutations[0]`, or `map` for a key at the top level — followed
+by the field path inside that part (`style.shpe`,
+`sections[0].txet`). Not a byte offset: a map runs to thousands of
+lines and the key is the thing you can search for.
 
-Two shapes get a better message than the generic one, because "unknown
-field `text`" is true but useless to someone holding a pre-refactor
-map: a top-level `portals` array and per-node `text` / `text_runs` are
-answered with the `maptool convert` verb that migrates them. See
+The converse is not a loss: a key written out at its own default value
+(`"color_schema": null`, `"text_runs": []`) may be *omitted* when the
+map is saved. Nothing that carries information disappears — reload the
+saved file and the model is the same one.
+
+**Three shapes are still refused**, and all three are pre-refactor
+spellings rather than keys from the future: a top-level `portals`
+array, per-node `text` / `text_runs`, and a `sections` that is not an
+array. The current model means something else by those names, so
+carrying them forward would carry a contradiction forward. Each is
+answered with the `maptool convert` verb that migrates it; see
 [`migration.md`](./migration.md).
 
-**What this does not cover.** Closedness is about *keys*, not
+**Where a preserved key can still be lost.** A key is written back at
+the route it was read from. Above an array — a node by its id, a
+palette by its name — that route is stable across any edit. Below one,
+it is positional: reorder or delete a node's sections between load and
+save and a key attached to `sections[1]` follows the index, not the
+element. If the route is gone entirely (the node was deleted), the key
+goes with it and the save says so at `warn!`.
+
+**What this does not cover.** Openness is about *keys*, not
 *meanings*. An edge whose `to_id` names no node, a `color_schema`
 pointing at a palette that isn't there, a section that hangs outside
 its node — all of those are spelled correctly and all of them load.
@@ -124,8 +145,8 @@ They are `maptool verify`'s job; see [`validation.md`](./validation.md).
 Values inside `macros` and a node's `inline_macros` are the deliberate
 exception: baumhard stores them as opaque JSON (the typed `Macro` lives
 in the application crate), so their interiors are carried through
-untouched rather than checked here. See [`macros.md`](./macros.md).
-
+untouched and never reported as unrecognized. See
+[`macros.md`](./macros.md).
 ## Top-level object
 
 ```json

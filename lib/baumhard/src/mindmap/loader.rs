@@ -2,27 +2,39 @@
 
 //! `.mindmap.json` loader + saver.
 //!
-//! **The loader never drops what it does not understand.** A key the
-//! model has no field for is a load error, not a shrug: the editor
-//! resaves the map it loaded, so a key ignored at load is a key
-//! deleted at save, and the file the author hand-wrote was the only
-//! copy. Every type reachable from a load therefore carries
-//! `#[serde(deny_unknown_fields)]` — enforced against the model that
-//! exists, not a list of it, by
-//! `tests::test_every_loadable_type_rejects_unknown_keys`.
+//! **The loader never drops what it does not understand, and never
+//! refuses a document for carrying it.** A map authored by a newer
+//! build has keys this one has no field for. Refusing the load leaves
+//! the reader with an empty window; ignoring the keys is worse,
+//! because the editor resaves the whole model and the next save
+//! deletes them. So the load keeps them: every unrecognized key is
+//! captured with the route back to where it sat, warned about once,
+//! carried on [`MindMap::unknown_keys`], and written back untouched at
+//! save. See [`crate::mindmap::unknown_keys`] for the mechanism and
+//! why it is not a per-type `#[serde(flatten)]` catch-all.
 //!
-//! That posture is what the pre-refactor rejections were always an
-//! instance of: a top-level `portals[]` array or per-node `text` /
-//! `text_runs` is a shape serde would otherwise ignore, and those get
-//! a concrete `maptool convert ...` pointer instead of the generic
-//! message.
+//! What the model owes that mechanism is only that no type between the
+//! document root and a key can absorb it first — no
+//! `deny_unknown_fields`, no `flatten`, no `untagged` or `tag`. That is
+//! enforced against the model that exists, not a list of it, by
+//! `tests::test_no_loadable_type_can_swallow_an_unknown_key`.
 //!
-//! Everything expensive lives on the failure path. A successful load
-//! parses the document exactly once; the raw JSON is re-examined only
-//! to explain a parse that already failed.
+//! **Three shapes are still refused, and all three are pre-refactor
+//! spellings with a migration verb**: a top-level `portals[]`, per-node
+//! `text` / `text_runs`, and a `sections` that is not an array. Those
+//! are not keys from the future — they are keys from the past that the
+//! current model means something else by, so preserving them would
+//! carry a contradiction forward. Each gets a concrete `maptool convert
+//! ...` pointer.
+//!
+//! A successful load parses the document exactly once. A map that does
+//! carry unknown keys pays one more pass, to lift their values out;
+//! everything else expensive lives on the failure path, where the raw
+//! JSON is re-examined only to explain a parse that already failed.
 
 use crate::mindmap::custom_mutation::CustomMutation;
 use crate::mindmap::model::{validate, Canvas, MindEdge, MindMap, MindNode, Palette};
+use crate::mindmap::unknown_keys::{self, Step};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -45,38 +57,78 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 
 /// Parse a `MindMap` from a JSON string.
 ///
-/// A key the model does not know is rejected rather than dropped —
-/// see the module header for why that is the only policy that keeps
-/// a hand-authored file intact across a load / save cycle. Legacy
-/// shapes (a top-level `portals[]`, per-node `text` / `text_runs`)
-/// get a concrete `maptool convert ...` pointer instead of serde's
-/// generic complaint.
+/// A key the model does not know is **kept**, not dropped and not
+/// grounds for refusing the document — see the module header for why
+/// that is what lets an older build open a newer map. Each one is
+/// warned about once, naming the node / edge / palette it sits in, and
+/// travels on [`MindMap::unknown_keys`] to the next save. Pre-refactor
+/// shapes (a top-level `portals[]`, per-node `text` / `text_runs`) are
+/// the exception and still fail, with a concrete `maptool convert ...`
+/// pointer.
 ///
-/// Cost on the happy path: **exactly one parse of `json`**, and
-/// nothing that walks the text again. The raw string is not even in
-/// scope below the parse — every remaining invariant is expressed
-/// against the typed map, which is what keeps that property true as
-/// the invariant list grows.
+/// Cost on the happy path: **exactly one parse of `json`** for a map
+/// with nothing unknown in it, which is every map this build wrote.
+/// The capture rides that parse rather than adding one.
 ///
-/// Cost on the failure path: roughly **2× the happy path**, and
+/// Cost when the map *does* carry unknown keys: one more parse, into a
+/// `serde_json::Value`, to lift the captured values out and to answer
+/// the legacy-shape question — the three legacy spellings are
+/// themselves unrecognized keys, so nothing looks for them until the
+/// capture reports something. The extra pass is paid by the documents
+/// that need it and by no others.
+///
+/// Cost on the failure path: roughly **2× a successful load**, and
 /// worth naming because it is more than the extra `Value` parse it
 /// looks like. `diagnose_rejected_json` pays that parse *plus*
 /// `locate_typed_failure`, which re-deserializes the canvas, then
-/// every palette, then every node, then every edge, then every
-/// custom mutation, stopping at the first that fails. When the
-/// offending key is in the last node, that second stage has typed the
-/// whole document a second time. The trade is deliberate: the load is
-/// not going to complete, and a node id beats a byte offset into a
-/// 545 KB file.
+/// every palette, then every node, then every edge, then every custom
+/// mutation, stopping at the first that fails. When the offending part
+/// is the last node, that second stage has typed the whole document a
+/// second time. The trade is deliberate: the load is not going to
+/// complete, and a node id beats a byte offset into a 545 KB file.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
-    let map = match serde_json::from_str::<MindMap>(json) {
-        Ok(map) => map,
+    let (mut map, routes): (MindMap, Vec<Vec<Step>>) = match unknown_keys::deserialize_capturing(json) {
+        Ok(parsed) => parsed,
         Err(e) => return Err(diagnose_rejected_json(json, &e)),
     };
-    // `json` deliberately ends here. `check_invariants` is not given
-    // it, so no future invariant can quietly reintroduce a second
-    // pass over the document text.
+    if !routes.is_empty() {
+        map.unknown_keys = adopt_unknown_keys(json, routes)?;
+    }
     check_invariants(map)
+}
+
+/// Turn the routes a capturing parse collected into the
+/// [`UnknownKeys`](crate::mindmap::unknown_keys::UnknownKeys) the map
+/// carries, warning once per key — or refuse the document when what
+/// the capture found is a pre-refactor spelling with a migration verb.
+///
+/// The second parse is what makes the values available: the capture
+/// rides the typed parse and learns *where* each key was, not what it
+/// held. Reaching this at all means the map has at least one
+/// unrecognized key, so the parse is never paid by a document that
+/// does not need it.
+///
+/// Re-parsing cannot fail — `json` has already parsed once, as a
+/// stricter shape — but the failure is reported rather than
+/// `expect`ed, because `load_from_str` sits on the interactive
+/// `console open` path (CODE_CONVENTIONS §9).
+///
+/// Cost: one `serde_json::Value` parse of `json`, one route resolution
+/// per captured key, and one `log::warn!` per captured key.
+fn adopt_unknown_keys(
+    json: &str,
+    routes: Vec<Vec<Step>>,
+) -> Result<crate::mindmap::unknown_keys::UnknownKeys, String> {
+    let mut raw: Value = serde_json::from_str(json)
+        .map_err(|e| format!("Failed to re-read mindmap JSON to preserve unknown keys: {e}"))?;
+    if let Some(message) = detect_legacy_shape(&raw) {
+        return Err(message);
+    }
+    let captured = unknown_keys::take_from(&mut raw, routes);
+    for entry in captured.iter() {
+        log::warn!("{}", entry.warning());
+    }
+    Ok(captured)
 }
 
 /// Post-parse invariants that live in the typed model rather than in
@@ -154,13 +206,32 @@ fn diagnose_rejected_json(json: &str, error: &serde_json::Error) -> String {
     if let Some(message) = locate_typed_failure(&raw) {
         return message;
     }
-    format!("Failed to parse mindmap JSON: {}", explain(error.to_string()))
+    format!("Failed to parse mindmap JSON: {error}")
 }
 
 /// Legacy field shapes that predate the current format, each with the
-/// `maptool convert` verb that migrates it. These win over the
-/// generic per-part diagnosis because "unknown field `text`" is a
-/// true but useless thing to tell someone holding a pre-section map.
+/// `maptool convert` verb that migrates it.
+///
+/// **Reachable from both a successful parse and a failed one**, and
+/// the successful one is the case that matters. `portals` and per-node
+/// `text` / `text_runs` are keys the current model has no field for,
+/// so under the unknown-key policy they load clean and would be
+/// preserved forever — a stale spelling carried across every save with
+/// nothing ever acting on it. They are not keys from the future; they
+/// are keys the model means something else by now, and the author has
+/// a one-command migration. So they are asked about explicitly, before
+/// the capture is adopted. On the failure path the same three
+/// questions win over the generic per-part diagnosis, because "unknown
+/// field `text`" is a true but useless thing to tell someone holding a
+/// pre-section map.
+///
+/// The third shape — a `sections` that is not an array — can only
+/// arrive on the failure path; the typed parse rejects it before the
+/// capture is consulted. It lives here because it belongs to the same
+/// migration story, and asking it twice costs nothing.
+///
+/// Cost: O(nodes) in the worst case, two `Value::get`s per node. Only
+/// reached when a load already found something it did not recognize.
 fn detect_legacy_shape(raw: &Value) -> Option<String> {
     // Pre-refactor maps stored portals in a separate `portals[]`
     // array. Post-refactor portals are edges with
@@ -250,30 +321,7 @@ fn locate_typed_failure(raw: &Value) -> Option<String> {
 /// `label` so the reader knows which part of the map it is.
 fn part_failure<'de, T: Deserialize<'de>>(label: &str, value: &'de Value) -> Option<String> {
     let error = T::deserialize(value).err()?;
-    Some(format!("{label}: {}", explain(error.to_string())))
-}
-
-/// Spell out the unknown-key policy on the one message where a reader
-/// would otherwise assume the friendlier behavior.
-///
-/// serde words a `deny_unknown_fields` rejection as ``unknown field
-/// `x`, expected one of ...``, which reads like pedantry until you
-/// know what the alternative was: the key silently gone from the file
-/// after the next save. Matching on serde's wording is a message
-/// nicety, not a control-flow decision — a reworded serde would cost
-/// the extra sentence and nothing else, and
-/// `test_unknown_node_key_is_rejected_with_the_policy` fails loudly
-/// if that day comes.
-fn explain(message: String) -> String {
-    if message.starts_with("unknown field") {
-        format!(
-            "{message} — unknown keys are rejected, not dropped: a load that ignored \
-             this key would erase it from the file on the next save. \
-             See format/schema.md."
-        )
-    } else {
-        message
-    }
+    Some(format!("{label}: {error}"))
 }
 
 /// Reject a `MindMap` whose `parent_id` links form a cycle. A cycle
@@ -393,6 +441,16 @@ fn detect_section_count_cap(map: &MindMap) -> Option<String> {
 /// Serialize a `MindMap` to pretty-printed JSON and write it to disk
 /// atomically and deterministically.
 ///
+/// **Preservation**: the keys the load did not recognize
+/// ([`MindMap::unknown_keys`]) are spliced back into the serialized
+/// document before it is rendered, each at the route it came from. A
+/// map this build authored carries none and the step is a no-op; a map
+/// authored by a newer build comes back out with its newer features
+/// intact. This is the save half of the policy in the module header,
+/// and [`to_json_value`] is where it happens — anything that
+/// serializes a `MindMap` for persistence must go through that rather
+/// than calling `serde_json::to_value` directly.
+///
 /// **Determinism**: routes through `serde_json::Value` (which uses
 /// `BTreeMap` for object keys) so two saves of the same `MindMap` produce
 /// byte-identical output regardless of `HashMap` iteration order. Costs
@@ -407,9 +465,29 @@ fn detect_section_count_cap(map: &MindMap) -> Option<String> {
 /// Native-only (synchronous I/O via `std::fs`). Returns a `String`
 /// error describing the path + underlying cause.
 pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
-    let value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
+    let value = to_json_value(map)?;
     let json = serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
     write_atomic(path, &json)
+}
+
+/// The JSON a `MindMap` persists as: its typed shape plus the keys
+/// this build did not recognize when it loaded the map, each written
+/// back where it came from.
+///
+/// **This, not `serde_json::to_value`, is the map's on-disk form.**
+/// Serializing the typed shape alone drops whatever a newer build
+/// wrote, which is the data loss the unknown-key policy exists to
+/// prevent; `to_value` is only the first half of the answer. Exposed
+/// so `maptool` and any future export path can produce the same bytes
+/// [`save_to_file`] would.
+///
+/// Cost: one full `Value` copy of the model (`serde_json::to_value`),
+/// plus one route walk and one `Value` clone per preserved key —
+/// nothing at all for a map with none.
+pub fn to_json_value(map: &MindMap) -> Result<Value, String> {
+    let mut value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
+    map.unknown_keys.splice_into(&mut value);
+    Ok(value)
 }
 
 /// Write `contents` to `path` via `<dir>/.<name>.<pid>.tmp` + rename.
@@ -565,50 +643,78 @@ mod tests {
     /// **The unknown-key policy, enforced against the model that
     /// exists rather than a list of the model as it once was.**
     ///
-    /// A `.mindmap.json` key the model does not know must be a load
-    /// error. Without `deny_unknown_fields` serde drops it in
-    /// silence, the app resaves what it loaded, and a hand-authored
-    /// field is gone — the file was the only copy.
+    /// A `.mindmap.json` key this build has no field for is captured
+    /// at load and written back at save. That only works while every
+    /// type between the document root and the key hands the key to
+    /// `deserialize_ignored_any` — which is serde's default, and
+    /// which exactly four container attributes take away:
+    ///
+    /// - `deny_unknown_fields` fails the load instead. This is the
+    ///   policy #105 shipped and #115 reversed, and it is the one
+    ///   that comes back by accident: it and `#[serde(flatten)]`
+    ///   **compile together, with `deny` silently winning**, so a
+    ///   type carrying both rejects where it reads as preserving.
+    /// - `flatten` absorbs the key into the flattened field.
+    /// - `untagged`, and `tag = "…"` with or without `content`,
+    ///   buffer the object into serde's own `Content` and replay it
+    ///   through a deserializer the capture is not wrapping.
     ///
     /// The set of types this applies to is not written down here.
     /// [`crate::util::serde_coverage`] parses baumhard's own sources
     /// and walks outward from `MindMap` through every deserializable
-    /// field, so a new field of a new type extends the covered set
-    /// on its own and this test fails until that type opts in. Two
-    /// shapes are exempt, and only two: a container that delegates
-    /// its on-disk shape to a proxy via `#[serde(from = "...")]`
-    /// (the requirement follows the proxy, which the walk also
-    /// reaches), and an `#[serde(untagged)]` enum, where denying
-    /// unknown fields changes which variant matches rather than
-    /// merely tightening a check.
+    /// field, so a new field of a new type extends the covered set on
+    /// its own. One shape is exempt: a container that delegates its
+    /// on-disk shape to a proxy via `#[serde(from = "...")]` never
+    /// deserializes its own fields, so the requirement follows the
+    /// proxy — which the walk also reaches, and holds to the same
+    /// rule there.
     #[test]
-    fn test_every_loadable_type_rejects_unknown_keys() {
+    fn test_no_loadable_type_can_swallow_an_unknown_key() {
         use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
 
         let graph = TypeGraph::build(&crate_src_root());
-        let mut missing: Vec<String> = Vec::new();
+        let mut offenders: Vec<String> = Vec::new();
         for info in graph.reachable_from("MindMap") {
-            let exempt = info.deserialize_proxy.is_some() || info.untagged;
-            if !info.derives_deserialize || !info.has_named_fields || exempt {
+            if !info.derives_deserialize || !info.has_named_fields || info.deserialize_proxy.is_some() {
                 continue;
             }
-            if !info.denies_unknown_fields {
-                // Naming the item kind matters for an enum: the
-                // attribute goes on the enum, not on the struct
-                // variant whose keys serde actually rejected.
-                let kind = match info.kind {
-                    TypeKind::Struct => "struct",
-                    TypeKind::Enum => "enum",
-                    TypeKind::Alias => "type",
-                };
-                missing.push(format!("{kind} {} — {}", info.name, info.file.display()));
+            let mut reasons: Vec<String> = Vec::new();
+            if info.denies_unknown_fields {
+                reasons.push("`deny_unknown_fields` (fails the load)".to_string());
             }
+            for field in &info.flattened_fields {
+                reasons.push(format!("`flatten` on `{field}` (absorbs the key)"));
+            }
+            if info.untagged {
+                reasons.push("`untagged` (replays through a buffered Content)".to_string());
+            }
+            if info.internally_tagged {
+                reasons.push("`tag = \"...\"` (replays through a buffered Content)".to_string());
+            }
+            if reasons.is_empty() {
+                continue;
+            }
+            // Naming the item kind matters for an enum: a container
+            // attribute goes on the enum, not on the struct variant
+            // whose keys serde was reading.
+            let kind = match info.kind {
+                TypeKind::Struct => "struct",
+                TypeKind::Enum => "enum",
+                TypeKind::Alias => "type",
+            };
+            offenders.push(format!(
+                "{kind} {} — {}: {}",
+                info.name,
+                info.file.display(),
+                reasons.join(", ")
+            ));
         }
         assert!(
-            missing.is_empty(),
-            "these types are reachable from a `.mindmap.json` load and would \
-             silently drop an unknown key (add `#[serde(deny_unknown_fields)]`):\n  {}",
-            missing.join("\n  ")
+            offenders.is_empty(),
+            "these types are reachable from a `.mindmap.json` load and can hide an \
+             unrecognized key from the loader's capture, so it would neither be warned \
+             about nor survive the next save:\n  {}",
+            offenders.join("\n  ")
         );
     }
 
@@ -1378,6 +1484,7 @@ mod tests {
             edges: Vec::new(),
             custom_mutations: Vec::new(),
             macros: Vec::new(),
+            unknown_keys: Default::default(),
         };
 
         let dir = TempDir::new("inline-macros-round-trip");
@@ -1668,93 +1775,179 @@ mod tests {
         false
     }
 
+    /// The one captured key whose `path_within_location` is `path`,
+    /// or a panic naming everything that *was* captured — a test that
+    /// fails because the loader stamped a key differently should say
+    /// so rather than report `None`.
+    fn captured<'m>(
+        map: &'m MindMap,
+        path: &str,
+    ) -> &'m crate::mindmap::unknown_keys::UnknownKey {
+        map.unknown_keys
+            .iter()
+            .find(|entry| entry.path_within_location() == path)
+            .unwrap_or_else(|| {
+                let seen: Vec<String> = map
+                    .unknown_keys
+                    .iter()
+                    .map(|entry| format!("{}: {}", entry.location(), entry.path_within_location()))
+                    .collect();
+                panic!("no captured key at {path:?}; captured: {seen:?}")
+            })
+    }
+
+    /// Save `map` through the editor's own save path and read the
+    /// bytes back. The round-trip tests go through the real writer
+    /// rather than [`to_json_value`], because the guarantee is about
+    /// the file on disk.
+    fn saved_json(map: &MindMap, label: &str) -> String {
+        let dir = TempDir::new(label);
+        let path = dir.join("saved.mindmap.json");
+        save_to_file(&path, map).expect("save failed");
+        std::fs::read_to_string(&path).expect("read saved")
+    }
+
+    /// **The acceptance criterion, and the one that separates keeping
+    /// a key from merely warning about it.** A map with a key this
+    /// build has no field for loads, and after a save the key is
+    /// still there, holding what it held.
+    ///
+    /// Warn-and-drop passes every other test in this file. It fails
+    /// this one.
+    #[test]
+    fn test_an_unrecognized_key_survives_a_load_and_save_round_trip() {
+        let json = map_json_with_nodes(&node_json_with(
+            "1.2",
+            "null",
+            r#", "portal_form": {"glyphs": "◇◆", "spin": 3}"#,
+        ));
+        let map = load_from_str(&json).expect("an unrecognized key must not fail the load");
+        assert_eq!(map.nodes["1.2"].sections[0].text, "n", "the rest of the node must still load");
+
+        let saved: Value = serde_json::from_str(&saved_json(&map, "round-trip-unknown")).expect("valid JSON");
+        assert_eq!(
+            saved["nodes"]["1.2"]["portal_form"],
+            serde_json::json!({"glyphs": "◇◆", "spin": 3}),
+            "the unrecognized key must come back out of the save unchanged"
+        );
+
+        // And again, so a second generation of the file does not lose
+        // what the first one kept.
+        let reloaded = load_from_str(&saved_json(&map, "round-trip-unknown-2")).expect("the saved map reloads");
+        assert_eq!(captured(&reloaded, "portal_form").value()["spin"], serde_json::json!(3));
+    }
+
+    /// The same guarantee at the bottom of the deepest thing a map
+    /// can hold. `custom_mutations[].mutator` is an externally tagged
+    /// enum, so the JSON has an object level — `{"Void": { … }}` —
+    /// that serde's ignored-key path does not report. If the route
+    /// did not account for that, this key would be captured and then
+    /// written back in the wrong place, or nowhere.
+    #[test]
+    fn test_an_unrecognized_key_inside_a_mutator_survives_the_round_trip() {
+        let json = map_json_with_nodes(&node_json("0", "null")).replace(
+            r#""edges": []"#,
+            r#""edges": [], "custom_mutations": [{
+                "id": "m", "name": "m", "target_scope": "SelfOnly",
+                "mutator": {"Void": {"channel": 0, "children": [], "afterglow": 0.5}}
+            }]"#,
+        );
+        let map = load_from_str(&json).expect("an unrecognized key must not fail the load");
+        let entry = captured(&map, "mutator.Void.afterglow");
+        assert_eq!(entry.location(), "custom_mutations[0]");
+
+        let saved: Value = serde_json::from_str(&saved_json(&map, "round-trip-mutator")).expect("valid JSON");
+        assert_eq!(
+            saved["custom_mutations"][0]["mutator"]["Void"]["afterglow"],
+            serde_json::json!(0.5)
+        );
+    }
+
     /// **The policy, spelled out where authors read it.**
-    /// `format/schema.md` publishes one map that must be rejected
-    /// for a mistyped key, the rejection message it produces, and
-    /// one map that must load once the spelling is fixed. All three
-    /// are read out of the spec rather than restated here, so the
-    /// pin follows the doc when the doc moves instead of agreeing
+    /// `format/schema.md` publishes one map carrying a mistyped key,
+    /// the warning it produces, and what the corrected map does. All
+    /// three are read out of the spec rather than restated here, so
+    /// the pin follows the doc when the doc moves instead of agreeing
     /// with a copy of its old self.
     ///
-    /// The published message is compared for **equality**, not
-    /// containment: the doc presents it as verbatim loader output,
-    /// and its `expected one of` clause is an enumeration of
-    /// `MindNode`'s keys that a hand-author reads as the field list.
-    /// A substring check would let a new field land, change the real
-    /// message, and leave the spec publishing a list that is missing
-    /// it — with the suite green. Only line wrapping is normalized
-    /// away ([`doc_fixtures::unwrapped`]): the doc wraps to the
-    /// column limit, the loader emits one line, and where the breaks
-    /// fall carries no meaning.
+    /// The published warning is compared for **equality**, not
+    /// containment: the doc presents it as verbatim loader output. A
+    /// substring check would let the wording drift and leave the spec
+    /// publishing something the loader no longer says, with the suite
+    /// green. Only line wrapping is normalized away
+    /// ([`doc_fixtures::unwrapped`]): the doc wraps to the column
+    /// limit, the loader emits one line, and where the breaks fall
+    /// carries no meaning.
     #[test]
-    fn test_documented_unknown_key_rejection_matches_the_spec() {
+    fn test_documented_unknown_key_warning_matches_the_spec() {
         use crate::util::doc_fixtures::{
             documented_json_block, documented_plain_block, format_doc_path, unwrapped,
         };
         let doc = format_doc_path("schema.md");
-        let heading = "## Unknown keys are rejected";
+        let heading = "## Unknown keys are kept";
 
-        let rejected = documented_json_block(&doc, heading, 0);
-        let err = match load_from_str(&rejected) {
-            Err(err) => err,
-            Ok(map) => {
-                panic!("the spec's mistyped-key example must not load:\n{rejected}\nbut it loaded: {map:?}")
-            }
-        };
+        let mistyped = documented_json_block(&doc, heading, 0);
+        let map = load_from_str(&mistyped)
+            .unwrap_or_else(|e| panic!("the spec's mistyped-key example must load: {e}\n{mistyped}"));
         assert!(
-            err.contains("min_zoom_to_rendr"),
-            "the error must name the key the author wrote: {err}"
+            map.nodes["0"].min_zoom_to_render.is_none(),
+            "a mistyped key must not reach the field it was aiming at"
         );
+        let entry = captured(&map, "min_zoom_to_rendr");
 
         let published = documented_plain_block(&doc, heading, 0);
         assert_eq!(
-            unwrapped(&err),
+            unwrapped(&entry.warning()),
             unwrapped(&published),
-            "format/schema.md §{heading} publishes this rejection as verbatim loader \
+            "format/schema.md §{heading} publishes this warning as verbatim loader \
              output and it no longer is. Re-wrap the block to match, or the spec is \
-             publishing a stale list of a node's keys.\n\
-             \n  loader: {err}\n  spec:   {published}\n"
+             publishing something the loader does not say.\n\
+             \n  loader: {}\n  spec:   {published}\n",
+            entry.warning()
         );
 
-        let accepted = documented_json_block(&doc, heading, 1);
-        let map = load_from_str(&accepted)
-            .unwrap_or_else(|e| panic!("the spec's corrected example must load: {e}\n{accepted}"));
+        let corrected = documented_json_block(&doc, heading, 1);
+        let map = load_from_str(&corrected)
+            .unwrap_or_else(|e| panic!("the spec's corrected example must load: {e}\n{corrected}"));
         assert_eq!(map.nodes["0"].min_zoom_to_render, Some(2.0));
+        assert!(
+            map.unknown_keys.is_empty(),
+            "the corrected example must have nothing left to preserve"
+        );
     }
 
-    /// An unknown key on a node names the node, names the key, and
-    /// says what the loader did about it. The last part is the point:
-    /// "unknown field" reads like pedantry until you know the
-    /// alternative was the key silently gone from the file after the
-    /// next save.
+    /// An unrecognized key on a node names the node, names the key,
+    /// and says what the loader did about it. The last part is the
+    /// point: an author who mistyped a real key needs to be told the
+    /// difference between "kept" and "understood".
     #[test]
-    fn test_unknown_node_key_is_rejected_with_the_policy() {
+    fn test_unknown_node_key_is_kept_and_named() {
         let json = map_json_with_nodes(&node_json_with("1.2", "null", r#", "portal_form": {"x": 1}"#));
-        let err = load_from_str(&json).expect_err("an unknown node key must be rejected");
-        assert!(err.contains("node \"1.2\""), "must name the node: {err}");
-        assert!(err.contains("portal_form"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized node key must not fail the load");
+        let warning = captured(&map, "portal_form").warning();
+        assert!(warning.starts_with("loader: "), "must carry the §9 area prefix: {warning}");
+        assert!(warning.contains("node \"1.2\""), "must name the node: {warning}");
+        assert!(warning.contains("portal_form"), "must name the key: {warning}");
         assert!(
-            err.contains("rejected, not dropped"),
-            "must state the policy, not just the symptom: {err}"
+            warning.contains("kept as written and saved back unchanged"),
+            "must state what happened to the key, not just that it is unknown: {warning}"
         );
-        assert!(err.contains("format/schema.md"), "must point at the spec: {err}");
-        assert!(
-            err.contains("expected one of") && err.contains("`inline_mutations`"),
-            "must list what the loader would have accepted: {err}"
-        );
+        assert!(warning.contains("format/schema.md"), "must point at the spec: {warning}");
     }
 
-    /// The same rejection reaches keys nested inside a node — a typo
-    /// in `style` is as destructive as one at the node level, and
-    /// the message still resolves to the node the author has to open.
+    /// The same report reaches keys nested inside a node — a typo in
+    /// `style` is as invisible as one at the node level, and the
+    /// message still resolves to the node the author has to open,
+    /// with the field path inside it.
     #[test]
     fn test_unknown_key_inside_node_style_names_the_node() {
         let json = map_json_with_nodes(
             &node_json("0", "null").replace(r#""show_shadow":false"#, r#""show_shadow":false,"shpe":"star""#),
         );
-        let err = load_from_str(&json).expect_err("an unknown style key must be rejected");
-        assert!(err.contains("node \"0\""), "must name the node: {err}");
-        assert!(err.contains("shpe"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized style key must not fail the load");
+        let entry = captured(&map, "style.shpe");
+        assert_eq!(entry.location(), "node \"0\"");
+        assert_eq!(entry.value(), &serde_json::json!("star"));
     }
 
     /// Edges are addressed by index, matching `MindMap::edge_locations`
@@ -1764,37 +1957,79 @@ mod tests {
     fn test_unknown_edge_key_names_the_edge_index() {
         let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
         let json = map_json(&nodes, &edge_json_with(r#", "arrowhead": "open""#));
-        let err = load_from_str(&json).expect_err("an unknown edge key must be rejected");
-        assert!(err.contains("edge[0]"), "must name the edge index: {err}");
-        assert!(err.contains("arrowhead"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized edge key must not fail the load");
+        assert_eq!(captured(&map, "arrowhead").location(), "edge[0]");
     }
 
-    /// The canvas is a single named part rather than a collection,
-    /// so it is stamped by name.
+    /// The canvas is a single named part rather than a collection, so
+    /// it is stamped by name.
     #[test]
     fn test_unknown_canvas_key_names_the_canvas() {
         let json = map_json_with_nodes(&node_json("0", "null")).replace(
             r##""background_color": "#000""##,
             r##""background_color": "#000", "grid_snap": 8"##,
         );
-        let err = load_from_str(&json).expect_err("an unknown canvas key must be rejected");
-        assert!(err.contains("canvas:"), "must name the canvas: {err}");
-        assert!(err.contains("grid_snap"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized canvas key must not fail the load");
+        assert_eq!(captured(&map, "grid_snap").location(), "canvas");
     }
 
-    /// A key the model does not know at the top level has no
-    /// sub-object to attribute it to, so serde's own message — which
-    /// already names the key and the accepted set — carries the
-    /// report, with the policy sentence appended.
+    /// A key at the top level has no sub-object to attribute it to,
+    /// so it is stamped against the map itself.
     #[test]
-    fn test_unknown_top_level_key_is_rejected() {
+    fn test_unknown_top_level_key_is_kept_and_named() {
         let json = map_json_with_nodes(&node_json("0", "null"))
             .replace(r#""version": "1.0","#, r#""version": "1.0", "authors": ["me"],"#);
-        let err = load_from_str(&json).expect_err("an unknown top-level key must be rejected");
-        assert!(err.contains("authors"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized top-level key must not fail the load");
+        let entry = captured(&map, "authors");
+        assert_eq!(entry.location(), "map");
+        assert_eq!(entry.value(), &serde_json::json!(["me"]));
+    }
+
+    /// Every unrecognized key is reported, and each exactly once — a
+    /// map that quietly kept the second one would satisfy every
+    /// single-key test above.
+    #[test]
+    fn test_every_unrecognized_key_is_reported_exactly_once() {
+        let nodes = format!(
+            "{},{}",
+            node_json_with("a", "null", r#", "alpha": 1"#),
+            node_json_with("b", "\"a\"", r#", "beta": 2, "gamma": 3"#)
+        );
+        let json = map_json_with_nodes(&nodes).replace(r#""version": "1.0","#, r#""version": "1.0", "delta": 4,"#);
+        let map = load_from_str(&json).expect("unrecognized keys must not fail the load");
+
+        let mut reported: Vec<String> = map
+            .unknown_keys
+            .iter()
+            .map(|entry| format!("{} {}", entry.location(), entry.path_within_location()))
+            .collect();
+        reported.sort();
+        assert_eq!(
+            reported,
+            vec![
+                "map delta".to_string(),
+                "node \"a\" alpha".to_string(),
+                "node \"b\" beta".to_string(),
+                "node \"b\" gamma".to_string(),
+            ]
+        );
+    }
+
+    /// A map this build authored carries nothing to preserve, and the
+    /// capture must say so rather than collecting the keys serde
+    /// legitimately defaulted or omitted. This is what keeps the
+    /// second parse — and the warning stream — off every ordinary
+    /// load.
+    #[test]
+    fn test_a_current_map_captures_nothing() {
+        let map = load_from_file(&test_map_path()).expect("the fixture loads");
         assert!(
-            err.contains("rejected, not dropped"),
-            "must state the policy: {err}"
+            map.unknown_keys.is_empty(),
+            "testament must carry no unrecognized keys, found: {:?}",
+            map.unknown_keys
+                .iter()
+                .map(|entry| format!("{}: {}", entry.location(), entry.path_within_location()))
+                .collect::<Vec<_>>()
         );
     }
 

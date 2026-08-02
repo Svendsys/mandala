@@ -513,6 +513,7 @@ fn assemble_mindmap(name: &str, nodes: Vec<MindNode>, edges: Vec<MindEdge>) -> M
         edges,
         custom_mutations: Vec::new(),
         macros: Vec::new(),
+        unknown_keys: Default::default(),
     }
 }
 

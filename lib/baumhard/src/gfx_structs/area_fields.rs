@@ -41,7 +41,6 @@ use strum_macros::{Display, EnumDiscriminants, EnumIter};
 /// quality without having to tune it. Hot-path work (§B7) — enable only when
 /// the background legibility problem actually needs it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct OutlineStyle {
     /// RGBA halo color, applied to every glyph in every halo copy.
     pub color: [u8; 4],

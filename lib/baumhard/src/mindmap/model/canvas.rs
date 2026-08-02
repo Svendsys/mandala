@@ -16,7 +16,6 @@ use super::{GlyphBorderConfig, GlyphConnectionConfig};
 /// [`super::MindMap`]. Plain data; no runtime cost beyond the
 /// `HashMap` / `String` allocations serde performs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Canvas {
     pub background_color: String,
     /// Default border style applied to all nodes unless overridden per-node.

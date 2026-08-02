@@ -47,7 +47,6 @@ use glam::Vec2;
 /// instant mutation into an animated transition. Serde-default
 /// throughout so old maps without timing fields still load.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct AnimationTiming {
     /// How long the animation runs after `delay_ms` elapses.
     /// `0` means "instant" — the dispatcher should bypass the
@@ -324,32 +323,28 @@ mod tests {
         assert!(!json.contains("then"));
     }
 
-    /// `Followup` variants are not reachable via the wire format,
-    /// and authoring one says so out loud. `"then"` used to be
-    /// swallowed in silence — the map loaded, the animation ran
-    /// once, nothing looped, and the key was gone from the file
-    /// after the next save. Denying unknown fields turns that into
-    /// a rejection while the author still has what they wrote.
+    /// `Followup` variants are not reachable via the wire format:
+    /// `then` is `#[serde(skip)]` until `tick_animations` grows the
+    /// followup dispatch, so an authored `"then"` reaches no field.
     ///
-    /// The gate itself is unchanged: no `.mindmap.json` can put a
-    /// `Followup` into the model. The gate lifts when
-    /// `tick_animations` gains the followup dispatch.
+    /// Nothing here denies it, and nothing needs to. `then` is an
+    /// unrecognized key like any other, which means the loader warns
+    /// about it naming the mutation it sits in and writes it back at
+    /// the next save — so the day the dispatch lands, a map that
+    /// asked for `"Loop"` early still says so. What this test pins is
+    /// the gate itself: no `.mindmap.json` can put a `Followup` into
+    /// the model, whatever it writes.
     #[test]
-    fn test_followup_is_rejected_rather_than_silently_dropped() {
+    fn test_an_authored_followup_reaches_no_field() {
         for authored in [
             r#"{"duration_ms": 200, "then": {"Reverse": {"hold_ms": 50}}}"#,
             r#"{"duration_ms": 200, "then": "Loop"}"#,
+            r#"{"duration_ms": 200}"#,
         ] {
-            let err = serde_json::from_str::<AnimationTiming>(authored)
-                .expect_err("an unwired `then` must not load silently");
-            assert!(
-                err.to_string().contains("unknown field `then`"),
-                "the rejection must name the key the author wrote: {err}"
-            );
+            let parsed: AnimationTiming =
+                serde_json::from_str(authored).expect("an unwired `then` must not fail the parse");
+            assert_eq!(parsed.duration_ms, 200);
+            assert!(parsed.then.is_none(), "`then` must stay unreachable from the wire: {authored}");
         }
-        // And the field is still absent from every timing the
-        // loader can produce.
-        let parsed: AnimationTiming = serde_json::from_str(r#"{"duration_ms": 200}"#).unwrap();
-        assert!(parsed.then.is_none());
     }
 }

@@ -119,6 +119,7 @@ fn synthetic_single_node_map(text: &str, w: f64, h: f64) -> MindMap {
         edges: Vec::new(),
         custom_mutations: Vec::new(),
         macros: Vec::new(),
+        unknown_keys: Default::default(),
     }
 }
 

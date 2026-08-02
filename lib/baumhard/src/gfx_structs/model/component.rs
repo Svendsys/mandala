@@ -33,7 +33,6 @@ pub enum GlyphComponentField {
 /// stacks into a [`crate::gfx_structs::model::GlyphMatrix`], which
 /// belongs to a [`crate::gfx_structs::model::GlyphModel`].
 #[derive(Serialize, Debug, Eq, PartialEq, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct GlyphComponent {
     /// The text run — may contain multi-byte / multi-grapheme clusters.
     pub text: String,
