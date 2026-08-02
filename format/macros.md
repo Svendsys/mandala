@@ -216,9 +216,15 @@ finished job:
 
 - The resource caps are **per element**, and element count is not
   capped. One border side cannot emit more than 100k glyphs and one
-  edge cannot sample more than 100k points, but a map may carry a
+  edge cannot sample more than 10k points, but a map may carry a
   great many of each; the aggregate per frame is still unbounded.
   A frame budget is the real answer and does not exist yet.
+- **Edge hit-testing re-samples curved edges on every click.**
+  `hit_test_edge` walks each Bezier from scratch per canvas click
+  rather than reusing the samples the scene build already produced,
+  so a map full of long curved edges makes every click expensive.
+  The per-path cap bounds one edge; nothing bounds the sum, and the
+  fix is a cache or a spatial pre-filter rather than a smaller cap.
 - The `OnClick` trigger path consults no `SourceTier`. Today's two
   `DocumentAction` variants are pure in-memory theme writes, so the
   reachable damage is bounded — but the gate the privilege model

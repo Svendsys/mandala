@@ -393,11 +393,22 @@ pub fn sample_path(path: &ConnectionPath, spacing: f32) -> Vec<SampledPoint> {
 /// the second wall, so a future path that reaches the sampler
 /// without passing the loader still cannot ask for terabytes.
 ///
-/// The value sits far past anything legible: a full-width desktop
-/// viewport at the minimum glyph size holds a few hundred samples,
-/// so this is two orders of magnitude of headroom and still only
-/// ~800 KB of [`SampledPoint`].
-pub const MAX_PATH_SAMPLES: usize = 100_000;
+/// **The `SampledPoint` vector is not what this bounds.** Each
+/// sample becomes a repeat of the connection's body glyph
+/// downstream: an owned clone of that string, a grapheme walk over
+/// it, a `GlyphArea` in the arena, and a shaped cosmic-text buffer.
+/// The real cost per sample is kilobytes, not the eight bytes the
+/// point itself occupies, so a ceiling budgeted against the vector
+/// would be wrong by three orders of magnitude — and the body's own
+/// length is a second multiplier, capped separately by
+/// [`MAX_CONNECTION_GLYPH_GRAPHEMES`](crate::mindmap::model::validate::MAX_CONNECTION_GLYPH_GRAPHEMES).
+///
+/// A full-width desktop viewport at the minimum on-screen glyph
+/// size holds a few hundred glyphs, so this still leaves well over
+/// an order of magnitude of headroom for a path drawn far off-axis.
+/// It bounds one path; the aggregate across every edge in a map is
+/// not bounded — see `format/macros.md` §"What is not yet closed".
+pub const MAX_PATH_SAMPLES: usize = 10_000;
 
 /// How many samples a path of `total_length` yields at `spacing`,
 /// clamped to [`MAX_PATH_SAMPLES`] and total over hostile inputs.

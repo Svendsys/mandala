@@ -3350,3 +3350,45 @@ fn test_delete_section_repairs_stranded_selection_and_undo_restores_it() {
         doc.selection
     );
 }
+
+/// **The load-time text floor must not lay out an unbounded number
+/// of lines.** Section text arrives from an untrusted file, and this
+/// measurement runs on every section at load, before a frame is
+/// drawn — so a map carrying millions of newlines would build
+/// millions of cosmic-text lines here, each an owned `String`, an
+/// `AttrsList`, and two layout caches.
+///
+/// The bound loses nothing real: `TextBlockSize::height` is
+/// `line_count * line_height`, and with an unbounded measuring width
+/// nothing wraps, so counting newlines gives the same number without
+/// a layout pass. This pins that the count stays exact past the
+/// budget while the shaped prefix stops growing.
+#[test]
+fn test_measured_prefix_bounds_layout_but_not_the_line_count() {
+    use crate::application::document::{measured_prefix, MEASURED_LINE_BUDGET};
+
+    // Under budget: the whole string is measured, count is exact.
+    let short = "alpha\nbeta\ngamma";
+    let (measured, total) = measured_prefix(short, MEASURED_LINE_BUDGET);
+    assert_eq!(measured, short, "short text is measured whole");
+    assert_eq!(total, 3);
+
+    // Over budget: the shaped slice is capped, the count is not.
+    let many = "x\n".repeat(MEASURED_LINE_BUDGET * 4);
+    let (measured, total) = measured_prefix(&many, MEASURED_LINE_BUDGET);
+    assert_eq!(
+        total,
+        MEASURED_LINE_BUDGET * 4,
+        "the line count must stay exact past the budget — it is what the height is derived from"
+    );
+    assert_eq!(
+        measured.lines().count(),
+        MEASURED_LINE_BUDGET,
+        "only the budgeted prefix is handed to the shaper"
+    );
+    assert!(measured.len() < many.len(), "the prefix must actually be shorter");
+
+    // Degenerate inputs stay total.
+    assert_eq!(measured_prefix("", MEASURED_LINE_BUDGET), ("", 0));
+    assert_eq!(measured_prefix("solo", MEASURED_LINE_BUDGET), ("solo", 1));
+}

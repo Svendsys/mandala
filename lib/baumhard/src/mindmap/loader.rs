@@ -2415,6 +2415,32 @@ mod tests {
         );
     }
 
+    /// **The multiplier behind a bounded sample count.** The body
+    /// glyph is emitted once per sampled point along a path, so its
+    /// length multiplies that count: capping the samples alone still
+    /// leaves `samples × |body|` unbounded, and each repeat is a
+    /// clone, a grapheme walk, a `GlyphArea`, and a shaped buffer.
+    #[test]
+    fn test_overlong_connection_glyph_is_rejected() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        let long = "\u{25c8}".repeat(64);
+        let edge = edge_json_with(&format!(r#", "glyph_connection": {{"body": "{long}"}}"#));
+        let err = load_from_str(&map_json(&nodes, &edge))
+            .expect_err("an overlong body glyph must be rejected");
+        assert!(err.contains("edge[0]"), "must name the edge: {err}");
+        assert!(err.contains("body"), "must name the field: {err}");
+        assert!(
+            err.contains("once per sampled point"),
+            "must say why length matters here: {err}"
+        );
+
+        // A real multi-grapheme motif still loads — the cap is on
+        // absurdity, not on decorative connections.
+        let motif = edge_json_with(r#", "glyph_connection": {"body": "◈··"}"#);
+        let map = load_from_str(&map_json(&nodes, &motif)).expect("a short motif is ordinary");
+        assert_eq!(map.edges.len(), 1);
+    }
+
     /// A valid 3-generation chain (no cycle) must load without error
     /// — pairs with the cycle-rejection tests to confirm the checker
     /// doesn't false-positive on an ordinary tree.

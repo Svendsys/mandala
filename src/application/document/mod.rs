@@ -254,6 +254,41 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
 /// section contributes the larger of its measured text and its
 /// pinned `size + offset` — pin survives when text fits;
 /// overflow grows the parent so nothing visually clips.
+/// How many lines of one section are actually laid out when
+/// measuring its text floor.
+///
+/// The largest section in the canonical fixture is 26 lines, so this
+/// is orders of magnitude above real authored content and never
+/// binds on a map anyone wrote. It binds on a map written to be
+/// expensive — see [`measured_prefix`].
+pub(super) const MEASURED_LINE_BUDGET: usize = 512;
+
+/// The prefix of `text` covering at most `max_lines` lines, together
+/// with the total line count of the whole string.
+///
+/// The count is a byte scan; the prefix is what gets shaped. Cost:
+/// O(text) with no allocation and no layout — which is the entire
+/// point, since laying the same text out costs a cosmic-text
+/// `BufferLine` per line.
+pub(super) fn measured_prefix(text: &str, max_lines: usize) -> (&str, usize) {
+    let total = text.lines().count();
+    if total <= max_lines {
+        return (text, total);
+    }
+    let mut end = text.len();
+    let mut seen = 0usize;
+    for (idx, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            seen += 1;
+            if seen == max_lines {
+                end = idx;
+                break;
+            }
+        }
+    }
+    (&text[..end], total)
+}
+
 pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindNode) -> (f64, f64) {
     use baumhard::font::fonts::{
         acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
@@ -294,10 +329,26 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
                 }
             });
 
-        let block = {
+        // Shaping is linear in line count and this runs at load, on
+        // text that came out of an untrusted file. A section
+        // carrying millions of newlines would shape millions of
+        // cosmic-text lines here — each one an owned `String`, an
+        // `AttrsList`, and two layout caches — before a single frame
+        // is drawn. So only a bounded prefix is laid out.
+        //
+        // The height loses nothing by it: `TextBlockSize::height` is
+        // `line_count * line_height`, and with an unbounded measuring
+        // width no line wraps, so counting newlines is the same
+        // number for a byte scan instead of a layout pass. Only the
+        // *width* is approximated, and only past the budget — where
+        // the node has already blown through `MAX_NODE_AXIS` and is
+        // getting clamped regardless.
+        let (measured, total_lines) = measured_prefix(&section.text, MEASURED_LINE_BUDGET);
+        let mut block = {
             let mut fs = acquire_font_system_write("compute_one_node_text_floor");
-            measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)
+            measure_text_block_unbounded(&mut fs, measured, scale, line_height, measure_font)
         };
+        block.height = total_lines as f32 * line_height;
 
         // Section dimension contribution: text needs `block + pad`
         // at minimum, but a `Some`-size section also pins a user-

@@ -349,9 +349,38 @@ pub fn border_config_violations(label: &str, border: &GlyphBorderConfig) -> Vec<
     out
 }
 
+/// Ceiling on the grapheme length of a connection's body or cap
+/// glyph.
+///
+/// The field is documented as "the glyph(s) used for the body,
+/// repeated to fill length" — a motif, not a paragraph. The cap
+/// matters because the body is **emitted once per sampled point**:
+/// each sample clones this string, segments it, and turns it into
+/// its own `GlyphArea` and shaped buffer. The sample count already
+/// has a ceiling, but the product of the two is what actually gets
+/// allocated, so an unbounded string multiplies a bounded count
+/// into an unbounded cost.
+pub const MAX_CONNECTION_GLYPH_GRAPHEMES: usize = 16;
+
 /// Every numeric-domain violation on a [`GlyphConnectionConfig`].
 pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -> Vec<String> {
     let mut out = Vec::new();
+    for (field, glyph) in [
+        ("body", Some(&conn.body)),
+        ("cap_start", conn.cap_start.as_ref()),
+        ("cap_end", conn.cap_end.as_ref()),
+    ] {
+        let Some(glyph) = glyph else { continue };
+        let length = count_grapheme_clusters(glyph);
+        if length > MAX_CONNECTION_GLYPH_GRAPHEMES {
+            out.push(format!(
+                "{}.{field} is {length} grapheme clusters, over the \
+                 {MAX_CONNECTION_GLYPH_GRAPHEMES} ceiling — this glyph is emitted once per \
+                 sampled point along the path, so its length multiplies the sample count",
+                label
+            ));
+        }
+    }
     out.extend(font_size(&field(label, "font_size_pt"), conn.font_size_pt));
     out.extend(font_size(
         &field(label, "min_font_size_pt"),
