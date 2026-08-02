@@ -9,7 +9,9 @@
 //! because the editor resaves the whole model and the next save
 //! deletes them. So the load keeps them: every unrecognized key is
 //! captured with the route back to where it sat, warned about once,
-//! carried on [`MindMap::unknown_keys`], and written back untouched at
+//! carried on
+//! [`MindMap::unknown_keys`](crate::mindmap::model::MindMap::unknown_keys),
+//! and written back untouched at
 //! save. See [`crate::mindmap::unknown_keys`] for the mechanism and
 //! why it is not a per-type `#[serde(flatten)]` catch-all.
 //!
@@ -1779,10 +1781,7 @@ mod tests {
     /// or a panic naming everything that *was* captured — a test that
     /// fails because the loader stamped a key differently should say
     /// so rather than report `None`.
-    fn captured<'m>(
-        map: &'m MindMap,
-        path: &str,
-    ) -> &'m crate::mindmap::unknown_keys::UnknownKey {
+    fn captured<'m>(map: &'m MindMap, path: &str) -> &'m crate::mindmap::unknown_keys::UnknownKey {
         map.unknown_keys
             .iter()
             .find(|entry| entry.path_within_location() == path)
@@ -1822,7 +1821,10 @@ mod tests {
             r#", "portal_form": {"glyphs": "◇◆", "spin": 3}"#,
         ));
         let map = load_from_str(&json).expect("an unrecognized key must not fail the load");
-        assert_eq!(map.nodes["1.2"].sections[0].text, "n", "the rest of the node must still load");
+        assert_eq!(
+            map.nodes["1.2"].sections[0].text, "n",
+            "the rest of the node must still load"
+        );
 
         let saved: Value = serde_json::from_str(&saved_json(&map, "round-trip-unknown")).expect("valid JSON");
         assert_eq!(
@@ -1833,8 +1835,12 @@ mod tests {
 
         // And again, so a second generation of the file does not lose
         // what the first one kept.
-        let reloaded = load_from_str(&saved_json(&map, "round-trip-unknown-2")).expect("the saved map reloads");
-        assert_eq!(captured(&reloaded, "portal_form").value()["spin"], serde_json::json!(3));
+        let reloaded =
+            load_from_str(&saved_json(&map, "round-trip-unknown-2")).expect("the saved map reloads");
+        assert_eq!(
+            captured(&reloaded, "portal_form").value()["spin"],
+            serde_json::json!(3)
+        );
     }
 
     /// The same guarantee at the bottom of the deepest thing a map
@@ -1925,14 +1931,20 @@ mod tests {
         let json = map_json_with_nodes(&node_json_with("1.2", "null", r#", "portal_form": {"x": 1}"#));
         let map = load_from_str(&json).expect("an unrecognized node key must not fail the load");
         let warning = captured(&map, "portal_form").warning();
-        assert!(warning.starts_with("loader: "), "must carry the §9 area prefix: {warning}");
+        assert!(
+            warning.starts_with("loader: "),
+            "must carry the §9 area prefix: {warning}"
+        );
         assert!(warning.contains("node \"1.2\""), "must name the node: {warning}");
         assert!(warning.contains("portal_form"), "must name the key: {warning}");
         assert!(
             warning.contains("kept as written and saved back unchanged"),
             "must state what happened to the key, not just that it is unknown: {warning}"
         );
-        assert!(warning.contains("format/schema.md"), "must point at the spec: {warning}");
+        assert!(
+            warning.contains("format/schema.md"),
+            "must point at the spec: {warning}"
+        );
     }
 
     /// The same report reaches keys nested inside a node — a typo in
@@ -1995,7 +2007,8 @@ mod tests {
             node_json_with("a", "null", r#", "alpha": 1"#),
             node_json_with("b", "\"a\"", r#", "beta": 2, "gamma": 3"#)
         );
-        let json = map_json_with_nodes(&nodes).replace(r#""version": "1.0","#, r#""version": "1.0", "delta": 4,"#);
+        let json =
+            map_json_with_nodes(&nodes).replace(r#""version": "1.0","#, r#""version": "1.0", "delta": 4,"#);
         let map = load_from_str(&json).expect("unrecognized keys must not fail the load");
 
         let mut reported: Vec<String> = map

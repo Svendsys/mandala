@@ -72,12 +72,13 @@ pub struct AnimationTiming {
     /// loads, the animation runs once, nothing ever loops — is
     /// what the skip prevents.
     ///
-    /// Because the container denies unknown fields, `"then"` in
-    /// a map is now a **load error** rather than a key quietly
-    /// swallowed and then erased on the next save. The author
-    /// finds out the followup is unwired while they still have
-    /// the file they wrote. The gate lifts when
-    /// `tick_animations` gains the followup dispatch.
+    /// `"then"` in a map is therefore an unrecognized key like
+    /// any other: the loader warns about it naming the mutation
+    /// it sits in, and writes it back untouched at the next save
+    /// (see [`crate::mindmap::unknown_keys`]). The author finds
+    /// out the followup is unwired, and the map that asked for it
+    /// early still says so on the day `tick_animations` gains the
+    /// followup dispatch and the skip lifts.
     #[serde(skip)]
     pub then: Option<Followup>,
 }
@@ -267,10 +268,7 @@ mod tests {
             for step in 1..=100 {
                 let t = step as f32 / 100.0;
                 let v = easing.evaluate(t);
-                assert!(
-                    v >= prev - 1e-6,
-                    "{easing:?} dipped at t={t}: prev={prev}, v={v}"
-                );
+                assert!(v >= prev - 1e-6, "{easing:?} dipped at t={t}: prev={prev}, v={v}");
                 prev = v;
             }
         }
@@ -344,7 +342,10 @@ mod tests {
             let parsed: AnimationTiming =
                 serde_json::from_str(authored).expect("an unwired `then` must not fail the parse");
             assert_eq!(parsed.duration_ms, 200);
-            assert!(parsed.then.is_none(), "`then` must stay unreachable from the wire: {authored}");
+            assert!(
+                parsed.then.is_none(),
+                "`then` must stay unreachable from the wire: {authored}"
+            );
         }
     }
 }

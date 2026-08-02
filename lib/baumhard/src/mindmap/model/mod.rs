@@ -11,7 +11,8 @@
 //! the save writes them back, so an older build can open, edit and
 //! resave a newer map without destroying the newer features. The keys
 //! do not live on these types — they live on
-//! [`MindMap::unknown_keys`], captured at the deserializer by
+//! [`MindMap::unknown_keys`](crate::mindmap::model::MindMap::unknown_keys),
+//! captured at the deserializer by
 //! `mindmap::unknown_keys`, which is what lets the guarantee cover
 //! types that cannot hold a `#[serde(flatten)]` catch-all because they
 //! derive `Copy`, `Eq` or `Hash`. What these types owe the mechanism

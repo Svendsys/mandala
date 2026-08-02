@@ -10,7 +10,8 @@
 //! nothing; ignoring the keys is worse, because the editor resaves the
 //! whole model and the next save deletes them. So the load keeps them:
 //! every unrecognized key is captured with the route that leads to it,
-//! warned about once, carried on [`MindMap`](crate::mindmap::MindMap),
+//! warned about once, carried on
+//! [`MindMap`](crate::mindmap::model::MindMap),
 //! and spliced back into the serialized document before it reaches
 //! disk.
 //!
@@ -85,7 +86,7 @@ impl UnknownKey {
     /// `custom_mutations[0]`, `canvas`, or `map` for a key at the top
     /// level.
     ///
-    /// [`MindMap::edge_locations`]: crate::mindmap::MindMap::edge_locations
+    /// [`MindMap::edge_locations`]: crate::mindmap::model::MindMap::edge_locations
     ///
     /// Cost: one `String` allocation.
     pub fn location(&self) -> String {
@@ -160,7 +161,7 @@ fn location_of(route: &[Step]) -> (String, &[Step]) {
 /// Every unrecognized key one load found, in the order the
 /// deserializer met them.
 ///
-/// Lives on [`MindMap`](crate::mindmap::MindMap) so the save path can
+/// Lives on [`MindMap`](crate::mindmap::model::MindMap) so the save path can
 /// put the keys back. `#[serde(skip)]` on that field is what keeps
 /// this out of the on-disk shape — the keys are written at their own
 /// routes, not collected into a side object.
@@ -435,7 +436,13 @@ mod tests {
         .expect("the enum payload must be reachable");
         assert_eq!(
             expanded,
-            route(serde_json::json!(["custom_mutations", 0, "mutator", "Void", "surprise"]))
+            route(serde_json::json!([
+                "custom_mutations",
+                0,
+                "mutator",
+                "Void",
+                "surprise"
+            ]))
         );
     }
 
@@ -474,9 +481,15 @@ mod tests {
     #[test]
     fn test_take_from_moves_the_value_out_of_the_document() {
         let mut document = serde_json::json!({"nodes": {"0": {"mystery": [1, 2]}}});
-        let captured = take_from(&mut document, vec![route(serde_json::json!(["nodes", "0", "mystery"]))]);
+        let captured = take_from(
+            &mut document,
+            vec![route(serde_json::json!(["nodes", "0", "mystery"]))],
+        );
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured.iter().next().expect("one entry").value(), &serde_json::json!([1, 2]));
+        assert_eq!(
+            captured.iter().next().expect("one entry").value(),
+            &serde_json::json!([1, 2])
+        );
         assert_eq!(document, serde_json::json!({"nodes": {"0": {}}}));
     }
 
@@ -486,9 +499,21 @@ mod tests {
     #[test]
     fn test_location_names_each_addressable_part() {
         let cases: &[(serde_json::Value, &str, &str)] = &[
-            (serde_json::json!(["nodes", "1.2", "style", "shpe"]), "node \"1.2\"", "style.shpe"),
-            (serde_json::json!(["edges", 3, "arrowhead"]), "edge[3]", "arrowhead"),
-            (serde_json::json!(["palettes", "coral", "hue"]), "palette \"coral\"", "hue"),
+            (
+                serde_json::json!(["nodes", "1.2", "style", "shpe"]),
+                "node \"1.2\"",
+                "style.shpe",
+            ),
+            (
+                serde_json::json!(["edges", 3, "arrowhead"]),
+                "edge[3]",
+                "arrowhead",
+            ),
+            (
+                serde_json::json!(["palettes", "coral", "hue"]),
+                "palette \"coral\"",
+                "hue",
+            ),
             (
                 serde_json::json!(["custom_mutations", 0, "flavor"]),
                 "custom_mutations[0]",
