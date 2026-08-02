@@ -328,7 +328,7 @@ impl GlyphArea {
                 }
                 ApplyOperation::Delete => self.regions = ColorFontRegions::default(),
                 ApplyOperation::Multiply => {
-                    warn!("Multiply is not defined for ColorFontRegions; ignoring")
+                    warn!("gfx_structs::area: Multiply is not defined for ColorFontRegions; ignoring")
                 }
                 ApplyOperation::Noop => {}
             }
@@ -343,7 +343,7 @@ impl GlyphArea {
                 ApplyOperation::Add => self.text += text,
                 ApplyOperation::Delete => self.text.clear(),
                 ApplyOperation::Subtract | ApplyOperation::Multiply => {
-                    warn!("{:?} is not defined for text; ignoring", operation)
+                    warn!("gfx_structs::area: {:?} is not defined for text; ignoring", operation)
                 }
                 ApplyOperation::Noop => {}
             }

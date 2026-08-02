@@ -138,6 +138,25 @@ pub fn section_aabb_violations(
     offset: Position,
     size: Option<Size>,
 ) -> Vec<String> {
+    let mut out = section_extent_violations(parent_size, section_idx, offset, size);
+    out.extend(section_containment_violations(parent_size, section_idx, offset, size));
+    out
+}
+
+/// The half of [`section_aabb_violations`] about the section's own
+/// shape: finite, positive, not an obvious typo. Split out because
+/// two callers want different halves — the loader's numeric sweep
+/// needs this one and not containment (a section hanging past its
+/// node renders fine and is `maptool verify`'s call), while `verify`
+/// needs containment and gets this half through the numeric sweep.
+/// Sharing the body is what keeps them from reporting the same
+/// defect in two sentences.
+pub fn section_extent_violations(
+    parent_size: Size,
+    section_idx: usize,
+    offset: Position,
+    size: Option<Size>,
+) -> Vec<String> {
     let mut out = Vec::new();
     if !offset.x.is_finite() || !offset.y.is_finite() {
         out.push(format!(
@@ -195,6 +214,20 @@ pub fn section_aabb_violations(
         }
     }
 
+    out
+}
+
+/// The half of [`section_aabb_violations`] about fitting inside the
+/// parent node. Not load-blocking: a section that hangs past its
+/// node's edge still renders, so `format/schema.md` assigns it to
+/// `maptool verify`.
+pub fn section_containment_violations(
+    parent_size: Size,
+    section_idx: usize,
+    offset: Position,
+    size: Option<Size>,
+) -> Vec<String> {
+    let mut out = Vec::new();
     let effective = size.unwrap_or(parent_size);
     if offset.x.is_finite()
         && offset.y.is_finite()
@@ -610,19 +643,21 @@ fn text_run_violations(section_idx: usize, section: &MindSection) -> Vec<String>
 /// `maptool verify`'s call (`format/schema.md`). What belongs here
 /// is only what the renderer cannot survive — a non-finite or
 /// degenerate extent, a hostile border config, a bad run.
-pub fn section_numeric_violations(idx: usize, section: &MindSection) -> Vec<String> {
-    let mut out = Vec::new();
+pub fn section_numeric_violations(idx: usize, section: &MindSection, parent_size: Size) -> Vec<String> {
+    // The section's own shape comes from the shared extent rules —
+    // restating them here is what made the loader and `verify`
+    // describe one defect in two sentences.
+    let mut out = section_extent_violations(parent_size, idx, section.offset, section.size);
     let label = format!("section[{idx}]");
-    out.extend(bounded(&label, "offset.x", section.offset.x, MAX_CANVAS_COORD));
-    out.extend(bounded(&label, "offset.y", section.offset.y, MAX_CANVAS_COORD));
-    if let Some(size) = section.size {
-        out.extend(bounded(&label, "size.width", size.width, MAX_NODE_AXIS));
-        out.extend(bounded(&label, "size.height", size.height, MAX_NODE_AXIS));
-        if size.width.is_finite() && size.width <= 0.0 {
-            out.push(format!("{label}.size.width is not positive ({})", size.width));
-        }
-        if size.height.is_finite() && size.height <= 0.0 {
-            out.push(format!("{label}.size.height is not positive ({})", size.height));
+    // The one bound extent does not express: an offset's magnitude.
+    // Its finiteness is already covered above, so only the
+    // out-of-range case is added here.
+    for (name, value) in [("offset.x", section.offset.x), ("offset.y", section.offset.y)] {
+        if value.is_finite() && value.abs() > MAX_CANVAS_COORD {
+            out.push(format!(
+                "{} ({value}) is outside the ±{MAX_CANVAS_COORD} bound",
+                field(&label, name)
+            ));
         }
     }
     if let Some(border) = section.frame_border.as_ref() {
@@ -663,7 +698,7 @@ pub fn node_numeric_violations(node: &MindNode) -> Vec<String> {
         node.max_zoom_to_render,
     ));
     for (idx, section) in node.sections.iter().enumerate() {
-        out.extend(section_numeric_violations(idx, section));
+        out.extend(section_numeric_violations(idx, section, node.size));
     }
     out
 }

@@ -274,7 +274,7 @@ impl PaletteField {
             Some("text") => PaletteField::Text,
             Some("title") => PaletteField::Title,
             Some(other) => {
-                log::warn!("border color_palette_field '{}' unknown; using 'frame'", other);
+                log::warn!("mindmap::border: color_palette_field '{}' unknown; using 'frame'", other);
                 PaletteField::Frame
             }
         }
@@ -1253,7 +1253,7 @@ pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
             // override these defaults," with the per-side fallback
             // to `light`. Anything else gets a warn-log.
             if name != CUSTOM_PRESET_NAME {
-                log::warn!("border preset '{}' unknown; using 'light'", preset);
+                log::warn!("mindmap::border: preset '{}' unknown; using 'light'", preset);
             }
             &PRESET_TABLE[0]
         });

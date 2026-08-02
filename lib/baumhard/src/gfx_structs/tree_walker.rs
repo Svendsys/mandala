@@ -148,7 +148,7 @@ fn process_instruction_node(
             // mutation application. The caller treats a no-op as
             // success.
             if mutator.first_child().is_none() {
-                warn!("RepeatWhile instruction node has no children, skipping branch");
+                warn!("gfx_structs::tree_walker: RepeatWhile instruction node has no children, skipping branch");
                 return;
             }
             if target.first_child().is_none() {
@@ -166,7 +166,7 @@ fn process_instruction_node(
             // mutation chain executing — a malformed reserved
             // instruction shouldn't abort the whole walk.
             warn!(
-                "RotateWhile instruction not implemented in walker; \
+                "gfx_structs::tree_walker: RotateWhile instruction not implemented; \
                  this branch becomes a no-op (see format/mutators.md)"
             );
         }
