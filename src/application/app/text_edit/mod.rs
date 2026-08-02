@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Inline node text editor: state, grapheme-aware cursor helpers
-//! shared with [`super::single_line_edit`]. Lifecycle in [`editor`].
+//! shared with `super::single_line_edit` (native-gated, so a plain
+//! code-span — an intra-doc link to it fails the wasm32 doc build).
+//! Lifecycle in [`editor`].
 
 use baumhard::util::grapheme_chad;
 
@@ -108,6 +110,61 @@ impl TextEditState {
             TextEditState::Closed => None,
         }
     }
+}
+
+/// Is `canvas_pos` inside `node_id`, counting overflowing sections?
+///
+/// Refreshes the subtree-AABB cache **before** the containment test,
+/// which is the load-bearing half.
+/// [`crate::application::document::point_in_node_aabb`] reads
+/// `subtree_aabb()`, which returns `None` while the cache is dirty
+/// (post-mutation / post-tree-rebuild) and then falls back to the
+/// container-only AABB — reporting a point over an *overflowing*
+/// second section as "outside". `ensure_subtree_aabbs` is O(1) on a
+/// clean cache and O(arena) on the first call after a mutation;
+/// either way it is cheap relative to a click handler.
+///
+/// Every click-outside gate in the app runs this pair, and the
+/// refresh is exactly the step that gets forgotten when the pair is
+/// written by hand. Callers: the text editor's click-outside-commit
+/// gate on both targets (via [`release_stays_inside_edited_node`])
+/// and the `NodeEdit` mode-exit gate in `event_mouse_click`.
+///
+/// Returns `false` when no tree is built — there is nothing to be
+/// inside of.
+pub(in crate::application::app) fn point_inside_node_fresh_aabb(
+    node_id: &str,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    canvas_pos: glam::Vec2,
+) -> bool {
+    if let Some(tree) = mindmap_tree.as_mut() {
+        tree.tree.ensure_subtree_aabbs();
+    }
+    mindmap_tree
+        .as_ref()
+        .map(|tree| crate::application::document::point_in_node_aabb(canvas_pos, node_id, tree))
+        .unwrap_or(false)
+}
+
+/// Did a pointer release land on the node the editor has open?
+///
+/// `true` keeps the edit alive and consumes the release; `false`
+/// means the release was outside and the caller commits through the
+/// funnel. Both targets' release paths run this — it is the whole of
+/// what they used to have written twice.
+///
+/// Returns `false` when the editor is closed — there is nothing to
+/// stay inside of.
+pub(in crate::application::app) fn release_stays_inside_edited_node(
+    text_edit_state: &TextEditState,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    release_canvas: glam::Vec2,
+) -> bool {
+    text_edit_state
+        .node_id()
+        .map(str::to_string)
+        .map(|id| point_inside_node_fresh_aabb(&id, mindmap_tree, release_canvas))
+        .unwrap_or(false)
 }
 
 /// Glyph rendered at the cursor position while a node, edge-label,

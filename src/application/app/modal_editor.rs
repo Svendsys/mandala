@@ -210,26 +210,14 @@ fn release_stays_inside(modal: ModalEditor, ctx: &mut InputHandlerContext<'_>) -
         .renderer
         .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
     match modal {
-        ModalEditor::Text => {
-            // Refresh the subtree-AABB cache before the
-            // overflow-aware containment check —
-            // `point_in_node_aabb` reads `subtree_aabb()`, which
-            // returns `None` when the cache is dirty (post-mutation
-            // / post-tree-rebuild). A `None` falls back to the
-            // container-only path, regressing the multi-section
-            // overflow gesture this branch exists for.
-            // `ensure_subtree_aabbs` is O(1) on a clean cache and
-            // O(arena) on the first call after a mutation; either
-            // way it is cheap relative to the click handler.
-            if let Some(tree) = ctx.mindmap_tree.as_mut() {
-                tree.tree.ensure_subtree_aabbs();
-            }
-            ctx.text_edit_state
-                .node_id()
-                .zip(ctx.mindmap_tree.as_ref())
-                .map(|(id, tree)| crate::application::document::point_in_node_aabb(release_canvas, id, tree))
-                .unwrap_or(false)
-        }
+        // Cross-platform: the WASM release path runs the same
+        // predicate, so the AABB-refresh-then-contain dance exists
+        // once.
+        ModalEditor::Text => super::text_edit::release_stays_inside_edited_node(
+            ctx.text_edit_state,
+            ctx.mindmap_tree,
+            release_canvas,
+        ),
         ModalEditor::SingleLine => {
             // Cloned so the `&mut AppScene` hit-test can borrow
             // `ctx` freely; the target is two or three short
