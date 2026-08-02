@@ -22,7 +22,6 @@ use super::text_edit::TextEditState;
 use super::{DragState, InteractionMode, Options};
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
-use crate::application::document::MindMapDocument;
 use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
 
@@ -30,8 +29,9 @@ use crate::application::renderer::Renderer;
 /// `Window`.
 ///
 /// A load failure is not a missing document: it resolves through
-/// [`startup_load::adopt`] to the load-failure placard, which is
-/// installed by the same code that installs a real map. Everything
+/// [`startup_load::native_startup_document`] to the load-failure
+/// placard, which is installed by the same code that installs a real
+/// map. Everything
 /// below the load therefore runs unconditionally — the window opens
 /// with the loader's message on the canvas, the camera fits it,
 /// input works, and `open` can be typed into the console without
@@ -56,16 +56,14 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // console / color-picker overlays.
     let mut app_scene = crate::application::scene_host::AppScene::new();
 
-    // The initial map load. A rejection is not a missing document:
-    // `startup_load` turns it into the load-failure placard carrying
-    // the loader's own message, and everything below installs that
-    // placard by the same code that installs a real map. `adopt` is
-    // also where the message reaches the log, so the terminal user
-    // and the canvas get the same words.
-    let mut doc = startup_load::adopt(startup_load::startup_surface(
-        &options.mindmap_path,
-        MindMapDocument::load(&options.mindmap_path),
-    ));
+    // The initial map load, in one call. A rejection is not a
+    // missing document: `startup_load` turns it into the load-failure
+    // placard carrying the loader's own message, and everything below
+    // installs that placard by the same code that installs a real
+    // map. The `Result` never reaches this file, which is what keeps
+    // the two targets from reporting the same failure differently —
+    // the browser's peer call is `wasm_startup_document`.
+    let mut doc = startup_load::native_startup_document(&options.mindmap_path);
 
     // Four-source mutation registry: app bundle (shipped in the
     // binary) < user file ($XDG_CONFIG_HOME/mandala/mutations.json)

@@ -1661,6 +1661,27 @@ pub fn do_wrap_to_display_width() {
     // including the blank line between two paragraphs.
     assert_eq!(wrap_to_display_width("one\n\ntwo", 10), vec!["one", "", "two"]);
 
+    // …and an empty `String` means *only* that. Indentation at
+    // least as wide as the column is consumed by the break its own
+    // width forces, rather than emitted as a blank first line that
+    // would read as a paragraph gap the input never had. The
+    // placard's contract is exactly that reading: its parts are
+    // separated by blank lines.
+    assert_eq!(wrap_to_display_width("        x", 4), vec!["x"]);
+    assert_eq!(wrap_to_display_width("    x", 4), vec!["x"]);
+    assert_eq!(wrap_to_display_width("        x y", 4), vec!["x y"]);
+    // A tab is one cell here, like every other non-East-Asian
+    // scalar, so it only forces a break in a one-cell column.
+    assert_eq!(wrap_to_display_width("\tx", 4), vec!["\tx"]);
+    assert_eq!(wrap_to_display_width("\tx", 1), vec!["x"]);
+    // Indentation *narrower* than the column is still content on the
+    // line it opens — the case above is the exception, not the rule.
+    assert_eq!(wrap_to_display_width("  x", 4), vec!["  x"]);
+    // A whitespace-only hard line is a gap and stays one: it is not
+    // reached through a break at all.
+    assert_eq!(wrap_to_display_width("   ", 4), vec![""]);
+    assert_eq!(wrap_to_display_width("a\n     \nb", 4), vec!["a", "", "b"]);
+
     // A word wider than the column splits mid-word rather than
     // running off the edge. Loader messages carry long paths.
     assert_eq!(wrap_to_display_width("aaaaaaaa", 3), vec!["aaa", "aaa", "aa"]);

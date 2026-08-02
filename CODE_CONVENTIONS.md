@@ -357,8 +357,23 @@ industrial cost/benefit reasoning. This is not license for speculation.
   internal invariants".
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
-  `Renderer::new`, `fonts::init`, the `?map=` query-string parser on
-  WASM. Bare `unwrap()` outside tests is a bug.
+  the winit event loop and its window, the renderer bootstrap,
+  `fonts::init`, and — in the browser — reading `?map=` off the page
+  URL. Four of those can fail, and each says so where it happens:
+  `EventLoop::new` and `create_window` when the window comes up, and
+  `create_surface` inside both `Renderer::bootstrap_native` and
+  `Renderer::bootstrap_wasm`; plus `web_sys::window`, whose absence
+  means there is no page to draw on. Two cannot fail, and are inside
+  the boundary rather than exceptions to it: `fonts::init` returns
+  `()`, and the query-string extractor is infallible by construction
+  — `search().unwrap_or_default()` then `strip_prefix`, with no
+  failure to report. What that extractor *feeds* is fallible, and is
+  the next bullet. Bare `unwrap()` outside tests is a bug. **This
+  list is checked against the code, not trusted:** the tests of the
+  module the next bullet names fail when it holds a name that has
+  moved, or a name that cannot fail. It held one of each — a
+  renamed renderer constructor, and a font initializer that returns
+  nothing — for as long as nothing looked.
 - **The initial map load is the one startup path that does not
   `expect`, and the reason names the boundary.** `expect` is for a
   *program precondition* that did not hold — no adapter, no fonts,
@@ -373,14 +388,17 @@ industrial cost/benefit reasoning. This is not license for speculation.
   would replace. So the initial `loader::load_from_file` on native
   and the `?map=` fetch + parse in the browser **put the loader's
   message in front of the user and keep the shell alive**: both
-  resolve through `app::startup_load`, whose `adopt` logs the message
-  and hands the shell `baumhard::mindmap::placard`'s one-node map
-  carrying it, installed by the same code that installs a real
-  document. Both targets make that one call — a startup-error surface
-  that exists on only one of them is not a fix (§4). This paragraph
-  is the recorded decision #107 asked for: the code and the
-  convention were in conflict, and they are reconciled here rather
-  than at `expect`.
+  resolve through `app::startup_load`, which logs the message —
+  behind the path or URL that was asked for, because most of the
+  loader's messages do not name it — and hands the shell
+  `baumhard::mindmap::placard`'s one-node map carrying the same
+  words, installed by the same code that installs a real document.
+  Each target makes exactly one call into that module and is handed a
+  document, never a `Result`: a startup-error surface that exists on
+  only one of them is not a fix (§4), and a `Result` in an init site's
+  hands is where the two start to differ. This paragraph is the
+  recorded decision #107 asked for: the code and the convention were
+  in conflict, and they are reconciled here rather than at `expect`.
 - **`warn!` and `error!` survive into release; `info!`, `debug!` and
   `trace!` do not.** Both crates build `log` with
   `release_max_level_warn`, so the degrade half of "degrade the frame,

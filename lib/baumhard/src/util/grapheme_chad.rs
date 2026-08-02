@@ -717,6 +717,13 @@ pub fn truncate_to_display_width(s: &str, max_width: usize) -> &str {
 ///   heading the next line, and every emitted line is right-trimmed —
 ///   which is also what keeps a run sitting on the right margin from
 ///   pushing the line past `max_width`.
+/// - **Indentation at least as wide as `max_width` is consumed by
+///   the break its own width forces**, not emitted as a blank first
+///   line. `("        x", 4)` is `["x"]`, not `["", "x"]`. This
+///   follows from the rule above — the run that justifies a break is
+///   consumed by it — and from the next one: an empty `String` in
+///   the output means a paragraph gap in the input, so emitting one
+///   for indentation would invent a gap that is not there.
 /// - **A word wider than `max_width` is split mid-word** at the cell
 ///   boundary, because the alternative is a line that silently
 ///   ignores the width it was given. Long paths and serde messages
@@ -810,7 +817,7 @@ fn wrap_one_line(line: &str, max_width: usize, scratch: &mut Vec<WrapCell>, out:
                 Some((run_start, run_end)) if run_start > start && run_end <= i => (run_start, run_end),
                 _ => (i, i),
             };
-            push_trimmed(line, scratch[start].byte_start, scratch[cut - 1].byte_end, out);
+            push_wrapped_segment(line, scratch[start].byte_start, scratch[cut - 1].byte_end, out);
             consumed = scratch[next_start - 1].cumulative_width;
             start = next_start;
             break_run = None;
@@ -828,8 +835,33 @@ fn wrap_one_line(line: &str, max_width: usize, scratch: &mut Vec<WrapCell>, out:
 /// Emit `line[from..to]` with trailing whitespace removed. The right
 /// margin is where a wrap discards whitespace; the left margin is
 /// where it preserves it, so only the end is trimmed.
+///
+/// Used for the *last* segment of a hard line, which is emitted
+/// whether or not it has content: a blank input line is a paragraph
+/// gap and has to survive as one.
 fn push_trimmed(line: &str, from: usize, to: usize, out: &mut Vec<String>) {
     out.push(line[from..to].trim_end().to_string());
+}
+
+/// [`push_trimmed`] for a segment cut off by a *break*, where an
+/// all-whitespace result is dropped rather than emitted.
+///
+/// The only way to reach one is indentation at least as wide as the
+/// column: `("        x", 4)` breaks before the `x` with eight
+/// spaces behind it. Emitting `""` there would claim a paragraph gap
+/// the input does not contain — the one meaning an empty `String`
+/// carries in this function's output — and the caller that noticed
+/// was the load-failure placard, whose contract says a blank line
+/// separates its parts.
+///
+/// No content can be lost: the segment is dropped only when it
+/// trims to nothing, which means it held nothing but the whitespace
+/// the break consumed.
+fn push_wrapped_segment(line: &str, from: usize, to: usize, out: &mut Vec<String>) {
+    let text = line[from..to].trim_end();
+    if !text.is_empty() {
+        out.push(text.to_string());
+    }
 }
 
 /// Display width of a single scalar. Exposed for tests; call sites

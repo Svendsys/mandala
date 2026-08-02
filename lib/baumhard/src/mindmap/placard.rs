@@ -60,10 +60,28 @@ pub const PLACARD_FOOTER: &str = "Nothing was opened; the file on disk is unchan
 /// Point size of the placard's text run.
 const PLACARD_FONT_SIZE_PT: u32 = 24;
 
-/// Font family of the placard's text run. The family every other
-/// freshly-authored run in the workspace uses, so the placard reads
-/// as part of the application rather than as a system dialog.
-const PLACARD_FONT_FAMILY: &str = "LiberationSans";
+/// Font family of the placard's text run: **empty, meaning no pin**.
+///
+/// `format/fonts.md` gives the empty string one meaning — "clears the
+/// pin (run uses the document default)" — and an unknown family
+/// another: a `warn!` at render time and a monospace fallback. The
+/// placard wants the first. It shipped with `"LiberationSans"`, which
+/// is the second: `app_font_by_family("LiberationSans")` is `None`,
+/// because no Liberation face is compiled in and the family the
+/// testament map authors under that name has never resolved
+/// (`document::custom::sync` documents the same mismatch from the
+/// other side).
+///
+/// Naming any real family would be worse, not better. `format/fonts.md`
+/// opens with "Mandala bundles every font it ships with. There is no
+/// system-font fallback on either native or WASM", and there is no
+/// bundled sans face to name — the Liberation, DejaVu and Noto
+/// families a native `FontSystem::new()` reports come from the host's
+/// fontconfig and are simply absent in the browser. Pinning one would
+/// make the placard render differently on the two targets
+/// (CODE_CONVENTIONS §4) on the one screen a user meets when
+/// something has already gone wrong.
+const PLACARD_FONT_FAMILY: &str = "";
 
 /// Text and frame color. The red the browser build's DOM overlay
 /// used before the placard replaced it, carried over so the visual
@@ -300,6 +318,43 @@ mod tests {
         assert_eq!(section.text_runs.len(), 1);
         assert_eq!(section.text_runs[0].start, 0);
         assert_eq!(section.text_runs[0].end, count_grapheme_clusters(&section.text));
+    }
+
+    /// **The placard's font pin is one the browser can honor too.**
+    ///
+    /// `format/fonts.md`: "Mandala bundles every font it ships with.
+    /// There is no system-font fallback on either native or WASM."
+    /// So a family pin is legitimate only when the face is compiled
+    /// in — and the empty string, which clears the pin, always is.
+    /// Anything else is a per-render `warn!` and a monospace
+    /// fallback, on the one screen a user reaches after something
+    /// has already gone wrong.
+    ///
+    /// This is a real gate rather than a tautology because a native
+    /// `FontSystem::new()` also indexes the host's fontconfig: on a
+    /// Linux desktop `app_font_by_family("Liberation Sans")` answers
+    /// `Some`, and a test written against *that* would wave through
+    /// a pin the browser cannot resolve. The roster here is
+    /// `FONT_SOURCES` — what the binary carries — not what the
+    /// machine running the suite happens to have installed.
+    #[test]
+    fn test_placard_font_pin_is_one_the_browser_can_honor() {
+        use crate::font::fonts::{family_name_of, FONT_SOURCES};
+
+        let map = load_failure(SOURCE, MESSAGE);
+        let run = &map.nodes[PLACARD_NODE_ID].sections[0].text_runs[0];
+        assert_eq!(run.font, PLACARD_FONT_FAMILY);
+
+        let compiled_in: Vec<&'static str> =
+            FONT_SOURCES.keys().copied().filter_map(family_name_of).collect();
+        assert!(
+            run.font.is_empty() || compiled_in.contains(&run.font.as_str()),
+            "the placard pins {:?}, which is not compiled in. Either bundle the face or \
+             clear the pin with the empty string — an unresolvable family is a `warn!` \
+             per render and a monospace fallback, and it differs between native and the \
+             browser. Compiled-in families: {compiled_in:?}",
+            run.font
+        );
     }
 
     /// The node box grows with the message. A fixed box would clip a

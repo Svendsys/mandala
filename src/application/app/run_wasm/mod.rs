@@ -667,19 +667,17 @@ pub(super) fn run(mut app: Application) {
         // build once and move into the input state.
         let mut init_app_scene = crate::application::scene_host::AppScene::new();
         let mut init_scene_cache = baumhard::mindmap::scene_cache::SceneConnectionCache::new();
-        // std::fs is unavailable in the browser; fetch over the page
-        // origin instead. Both halves of the load can fail — the
-        // fetch (a `?map=` pointing at nothing gives an HTTP 404) and
-        // the parse — and they collapse into one `Result` so both
-        // reach the same surface. `startup_load::adopt` is the same
-        // call the native init makes: a rejection becomes the
-        // load-failure placard carrying the loader's own message, so
-        // the browser build reports a bad map exactly as the desktop
-        // build does (CODE_CONVENTIONS §4).
-        let load = fetch_map_json(&mindmap_path)
-            .await
-            .and_then(|json| MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())));
-        let mut doc = startup_load::adopt(startup_load::startup_surface(&mindmap_path, load));
+        // The initial map load, in one call — the browser peer of
+        // native's `startup_load::native_startup_document`. Both
+        // halves of the browser's load can fail (the fetch, where a
+        // `?map=` pointing at nothing gives an HTTP 404, and the
+        // parse) and `startup_load` owns both: a rejection becomes
+        // the load-failure placard carrying the loader's own message,
+        // so the browser build reports a bad map exactly as the
+        // desktop build does (CODE_CONVENTIONS §4). No `Result`
+        // reaches this file, so there is nowhere here for the two
+        // targets to start disagreeing.
+        let mut doc = startup_load::wasm_startup_document(&mindmap_path).await;
 
         // Canvas background: resolve through theme variables
         // so `"var(--bg)"` works, then hand off to the
@@ -812,29 +810,4 @@ pub(super) fn run(mut app: Application) {
         keybinds,
     };
     app.event_loop.spawn_app(handler);
-}
-
-/// HTTP-fetch a mindmap JSON file. Maps are bundled into the page
-/// origin by trunk's `copy-dir` directive in `web/index.html`.
-async fn fetch_map_json(url: &str) -> Result<String, String> {
-    use wasm_bindgen::JsCast;
-    let window = web_sys::window().ok_or("no global window")?;
-    let promise = window.fetch_with_str(url);
-    let resp_value = wasm_bindgen_futures::JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("fetch failed: {:?}", e))?;
-    let resp: web_sys::Response = resp_value
-        .dyn_into()
-        .map_err(|_| "fetch did not return a Response".to_string())?;
-    if !resp.ok() {
-        return Err(format!("HTTP {} {}", resp.status(), resp.status_text()));
-    }
-    let text_promise = resp
-        .text()
-        .map_err(|e| format!("Response::text() failed: {:?}", e))?;
-    wasm_bindgen_futures::JsFuture::from(text_promise)
-        .await
-        .map_err(|e| format!("reading response body failed: {:?}", e))?
-        .as_string()
-        .ok_or_else(|| "response body was not a string".to_string())
 }

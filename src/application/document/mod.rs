@@ -212,6 +212,22 @@ pub struct ColorPickerPreview {
     pub color: String,
 }
 
+/// Announce a map that really did load.
+///
+/// Called by [`MindMapDocument::load`] and
+/// [`MindMapDocument::from_json_str`] — the two constructors that
+/// take a `.mindmap.json` and succeed — and deliberately *not* by
+/// `finalize`, which the load-failure placard also goes through.
+/// `info!`, so it is compiled out of release entirely (§9); a
+/// failure is `error!` and reaches the user either way.
+fn log_loaded(map: &MindMap) {
+    info!(
+        "document: loaded mindmap {:?} with {} node(s)",
+        map.name,
+        map.nodes.len()
+    );
+}
+
 fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
     for node in map.nodes.values_mut() {
         grow_one_node_to_fit_text(node);
@@ -448,7 +464,10 @@ impl MindMapDocument {
     /// choose between reporting it twice and suppressing it, and the
     /// startup path did the former.
     pub fn load(path: &str) -> Result<Self, String> {
-        loader::load_from_file(Path::new(path)).map(|map| Self::finalize(map, Some(path.to_string())))
+        loader::load_from_file(Path::new(path)).map(|map| {
+            log_loaded(&map);
+            Self::finalize(map, Some(path.to_string()))
+        })
     }
 
     /// Construct a Document from an in-memory JSON string. `file_path`
@@ -457,7 +476,10 @@ impl MindMapDocument {
     ///
     /// Reports nothing, for the reason spelled out on [`Self::load`].
     pub fn from_json_str(json: &str, file_path: Option<String>) -> Result<Self, String> {
-        loader::load_from_str(json).map(|map| Self::finalize(map, file_path))
+        loader::load_from_str(json).map(|map| {
+            log_loaded(&map);
+            Self::finalize(map, file_path)
+        })
     }
 
     /// The document a rejected load is rendered as: a one-node map
@@ -480,12 +502,15 @@ impl MindMapDocument {
     /// tree/scene builders. Both passes only grow, so the order
     /// composes — text-driven floor first, then border-driven —
     /// and the larger of the two wins per node.
+    ///
+    /// **Reports nothing.** The "loaded mindmap …" line belongs to
+    /// the two constructors that really did load one, not here:
+    /// [`Self::load_failure_placard`] also finalizes, and a placard
+    /// is the map that stands in for a load that did not happen.
+    /// Announcing `document: loaded mindmap "load-failure"` beside
+    /// `startup: could not load …` is a log that contradicts itself
+    /// in two consecutive lines.
     fn finalize(mut map: MindMap, file_path: Option<String>) -> Self {
-        info!(
-            "document: loaded mindmap {:?} with {} node(s)",
-            map.name,
-            map.nodes.len()
-        );
         grow_node_sizes_to_fit_text(&mut map);
         grow_node_sizes_to_fit_borders(&mut map);
         Self::from_mindmap(map, file_path)
