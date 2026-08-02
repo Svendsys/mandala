@@ -144,8 +144,8 @@ mod tests {
                  "mutator": {"Glwo": {"channel": 0}}}
             ]
         }"##;
-        let map = baumhard::mindmap::loader::load_from_str(json)
-            .expect("the map must open around the construct");
+        let map =
+            baumhard::mindmap::loader::load_from_str(json).expect("the map must open around the construct");
         assert!(
             check(&map).is_empty(),
             "an unreadable construct is not an unrecognized key; the two are reported \
@@ -158,6 +158,18 @@ mod tests {
             found[0].message.contains("Glwo"),
             "must name the variant the author has to fix: {}",
             found[0].message
+        );
+
+        // Through the verb the user actually runs, not just the check
+        // in isolation — a check nothing calls reports nothing, and
+        // `maptool verify` exiting 0 on a typo'd variant is the whole
+        // failure this exists to prevent.
+        let reported = crate::verify::verify(&map);
+        assert!(
+            reported
+                .iter()
+                .any(|v| v.category == "unknown_variant" && v.message.contains("Glwo")),
+            "`verify` itself must carry the violation: {reported:?}"
         );
     }
 

@@ -54,20 +54,20 @@
 //!   spelled like the variant. The probe answers it without guessing:
 //!   **a key the model itself writes at a level cannot be the key
 //!   serde ignored there**, so the walk descends past it. See
-//!   [`expand_route`].
+//!   `expand_route`.
 //! - **Containers the saver omits.** `#[serde(skip_serializing_if)]`
 //!   means a container that holds its own default is simply absent
 //!   from the saved document, and a route through it would die with
 //!   nothing to hold on to. Comparing the authored document against
 //!   the probe finds those levels at load time, so the save can put
 //!   the container back before writing the key into it. See
-//!   [`Scaffold`].
+//!   `Scaffold`.
 //! - **Array elements that move.** A route below an array is
 //!   positional, and deleting an earlier element silently slides the
 //!   route onto a different one. The probe's element fingerprints are
 //!   captured alongside the index, so the save re-finds the element it
 //!   was actually attached to — and refuses, loudly, when it cannot.
-//!   See [`IndexAnchor`].
+//!   See `IndexAnchor`.
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -231,7 +231,7 @@ impl UnknownKey {
     /// and the line says so. A key whose route the save cannot
     /// reconstruct is told apart at load time rather than promised
     /// something the save will not deliver — see
-    /// [`UnknownKey::preservable`].
+    /// `UnknownKey::preservable`.
     ///
     /// Cost: one `String` allocation.
     pub fn warning(&self) -> String {
@@ -375,11 +375,7 @@ impl SkippedConstructs {
     ///
     /// `route` must end in the element's authored index.
     pub fn push(&mut self, route: Vec<Step>, value: Value, reason: String) {
-        self.entries.push(SkippedConstruct {
-            route,
-            value,
-            reason,
-        });
+        self.entries.push(SkippedConstruct { route, value, reason });
     }
 
     /// Put every skipped construct back into a freshly serialized
@@ -533,13 +529,13 @@ impl UnknownKeys {
     /// - **A container the saver omitted.** A `skip_serializing_if`
     ///   field holding its own default is absent from the saved
     ///   document, so a route through it has nothing to walk. The load
-    ///   recorded the authored container ([`Scaffold`]); it is put back
+    ///   recorded the authored container (`Scaffold`); it is put back
     ///   before the key is written into it. This is what makes a
     ///   **zero-edit load → save key-set-preserving**, which is the
     ///   whole point of the mechanism.
     /// - **An array element that moved.** Every positional step
     ///   carries the load-time fingerprints of the array's elements
-    ///   ([`IndexAnchor`]), so deleting or reordering earlier elements
+    ///   (`IndexAnchor`), so deleting or reordering earlier elements
     ///   re-finds the right one instead of silently writing the key
     ///   onto its neighbor.
     ///
@@ -559,13 +555,35 @@ impl UnknownKeys {
     /// Each of the three is a distinct `warn!`, because each asks the
     /// reader to do something different.
     ///
-    /// # What is still not preserved
+    /// # What is still not preserved, and one thing that is preserved
+    /// oddly
     ///
-    /// Nothing else on the load graph. `format/schema.md`
-    /// §"Where a preserved key can still be lost" is the checked
-    /// statement of the residue and
+    /// The three refusals above are the whole residue, and every one
+    /// of them needs an **edit** to reach: a zero-edit load → save
+    /// keeps every authored key, in every position.
+    /// `format/schema.md` §"Where a preserved key can still be lost"
+    /// states it for the reader and
     /// `loader::tests::test_a_zero_edit_round_trip_keeps_every_authored_key`
-    /// is what keeps it honest.
+    /// is what keeps it honest — table-driven over every position a
+    /// key can sit in, because four of them were lost while a
+    /// hand-picked case passed.
+    ///
+    /// The odd one is a key below a `#[serde(from = "…")]` /
+    /// `#[serde(into = "…")]` proxy, where what the load reads is not
+    /// what the save writes: `CustomMutationIn` accepts a legacy
+    /// `mutations` list, `CustomMutationOut` only ever writes the
+    /// upgraded `mutator`. Recording the route against the proxy's
+    /// own shape would not help — the legacy pair is *folded* into a
+    /// synthesized `MutatorNode` and the fold is not invertible, so
+    /// there is no position in the written shape that corresponds to
+    /// `mutations[i]`. What happens instead is that the omitted
+    /// `mutations` list is rebuilt as an ordinary `Scaffold`, so the
+    /// saved entry carries the legacy list *alongside* its upgraded
+    /// form. `mutator` takes precedence on reload, so the model is
+    /// unaffected and the key survives; the cost is that resaving such
+    /// an entry no longer erases the legacy spelling. That is the
+    /// trade, and it is only paid by an entry that had a preserved key
+    /// inside its legacy list.
     ///
     /// Cost: O(captured keys × route length), plus one fingerprint of
     /// each array the routes pass through, plus one `Value` clone per
@@ -1206,15 +1224,14 @@ mod tests {
                 Some(&probe),
                 &route(serde_json::json!(["field", "zz"])),
             );
-            let want = Some(route(
-                serde_json::json!(["field", variant.clone(), "zz"]),
-            ));
+            let want = Some(route(serde_json::json!(["field", variant.clone(), "zz"])));
             if expanded != want {
-                failures.push(format!("{variant}: a key inside the payload resolved to {expanded:?}"));
+                failures.push(format!(
+                    "{variant}: a key inside the payload resolved to {expanded:?}"
+                ));
             }
 
-            let collided =
-                serde_json::json!({"field": {variant.clone(): {"known": 0, variant.clone(): 99}}});
+            let collided = serde_json::json!({"field": {variant.clone(): {"known": 0, variant.clone(): 99}}});
             let expanded = expand_route(
                 &collided,
                 Some(&probe),
@@ -1316,8 +1333,7 @@ mod tests {
     /// each written once rather than one of them twice.
     #[test]
     fn test_two_keys_in_one_omitted_container_are_each_written_once() {
-        let mut document =
-            serde_json::json!({"nodes": {"0": {"offset": {"x": 0, "one": 1, "two": 2}}}});
+        let mut document = serde_json::json!({"nodes": {"0": {"offset": {"x": 0, "one": 1, "two": 2}}}});
         let probe = serde_json::json!({"nodes": {"0": {}}});
         let captured = take_from(
             &mut document,

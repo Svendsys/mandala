@@ -153,7 +153,6 @@ fn adopt_unknown_keys(
     Ok(captured)
 }
 
-
 /// Load the map around the constructs this build cannot read, or
 /// `None` when there is nothing of the kind to skip.
 ///
@@ -256,7 +255,11 @@ fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, Str
 /// failed.
 fn excise_unreadable_constructs(document: &mut Value) -> unknown_keys::SkippedConstructs {
     let mut skipped = unknown_keys::SkippedConstructs::default();
-    excise_from::<CustomMutation>(document, &[Step::Key("custom_mutations".to_string())], &mut skipped);
+    excise_from::<CustomMutation>(
+        document,
+        &[Step::Key("custom_mutations".to_string())],
+        &mut skipped,
+    );
 
     let mut node_ids: Vec<String> = document
         .get("nodes")
@@ -267,10 +270,7 @@ fn excise_unreadable_constructs(document: &mut Value) -> unknown_keys::SkippedCo
     // every time, whatever the object's own iteration order is.
     node_ids.sort();
     for id in node_ids {
-        let node = [
-            Step::Key("nodes".to_string()),
-            Step::Key(id.clone()),
-        ];
+        let node = [Step::Key("nodes".to_string()), Step::Key(id.clone())];
         let at = |field: &str| {
             let mut route = node.to_vec();
             route.push(Step::Key(field.to_string()));
@@ -2388,7 +2388,6 @@ mod tests {
         assert_load_save_loses_no_authored_key(&source, &saved);
     }
 
-
     /// The serialization verbs that put bytes somewhere — a file, a
     /// socket, a string that is about to become one.
     const PERSISTING_VERBS: &[&str] = &[
@@ -2517,12 +2516,7 @@ mod tests {
                 let aliases = map_aliases(shipped);
                 for (number, line) in shipped.lines().enumerate() {
                     if serializes_a_map(line, &aliases) {
-                        offenders.push(format!(
-                            "{}:{}: {}",
-                            file.display(),
-                            number + 1,
-                            line.trim()
-                        ));
+                        offenders.push(format!("{}:{}: {}", file.display(), number + 1, line.trim()));
                     }
                 }
             }
@@ -2549,7 +2543,11 @@ mod tests {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             if path.is_dir() {
                 if name != "tests" && name != "target" {
                     collect_rust_sources(&path, out);
@@ -2576,8 +2574,8 @@ mod tests {
     fn test_trailing_content_after_the_document_is_rejected() {
         let source = map_json_with_nodes(&node_json("0", "null"));
         let doubled = format!("{source}\n{{\"and\": \"another document\"}}\n");
-        let error = load_from_str(&doubled)
-            .expect_err("a file with a second document after the map must not load");
+        let error =
+            load_from_str(&doubled).expect_err("a file with a second document after the map must not load");
         assert!(
             error.contains("trailing characters"),
             "the reader has to be told what is wrong with the file, got: {error}"
@@ -2670,14 +2668,20 @@ mod tests {
                 "a key inside a node's style",
                 shape_map(
                     "",
-                    &node_json("0", "null").replace(r#""show_shadow":false"#, r#""show_shadow":false,"glow":3"#),
+                    &node_json("0", "null")
+                        .replace(r#""show_shadow":false"#, r#""show_shadow":false,"glow":3"#),
                     "",
                     "",
                 ),
             ),
             (
                 "a key on a section",
-                shape_map("", &node_with_sections(r#"{"text": "n", "txet": "typo"}"#), "", ""),
+                shape_map(
+                    "",
+                    &node_with_sections(r#"{"text": "n", "txet": "typo"}"#),
+                    "",
+                    "",
+                ),
             ),
             (
                 "a key inside a section offset that holds its default",
@@ -2706,7 +2710,9 @@ mod tests {
                 shape_map(
                     "",
                     &plain_node,
-                    &edge_json_with(r#", "authored_note": "keep me""#).replace(r#""to_id": "b""#, r#""to_id": "0""#).replace(r#""from_id": "a""#, r#""from_id": "0""#),
+                    &edge_json_with(r#", "authored_note": "keep me""#)
+                        .replace(r#""to_id": "b""#, r#""to_id": "0""#)
+                        .replace(r#""from_id": "a""#, r#""from_id": "0""#),
                     "",
                 ),
             ),
@@ -2721,7 +2727,12 @@ mod tests {
             ),
             (
                 "a key on a custom mutation",
-                shape_map("", &plain_node, "", &custom_mutation_tail(r#", "flavor": "sour""#)),
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(r#", "flavor": "sour""#),
+                ),
             ),
             (
                 "a key inside an externally tagged variant payload",
@@ -2754,7 +2765,6 @@ mod tests {
             ),
         ]
     }
-
 
     /// **The scenario #115 was opened for.** A map authored by a newer
     /// build names a mutator variant this one has never heard of. It
@@ -2826,9 +2836,7 @@ mod tests {
     /// whatever position the shortened list left behind.
     #[test]
     fn test_a_skipped_construct_goes_back_where_it_was_authored() {
-        let readable = |id: &str| {
-            format!(r#"{{"id": "{id}", "name": "{id}", "target_scope": "SelfOnly"}}"#)
-        };
+        let readable = |id: &str| format!(r#"{{"id": "{id}", "name": "{id}", "target_scope": "SelfOnly"}}"#);
         let unreadable =
             r#"{"id": "mid", "name": "mid", "target_scope": "SelfOnly", "mutator": {"zzOrderGlow": {}}}"#;
         let json = shape_map(

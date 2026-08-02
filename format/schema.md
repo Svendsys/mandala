@@ -115,11 +115,6 @@ by the field path inside that part (`style.shpe`,
 `sections[0].txet`). Not a byte offset: a map runs to thousands of
 lines and the key is the thing you can search for.
 
-The converse is not a loss: a key written out at its own default value
-(`"color_schema": null`, `"text_runs": []`) may be *omitted* when the
-map is saved. Nothing that carries information disappears — reload the
-saved file and the model is the same one.
-
 **Three shapes are still refused**, and all three are pre-refactor
 spellings rather than keys from the future: a top-level `portals`
 array, per-node `text` / `text_runs`, and a `sections` that is not an
@@ -128,13 +123,83 @@ carrying them forward would carry a contradiction forward. Each is
 answered with the `maptool convert` verb that migrates it; see
 [`migration.md`](./migration.md).
 
+**A construct built on a name this build does not know is skipped, not
+fatal.** An unrecognized *key* is inert — nothing reads it, so ignoring
+it changes nothing. An unrecognized **variant** is the opposite: it is
+the instruction. `{"mutator": {"Glow": …}}` from a newer build used to
+make the whole document unloadable, which is the empty window this
+policy exists to avoid. The load now lifts the construct out, opens the
+rest of the map, warns saying that nothing it describes will run, and
+writes it back byte-for-byte at the index it was authored at.
+
+The unit that is skipped is a whole custom mutation (`custom_mutations[i]`
+or a node's `inline_mutations[i]`) or a whole trigger binding (a node's
+or a section's) — never the part inside it that failed. Dropping one
+`Mutation` out of a macro would leave a custom mutation that still
+appears in `mutation list`, still fires, and silently does less than it
+says; dropping the entry is visible as absence. Nothing else is
+skippable: a node, an edge, the canvas or a palette this build cannot
+read still fails the load, because a map missing part of itself with no
+sign of which part is worse than no map.
+
+`maptool verify` still reports every skipped construct as a violation
+and exits non-zero, naming the variant. Loading a map and validating it
+are different questions, and `{"mutator": {"Glwo": …}}` is a typo that
+still needs a moment at which somebody finds out.
+
+**What forward compatibility covers, exactly.** Three things, and it is
+worth being precise because the boundary is not obvious:
+
+- **Unknown object keys**, anywhere in the document — kept, warned,
+  written back.
+- **Unknown named-enum strings** (`"shape": "hexagram"`,
+  `"line_style": "dot-dash"`) — these are `String` fields in the model
+  with a documented fallback, so they load, render as the default, and
+  survive the save unchanged. See [`enums.md`](./enums.md).
+- **Unknown externally tagged enum variants** inside a custom mutation
+  or a trigger binding (`MutatorNode`, `Mutation`, `MutationSrc`,
+  `MutationListSrc`, `DocumentAction`, `Trigger`, `InstructionSpec`,
+  `ChannelSrc`, `CountSrc`) — the construct is skipped whole and
+  preserved, as above.
+
+It does **not** cover a structural change to a part that cannot be
+skipped: a node, an edge, the canvas or a palette whose shape this build
+cannot read still fails the load.
+
 **Where a preserved key can still be lost.** A key is written back at
-the route it was read from. Above an array — a node by its id, a
-palette by its name — that route is stable across any edit. Below one,
-it is positional: reorder or delete a node's sections between load and
-save and a key attached to `sections[1]` follows the index, not the
-element. If the route is gone entirely (the node was deleted), the key
-goes with it and the save says so at `warn!`.
+the route it was read from. Above an array — a node by its id, a palette
+by its name — that route is stable across any edit. Below one, it is
+positional, and every `Vec` on the load graph is below one:
+`edges`, `custom_mutations`, `macros`, a node's `sections`,
+`inline_mutations`, `inline_macros` and `trigger_bindings`, and a
+section's `text_runs` and `trigger_bindings`. Position alone is not
+trusted there: the load records what each array looked like, so the save
+re-finds the element the key was attached to after a deletion or a
+reorder, and keeps it through an edit to that element. Three cases still
+lose the key, and all three say so at `warn!`:
+
+- the route is gone entirely — the node, edge or section it hung off was
+  deleted, and the key goes with it;
+- the element can no longer be identified — it was edited *and* its
+  siblings changed, so neither its content nor its position is evidence.
+  It is dropped rather than written onto whatever now sits at the index:
+  wrong data reads as authored, missing data does not;
+- this build has since grown a field of that name at that place, and the
+  value the model writes wins.
+
+A **zero-edit** load → save loses nothing, in any position — including a
+key nested inside a container the saver omits because it holds its own
+default (a section's `offset`), and a key below a `#[serde(from = "…")]`
+proxy where the shape that is read (`mutations`) is not the shape that is
+written (`mutator`). In that last case the legacy `mutations` list is
+written back alongside the upgraded `mutator` so the key inside it has
+somewhere to live; `mutator` takes precedence on reload, so the model is
+unaffected.
+
+The converse is not a loss: a key written out at its own default value
+(`"color_schema": null`, `"text_runs": []`) may be *omitted* when the
+map is saved. Nothing that carries information disappears — reload the
+saved file and the model is the same one.
 
 **What this does not cover.** Openness is about *keys*, not
 *meanings*. An edge whose `to_id` names no node, a `color_schema`
