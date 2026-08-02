@@ -97,7 +97,11 @@ pub(crate) fn install() {
 pub(crate) fn lines_containing(needle: &str) -> Vec<String> {
     install();
     let lines = buffer().lock().unwrap_or_else(|e| e.into_inner());
-    lines.iter().filter(|line| line.contains(needle)).cloned().collect()
+    lines
+        .iter()
+        .filter(|line| line.contains(needle))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -105,14 +109,22 @@ mod tests {
     use super::*;
 
     /// The recorder records, and the search finds what this test put
-    /// there rather than what a neighbour did.
+    /// there rather than what a neighbor did.
     #[test]
     fn test_a_warning_reaches_the_buffer() {
         install();
         log::warn!("test_logger: unmistakable-needle-4a91 happened");
         let found = lines_containing("unmistakable-needle-4a91");
-        assert_eq!(found.len(), 1, "expected exactly one recorded line, got {found:?}");
-        assert!(found[0].starts_with("WARN "), "the level must survive: {}", found[0]);
+        assert_eq!(
+            found.len(),
+            1,
+            "expected exactly one recorded line, got {found:?}"
+        );
+        assert!(
+            found[0].starts_with("WARN "),
+            "the level must survive: {}",
+            found[0]
+        );
     }
 
     /// A needle nobody logged finds nothing — the control that keeps
