@@ -328,12 +328,8 @@ pub(in crate::application::app) fn dispatch_compatible(
         }
         // ── Document-lifecycle ─────────────────────────────────
         Action::Undo => with_doc_rebuild(core, super::cross_dispatch::apply_undo),
-        Action::DeleteSelection => {
-            with_doc_rebuild(core, super::cross_dispatch::apply_delete_selection)
-        }
-        Action::OrphanSelection => {
-            with_doc_rebuild(core, super::cross_dispatch::apply_orphan_selection)
-        }
+        Action::DeleteSelection => with_doc_rebuild(core, super::cross_dispatch::apply_delete_selection),
+        Action::OrphanSelection => with_doc_rebuild(core, super::cross_dispatch::apply_orphan_selection),
         Action::CreateOrphanNode => {
             let canvas_pos = core
                 .renderer
@@ -411,9 +407,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetBorderField { field, value } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_border_field(field, value, rc)
         }),
-        Action::CycleBorderPreset => {
-            with_doc_rebuild(core, super::cross_dispatch::apply_cycle_border_preset)
-        }
+        Action::CycleBorderPreset => with_doc_rebuild(core, super::cross_dispatch::apply_cycle_border_preset),
         Action::ToggleBorderVisible => {
             with_doc_rebuild(core, super::cross_dispatch::apply_toggle_border_visible)
         }
@@ -727,7 +721,7 @@ mod tests {
     /// open is missing — the same "cross-platform slice ran" shape
     /// `EditSelection` has, so it lifts the same way.
     #[test]
-    fn double_click_activate_unhandled_lifts_to_handled() {
+    fn test_double_click_activate_unhandled_lifts_to_handled() {
         let out = lift_mixed_branch_for_wasm_macro(&Action::DoubleClickActivate, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }

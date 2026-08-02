@@ -60,7 +60,7 @@ pub(in crate::application::app) enum DoubleClickRoute {
         /// the section the user pointed at rather than section 0.
         section_idx: Option<usize>,
     },
-    /// Centre the camera on the *other* endpoint of a portal-mode
+    /// Center the camera on the *other* endpoint of a portal-mode
     /// edge and select that edge. Icon and text sub-parts share this
     /// route — same endpoint identity, same "navigate" intent.
     PanToPortalPartner { edge: EdgeKey, partner_id: String },
@@ -282,7 +282,7 @@ pub(in crate::application::app) fn apply_double_click_activate(
 /// winit's touch phase in the recognizer's stable vocabulary.
 ///
 /// `Cancelled` folds into `Ended`: from the recognizer's point of
-/// view a cancelled finger and a lifted finger both free the slot,
+/// view a canceled finger and a lifted finger both free the slot,
 /// and the difference is invisible to gesture recognition. Both
 /// targets translated this identically at their own boundary; it is
 /// here so a fourth winit phase cannot be handled on one target and

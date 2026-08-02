@@ -303,7 +303,7 @@ mod tests {
     /// distinguishable, which is the part the extraction could have
     /// broken.
     #[test]
-    fn build_macro_registry_includes_map_tier_when_a_document_is_given() {
+    fn test_build_macro_registry_includes_map_tier_when_a_document_is_given() {
         use crate::application::document::tests_common::load_test_doc;
         use crate::application::source_tier::SourceTier;
 
@@ -336,7 +336,7 @@ mod tests {
     /// `format/macros.md` names as SOURCE-OF-TRUTH-critical, now
     /// enforced in the single body both targets run.
     #[test]
-    fn build_macro_registry_lets_inline_tier_shadow_map_tier() {
+    fn test_build_macro_registry_lets_inline_tier_shadow_map_tier() {
         use crate::application::document::tests_common::load_test_doc;
         use crate::application::source_tier::SourceTier;
 
