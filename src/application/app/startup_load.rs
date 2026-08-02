@@ -219,6 +219,61 @@ mod tests {
         );
     }
 
+    /// **§9 records the decision, in the direction the code
+    /// implements it.**
+    ///
+    /// #107's acceptance asked for exactly this: the convention
+    /// prescribed `expect` for the initial `loader::load_from_file`
+    /// and the code did something else, so one of the two had to
+    /// move. §9 moved — but a paragraph is only a decision for as
+    /// long as it survives the next edit of the file, and a reader
+    /// reaching §9 for "what do I do when startup fails" has to find
+    /// the answer this module implements rather than the one it
+    /// replaced.
+    ///
+    /// Scoped to §9 and directional on purpose, in the same shape as
+    /// `baumhard::util::log`'s pin of the release-log boundary in
+    /// the same section: a whole-file `contains` would stay green
+    /// when the paragraph drifts into another section, and naming
+    /// the vocabulary without the direction would stay green when
+    /// §9 says the opposite of what ships.
+    #[test]
+    fn test_code_conventions_section_9_records_the_startup_load_decision() {
+        use baumhard::util::doc_fixtures::{repo_path, section_text};
+
+        let section = section_text(&repo_path("CODE_CONVENTIONS.md"), "## §9 Error handling");
+        let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        assert!(
+            flat.contains("The initial map load is the one startup path that does not `expect`"),
+            "CODE_CONVENTIONS.md §9 must carve the initial map load out of the `expect` \
+             list — otherwise the convention still prescribes the crash this module exists \
+             to avoid"
+        );
+        assert!(
+            flat.contains("app::startup_load"),
+            "CODE_CONVENTIONS.md §9 must name `app::startup_load` as where the carve-out \
+             is implemented, so a reader can get from the rule to the code"
+        );
+        assert!(
+            flat.contains("keep the shell alive"),
+            "CODE_CONVENTIONS.md §9 must state the outcome — the shell survives a rejected \
+             map — and not merely that `expect` is unwanted"
+        );
+
+        // The `expect` list itself must still exist and must still
+        // hold the program-precondition entries. A §9 that dropped
+        // them would read as "startup never panics", which is not
+        // the decision and is not what ships.
+        for precondition in ["`Renderer::new`", "`fonts::init`"] {
+            assert!(
+                flat.contains(precondition),
+                "CODE_CONVENTIONS.md §9 must keep {precondition} in the `expect` list — the \
+                 carve-out is for user data, not for broken program preconditions"
+            );
+        }
+    }
+
     /// **Both init paths adopt through [`adopt`], and neither takes
     /// the surface apart itself.**
     ///

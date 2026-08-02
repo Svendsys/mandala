@@ -357,8 +357,30 @@ industrial cost/benefit reasoning. This is not license for speculation.
   internal invariants".
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
-  `Renderer::new`, `fonts::init`, the initial `loader::load_from_file`,
-  the `?map=` parser on WASM. Bare `unwrap()` outside tests is a bug.
+  `Renderer::new`, `fonts::init`, the `?map=` query-string parser on
+  WASM. Bare `unwrap()` outside tests is a bug.
+- **The initial map load is the one startup path that does not
+  `expect`, and the reason names the boundary.** `expect` is for a
+  *program precondition* that did not hold — no adapter, no fonts,
+  nonsense on the command line. There is no window yet and nothing
+  sensible to draw into it, so a loud abort is the honest outcome. A
+  `.mindmap.json` the loader rejects is not that: it is a user
+  *input* the program is supposed to have an opinion about, and
+  `expect` turns having an opinion into a crash. On a desktop launch
+  — double-click, `.desktop` entry, file association — that crash is
+  a process that vanishes leaving no window at all, which tells the
+  person holding the file strictly less than the empty window it
+  would replace. So the initial `loader::load_from_file` on native
+  and the `?map=` fetch + parse in the browser **put the loader's
+  message in front of the user and keep the shell alive**: both
+  resolve through `app::startup_load`, whose `adopt` logs the message
+  and hands the shell `baumhard::mindmap::placard`'s one-node map
+  carrying it, installed by the same code that installs a real
+  document. Both targets make that one call — a startup-error surface
+  that exists on only one of them is not a fix (§4). This paragraph
+  is the recorded decision #107 asked for: the code and the
+  convention were in conflict, and they are reconciled here rather
+  than at `expect`.
 - **`warn!` and `error!` survive into release; `info!`, `debug!` and
   `trace!` do not.** Both crates build `log` with
   `release_max_level_warn`, so the degrade half of "degrade the frame,
