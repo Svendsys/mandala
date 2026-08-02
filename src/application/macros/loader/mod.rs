@@ -292,6 +292,78 @@ mod tests {
         let _ = load_app_macros();
     }
 
+    /// `build_macro_registry` folds the document-derived tiers in
+    /// when a document is present. Both runtimes' init calls this;
+    /// before the extraction each had its own copy of the loop, so a
+    /// tier added on one target could silently miss the other.
+    ///
+    /// Not hermetic in the App / User tiers — those read the bundled
+    /// asset and the user's config dir — so the assertions are about
+    /// the *document* tiers and about `None` versus `Some` being
+    /// distinguishable, which is the part the extraction could have
+    /// broken.
+    #[test]
+    fn build_macro_registry_includes_map_tier_when_a_document_is_given() {
+        use crate::application::document::tests_common::load_test_doc;
+        use crate::application::source_tier::SourceTier;
+
+        let mut doc = load_test_doc();
+        doc.mindmap.macros = vec![json!({
+            "id": "from-the-map",
+            "steps": [{"kind": "Action", "action": "Undo"}]
+        })];
+
+        let with_doc = build_macro_registry(Some(&doc));
+        assert_eq!(
+            with_doc.get_with_source("from-the-map").map(|(_, t)| t),
+            Some(SourceTier::Map),
+            "a map-tier macro must be registered at the Map tier",
+        );
+
+        // The same call with no document must not carry it. This is
+        // the positive control for the assertion above: without it,
+        // a registry that ignored its argument entirely would still
+        // pass the first check on a machine whose config dir happens
+        // to define the id.
+        let without_doc = build_macro_registry(None);
+        assert!(
+            without_doc.get("from-the-map").is_none(),
+            "document tiers must be absent when no document is passed",
+        );
+    }
+
+    /// Inline tier outranks Map on an id collision — the precedence
+    /// `format/macros.md` names as SOURCE-OF-TRUTH-critical, now
+    /// enforced in the single body both targets run.
+    #[test]
+    fn build_macro_registry_lets_inline_tier_shadow_map_tier() {
+        use crate::application::document::tests_common::load_test_doc;
+        use crate::application::source_tier::SourceTier;
+
+        let mut doc = load_test_doc();
+        doc.mindmap.macros = vec![json!({
+            "id": "collides",
+            "steps": [{"kind": "Action", "action": "Undo"}]
+        })];
+        let mut node_ids: Vec<String> = doc.mindmap.nodes.keys().cloned().collect();
+        node_ids.sort();
+        doc.mindmap
+            .nodes
+            .get_mut(&node_ids[0])
+            .expect("test doc has at least one node")
+            .inline_macros = vec![json!({
+            "id": "collides",
+            "steps": [{"kind": "Action", "action": "SelectAll"}]
+        })];
+
+        let reg = build_macro_registry(Some(&doc));
+        assert_eq!(
+            reg.get_with_source("collides").map(|(_, t)| t),
+            Some(SourceTier::Inline),
+            "Inline must shadow Map on an id collision",
+        );
+    }
+
     /// `parse_map_macros` is best-effort: malformed entries log
     /// `warn!` and skip without breaking the rest of the parse.
     /// Locks the resilience contract documented in the rustdoc.
