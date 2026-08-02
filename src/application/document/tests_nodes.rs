@@ -667,6 +667,80 @@ fn test_compute_one_node_text_floor_pinned_size_acts_as_floor() {
     assert!(h >= 210.0, "pinned height must propagate, got {}", h);
 }
 
+/// **Past the budget, the floor must beat both samples.**
+///
+/// The width sample was once the first `MEASURED_LINE_BUDGET`
+/// lines, which sized a node from a prefix and clipped a long line
+/// past it. Replacing that with the widest-by-column-proxy lines
+/// fixed that case and broke another: the proxy counts columns
+/// while cosmic-text shapes advances against a proportional face,
+/// so `"i".repeat(30)` outranks `"W".repeat(20)` and shapes far
+/// narrower. On this input the *replacement* measured ~46% of what
+/// the node needed — worse than the prefix it replaced.
+///
+/// So both samples are measured and the wider wins, and this is the
+/// input that distinguishes that from either one alone: the widest
+/// line lives in the first 512 (so the proxy sample misses it) and
+/// the proxy's picks are narrower (so taking the proxy alone
+/// regresses). Asserted as a strict inequality against the narrow
+/// sample, because "not worse" is the whole property.
+#[test]
+fn test_text_floor_past_budget_beats_both_samples() {
+    use super::{compute_one_node_text_floor, MEASURED_LINE_BUDGET};
+
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+
+    // 512 wide-shaping lines, then 600 that win the column ranking
+    // while shaping narrower.
+    let wide = "W".repeat(20);
+    let narrow = "i".repeat(30);
+    let mut text = String::new();
+    for _ in 0..MEASURED_LINE_BUDGET {
+        text.push_str(&wide);
+        text.push('\n');
+    }
+    for i in 0..600 {
+        text.push_str(&narrow);
+        if i < 599 {
+            text.push('\n');
+        }
+    }
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        n.sections.truncate(1);
+        n.sections[0].text = text.clone();
+        n.sections[0].text_runs.clear();
+        n.sections[0].size = None;
+        n.sections[0].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+    }
+    let (floor_w, _) = compute_one_node_text_floor(&doc.mindmap.nodes[&id]);
+
+    // What the node would measure if only the narrow (proxy-picked)
+    // lines were sampled — the regression this guards.
+    let mut narrow_only = doc.mindmap.nodes[&id].clone();
+    narrow_only.sections[0].text = narrow.clone();
+    let (narrow_w, _) = compute_one_node_text_floor(&narrow_only);
+
+    // And what the widest line actually needs.
+    let mut wide_only = doc.mindmap.nodes[&id].clone();
+    wide_only.sections[0].text = wide.clone();
+    let (wide_w, _) = compute_one_node_text_floor(&wide_only);
+
+    assert!(
+        wide_w > narrow_w,
+        "fixture is wrong: the wide line must shape wider than the narrow one ({wide_w} vs {narrow_w})"
+    );
+    assert!(
+        floor_w >= wide_w,
+        "the floor must cover the widest line, got {floor_w} < {wide_w}"
+    );
+    assert!(
+        floor_w > narrow_w,
+        "the floor must beat the proxy-only sample, got {floor_w} <= {narrow_w}"
+    );
+}
+
 /// A non-finite section offset is skipped — the verifier flags
 /// it elsewhere, and a NaN propagating into the floor would
 /// corrupt every downstream `node.size` reader.
@@ -3568,6 +3642,64 @@ fn test_extreme_editor_writes_still_reload() {
     assert!(
         spacing.abs() <= max_axis,
         "spacing must be clamped into the loader's bound, got {spacing}"
+    );
+
+    // The text-run font size, on all three setters that write it.
+    // The edge and border font channels were clamped in an earlier
+    // pass and these were missed, which left `font size=5000` — the
+    // plainest thing to type — writing a map that would not reopen.
+    let max_run_pt = baumhard::font::fonts::MAX_FONT_SIZE_PT as u32;
+
+    let id = node_id.clone();
+    let reloaded = round_trip("node-font-size", &move |doc| {
+        doc.set_node_font_size(&id, 5000.0);
+    });
+    for run in reloaded.nodes[&node_id].sections.iter().flat_map(|s| s.text_runs.iter()) {
+        assert!(
+            run.size_pt <= max_run_pt,
+            "set_node_font_size must clamp into the loader's run domain, got {}",
+            run.size_pt
+        );
+    }
+
+    let id = node_id.clone();
+    let reloaded = round_trip("section-font-size", &move |doc| {
+        doc.set_section_font_size(&id, 0, 5000.0);
+    });
+    for run in reloaded.nodes[&node_id].sections[0].text_runs.iter() {
+        assert!(
+            run.size_pt <= max_run_pt,
+            "set_section_font_size must clamp, got {}",
+            run.size_pt
+        );
+    }
+
+    let id = node_id.clone();
+    let reloaded = round_trip("section-font-size-range", &move |doc| {
+        doc.set_section_font_size_range(&id, 0, 0, 1, 5000.0);
+    });
+    for run in reloaded.nodes[&node_id].sections[0].text_runs.iter() {
+        assert!(
+            run.size_pt <= max_run_pt,
+            "set_section_font_size_range must clamp, got {}",
+            run.size_pt
+        );
+    }
+
+    // An ordinary size still round-trips exactly — the clamp bounds
+    // the extremes, it does not perturb normal edits. Rounding
+    // happens before the clamp, so 12.7 is still 13 rather than 12.
+    let id = node_id.clone();
+    let reloaded = round_trip("node-font-ordinary", &move |doc| {
+        doc.set_node_font_size(&id, 12.7);
+    });
+    assert!(
+        reloaded.nodes[&node_id]
+            .sections
+            .iter()
+            .flat_map(|s| s.text_runs.iter())
+            .all(|r| r.size_pt == 13),
+        "an ordinary size must round to 13 and survive unchanged"
     );
 
     // A negative gap is a legitimate tightening, so it must survive

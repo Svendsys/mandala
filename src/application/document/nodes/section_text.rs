@@ -202,7 +202,9 @@ impl MindMapDocument {
         if !size_pt.is_finite() {
             return false;
         }
-        let size_u = size_pt.round().max(1.0) as u32;
+        // Same clamp as the whole-node setter — rounded first,
+        // then bounded into the loader's run domain.
+        let size_u = crate::application::document::custom::sync::clamp_run_size_pt(size_pt.round());
         self.mutate_section_with_style_undo(node_id, section_idx, NodeEditTail::Grow, move |s| {
             if s.text_runs.iter().all(|r| r.size_pt == size_u) {
                 return false;
@@ -291,7 +293,9 @@ impl MindMapDocument {
         if !size_pt.is_finite() {
             return false;
         }
-        let size_u = size_pt.round().max(1.0) as u32;
+        // Same clamp as the whole-node setter — rounded first,
+        // then bounded into the loader's run domain.
+        let size_u = crate::application::document::custom::sync::clamp_run_size_pt(size_pt.round());
         self.mutate_section_runs_in_range(
             node_id,
             section_idx,

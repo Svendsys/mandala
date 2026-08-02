@@ -421,7 +421,11 @@ impl MindMapDocument {
         if !size_pt.is_finite() {
             return false;
         }
-        let size_u = size_pt.round().max(1.0) as u32;
+        // Rounded first, then clamped into the loader's run domain:
+        // the console's `font size=` takes any positive finite f32,
+        // and a value past the ceiling writes a map that will not
+        // reopen. See `custom::sync::clamp_run_size_pt`.
+        let size_u = crate::application::document::custom::sync::clamp_run_size_pt(size_pt.round());
         // `NodeEditTail::Grow`: larger text needs a larger box.
         // Monotonic floor — grow on demand, never shrink.
         self.mutate_node_with_style_undo(node_id, NodeEditTail::Grow, |node| {

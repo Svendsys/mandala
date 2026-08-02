@@ -2273,17 +2273,14 @@ fn test_grow_font_clamps_to_maximum() {
         }];
     }
     // Grow by far more than the ceiling allows.
-    let cm = make_font_scale_mutation(
-        "grow-font-test",
-        GlyphAreaCommand::GrowFont(1.0e6),
-        TS::SelfOnly,
-    );
+    let cm = make_font_scale_mutation("grow-font-test", GlyphAreaCommand::GrowFont(1.0e6), TS::SelfOnly);
     let mut tree = doc.build_tree();
     doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
 
     let grown = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].size_pt;
     assert_eq!(
-        grown, baumhard::font::fonts::MAX_FONT_SIZE_PT as u32,
+        grown,
+        baumhard::font::fonts::MAX_FONT_SIZE_PT as u32,
         "grow past the ceiling clamps to the shaper's maximum, got {grown}"
     );
 

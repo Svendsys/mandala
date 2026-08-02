@@ -70,18 +70,28 @@ pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = {
 /// shrunk run stays legible and can be grown back.
 pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
 
-/// Clamp a reverse-converted `size_pt` into the domain the loader
-/// would accept on the way back in.
+/// Clamp a `size_pt` into the domain the loader would accept on the
+/// way back in.
 ///
-/// **The two directions have to agree.** The loader rejects a run
-/// whose `size_pt` is zero or past
-/// [`validate::MAX_FONT_SIZE_PT`], so a reverse converter that can
-/// write outside that range produces a model the editor itself
-/// would refuse to reopen — and gets there in one click, since a
+/// **Every writer of `TextRun.size_pt` goes through here.** The
+/// loader rejects a run whose `size_pt` is zero or past
+/// [`validate::MAX_FONT_SIZE_PT`], so any writer that can leave that
+/// range produces a model the editor itself would refuse to
+/// reopen. The reverse converter gets there in one click, since a
 /// `grow-font` mutation adds an unbounded delta and the `as u32`
-/// cast saturates rather than wrapping. The floor and the ceiling
-/// are the same clamp; only the floor had an opinion before.
-fn clamp_run_size_pt(size_pt: f32) -> u32 {
+/// cast saturates rather than wrapping; the console gets there in
+/// one line, since `parse_finite_pt` accepts any positive finite
+/// `f32` and `font size=5000` is an ordinary thing to type.
+///
+/// The floor and the ceiling are the same clamp. The floor is the
+/// older half — a shrunk run must stay legible and re-growable
+/// rather than casting to an invisible 0 — and the ceiling is what
+/// keeps the file reopenable.
+///
+/// Callers that round do so **before** calling: this truncates, so
+/// rounding afterwards would silently change every ordinary edit by
+/// up to a point.
+pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> u32 {
     if size_pt.is_nan() {
         return MIN_TEXT_RUN_SIZE_PT;
     }
