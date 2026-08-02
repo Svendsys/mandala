@@ -168,10 +168,16 @@ names the part to fix. What it covers:
   spellings address different graphs (the cycle check walks keys,
   `ChildIndex` walks `node.id`), and a mismatch let a self-loop past
   the cycle rejection into a scene build that never terminates.
-- **Mutation payloads** — `custom_mutations` and `inline_mutations`
-  are walked too, since a map's own mutation fires on a click and
-  would otherwise deliver its numbers one interaction after the
-  checks.
+- **Mutation timing** — `custom_mutations` and `inline_mutations`
+  are walked for their animation envelopes, since a map's own
+  mutation fires on a click and would otherwise deliver its numbers
+  one interaction after the checks. The *mutator payload* itself —
+  the `MutatorNode` AST, whose leaves can set a font scale directly
+  — is deliberately **not** screened here. It is defended the other
+  way, by clamping where the value lands (`GlyphArea`'s scale
+  setters and its delta path), because console verbs, macros and IPC
+  write the same fields without passing the loader at all. Screening
+  the AST as well would be a second wall, not the only one.
 - **File size** — `MAX_MAP_BYTES`, checked by `stat` before the read
   commits to the allocation.
 

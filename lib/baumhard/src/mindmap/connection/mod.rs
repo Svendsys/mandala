@@ -403,10 +403,18 @@ pub fn sample_path(path: &ConnectionPath, spacing: f32) -> Vec<SampledPoint> {
 /// length is a second multiplier, capped separately by
 /// [`MAX_CONNECTION_GLYPH_GRAPHEMES`](crate::mindmap::model::validate::MAX_CONNECTION_GLYPH_GRAPHEMES).
 ///
-/// A full-width desktop viewport at the minimum on-screen glyph
-/// size holds a few hundred glyphs, so this still leaves well over
-/// an order of magnitude of headroom for a path drawn far off-axis.
-/// It bounds one path; the aggregate across every edge in a map is
+/// The number is a **canvas-space** budget, and has to be read that
+/// way: `sample_count` divides a canvas-space length by a
+/// canvas-space step, with no camera in the expression. At a typical
+/// authored body size the step is a few canvas units, so this covers
+/// a path of tens of thousands of units — far longer than any edge
+/// in the canonical fixture — and beyond that the rail is silently
+/// short rather than absent. A cap that could not be hit without an
+/// absurd length or a sub-unit step is the trade being made; a
+/// screen-space budget would need the zoom, which this layer does
+/// not have.
+///
+/// It bounds one path. The aggregate across every edge in a map is
 /// not bounded — see `format/macros.md` §"What is not yet closed".
 pub const MAX_PATH_SAMPLES: usize = 10_000;
 

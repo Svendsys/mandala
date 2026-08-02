@@ -750,15 +750,21 @@ pub const MAX_ANIMATION_MS: u32 = 60_000;
 /// Numeric-domain violations on one [`CustomMutation`].
 ///
 /// **Mutations are the second way numbers enter the model**, and
-/// they arrive after the loader has finished. A map carries its own
+/// they arrive after the loader has finished: a map carries its own
 /// `custom_mutations`, a node carries `inline_mutations`, and a
-/// trigger binding fires one on a click — so a payload skipped here
-/// is a number that reaches the same shaper and the same event loop
-/// as authored geometry, just one interaction later. The scene-side
-/// metrics are additionally clamped where they land
-/// (`GlyphArea`'s scale setters, `font::fonts::clamp_font_metric`),
-/// because console verbs, macros, and IPC write there too and never
-/// pass this function at all.
+/// trigger binding fires one on a click.
+///
+/// What this screens is the **animation envelope**, because nothing
+/// downstream bounds it — a duration is a promise to hold the event
+/// loop off its idle path for that long, and only the loader is in a
+/// position to refuse.
+///
+/// What it deliberately does *not* screen is the mutator payload
+/// itself. Those leaves set scene metrics, and scene metrics are
+/// clamped where they land (`GlyphArea`'s scale setters and its
+/// delta path, via `font::fonts::clamp_font_metric`) — which has to
+/// hold anyway, since console verbs, macros and IPC write the same
+/// fields and never reach this function.
 pub fn mutation_numeric_violations(mutation: &CustomMutation) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(timing) = mutation.timing.as_ref() {

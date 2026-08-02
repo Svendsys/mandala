@@ -66,10 +66,13 @@ use crate::util::grapheme_chad;
 /// ZWJ-emoji or combining-mark cluster boundary produces a
 /// UTF-8-valid byte range that matches the visual glyph.
 ///
-/// Cost: O(n_text + n_regions) — the whole run table is converted
-/// in a single grapheme walk rather than one walk per boundary —
-/// plus one `font_system.db().face()` lookup per region carrying a
-/// font id. The caller is expected to hold the `FONT_SYSTEM` write
+/// Cost: O(n_text + n_regions) **when the regions are sorted**,
+/// which the format guarantees and the loader enforces; the whole
+/// run table is then converted in a single grapheme walk rather than
+/// one walk per boundary. An out-of-order region falls back to its
+/// own walk and costs O(n_text) for itself — correct, just not
+/// linear. Plus one `font_system.db().face()` lookup per region
+/// carrying a font id. The caller is expected to hold the `FONT_SYSTEM` write
 /// lock for the same scope it uses the returned list — that's how
 /// the renderer wires it today.
 pub fn attrs_list_from_regions(
