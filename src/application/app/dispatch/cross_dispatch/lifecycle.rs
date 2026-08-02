@@ -108,14 +108,19 @@ pub(in crate::application::app) fn apply_create_orphan_node(
 
 /// Create a new orphan node at `canvas_pos`, select it, rebuild,
 /// then open the inline text editor on the new node pre-cleared.
-/// The keyboard-driven shape of `Action::CreateOrphanNodeAndEdit`.
 ///
-/// Mouse-driven empty-canvas double-click reaches the same
-/// outcome through `dispatch::dispatch_create_orphan_and_edit`
-/// (which uses `DispatchHit::canvas_pos` instead of `cursor_pos`)
-/// — that helper is called inline by the `DoubleClickActivate`
-/// arm and stays in `dispatch.rs` because `DispatchHit` doesn't
-/// flow through `dispatch_compatible`.
+/// The single body for `Action::CreateOrphanNodeAndEdit` — this
+/// existed in three copies before #29 (here, a private helper in
+/// `dispatch/native.rs`, and inline in the browser's double-click
+/// ladder). All three callers now land here:
+///
+/// - the keyboard shape, via `dispatch_compatible`'s
+///   `CreateOrphanNodeAndEdit` arm, which supplies `cursor_pos`;
+/// - both targets' mouse-driven empty-canvas double-click, via
+///   [`super::DoubleClickRoute::CreateOrphanAndEdit`], which
+///   supplies `DispatchHit::canvas_pos`.
+///
+/// The position is the only thing that ever differed between them.
 pub(in crate::application::app) fn apply_create_orphan_node_and_edit(
     canvas_pos: glam::Vec2,
     rc: &mut RebuildContext<'_>,

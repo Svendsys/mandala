@@ -110,6 +110,40 @@ impl TextEditState {
     }
 }
 
+/// Is `canvas_pos` inside `node_id`, counting overflowing sections?
+///
+/// Refreshes the subtree-AABB cache **before** the containment test,
+/// which is the load-bearing half.
+/// [`crate::application::document::point_in_node_aabb`] reads
+/// `subtree_aabb()`, which returns `None` while the cache is dirty
+/// (post-mutation / post-tree-rebuild) and then falls back to the
+/// container-only AABB — reporting a point over an *overflowing*
+/// second section as "outside". `ensure_subtree_aabbs` is O(1) on a
+/// clean cache and O(arena) on the first call after a mutation;
+/// either way it is cheap relative to a click handler.
+///
+/// Every click-outside gate in the app runs this pair, and the
+/// refresh is exactly the step that gets forgotten when the pair is
+/// written by hand. Callers: the text editor's click-outside-commit
+/// gate on both targets (via [`release_stays_inside_edited_node`])
+/// and the `NodeEdit` mode-exit gate in `event_mouse_click`.
+///
+/// Returns `false` when no tree is built — there is nothing to be
+/// inside of.
+pub(in crate::application::app) fn point_inside_node_fresh_aabb(
+    node_id: &str,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    canvas_pos: glam::Vec2,
+) -> bool {
+    if let Some(tree) = mindmap_tree.as_mut() {
+        tree.tree.ensure_subtree_aabbs();
+    }
+    mindmap_tree
+        .as_ref()
+        .map(|tree| crate::application::document::point_in_node_aabb(canvas_pos, node_id, tree))
+        .unwrap_or(false)
+}
+
 /// Did a pointer release land on the node the editor has open?
 ///
 /// `true` keeps the edit alive and consumes the release; `false`
@@ -117,32 +151,17 @@ impl TextEditState {
 /// funnel. Both targets' release paths run this — it is the whole of
 /// what they used to have written twice.
 ///
-/// Refreshes the subtree-AABB cache before the containment test.
-/// [`crate::application::document::point_in_node_aabb`] reads
-/// `subtree_aabb()`, which returns `None` while the cache is dirty
-/// (post-mutation / post-tree-rebuild) and then falls back to the
-/// container-only AABB — which would report a click on an
-/// *overflowing* second section as "outside" and commit an edit the
-/// user was still in the middle of. `ensure_subtree_aabbs` is O(1)
-/// on a clean cache and O(arena) on the first call after a mutation;
-/// either way it is cheap relative to a click handler.
-///
-/// Returns `false` when the editor is closed or no tree is built —
-/// there is nothing to stay inside of.
+/// Returns `false` when the editor is closed — there is nothing to
+/// stay inside of.
 pub(in crate::application::app) fn release_stays_inside_edited_node(
     text_edit_state: &TextEditState,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     release_canvas: glam::Vec2,
 ) -> bool {
-    if let Some(tree) = mindmap_tree.as_mut() {
-        tree.tree.ensure_subtree_aabbs();
-    }
     text_edit_state
         .node_id()
-        .zip(mindmap_tree.as_ref())
-        .map(|(id, tree)| {
-            crate::application::document::point_in_node_aabb(release_canvas, id, tree)
-        })
+        .map(str::to_string)
+        .map(|id| point_inside_node_fresh_aabb(&id, mindmap_tree, release_canvas))
         .unwrap_or(false)
 }
 
