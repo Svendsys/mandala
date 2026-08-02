@@ -929,3 +929,44 @@ pub enum WasmCompatibility {
     /// `Compatible`. Tracked in `WASM_CONVERGENCE.md`.
     NativeOnly,
 }
+
+/// The **mixed-branch set**: Actions whose dispatch arm has both a
+/// cross-platform slice and a native-only leftover. One list, in one
+/// place, because two consumers have to agree on it and previously
+/// did not:
+///
+/// - `app::dispatch::action_core::lift_mixed_branch_for_wasm_macro`
+///   decides, per member, whether an `Unhandled` from the
+///   cross-platform dispatcher means "WASM did everything it can"
+///   (so a WASM macro's `any_ran` must bump) or "nothing ran".
+/// - `keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only`
+///   pins each member's classification.
+///
+/// The second element is that classification, and it is **not** the
+/// same for every member — which is why two hand-written lists
+/// drifted. [`Action::ExitMode`] is mixed-branch and `Compatible`:
+/// its native leftover is a *step* (clearing `hovered_node` so the
+/// Reparent / Connect overlay rebuilds), not a branch that reaches
+/// native-only state. The other three each have a whole branch
+/// ending in a native-only editor, so the "ANY NativeOnly branch ⇒
+/// NativeOnly" rule classifies them `NativeOnly`. Carrying the
+/// expected classification per member keeps that difference stated
+/// rather than lost, and makes a re-classification fail a test
+/// instead of quietly widening the set.
+///
+/// Adding a member here obliges both consumers: the keybind test
+/// asserts its classification, and the lift's `debug_assert` fires in
+/// any test build if the member has no verdict arm.
+pub(crate) const MIXED_BRANCH_ACTIONS: [(Action, WasmCompatibility); 4] = [
+    // Native leftover: the `hovered_node` clear for the target-picker
+    // overlay rebuild. Cross-platform slice: border-preview cancel,
+    // `last_click` clear, `InteractionMode` reset + rebuild.
+    (Action::ExitMode, WasmCompatibility::Compatible),
+    // EdgeLabel + Portal* selection branches reach native-only
+    // editors; the node-scoped branch is cross-platform.
+    (Action::EditSelection, WasmCompatibility::NativeOnly),
+    (Action::EditSelectionClean, WasmCompatibility::NativeOnly),
+    // The EdgeLabel route reaches `open_single_line_edit`; the node,
+    // portal and empty-canvas routes are cross-platform.
+    (Action::DoubleClickActivate, WasmCompatibility::NativeOnly),
+];

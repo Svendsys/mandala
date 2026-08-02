@@ -105,6 +105,91 @@ pub(in crate::application::app) enum DoubleClickResidual {
     OpenEdgeLabelEditor,
 }
 
+/// The [`DispatchOutcome`](super::DispatchOutcome) a
+/// `DoubleClickActivate` step reports, from the residual
+/// [`apply_double_click_activate`] produced. `None` means the step
+/// never reached the apply half — there was no [`DispatchHit`] to
+/// route on, so nothing was decided and nothing ran, which is the
+/// shape every macro step has today.
+///
+/// **This is the discriminator, and it is written exactly once.** Two
+/// callers must not disagree about whether a double-click did
+/// anything: the dispatcher arm returns this value, and
+/// `action_core::lift_mixed_branch_for_wasm_macro` reads it to decide
+/// whether a WASM macro's `any_ran` flag bumps. The `match` is
+/// exhaustive over the residual on purpose — a new
+/// [`DoubleClickResidual`] variant is a build error here rather than
+/// a gesture silently reported as work it did not do. Pure `Option`
+/// shape in, enum out: no renderer, so `cargo test` pins every case
+/// (`TEST_CONVENTIONS §T9`).
+///
+/// Note what `OpenEdgeLabelEditor` does **not** say: that work ran.
+/// [`apply_double_click_activate`] skips the selection commit and the
+/// rebuild when the label is already selected
+/// ([`edge_label_selection_is_current`]) — the normal case, since the
+/// double-click's first click has usually committed it already — and
+/// still returns that residual, because native still has an editor to
+/// open. So it maps to `Unhandled`: "this target has nothing to
+/// report". Native's fall-through opens the editor and reports
+/// `Handled` from there. Keying the decision on "was there a hit"
+/// instead reports the already-selected case as work.
+pub(in crate::application::app) fn double_click_outcome(
+    residual: Option<DoubleClickResidual>,
+) -> super::DispatchOutcome {
+    match residual {
+        None => super::DispatchOutcome::Unhandled,
+        Some(DoubleClickResidual::Done) => super::DispatchOutcome::Handled,
+        Some(DoubleClickResidual::OpenEdgeLabelEditor) => super::DispatchOutcome::Unhandled,
+    }
+}
+
+/// Which of the two meanings an `Unhandled` outcome from a *pointer*
+/// dispatch has, for the browser's reporting split.
+///
+/// Both arrive at the same place in `run_wasm`'s mouse handlers and
+/// they are not the same event: one is a documented stop, the other
+/// is a user's binding doing nothing at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::application::app) enum UnhandledPointerDispatch {
+    /// The sanctioned carve-out: `DoubleClickActivate` on an edge
+    /// label. The selection is committed (or was already current) and
+    /// only the native single-line editor open is missing. Carries
+    /// the `EdgeRef` for the `debug!` line.
+    EdgeLabelEditorIsNativeOnly(EdgeRef),
+    /// A `NativeOnly` Action the user bound to a pointer gesture,
+    /// with no browser body at all — the gesture is a silent no-op
+    /// and the user needs telling once.
+    NativeOnlyBinding,
+}
+
+/// Classify an `Unhandled` pointer dispatch for the browser's
+/// warn-vs-debug split.
+///
+/// Keyed on the **Action as well as the hit**, because the hit alone
+/// cannot tell the two apart: binding a `NativeOnly` Action such as
+/// `OpenConsole` to the double-click and using it on an edge label
+/// produces an `Unhandled` with an `EdgeLabel` hit and *no*
+/// edge-label carve-out — nothing ran, and reporting it as the
+/// carve-out would file a dead binding as a sanctioned stop at a log
+/// level release builds filter out.
+///
+/// `DoubleClickActivate` + an edge-label hit is the carve-out and
+/// nothing else is: that pair is the only way
+/// [`apply_double_click_activate`] can return
+/// [`DoubleClickResidual::OpenEdgeLabelEditor`], which is in turn the
+/// only `Unhandled` that arm produces with a hit present.
+pub(in crate::application::app) fn classify_unhandled_pointer_dispatch(
+    action: &Action,
+    click_hit: &ClickHit,
+) -> UnhandledPointerDispatch {
+    match (action, edge_label_target(click_hit)) {
+        (Action::DoubleClickActivate, Some(edge_ref)) => {
+            UnhandledPointerDispatch::EdgeLabelEditorIsNativeOnly(edge_ref)
+        }
+        _ => UnhandledPointerDispatch::NativeOnlyBinding,
+    }
+}
+
 /// The `EdgeRef` identity a `ClickHit::EdgeLabel` names, if the hit
 /// is one. Single source for the `EdgeKey` → `EdgeRef` conversion so
 /// the route resolver and the native residual cannot disagree about
@@ -399,16 +484,6 @@ mod tests {
         KeybindConfig::default().resolve()
     }
 
-    /// Edge identity is the *triple* `(from_id, to_id, edge_type)` —
-    /// `format/validation.md` allows several edges between the same
-    /// pair distinguished only by `edge_type`, and `EdgeRef::matches`
-    /// compares all three. The helper therefore takes the type rather
-    /// than defaulting it, so no test can leave the third component
-    /// constant by accident.
-    fn edge_key(from: &str, to: &str, edge_type: &str) -> EdgeKey {
-        EdgeKey::new(from, to, edge_type)
-    }
-
     #[test]
     fn test_double_click_route_node_without_section_opens_whole_node() {
         let route = resolve_double_click_route(
@@ -445,7 +520,7 @@ mod tests {
     fn test_double_click_route_portal_icon_targets_the_far_endpoint() {
         let route = resolve_double_click_route(
             &ClickHit::PortalMarker {
-                edge: edge_key("a", "b", "cross_link"),
+                edge: EdgeKey::new("a", "b", "cross_link"),
                 endpoint: "a".into(),
             },
             &SelectionState::None,
@@ -454,7 +529,7 @@ mod tests {
         assert_eq!(
             route,
             DoubleClickRoute::PanToPortalPartner {
-                edge: edge_key("a", "b", "cross_link"),
+                edge: EdgeKey::new("a", "b", "cross_link"),
                 partner_id: "b".into(),
             }
         );
@@ -466,7 +541,7 @@ mod tests {
     fn test_double_click_route_portal_icon_from_far_end_targets_the_near_endpoint() {
         let route = resolve_double_click_route(
             &ClickHit::PortalMarker {
-                edge: edge_key("a", "b", "cross_link"),
+                edge: EdgeKey::new("a", "b", "cross_link"),
                 endpoint: "b".into(),
             },
             &SelectionState::None,
@@ -475,7 +550,7 @@ mod tests {
         assert_eq!(
             route,
             DoubleClickRoute::PanToPortalPartner {
-                edge: edge_key("a", "b", "cross_link"),
+                edge: EdgeKey::new("a", "b", "cross_link"),
                 partner_id: "a".into(),
             }
         );
@@ -487,7 +562,7 @@ mod tests {
     fn test_double_click_route_portal_text_matches_portal_icon() {
         let icon = resolve_double_click_route(
             &ClickHit::PortalMarker {
-                edge: edge_key("a", "b", "cross_link"),
+                edge: EdgeKey::new("a", "b", "cross_link"),
                 endpoint: "a".into(),
             },
             &SelectionState::None,
@@ -495,7 +570,7 @@ mod tests {
         );
         let text = resolve_double_click_route(
             &ClickHit::PortalText {
-                edge: edge_key("a", "b", "cross_link"),
+                edge: EdgeKey::new("a", "b", "cross_link"),
                 endpoint: "a".into(),
             },
             &SelectionState::None,
@@ -507,7 +582,7 @@ mod tests {
     #[test]
     fn test_double_click_route_edge_label_carries_the_edge_ref() {
         let route = resolve_double_click_route(
-            &ClickHit::EdgeLabel(edge_key("a", "b", "cross_link")),
+            &ClickHit::EdgeLabel(EdgeKey::new("a", "b", "cross_link")),
             &SelectionState::None,
             &keybinds_default(),
         );
@@ -567,56 +642,93 @@ mod tests {
         assert!(edge_label_target(&ClickHit::Empty).is_none());
         assert!(edge_label_target(&ClickHit::Node("n".into(), None)).is_none());
         assert!(edge_label_target(&ClickHit::PortalMarker {
-            edge: edge_key("a", "b", "cross_link"),
+            edge: EdgeKey::new("a", "b", "cross_link"),
             endpoint: "a".into(),
         })
         .is_none());
         assert_eq!(
-            edge_label_target(&ClickHit::EdgeLabel(edge_key("a", "b", "cross_link"))),
+            edge_label_target(&ClickHit::EdgeLabel(EdgeKey::new("a", "b", "cross_link"))),
             Some(EdgeRef::new("a", "b", "cross_link")),
         );
     }
 
-    /// `edge_type` is the third component of the edge identity and
-    /// carries as much weight as the endpoints: `format/validation.md`
-    /// permits several edges between the same pair distinguished only
-    /// by it. A conversion that dropped the type — hardcoding
-    /// `"cross_link"`, say — would hand the native residual an
-    /// `EdgeRef` naming a *different* edge between the same two nodes,
-    /// and the single-line editor would silently open on a label the
-    /// user did not click.
+    /// Edge identity is the *triple* `(from_id, to_id, edge_type)`,
+    /// and every component carries the same weight:
+    /// `format/validation.md` permits several edges between the same
+    /// pair distinguished only by the type, and `EdgeRef::matches`
+    /// compares all three. A conversion that dropped **any** one of
+    /// them — substituting a constant for it, which is what a
+    /// hardcoded fixture value hides — hands the native residual an
+    /// `EdgeRef` naming a *different* edge, and the single-line
+    /// editor silently opens on a label the user did not click.
+    /// Precisely what [`edge_label_target`]'s rustdoc claims to
+    /// prevent.
+    ///
+    /// Each case therefore varies exactly one component away from the
+    /// baseline, so substituting the baseline value back in for that
+    /// component fails here and nowhere else has to notice.
     #[test]
-    fn test_edge_label_target_carries_the_edge_type_not_a_default() {
-        for edge_type in ["cross_link", "hierarchy", "portal", ""] {
+    fn test_edge_label_target_carries_all_three_identity_components() {
+        for (from, to, edge_type) in [
+            ("a", "b", "cross_link"),
+            // `from_id` varied, other two at baseline.
+            ("z", "b", "cross_link"),
+            // `to_id` varied.
+            ("a", "z", "cross_link"),
+            // `edge_type` varied — three ways, including empty.
+            ("a", "b", "hierarchy"),
+            ("a", "b", "portal"),
+            ("a", "b", ""),
+            // All three away from the baseline at once.
+            ("n1", "n2", "hierarchy"),
+        ] {
             assert_eq!(
-                edge_label_target(&ClickHit::EdgeLabel(edge_key("a", "b", edge_type))),
-                Some(EdgeRef::new("a", "b", edge_type)),
-                "edge_type {edge_type:?} must survive the EdgeKey → EdgeRef conversion",
+                edge_label_target(&ClickHit::EdgeLabel(EdgeKey::new(from, to, edge_type))),
+                Some(EdgeRef::new(from, to, edge_type)),
+                "({from:?}, {to:?}, {edge_type:?}) must survive the EdgeKey → EdgeRef conversion",
             );
         }
     }
 
     /// The same identity, one component at a time, through the full
     /// resolver rather than the helper — so the route the apply half
-    /// receives is pinned too, not just the conversion.
+    /// receives is pinned too, not just the conversion. Two hits that
+    /// differ in any single component are two different edges and so
+    /// two different routes.
     #[test]
-    fn test_double_click_route_edge_label_distinguishes_edges_by_edge_type_alone() {
-        let route_of = |edge_type: &str| {
+    fn test_double_click_route_edge_label_distinguishes_edges_by_each_component_alone() {
+        let route_of = |from: &str, to: &str, edge_type: &str| {
             resolve_double_click_route(
-                &ClickHit::EdgeLabel(edge_key("a", "b", edge_type)),
+                &ClickHit::EdgeLabel(EdgeKey::new(from, to, edge_type)),
                 &SelectionState::None,
                 &keybinds_default(),
             )
         };
+        let baseline = route_of("a", "b", "cross_link");
         assert_eq!(
-            route_of("hierarchy"),
+            baseline,
             DoubleClickRoute::EditEdgeLabel {
-                edge_ref: EdgeRef::new("a", "b", "hierarchy"),
+                edge_ref: EdgeRef::new("a", "b", "cross_link"),
             }
         );
-        // Same endpoints, different type: a distinct edge, and so a
-        // distinct route.
-        assert_ne!(route_of("hierarchy"), route_of("cross_link"));
+        for (from, to, edge_type, component) in [
+            ("z", "b", "cross_link", "from_id"),
+            ("a", "z", "cross_link", "to_id"),
+            ("a", "b", "hierarchy", "edge_type"),
+        ] {
+            let varied = route_of(from, to, edge_type);
+            assert_eq!(
+                varied,
+                DoubleClickRoute::EditEdgeLabel {
+                    edge_ref: EdgeRef::new(from, to, edge_type),
+                },
+                "{component} must reach the route verbatim",
+            );
+            assert_ne!(
+                varied, baseline,
+                "a hit differing only in {component} must resolve to a different edge",
+            );
+        }
     }
 
     #[test]
@@ -628,6 +740,12 @@ mod tests {
         ));
         assert!(!edge_label_selection_is_current(
             &SelectionState::EdgeLabel(EdgeLabelSel::new(EdgeRef::new("a", "c", "cross_link"))),
+            &er
+        ));
+        // ... and differing in `from_id` alone, the third component
+        // of the same triple.
+        assert!(!edge_label_selection_is_current(
+            &SelectionState::EdgeLabel(EdgeLabelSel::new(EdgeRef::new("z", "b", "cross_link"))),
             &er
         ));
         // Differing in `edge_type` *alone* is differing. Two edges
@@ -654,6 +772,108 @@ mod tests {
             &SelectionState::Section(SectionSel::new("n", 0)),
             &er
         ));
+    }
+
+    // -------------------------------------------------------------
+    // Residual → outcome, and the browser's report split
+    //
+    // Both are `Option`-shape / enum in, enum out — the decisions the
+    // dispatcher arm and the browser's mouse handler used to make
+    // inline, where a `Renderer` (`TEST_CONVENTIONS §T8`) and a
+    // `#[cfg(target_arch = "wasm32")]` module respectively put them
+    // out of the suite's reach. §T9: platform-shared pure logic has
+    // to be reachable without a wgpu instance.
+    // -------------------------------------------------------------
+
+    /// Every residual maps to exactly one outcome, and the `None`
+    /// case — the hitless soft-skip a macro produces — is
+    /// `Unhandled`, so the macro loop's `any_ran` does not bump for a
+    /// step that touched nothing.
+    #[test]
+    fn test_double_click_outcome_maps_every_residual() {
+        assert_eq!(
+            double_click_outcome(None),
+            crate::application::app::dispatch::DispatchOutcome::Unhandled
+        );
+        assert_eq!(
+            double_click_outcome(Some(DoubleClickResidual::Done)),
+            crate::application::app::dispatch::DispatchOutcome::Handled,
+        );
+        assert_eq!(
+            double_click_outcome(Some(DoubleClickResidual::OpenEdgeLabelEditor)),
+            crate::application::app::dispatch::DispatchOutcome::Unhandled,
+        );
+    }
+
+    /// The three cases are genuinely three: no two of them collapse.
+    /// A mapping that answered the same thing everywhere would pass
+    /// two thirds of the test above.
+    #[test]
+    fn test_double_click_outcome_distinguishes_ran_from_did_not_run() {
+        assert_ne!(
+            double_click_outcome(Some(DoubleClickResidual::Done)),
+            double_click_outcome(None),
+        );
+        assert_ne!(
+            double_click_outcome(Some(DoubleClickResidual::Done)),
+            double_click_outcome(Some(DoubleClickResidual::OpenEdgeLabelEditor)),
+        );
+    }
+
+    /// The sanctioned carve-out is `DoubleClickActivate` on an edge
+    /// label and nothing else.
+    #[test]
+    fn test_classify_unhandled_pointer_dispatch_names_the_edge_label_carve_out() {
+        assert_eq!(
+            classify_unhandled_pointer_dispatch(
+                &Action::DoubleClickActivate,
+                &ClickHit::EdgeLabel(EdgeKey::new("a", "b", "cross_link")),
+            ),
+            UnhandledPointerDispatch::EdgeLabelEditorIsNativeOnly(EdgeRef::new("a", "b", "cross_link")),
+        );
+    }
+
+    /// **The case the hit alone gets wrong.** Bind a `NativeOnly`
+    /// Action — `OpenConsole` is the example the browser's warn text
+    /// names — to the double-click and use it on an edge label. The
+    /// dispatcher returns `Unhandled` from the `NativeOnly` early
+    /// return, having run nothing at all, while the *hit* is still an
+    /// edge label. Classifying on the hit files a dead binding as the
+    /// sanctioned carve-out and reports it at `debug!`, which the
+    /// default filter drops: the user gets silence, which is the
+    /// outcome BLK-1 rejected.
+    #[test]
+    fn test_classify_unhandled_pointer_dispatch_is_not_fooled_by_the_hit() {
+        for action in [Action::OpenConsole, Action::EditSelection, Action::PanCanvas] {
+            assert_eq!(
+                classify_unhandled_pointer_dispatch(
+                    &action,
+                    &ClickHit::EdgeLabel(EdgeKey::new("a", "b", "cross_link")),
+                ),
+                UnhandledPointerDispatch::NativeOnlyBinding,
+                "{action:?} bound to a pointer gesture is a dead binding, not the carve-out",
+            );
+        }
+    }
+
+    /// ... and `DoubleClickActivate` on anything that is not an edge
+    /// label is not the carve-out either.
+    #[test]
+    fn test_classify_unhandled_pointer_dispatch_needs_an_edge_label_hit() {
+        for hit in [
+            ClickHit::Empty,
+            ClickHit::Node("n1".into(), None),
+            ClickHit::PortalMarker {
+                edge: EdgeKey::new("a", "b", "cross_link"),
+                endpoint: "a".into(),
+            },
+        ] {
+            assert_eq!(
+                classify_unhandled_pointer_dispatch(&Action::DoubleClickActivate, &hit),
+                UnhandledPointerDispatch::NativeOnlyBinding,
+                "{hit:?} is not the edge-label carve-out",
+            );
+        }
     }
 
     // -------------------------------------------------------------

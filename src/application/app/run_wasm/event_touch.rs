@@ -41,8 +41,7 @@ impl super::WasmApp {
         let now = Instant::now();
         let mut input_borrow = self.input.borrow_mut();
         let mut renderer_borrow = self.renderer.borrow_mut();
-        let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut())
-        else {
+        let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) else {
             return false;
         };
         // Phase translation, recognizer ingest + tick, and the
@@ -78,7 +77,7 @@ impl super::WasmApp {
                 // that they consult the keybind table too; only the
                 // latch and the remedy are per-input-class.
                 if matches!(outcome, DispatchOutcome::Unhandled) {
-                    super::warn_unhandled_native_only_once(
+                    crate::application::app::warn_unhandled_native_only_once(
                         &WARNED_NATIVE_ONLY,
                         name,
                         &a,

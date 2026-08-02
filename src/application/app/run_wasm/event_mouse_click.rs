@@ -3,13 +3,13 @@
 //! `WindowEvent::MouseInput` arm (left button only). Splits into
 //! Pressed and Released paths via [`super::WasmApp::handle_mouse_input`]:
 //!
-//! - **Pressed** ([`handle_mouse_pressed`]): runs the cross-platform
+//! - **Pressed** ([`super::WasmApp::handle_mouse_pressed`]): runs the cross-platform
 //!   `compute_click_hit` priority chain (node > portal text > portal
 //!   icon > edge label > empty), distinguishes single vs double
 //!   click, commits double-click outcomes immediately, and otherwise
 //!   stashes a [`super::PendingClick`] plus a `LastClick` snapshot
 //!   for the eventual release.
-//! - **Released** ([`handle_mouse_released`]): consumes the pending
+//! - **Released** ([`super::WasmApp::handle_mouse_released`]): consumes the pending
 //!   click — click-outside on an open editor commits the edit via
 //!   the funnel, otherwise the pending tag becomes a fresh
 //!   `SelectionState` and the scene is rebuilt through
@@ -35,7 +35,7 @@ use crate::application::keybinds::Action;
 use std::sync::atomic::AtomicBool;
 
 /// One-shot latch for the double-click input class. See
-/// [`super::warn_unhandled_native_only_once`]; per-class so a dead
+/// [`crate::application::app::warn_unhandled_native_only_once`]; per-class so a dead
 /// double-click binding and a dead wheel binding each get their own
 /// line in the console.
 static WARNED_NATIVE_ONLY_DOUBLE_CLICK: AtomicBool = AtomicBool::new(false);
@@ -163,8 +163,14 @@ impl super::WasmApp {
                 // `Unhandled` here means the browser could not finish
                 // the gesture, and it arrives for two very different
                 // reasons that must not be reported the same way.
+                // Which one it is depends on the **Action** as well as
+                // the hit — a `NativeOnly` Action bound to the
+                // double-click returns `Unhandled` having run nothing,
+                // and its hit can perfectly well be an edge label — so
+                // the split is decided by the cross-platform
+                // classifier rather than re-derived here.
                 if matches!(outcome, DispatchOutcome::Unhandled) {
-                    match dispatch::edge_label_target(&dispatch_hit.click_hit) {
+                    match dispatch::classify_unhandled_pointer_dispatch(&a, &dispatch_hit.click_hit) {
                         // The sanctioned carve-out: the label is
                         // selected and the scene rebuilt; only the
                         // single-line editor open is missing, because
@@ -172,25 +178,29 @@ impl super::WasmApp {
                         // (CLAUDE.md "Dual-target status"). Expected,
                         // so `debug!` — it must not warn on every
                         // edge-label double-click.
-                        Some(edge_ref) => log::debug!(
-                            "run_wasm: edge-label double-click on {:?} selected the label; \
-                             the single-line editor is native-only \
-                             (DoubleClickResidual::OpenEdgeLabelEditor)",
-                            edge_ref,
-                        ),
+                        dispatch::UnhandledPointerDispatch::EdgeLabelEditorIsNativeOnly(edge_ref) => {
+                            log::debug!(
+                                "run_wasm: edge-label double-click on {:?} selected the label; \
+                                 the single-line editor is native-only \
+                                 (DoubleClickResidual::OpenEdgeLabelEditor)",
+                                edge_ref,
+                            )
+                        }
                         // Anything else is a `NativeOnly` Action the
                         // user bound to `DoubleClick`. Newly reachable:
                         // before this PR the browser hardcoded the
                         // double-click body and never consulted the
                         // table at all.
-                        None => super::warn_unhandled_native_only_once(
-                            &WARNED_NATIVE_ONLY_DOUBLE_CLICK,
-                            dblclick_name,
-                            &a,
-                            "Rebind double_click_activate to a Compatible action, or wait for \
-                             the browser port of the native-only body \
-                             (work_plans/WASM_CONVERGENCE.md).",
-                        ),
+                        dispatch::UnhandledPointerDispatch::NativeOnlyBinding => {
+                            crate::application::app::warn_unhandled_native_only_once(
+                                &WARNED_NATIVE_ONLY_DOUBLE_CLICK,
+                                dblclick_name,
+                                &a,
+                                "Rebind double_click_activate to a Compatible action, or wait \
+                                 for the browser port of the native-only body \
+                                 (work_plans/WASM_CONVERGENCE.md).",
+                            );
+                        }
                     }
                 }
             }

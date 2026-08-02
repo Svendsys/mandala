@@ -51,42 +51,6 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{Action, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-/// Warn once per session that a browser input resolved to an Action
-/// the browser has no body for, so the gesture is a no-op.
-///
-/// Every input class that consults the keybind table needs this.
-/// A user who binds a `NativeOnly` Action to a gesture gets
-/// *literally nothing* otherwise — no log, no chrome, no model
-/// change — which was rejected as a blocking review finding on the
-/// touch path (`Whole-PR review BLK-1`) and is no more acceptable on
-/// the double-click or the wheel now that both consult the table
-/// too. `warned` is a per-call-site latch so one input class going
-/// quiet cannot silence another; `remedy` names what the user can
-/// do about it and what unblocks parity.
-///
-/// A *sanctioned* carve-out — a residual the browser is documented
-/// as not finishing, like the edge-label single-line editor — is not
-/// this. Those log at `debug!` at their own call site: they are
-/// expected, and `warn!` survives into release (`CODE_CONVENTIONS
-/// §9`) where a per-double-click warning would be noise.
-pub(super) fn warn_unhandled_native_only_once(
-    warned: &std::sync::atomic::AtomicBool,
-    gesture: &str,
-    action: &Action,
-    remedy: &str,
-) {
-    if warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        return;
-    }
-    log::warn!(
-        "run_wasm: input '{}' is bound to a NativeOnly action ({:?}) with no \
-         browser body — the gesture is a no-op. {}",
-        gesture,
-        action,
-        remedy,
-    );
-}
-
 /// Pending left-click awaiting a release. `None` on init and after
 /// release consumed; `Empty` after a click-down on empty canvas;
 /// `Node(id)` after a click-down on a node. Full drag machine
@@ -244,15 +208,25 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
         // The mixed-branch lift below restores `Handled` returns
         // for `ExitMode`/`EditSelection*` so the macro loop's
         // `any_ran` flag bumps correctly — see
-        // `lift_mixed_branch_for_wasm_macro`'s rustdoc. A macro step
-        // carries no `DispatchHit`, which is exactly what stops the
-        // lift from promoting `DoubleClickActivate`'s soft-skip.
+        // `lift_mixed_branch_for_wasm_macro`'s rustdoc.
+        //
+        // A macro step carries no `DispatchHit`: it is a keystroke-
+        // level instruction with no pointer event behind it. Both
+        // `None`s below are that one fact — no hit means the
+        // `DoubleClickActivate` arm returns before reaching the apply
+        // half, so there is no `DoubleClickResidual` either, and the
+        // lift is told so rather than left to infer it.
         let hit = None;
+        let double_click_residual = None;
         let outcome = {
             let mut core = self.input.input_context_core(self.renderer, self.keybinds);
             super::dispatch::action_core::dispatch_compatible(&action, &mut core, hit)
         };
-        super::dispatch::action_core::lift_mixed_branch_for_wasm_macro(&action, hit, outcome)
+        super::dispatch::action_core::lift_mixed_branch_for_wasm_macro(
+            &action,
+            double_click_residual,
+            outcome,
+        )
     }
 
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
@@ -330,8 +304,10 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
 }
 
 /// winit 0.30 [`ApplicationHandler`] for the WASM target. Mirrors
-/// the native [`super::run_native`]'s `NativeApp` shape so each
-/// target's event-loop entry point reads the same way.
+/// the native `super::run_native`'s `NativeApp` shape so each
+/// target's event-loop entry point reads the same way. Plain
+/// code-span: that module is native-gated, so an intra-doc link to
+/// it cannot resolve in this target's doc build.
 ///
 /// Initial DOM setup (canvas attach, `tabindex` focus, keydown
 /// preventDefault listener, async renderer construction, document

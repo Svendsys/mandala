@@ -595,3 +595,60 @@ mod wheel_tests {
         assert_eq!(wheel_gesture(-0.0), MouseGesture::WheelDown);
     }
 }
+
+// -----------------------------------------------------------------
+// One-shot NativeOnly-binding warn latch
+//
+// `warn_unhandled_native_only_once` is what a user gets when they
+// bind a NativeOnly Action to a browser gesture: one line, once. It
+// lived inside `run_wasm`, which is `#![cfg(target_arch = "wasm32")]`
+// and therefore out of `cargo test`'s reach, though nothing in it is
+// browser-specific (§T9). It is cross-platform now, and its return
+// value is the emission decision — the only way to assert "exactly
+// one emission" in a workspace with no log-capture facility and a
+// §T10 rule against process-global mocks.
+// -----------------------------------------------------------------
+
+mod native_only_warn_latch_tests {
+    use super::super::warn_unhandled_native_only_once;
+    use crate::application::keybinds::Action;
+    use std::sync::atomic::AtomicBool;
+
+    fn warn(latch: &AtomicBool) -> bool {
+        warn_unhandled_native_only_once(latch, "DoubleClick", &Action::OpenConsole, "remedy")
+    }
+
+    /// Once means once. The second call and every call after it are
+    /// silent, so a gesture the user repeats does not fill the
+    /// console — `warn!` survives into release (§9).
+    #[test]
+    fn test_warn_unhandled_native_only_once_emits_exactly_once() {
+        let latch = AtomicBool::new(false);
+        assert!(warn(&latch), "the first call must emit");
+        assert!(!warn(&latch), "the second call must not emit");
+        assert!(!warn(&latch), "and neither must any later one");
+    }
+
+    /// The latch is per-input-class, and that is the whole reason it
+    /// is a parameter rather than a `static` inside the function: a
+    /// dead double-click binding must not silence a dead wheel
+    /// binding, which is what one shared latch across three call
+    /// sites would do.
+    #[test]
+    fn test_warn_unhandled_native_only_once_latches_are_independent() {
+        let double_click = AtomicBool::new(false);
+        let wheel = AtomicBool::new(false);
+        assert!(warn(&double_click));
+        assert!(!warn(&double_click));
+        assert!(warn(&wheel), "a separate input class gets its own line");
+    }
+
+    /// A latch that arrives already set stays silent — the caller's
+    /// `static` is `false` at startup and never reset, so "already
+    /// warned in this session" is the steady state.
+    #[test]
+    fn test_warn_unhandled_native_only_once_respects_a_pre_set_latch() {
+        let latch = AtomicBool::new(true);
+        assert!(!warn(&latch));
+    }
+}

@@ -4,11 +4,13 @@
 //!
 //! Handles every Compatible-classified `Action` arm whose body
 //! has been factored into a `cross_dispatch::apply_*` helper, plus
-//! the cross-platform slice of three mixed-branch NativeOnly Actions
-//! (`Action::ExitMode`'s mode reset + `last_click` clear,
-//! `Action::EditSelection*`-Single open, and
+//! the cross-platform slice of the four mixed-branch Actions
+//! [`MIXED_BRANCH_ACTIONS`] names (`Action::ExitMode`'s mode reset +
+//! `last_click` clear, `Action::EditSelection*`-Single open, and
 //! `Action::DoubleClickActivate` — everything except the edge-label
-//! branch's single-line editor open). Returns `Handled` when
+//! branch's single-line editor open). Three of the four classify
+//! `NativeOnly`; `ExitMode` is `Compatible`, because its native
+//! leftover is a step rather than a branch. Returns `Handled` when
 //! the body ran; `Unhandled` for variants this dispatcher doesn't
 //! own — the caller's fall-through (native only) runs the
 //! platform-specific arm.
@@ -32,7 +34,7 @@
 use baumhard::util::geometry::is_positive_finite;
 
 use crate::application::document::OptionEdit;
-use crate::application::keybinds::{Action, WasmCompatibility};
+use crate::application::keybinds::{Action, WasmCompatibility, MIXED_BRANCH_ACTIONS};
 
 use super::super::input_context_core::InputContextCore;
 use super::super::InteractionMode;
@@ -101,47 +103,74 @@ where
 /// `any_ran` flag would stop bumping for these arms without this
 /// lift.
 ///
-/// `hit` is what makes the `DoubleClickActivate` entry safe to
-/// list. That arm produces **two different** `Unhandled`s and they
-/// mean opposite things:
+/// `double_click_residual` is what makes the `DoubleClickActivate`
+/// entry safe to list. That arm produces **two different**
+/// `Unhandled`s, and the outcome alone cannot tell them apart —
+/// neither can "was there a hit", which is the *wrong* discriminator
+/// and was the one this function used before:
 ///
-/// - **With** a `DispatchHit`: the edge-label selection committed
-///   and the scene rebuilt; only the native-only single-line editor
-///   open is missing. Work ran, so the macro runner must see
-///   `Handled`.
-/// - **Without** one: a soft-skip. The arm logged and returned
-///   without touching the document, which
+/// - **No residual at all** (`None`): the arm never reached the apply
+///   half because there was no `DispatchHit`. A soft-skip — it logged
+///   and touched no document state, which
 ///   `MacroDispatchTarget::dispatch_action`'s contract defines as
-///   "did not run". Lifting it would report `any_ran=true` for a
-///   step that did nothing, and a User-tier macro whose step list
-///   is `[Action(DoubleClickActivate)]` would stop falling through
-///   to the custom-mutation tier.
+///   "did not run". Lifting it would report `any_ran=true` for a step
+///   that did nothing, and a User-tier macro whose step list is
+///   `[Action(DoubleClickActivate)]` would stop falling through to
+///   the custom-mutation tier.
+/// - **`OpenEdgeLabelEditor`**: a hit *was* present, but the shared
+///   half may legitimately have done nothing — it skips the commit
+///   and the rebuild when the label is already the current selection
+///   ([`edge_label_selection_is_current`](super::cross_dispatch::edge_label_selection_is_current)),
+///   which is the normal case because the double-click's first click
+///   already committed it. "There was a hit" therefore does **not**
+///   mean "work ran"; treating it that way reproduced the very
+///   misreport this lift exists to prevent, one condition deeper.
 ///
-/// Discriminating on `hit` is what keeps the entry live and correct
-/// rather than either dead or actively wrong. A macro carries no
-/// hit today, so today the entry only ever declines to lift — but
-/// it is the correct answer, not an accident of reachability, and
-/// it stays correct the moment macros gain a hit payload.
+/// So the verdict is read from
+/// [`double_click_outcome`](super::cross_dispatch::double_click_outcome)
+/// — the single place the residual → outcome mapping is written, and
+/// the same one the dispatcher arm returns — rather than inferred
+/// here. Today a macro carries no hit, so the residual is always
+/// `None` and the entry always declines; that is the correct answer
+/// by construction, not an accident of reachability, and it stays
+/// correct if a future macro step gains a hit payload.
+///
+/// Membership is [`MIXED_BRANCH_ACTIONS`], shared with the keybind
+/// test that pins each member's classification, so the two cannot
+/// name different sets.
 ///
 /// Public-in-app so the WASM macro target's impl can call it,
 /// and so unit tests under `#[cfg(test)]` can pin the contract
 /// without spinning up a `WasmInputState`.
 pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
     action: &Action,
-    hit: Option<&super::cross_dispatch::DispatchHit>,
+    double_click_residual: Option<super::cross_dispatch::DoubleClickResidual>,
     outcome: DispatchOutcome,
 ) -> DispatchOutcome {
     if !matches!(outcome, DispatchOutcome::Unhandled) {
         return outcome;
     }
-    // The written-down mixed-branch set — the same one
-    // `keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only`
-    // names. An arm in that set but missing here is a silent
-    // misreport; an arm here that did no work is the opposite one.
+    if !MIXED_BRANCH_ACTIONS.iter().any(|(a, _)| a == action) {
+        return outcome;
+    }
     let work_ran = match action {
         Action::ExitMode | Action::EditSelection | Action::EditSelectionClean => true,
-        Action::DoubleClickActivate => hit.is_some(),
-        _ => false,
+        Action::DoubleClickActivate => matches!(
+            super::cross_dispatch::double_click_outcome(double_click_residual),
+            DispatchOutcome::Handled
+        ),
+        other => {
+            // Reachable only by adding a member to
+            // `MIXED_BRANCH_ACTIONS` without giving it a verdict —
+            // the guard above already excluded everything else. A
+            // silent `false` there is the misreport this function
+            // exists to prevent, so it fails any test build.
+            debug_assert!(
+                false,
+                "mixed-branch Action {other:?} has no lift verdict — add an arm",
+            );
+            false
+        }
     };
     if work_ran {
         DispatchOutcome::Handled
@@ -286,29 +315,25 @@ pub(in crate::application::app) fn dispatch_compatible(
             // both targets populate `hit` before dispatching; without
             // it there is no target and the gesture silently no-ops
             // (it was bound but fired from a non-pointer source, e.g.
-            // a macro carrying no hit context).
-            // Soft-skip, and reported as one. The step logs and
-            // changes no document state, which is exactly the case
-            // `MacroDispatchTarget::dispatch_action`'s contract
-            // (`macro_core.rs`) pins as "did not run" — so this
-            // returns `Unhandled` and the macro loop's `any_ran`
-            // flag does not bump. Returning `Handled` here would let
-            // a User-tier macro whose step list is
-            // `[Action(DoubleClickActivate)]` consume the keystroke
-            // instead of falling through to the custom-mutation tier.
-            let Some(h) = hit else {
-                log::debug!("DoubleClickActivate: no DispatchHit; skipping");
-                return DispatchOutcome::Unhandled;
+            // a macro carrying no hit context). That is a soft-skip:
+            // the step logs and changes no document state, which is
+            // exactly the case `MacroDispatchTarget::dispatch_action`'s
+            // contract (`macro_core.rs`) pins as "did not run".
+            //
+            // `None` residual is that fact, and
+            // `double_click_outcome` — not this arm — turns it into
+            // the reported outcome. The mapping lives there because
+            // `lift_mixed_branch_for_wasm_macro` has to reach the
+            // same verdict, and because it is pure data the suite can
+            // pin without a `Renderer` (`TEST_CONVENTIONS §T8`/§T9).
+            let residual = match hit {
+                Some(h) => Some(super::cross_dispatch::apply_double_click_activate(h, core)),
+                None => {
+                    log::debug!("DoubleClickActivate: no DispatchHit; skipping");
+                    None
+                }
             };
-            return match super::cross_dispatch::apply_double_click_activate(h, core) {
-                super::cross_dispatch::DoubleClickResidual::Done => DispatchOutcome::Handled,
-                // The edge-label selection is committed; only the
-                // single-line editor open is left, and that needs
-                // `NativeContextExt`. Native's fall-through finishes
-                // it; WASM has no single-line editor yet and stops
-                // here with the label selected.
-                super::cross_dispatch::DoubleClickResidual::OpenEdgeLabelEditor => DispatchOutcome::Unhandled,
-            };
+            return super::cross_dispatch::double_click_outcome(residual);
         }
         _ => {}
     }
@@ -717,20 +742,8 @@ mod tests {
     //! here so the WASM-macro `any_ran` regression flagged by the
     //! Track-C parity reviewer can't recur silently.
     use super::*;
+    use crate::application::app::dispatch::cross_dispatch::DoubleClickResidual;
     use crate::application::keybinds::Action;
-
-    /// A pointer-sourced `DispatchHit` landing on an edge label —
-    /// the only shape that makes `DoubleClickActivate`'s `Unhandled`
-    /// mean "the selection committed". Plain values throughout, so
-    /// no renderer is involved (`TEST_CONVENTIONS §T8`).
-    fn dispatch_hit_on_edge_label() -> super::super::cross_dispatch::DispatchHit {
-        super::super::cross_dispatch::DispatchHit {
-            click_hit: crate::application::app::ClickHit::EdgeLabel(
-                baumhard::mindmap::scene_cache::EdgeKey::new("a", "b", "cross_link"),
-            ),
-            canvas_pos: glam::Vec2::ZERO,
-        }
-    }
 
     #[test]
     fn exit_mode_unhandled_lifts_to_handled() {
@@ -751,36 +764,80 @@ mod tests {
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
-    /// A `DispatchHit` is what tells the two `DoubleClickActivate`
-    /// `Unhandled`s apart. With one, the arm committed the edge-label
-    /// selection and rebuilt the scene, and only the native
-    /// single-line editor open is missing — the same "cross-platform
-    /// slice ran" shape `EditSelection` has, so it lifts the same way.
-    #[test]
-    fn test_double_click_activate_unhandled_with_a_hit_lifts_to_handled() {
-        let hit = dispatch_hit_on_edge_label();
-        let out = lift_mixed_branch_for_wasm_macro(
-            &Action::DoubleClickActivate,
-            Some(&hit),
-            DispatchOutcome::Unhandled,
-        );
-        assert_eq!(out, DispatchOutcome::Handled);
-    }
-
-    /// Without a hit the arm is a soft-skip: it logs and touches no
-    /// document state. `MacroDispatchTarget::dispatch_action`'s
-    /// contract defines that as "did not run", so the lift must
-    /// decline and the macro loop's `any_ran` must stay `false`.
+    /// No residual means the arm never reached the apply half: there
+    /// was no `DispatchHit`, so it logged and touched no document
+    /// state. `MacroDispatchTarget::dispatch_action`'s contract
+    /// defines that as "did not run", so the lift must decline and
+    /// the macro loop's `any_ran` must stay `false`.
     ///
     /// This is the shape a macro actually reaches today — macros
     /// carry no hit — so it is the case that decides whether a
     /// User-tier `[Action(DoubleClickActivate)]` macro falls through
     /// to the custom-mutation tier on WASM. It must.
     #[test]
-    fn test_double_click_activate_unhandled_without_a_hit_stays_unhandled() {
+    fn test_double_click_activate_unhandled_without_a_residual_stays_unhandled() {
         let out =
             lift_mixed_branch_for_wasm_macro(&Action::DoubleClickActivate, None, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Unhandled);
+    }
+
+    /// **The regression this arm keeps producing, at the level where
+    /// it is now decidable.** `OpenEdgeLabelEditor` says native has
+    /// an editor left to open; it does *not* say the shared half did
+    /// anything. It is returned unconditionally, including when the
+    /// label was already the current selection and both the commit
+    /// and the rebuild were skipped — the normal case, since the
+    /// double-click's first click commits the selection.
+    ///
+    /// The previous discriminator was `hit.is_some()`, which is
+    /// `true` here, so this exact input lifted to `Handled` and
+    /// reported `any_ran=true` for a step that touched nothing.
+    #[test]
+    fn test_double_click_activate_edge_label_residual_stays_unhandled() {
+        let out = lift_mixed_branch_for_wasm_macro(
+            &Action::DoubleClickActivate,
+            Some(DoubleClickResidual::OpenEdgeLabelEditor),
+            DispatchOutcome::Unhandled,
+        );
+        assert_eq!(out, DispatchOutcome::Unhandled);
+    }
+
+    /// The other direction of the same discriminator: the verdict is
+    /// *read* from `double_click_outcome`, not hardwired to "never
+    /// lift". A `Done` residual is the arm having run the whole
+    /// behavior, and that is `Handled`.
+    ///
+    /// The pair (`Done`, `Unhandled`) cannot come out of the
+    /// dispatcher — `Done` makes the arm return `Handled` and this
+    /// function returns early on anything but `Unhandled` — so this
+    /// pins the lift's *decision rule* rather than a reachable
+    /// dispatch state. Without it, replacing the rule with a constant
+    /// `false` would pass the suite while making the entry a lie.
+    #[test]
+    fn test_double_click_activate_verdict_follows_the_residual_not_a_constant() {
+        let out = lift_mixed_branch_for_wasm_macro(
+            &Action::DoubleClickActivate,
+            Some(DoubleClickResidual::Done),
+            DispatchOutcome::Unhandled,
+        );
+        assert_eq!(out, DispatchOutcome::Handled);
+    }
+
+    /// Every member of the one canonical mixed-branch set reaches a
+    /// verdict arm in the lift. A member added to
+    /// `MIXED_BRANCH_ACTIONS` without one hits the `debug_assert!`
+    /// in the catch-all and panics here, which is the enforcement
+    /// that keeps the list and the lift from drifting apart again.
+    #[test]
+    fn test_lift_decides_every_mixed_branch_member() {
+        for (action, _) in crate::application::keybinds::MIXED_BRANCH_ACTIONS {
+            let out = lift_mixed_branch_for_wasm_macro(&action, None, DispatchOutcome::Unhandled);
+            assert!(
+                matches!(out, DispatchOutcome::Handled | DispatchOutcome::Unhandled),
+                "{:?} produced no verdict",
+                action,
+            );
+        }
     }
 
     #[test]

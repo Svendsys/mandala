@@ -15,8 +15,10 @@
 //!   dispatcher with the privilege-gate enforcement loop.
 //!   Abstracted over the `MacroDispatchTarget` trait so native
 //!   and WASM share the body byte-for-byte.
-//! - [`native`]: the native-side `dispatch_action` funnel that
-//!   wraps `dispatch_compatible` and adds the NativeOnly arm
+//! - `native` (plain code-span — `cfg`-gated to native, so a link
+//!   would break the wasm32 doc build): the native-side
+//!   `dispatch_action` funnel that wraps `dispatch_compatible`
+//!   and adds the NativeOnly arm
 //!   match (console verbs / app-mode toggles / inline modal
 //!   editors / filesystem). Native-only by `cfg`; WASM reaches
 //!   `dispatch_compatible` directly from `run_wasm`.
@@ -44,8 +46,20 @@ pub(in crate::application::app) use native::{
 // `tests_mutations` parity tests import via the shorter
 // `super::dispatch::*` form.
 pub(in crate::application::app) use cross_dispatch::{
-    dispatch_custom_mutation_for_key, drive_touch_event, edge_label_target, touch_phase, DispatchHit,
-    DispatchOutcome,
+    dispatch_custom_mutation_for_key, drive_touch_event, touch_phase, DispatchHit, DispatchOutcome,
+};
+// One-target consumers of cross-platform items. Each body lives in
+// `cross_dispatch` and is unit-tested on the host (§T9); only the
+// *re-export* is unused on the other target, which is what the allow
+// covers:
+// - `edge_label_target` — native's `DoubleClickActivate` residual arm
+//   re-derives the identity through it; the browser reaches it via
+//   `classify_unhandled_pointer_dispatch` instead of directly.
+// - the unhandled-pointer split — the browser's mouse handlers report
+//   on it; native has a fall-through arm rather than a report.
+#[allow(unused_imports)]
+pub(in crate::application::app) use cross_dispatch::{
+    classify_unhandled_pointer_dispatch, edge_label_target, UnhandledPointerDispatch,
 };
 // `pub(crate)` so `tests_mutations` (in `document/`) and the
 // WASM run loop (`run_wasm/mod.rs`) can both reach it through this

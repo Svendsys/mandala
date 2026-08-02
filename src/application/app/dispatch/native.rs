@@ -99,9 +99,17 @@ fn quote_console_arg(s: &str) -> String {
 ///     `apply_create_orphan_node_and_edit` through
 ///     `DoubleClickRoute::CreateOrphanAndEdit`,
 ///   - a `DoubleClickActivate` dispatched with no `DispatchHit` at
-///     all (a macro, say). That is a soft-skip: nothing ran, and
-///     `Unhandled` is how the macro loop is told so. Native's arm
-///     below finds no target and does nothing either.
+///     all (a macro, say). That is a soft-skip: nothing ran. The arm
+///     below finds no target, does nothing, and returns `Unhandled`
+///     itself, so this function — which is what the *native* macro
+///     loop reads — reports "did not run" for it. That is a behavior
+///     change on native: the arm used to return `Handled`
+///     unconditionally, so a native macro step
+///     `[Action(DoubleClickActivate)]` bumped `any_ran` for a step
+///     that touched nothing, and stopped falling through to the
+///     custom-mutation tier. WASM was fixed first; this is the same
+///     fix on the other side of the seam, so the two targets now
+///     answer identically for identical input.
 ///
 /// `WASM_CONVERGENCE.md` Track C records the architecture; calling
 /// `dispatch_compatible` from this fn is the seam.
@@ -431,19 +439,38 @@ pub(in crate::application::app) fn dispatch_action(
             // cannot open on a different edge than the one the
             // selection just committed to.
             let target = hit.and_then(|h| super::edge_label_target(&h.click_hit));
-            if let (Some(edge_ref), Some(doc)) = (target, ctx.document.as_mut()) {
-                // Double-click on an edge label edits the existing
-                // text — not clean.
-                open_single_line_edit(
-                    SingleLineEditTarget::EdgeLabel { edge_ref },
-                    false,
-                    doc,
-                    ctx.single_line_edit_state,
-                    ctx.app_scene,
-                    ctx.renderer,
-                );
+            match (target, ctx.document.as_mut()) {
+                (Some(edge_ref), Some(doc)) => {
+                    // Double-click on an edge label edits the existing
+                    // text — not clean.
+                    open_single_line_edit(
+                        SingleLineEditTarget::EdgeLabel { edge_ref },
+                        false,
+                        doc,
+                        ctx.single_line_edit_state,
+                        ctx.app_scene,
+                        ctx.renderer,
+                    );
+                    DispatchOutcome::Handled
+                }
+                // No edge-label target means no `DispatchHit` at all:
+                // the cross-platform stage only hands this arm an
+                // `Unhandled` for the edge-label residual (which
+                // always has one) or for the hitless soft-skip. So
+                // this is the soft-skip — nothing ran here and
+                // nothing ran above — and it is now reported as such
+                // on native too. It previously returned `Handled`,
+                // which bumped the *native* macro loop's `any_ran`
+                // for a step that did nothing, the mirror image of
+                // the WASM misreport fixed in `c023ff9`. Both targets
+                // now report the same thing for the same input.
+                (None, _) => DispatchOutcome::Unhandled,
+                // A label hit with no document loaded cannot reach
+                // here — `apply_double_click_activate` returns `Done`
+                // (and so `Handled`) when there is no document — but
+                // "nothing ran" is the honest answer if it ever does.
+                (Some(_), None) => DispatchOutcome::Unhandled,
             }
-            DispatchOutcome::Handled
         }
         Action::PanCanvas => {
             // Continuous gesture: enter pan mode for the duration of

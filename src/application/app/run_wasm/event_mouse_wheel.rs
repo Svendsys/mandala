@@ -22,7 +22,7 @@ use crate::application::app::{dispatch, wheel_gesture, wheel_lines};
 use std::sync::atomic::AtomicBool;
 
 /// One-shot latch for the wheel input class. See
-/// [`super::warn_unhandled_native_only_once`].
+/// [`crate::application::app::warn_unhandled_native_only_once`].
 static WARNED_NATIVE_ONLY_WHEEL: AtomicBool = AtomicBool::new(false);
 
 impl super::WasmApp {
@@ -68,7 +68,7 @@ impl super::WasmApp {
         // bound to the wheel. Newly reachable: before this PR the
         // browser hardcoded the zoom and never consulted the table.
         if matches!(outcome, DispatchOutcome::Unhandled) {
-            super::warn_unhandled_native_only_once(
+            crate::application::app::warn_unhandled_native_only_once(
                 &WARNED_NATIVE_ONLY_WHEEL,
                 gesture_name,
                 &a,

@@ -4,15 +4,19 @@
 //! and the dispatch funnel that ties them together. [`Application`]
 //! is the binary entry point's root; [`Application::run`]
 //! transfers control to the per-target run loop
-//! ([`run_native`] / `run_wasm`) which builds the appropriate
-//! `ApplicationHandler` and hands it to winit. The `run_wasm`
-//! module is `cfg(target_arch = "wasm32")`-gated, hence the
-//! plain code-span (rustdoc resolves intra-doc links against
-//! the active target's module tree).
+//! (`run_native` / `run_wasm`) which builds the appropriate
+//! `ApplicationHandler` and hands it to winit. Both are plain
+//! code-spans, not intra-doc links: each is `cfg`-gated to one
+//! target and rustdoc resolves links against the *active*
+//! target's module tree, so a link to either breaks the doc
+//! build for the other target.
 //!
 //! **Dispatch funnel.** Every user-driven action — keyboard,
 //! mouse-click, console verb, macro replay — flows through
-//! [`dispatch::dispatch_action`] (CODE_CONVENTIONS §3). Per-event
+//! `dispatch::dispatch_action` (CODE_CONVENTIONS §3) — a plain
+//! code-span for the same reason: it is re-exported from the
+//! native-gated `dispatch::native`, so the link does not resolve
+//! on `wasm32-unknown-unknown`. Per-event
 //! handlers (in `event_keyboard`, `event_mouse_click`,
 //! `event_cursor_moved` on native; the per-arm methods of
 //! `run_wasm::WasmApp` on WASM) recognize an input gesture,
@@ -305,6 +309,58 @@ fn already_editing_same_target(
     single_line_match: bool,
 ) -> bool {
     edit_node_id.is_some_and(|id| hit_node == Some(id)) || single_line_match
+}
+
+/// Warn once per latch that an input resolved to an Action the
+/// browser has no body for, so the gesture is a no-op. Returns
+/// whether this call is the one that emitted.
+///
+/// Every input class that consults the keybind table needs this. A
+/// user who binds a `NativeOnly` Action to a gesture gets *literally
+/// nothing* otherwise — no log, no chrome, no model change — which
+/// was rejected as a blocking review finding on the touch path
+/// (`Whole-PR review BLK-1`) and is no more acceptable on the
+/// double-click or the wheel now that both consult the table too.
+/// `warned` is a per-call-site latch so one input class going quiet
+/// cannot silence another; `remedy` names what the user can do about
+/// it and what unblocks parity.
+///
+/// A *sanctioned* carve-out — a residual the browser is documented as
+/// not finishing, like the edge-label single-line editor — is not
+/// this. Those log at `debug!` at their own call site: they are
+/// expected, and `warn!` survives into release (`CODE_CONVENTIONS
+/// §9`) where a per-double-click warning would be noise. The
+/// classification is
+/// [`dispatch::classify_unhandled_pointer_dispatch`], not the call
+/// site's guesswork.
+///
+/// **Cross-platform on purpose, though every caller is under
+/// `run_wasm/`.** Nothing in the body is browser-specific — an
+/// `AtomicBool`, three borrowed values and a `log::warn!` — and while
+/// it lived inside the `#![cfg(target_arch = "wasm32")]` module
+/// `cargo test` could not reach it, which is what §T9 forbids for
+/// platform-shared logic. The `bool` return is what makes the
+/// one-shot semantics assertable without a global log sink: this
+/// workspace has no log-capture test facility, and installing one
+/// would be a process-global mock that §T10 rules out. Callers may
+/// ignore it.
+pub(super) fn warn_unhandled_native_only_once(
+    warned: &std::sync::atomic::AtomicBool,
+    gesture: &str,
+    action: &crate::application::keybinds::Action,
+    remedy: &str,
+) -> bool {
+    if warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    log::warn!(
+        "run_wasm: input '{}' is bound to a NativeOnly action ({:?}) with no \
+         browser body — the gesture is a no-op. {}",
+        gesture,
+        action,
+        remedy,
+    );
+    true
 }
 
 /// Bag of "what was hit" that the click dispatch on both

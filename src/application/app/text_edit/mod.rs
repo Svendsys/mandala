@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Inline node text editor: state, grapheme-aware cursor helpers
-//! shared with [`super::single_line_edit`]. Lifecycle in [`editor`].
+//! shared with `super::single_line_edit` (native-gated, so a plain
+//! code-span — an intra-doc link to it fails the wasm32 doc build).
+//! Lifecycle in [`editor`].
 
 use baumhard::util::grapheme_chad;
 
