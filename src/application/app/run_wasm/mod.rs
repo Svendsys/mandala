@@ -687,12 +687,7 @@ pub(super) fn run(mut app: Application) {
                     // `warm_scene_at_load`, the body native's init
                     // runs too. `fit_camera_to_tree` above settled
                     // the zoom, which that helper reads.
-                    warm_scene_at_load(
-                        &doc,
-                        &mut init_app_scene,
-                        &mut renderer,
-                        &mut init_scene_cache,
-                    );
+                    warm_scene_at_load(&doc, &mut init_app_scene, &mut renderer, &mut init_scene_cache);
                     tree_opt = Some(mindmap_tree);
                     doc_opt = Some(doc);
                 }

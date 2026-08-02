@@ -421,8 +421,7 @@ pub(in crate::application::app) fn dispatch_action(
             // conversion the route resolver used, so the editor
             // cannot open on a different edge than the one the
             // selection just committed to.
-            let target = hit
-                .and_then(|h| super::cross_dispatch::edge_label_target(&h.click_hit));
+            let target = hit.and_then(|h| super::cross_dispatch::edge_label_target(&h.click_hit));
             if let (Some(edge_ref), Some(doc)) = (target, ctx.document.as_mut()) {
                 // Double-click on an edge label edits the existing
                 // text — not clean.

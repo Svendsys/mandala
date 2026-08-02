@@ -29,9 +29,7 @@ use crate::application::app::scene_rebuild::rebuild_after_selection_change;
 use crate::application::app::{
     compute_click_hit, dispatch, is_double_click, now_ms, ClickHitParts, LastClick,
 };
-use crate::application::document::{
-    EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState,
-};
+use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState};
 use crate::application::keybinds::Action;
 
 impl super::WasmApp {
@@ -239,11 +237,7 @@ impl super::WasmApp {
             // native uses for this Compatible Action.
             {
                 let mut core = input.input_context_core(renderer, &self.keybinds);
-                let _ = dispatch::action_core::dispatch_compatible(
-                    &Action::TextEditCommit,
-                    &mut core,
-                    None,
-                );
+                let _ = dispatch::action_core::dispatch_compatible(&Action::TextEditCommit, &mut core, None);
             }
             self.suppress_keys.set(false);
             // Fall through to the click-target selection

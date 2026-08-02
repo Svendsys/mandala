@@ -745,11 +745,8 @@ fn maybe_exit_node_edit_on_outside_click(
     let release_canvas = ctx
         .renderer
         .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-    let inside = super::text_edit::point_inside_node_fresh_aabb(
-        &active_node,
-        ctx.mindmap_tree,
-        release_canvas,
-    );
+    let inside =
+        super::text_edit::point_inside_node_fresh_aabb(&active_node, ctx.mindmap_tree, release_canvas);
     if !inside {
         let _ = super::dispatch::dispatch_action(Action::ExitMode, ctx, None);
     }

@@ -221,7 +221,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                         // Other selection states (Multi, edge,
                         // portal) stay untouched — the user steered
                         // away from the active node deliberately.
-                        if doc.selection.primary_node_id().map_or(false, |id| id == node_id) {
+                        if doc.selection.primary_node_id().is_some_and(|id| id == node_id) {
                             doc.selection = crate::application::document::SelectionState::Single(node_id);
                         }
                     }
@@ -327,12 +327,12 @@ pub(in crate::application::app) fn dispatch_compatible(
             }
         }
         // ── Document-lifecycle ─────────────────────────────────
-        Action::Undo => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_undo(rc)),
+        Action::Undo => with_doc_rebuild(core, super::cross_dispatch::apply_undo),
         Action::DeleteSelection => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_delete_selection(rc))
+            with_doc_rebuild(core, super::cross_dispatch::apply_delete_selection)
         }
         Action::OrphanSelection => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_orphan_selection(rc))
+            with_doc_rebuild(core, super::cross_dispatch::apply_orphan_selection)
         }
         Action::CreateOrphanNode => {
             let canvas_pos = core
@@ -374,7 +374,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 super::cross_dispatch::apply_center_on_selection(doc, core.renderer);
             }
         }
-        Action::JumpToRoot => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_jump_to_root(rc)),
+        Action::JumpToRoot => with_doc_rebuild(core, super::cross_dispatch::apply_jump_to_root),
         // ── FPS overlay ────────────────────────────────────────
         Action::ToggleFps => super::cross_dispatch::apply_toggle_fps(core.renderer),
         Action::ToggleFpsDebug => super::cross_dispatch::apply_toggle_fps_debug(core.renderer),
@@ -412,10 +412,10 @@ pub(in crate::application::app) fn dispatch_compatible(
             super::cross_dispatch::apply_set_border_field(field, value, rc)
         }),
         Action::CycleBorderPreset => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_cycle_border_preset(rc))
+            with_doc_rebuild(core, super::cross_dispatch::apply_cycle_border_preset)
         }
         Action::ToggleBorderVisible => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_toggle_border_visible(rc))
+            with_doc_rebuild(core, super::cross_dispatch::apply_toggle_border_visible)
         }
         Action::SetBorderPreview {
             target_kind,
@@ -425,10 +425,10 @@ pub(in crate::application::app) fn dispatch_compatible(
             super::cross_dispatch::apply_set_border_preview(*target_kind, field, value, rc)
         }),
         Action::CommitBorderPreview => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_commit_border_preview(rc))
+            with_doc_rebuild(core, super::cross_dispatch::apply_commit_border_preview)
         }
         Action::CancelBorderPreview => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_cancel_border_preview(rc))
+            with_doc_rebuild(core, super::cross_dispatch::apply_cancel_border_preview)
         }
         Action::SetEdgeCap { from, to } => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_edge_cap(from, to, rc))
@@ -483,7 +483,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 super::cross_dispatch::apply_set_zoom_window(min, max, rc)
             });
         }
-        Action::ClearZoom => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc)),
+        Action::ClearZoom => with_doc_rebuild(core, super::cross_dispatch::apply_clear_zoom),
         Action::SetSectionOffsetDelta { dx, dy } => {
             let (Some(dx_v), Some(dy_v)) = (dx.parse::<f64>().ok(), dy.parse::<f64>().ok()) else {
                 log::warn!("SetSectionOffsetDelta: invalid dx='{}' or dy='{}'", dx, dy);
@@ -572,7 +572,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 rc.rebuild_after_geometry_change();
             }
         }),
-        Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),
+        Action::Paste => with_doc_rebuild(core, super::cross_dispatch::apply_paste),
         // ── Create-orphan-and-edit (keyboard shape) ───────────
         // The mouse-driven empty-canvas double-click reaches the
         // same `apply_create_orphan_node_and_edit` body through
@@ -728,8 +728,7 @@ mod tests {
     /// `EditSelection` has, so it lifts the same way.
     #[test]
     fn double_click_activate_unhandled_lifts_to_handled() {
-        let out =
-            lift_mixed_branch_for_wasm_macro(&Action::DoubleClickActivate, DispatchOutcome::Unhandled);
+        let out = lift_mixed_branch_for_wasm_macro(&Action::DoubleClickActivate, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 

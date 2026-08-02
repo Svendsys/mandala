@@ -149,9 +149,7 @@ impl super::WasmApp {
                 // entry worked on the desktop and was silently dead
                 // on the web.
                 let mut core = input.input_context_core(renderer, &self.keybinds);
-                let _ = dispatch::dispatch_custom_mutation_for_key(
-                    &mut core, k, ctrl, shift, alt,
-                );
+                let _ = dispatch::dispatch_custom_mutation_for_key(&mut core, k, ctrl, shift, alt);
             }
         }
     }

@@ -195,10 +195,7 @@ pub(in crate::application::app) fn apply_double_click_activate(
     };
     match route {
         DoubleClickRoute::Nothing => DoubleClickResidual::Done,
-        DoubleClickRoute::OpenNodeEditor {
-            node_id,
-            section_idx,
-        } => {
+        DoubleClickRoute::OpenNodeEditor { node_id, section_idx } => {
             if let Some(doc) = core.document.as_deref_mut() {
                 // Section identity is preserved so the editor opens
                 // on the section the user pointed at; collapsing to
@@ -241,11 +238,8 @@ pub(in crate::application::app) fn apply_double_click_activate(
                 }
             }
             if let Some(doc) = core.document.as_deref_mut() {
-                doc.selection = SelectionState::Edge(EdgeRef::new(
-                    &edge.from_id,
-                    &edge.to_id,
-                    &edge.edge_type,
-                ));
+                doc.selection =
+                    SelectionState::Edge(EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type));
                 rebuild_all(
                     doc,
                     core.interaction_mode,
@@ -261,8 +255,7 @@ pub(in crate::application::app) fn apply_double_click_activate(
             if let Some(doc) = core.document.as_deref_mut() {
                 if !edge_label_selection_is_current(&doc.selection, &edge_ref) {
                     let prev = doc.selection.clone();
-                    doc.selection =
-                        SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref.clone()));
+                    doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref.clone()));
                     rebuild_after_selection_change(
                         &prev,
                         doc,
@@ -388,9 +381,11 @@ mod tests {
     use crate::application::keybinds::KeybindConfig;
 
     fn keybinds_with_orphan_edit_bound() -> ResolvedKeybinds {
-        let mut cfg = KeybindConfig::default();
-        cfg.create_orphan_node_and_edit = vec!["Ctrl+Shift+N".into()];
-        cfg.resolve()
+        KeybindConfig {
+            create_orphan_node_and_edit: vec!["Ctrl+Shift+N".into()],
+            ..Default::default()
+        }
+        .resolve()
     }
 
     fn keybinds_default() -> ResolvedKeybinds {
@@ -515,11 +510,7 @@ mod tests {
     /// because `CreateOrphanNodeAndEdit` is unbound out of the box.
     #[test]
     fn test_double_click_route_empty_canvas_is_a_no_op_when_unbound() {
-        let route = resolve_double_click_route(
-            &ClickHit::Empty,
-            &SelectionState::None,
-            &keybinds_default(),
-        );
+        let route = resolve_double_click_route(&ClickHit::Empty, &SelectionState::None, &keybinds_default());
         assert_eq!(route, DoubleClickRoute::Nothing);
     }
 
@@ -663,9 +654,11 @@ mod tests {
     #[test]
     fn test_drive_touch_event_reports_the_position_even_when_unbound() {
         let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
-        let mut cfg = KeybindConfig::default();
-        cfg.enter_resize_mode = vec![];
-        let kb = cfg.resolve();
+        let kb = KeybindConfig {
+            enter_resize_mode: vec![],
+            ..Default::default()
+        }
+        .resolve();
         let t0 = Instant::now();
         drive_touch_event(&mut r, &kb, Phase::Started, 1, (5.0, 6.0), t0);
         let d = drive_touch_event(
@@ -688,10 +681,12 @@ mod tests {
     #[test]
     fn test_drive_touch_event_honors_a_rebound_gesture() {
         let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
-        let mut cfg = KeybindConfig::default();
-        cfg.enter_resize_mode = vec![];
-        cfg.select_all = vec!["LongPress".into()];
-        let kb = cfg.resolve();
+        let kb = KeybindConfig {
+            enter_resize_mode: vec![],
+            select_all: vec!["LongPress".into()],
+            ..Default::default()
+        }
+        .resolve();
         let t0 = Instant::now();
         drive_touch_event(&mut r, &kb, Phase::Started, 1, (1.0, 2.0), t0);
         let d = drive_touch_event(
@@ -740,10 +735,12 @@ mod tests {
     #[test]
     fn test_drive_touch_event_looks_up_with_no_modifiers() {
         let mut r = TouchGestureRecognizer::with_thresholds(Duration::from_millis(10), 8.0);
-        let mut cfg = KeybindConfig::default();
-        cfg.enter_resize_mode = vec!["LongPress".into()];
-        cfg.select_all = vec!["Ctrl+LongPress".into()];
-        let kb = cfg.resolve();
+        let kb = KeybindConfig {
+            enter_resize_mode: vec!["LongPress".into()],
+            select_all: vec!["Ctrl+LongPress".into()],
+            ..Default::default()
+        }
+        .resolve();
         let t0 = Instant::now();
         drive_touch_event(&mut r, &kb, Phase::Started, 1, (1.0, 2.0), t0);
         let d = drive_touch_event(

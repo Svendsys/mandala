@@ -12,9 +12,7 @@ use glam::Vec2;
 
 use super::now_ms;
 use super::scene_rebuild::{overlay_tree, rebuild_all, rebuild_camera_geometry};
-use crate::application::document::{
-    rect_select, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
-};
+use crate::application::document::{rect_select, MindMapDocument, SelectionState, HIGHLIGHT_COLOR};
 use crate::application::renderer::Renderer;
 
 pub(super) fn drain_selecting_rect(
@@ -101,8 +99,8 @@ pub(super) fn drain_camera_geometry_rebuild(
 
 /// Tick any active animations. Each tick lerps the from / to
 /// snapshots into the model and (on completion) routes the final
-/// state through `apply_custom_mutation` so the standard model-sync
-/// + undo-push runs once. Drives `rebuild_all` only when something
+/// state through `apply_custom_mutation` so the standard
+/// model-sync + undo-push runs once. Drives `rebuild_all` only when something
 /// actually advanced. The event loop's `ControlFlow::Wait` /
 /// `ControlFlow::Poll` choice is decided in `NativeApp::about_to_wait`
 /// from `InitState::needs_continuation`, which factors in

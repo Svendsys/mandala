@@ -43,7 +43,7 @@
 //!   `DeselectAll`, `InvertSelection`, `SelectParent`,
 //!   `SelectChild`, `SelectNext/PrevSibling`) + their pure-doc
 //!   inner functions.
-//! - [`pointer`]: the pointer-gesture payload
+//! - [`mod@pointer`]: the pointer-gesture payload
 //!   ([`DispatchHit`]) and the double-click behavior — a pure
 //!   route resolver plus the apply half that matches on it.
 //!

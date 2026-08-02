@@ -879,9 +879,9 @@ pub enum Action {
     #[action(context = Document, wasm = NativeOnly, destructive)]
     SaveDocumentAs(String),
     /// Mirror `new <path>` — start a fresh document and bind it to
-    /// `path` (writes a blank file there immediately). **NativeOnly**
-    /// + **destructive**: writes to the filesystem. Denylisted for
-    /// non-User macro tiers.
+    /// `path` (writes a blank file there immediately).
+    /// **NativeOnly** + **destructive**: writes to the filesystem.
+    /// Denylisted for non-User macro tiers.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     NewDocumentAt(String),
 }

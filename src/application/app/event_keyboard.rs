@@ -178,9 +178,7 @@ pub(super) fn handle_keyboard_input(
                     ctx.modifiers.alt_key(),
                 );
                 let (mut core, _) = ctx.split_borrow();
-                let _ = super::dispatch::dispatch_custom_mutation_for_key(
-                    &mut core, k, ctrl, shift, alt,
-                );
+                let _ = super::dispatch::dispatch_custom_mutation_for_key(&mut core, k, ctrl, shift, alt);
             }
         }
     }

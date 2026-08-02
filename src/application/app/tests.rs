@@ -179,7 +179,6 @@ fn test_guard_each_term_carries_the_result_alone() {
     assert!(already_editing_same_target(Some("n1"), Some("n2"), true));
 }
 
-
 // -----------------------------------------------------------------
 // Drag-helper + release-flush invariants
 //

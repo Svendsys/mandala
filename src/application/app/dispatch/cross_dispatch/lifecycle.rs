@@ -25,7 +25,8 @@ const MULTI_TARGET_SEPARATOR: &str = "\n\n";
 ///
 /// This is the third and lowest tier of the keyboard resolution chain
 /// (Action → Macro → CustomMutation, CONCEPTS §5). It takes
-/// [`InputContextCore`] rather than the native context because both
+/// [`InputContextCore`](crate::application::app::input_context_core::InputContextCore)
+/// rather than the native context because both
 /// targets' keyboard handlers run the same chain: a
 /// `custom_mutation_bindings` entry that fires on the desktop has to
 /// fire in the browser too, and before this lift the browser's chain
@@ -59,14 +60,8 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
         return false;
     };
     let now = crate::application::app::now_ms() as u64;
-    let applied = super::apply_keybind_custom_mutation(
-        doc,
-        core.mindmap_tree,
-        core.scene_cache,
-        &cm,
-        &nid,
-        now,
-    );
+    let applied =
+        super::apply_keybind_custom_mutation(doc, core.mindmap_tree, core.scene_cache, &cm, &nid, now);
     if applied {
         crate::application::app::scene_rebuild::rebuild_all(
             doc,
