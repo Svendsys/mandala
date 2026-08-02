@@ -179,9 +179,10 @@ impl WasmInputState {
     }
 }
 
-/// WASM impl of `MacroDispatchTarget`. Wraps `&mut WasmInputState`
-/// + `&mut Renderer` and forwards each operation to the same
-/// helpers the keyboard handler uses. Privilege gating happens in
+/// WASM impl of `MacroDispatchTarget`. Wraps
+/// `&mut WasmInputState` + `&mut Renderer` and forwards each
+/// operation to the same helpers the keyboard handler uses.
+/// Privilege gating happens in
 /// `dispatch_macro_core::dispatch_macro` (single-source contract).
 struct WasmMacroDispatchTarget<'a> {
     input: &'a mut WasmInputState,

@@ -101,7 +101,10 @@ the parity trajectory (or why none is owed):
   cross-platform drift can pass a green run. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
   `target/llvm-cov/html/index.html`), `--lint` (advisory
-  `cargo fmt --check` + `cargo clippy`), `--bench` (runs the criterion
+  `cargo fmt --check` + `cargo clippy` on **both** the host target and
+  `wasm32-unknown-unknown` — a host-target clippy run compiles nothing
+  under `#[cfg(target_arch = "wasm32")]`, so without the second leg the
+  browser half of the app is invisible to the linter), `--bench` (runs the criterion
   benches after tests — **maintainers only**; §7 and `AGENTS.md`
   forbid it to agents, who need the type-check above and nothing
   else).

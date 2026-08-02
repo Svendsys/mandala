@@ -17,7 +17,12 @@ Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
                type-check the benchmark targets and the WASM target so
                neither can rot silently between merges.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
-  --lint       Also run cargo fmt --check and cargo clippy (advisory, never fails the run).
+  --lint       Also run cargo fmt --check and cargo clippy, on the host
+               target *and* on wasm32-unknown-unknown (advisory, never
+               fails the run). Both legs are needed: a host-target
+               clippy run compiles nothing under
+               #[cfg(target_arch = "wasm32")], so the browser half of
+               the app is invisible to it.
   --bench      Also *run* cargo bench after tests pass. Maintainers
                only — AGENTS.md forbids automated agents this flag.
                The unconditional bench type-check needs no flag.
@@ -38,8 +43,16 @@ done
 if [ "$LINT" -eq 1 ]; then
   echo "== fmt (advisory) =="
   cargo fmt --all -- --check || echo "(fmt diffs present — not failing the run)"
-  echo "== clippy (advisory) =="
+  echo "== clippy, host target (advisory) =="
   cargo clippy --workspace --all-targets 2>&1 || echo "(clippy issues present — not failing the run)"
+  # The host-target run above compiles nothing gated behind
+  # #[cfg(target_arch = "wasm32")], so every lint in src/application/app/run_wasm/
+  # is invisible to it. CODE_CONVENTIONS §4 makes the browser build a peer, not
+  # an afterthought, so it gets its own clippy leg. `cargo check --target
+  # wasm32-unknown-unknown` (run unconditionally below) is rustc, not clippy,
+  # and does not substitute.
+  echo "== clippy, wasm32-unknown-unknown (advisory) =="
+  cargo clippy -p mandala --target wasm32-unknown-unknown 2>&1 || echo "(clippy issues present — not failing the run)"
 fi
 
 if [ "$COVERAGE" -eq 1 ]; then
