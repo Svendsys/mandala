@@ -108,11 +108,17 @@ impl super::WasmApp {
             portal_icon_hit,
             edge_label_hit,
         } = parts;
-        let already_editing_same_target = input
-            .text_edit_state
-            .node_id()
-            .map(|id| hit_node.as_deref() == Some(id))
-            .unwrap_or(false);
+        // Same guard native runs, over the same predicate: a
+        // double-click on the element already under edit must not
+        // re-open the editor, because re-opening re-seeds the buffer
+        // from the committed model value and silently destroys the
+        // in-progress edit. WASM has no single-line editor, so its
+        // half of the predicate is `false` here.
+        let already_editing_same_target = crate::application::app::already_editing_same_target(
+            input.text_edit_state.node_id(),
+            hit_node.as_deref(),
+            false,
+        );
         let is_dblclick = !already_editing_same_target
             && input
                 .last_click
@@ -128,138 +134,31 @@ impl super::WasmApp {
                 return;
             };
 
-            match &click_hit {
-                ClickHit::Node(node_id, section_idx) => {
-                    let nid = node_id.clone();
-                    // Preserve the section identity for double-click
-                    // → editor open. See the parallel native path
-                    // for the rationale (pre-fix the editor opened
-                    // on section 0 regardless of which section the
-                    // user pointed at).
-                    input.document.selection = match section_idx {
-                        Some(idx) => SelectionState::Section(
-                            crate::application::document::SectionSel {
-                                node_id: nid.clone(),
-                                section_idx: *idx,
-                            },
-                        ),
-                        None => SelectionState::Single(nid.clone()),
-                    };
-                    rebuild_all(
-                        &input.document,
-                        &input.interaction_mode,
-                        &mut input.mindmap_tree,
-                        &mut input.app_scene,
-                        renderer,
-                        &mut input.scene_cache,
-                    );
-                    open_text_edit(
-                        &nid,
-                        false,
-                        &mut input.document,
-                        &mut input.text_edit_state,
-                        &mut input.mindmap_tree,
-                        &mut input.app_scene,
-                        renderer,
-                    );
-                }
-                ClickHit::PortalMarker { edge, endpoint } | ClickHit::PortalText { edge, endpoint } => {
-                    // Double-click on icon or text both
-                    // jump to the partner endpoint — they
-                    // share the same endpoint identity
-                    // and the same "navigate" intent.
-                    let other_id = if *endpoint == edge.from_id {
-                        edge.to_id.clone()
-                    } else {
-                        edge.from_id.clone()
-                    };
-                    if let Some(node) = input.document.mindmap.nodes.get(&other_id) {
-                        renderer.set_camera_center(node.center_vec2());
-                    }
-                    input.document.selection =
-                        SelectionState::Edge(EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type));
-                    rebuild_all(
-                        &input.document,
-                        &input.interaction_mode,
-                        &mut input.mindmap_tree,
-                        &mut input.app_scene,
-                        renderer,
-                        &mut input.scene_cache,
-                    );
-                }
-                ClickHit::EdgeLabel(edge_key) => {
-                    // Edge-label double-click is a parity
-                    // placeholder on WASM. Native opens the
-                    // inline label editor; WASM's modal
-                    // editor path isn't available here yet,
-                    // so the user falls back to the
-                    // `/label edit` console verb. The
-                    // previous single-click (release 1 in
-                    // the dbl-click pair) already committed
-                    // `SelectionState::EdgeLabel` and
-                    // rebuilt the scene — this branch has
-                    // nothing to add. Skipping the
-                    // redundant commit + rebuild is both
-                    // correct and meaningfully cheaper on
-                    // mobile browsers (§4 mobile budget).
-                    // If the selection somehow drifted
-                    // between the two clicks, the `match`
-                    // below handles re-committing; the
-                    // guard just avoids the wasted
-                    // rebuild in the common case.
-                    let expected_er = EdgeRef::new(
-                        edge_key.from_id.as_str(),
-                        edge_key.to_id.as_str(),
-                        edge_key.edge_type.as_str(),
-                    );
-                    let already_selected = matches!(
-                        &input.document.selection,
-                        SelectionState::EdgeLabel(s) if s.edge_ref == expected_er
-                    );
-                    if !already_selected {
-                        input.document.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(expected_er));
-                        rebuild_scene_only(
-                            &input.document,
-                            &input.interaction_mode,
-                            &mut input.app_scene,
-                            renderer,
-                            &mut input.scene_cache,
-                        );
-                    }
-                }
-                ClickHit::Empty => {
-                    // Match native: empty-canvas double-click is
-                    // a no-op unless the user has explicitly
-                    // bound `CreateOrphanNodeAndEdit`. Default
-                    // ships unbound — addresses the user's
-                    // "annoying" complaint on the WASM target
-                    // too.
-                    let allow_create = !matches!(input.document.selection, SelectionState::Edge(_))
-                        && self.keybinds.has_any_binding_for(
-                            crate::application::keybinds::Action::CreateOrphanNodeAndEdit,
-                        );
-                    if allow_create {
-                        let new_id = input.document.create_orphan_and_select(canvas_pos);
-                        rebuild_all(
-                            &input.document,
-                            &input.interaction_mode,
-                            &mut input.mindmap_tree,
-                            &mut input.app_scene,
-                            renderer,
-                            &mut input.scene_cache,
-                        );
-                        open_text_edit(
-                            &new_id,
-                            true,
-                            &mut input.document,
-                            &mut input.text_edit_state,
-                            &mut input.mindmap_tree,
-                            &mut input.app_scene,
-                            renderer,
-                        );
-                    }
-                }
+            // Look up which Action the user has bound to
+            // `DoubleClick` — the same `action_for_gesture` lookup
+            // native runs, with the same modifier fallback, so
+            // rebinding or unbinding `double_click_activate` takes
+            // effect in the browser too. Pre-unification this side
+            // hardcoded the `DoubleClickActivate` body and the
+            // keybind table was never consulted.
+            let dblclick_name = crate::application::keybinds::MouseGesture::DoubleClick.key_name();
+            let action = self.keybinds.action_for_gesture(
+                dblclick_name,
+                input.modifiers.control_key(),
+                input.modifiers.shift_key(),
+                input.modifiers.alt_key(),
+            );
+            if let Some(a) = action {
+                let dispatch_hit = dispatch::DispatchHit {
+                    click_hit: click_hit.clone(),
+                    canvas_pos,
+                };
+                let mut core = input.input_context_core(renderer, &self.keybinds);
+                let _ = dispatch::action_core::dispatch_compatible(&a, &mut core, Some(&dispatch_hit));
             }
+            // No Action bound to DoubleClick: silently no-op. Either
+            // way the double-click consumed `last_click`; we don't
+            // fall through to the single-click pending-selection path.
             self.suppress_keys.set(input.text_edit_state.is_open());
             return;
         }
@@ -328,25 +227,12 @@ impl super::WasmApp {
             };
             let release_canvas =
                 renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
-            // Refresh the subtree-AABB cache before the
-            // overflow-aware containment check — see the parallel
-            // comment in `app/event_mouse_click.rs`. Without this,
-            // a click on an overflowing second section after any
-            // mid-frame mutation registers as "outside" because
-            // `point_in_node_aabb` falls back to container-only
-            // when `subtree_aabb()` is dirty.
-            if let Some(tree) = input.mindmap_tree.as_mut() {
-                tree.tree.ensure_subtree_aabbs();
-            }
-
-            let inside_edit_node = input
-                .text_edit_state
-                .node_id()
-                .zip(input.mindmap_tree.as_ref())
-                .map(|(id, tree)| point_in_node_aabb(release_canvas, id, tree))
-                .unwrap_or(false);
-
-            if inside_edit_node {
+            // Same predicate native's modal-release ladder runs.
+            if crate::application::app::text_edit::release_stays_inside_edited_node(
+                &input.text_edit_state,
+                &mut input.mindmap_tree,
+                release_canvas,
+            ) {
                 return;
             }
 
@@ -356,7 +242,11 @@ impl super::WasmApp {
             // native uses for this Compatible Action.
             {
                 let mut core = input.input_context_core(renderer, &self.keybinds);
-                let _ = dispatch::action_core::dispatch_compatible(&Action::TextEditCommit, &mut core);
+                let _ = dispatch::action_core::dispatch_compatible(
+                    &Action::TextEditCommit,
+                    &mut core,
+                    None,
+                );
             }
             self.suppress_keys.set(false);
             // Fall through to the click-target selection

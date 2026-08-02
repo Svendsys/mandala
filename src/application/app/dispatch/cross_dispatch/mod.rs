@@ -43,6 +43,9 @@
 //!   `DeselectAll`, `InvertSelection`, `SelectParent`,
 //!   `SelectChild`, `SelectNext/PrevSibling`) + their pure-doc
 //!   inner functions.
+//! - [`pointer`]: the pointer-gesture payload
+//!   ([`DispatchHit`]) and the double-click behavior — a pure
+//!   route resolver plus the apply half that matches on it.
 //!
 //! `mod.rs` itself only carries the shared types
 //! ([`RebuildContext`], [`DispatchOutcome`]), the two
@@ -63,6 +66,7 @@ mod camera;
 mod edges;
 mod fps;
 mod lifecycle;
+mod pointer;
 mod selection;
 mod style;
 
@@ -74,6 +78,7 @@ pub(in crate::application::app) use camera::*;
 pub(in crate::application::app) use edges::*;
 pub(in crate::application::app) use fps::*;
 pub(in crate::application::app) use lifecycle::*;
+pub(in crate::application::app) use pointer::*;
 pub(in crate::application::app) use selection::*;
 pub(in crate::application::app) use style::*;
 

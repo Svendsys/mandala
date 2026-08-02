@@ -37,14 +37,15 @@ pub(in crate::application::app) mod native;
 // callable without callers learning the sub-module split.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) use native::{
-    apply_label_edit_action_to_buffer, dispatch_action, dispatch_custom_mutation_for_key, dispatch_macro,
-    DispatchHit,
+    apply_label_edit_action_to_buffer, dispatch_action, dispatch_macro,
 };
 
 // Cross-platform re-exports — both dispatchers and the
 // `tests_mutations` parity tests import via the shorter
 // `super::dispatch::*` form.
-pub(in crate::application::app) use cross_dispatch::DispatchOutcome;
+pub(in crate::application::app) use cross_dispatch::{
+    dispatch_custom_mutation_for_key, DispatchHit, DispatchOutcome,
+};
 // `pub(crate)` so `tests_mutations` (in `document/`) and the
 // WASM run loop (`run_wasm/mod.rs`) can both reach it through this
 // canonical re-export. Native sub-modules (`native.rs`) also call

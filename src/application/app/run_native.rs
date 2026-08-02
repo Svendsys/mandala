@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Event, KeyEvent, MouseScrollDelta, StartCause, WindowEvent};
+use winit::event::{ElementState, Event, KeyEvent, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{CursorIcon, Window, WindowId};
@@ -411,10 +411,7 @@ impl InitState {
                 event: WindowEvent::MouseWheel { delta, .. },
                 ..
             } => {
-                let scroll_y = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64,
-                    MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
-                };
+                let scroll_y = crate::application::app::wheel_lines(delta);
                 // While the console is open, the wheel scrolls the
                 // scrollback rather than zooming the canvas — mouse
                 // events should follow keyboard focus. Fractional
@@ -455,11 +452,7 @@ impl InitState {
                     // both to `ZoomIn` / `ZoomOut`. If the user
                     // explicitly clears the bindings, wheel events are
                     // silently ignored.
-                    let gesture_name = if scroll_y > 0.0 {
-                        crate::application::keybinds::MouseGesture::WheelUp.key_name()
-                    } else {
-                        crate::application::keybinds::MouseGesture::WheelDown.key_name()
-                    };
+                    let gesture_name = crate::application::app::wheel_gesture(scroll_y).key_name();
                     // `action_for_gesture` falls back to the unmodified
                     // binding when no exact-modifier match exists, so
                     // `Ctrl+Wheel` keeps zooming even though only

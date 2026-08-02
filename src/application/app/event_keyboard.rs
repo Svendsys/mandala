@@ -168,13 +168,18 @@ pub(super) fn handle_keyboard_input(
             if !macro_handled {
                 // Custom mutation fall-through (Phase-7 parity:
                 // animation-timing aware, always invokes
-                // `apply_document_actions`).
-                let _ = super::dispatch::dispatch_custom_mutation_for_key(
-                    ctx,
-                    k,
+                // `apply_document_actions`). The tier body is
+                // cross-platform and takes the shared core, so the
+                // WASM keyboard handler runs the same three-tier
+                // chain.
+                let (ctrl, shift, alt) = (
                     ctx.modifiers.control_key(),
                     ctx.modifiers.shift_key(),
                     ctx.modifiers.alt_key(),
+                );
+                let (mut core, _) = ctx.split_borrow();
+                let _ = super::dispatch::dispatch_custom_mutation_for_key(
+                    &mut core, k, ctrl, shift, alt,
                 );
             }
         }

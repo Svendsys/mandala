@@ -110,6 +110,42 @@ impl TextEditState {
     }
 }
 
+/// Did a pointer release land on the node the editor has open?
+///
+/// `true` keeps the edit alive and consumes the release; `false`
+/// means the release was outside and the caller commits through the
+/// funnel. Both targets' release paths run this — it is the whole of
+/// what they used to have written twice.
+///
+/// Refreshes the subtree-AABB cache before the containment test.
+/// [`crate::application::document::point_in_node_aabb`] reads
+/// `subtree_aabb()`, which returns `None` while the cache is dirty
+/// (post-mutation / post-tree-rebuild) and then falls back to the
+/// container-only AABB — which would report a click on an
+/// *overflowing* second section as "outside" and commit an edit the
+/// user was still in the middle of. `ensure_subtree_aabbs` is O(1)
+/// on a clean cache and O(arena) on the first call after a mutation;
+/// either way it is cheap relative to a click handler.
+///
+/// Returns `false` when the editor is closed or no tree is built —
+/// there is nothing to stay inside of.
+pub(in crate::application::app) fn release_stays_inside_edited_node(
+    text_edit_state: &TextEditState,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    release_canvas: glam::Vec2,
+) -> bool {
+    if let Some(tree) = mindmap_tree.as_mut() {
+        tree.tree.ensure_subtree_aabbs();
+    }
+    text_edit_state
+        .node_id()
+        .zip(mindmap_tree.as_ref())
+        .map(|(id, tree)| {
+            crate::application::document::point_in_node_aabb(release_canvas, id, tree)
+        })
+        .unwrap_or(false)
+}
+
 /// Glyph rendered at the cursor position while a node, edge-label,
 /// or portal-text editor is open. ASCII `|` (U+007C) is deliberate:
 /// the earlier pick `▌` (U+258C, Left Half Block) fell through

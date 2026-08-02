@@ -240,6 +240,73 @@ fn is_double_click(
     &prev.hit == new_hit
 }
 
+/// Scroll delta as a signed line count, for the wheel-gesture
+/// lookup.
+///
+/// winit reports two shapes and they are not interchangeable: a
+/// notched wheel reports whole lines, a trackpad or a
+/// high-resolution wheel reports pixels. The `/ 50.0` divisor is the
+/// pixels-per-line convention this app has always used; it is here
+/// rather than at the two call sites so a change to it cannot land
+/// on one target only.
+///
+/// Only the sign is consulted by the gesture lookup today
+/// (`> 0.0` → `WheelUp`, otherwise `WheelDown`), but the magnitude is
+/// preserved: the console's scrollback accumulates fractional lines
+/// through it, and a future per-notch zoom step would want it too.
+fn wheel_lines(delta: crate::application::platform::input::MouseScrollDelta) -> f64 {
+    use crate::application::platform::input::MouseScrollDelta;
+    match delta {
+        MouseScrollDelta::LineDelta(_, y) => y as f64,
+        MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
+    }
+}
+
+/// The `MouseGesture` a scroll of `lines` names. Split from
+/// [`wheel_lines`] because the sign convention — zero and negative
+/// both scroll down — is a decision, not arithmetic, and both
+/// targets have to make the same one.
+fn wheel_gesture(lines: f64) -> crate::application::keybinds::MouseGesture {
+    if lines > 0.0 {
+        crate::application::keybinds::MouseGesture::WheelUp
+    } else {
+        crate::application::keybinds::MouseGesture::WheelDown
+    }
+}
+
+/// Is an inline editor already open on the thing this press landed
+/// on?
+///
+/// When it is, the press must **not** be promoted to a double-click:
+/// the double-click would re-open the editor, and re-opening re-seeds
+/// the buffer from the committed model value, silently discarding
+/// whatever the user had typed. The press instead falls through and
+/// the matching release is swallowed as a click-inside.
+///
+/// Three plain inputs so the guard is pinnable without an event loop
+/// (`TEST_CONVENTIONS §T9`):
+/// - `edit_node_id` — the node the multi-line text editor has open,
+///   `None` when it is closed.
+/// - `hit_node` — the node this press landed on, `None` for
+///   empty canvas and for non-node hits.
+/// - `single_line_match` — whether the single-line editor (edge
+///   label / portal caption) is open on *this* press's target. It is
+///   passed in rather than resolved here because that editor is
+///   native-only today; the browser passes `false`.
+///
+/// The two editor states are mutually exclusive by construction (the
+/// keyboard steal claims whichever opened first), so the `||` is
+/// belt-and-braces rather than a case that arises in practice — but
+/// a guard that only covered one of them would be a live bug the
+/// moment that stops holding.
+fn already_editing_same_target(
+    edit_node_id: Option<&str>,
+    hit_node: Option<&str>,
+    single_line_match: bool,
+) -> bool {
+    edit_node_id.is_some_and(|id| hit_node == Some(id)) || single_line_match
+}
+
 /// Bag of "what was hit" that the click dispatch on both
 /// platforms needs. The collapsed `click_hit` is what
 /// double-click detection compares against; the four

@@ -209,19 +209,16 @@ pub(super) fn handle_mouse_input(
                 // `open_single_line_edit` a second time, which
                 // re-seeds the buffer from the committed model
                 // value and silently destroys the in-progress edit.
-                let already_editing_same_target = {
-                    let node_match = ctx
-                        .text_edit_state
-                        .node_id()
-                        .map(|id| hit_node.as_deref() == Some(id))
-                        .unwrap_or(false);
-                    let single_line_match = ctx
-                        .single_line_edit_state
-                        .target()
-                        .map(|t| t.matches_press_hit(edge_label_hit.as_ref(), portal_text_hit.as_ref()))
-                        .unwrap_or(false);
-                    node_match || single_line_match
-                };
+                let single_line_match = ctx
+                    .single_line_edit_state
+                    .target()
+                    .map(|t| t.matches_press_hit(edge_label_hit.as_ref(), portal_text_hit.as_ref()))
+                    .unwrap_or(false);
+                let already_editing_same_target = super::already_editing_same_target(
+                    ctx.text_edit_state.node_id(),
+                    hit_node.as_deref(),
+                    single_line_match,
+                );
                 let is_dblclick = !already_editing_same_target
                     && ctx
                         .last_click

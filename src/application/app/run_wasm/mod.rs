@@ -213,7 +213,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
         // `lift_mixed_branch_for_wasm_macro`'s rustdoc.
         let outcome = {
             let mut core = self.input.input_context_core(self.renderer, self.keybinds);
-            super::dispatch::action_core::dispatch_compatible(&action, &mut core)
+            super::dispatch::action_core::dispatch_compatible(&action, &mut core, None)
         };
         super::dispatch::action_core::lift_mixed_branch_for_wasm_macro(&action, outcome)
     }

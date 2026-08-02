@@ -64,7 +64,7 @@ impl super::WasmApp {
             let action = self.keybinds.action_for_gesture(name, false, false, false);
             if let Some(a) = action {
                 let mut core = input.input_context_core(renderer, &self.keybinds);
-                let outcome = dispatch::action_core::dispatch_compatible(&a, &mut core);
+                let outcome = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
                 // Whole-PR review BLK-1: when the bound Action is
                 // `NativeOnly` (e.g. `EnterResizeMode`,
                 // `FastResizeStart` — both default-bound to touch

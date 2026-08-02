@@ -4,9 +4,11 @@
 //!
 //! Handles every Compatible-classified `Action` arm whose body
 //! has been factored into a `cross_dispatch::apply_*` helper, plus
-//! the cross-platform slice of two mixed-branch NativeOnly Actions
+//! the cross-platform slice of three mixed-branch NativeOnly Actions
 //! (`Action::ExitMode`'s mode reset + `last_click` clear,
-//! `Action::EditSelection*`-Single open). Returns `Handled` when
+//! `Action::EditSelection*`-Single open, and
+//! `Action::DoubleClickActivate` — everything except the edge-label
+//! branch's single-line editor open). Returns `Handled` when
 //! the body ran; `Unhandled` for variants this dispatcher doesn't
 //! own — the caller's fall-through (native only) runs the
 //! platform-specific arm.
@@ -122,9 +124,17 @@ pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
 /// own (NativeOnly Actions without a cross-platform slice, or
 /// mixed-branch Actions whose cross-platform slice didn't apply
 /// — caller's fall-through runs the native arm).
+///
+/// `hit` carries the pointer-event-only payload (what the press
+/// landed on, where it landed in canvas space). Keyboard, macro and
+/// touch callers pass `None`; the mouse handlers on **both** targets
+/// populate it, which is what lets `DoubleClickActivate` resolve
+/// through the keybind table in the browser instead of being
+/// hardcoded there.
 pub(in crate::application::app) fn dispatch_compatible(
     action: &Action,
     core: &mut InputContextCore<'_>,
+    hit: Option<&super::cross_dispatch::DispatchHit>,
 ) -> DispatchOutcome {
     // Mixed-branch arms — handle the cross-platform slice here.
     // Caller's fall-through (native only) handles the residual
@@ -238,6 +248,28 @@ pub(in crate::application::app) fn dispatch_compatible(
                 DispatchOutcome::Handled
             } else {
                 DispatchOutcome::Unhandled
+            };
+        }
+        Action::DoubleClickActivate => {
+            // Routes by what the press hit. The mouse handlers on
+            // both targets populate `hit` before dispatching; without
+            // it there is no target and the gesture silently no-ops
+            // (it was bound but fired from a non-pointer source, e.g.
+            // a macro carrying no hit context).
+            let Some(h) = hit else {
+                log::debug!("DoubleClickActivate: no DispatchHit; skipping");
+                return DispatchOutcome::Handled;
+            };
+            return match super::cross_dispatch::apply_double_click_activate(h, core) {
+                super::cross_dispatch::DoubleClickResidual::Done => DispatchOutcome::Handled,
+                // The edge-label selection is committed; only the
+                // single-line editor open is left, and that needs
+                // `NativeContextExt`. Native's fall-through finishes
+                // it; WASM has no single-line editor yet and stops
+                // here with the label selected.
+                super::cross_dispatch::DoubleClickResidual::OpenEdgeLabelEditor { .. } => {
+                    DispatchOutcome::Unhandled
+                }
             };
         }
         _ => {}
@@ -525,12 +557,12 @@ pub(in crate::application::app) fn dispatch_compatible(
         }),
         Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),
         // ── Create-orphan-and-edit (keyboard shape) ───────────
-        // Mouse-driven empty-canvas double-click stays in
-        // `dispatch.rs` (DoubleClickActivate::Empty calls
-        // `dispatch_create_orphan_and_edit` directly with
-        // `DispatchHit::canvas_pos`). The keyboard-bound case
-        // — and the WASM target which has no DispatchHit on this
-        // path — uses `cursor_pos` here.
+        // The mouse-driven empty-canvas double-click reaches the
+        // same `apply_create_orphan_node_and_edit` body through
+        // `DoubleClickRoute::CreateOrphanAndEdit`, which uses
+        // `DispatchHit::canvas_pos`. This arm is the keyboard shape
+        // and uses `cursor_pos`; the two differ only in where the
+        // position comes from.
         Action::CreateOrphanNodeAndEdit => {
             let canvas_pos = core
                 .renderer

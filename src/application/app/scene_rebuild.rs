@@ -344,6 +344,46 @@ pub(in crate::application::app) fn rebuild_scene_only(
     flush_canvas_scene_buffers(app_scene, renderer);
 }
 
+/// Re-project the **zoom-dependent** canvas roles after a camera
+/// change (pan / zoom / surface resize).
+///
+/// Connections, their labels, portals and edge handles all size and
+/// position against the current camera; borders, section frames and
+/// resize handles are canvas-space and zoom-independent, so
+/// re-projecting them here would be pure waste on every scroll tick
+/// (§4's mobile budget). That is the whole difference from
+/// [`rebuild_scene_only`], which does all of them.
+///
+/// The connection sample cache is cleared first: effective font size
+/// depends on zoom, so every cached pre-clip sample is stale.
+/// `ensure_zoom` inside the connection pass would also catch it; the
+/// explicit clear keeps the ordering readable next to the rebuild.
+///
+/// Both targets reach this. Native calls it from
+/// `drain_frame::drain_camera_geometry_rebuild` once per frame under
+/// the renderer's dirty flag; WASM has no per-frame drain and calls
+/// it from the wheel handler under the same flag.
+pub(in crate::application::app) fn rebuild_camera_geometry(
+    doc: &MindMapDocument,
+    interaction_mode: &super::InteractionMode,
+    app_scene: &mut crate::application::scene_host::AppScene,
+    renderer: &mut Renderer,
+    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+) {
+    scene_cache.clear();
+    let offsets = std::collections::HashMap::new();
+    let frame = CanvasFrame::new(
+        doc,
+        &offsets,
+        interaction_mode.resize_handle_overrides(),
+        renderer.camera_zoom(),
+    );
+    frame.update_connection_trees(scene_cache, app_scene);
+    frame.update_connection_label_tree(app_scene);
+    frame.update_portal_tree(app_scene);
+    flush_canvas_scene_buffers(app_scene, renderer);
+}
+
 // =====================================================================
 // Canvas-role projection.
 //
