@@ -358,22 +358,36 @@ industrial cost/benefit reasoning. This is not license for speculation.
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
   the winit event loop and its window, the renderer bootstrap,
-  `fonts::init`, and — in the browser — reading `?map=` off the page
-  URL. Four of those can fail, and each says so where it happens:
-  `EventLoop::new` and `create_window` when the window comes up, and
-  `create_surface` inside both `Renderer::bootstrap_native` and
-  `Renderer::bootstrap_wasm`; plus `web_sys::window`, whose absence
-  means there is no page to draw on. Two cannot fail, and are inside
-  the boundary rather than exceptions to it: `fonts::init` returns
-  `()`, and the query-string extractor is infallible by construction
-  — `search().unwrap_or_default()` then `strip_prefix`, with no
+  `fonts::init`, and — in the browser — hanging a canvas off the page
+  and reading `?map=` from its URL. What can fail says so where it
+  happens, in three groups. **The window:** `EventLoop::new`,
+  `create_window`, and `run_app`, whose `Err` is the loop itself
+  giving out. **The renderer bootstrap:** `create_surface`, then
+  `request_adapter` and `request_device` — no GPU, no program —
+  reached from both `Renderer::bootstrap_native` and
+  `Renderer::bootstrap_wasm`. **The page, in the browser:**
+  `web_sys::window`, the `document`, `body` and `canvas` hung off it,
+  the `append_child` that attaches one to the other, and the
+  `inner_width` / `inner_height` the first surface is sized from —
+  any one of them missing means there is no page to draw on. Two
+  things in the phase list cannot fail, and are inside the boundary
+  rather than exceptions to it: `fonts::init` returns `()`, and the
+  query-string extractor is infallible by construction —
+  `search().unwrap_or_default()` then `strip_prefix`, with no
   failure to report. What that extractor *feeds* is fallible, and is
-  the next bullet. Bare `unwrap()` outside tests is a bug. **This
-  list is checked against the code, not trusted:** the tests of the
+  the next bullet — which is also why the map fetch asks
+  `web_sys::window` a second time and *degrades* rather than
+  aborting: by then there is a shell to put the message in. Bare
+  `unwrap()` outside tests is a bug. **This list is checked against
+  the code in all three directions, not trusted:** the tests of the
   module the next bullet names fail when it holds a name that has
-  moved, or a name that cannot fail. It held one of each — a
-  renamed renderer constructor, and a font initializer that returns
-  nothing — for as long as nothing looked.
+  moved, when it holds a name that cannot fail, and when a file on
+  the startup path grows a panicking call this list does not name.
+  It held one of each of the first two — a renamed renderer
+  constructor, and a font initializer that returns nothing — for as
+  long as nothing looked; and the third direction did not exist at
+  all, which is how `request_adapter` and `request_device` came to
+  `expect` on every launch of both targets while going unmentioned.
 - **The initial map load is the one startup path that does not
   `expect`, and the reason names the boundary.** `expect` is for a
   *program precondition* that did not hold — no adapter, no fonts,

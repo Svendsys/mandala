@@ -504,7 +504,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("insert_spaces", |b| b.iter(do_insert_spaces));
     c.bench_function("split_graphemes_owned", |b| b.iter(do_split_graphemes_owned));
     c.bench_function("join_graphemes", |b| b.iter(do_join_graphemes));
-    // rust_source // (the four pure scanners; `production_code` and
+    // rust_source // (the five pure scanners; `production_code` and
     // the tree-wide sweep have no entry because they are file reads
     // — see the module docs)
     c.bench_function("strip_comments", |b| {
@@ -519,6 +519,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("string_literals", |b| {
         b.iter(do_string_literals_returns_every_literal)
     });
+    c.bench_function("statements", |b| b.iter(do_statements_split_at_the_right_places));
     // geometry //
     c.bench_function("90_deg_rotation", |b| b.iter(do_90_deg_rotation));
     c.bench_function("180_deg_rotation", |b| b.iter(do_180_deg_rotation));

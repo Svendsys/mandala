@@ -52,6 +52,8 @@
 //! module's own browser leg stayed open, and blanking the URL one
 //! level in was still a one-line change under a green suite.
 
+use baumhard::mindmap::placard;
+
 use crate::application::document::MindMapDocument;
 
 /// The decision: given the result of the initial load, what goes on
@@ -184,22 +186,31 @@ fn startup_surface(source: &str, load: Result<MindMapDocument, String>) -> Start
 }
 
 /// The line a rejected load reports: the source that was asked for,
-/// then the loader's own message.
+/// then the loader's own message — **with the source appearing
+/// exactly once**.
 ///
-/// **The source is here because nothing else puts it there.** Exactly
-/// one of the loader's failure modes names the file —
-/// `load_from_file`'s *read* error — while `load_from_str`'s parse
-/// errors and all five of `fetch_map_json`'s never do. Without this
-/// the log read `startup: Failed to parse mindmap JSON: key must be a
-/// string at line 1 column 3`, which does not say *which* map, and a
-/// line that cannot be pasted into a bug report is not worth
-/// emitting. The placard already names the source on the canvas; this
-/// is the copy for whoever is reading `stderr` or the browser
-/// console.
+/// *Why the source is added.* Exactly one of the loader's failure
+/// modes names the file — `load_from_file`'s *read* error — while
+/// `load_from_str`'s parse errors and every one of `fetch_map_json`'s
+/// never do. Without this the log read `startup: Failed to parse
+/// mindmap JSON: key must be a string at line 1 column 3`, which does
+/// not say *which* map, and a line that cannot be pasted into a bug
+/// report is not worth emitting.
+///
+/// *Why it is conditional.* The one failure mode that does name the
+/// file is also the likeliest way anybody reaches this screen — a
+/// mistyped path — and prepending unconditionally produced `startup:
+/// could not load '/nope/x.mindmap.json': Failed to read file
+/// /nope/x.mindmap.json: No such file or directory`. The predicate is
+/// [`placard::message_names_source`], shared with the canvas so the
+/// two surfaces cannot disagree about what "once" means.
 ///
 /// Quoted because a path may contain spaces and what follows it is
 /// prose.
 fn report_line(source: &str, message: &str) -> String {
+    if placard::message_names_source(source, message) {
+        return message.to_string();
+    }
     format!("could not load '{source}': {message}")
 }
 
@@ -244,7 +255,7 @@ fn resolve(surface: StartupSurface) -> (MindMapDocument, Option<String>) {
 mod tests {
     use super::*;
     use baumhard::mindmap::placard;
-    use baumhard::util::rust_source::{braced_block_after, production_code, string_literals};
+    use baumhard::util::rust_source::{self, braced_block_after, production_code, string_literals};
 
     /// This module's own path, for the pins that read it.
     const THIS_FILE: &str = "src/application/app/startup_load.rs";
@@ -527,6 +538,77 @@ mod tests {
         }
     }
 
+    /// **The source appears once, in both failure shapes and on both
+    /// surfaces.**
+    ///
+    /// The loader names the file in exactly one of its failure modes,
+    /// and that one — `load_from_file`'s read error — is the mode a
+    /// mistyped path produces, which is the likeliest way anybody
+    /// meets this screen at all. Prepending unconditionally therefore
+    /// duplicated the path on the commonest line the fix emits:
+    ///
+    /// ```text
+    /// startup: could not load '/nope/absent.mindmap.json': Failed to
+    /// read file /nope/absent.mindmap.json: No such file or directory
+    /// ```
+    ///
+    /// Both shapes are checked, in both directions, because a fix
+    /// that stopped naming the source in the *parse* case would be
+    /// the regression this whole module exists to prevent — and so is
+    /// the canvas, which joins the same two strings its own way
+    /// through the same predicate.
+    #[test]
+    fn test_the_source_is_named_once_whichever_way_the_load_failed() {
+        // Shape 1: the read failure, produced by the real loader
+        // against a path that is not there. Its message already names
+        // the file.
+        let missing = "/nonexistent/definitely-not-here.mindmap.json";
+        let read_error = MindMapDocument::load(missing)
+            .err()
+            .expect("a path that is not there must not load");
+        assert!(
+            read_error.contains(missing),
+            "fixture assumption broken — `load_from_file`'s read error used to name the \
+             file, and this test is about what happens when it does: {read_error}"
+        );
+
+        // Shape 2: the parse failure, produced by the real loader
+        // against a body that arrived. Its message names nothing.
+        let (parse_error, _) = rejected();
+        assert!(
+            !parse_error.contains(missing),
+            "fixture assumption broken — the parse message must not name a source: {parse_error}"
+        );
+
+        for (shape, message) in [("read", &read_error), ("parse", &parse_error)] {
+            let line = report_line(missing, message);
+            assert_eq!(
+                line.matches(missing).count(),
+                1,
+                "the {shape} failure names {missing} {} time(s) in one log line. \
+                 `report_line` adds the source because most loader messages do not \
+                 carry it — but adding it to one that does reads as a stutter on the \
+                 line a bug report is pasted from. Line: {line}",
+                line.matches(missing).count()
+            );
+            assert!(
+                line.contains(message.as_str()),
+                "the {shape} failure lost the loader's own words: {line}"
+            );
+
+            let canvas = placard::load_failure_text(missing, message);
+            assert_eq!(
+                canvas.replace('\n', " ").matches(missing).count(),
+                1,
+                "the {shape} failure names {missing} more than once on the canvas:\n{canvas}"
+            );
+            assert!(
+                canvas.contains(placard::PLACARD_HEADLINE) && canvas.contains(placard::PLACARD_FOOTER),
+                "the {shape} placard lost its frame:\n{canvas}"
+            );
+        }
+    }
+
     /// **The browser leg keeps the loader's words.** Blanking the
     /// message on that leg alone used to be a one-line edit at the
     /// init site that no test could see, because `cargo test` runs
@@ -792,39 +874,124 @@ mod tests {
         }
     }
 
-    /// Where §9's startup roster must resolve to, and whether §9
-    /// classes each entry as a site that *can fail* — which is a
-    /// claim about the code, and so is checked against the code: a
-    /// fallible site must appear in a statement that also carries an
-    /// `.expect(`.
+    /// The files startup runs through — §9's phase list, resolved,
+    /// with the phrase each one answers.
+    ///
+    /// This is what makes the roster's *third* direction possible.
+    /// §9 ⊆ [`STARTUP_SITES`] catches a stale name; roster ⊆ code
+    /// catches a rename; neither catches a fallible startup site that
+    /// is simply never named, which is how `request_adapter` and
+    /// `request_device` came to `expect` on every launch of both
+    /// targets, unlisted, for as long as this list did not exist.
+    ///
+    /// The residual, plainly: §9's phase list is prose, and resolving
+    /// it to files is done here by hand. A *seventh* startup file
+    /// nobody adds is out of reach of any test — but a panicking call
+    /// added to any of these six is not, and neither is a roster
+    /// entry pointing at a file that is not on the list.
+    const STARTUP_FILES: &[(&str, &str)] = &[
+        ("src/main.rs", "the CLI parse"),
+        (
+            "src/application/app/run_native.rs",
+            "the winit event loop and its window",
+        ),
+        (
+            "src/application/app/run_native_init.rs",
+            "`fonts::init` and the native bootstrap",
+        ),
+        (
+            "src/application/app/run_wasm/mod.rs",
+            "the page attachment, the `?map=` read and the browser bootstrap",
+        ),
+        ("src/application/renderer/mod.rs", "the renderer bootstrap"),
+        (
+            "src/application/renderer/pipeline.rs",
+            "the adapter and the device that bootstrap asks wgpu for",
+        ),
+        (
+            "src/application/app/startup_load.rs",
+            "the initial map load — §9's carve-out, which must therefore panic nowhere",
+        ),
+    ];
+
+    /// Where §9's startup roster must resolve to, and whether every
+    /// call of it in that file carries an `.expect(` — which is a
+    /// claim about the code, and so is checked against the code.
+    ///
+    /// The `reason` column is for the `false` rows, because "no
+    /// `expect` here" has three different causes and a failure
+    /// message that conflated them would send a reader the wrong way.
     ///
     /// The list exists because §9's used to name `Renderer::new`,
     /// which the bootstrap split replaced, and `fonts::init`, which
     /// returns `()` and has no failure to report. Both survived
-    /// review because nothing checked them.
-    const STARTUP_SITES: &[(&str, &str, bool)] = &[
-        ("EventLoop::new", "src/application/app/run_native.rs", true),
-        ("create_window", "src/application/app/run_native.rs", true),
-        ("create_surface", "src/application/renderer/mod.rs", true),
-        ("web_sys::window", "src/application/app/run_wasm/mod.rs", true),
+    /// review because nothing checked them. It grew its second half
+    /// because nothing checked the other direction either: every row
+    /// below `create_surface` was a live `.expect(` on the startup
+    /// path that §9 did not mention.
+    const STARTUP_SITES: &[(&str, &str, bool, &str)] = &[
+        ("EventLoop::new", "src/application/app/run_native.rs", true, ""),
+        ("create_window", "src/application/app/run_native.rs", true, ""),
+        ("run_app", "src/application/app/run_native.rs", true, ""),
+        ("create_surface", "src/application/renderer/mod.rs", true, ""),
+        (
+            "request_adapter",
+            "src/application/renderer/pipeline.rs",
+            true,
+            "",
+        ),
+        ("request_device", "src/application/renderer/pipeline.rs", true, ""),
+        ("web_sys::window", "src/application/app/run_wasm/mod.rs", true, ""),
+        ("canvas", "src/application/app/run_wasm/mod.rs", true, ""),
+        ("document", "src/application/app/run_wasm/mod.rs", true, ""),
+        ("body", "src/application/app/run_wasm/mod.rs", true, ""),
+        ("append_child", "src/application/app/run_wasm/mod.rs", true, ""),
+        ("inner_width", "src/application/app/run_wasm/mod.rs", true, ""),
+        ("inner_height", "src/application/app/run_wasm/mod.rs", true, ""),
         (
             "Renderer::bootstrap_native",
             "src/application/app/run_native_init.rs",
             false,
+            "the failure is one level in, at `create_surface`",
         ),
         (
             "Renderer::bootstrap_wasm",
             "src/application/app/run_wasm/mod.rs",
             false,
+            "the failure is one level in, at `create_surface`",
         ),
-        ("fonts::init", "src/application/app/run_native_init.rs", false),
-        ("strip_prefix", "src/application/app/run_wasm/mod.rs", false),
+        (
+            "fonts::init",
+            "src/application/app/run_native_init.rs",
+            false,
+            "it returns `()` and has nothing to report",
+        ),
+        (
+            "strip_prefix",
+            "src/application/app/run_wasm/mod.rs",
+            false,
+            "the query-string extractor is infallible by construction",
+        ),
+        (
+            "web_sys::window",
+            "src/application/app/startup_load.rs",
+            false,
+            "the map fetch's second ask degrades into the placard's message rather \
+             than aborting — §9's carve-out bullet, and the reason this name needs a \
+             row per file",
+        ),
     ];
+
+    /// The three spellings of "this statement can end the process",
+    /// as they appear in source. `.unwrap_or…` is deliberately not
+    /// one of them: it is the opposite of a panic.
+    const PANICKING: &[&str] = &[".expect(", ".unwrap()", "panic!("];
 
     /// Backticked words in the `expect` bullet that are Rust
     /// *vocabulary* rather than startup sites — they are what the
-    /// rule is about, not entries in its list.
-    const NOT_A_SITE: &[&str] = &["expect", "unwrap"];
+    /// rule is about, or the type it is stated in, not entries in
+    /// its list.
+    const NOT_A_SITE: &[&str] = &["expect", "unwrap", "Err"];
 
     /// The bold lead of §9's `expect` bullet, verbatim.
     const EXPECT_LEAD: &str = "**Startup paths use `expect(\"<reason>\")` with a human-readable message.**";
@@ -889,14 +1056,44 @@ mod tests {
             })
     }
 
-    /// `code` split into statements, each whitespace-flattened.
-    /// Crude on purpose — the question asked of it is only "does
-    /// *this* call carry an `.expect(`", and a statement is the unit
-    /// that answers it.
+    /// Whether `statement` *calls* `name`: the name followed by `(`,
+    /// with whatever precedes it not an identifier character.
+    ///
+    /// The boundary is the whole point. A bare
+    /// `statement.contains("document(")` also matches
+    /// `wasm_startup_document(`, and a bare `create_surface(` also
+    /// matches `create_surface_config(` — which is infallible, and
+    /// would answer "does every call of this carry an `.expect(`"
+    /// with the wrong answer.
+    fn statement_calls(statement: &str, name: &str) -> bool {
+        let needle = format!("{name}(");
+        let mut from = 0usize;
+        while let Some(offset) = statement[from..].find(&needle) {
+            let at = from + offset;
+            let preceded_by_identifier = statement[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            if !preceded_by_identifier {
+                return true;
+            }
+            from = at + 1;
+        }
+        false
+    }
+
+    /// [`rust_source::statements`], each piece whitespace-flattened
+    /// so a re-wrap cannot change the answer.
+    ///
+    /// The split used to be `code.split(';')` here. That merges every
+    /// expression-bodied `fn` in a file with its neighbors — such a
+    /// body ends in `}`, not `;` — and `renderer/pipeline.rs` has two
+    /// of them side by side, so turning `request_device`'s `.expect(`
+    /// into a bare `unwrap()` left the chunk carrying
+    /// `request_adapter`'s `.expect(` and every pin below stayed
+    /// green.
     fn statements(code: &str) -> Vec<String> {
-        code.split(';')
-            .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
-            .collect()
+        rust_source::statements(code).into_iter().map(flatten).collect()
     }
 
     /// **§9's `expect` roster names things that exist, and only
@@ -915,13 +1112,19 @@ mod tests {
     ///    than surviving a decade;
     /// 2. every roster entry is *called* in the file the roster names
     ///    — so a rename fails;
-    /// 3. every call of an entry the roster marks fallible sits in a
-    ///    statement that also carries an `.expect(` — so listing
+    /// 3. every call of an entry the roster marks as `expect`ing sits
+    ///    in a statement that also carries an `.expect(` — so listing
     ///    something that cannot fail fails, and so does one arm of a
     ///    two-arm site quietly dropping its reason.
     ///
     /// All three read [`production_code`], so a name that survives
     /// only in a comment does not count as surviving.
+    ///
+    /// **All three run §9 → roster → code, and that is only half the
+    /// job.** A fallible startup site that is simply never named is
+    /// invisible to every one of them;
+    /// [`test_no_startup_file_panics_outside_the_roster`] is the
+    /// other half.
     #[test]
     fn test_code_conventions_section_9_expect_roster_names_real_sites() {
         use baumhard::util::doc_fixtures::{repo_path, section_text};
@@ -935,14 +1138,14 @@ mod tests {
                 continue;
             }
             assert!(
-                STARTUP_SITES.iter().any(|(name, _, _)| *name == token),
+                STARTUP_SITES.iter().any(|(name, _, _, _)| *name == token),
                 "CODE_CONVENTIONS.md §9 names `{token}` as a startup site, but this test's \
                  roster does not know it. Add it here with the file it lives in and whether \
                  it can fail — or take it out of §9, which is what `Renderer::new` needed."
             );
         }
 
-        for (name, relative, fallible) in STARTUP_SITES {
+        for (name, relative, expects, reason) in STARTUP_SITES {
             assert!(
                 bullet.contains(&format!("`{name}`")),
                 "CODE_CONVENTIONS.md §9's `expect` bullet must still name `{name}`"
@@ -952,10 +1155,9 @@ mod tests {
             // without it `create_surface` also matches
             // `create_surface_config`, which is infallible and would
             // answer the next question wrongly.
-            let call = format!("{name}(");
             let calls: Vec<String> = statements(&code)
                 .into_iter()
-                .filter(|s| s.contains(&call))
+                .filter(|s| statement_calls(s, name))
                 .collect();
             assert!(
                 !calls.is_empty(),
@@ -970,14 +1172,19 @@ mod tests {
             let all_expect = calls.iter().all(|s| s.contains(".expect("));
             assert_eq!(
                 all_expect,
-                *fallible,
-                "§9 classes `{name}` as {}, but {relative} says otherwise: a fallible startup \
-                 site is one whose every call carries an `.expect(\"<reason>\")`. \
-                 Calls seen: {calls:#?}",
-                if *fallible {
-                    "a site that can fail"
+                *expects,
+                "§9 classes `{name}` in {relative} as {}, and the code says otherwise: a \
+                 site that `expect`s is one whose *every* call carries an \
+                 `.expect(\"<reason>\")`.{} Calls seen: {calls:#?}",
+                if *expects {
+                    "a site that says why it died"
                 } else {
-                    "a site that cannot fail"
+                    "a site that does not `expect`"
+                },
+                if reason.is_empty() {
+                    String::new()
+                } else {
+                    format!(" The roster's reason for the `false`: {reason}.")
                 }
             );
         }
@@ -1014,7 +1221,18 @@ mod tests {
     /// The residual, stated plainly: a bullet that keeps its lead
     /// verbatim and contradicts it in its own body is out of reach of
     /// any text test, and is a self-refuting document rather than a
-    /// drift.
+    /// drift. Verified to include its near variants — [`bullets`]
+    /// folds a nested `  - ` sub-bullet into its parent, so
+    /// contradicting the lead from a sub-bullet is the same case; and
+    /// [`bullet_led_by`] takes the *first* bullet with the lead, so a
+    /// second bullet opening with the same words is out of reach the
+    /// same way. What is **not** residual, and is worth saying
+    /// because it is the near miss: contradicting the rule by
+    /// *listing the initial load* among the sites that `expect` fails
+    /// below, and so does implementing the contradiction, because
+    /// [`test_no_startup_file_panics_outside_the_roster`] reads
+    /// `startup_load.rs` itself and no panicking call in it is
+    /// roster-named.
     #[test]
     fn test_code_conventions_section_9_records_the_startup_load_decision() {
         use baumhard::util::doc_fixtures::{repo_path, section_text};
@@ -1086,5 +1304,81 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// **The third direction: no file on the startup path panics
+    /// without §9 knowing.**
+    ///
+    /// The two checks above run §9 → roster → code. Both are
+    /// one-directional, and the gap between them was invisible by
+    /// construction: `request_device` and `request_adapter` in
+    /// `renderer/pipeline.rs` each carry an `.expect(`, each is
+    /// reached from `Renderer::new` and so from both bootstraps, and
+    /// neither §9 nor the roster had ever heard of them. Turning one
+    /// into a bare `unwrap()` — an explicit §9 violation — left all
+    /// thirteen of this module's tests green.
+    ///
+    /// So: every statement in a [`STARTUP_FILES`] file that can end
+    /// the process must call something the roster names as a site
+    /// that `expect`s. Two consequences worth naming:
+    ///
+    /// - a bare `unwrap()` anywhere on the startup path fails here,
+    ///   which is §9's "bare `unwrap()` outside tests is a bug" made
+    ///   executable for the phase where it matters most;
+    /// - `startup_load.rs` is on the list and must therefore panic
+    ///   *nowhere*, which is §9's carve-out checked from the code
+    ///   side rather than restated.
+    ///
+    /// Reads [`production_code`], so a `.expect(` in a test module or
+    /// quoted in a doc comment is not a startup panic.
+    #[test]
+    fn test_no_startup_file_panics_outside_the_roster() {
+        // The two lists have to agree about which files exist, or a
+        // roster entry could name a file this sweep never opens.
+        for (name, relative, _, _) in STARTUP_SITES {
+            assert!(
+                STARTUP_FILES.iter().any(|(file, _)| file == relative),
+                "the roster puts `{name}` in {relative}, which is not on the startup-file \
+                 list — either the file belongs there, or the entry is pointing at code \
+                 that startup does not run"
+            );
+        }
+
+        let mut seen = 0usize;
+        for (relative, phase) in STARTUP_FILES {
+            let code = production_code(relative);
+            for statement in statements(&code) {
+                let Some(how) = PANICKING.iter().find(|p| statement.contains(**p)) else {
+                    continue;
+                };
+                seen += 1;
+                assert_ne!(
+                    *how, ".unwrap()",
+                    "{relative} ({phase}) ends the process with a bare `unwrap()`. \
+                     CODE_CONVENTIONS §9: startup panics carry `expect(\"<reason>\")`, \
+                     because the message is the only thing the person holding the \
+                     binary gets. Statement: {statement}"
+                );
+                let named = STARTUP_SITES.iter().any(|(name, file, expects, _)| {
+                    file == relative && *expects && statement_calls(&statement, name)
+                });
+                assert!(
+                    named,
+                    "{relative} ({phase}) can end the process here, and neither \
+                     CODE_CONVENTIONS §9 nor this roster names the call that does it. \
+                     Add it to `STARTUP_SITES` and to §9's `expect` bullet — a startup \
+                     site nobody has written down is one nobody has decided about. \
+                     Statement: {statement}"
+                );
+            }
+        }
+        // Non-vacuity: `production_code` handing back an empty string
+        // would satisfy every assertion above.
+        assert!(
+            seen >= 12,
+            "only {seen} panicking statements were found across {} startup files — the \
+             reader is not reaching them",
+            STARTUP_FILES.len()
+        );
     }
 }

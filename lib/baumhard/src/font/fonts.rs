@@ -128,10 +128,14 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 ///
 /// The reverse lookup (`app_font_by_family`) maps each unique
 /// family name to the first `AppFont` whose face advertises that
-/// name. Faces fontdb knows about but that aren't compiled in (none
-/// today; we own the database) map to `Any` so the cosmic-text
-/// fallback picks them up. Sorting is alphabetical so a UI list is
-/// stable.
+/// name. Faces fontdb knows about but that aren't compiled in map to
+/// `Any` so the cosmic-text fallback picks them up. **On native that
+/// set is not empty:** `FONT_SYSTEM` is `FontSystem::new()`, which
+/// indexes the host's fontconfig, so every family the machine has
+/// installed lands in this index too. The browser build has no
+/// fontconfig and sees only the compiled-in faces, which is the
+/// native-only divergence `format/fonts.md` opens by describing.
+/// Sorting is alphabetical so a UI list is stable.
 fn build_family_index() -> Vec<(String, AppFont)> {
     // Force `COMPILED_FONT_ID_MAP`'s lazy-static init **before** we
     // grab the `FONT_SYSTEM` read lock. `load_fonts()` (the lazy

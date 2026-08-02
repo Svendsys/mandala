@@ -12,7 +12,7 @@
 
 use crate::util::doc_fixtures::repo_path;
 use crate::util::rust_source::{
-    above_test_modules, braced_block_after, production_code, string_literals, strip_comments,
+    above_test_modules, braced_block_after, production_code, statements, string_literals, strip_comments,
 };
 use std::path::{Path, PathBuf};
 
@@ -368,6 +368,50 @@ pub fn do_string_literals_returns_every_literal() {
     }
 }
 
+/// A statement ends at a `;`, a `{` or a `}` that is not inside
+/// parentheses — and nowhere else.
+///
+/// The first case is the one that cost a mutant its life: two
+/// expression-bodied functions in a row, which a `split(';')` hands
+/// back as a single chunk carrying both of their tails.
+pub fn do_statements_split_at_the_right_places() {
+    // `renderer/pipeline.rs`, reduced: neither body ends in `;`, so
+    // the `unwrap()` and the `expect(` must not land in one piece.
+    let two_bodies = "fn a() -> D { adapter.request_device(&D { label: None }).await.unwrap() }\n\
+                      fn b() -> A { instance.request_adapter(&O { p: 1 }).await.expect(\"no adapter\") }";
+    let pieces = statements(two_bodies);
+    let device = pieces
+        .iter()
+        .find(|p| p.contains("request_device"))
+        .expect("the device call is a statement of its own");
+    assert!(
+        !device.contains("expect("),
+        "two expression-bodied fns merged into one statement: {device:?}"
+    );
+    assert!(
+        device.contains("&D { label: None }"),
+        "a struct literal argument was split off its call: {device:?}"
+    );
+
+    // A `;` inside parentheses is still a boundary only at depth 0,
+    // and a brace inside a literal is not a boundary at all.
+    let literal = r#"fn f() { log::error!("a; b {} c", x); tail(); }"#;
+    let pieces = statements(literal);
+    assert!(
+        pieces.contains(&r#"log::error!("a; b {} c", x)"#),
+        "a `;` or `{{` inside a string literal split the statement: {pieces:?}"
+    );
+    assert!(pieces.contains(&"tail()"));
+
+    // Ordinary statements, and no empty pieces from the run of
+    // `}` at the end.
+    assert_eq!(
+        statements("fn f() { let a = 1; let b = 2; }"),
+        vec!["fn f()", "let a = 1", "let b = 2"]
+    );
+    assert!(statements("   \n  ").is_empty());
+}
+
 /// The reader, end to end, against a file that is in the tree and
 /// stays there: this module's own source.
 ///
@@ -659,6 +703,11 @@ fn test_braced_block_after_matches_one_item() {
 #[test]
 fn test_string_literals_returns_every_literal() {
     do_string_literals_returns_every_literal();
+}
+
+#[test]
+fn test_statements_split_at_the_right_places() {
+    do_statements_split_at_the_right_places();
 }
 
 #[test]

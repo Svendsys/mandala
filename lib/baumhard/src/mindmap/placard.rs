@@ -72,14 +72,13 @@ const PLACARD_FONT_SIZE_PT: u32 = 24;
 /// (`document::custom::sync` documents the same mismatch from the
 /// other side).
 ///
-/// Naming any real family would be worse, not better. `format/fonts.md`
-/// opens with "Mandala bundles every font it ships with. There is no
-/// system-font fallback on either native or WASM", and there is no
+/// Naming any real family would be worse, not better. There is no
 /// bundled sans face to name — the Liberation, DejaVu and Noto
 /// families a native `FontSystem::new()` reports come from the host's
-/// fontconfig and are simply absent in the browser. Pinning one would
-/// make the placard render differently on the two targets
-/// (CODE_CONVENTIONS §4) on the one screen a user meets when
+/// fontconfig and are simply absent in the browser, which is the
+/// native-only carve-out `format/fonts.md` opens by describing.
+/// Pinning one would make the placard render differently on the two
+/// targets (CODE_CONVENTIONS §4) on the one screen a user meets when
 /// something has already gone wrong.
 const PLACARD_FONT_FAMILY: &str = "";
 
@@ -133,16 +132,51 @@ pub fn load_failure(source: &str, message: &str) -> MindMap {
 /// reader sees, and asserting on a `String` beats digging it back
 /// out of a `MindMap`.
 ///
+/// **The source appears once.** The line under the headline is
+/// dropped when the loader's message already names the map, which
+/// [`message_names_source`] decides — the commonest failure of all,
+/// a path that is not there, produces `Failed to read file <path>:
+/// …` and used to put that path on the placard twice, two lines
+/// apart. The message is never edited to make room; it is the source
+/// line that goes, because the message is the loader's own words and
+/// the line is this module's framing of them.
+///
 /// Cost: one [`wrap_to_display_width`] pass over each of `source`
 /// and `message`, plus the joined result.
 pub fn load_failure_text(source: &str, message: &str) -> String {
     let mut lines: Vec<String> = vec![PLACARD_HEADLINE.to_string(), String::new()];
-    lines.extend(wrap_to_display_width(source, PLACARD_COLUMNS));
-    lines.push(String::new());
+    if !message_names_source(source, message) {
+        lines.extend(wrap_to_display_width(source, PLACARD_COLUMNS));
+        lines.push(String::new());
+    }
     lines.extend(wrap_to_display_width(message, PLACARD_COLUMNS));
     lines.push(String::new());
     lines.push(PLACARD_FOOTER.to_string());
     lines.join("\n")
+}
+
+/// Whether `message` already names `source`, so a caller about to put
+/// the source in front of it should not.
+///
+/// One predicate for both surfaces on purpose. The canvas and the log
+/// line are the same two pieces of text joined two different ways,
+/// and the application's `startup_load::report_line` asks this before
+/// prepending exactly as [`load_failure_text`] does — so "the source
+/// appears once" is one decision rather than two that can drift.
+///
+/// The loader is why this is needed at all: exactly one of its
+/// failure modes names the file — `load_from_file`'s *read* error,
+/// which is what a mistyped path produces — and none of the others
+/// do. Asking the message is therefore more honest than classifying
+/// the error, and it stays right if a second message ever grows a
+/// path.
+///
+/// An empty `source` is never "named": `"".contains("")` is true, and
+/// a placard built from a blank source must still say what it has.
+///
+/// Cost: one substring search.
+pub fn message_names_source(source: &str, message: &str) -> bool {
+    !source.is_empty() && message.contains(source)
 }
 
 /// The placard's single node, sized to its own text and styled to
@@ -237,13 +271,38 @@ mod tests {
     /// The path the user asked for is on the placard too — "this map
     /// did not load" is not actionable when three maps are open in
     /// three windows.
+    ///
+    /// **Once**, whichever way the load failed. The read error a
+    /// mistyped path produces already names the file, and it is the
+    /// likeliest failure of all; a placard that also printed the
+    /// source line above it read the path out twice, two lines apart.
+    /// Both shapes are checked, so the fix for one cannot silently
+    /// drop the other — a parse error names nothing, and dropping the
+    /// source line for *it* would leave a placard that does not say
+    /// which map died.
     #[test]
     fn test_placard_names_the_source_that_failed() {
-        let text = load_failure_text(SOURCE, MESSAGE);
-        let flattened = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(flattened.contains(SOURCE), "source missing from:\n{text}");
-        assert!(text.starts_with(PLACARD_HEADLINE));
-        assert!(text.ends_with(PLACARD_FOOTER));
+        for (shape, message) in [
+            ("parse", MESSAGE),
+            (
+                "read",
+                concat!(
+                    "Failed to read file /home/user/maps/broken.mindmap.json: ",
+                    "No such file or directory (os error 2)"
+                ),
+            ),
+        ] {
+            let text = load_failure_text(SOURCE, message);
+            let flattened = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert_eq!(
+                flattened.matches(SOURCE).count(),
+                1,
+                "the {shape} failure names the source {} time(s):\n{text}",
+                flattened.matches(SOURCE).count()
+            );
+            assert!(text.starts_with(PLACARD_HEADLINE));
+            assert!(text.ends_with(PLACARD_FOOTER));
+        }
     }
 
     /// No line of the placard runs past its column, except where a
@@ -322,10 +381,10 @@ mod tests {
 
     /// **The placard's font pin is one the browser can honor too.**
     ///
-    /// `format/fonts.md`: "Mandala bundles every font it ships with.
-    /// There is no system-font fallback on either native or WASM."
-    /// So a family pin is legitimate only when the face is compiled
-    /// in — and the empty string, which clears the pin, always is.
+    /// `format/fonts.md`: "the compiled-in set is the *portable*
+    /// set, and anything outside it is a native-only accident." So a
+    /// family pin is legitimate only when the face is compiled in —
+    /// and the empty string, which clears the pin, always is.
     /// Anything else is a per-render `warn!` and a monospace
     /// fallback, on the one screen a user reaches after something
     /// has already gone wrong.

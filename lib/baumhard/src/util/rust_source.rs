@@ -72,13 +72,14 @@
 //! I/O on a cold test path, and a benchmark of it would measure the
 //! page cache — and none for the tree-wide sweep in
 //! `util::tests::rust_source_tests`, which is several hundred of
-//! them. The four pure scanners do carry bench entries
+//! them. The five pure scanners do carry bench entries
 //! (`lib/baumhard/CONVENTIONS.md` §B7):
 //! [`strip_comments`](crate::util::rust_source::strip_comments),
 //! [`above_test_modules`](crate::util::rust_source::above_test_modules),
-//! [`braced_block_after`](crate::util::rust_source::braced_block_after)
+//! [`braced_block_after`](crate::util::rust_source::braced_block_after),
+//! [`string_literals`](crate::util::rust_source::string_literals)
 //! and
-//! [`string_literals`](crate::util::rust_source::string_literals).
+//! [`statements`](crate::util::rust_source::statements).
 
 use crate::util::doc_fixtures::repo_path;
 
@@ -413,6 +414,79 @@ fn opens_an_inline_module(after: &str) -> bool {
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(named.len());
     named[end..].trim_start().starts_with('{')
+}
+
+/// `code` split into statements: the pieces between the `;`, `{` and
+/// `}` that sit outside any `(…)` or `[…]`, each trimmed, empties
+/// dropped.
+///
+/// The unit a caller wants when the question is "does *this* call
+/// carry an `.expect(`" — and getting it wrong is not cosmetic. A
+/// split on `;` alone merges every expression-bodied `fn` in a file
+/// into one chunk with its neighbors, because such a function's body
+/// ends in `}` and not `;`. `renderer/pipeline.rs` has two of them
+/// side by side, so
+///
+/// ```text
+/// .await.unwrap()          // in get_device
+/// .await.expect("…")       // in get_adapter
+/// ```
+///
+/// arrived as a single "statement" that contained an `.expect(`, and
+/// a pin asking whether every call of `request_device` says why it
+/// died answered yes about `request_adapter`'s message.
+///
+/// Braces *inside* parentheses are not boundaries, which is what
+/// keeps a struct literal argument —
+/// `request_device(&DeviceDescriptor { label: None, … })` — attached
+/// to the `.expect(` that follows it. String, byte-string,
+/// raw-string and character literals are skipped, so a `;` or `}` in
+/// a message splits nothing.
+///
+/// Pass comment-free text: [`production_code`] or [`strip_comments`].
+///
+/// Cost: one pass over `code`, and one `Vec` of borrowed slices.
+pub fn statements(code: &str) -> Vec<&str> {
+    let bytes = code.as_bytes();
+    let mut pieces = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < code.len() {
+        if let Some(next) = raw_string_end(code, i) {
+            i = next;
+            continue;
+        }
+        match bytes[i] {
+            b'"' => {
+                i = quoted_end(code, i, '"');
+                continue;
+            }
+            b'\'' => {
+                if let Some(next) = char_literal_end(code, i) {
+                    i = next;
+                    continue;
+                }
+            }
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b';' | b'{' | b'}' if depth == 0 => {
+                let piece = code[start..i].trim();
+                if !piece.is_empty() {
+                    pieces.push(piece);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+        let ch = code[i..].chars().next().expect("in-bounds by the loop guard");
+        i += ch.len_utf8();
+    }
+    let tail = code[start..].trim();
+    if !tail.is_empty() {
+        pieces.push(tail);
+    }
+    pieces
 }
 
 /// Replace every Rust comment in `src` with a single space, leaving
