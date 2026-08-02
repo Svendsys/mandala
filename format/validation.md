@@ -203,15 +203,27 @@ category; the loader refuses them outright.
 | Node extent | finite, positive, ≤ `1_000_000` per axis |
 | Positions, section offsets, Bezier control points | finite, `|v|` ≤ `1e9` |
 | Text runs | sorted, non-overlapping, non-empty, `end` ≤ the section's grapheme count |
-| Connection body / cap glyphs | ≤ 16 grapheme clusters (each is re-emitted per sampled point) |
+| Connection body / cap glyphs | ≤ 16 grapheme clusters **and** ≤ 512 bytes (each is re-emitted per sampled point, and one cluster can carry unlimited combining marks — the cluster count keeps it a motif, the byte count keeps `bytes × samples` finite) |
 | Animation envelope — `duration_ms`, `delay_ms` | ≤ `60_000` ms each |
 | Zoom windows | finite, non-negative, not inverted |
 | Whole file | ≤ 256 MiB |
 
 The constants live in `lib/baumhard/src/mindmap/model/validate.rs`
-and `lib/baumhard/src/font/fonts.rs`, and the loader, the document
-setters, and `verify` all read the same ones — a value the editor can
-write is by construction a value the loader accepts.
+and `lib/baumhard/src/font/fonts.rs` (with `MAX_NODE_AXIS` in
+`model/node.rs` and the font window re-exported from `font/fonts.rs`),
+and the loader, the document setters, and `verify` all read the same
+ones.
+
+The setters clamp rather than pass through, so a value the editor
+writes is a value the loader accepts. That is a property maintained
+by hand at each setter, not one the types enforce: the console
+parsers are deliberately permissive — `parse_finite_pt` takes any
+positive finite `f32`, the `spacing` verb any finite one — so a new
+bounded field is a lockout waiting to happen until its setter is
+clamped too. `border padding=` and `spacing` were exactly that, and
+`test_extreme_editor_writes_still_reload` is where the property is
+pinned: it drives each setter past its bound and round-trips through
+the real save and the real strict load.
 
 ## Running verify in CI
 

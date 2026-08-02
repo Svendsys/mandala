@@ -549,3 +549,77 @@ fn test_border_side_fill_is_capped_in_both_units() {
     // An ordinary rail is untouched by any of it.
     assert_eq!(crate::mindmap::border::fill_copies(100.0, 10.0, 1, 1), 10);
 }
+
+/// **The rail cycles the whole pattern, so the byte ceiling has to
+/// price the whole pattern.** `fill_copies` is correct and its unit
+/// test above passes it correct arguments; the defect this pins was
+/// at the *call site*, which measured only the pattern's first
+/// grapheme. A rail whose first cluster is one byte and whose second
+/// is a thousand then set its ceiling from the one byte and went on
+/// to emit the thousand, once per row — a 3 KB map produced a
+/// hundred-megabyte rail, and the factor scales with the authored
+/// cluster.
+///
+/// This drives `border_run_specs`, not `fill_copies`, because that
+/// is where the arguments are chosen and where the bug lived.
+#[cfg(test)]
+mod side_rail_byte_ceiling_tests {
+    use crate::mindmap::border::{border_run_specs, BorderStyle, MAX_BORDER_SIDE_BYTES};
+    use crate::mindmap::border_pattern::SidePattern;
+
+    #[test]
+    fn test_multi_cluster_side_rail_respects_the_byte_ceiling() {
+        let mut style = BorderStyle::default_with_color("#ffffff");
+        // Two clusters: a one-byte "A", then a base plus 1,000
+        // combining acutes. Reading only the first gives 1 byte per
+        // row; the rail actually averages ~1,000.
+        let fat = format!("A{}", "\u{0301}".repeat(1_000));
+        style.side_patterns.left = SidePattern::AtomicRepeat {
+            cluster: vec!["A".to_string(), fat],
+        };
+
+        // A tall node, so the row count is bounded by a ceiling
+        // rather than by the available space.
+        let specs = border_run_specs(&style, (0.0, 0.0), (100.0, 1_000_000.0));
+        let left = specs
+            .iter()
+            .find(|s| s.channel == 3)
+            .expect("channel 3 is the left rail");
+
+        assert!(
+            left.text.len() <= MAX_BORDER_SIDE_BYTES,
+            "left rail is {} bytes, over the {MAX_BORDER_SIDE_BYTES} ceiling",
+            left.text.len()
+        );
+    }
+
+    /// The mean is what the rail actually spends per row, and it is
+    /// read from every cluster rather than the first.
+    #[test]
+    fn test_bytes_per_row_reads_the_whole_pattern() {
+        // "A" (1) + "BB" (2) + "CCC" (3) = 6 bytes over 3 clusters.
+        let pattern = SidePattern::AtomicRepeat {
+            cluster: vec!["A".to_string(), "BB".to_string(), "CCC".to_string()],
+        };
+        assert_eq!(
+            crate::mindmap::border::side_pattern_bytes_per_row(&pattern),
+            2,
+            "6 bytes over 3 clusters is 2 per row — not the first cluster's 1"
+        );
+
+        // Rounds up, so a ceiling never under-charges a row.
+        let uneven = SidePattern::AtomicRepeat {
+            cluster: vec!["A".to_string(), "BBBB".to_string()],
+        };
+        assert_eq!(
+            crate::mindmap::border::side_pattern_bytes_per_row(&uneven),
+            3,
+            "5 bytes over 2 clusters rounds up to 3"
+        );
+
+        // An empty pattern charges one byte rather than dividing by
+        // zero or reporting a free row.
+        let empty = SidePattern::AtomicRepeat { cluster: vec![] };
+        assert_eq!(crate::mindmap::border::side_pattern_bytes_per_row(&empty), 1);
+    }
+}

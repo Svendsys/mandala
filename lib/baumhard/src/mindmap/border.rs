@@ -592,8 +592,24 @@ pub fn border_run_specs_with(
     // author's pattern spells — a ZWJ sequence is one cluster and
     // dozens of bytes — so the byte ceiling gets the real number
     // rather than the row count.
-    let left_row_count = fill_copies(side_avail, left_line_h, 1, left_first_glyph.len().max(1));
-    let right_row_count = fill_copies(side_avail, right_line_h, 1, right_first_glyph.len().max(1));
+    //
+    // That number is the pattern's per-row mean, not its first
+    // grapheme: the rail cycles through the whole cluster vector
+    // (`cluster[i % unit]`), so a pattern whose first cluster is one
+    // byte and whose second is a thousand would otherwise set the
+    // ceiling from the byte and then emit the thousand.
+    let left_row_count = fill_copies(
+        side_avail,
+        left_line_h,
+        1,
+        side_pattern_bytes_per_row(&border_style.side_patterns.left),
+    );
+    let right_row_count = fill_copies(
+        side_avail,
+        right_line_h,
+        1,
+        side_pattern_bytes_per_row(&border_style.side_patterns.right),
+    );
     let left_text = border_style.left_column_text(left_row_count.max(1));
     let right_text = border_style.right_column_text(right_row_count.max(1));
     let left_v_height = left_row_count as f32 * left_line_h;
@@ -733,6 +749,39 @@ fn side_pattern_first_grapheme(pattern: &SidePattern) -> String {
         SidePattern::AtomicRepeat { cluster } => cluster.first().cloned().unwrap_or_default(),
         SidePattern::PrefixFillSuffix { fill, .. } => fill.first().cloned().unwrap_or_default(),
     }
+}
+
+/// Bytes a vertical rail spends per **row**, rounded up.
+///
+/// A rail emits one grapheme cluster per row, but not the *same*
+/// one: `SidePattern::render(rows)` writes `rows / unit` copies of
+/// the whole cluster vector, so row `i` carries `cluster[i % unit]`.
+/// Measuring the first grapheme instead — which is what the byte
+/// ceiling used to be handed — reads a pattern like `"A" + 1000
+/// combining marks` as one byte per row and lets the ceiling pass a
+/// hundred megabytes.
+///
+/// The mean is exact rather than approximate here, because `render`
+/// only ever emits whole copies: `rows / unit` copies of
+/// `total_bytes` is `rows × total_bytes / unit`. Rounded up so the
+/// ceiling never under-charges a row.
+///
+/// The horizontal fill does not need this — `fit_pattern_to_width`
+/// already sums every cluster in the pattern.
+///
+/// Cost: one pass over the pattern's clusters, no allocation.
+pub(crate) fn side_pattern_bytes_per_row(pattern: &SidePattern) -> usize {
+    use crate::mindmap::border_pattern::SidePattern;
+    let clusters: &[String] = match pattern {
+        SidePattern::AtomicRepeat { cluster } => cluster.as_slice(),
+        SidePattern::PrefixFillSuffix { fill, .. } => fill.as_slice(),
+    };
+    let unit = clusters.len();
+    if unit == 0 {
+        return 1;
+    }
+    let total: usize = clusters.iter().map(|g| g.len()).sum();
+    total.div_ceil(unit).max(1)
 }
 
 /// Hard ceiling on the grapheme count one border side may emit.

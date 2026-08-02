@@ -112,7 +112,11 @@ fn test_clone_preserves_depth_first_pre_order() {
         "destination slots must be allocated in the source's pre-order"
     );
 
-    let by_walk: Vec<usize> = dst_root.descendants(&dst).skip(1).map(|id| *dst[id].get()).collect();
+    let by_walk: Vec<usize> = dst_root
+        .descendants(&dst)
+        .skip(1)
+        .map(|id| *dst[id].get())
+        .collect();
     assert_eq!(by_walk, expected, "and the cloned structure must match");
 }
 

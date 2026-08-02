@@ -2464,6 +2464,66 @@ mod tests {
         assert_eq!(map.edges.len(), 1);
     }
 
+    /// **The cluster ceiling does not bound the allocation; the byte
+    /// ceiling does.** A UAX #29 extended grapheme cluster has no
+    /// length bound — a base character plus any number of combining
+    /// marks is exactly *one* cluster — so a body glyph can be
+    /// arbitrarily large and still satisfy
+    /// `MAX_CONNECTION_GLYPH_GRAPHEMES`. Since the body is cloned
+    /// once per sampled point, that turned a bounded sample count
+    /// back into an unbounded allocation: at `MAX_PATH_SAMPLES` a
+    /// one-megabyte cluster asks for gigabytes during the first
+    /// scene build after open.
+    ///
+    /// The cluster count is deliberately kept alongside it rather
+    /// than replaced. They bound different things — clusters make
+    /// the field a motif rather than a paragraph, bytes make the
+    /// product finite — so this asserts the byte rejection on a
+    /// glyph the cluster check *passes*.
+    #[test]
+    fn test_single_cluster_overlong_connection_glyph_is_rejected() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        // One base character plus 4,000 combining acute accents:
+        // 1 grapheme cluster, 8,001 bytes.
+        let fat_cluster = format!("a{}", "\u{0301}".repeat(4_000));
+        assert_eq!(
+            crate::util::grapheme_chad::count_grapheme_clusters(&fat_cluster),
+            1,
+            "the fixture must pass the cluster ceiling, or it tests the wrong guard"
+        );
+        assert!(
+            fat_cluster.len() > validate::MAX_CONNECTION_GLYPH_BYTES,
+            "the fixture must exceed the byte ceiling"
+        );
+
+        let edge = edge_json_with(&format!(r#", "glyph_connection": {{"body": "{fat_cluster}"}}"#));
+        let err = load_from_str(&map_json(&nodes, &edge))
+            .expect_err("a single-cluster megabyte body must be rejected");
+        assert!(err.contains("edge[0]"), "must name the edge: {err}");
+        assert!(err.contains("body"), "must name the field: {err}");
+        assert!(
+            err.contains("bytes"),
+            "must reject on the byte ceiling, not the cluster one: {err}"
+        );
+        assert!(
+            err.contains("combining"),
+            "must say why a cluster count did not catch this: {err}"
+        );
+
+        // The same shape on a cap glyph, so the loop covers every
+        // field rather than only the one the exploit used.
+        let cap = edge_json_with(&format!(r#", "glyph_connection": {{"cap_end": "{fat_cluster}"}}"#));
+        let err = load_from_str(&map_json(&nodes, &cap)).expect_err("cap glyphs carry the same ceiling");
+        assert!(err.contains("cap_end"), "must name the field: {err}");
+
+        // A single emoji ZWJ sequence is one cluster and many bytes,
+        // and must still load — the ceiling is on absurdity, not on
+        // legitimate multi-byte glyphs.
+        let family = edge_json_with(r#", "glyph_connection": {"body": "👨‍👩‍👧‍👦"}"#);
+        let map = load_from_str(&map_json(&nodes, &family)).expect("an emoji ZWJ motif is ordinary");
+        assert_eq!(map.edges.len(), 1);
+    }
+
     /// **Both doors carry the size ceiling, and that is the point.**
     /// The first version of this cap stat-ed the file and nothing
     /// else, which left the browser — where the map arrives as a
@@ -2483,15 +2543,43 @@ mod tests {
         );
 
         // The inspection door inherits it — it still has to read the
-        // bytes, so it carries the same commitment.
-        assert!(parse_for_inspection(&oversized).is_err());
+        // bytes, so it carries the same commitment. Pinned on the
+        // cap's own wording rather than on `is_err()`: the fixture is
+        // 256 MiB of spaces, which serde rejects as "EOF while
+        // parsing a value" whether or not the cap exists, so a bare
+        // `is_err()` here certifies nothing.
+        let err =
+            parse_for_inspection(&oversized).expect_err("the inspection door carries the cap too");
+        assert!(
+            err.contains("refusing to load it"),
+            "must refuse on the cap, not on a parse error: {err}"
+        );
 
         // The filesystem door, checked by `stat` before the read.
+        //
+        // Asserted on the text only `read_capped` produces. Both caps
+        // say "over the", so matching that alone passes with the stat
+        // check deleted — `load_from_file` would fall through to
+        // `load_from_str` and be caught in memory, which is precisely
+        // the 256 MiB allocation the stat exists to avoid. "byte map
+        // limit" and the path are what distinguish the door that
+        // refused.
         let dir = TempDir::new("oversize-cap");
         let path = dir.join("huge.mindmap.json");
         std::fs::write(&path, &oversized).expect("seed the oversized file");
         let err = load_from_file(&path).expect_err("an oversized file must be refused");
-        assert!(err.contains("over the"), "must name the limit: {err}");
+        assert!(
+            err.contains("byte map limit"),
+            "must be refused by the stat check, before the read commits: {err}"
+        );
+        assert!(
+            err.contains("refusing to read it"),
+            "must be refused before the read, not after: {err}"
+        );
+        assert!(
+            err.contains("huge.mindmap.json"),
+            "must name the file it refused: {err}"
+        );
 
         // And an ordinary map is untouched by any of it.
         load_from_str(&map_json_with_nodes(&node_json("0", "null"))).expect("a normal map still loads");

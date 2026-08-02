@@ -3393,6 +3393,64 @@ fn test_measured_prefix_bounds_layout_but_not_the_line_count() {
     assert_eq!(measured_prefix("solo", MEASURED_LINE_BUDGET), ("solo", 1));
 }
 
+/// **The budget bounds the work; it must not bias the answer.**
+///
+/// With an unbounded measuring width nothing wraps, so a block's
+/// width is its widest line. Measuring the first `MEASURED_LINE_BUDGET`
+/// lines therefore answered a different question than the one asked:
+/// a section of 512 short lines followed by one long line was sized
+/// as though the long line did not exist, and the node clipped it —
+/// the exact failure `grow_node_sizes_to_fit_text` exists to prevent.
+///
+/// It was excused on the grounds that a node past the budget is
+/// clamped at `MAX_NODE_AXIS` anyway. At the default 14 pt, 513
+/// lines is 8,618 pt against a 1,000,000 ceiling — 0.86% of it — so
+/// the clamp does not cover for this until roughly 1,624 pt, and the
+/// whole 513..~59,500-line range shipped an under-measured width.
+#[test]
+fn test_widest_lines_picks_by_width_not_by_position() {
+    use crate::application::document::{widest_lines, MEASURED_LINE_BUDGET};
+
+    // The shape that broke: the widest line sits past the budget.
+    let long = "W".repeat(300);
+    let text = format!("{}{}", "x\n".repeat(MEASURED_LINE_BUDGET), long);
+    let picked = widest_lines(&text, MEASURED_LINE_BUDGET);
+    assert!(
+        picked.lines().any(|l| l == long),
+        "the widest line must be measured even when it falls past the budget"
+    );
+    assert_eq!(
+        picked.lines().count(),
+        MEASURED_LINE_BUDGET,
+        "the sample must still respect the budget"
+    );
+
+    // Selection is by width, and ties keep source order.
+    let ranked = widest_lines("a\nbbbb\ncc\nddd", 2);
+    assert_eq!(ranked, "bbbb\nddd", "the two widest, in source order");
+
+    // Ranking is display width, not byte length — chosen so the two
+    // disagree. "日本語" is 9 bytes but 6 columns; "abcdefgh" is 8
+    // bytes and 8 columns. Byte length would pick the CJK line;
+    // column width picks the ASCII one, and column width is what
+    // decides how wide the node has to be.
+    let by_columns = widest_lines("日本語\nabcdefgh", 1);
+    assert_eq!(by_columns, "abcdefgh", "ranking is display width, not bytes");
+
+    // And the double-width half of that: three CJK glyphs are 6
+    // columns and must beat a 4-column ASCII line despite both being
+    // short.
+    let wide_script = widest_lines("日本語\nabcd", 1);
+    assert_eq!(wide_script, "日本語", "a CJK glyph counts as two columns");
+
+    // Under budget nothing is dropped.
+    assert_eq!(widest_lines("one\ntwo", MEASURED_LINE_BUDGET), "one\ntwo");
+
+    // Degenerate inputs stay total.
+    assert_eq!(widest_lines("", MEASURED_LINE_BUDGET), "");
+    assert_eq!(widest_lines("solo", 0), "");
+}
+
 /// **A file the editor writes must be a file the editor can reopen.**
 ///
 /// The loader now rejects rather than repairs, which makes every
@@ -3410,57 +3468,117 @@ fn test_extreme_editor_writes_still_reload() {
     use crate::application::document::{BorderConfigEdits, OptionEdit};
     use baumhard::mindmap::loader::{load_from_file, save_to_file};
 
-    let mut doc = load_test_doc();
-    let node_id = doc.mindmap.root_nodes()[0].id.clone();
+    let dir = baumhard::util::test_temp::TempDir::new("editor-write-reload");
 
-    // A decorative hairline and an absurd ceiling, from the two
-    // ends the console will happily parse.
-    for requested in [0.001_f32, 5000.0] {
-        let edits = BorderConfigEdits {
-            font_size_pt: OptionEdit::Set(requested),
-            visible: Some(true),
-            ..Default::default()
-        };
-        doc.set_node_border_config(&node_id, edits);
+    // Every case gets its own document and its own round trip. An
+    // earlier version drove several values into *one* document
+    // before saving, which meant each was overwritten by the next
+    // and only the last one was ever tested — the low-end font case
+    // never reached the loader at all.
+    let round_trip = |label: &str, edit: &dyn Fn(&mut crate::application::document::MindMapDocument)| {
+        let mut doc = load_test_doc();
+        edit(&mut doc);
+        let path = dir.join(&format!("{label}.mindmap.json"));
+        save_to_file(&path, &doc.mindmap).expect("save must succeed");
+        load_from_file(&path).unwrap_or_else(|e| {
+            panic!("{label}: the editor wrote a map its own loader refuses — the lockout case: {e}")
+        })
+    };
+
+    let node_id = load_test_doc().mindmap.root_nodes()[0].id.clone();
+    let edge_ref = |doc: &crate::application::document::MindMapDocument| {
+        doc.mindmap
+            .edges
+            .first()
+            .map(|e| crate::application::document::EdgeRef {
+                from_id: e.from_id.clone(),
+                to_id: e.to_id.clone(),
+                edge_type: e.edge_type.clone(),
+            })
+            .expect("fixture has edges")
+    };
+    let border_of = |map: &baumhard::mindmap::model::MindMap, id: &str| {
+        map.nodes[id]
+            .style
+            .border
+            .as_ref()
+            .expect("border override was authored")
+            .clone()
+    };
+    let spacing_of = |map: &baumhard::mindmap::model::MindMap| {
+        map.edges[0]
+            .glyph_connection
+            .as_ref()
+            .map(|c| c.spacing)
+            .expect("spacing override was authored")
+    };
+
+    // A decorative hairline and an absurd ceiling, from the two ends
+    // the console will happily parse — each round-tripped alone.
+    for (label, requested) in [("hairline", 0.001_f32), ("giant", 5000.0)] {
+        let id = node_id.clone();
+        let reloaded = round_trip(label, &move |doc| {
+            doc.set_node_border_config(
+                &id,
+                BorderConfigEdits {
+                    font_size_pt: OptionEdit::Set(requested),
+                    visible: Some(true),
+                    ..Default::default()
+                },
+            );
+        });
+        let border = border_of(&reloaded, &node_id);
+        assert!(
+            border.font_size_pt >= baumhard::font::fonts::MIN_FONT_SIZE_PT
+                && border.font_size_pt <= baumhard::font::fonts::MAX_FONT_SIZE_PT,
+            "{label}: the setter must clamp into the domain the loader accepts, got {}",
+            border.font_size_pt
+        );
     }
+
+    let max_axis = baumhard::mindmap::model::MAX_NODE_AXIS as f32;
+
+    // The magnitude bounds, which the first pass missed: the loader
+    // caps both `style.border.padding` and
+    // `glyph_connection.spacing` at `MAX_NODE_AXIS`, while
+    // `border padding=` and `spacing` accept any finite float. Both
+    // reported success and wrote a map that would not reopen.
+    let id = node_id.clone();
+    let reloaded = round_trip("padding", &move |doc| {
+        doc.set_node_border_config(
+            &id,
+            BorderConfigEdits {
+                padding: OptionEdit::Set(1.0e30),
+                visible: Some(true),
+                ..Default::default()
+            },
+        );
+    });
+    let padding = border_of(&reloaded, &node_id).padding;
+    assert!(
+        padding.abs() <= max_axis,
+        "padding must be clamped into the loader's bound, got {padding}"
+    );
+
+    let reloaded = round_trip("spacing-huge", &|doc| {
+        let r = edge_ref(doc);
+        doc.set_edge_spacing(&r, 1.0e30);
+    });
+    let spacing = spacing_of(&reloaded);
+    assert!(
+        spacing.abs() <= max_axis,
+        "spacing must be clamped into the loader's bound, got {spacing}"
+    );
 
     // A negative gap is a legitimate tightening, so it must survive
     // the round trip unchanged rather than be clamped away.
-    let edge_ref = doc
-        .mindmap
-        .edges
-        .first()
-        .map(|e| crate::application::document::EdgeRef {
-            from_id: e.from_id.clone(),
-            to_id: e.to_id.clone(),
-            edge_type: e.edge_type.clone(),
-        })
-        .expect("fixture has edges");
-    doc.set_edge_spacing(&edge_ref, -2.0);
-
-    let dir = baumhard::util::test_temp::TempDir::new("editor-write-reload");
-    let path = dir.join("written.mindmap.json");
-    save_to_file(&path, &doc.mindmap).expect("save must succeed");
-
-    let reloaded = load_from_file(&path).unwrap_or_else(|e| {
-        panic!("the editor wrote a map its own loader refuses — this is the lockout case: {e}")
+    let reloaded = round_trip("spacing-tight", &|doc| {
+        let r = edge_ref(doc);
+        doc.set_edge_spacing(&r, -2.0);
     });
-
-    let border = reloaded.nodes[&node_id]
-        .style
-        .border
-        .as_ref()
-        .expect("border override was authored");
-    assert!(
-        border.font_size_pt >= baumhard::font::fonts::MIN_FONT_SIZE_PT
-            && border.font_size_pt <= baumhard::font::fonts::MAX_FONT_SIZE_PT,
-        "the setter must clamp into the domain the loader accepts, got {}",
-        border.font_size_pt
+    assert_eq!(
+        spacing_of(&reloaded),
+        -2.0,
+        "a negative gap is authorable and must survive unclamped"
     );
-    let spacing = reloaded.edges[0]
-        .glyph_connection
-        .as_ref()
-        .map(|c| c.spacing)
-        .expect("spacing override was authored");
-    assert_eq!(spacing, -2.0, "a negative gap is authorable and must survive");
 }

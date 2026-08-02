@@ -27,7 +27,7 @@ use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;
 use baumhard::mindmap::model::GlyphBorderConfig;
 
-use super::option_edit::{apply_option_edit, apply_string_set, apply_value_set, OptionEdit};
+use super::option_edit::{apply_option_edit, apply_string_set, OptionEdit};
 use super::{MindMapDocument, NodeEditTail, UndoAction};
 
 /// Bundle of optional edits applied atomically by
@@ -882,7 +882,23 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
         }
     }
     changed |= apply_option_edit(&edits.color, &mut cfg.color, |v| v.clone());
-    changed |= apply_value_set(&edits.padding, &mut cfg.padding);
+    // Clamped for the same reason as `font_size_pt` two lines above,
+    // and it is the same hole: the loader bounds `padding` at
+    // `MAX_NODE_AXIS`, while the console's `border padding=` parses
+    // through `parse_finite_pt`, which accepts any positive finite
+    // f32. `border padding=1e30` reported success and wrote a map
+    // that would not reopen.
+    if let crate::application::document::OptionEdit::Set(requested) = &edits.padding {
+        let clamped = baumhard::mindmap::model::validate::clamp_to_bound(
+            *requested,
+            baumhard::mindmap::model::MAX_NODE_AXIS,
+            cfg.padding,
+        );
+        if cfg.padding != clamped {
+            cfg.padding = clamped;
+            changed = true;
+        }
+    }
     changed |= apply_option_edit(&edits.color_palette, &mut cfg.color_palette, |v| v.clone());
     changed |= apply_option_edit(&edits.color_palette_field, &mut cfg.color_palette_field, |v| {
         v.as_str().to_string()

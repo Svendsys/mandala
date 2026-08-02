@@ -344,6 +344,33 @@ fn opt_font_size(prefix: &str, name: &str, value: Option<f32>) -> Option<String>
     font_size(prefix, name, value?)
 }
 
+/// Bring `value` inside the `±limit` magnitude bound that the
+/// private `bounded` check enforces, so a setter cannot author a
+/// value the loader would then refuse.
+///
+/// The loader rejects rather than repairs, which makes every writer
+/// that can exceed the domain a lockout candidate: the user edits,
+/// saves, and their own map stops opening — a file destroyed by the
+/// hardening meant to protect it. Screening at the door is not
+/// enough on its own, because console verbs, macros and IPC write
+/// these fields without passing the loader at all; the answer is the
+/// same one the font metric takes in
+/// [`clamp_font_metric`](crate::font::fonts::clamp_font_metric),
+/// which is to clamp where the value lands.
+///
+/// A non-finite `value` falls back to `fallback` rather than to a
+/// bound: `NaN` has no nearest edge, and the caller's previous value
+/// is a better answer than an arbitrary one.
+///
+/// Cost: O(1), no allocation.
+pub fn clamp_to_bound(value: f32, limit: f64, fallback: f32) -> f32 {
+    if !value.is_finite() {
+        return fallback;
+    }
+    let limit = limit as f32;
+    value.clamp(-limit, limit)
+}
+
 /// `Some(message)` unless `value` is finite and within `±limit`.
 fn bounded(prefix: &str, name: &str, value: f64, limit: f64) -> Option<String> {
     if !value.is_finite() {
@@ -420,7 +447,32 @@ pub fn border_config_violations(label: &str, border: &GlyphBorderConfig) -> Vec<
 /// has a ceiling, but the product of the two is what actually gets
 /// allocated, so an unbounded string multiplies a bounded count
 /// into an unbounded cost.
+///
+/// This ceiling alone does not bound that product — see
+/// [`MAX_CONNECTION_GLYPH_BYTES`], which does.
 pub const MAX_CONNECTION_GLYPH_GRAPHEMES: usize = 16;
+
+/// Ceiling on the **byte** length of a connection's body or cap
+/// glyph.
+///
+/// [`MAX_CONNECTION_GLYPH_GRAPHEMES`] counts clusters, and a UAX #29
+/// extended grapheme cluster has no length bound: a base character
+/// followed by any number of combining marks is exactly one cluster.
+/// So a megabyte-long `body` passes a cluster cap with `length == 1`
+/// while costing a megabyte per sampled point — the cluster ceiling
+/// measures the motif, but the allocation is charged in bytes.
+///
+/// Both ceilings are enforced, because they bound different things:
+/// the cluster count is what makes the field a motif rather than a
+/// paragraph, and this is what makes the product finite. At
+/// [`MAX_PATH_SAMPLES`](crate::mindmap::connection::MAX_PATH_SAMPLES)
+/// (10,000) the worst case is 10,000 × 512 B ≈ 5 MB of text — large,
+/// bounded, and reached only by a file built to reach it.
+///
+/// 512 B across 16 clusters leaves 32 B per cluster, which clears
+/// the longest emoji ZWJ sequences in common use with room to
+/// spare; a legitimate motif is nowhere near it.
+pub const MAX_CONNECTION_GLYPH_BYTES: usize = 512;
 
 /// Every numeric-domain violation on a [`GlyphConnectionConfig`].
 pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -> Vec<String> {
@@ -437,6 +489,20 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
                 "{}.{field} is {length} grapheme clusters, over the \
                  {MAX_CONNECTION_GLYPH_GRAPHEMES} ceiling — this glyph is emitted once per \
                  sampled point along the path, so its length multiplies the sample count",
+                label
+            ));
+        }
+        // Checked separately from the cluster count, and not as a
+        // formality: one cluster can carry an unbounded number of
+        // combining marks, so the cluster ceiling above can pass a
+        // megabyte. This is the ceiling that makes
+        // `bytes × MAX_PATH_SAMPLES` finite.
+        let bytes = glyph.len();
+        if bytes > MAX_CONNECTION_GLYPH_BYTES {
+            out.push(format!(
+                "{}.{field} is {bytes} bytes, over the {MAX_CONNECTION_GLYPH_BYTES} byte \
+                 ceiling — a single grapheme cluster can carry any number of combining \
+                 marks, and this glyph is cloned once per sampled point along the path",
                 label
             ));
         }
