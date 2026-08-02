@@ -4,15 +4,19 @@
 //! and the dispatch funnel that ties them together. [`Application`]
 //! is the binary entry point's root; [`Application::run`]
 //! transfers control to the per-target run loop
-//! ([`run_native`] / `run_wasm`) which builds the appropriate
-//! `ApplicationHandler` and hands it to winit. The `run_wasm`
-//! module is `cfg(target_arch = "wasm32")`-gated, hence the
-//! plain code-span (rustdoc resolves intra-doc links against
-//! the active target's module tree).
+//! (`run_native` / `run_wasm`) which builds the appropriate
+//! `ApplicationHandler` and hands it to winit. Both are plain
+//! code-spans, not intra-doc links: each is `cfg`-gated to one
+//! target and rustdoc resolves links against the *active*
+//! target's module tree, so a link to either breaks the doc
+//! build for the other target.
 //!
 //! **Dispatch funnel.** Every user-driven action — keyboard,
 //! mouse-click, console verb, macro replay — flows through
-//! [`dispatch::dispatch_action`] (CODE_CONVENTIONS §3). Per-event
+//! `dispatch::dispatch_action` (CODE_CONVENTIONS §3) — a plain
+//! code-span for the same reason: it is re-exported from the
+//! native-gated `dispatch::native`, so the link does not resolve
+//! on `wasm32-unknown-unknown`. Per-event
 //! handlers (in `event_keyboard`, `event_mouse_click`,
 //! `event_cursor_moved` on native; the per-arm methods of
 //! `run_wasm::WasmApp` on WASM) recognize an input gesture,
@@ -238,6 +242,125 @@ fn is_double_click(
         return false;
     }
     &prev.hit == new_hit
+}
+
+/// Scroll delta as a signed line count, for the wheel-gesture
+/// lookup.
+///
+/// winit reports two shapes and they are not interchangeable: a
+/// notched wheel reports whole lines, a trackpad or a
+/// high-resolution wheel reports pixels. The `/ 50.0` divisor is the
+/// pixels-per-line convention this app has always used; it is here
+/// rather than at the two call sites so a change to it cannot land
+/// on one target only.
+///
+/// Only the sign is consulted by the gesture lookup today
+/// (`> 0.0` → `WheelUp`, otherwise `WheelDown`), but the magnitude is
+/// preserved: the console's scrollback accumulates fractional lines
+/// through it, and a future per-notch zoom step would want it too.
+fn wheel_lines(delta: crate::application::platform::input::MouseScrollDelta) -> f64 {
+    use crate::application::platform::input::MouseScrollDelta;
+    match delta {
+        MouseScrollDelta::LineDelta(_, y) => y as f64,
+        MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
+    }
+}
+
+/// The `MouseGesture` a scroll of `lines` names. Split from
+/// [`wheel_lines`] because the sign convention — zero and negative
+/// both scroll down — is a decision, not arithmetic, and both
+/// targets have to make the same one.
+fn wheel_gesture(lines: f64) -> crate::application::keybinds::MouseGesture {
+    if lines > 0.0 {
+        crate::application::keybinds::MouseGesture::WheelUp
+    } else {
+        crate::application::keybinds::MouseGesture::WheelDown
+    }
+}
+
+/// Is an inline editor already open on the thing this press landed
+/// on?
+///
+/// When it is, the press must **not** be promoted to a double-click:
+/// the double-click would re-open the editor, and re-opening re-seeds
+/// the buffer from the committed model value, silently discarding
+/// whatever the user had typed. The press instead falls through and
+/// the matching release is swallowed as a click-inside.
+///
+/// Three plain inputs so the guard is pinnable without an event loop
+/// (`TEST_CONVENTIONS §T9`):
+/// - `edit_node_id` — the node the multi-line text editor has open,
+///   `None` when it is closed.
+/// - `hit_node` — the node this press landed on, `None` for
+///   empty canvas and for non-node hits.
+/// - `single_line_match` — whether the single-line editor (edge
+///   label / portal caption) is open on *this* press's target. It is
+///   passed in rather than resolved here because that editor is
+///   native-only today; the browser passes `false`.
+///
+/// The two editor states are mutually exclusive by construction (the
+/// keyboard steal claims whichever opened first), so the `||` is
+/// belt-and-braces rather than a case that arises in practice — but
+/// a guard that only covered one of them would be a live bug the
+/// moment that stops holding.
+fn already_editing_same_target(
+    edit_node_id: Option<&str>,
+    hit_node: Option<&str>,
+    single_line_match: bool,
+) -> bool {
+    edit_node_id.is_some_and(|id| hit_node == Some(id)) || single_line_match
+}
+
+/// Warn once per latch that an input resolved to an Action the
+/// browser has no body for, so the gesture is a no-op. Returns
+/// whether this call is the one that emitted.
+///
+/// Every input class that consults the keybind table needs this. A
+/// user who binds a `NativeOnly` Action to a gesture gets *literally
+/// nothing* otherwise — no log, no chrome, no model change — which
+/// was rejected as a blocking review finding on the touch path
+/// (`Whole-PR review BLK-1`) and is no more acceptable on the
+/// double-click or the wheel now that both consult the table too.
+/// `warned` is a per-call-site latch so one input class going quiet
+/// cannot silence another; `remedy` names what the user can do about
+/// it and what unblocks parity.
+///
+/// A *sanctioned* carve-out — a residual the browser is documented as
+/// not finishing, like the edge-label single-line editor — is not
+/// this. Those log at `debug!` at their own call site: they are
+/// expected, and `warn!` survives into release (`CODE_CONVENTIONS
+/// §9`) where a per-double-click warning would be noise. The
+/// classification is
+/// [`dispatch::classify_unhandled_pointer_dispatch`], not the call
+/// site's guesswork.
+///
+/// **Cross-platform on purpose, though every caller is under
+/// `run_wasm/`.** Nothing in the body is browser-specific — an
+/// `AtomicBool`, three borrowed values and a `log::warn!` — and while
+/// it lived inside the `#![cfg(target_arch = "wasm32")]` module
+/// `cargo test` could not reach it, which is what §T9 forbids for
+/// platform-shared logic. The `bool` return is what makes the
+/// one-shot semantics assertable without a global log sink: this
+/// workspace has no log-capture test facility, and installing one
+/// would be a process-global mock that §T10 rules out. Callers may
+/// ignore it.
+pub(super) fn warn_unhandled_native_only_once(
+    warned: &std::sync::atomic::AtomicBool,
+    gesture: &str,
+    action: &crate::application::keybinds::Action,
+    remedy: &str,
+) -> bool {
+    if warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    log::warn!(
+        "run_wasm: input '{}' is bound to a NativeOnly action ({:?}) with no \
+         browser body — the gesture is a no-op. {}",
+        gesture,
+        action,
+        remedy,
+    );
+    true
 }
 
 /// Bag of "what was hit" that the click dispatch on both
