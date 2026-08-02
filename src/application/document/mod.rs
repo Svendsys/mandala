@@ -10,11 +10,12 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use log::{error, info};
+use log::info;
 
 use baumhard::mindmap::custom_mutation::CustomMutation;
 use baumhard::mindmap::loader;
 use baumhard::mindmap::model::{MindMap, MAX_NODE_AXIS};
+use baumhard::mindmap::placard;
 use baumhard::mindmap::tree_builder::{self, FrameOverrides, MindMapTree};
 
 use crate::application::source_tier::SourceTier;
@@ -438,26 +439,40 @@ impl MindMapDocument {
 
     /// Load a MindMap from a file path. Native-only — WASM builds
     /// must use `from_json_str` since the browser has no filesystem.
+    ///
+    /// **The error is returned, not reported.** Reporting belongs to
+    /// whichever surface the caller is: the console `open` verb
+    /// prints it in the overlay, and the startup path renders it on
+    /// the canvas via [`Self::load_failure_placard`]. A constructor
+    /// that both logged and returned the failure made every caller
+    /// choose between reporting it twice and suppressing it, and the
+    /// startup path did the former.
     pub fn load(path: &str) -> Result<Self, String> {
-        loader::load_from_file(Path::new(path))
-            .map(|map| Self::finalize(map, Some(path.to_string())))
-            .map_err(|e| {
-                let msg = format!("Failed to load mindmap '{}': {}", path, e);
-                error!("{}", msg);
-                msg
-            })
+        loader::load_from_file(Path::new(path)).map(|map| Self::finalize(map, Some(path.to_string())))
     }
 
     /// Construct a Document from an in-memory JSON string. `file_path`
     /// is the origin tag stored for save-back; pass the URL/path the
     /// JSON came from, or `None` for ad-hoc JSON.
+    ///
+    /// Reports nothing, for the reason spelled out on [`Self::load`].
     pub fn from_json_str(json: &str, file_path: Option<String>) -> Result<Self, String> {
-        loader::load_from_str(json)
-            .map(|map| Self::finalize(map, file_path))
-            .map_err(|e| {
-                error!("Failed to parse mindmap JSON: {}", e);
-                e
-            })
+        loader::load_from_str(json).map(|map| Self::finalize(map, file_path))
+    }
+
+    /// The document a rejected load is rendered as: a one-node map
+    /// carrying `message` — the loader's own text — over the
+    /// `source` that was asked for. See
+    /// [`baumhard::mindmap::placard`] for why the failure surface is
+    /// a map rather than an overlay.
+    ///
+    /// **Bound to no file path, on purpose.** `save` and `Ctrl+S`
+    /// both refuse a document with no `file_path`, so a reflexive
+    /// save on the placard cannot overwrite the file that failed to
+    /// parse — which, being unparseable, is likely the only copy of
+    /// whatever the author was hand-editing.
+    pub fn load_failure_placard(source: &str, message: &str) -> Self {
+        Self::finalize(placard::load_failure(source, message), None)
     }
 
     /// Grow undersized node boxes to fit their text and their

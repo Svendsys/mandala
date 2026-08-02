@@ -47,6 +47,7 @@ use super::scene_rebuild::{
     flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice,
     warm_handle_tree_arenas, CanvasFrame,
 };
+use super::startup_load;
 use super::text_edit::TextEditState;
 use super::{Application, LastClick};
 use crate::application::common::RenderDecree;
@@ -644,9 +645,6 @@ pub(super) fn run(mut app: Application) {
         renderer.process_decree(RenderDecree::SetSurfaceSize(size, height));
         log::info!("WASM: surface configured {}x{}", size, height);
 
-        // std::fs is unavailable in the browser; fetch over the page origin instead.
-        let mut doc_opt: Option<MindMapDocument> = None;
-        let mut tree_opt: Option<MindMapTree> = None;
         // Lifted to outer scope so the warm-cache and warm-AppScene
         // built during init survive into `WasmInputState` (the
         // active event-loop scene host) instead of being dropped at
@@ -656,90 +654,88 @@ pub(super) fn run(mut app: Application) {
         // build once and move into the input state.
         let mut init_app_scene = crate::application::scene_host::AppScene::new();
         let mut init_scene_cache = baumhard::mindmap::scene_cache::SceneConnectionCache::new();
-        match fetch_map_json(&mindmap_path).await {
-            Ok(json) => match MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())) {
-                Ok(mut doc) => {
-                    // Canvas background: resolve through theme variables
-                    // so `"var(--bg)"` works, then hand off to the
-                    // renderer as the render-pass clear color. Mirrors
-                    // run_native.rs so the WASM canvas paints against
-                    // the doc's configured background instead of the
-                    // default pitch black.
-                    let vars = &doc.mindmap.canvas.theme_variables;
-                    let resolved_bg =
-                        baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
-                    renderer.set_clear_color_from_hex(resolved_bg);
+        // std::fs is unavailable in the browser; fetch over the page
+        // origin instead. Both halves of the load can fail — the
+        // fetch (a `?map=` pointing at nothing gives an HTTP 404) and
+        // the parse — and they collapse into one `Result` so both
+        // reach the same surface. `startup_load::adopt` is the same
+        // call the native init makes: a rejection becomes the
+        // load-failure placard carrying the loader's own message, so
+        // the browser build reports a bad map exactly as the desktop
+        // build does (CODE_CONVENTIONS §4).
+        let load = match fetch_map_json(&mindmap_path).await {
+            Ok(json) => MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())),
+            Err(e) => Err(e),
+        };
+        let mut doc = startup_load::adopt(startup_load::startup_surface(&mindmap_path, load));
 
-                    // Four-source mutation registry, matching the native
-                    // path: app bundle (shipped in the binary) < user
-                    // source (?mutations= query param + localStorage) <
-                    // map (custom_mutations in the .mindmap.json) <
-                    // inline (on individual nodes). Plus the Rust-backed
-                    // handlers for layouts too structural for pure data.
-                    let (app_mutations, user_mutations) =
-                        crate::application::document::mutations_loader::load_app_and_user();
-                    doc.build_mutation_registry_with_app_and_user(&app_mutations, &user_mutations);
-                    crate::application::document::mutations::register_builtin_handlers(&mut doc);
+        // Canvas background: resolve through theme variables
+        // so `"var(--bg)"` works, then hand off to the
+        // renderer as the render-pass clear color. Mirrors
+        // run_native.rs so the WASM canvas paints against
+        // the doc's configured background instead of the
+        // default pitch black.
+        let vars = &doc.mindmap.canvas.theme_variables;
+        let resolved_bg = baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
+        renderer.set_clear_color_from_hex(resolved_bg);
 
-                    let mindmap_tree = doc.build_tree();
-                    renderer.rebuild_buffers_from_tree(&mindmap_tree.tree);
-                    renderer.fit_camera_to_tree(&mindmap_tree.tree);
+        // Four-source mutation registry, matching the native
+        // path: app bundle (shipped in the binary) < user
+        // source (?mutations= query param + localStorage) <
+        // map (custom_mutations in the .mindmap.json) <
+        // inline (on individual nodes). Plus the Rust-backed
+        // handlers for layouts too structural for pure data.
+        let (app_mutations, user_mutations) =
+            crate::application::document::mutations_loader::load_app_and_user();
+        doc.build_mutation_registry_with_app_and_user(&app_mutations, &user_mutations);
+        crate::application::document::mutations::register_builtin_handlers(&mut doc);
 
-                    // Project every canvas role once so the per-edge
-                    // Bezier-sample cache is populated at load and
-                    // first interactions don't pay the full cost.
-                    // WASM init runs in Default mode — no handles emit.
-                    let init_offsets = std::collections::HashMap::new();
-                    let frame = CanvasFrame::new(
-                        &doc,
-                        &init_offsets,
-                        crate::application::document::InteractionModeOverrides::none(),
-                        renderer.camera_zoom(),
-                    );
-                    frame.update_connection_trees(&mut init_scene_cache, &mut init_app_scene);
-                    frame.update_border_tree(&mut init_app_scene);
-                    frame.update_portal_tree(&mut init_app_scene);
-                    frame.update_connection_label_tree(&mut init_app_scene);
-                    frame.update_section_frame_tree(&mut init_app_scene);
-                    // Register the three handle-tree canvas roles
-                    // with fresh-load (empty-slice) signatures.
-                    // First real selection still takes FullRebuild
-                    // (8-handle signature differs from empty), but
-                    // every subsequent return to "nothing selected"
-                    // hits InPlaceMutator. Mirrors the native init.
-                    frame.update_section_resize_handle_tree(&mut init_app_scene);
-                    frame.update_node_resize_handle_tree(&mut init_app_scene);
-                    // Synthetic-handle allocator warm; mirrors
-                    // native init. See `warm_handle_tree_arenas`
-                    // doc for what this does and what it doesn't.
-                    warm_handle_tree_arenas(&mut init_app_scene);
-                    // Restamp the empty-handle signatures so the
-                    // load-end canvas state matches what's on
-                    // screen. The later `rebuild_all` re-stamps
-                    // these via `rebuild_scene_only`, but we do it
-                    // here too so correctness doesn't depend on
-                    // `rebuild_all` running.
-                    update_edge_handle_tree_from_slice(&[], &mut init_app_scene);
-                    frame.update_section_resize_handle_tree(&mut init_app_scene);
-                    frame.update_node_resize_handle_tree(&mut init_app_scene);
-                    flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
-                    tree_opt = Some(mindmap_tree);
-                    doc_opt = Some(doc);
-                }
-                Err(e) => {
-                    log::error!(
-                        "WASM: failed to construct document from '{}': {}",
-                        mindmap_path,
-                        e
-                    );
-                    show_load_error_overlay(&mindmap_path, &e.to_string());
-                }
-            },
-            Err(e) => {
-                log::error!("WASM: failed to fetch '{}': {}", mindmap_path, e);
-                show_load_error_overlay(&mindmap_path, &e);
-            }
-        }
+        let mindmap_tree = doc.build_tree();
+        renderer.rebuild_buffers_from_tree(&mindmap_tree.tree);
+        renderer.fit_camera_to_tree(&mindmap_tree.tree);
+
+        // Project every canvas role once so the per-edge
+        // Bezier-sample cache is populated at load and
+        // first interactions don't pay the full cost.
+        // WASM init runs in Default mode — no handles emit.
+        let init_offsets = std::collections::HashMap::new();
+        let frame = CanvasFrame::new(
+            &doc,
+            &init_offsets,
+            crate::application::document::InteractionModeOverrides::none(),
+            renderer.camera_zoom(),
+        );
+        frame.update_connection_trees(&mut init_scene_cache, &mut init_app_scene);
+        frame.update_border_tree(&mut init_app_scene);
+        frame.update_portal_tree(&mut init_app_scene);
+        frame.update_connection_label_tree(&mut init_app_scene);
+        frame.update_section_frame_tree(&mut init_app_scene);
+        // Register the three handle-tree canvas roles
+        // with fresh-load (empty-slice) signatures.
+        // First real selection still takes FullRebuild
+        // (8-handle signature differs from empty), but
+        // every subsequent return to "nothing selected"
+        // hits InPlaceMutator. Mirrors the native init.
+        frame.update_section_resize_handle_tree(&mut init_app_scene);
+        frame.update_node_resize_handle_tree(&mut init_app_scene);
+        // Synthetic-handle allocator warm; mirrors
+        // native init. See `warm_handle_tree_arenas`
+        // doc for what this does and what it doesn't.
+        warm_handle_tree_arenas(&mut init_app_scene);
+        // Restamp the empty-handle signatures so the
+        // load-end canvas state matches what's on
+        // screen. The later `rebuild_all` re-stamps
+        // these via `rebuild_scene_only`, but we do it
+        // here too so correctness doesn't depend on
+        // `rebuild_all` running.
+        update_edge_handle_tree_from_slice(&[], &mut init_app_scene);
+        frame.update_section_resize_handle_tree(&mut init_app_scene);
+        frame.update_node_resize_handle_tree(&mut init_app_scene);
+        flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
+        // `rebuild_all` takes the tree as `&mut Option`; `doc` stays
+        // owned to the end of init, because startup no longer has a
+        // "no document" state to model.
+        let mut tree_opt: Option<MindMapTree> = Some(mindmap_tree);
 
         renderer.process_decree(RenderDecree::StartRender);
         log::info!("WASM: StartRender dispatched, rAF loop starting");
@@ -747,11 +743,11 @@ pub(super) fn run(mut app: Application) {
         // Pre-warm allocators on the rebuild_all critical path.
         // Mirrors native init — see the run_native_init.rs doc for
         // what this does and why.
-        if let Some(doc) = doc_opt.as_ref() {
+        {
             // WASM init runs in Default mode.
             let init_mode = super::InteractionMode::Default;
             rebuild_all(
-                doc,
+                &doc,
                 &init_mode,
                 &mut tree_opt,
                 &mut init_app_scene,
@@ -769,55 +765,58 @@ pub(super) fn run(mut app: Application) {
         // Populate the shared state now that init is complete.
         *renderer_for_init.borrow_mut() = Some(renderer);
 
-        if let Some(doc) = doc_opt {
-            // Build the macro registry — App + User tiers from the
-            // bundled JSON / `?macros=` / localStorage; Map + Inline
-            // tiers from the just-loaded document. Mirrors
-            // `run_native_init.rs:117-142` precedence and logging
-            // shape so cross-target log triage stays uniform.
-            let mut macros = crate::application::macros::MacroRegistry::new();
-            let mut app_count = 0usize;
-            for m in crate::application::macros::loader::load_app_macros() {
-                macros.insert(m, crate::application::source_tier::SourceTier::App);
-                app_count += 1;
-            }
-            let mut user_count = 0usize;
-            for m in crate::application::macros::loader::load_user_macros() {
-                macros.insert(m, crate::application::source_tier::SourceTier::User);
-                user_count += 1;
-            }
-            if app_count > 0 || user_count > 0 {
-                log::info!(
-                    "loaded {} macro(s): {} app-tier, {} user-tier",
-                    macros.len(),
-                    app_count,
-                    user_count,
-                );
-            }
-            // Document-derived tiers — Map first, then Inline. The
-            // shared `rebuild_document_macros` helper enforces the
-            // ordering so it can't drift between the native and WASM
-            // load sites.
-            crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
-
-            *input_for_init.borrow_mut() = Some(WasmInputState {
-                document: doc,
-                mindmap_tree: tree_opt,
-                text_edit_state: TextEditState::Closed,
-                last_click: None,
-                cursor_pos: (0.0, 0.0),
-                pending_click: PendingClick::None,
-                modifiers: crate::application::platform::input::Modifiers::empty(),
-                interaction_mode: super::InteractionMode::Default,
-                // Move the warm AppScene + scene_cache built during
-                // init into the live event-loop state so the
-                // pre-warm work isn't dropped at the end of init.
-                app_scene: init_app_scene,
-                scene_cache: init_scene_cache,
-                macros,
-                touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
-            });
+        // Build the macro registry — App + User tiers from the
+        // bundled JSON / `?macros=` / localStorage; Map + Inline
+        // tiers from the just-loaded document. Mirrors
+        // `run_native_init.rs` precedence and logging
+        // shape so cross-target log triage stays uniform.
+        let mut macros = crate::application::macros::MacroRegistry::new();
+        let mut app_count = 0usize;
+        for m in crate::application::macros::loader::load_app_macros() {
+            macros.insert(m, crate::application::source_tier::SourceTier::App);
+            app_count += 1;
         }
+        let mut user_count = 0usize;
+        for m in crate::application::macros::loader::load_user_macros() {
+            macros.insert(m, crate::application::source_tier::SourceTier::User);
+            user_count += 1;
+        }
+        if app_count > 0 || user_count > 0 {
+            log::info!(
+                "loaded {} macro(s): {} app-tier, {} user-tier",
+                macros.len(),
+                app_count,
+                user_count,
+            );
+        }
+        // Document-derived tiers — Map first, then Inline. The
+        // shared `rebuild_document_macros` helper enforces the
+        // ordering so it can't drift between the native and WASM
+        // load sites.
+        crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
+
+        // Unconditional now that a rejected load yields a placard
+        // document: the input state exists even when the map did
+        // not, so the canvas that carries the error message is a
+        // live canvas — pan, zoom and selection all work on it —
+        // rather than an inert one.
+        *input_for_init.borrow_mut() = Some(WasmInputState {
+            document: doc,
+            mindmap_tree: tree_opt,
+            text_edit_state: TextEditState::Closed,
+            last_click: None,
+            cursor_pos: (0.0, 0.0),
+            pending_click: PendingClick::None,
+            modifiers: crate::application::platform::input::Modifiers::empty(),
+            interaction_mode: super::InteractionMode::Default,
+            // Move the warm AppScene + scene_cache built during
+            // init into the live event-loop state so the
+            // pre-warm work isn't dropped at the end of init.
+            app_scene: init_app_scene,
+            scene_cache: init_scene_cache,
+            macros,
+            touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
+        });
 
         // Event-driven redraw model: instead of an unconditional
         // self-rescheduling rAF (which kept the main thread busy at
@@ -880,47 +879,4 @@ async fn fetch_map_json(url: &str) -> Result<String, String> {
         .map_err(|e| format!("reading response body failed: {:?}", e))?
         .as_string()
         .ok_or_else(|| "response body was not a string".to_string())
-}
-
-/// Surface a map-load failure as a DOM overlay rather than only
-/// `console.log`. The legacy WASM failure mode ("blank canvas
-/// when the map is pre-section") leaves users with no visible
-/// hint that anything went wrong; this overlay names the file
-/// and the loader error so the `maptool convert --sections`
-/// migration pointer is copyable. Idempotent — calling twice
-/// replaces the existing overlay's text.
-fn show_load_error_overlay(map_path: &str, error: &str) {
-    use wasm_bindgen::JsCast;
-    let Some(window) = web_sys::window() else { return };
-    let Some(document) = window.document() else { return };
-    let Some(body) = document.body() else { return };
-
-    const OVERLAY_ID: &str = "mandala-map-load-error";
-    let overlay = match document.get_element_by_id(OVERLAY_ID) {
-        Some(existing) => existing,
-        None => {
-            let Ok(div) = document.create_element("div") else { return };
-            let _ = div.set_attribute("id", OVERLAY_ID);
-            let style = "position:fixed;top:1rem;left:1rem;right:1rem;\
-                         z-index:9999;padding:1rem;\
-                         background:#1a1a1a;color:#ff6b6b;\
-                         border:1px solid #ff6b6b;border-radius:4px;\
-                         font-family:monospace;font-size:14px;\
-                         white-space:pre-wrap;user-select:text;";
-            let _ = div.set_attribute("style", style);
-            if body.append_child(&div).is_err() {
-                return;
-            }
-            div
-        }
-    };
-    if let Some(html_elem) = overlay.dyn_ref::<web_sys::HtmlElement>() {
-        let text = format!(
-            "Failed to load map '{}'.\n\nError: {}\n\n\
-             If this is a pre-section map, run:\n\
-             maptool convert --sections <path>",
-            map_path, error
-        );
-        html_elem.set_inner_text(&text);
-    }
 }

@@ -90,6 +90,10 @@ mod run_native_init;
 mod run_wasm;
 #[cfg(not(target_arch = "wasm32"))]
 mod single_line_edit;
+// Cross-platform: both init paths resolve the initial map load
+// through it, which is what keeps the two from surfacing a load
+// failure differently (CODE_CONVENTIONS §4).
+mod startup_load;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
 mod touch_gesture;

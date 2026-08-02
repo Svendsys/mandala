@@ -15,6 +15,7 @@ use crate::application::platform::input::Modifiers as ModifiersState;
 
 use super::console_input::load_console_history;
 use super::run_native::InitState;
+use super::startup_load;
 use super::scene_rebuild::{
     flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice, warm_handle_tree_arenas,
     CanvasFrame,
@@ -29,8 +30,15 @@ use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
 
 /// Build the fully-initialized [`InitState`] around a freshly-created
-/// `Window`. Mindmap load is best-effort (on failure the document
-/// stays `None` and the canvas renders empty).
+/// `Window`.
+///
+/// A load failure is not a missing document: it resolves through
+/// [`startup_load::adopt`] to the load-failure placard, which is
+/// installed by the same code that installs a real map. Everything
+/// below the load therefore runs unconditionally — the window opens
+/// with the loader's message on the canvas, the camera fits it,
+/// input works, and `open` can be typed into the console without
+/// restarting the process.
 pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     baumhard::font::fonts::init();
 
@@ -40,9 +48,6 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     let size = window.inner_size();
     renderer.process_decree(RenderDecree::SetSurfaceSize(size.width, size.height));
 
-    // Load mindmap — document and tree persist for interactive use.
-    let mut document: Option<MindMapDocument> = None;
-    let mut mindmap_tree: Option<MindMapTree> = None;
     // Keyed incremental rebuild: document-side cache of per-edge
     // pre-clip sample geometry. Populated at load by
     // the cache-aware connection pass so first interactions don't pay the
@@ -54,101 +59,108 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // console / color-picker overlays.
     let mut app_scene = crate::application::scene_host::AppScene::new();
 
-    match MindMapDocument::load(&options.mindmap_path) {
-        Ok(mut doc) => {
-            // Four-source mutation registry: app bundle (shipped in the
-            // binary) < user file ($XDG_CONFIG_HOME/mandala/mutations.json)
-            // < map (in the .mindmap.json) < inline (on individual nodes).
-            let (app_mutations, user_mutations) =
-                crate::application::document::mutations_loader::load_app_and_user(None);
-            doc.build_mutation_registry_with_app_and_user(&app_mutations, &user_mutations);
-            // Rust-backed handlers for mutations too structural for
-            // a pure-data `flat_mutations` reach (flower-layout,
-            // tree-cascade, …).
-            crate::application::document::mutations::register_builtin_handlers(&mut doc);
-            // Canvas background: resolve through theme variables so
-            // `"var(--bg)"` works, then hand off to the renderer as
-            // the render-pass clear color.
-            let vars = &doc.mindmap.canvas.theme_variables;
-            let resolved_bg = baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
-            renderer.set_clear_color_from_hex(resolved_bg);
+    // The initial map load. A rejection is not a missing document:
+    // `startup_load` turns it into the load-failure placard carrying
+    // the loader's own message, and everything below installs that
+    // placard by the same code that installs a real map. `adopt` is
+    // also where the message reaches the log, so the terminal user
+    // and the canvas get the same words.
+    let mut doc = startup_load::adopt(startup_load::startup_surface(
+        &options.mindmap_path,
+        MindMapDocument::load(&options.mindmap_path),
+    ));
 
-            // Nodes: build Baumhard tree from MindMap hierarchy.
-            let tree = doc.build_tree();
-            renderer.rebuild_buffers_from_tree(&tree.tree);
-            renderer.fit_camera_to_tree(&tree.tree);
+    // Four-source mutation registry: app bundle (shipped in the
+    // binary) < user file ($XDG_CONFIG_HOME/mandala/mutations.json)
+    // < map (in the .mindmap.json) < inline (on individual nodes).
+    let (app_mutations, user_mutations) =
+        crate::application::document::mutations_loader::load_app_and_user(None);
+    doc.build_mutation_registry_with_app_and_user(&app_mutations, &user_mutations);
+    // Rust-backed handlers for mutations too structural for
+    // a pure-data `flat_mutations` reach (flower-layout,
+    // tree-cascade, …).
+    crate::application::document::mutations::register_builtin_handlers(&mut doc);
+    // Canvas background: resolve through theme variables so
+    // `"var(--bg)"` works, then hand off to the renderer as
+    // the render-pass clear color.
+    let vars = &doc.mindmap.canvas.theme_variables;
+    let resolved_bg = baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
+    renderer.set_clear_color_from_hex(resolved_bg);
 
-            // Every canvas role, projected once at load, so
-            // `scene_cache` is hot before the first interaction (the
-            // first drag / zoom no longer pays the full per-edge
-            // Bezier-sample cost) and every role's canvas signature
-            // is stamped where §B2 dispatch can find it.
-            //
-            // `fit_camera_to_tree` above settled the zoom, so the
-            // frame reads `renderer.camera_zoom()` — connection
-            // glyphs size against the actual final zoom rather than
-            // the default-init value.
-            //
-            // Init runs before any interaction — mode is `Default`
-            // and no resize handles emit. The explicit `none()`
-            // overrides make the warm projection match the first
-            // post-init frame's shape.
-            let init_offsets = std::collections::HashMap::new();
-            let frame = CanvasFrame::new(
-                &doc,
-                &init_offsets,
-                crate::application::document::InteractionModeOverrides::none(),
-                renderer.camera_zoom(),
-            );
-            frame.update_connection_trees(&mut scene_cache, &mut app_scene);
-            frame.update_border_tree(&mut app_scene);
-            frame.update_portal_tree(&mut app_scene);
-            frame.update_connection_label_tree(&mut app_scene);
-            frame.update_section_frame_tree(&mut app_scene);
-            // Register the three handle-tree canvas roles with their
-            // fresh-load (empty-slice) signatures. The first real
-            // selection still takes `CanvasDispatch::FullRebuild`
-            // (its 8-handle signature differs from the empty one),
-            // but every subsequent transition back to "nothing
-            // selected" hits `InPlaceMutator` instead of
-            // FullRebuild because the empty signature is already
-            // stamped. The role registration also lets §B2 dispatch
-            // find the role at all — without these calls the first
-            // interaction would force a register-and-rebuild, the
-            // second a rebuild, and only steady-state drags would
-            // be cheap.
-            frame.update_section_resize_handle_tree(&mut app_scene);
-            frame.update_node_resize_handle_tree(&mut app_scene);
-            // Synthetic-handle allocator warm: feed the handle-tree
-            // dispatch path 8-element slices once so its arena
-            // allocates from cold pools at load instead of on the
-            // user's first selection. Doesn't help signature
-            // matching (the user-state signature still differs),
-            // but the cosmic-text BufferLine pools and arena
-            // bumpers used inside `build_handle_tree` are warm
-            // when the first real selection lands, cutting the
-            // FullRebuild cost.
-            warm_handle_tree_arenas(&mut app_scene);
-            // Restamp the load-time empty signature so the
-            // canvas state at load-end is the empty-handles state
-            // rather than the synthetic 8-handle one. The later
-            // `rebuild_all` would do this again via
-            // `rebuild_scene_only`, but we re-stamp here too so
-            // correctness doesn't depend on `rebuild_all` running
-            // — if a future change makes it conditional or moves
-            // it, the canvas state stays well-defined.
-            update_edge_handle_tree_from_slice(&[], &mut app_scene);
-            frame.update_section_resize_handle_tree(&mut app_scene);
-            frame.update_node_resize_handle_tree(&mut app_scene);
-            flush_canvas_scene_buffers(&mut app_scene, &mut renderer);
+    // Nodes: build Baumhard tree from MindMap hierarchy.
+    let tree = doc.build_tree();
+    renderer.rebuild_buffers_from_tree(&tree.tree);
+    renderer.fit_camera_to_tree(&tree.tree);
 
-            mindmap_tree = Some(tree);
-            document = Some(doc);
-        }
-        Err(e) => {
-            log::error!("{}", e);
-        }
-    }
+    // Every canvas role, projected once at load, so
+    // `scene_cache` is hot before the first interaction (the
+    // first drag / zoom no longer pays the full per-edge
+    // Bezier-sample cost) and every role's canvas signature
+    // is stamped where §B2 dispatch can find it.
+    //
+    // `fit_camera_to_tree` above settled the zoom, so the
+    // frame reads `renderer.camera_zoom()` — connection
+    // glyphs size against the actual final zoom rather than
+    // the default-init value.
+    //
+    // Init runs before any interaction — mode is `Default`
+    // and no resize handles emit. The explicit `none()`
+    // overrides make the warm projection match the first
+    // post-init frame's shape.
+    let init_offsets = std::collections::HashMap::new();
+    let frame = CanvasFrame::new(
+        &doc,
+        &init_offsets,
+        crate::application::document::InteractionModeOverrides::none(),
+        renderer.camera_zoom(),
+    );
+    frame.update_connection_trees(&mut scene_cache, &mut app_scene);
+    frame.update_border_tree(&mut app_scene);
+    frame.update_portal_tree(&mut app_scene);
+    frame.update_connection_label_tree(&mut app_scene);
+    frame.update_section_frame_tree(&mut app_scene);
+    // Register the three handle-tree canvas roles with their
+    // fresh-load (empty-slice) signatures. The first real
+    // selection still takes `CanvasDispatch::FullRebuild`
+    // (its 8-handle signature differs from the empty one),
+    // but every subsequent transition back to "nothing
+    // selected" hits `InPlaceMutator` instead of
+    // FullRebuild because the empty signature is already
+    // stamped. The role registration also lets §B2 dispatch
+    // find the role at all — without these calls the first
+    // interaction would force a register-and-rebuild, the
+    // second a rebuild, and only steady-state drags would
+    // be cheap.
+    frame.update_section_resize_handle_tree(&mut app_scene);
+    frame.update_node_resize_handle_tree(&mut app_scene);
+    // Synthetic-handle allocator warm: feed the handle-tree
+    // dispatch path 8-element slices once so its arena
+    // allocates from cold pools at load instead of on the
+    // user's first selection. Doesn't help signature
+    // matching (the user-state signature still differs),
+    // but the cosmic-text BufferLine pools and arena
+    // bumpers used inside `build_handle_tree` are warm
+    // when the first real selection lands, cutting the
+    // FullRebuild cost.
+    warm_handle_tree_arenas(&mut app_scene);
+    // Restamp the load-time empty signature so the
+    // canvas state at load-end is the empty-handles state
+    // rather than the synthetic 8-handle one. The later
+    // `rebuild_all` would do this again via
+    // `rebuild_scene_only`, but we re-stamp here too so
+    // correctness doesn't depend on `rebuild_all` running
+    // — if a future change makes it conditional or moves
+    // it, the canvas state stays well-defined.
+    update_edge_handle_tree_from_slice(&[], &mut app_scene);
+    frame.update_section_resize_handle_tree(&mut app_scene);
+    frame.update_node_resize_handle_tree(&mut app_scene);
+    flush_canvas_scene_buffers(&mut app_scene, &mut renderer);
+
+    // `InitState.mindmap_tree` is optional (the console's
+    // document-replace path drops it), and `rebuild_all` takes it as
+    // `&mut Option`. `doc` stays owned to the end of this function —
+    // startup no longer has a "no document" state to model.
+    let mut mindmap_tree: Option<MindMapTree> = Some(tree);
 
     // Start rendering.
     renderer.process_decree(RenderDecree::StartRender);
@@ -162,13 +174,13 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // BufferLine pools, the Tree arena, and the per-role canvas-
     // signature stamps so the first user-visible rebuild only
     // pays the diffing-cost portion.
-    if let Some(doc) = document.as_ref() {
+    {
         // Init runs in Default mode — no handles emit. Construct the
         // mode locally rather than threading from the (still-empty)
         // InitState; the post-init InitState will use its own field.
         let init_mode = InteractionMode::Default;
         rebuild_all(
-            doc,
+            &doc,
             &init_mode,
             &mut mindmap_tree,
             &mut app_scene,
@@ -221,14 +233,12 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // `rebuild_document_macros` helper is the single entry point
     // shared with the document-replace path in `execute_console_line`
     // so the Map-then-Inline ordering can't drift between sites.
-    if let Some(d) = document.as_ref() {
-        crate::application::macros::loader::rebuild_document_macros(&mut macros, d);
-    }
+    crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
 
     InitState {
         window,
         renderer,
-        document,
+        document: Some(doc),
         mindmap_tree,
         scene_cache,
         app_scene,
