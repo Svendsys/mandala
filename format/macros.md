@@ -228,6 +228,27 @@ finished job:
   `allows_action` is the fix.
 - `MAX_FONT_SIZE_PT` combined with the maximum camera zoom can still
   ask the rasterizer for a very large glyph.
+- **The browser's `?map=` takes a whole URL, not a path.** The value
+  goes to `fetch` verbatim, so an absolute one loads a third-party
+  map cross-origin (the attacker's own server decides its CORS). The
+  content is screened like any other — the WASM path runs
+  `load_from_str` — but the *provenance* step is gone: there is no
+  file the user chose to open, only a link they clicked. Restricting
+  the parameter to a same-origin path is a product decision, not a
+  bug fix, which is why it is named here rather than changed.
+- **Map and Inline outrank User in the tier order.** That is
+  deliberate — a map should be able to specialize behavior for its
+  own content — but it means an opened map shadows the user's own
+  macro on an id collision, so a key bound in
+  `~/.config/mandala/macros.json` can do what the map chose instead.
+  The gates bound *what* that is (no console verbs, nothing
+  destructive), and the shadowing is reversible: closing the map
+  clears the Map tier and the user's entry re-emerges. Reversing the
+  order is a format-wide decision touching the six places the
+  SOURCE-OF-TRUTH comment above names.
+- A node's `sections` array is capped *after* serde has already
+  allocated it, so the cap bounds the model rather than the parse.
+  `MAX_MAP_BYTES` is what actually bounds the allocation today.
 
 If a future contributor adds a `DocumentAction` variant that
 performs file I/O, network access, or arbitrary content load, the
