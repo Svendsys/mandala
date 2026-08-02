@@ -481,7 +481,11 @@ impl MindMapDocument {
     /// composes — text-driven floor first, then border-driven —
     /// and the larger of the two wins per node.
     fn finalize(mut map: MindMap, file_path: Option<String>) -> Self {
-        info!("Loaded mindmap '{}' with {} nodes", map.name, map.nodes.len());
+        info!(
+            "document: loaded mindmap {:?} with {} node(s)",
+            map.name,
+            map.nodes.len()
+        );
         grow_node_sizes_to_fit_text(&mut map);
         grow_node_sizes_to_fit_borders(&mut map);
         Self::from_mindmap(map, file_path)

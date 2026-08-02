@@ -663,10 +663,9 @@ pub(super) fn run(mut app: Application) {
         // load-failure placard carrying the loader's own message, so
         // the browser build reports a bad map exactly as the desktop
         // build does (CODE_CONVENTIONS §4).
-        let load = match fetch_map_json(&mindmap_path).await {
-            Ok(json) => MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())),
-            Err(e) => Err(e),
-        };
+        let load = fetch_map_json(&mindmap_path)
+            .await
+            .and_then(|json| MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())));
         let mut doc = startup_load::adopt(startup_load::startup_surface(&mindmap_path, load));
 
         // Canvas background: resolve through theme variables
