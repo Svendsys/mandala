@@ -770,6 +770,28 @@ pub const MAX_BORDER_SIDE_GLYPHS: usize = 100_000;
 ///
 /// Cost: a few float ops, no allocation.
 fn fill_copies(available_pt: f32, cluster_w: f32, cluster_len: usize) -> usize {
+    fill_copies_bounded(available_pt, cluster_w, cluster_len, cluster_len)
+}
+
+/// Ceiling on the byte length of one border side's emitted string.
+///
+/// [`MAX_BORDER_SIDE_GLYPHS`] bounds the *grapheme* count, which is
+/// the right unit for "how much border is drawn" and the wrong one
+/// for "how much memory this costs". A grapheme is not a byte: a ZWJ
+/// sequence runs to dozens, and a side pattern is an author-supplied
+/// string, so a map can make each emitted cluster arbitrarily large
+/// and multiply it by the grapheme cap. Both units are bounded, and
+/// whichever binds first wins.
+pub const MAX_BORDER_SIDE_BYTES: usize = 1024 * 1024;
+
+/// [`fill_copies`] with the cluster's byte length passed separately,
+/// so the byte ceiling can bind independently of the grapheme one.
+fn fill_copies_bounded(
+    available_pt: f32,
+    cluster_w: f32,
+    cluster_len: usize,
+    cluster_bytes: usize,
+) -> usize {
     if !available_pt.is_finite() || !cluster_w.is_finite() || cluster_w <= 0.0 || cluster_len == 0 {
         return 0;
     }
@@ -777,7 +799,9 @@ fn fill_copies(available_pt: f32, cluster_w: f32, cluster_len: usize) -> usize {
     if !copies.is_finite() || copies <= 0.0 {
         return 0;
     }
-    (copies as usize).min(MAX_BORDER_SIDE_GLYPHS / cluster_len)
+    let by_graphemes = MAX_BORDER_SIDE_GLYPHS / cluster_len;
+    let by_bytes = MAX_BORDER_SIDE_BYTES / cluster_bytes.max(1);
+    (copies as usize).min(by_graphemes).min(by_bytes)
 }
 
 fn fit_pattern_to_width(
@@ -807,7 +831,8 @@ fn fit_pattern_to_width(
             if cluster_w <= 0.0 {
                 return (String::new(), 0, 0.0);
             }
-            let full_copies = fill_copies(available_pt, cluster_w, cluster.len());
+            let cluster_bytes: usize = cluster.iter().map(|g| g.len()).sum();
+            let full_copies = fill_copies_bounded(available_pt, cluster_w, cluster.len(), cluster_bytes);
             let mut emitted_w = full_copies as f32 * cluster_w;
             let mut text = String::new();
             for _ in 0..full_copies {
@@ -853,7 +878,8 @@ fn fit_pattern_to_width(
                 return (rendered.text, rendered.cluster_count, prefix_w + suffix_w);
             }
             let between_avail = available_pt - prefix_w - suffix_w;
-            let full_copies = fill_copies(between_avail, fill_cluster_w, fill.len());
+            let fill_bytes: usize = fill.iter().map(|g| g.len()).sum();
+            let full_copies = fill_copies_bounded(between_avail, fill_cluster_w, fill.len(), fill_bytes);
 
             let mut text = String::new();
             let mut cluster_count = 0;

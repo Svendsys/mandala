@@ -117,6 +117,31 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     check_invariants(parse_for_inspection(json)?)
 }
 
+/// [`MAX_MAP_BYTES`], enforced against text already in memory.
+///
+/// The file-path loader stats before it reads, which is the cheaper
+/// and better check — but it is not the only door. **The browser
+/// never touches it**: the WASM build receives its map as a string
+/// (`?map=`) and goes straight to [`load_from_str`], so a ceiling
+/// that lived only on the filesystem path left the target with the
+/// smaller memory budget entirely unguarded. The same is true of
+/// any future transport — a paste, a socket, a fetch.
+///
+/// The text is already allocated by the time this runs, so this
+/// bounds the *typed model* built on top of it rather than the read
+/// itself. That is still the larger of the two costs.
+fn check_text_cap(json: &str) -> Result<(), String> {
+    if json.len() as u64 > MAX_MAP_BYTES {
+        return Err(format!(
+            "map is {} bytes, over the {} byte limit — refusing to load it. \
+             A map this size is either damaged or hostile.",
+            json.len(),
+            MAX_MAP_BYTES
+        ));
+    }
+    Ok(())
+}
+
 /// Parse a `MindMap` with the *shape* checks but **without** the
 /// load-time invariants, for tooling that has to inspect a map the
 /// editor refuses to open.
@@ -142,6 +167,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
 /// Cost: identical to a successful [`load_from_str`] minus the
 /// invariant sweep — one parse of `json`.
 pub fn parse_for_inspection(json: &str) -> Result<MindMap, String> {
+    check_text_cap(json)?;
     serde_json::from_str::<MindMap>(json).map_err(|e| diagnose_rejected_json(json, &e))
 }
 
