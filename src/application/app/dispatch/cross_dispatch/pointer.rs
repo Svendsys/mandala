@@ -392,8 +392,14 @@ mod tests {
         KeybindConfig::default().resolve()
     }
 
-    fn edge_key(from: &str, to: &str) -> EdgeKey {
-        EdgeKey::new(from, to, "cross_link")
+    /// Edge identity is the *triple* `(from_id, to_id, edge_type)` —
+    /// `format/validation.md` allows several edges between the same
+    /// pair distinguished only by `edge_type`, and `EdgeRef::matches`
+    /// compares all three. The helper therefore takes the type rather
+    /// than defaulting it, so no test can leave the third component
+    /// constant by accident.
+    fn edge_key(from: &str, to: &str, edge_type: &str) -> EdgeKey {
+        EdgeKey::new(from, to, edge_type)
     }
 
     #[test]
@@ -432,7 +438,7 @@ mod tests {
     fn test_double_click_route_portal_icon_targets_the_far_endpoint() {
         let route = resolve_double_click_route(
             &ClickHit::PortalMarker {
-                edge: edge_key("a", "b"),
+                edge: edge_key("a", "b", "cross_link"),
                 endpoint: "a".into(),
             },
             &SelectionState::None,
@@ -441,7 +447,7 @@ mod tests {
         assert_eq!(
             route,
             DoubleClickRoute::PanToPortalPartner {
-                edge: edge_key("a", "b"),
+                edge: edge_key("a", "b", "cross_link"),
                 partner_id: "b".into(),
             }
         );
@@ -453,7 +459,7 @@ mod tests {
     fn test_double_click_route_portal_icon_from_far_end_targets_the_near_endpoint() {
         let route = resolve_double_click_route(
             &ClickHit::PortalMarker {
-                edge: edge_key("a", "b"),
+                edge: edge_key("a", "b", "cross_link"),
                 endpoint: "b".into(),
             },
             &SelectionState::None,
@@ -462,7 +468,7 @@ mod tests {
         assert_eq!(
             route,
             DoubleClickRoute::PanToPortalPartner {
-                edge: edge_key("a", "b"),
+                edge: edge_key("a", "b", "cross_link"),
                 partner_id: "a".into(),
             }
         );
@@ -474,7 +480,7 @@ mod tests {
     fn test_double_click_route_portal_text_matches_portal_icon() {
         let icon = resolve_double_click_route(
             &ClickHit::PortalMarker {
-                edge: edge_key("a", "b"),
+                edge: edge_key("a", "b", "cross_link"),
                 endpoint: "a".into(),
             },
             &SelectionState::None,
@@ -482,7 +488,7 @@ mod tests {
         );
         let text = resolve_double_click_route(
             &ClickHit::PortalText {
-                edge: edge_key("a", "b"),
+                edge: edge_key("a", "b", "cross_link"),
                 endpoint: "a".into(),
             },
             &SelectionState::None,
@@ -494,7 +500,7 @@ mod tests {
     #[test]
     fn test_double_click_route_edge_label_carries_the_edge_ref() {
         let route = resolve_double_click_route(
-            &ClickHit::EdgeLabel(edge_key("a", "b")),
+            &ClickHit::EdgeLabel(edge_key("a", "b", "cross_link")),
             &SelectionState::None,
             &keybinds_default(),
         );
@@ -554,14 +560,56 @@ mod tests {
         assert!(edge_label_target(&ClickHit::Empty).is_none());
         assert!(edge_label_target(&ClickHit::Node("n".into(), None)).is_none());
         assert!(edge_label_target(&ClickHit::PortalMarker {
-            edge: edge_key("a", "b"),
+            edge: edge_key("a", "b", "cross_link"),
             endpoint: "a".into(),
         })
         .is_none());
         assert_eq!(
-            edge_label_target(&ClickHit::EdgeLabel(edge_key("a", "b"))),
+            edge_label_target(&ClickHit::EdgeLabel(edge_key("a", "b", "cross_link"))),
             Some(EdgeRef::new("a", "b", "cross_link")),
         );
+    }
+
+    /// `edge_type` is the third component of the edge identity and
+    /// carries as much weight as the endpoints: `format/validation.md`
+    /// permits several edges between the same pair distinguished only
+    /// by it. A conversion that dropped the type — hardcoding
+    /// `"cross_link"`, say — would hand the native residual an
+    /// `EdgeRef` naming a *different* edge between the same two nodes,
+    /// and the single-line editor would silently open on a label the
+    /// user did not click.
+    #[test]
+    fn test_edge_label_target_carries_the_edge_type_not_a_default() {
+        for edge_type in ["cross_link", "hierarchy", "portal", ""] {
+            assert_eq!(
+                edge_label_target(&ClickHit::EdgeLabel(edge_key("a", "b", edge_type))),
+                Some(EdgeRef::new("a", "b", edge_type)),
+                "edge_type {edge_type:?} must survive the EdgeKey → EdgeRef conversion",
+            );
+        }
+    }
+
+    /// The same identity, one component at a time, through the full
+    /// resolver rather than the helper — so the route the apply half
+    /// receives is pinned too, not just the conversion.
+    #[test]
+    fn test_double_click_route_edge_label_distinguishes_edges_by_edge_type_alone() {
+        let route_of = |edge_type: &str| {
+            resolve_double_click_route(
+                &ClickHit::EdgeLabel(edge_key("a", "b", edge_type)),
+                &SelectionState::None,
+                &keybinds_default(),
+            )
+        };
+        assert_eq!(
+            route_of("hierarchy"),
+            DoubleClickRoute::EditEdgeLabel {
+                edge_ref: EdgeRef::new("a", "b", "hierarchy"),
+            }
+        );
+        // Same endpoints, different type: a distinct edge, and so a
+        // distinct route.
+        assert_ne!(route_of("hierarchy"), route_of("cross_link"));
     }
 
     #[test]
@@ -574,6 +622,19 @@ mod tests {
         assert!(!edge_label_selection_is_current(
             &SelectionState::EdgeLabel(EdgeLabelSel::new(EdgeRef::new("a", "c", "cross_link"))),
             &er
+        ));
+        // Differing in `edge_type` *alone* is differing. Two edges
+        // between the same pair are distinct edges when their types
+        // differ (`format/validation.md`), so the committed selection
+        // for one is not current for the other and the double-click
+        // must re-commit rather than skip.
+        assert!(!edge_label_selection_is_current(
+            &SelectionState::EdgeLabel(EdgeLabelSel::new(EdgeRef::new("a", "b", "hierarchy"))),
+            &er
+        ));
+        assert!(!edge_label_selection_is_current(
+            &SelectionState::EdgeLabel(EdgeLabelSel::new(er.clone())),
+            &EdgeRef::new("a", "b", "hierarchy")
         ));
         // The *edge* being selected is not the *label* being
         // selected — the double-click must still commit.
