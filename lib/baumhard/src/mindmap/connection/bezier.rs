@@ -88,7 +88,7 @@ pub(super) fn sample_cubic_bezier(
     }
 
     let n = ARC_LENGTH_SUBDIVISIONS;
-    let count = (total_length / spacing).floor() as usize + 1;
+    let count = super::sample_count(total_length, spacing);
     let mut points = Vec::with_capacity(count);
     for i in 0..count {
         let target_len = (i as f32 * spacing).min(total_length);

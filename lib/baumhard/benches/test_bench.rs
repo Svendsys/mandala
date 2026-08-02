@@ -479,6 +479,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("find_byte_index_of_grapheme", |b| {
         b.iter(|| do_find_byte_index_of_grapheme())
     });
+    c.bench_function("byte_indices_of_graphemes", |b| {
+        b.iter(|| do_byte_indices_of_graphemes())
+    });
     c.bench_function("replace_graphemes_until_newline", |b| {
         b.iter(|| do_replace_graphemes_until_newline())
     });

@@ -379,12 +379,53 @@ pub fn sample_path(path: &ConnectionPath, spacing: f32) -> Vec<SampledPoint> {
     }
 }
 
+/// Hard ceiling on the number of glyph samples one connection path
+/// may produce.
+///
+/// The count is `path length / spacing`, and **both terms come out
+/// of the document**: the endpoints are node positions and the
+/// spacing derives from an authored font size. A `.mindmap.json` is
+/// untrusted input, so the quotient is attacker-controlled — and it
+/// lands in `Vec::with_capacity`, where an over-large request is an
+/// allocator abort rather than a catchable panic. The loader's
+/// numeric-domain check (`model::validate`) already rejects the
+/// coordinates and sizes that make this quotient absurd; this is
+/// the second wall, so a future path that reaches the sampler
+/// without passing the loader still cannot ask for terabytes.
+///
+/// The value sits far past anything legible: a full-width desktop
+/// viewport at the minimum glyph size holds a few hundred samples,
+/// so this is two orders of magnitude of headroom and still only
+/// ~800 KB of [`SampledPoint`].
+pub const MAX_PATH_SAMPLES: usize = 100_000;
+
+/// How many samples a path of `total_length` yields at `spacing`,
+/// clamped to [`MAX_PATH_SAMPLES`] and total over hostile inputs.
+///
+/// Float-to-integer casts in Rust *saturate*, which is what makes
+/// the naive form dangerous rather than merely wrong: an infinite
+/// length reaches `usize::MAX` and the `+ 1` overflows it, while a
+/// `NaN` casts to zero. Both are folded into the clamp here so
+/// neither reaches an allocation.
+///
+/// Cost: a few float ops, no allocation.
+fn sample_count(total_length: f32, spacing: f32) -> usize {
+    if !total_length.is_finite() || !spacing.is_finite() || spacing <= 0.0 {
+        return 1;
+    }
+    let count = (total_length / spacing).floor();
+    if !count.is_finite() || count <= 0.0 {
+        return 1;
+    }
+    (count as usize).saturating_add(1).min(MAX_PATH_SAMPLES)
+}
+
 fn sample_straight(start: Vec2, end: Vec2, spacing: f32) -> Vec<SampledPoint> {
     let total_length = start.distance(end);
     if total_length < f32::EPSILON {
         return vec![SampledPoint { position: start }];
     }
-    let count = (total_length / spacing).floor() as usize + 1;
+    let count = sample_count(total_length, spacing);
     let mut points = Vec::with_capacity(count);
     for i in 0..count {
         let t = (i as f32 * spacing) / total_length;

@@ -87,7 +87,7 @@ pub use section_resize_handle::{
 };
 
 use crate::mindmap::model::ChildIndex;
-use node::{append_node_sections, build_children_recursive, mindnode_container_area};
+use node::{append_node_sections, build_descendants, mindnode_container_area};
 
 /// Result of building a Baumhard tree from a MindMap. The tree
 /// mirrors the MindMap's parent-child hierarchy. Each MindNode
@@ -186,7 +186,7 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
 
         append_node_sections(root, node_id, vars, &mut tree, &mut section_map, &mut id_counter);
 
-        build_children_recursive(
+        build_descendants(
             map,
             &index,
             &root.id,

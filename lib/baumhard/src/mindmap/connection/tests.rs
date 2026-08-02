@@ -965,3 +965,66 @@ fn closest_point_on_path_cubic_near_inflection_never_worse_than_seed() {
         );
     }
 }
+
+/// **The allocation the sampler used to commit to unconditionally.**
+///
+/// The sample count is `path length / spacing`, and both terms come
+/// out of the document — endpoints are node positions, spacing
+/// derives from an authored font size. Uncapped, a long path at a
+/// fine spacing asked `Vec::with_capacity` for billions of points,
+/// which fails as an allocator abort rather than a catchable panic.
+///
+/// The loader now rejects the coordinates that get here in the first
+/// place; this pins the second wall, so a path reaching the sampler
+/// by some other route still cannot ask for terabytes.
+#[test]
+fn test_sample_path_caps_hostile_geometry() {
+    let far = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(1.0e9, 0.0),
+    };
+    let samples = sample_path(&far, 0.001);
+    assert!(
+        samples.len() <= MAX_PATH_SAMPLES,
+        "a long path at fine spacing must stay capped, got {}",
+        samples.len()
+    );
+
+    let curved = ConnectionPath::CubicBezier {
+        start: Vec2::ZERO,
+        control1: Vec2::new(1.0e8, 1.0e8),
+        control2: Vec2::new(2.0e8, -1.0e8),
+        end: Vec2::new(1.0e9, 0.0),
+    };
+    assert!(sample_path(&curved, 0.001).len() <= MAX_PATH_SAMPLES);
+}
+
+/// A non-finite length or spacing must not reach the allocation
+/// either. Float-to-integer casts saturate, so an infinite quotient
+/// would land on `usize::MAX` and overflow the `+ 1`; a `NaN` casts
+/// to zero. Both resolve to a single point instead.
+#[test]
+fn test_sample_path_survives_non_finite_geometry() {
+    let infinite = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(f32::INFINITY, 0.0),
+    };
+    assert!(sample_path(&infinite, 1.0).len() <= MAX_PATH_SAMPLES);
+
+    let nan = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(f32::NAN, 0.0),
+    };
+    assert!(sample_path(&nan, 1.0).len() <= MAX_PATH_SAMPLES);
+
+    // A non-finite spacing is the same hazard from the other side.
+    let ordinary = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(100.0, 0.0),
+    };
+    assert!(sample_path(&ordinary, f32::NAN).len() <= MAX_PATH_SAMPLES);
+    assert!(sample_path(&ordinary, f32::INFINITY).len() <= MAX_PATH_SAMPLES);
+
+    // The ordinary case still samples the way it always did.
+    assert_eq!(sample_path(&ordinary, 10.0).len(), 11);
+}

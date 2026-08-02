@@ -648,11 +648,22 @@ pub(crate) fn bvh_find(
     refine_with_shape: bool,
     best: &mut Option<(NodeId, f32)>,
 ) {
-    let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
+    // Pre-order DFS over an explicit stack rather than the call
+    // stack. This arena is the projection of a `.mindmap.json`,
+    // whose `parent_id` depth is untrusted and unbounded — a linear
+    // chain of N nodes is a legal acyclic tree — and every hit test
+    // in the app funnels through here, so recursing over that depth
+    // meant a hostile map aborted the process on a mouse move.
+    //
+    // Children are pushed reversed so the first sibling pops first
+    // and a node's own subtree is exhausted before the next
+    // sibling: the same order the recursive form visited in, which
+    // the tie-break below depends on (equal-area candidates keep
+    // the one found first).
+    let mut pending: Vec<NodeId> = Vec::new();
+    push_children_reversed(arena, node_id, &mut pending);
 
-    while let Some(child_id) = child_opt {
-        child_opt = arena.get(child_id).and_then(|n| n.next_sibling());
-
+    while let Some(child_id) = pending.pop() {
         let Some(node) = arena.get(child_id) else {
             continue;
         };
@@ -732,8 +743,25 @@ pub(crate) fn bvh_find(
             }
         }
 
-        // 3. Recurse (the subtree-AABB test above proved at least
+        // 3. Descend (the subtree-AABB test above proved at least
         //    one descendant may contain the point).
-        bvh_find(arena, child_id, point, slack, refine_with_shape, best);
+        push_children_reversed(arena, child_id, &mut pending);
     }
+}
+
+/// Append every child of `parent` to `pending` in reverse document
+/// order, so a LIFO pop yields them first-to-last.
+///
+/// Reversing in place over the slice just appended keeps this free
+/// of any allocation beyond `pending`'s own growth — the children
+/// are pushed once and flipped, never collected into a scratch
+/// vector (§B7).
+fn push_children_reversed(arena: &Arena<GfxElement>, parent: NodeId, pending: &mut Vec<NodeId>) {
+    let start = pending.len();
+    let mut child_opt = arena.get(parent).and_then(|n| n.first_child());
+    while let Some(child_id) = child_opt {
+        child_opt = arena.get(child_id).and_then(|n| n.next_sibling());
+        pending.push(child_id);
+    }
+    pending[start..].reverse();
 }

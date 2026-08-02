@@ -29,6 +29,21 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
+/// Ceiling on the on-disk size of a `.mindmap.json`, in bytes.
+///
+/// The loader reads the whole file into memory and then builds a
+/// typed model several times its size, so the file length is the
+/// one number that bounds the whole load before any of it happens.
+/// Without a ceiling, "open this map" is an unconditional promise
+/// to allocate whatever the file asks for.
+///
+/// 256 MiB is far past any authored map — the canonical fixture is
+/// 545 KB with 252 nodes, so this admits a map roughly five hundred
+/// times larger — while still bounding the commitment. The app's
+/// user-config loader takes the same posture with its own
+/// `MAX_USER_PAYLOAD_BYTES`.
+pub const MAX_MAP_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Load a `MindMap` from a file path. Reads the entire file into
 /// memory via `std::fs::read_to_string`, then delegates to
 /// [`load_from_str`]. Native-only (synchronous I/O). Returns a
@@ -38,9 +53,36 @@ use std::path::Path;
 /// sized to the file's UTF-8 length) followed by [`load_from_str`]'s
 /// JSON parse — O(file_size) overall. Felt every map load.
 pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
-    let content =
-        fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
-    load_from_str(&content)
+    load_from_str(&read_capped(path)?)
+}
+
+/// Read `path` to a `String`, refusing anything over
+/// [`MAX_MAP_BYTES`].
+///
+/// **Stat before read.** `read_to_string` sizes its buffer from the
+/// file's length, so an oversized map is an allocation the process
+/// has already committed to by the time any parser gets a say — and
+/// the typed model built on top costs several times the text again.
+/// Checking first turns an OOM kill into a sentence, which is the
+/// whole difference between "this file is broken" and "the editor
+/// died".
+///
+/// A file whose metadata cannot be read falls through to the read
+/// rather than failing here: the read reports the real error
+/// (missing, unreadable) far better than a guess would.
+fn read_capped(path: &Path) -> Result<String, String> {
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.len() > MAX_MAP_BYTES {
+            return Err(format!(
+                "{} is {} bytes, over the {} byte map limit — refusing to read it. \
+                 A map this size is either damaged or hostile.",
+                path.display(),
+                meta.len(),
+                MAX_MAP_BYTES
+            ));
+        }
+    }
+    fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))
 }
 
 /// Parse a `MindMap` from a JSON string.
@@ -69,30 +111,82 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// not going to complete, and a node id beats a byte offset into a
 /// 545 KB file.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
-    let map = match serde_json::from_str::<MindMap>(json) {
-        Ok(map) => map,
-        Err(e) => return Err(diagnose_rejected_json(json, &e)),
-    };
-    // `json` deliberately ends here. `check_invariants` is not given
-    // it, so no future invariant can quietly reintroduce a second
-    // pass over the document text.
-    check_invariants(map)
+    // `json` deliberately ends at the parse. `check_invariants` is
+    // not given it, so no future invariant can quietly reintroduce a
+    // second pass over the document text.
+    check_invariants(parse_for_inspection(json)?)
+}
+
+/// Parse a `MindMap` with the *shape* checks but **without** the
+/// load-time invariants, for tooling that has to inspect a map the
+/// editor refuses to open.
+///
+/// [`load_from_str`] is the editor's front door and is deliberately
+/// strict: a parent cycle, a `nodes` key that disagrees with its
+/// node's `id`, a font size the text shaper asserts on — none of
+/// those open, because rendering them takes the process down. A
+/// *diagnostic* tool has the opposite need. The maps worth
+/// inspecting are exactly the broken ones, and a verifier that
+/// could only read files already passing the gate would fall silent
+/// precisely when it is wanted — reporting "cannot load" where the
+/// user asked *what is wrong with it*.
+///
+/// So this keeps everything that decides what the document *is* —
+/// serde's typed parse, the closed-object rejection, the
+/// legacy-shape migration pointers — and drops only the checks
+/// about whether it is safe to render. The returned model may
+/// therefore hold a cycle, non-finite geometry, or a zero font
+/// size: **do not build a scene from it.** `maptool verify` is the
+/// intended caller.
+///
+/// Cost: identical to a successful [`load_from_str`] minus the
+/// invariant sweep — one parse of `json`.
+pub fn parse_for_inspection(json: &str) -> Result<MindMap, String> {
+    serde_json::from_str::<MindMap>(json).map_err(|e| diagnose_rejected_json(json, &e))
+}
+
+/// [`parse_for_inspection`] from a file path, with the same
+/// [`MAX_MAP_BYTES`] ceiling [`load_from_file`] applies — an
+/// inspection tool still has to read the bytes, so it inherits the
+/// same commitment.
+pub fn parse_file_for_inspection(path: &Path) -> Result<MindMap, String> {
+    let content = read_capped(path)?;
+    parse_for_inspection(&content)
 }
 
 /// Post-parse invariants that live in the typed model rather than in
 /// the JSON: they are checked against `MindMap` values, never against
 /// the source text.
 ///
-/// Cost: O(nodes + edges) — one sorted pass for the zero-section and
-/// section-cap checks, one memoized parent walk, one edge-tuple scan.
+/// Two kinds of invariant live here, and the order they run in is
+/// the order a reader wants them. **Structure** comes first — a
+/// node with no sections, a parent cycle, too many sections — because
+/// those describe a map that is malformed as a *document*.
+/// **Numeric domain** comes last, and is the one that keeps the
+/// editor alive: a `.mindmap.json` is untrusted input, and its
+/// numbers reach `assert!`s inside the text shaper, an inverted
+/// `f32::clamp`, and allocations sized from authored geometry. A map
+/// that would abort the process on its first frame does not open;
+/// see `mindmap::model::validate` for why that is a rejection rather
+/// than a repair.
+///
+/// Cost: O(nodes + edges + sections + runs) — one sorted pass for the
+/// zero-section and section-cap checks, one memoized parent walk, one
+/// edge-tuple scan, and one domain sweep.
 fn check_invariants(map: MindMap) -> Result<MindMap, String> {
     if let Some(err) = detect_zero_section_node(&map) {
+        return Err(err);
+    }
+    if let Some(err) = detect_id_key_mismatch(&map) {
         return Err(err);
     }
     if let Some(err) = detect_parent_cycle(&map) {
         return Err(err);
     }
     if let Some(err) = detect_section_count_cap(&map) {
+        return Err(err);
+    }
+    if let Some(err) = validate::map_numeric_domain(&map) {
         return Err(err);
     }
     warn_on_duplicate_edges(&map);
@@ -114,6 +208,37 @@ fn detect_zero_section_node(map: &MindMap) -> Option<String> {
          needs at least one. Run `maptool convert --sections <file>` \
          to migrate, or add an explicit `sections` array.",
         id
+    ))
+}
+
+/// Reject a map where a node's key in `nodes` differs from the
+/// node's own `id`.
+///
+/// **This is what makes the cycle rejection below sound.** The two
+/// spellings of a node's identity address *different graphs*:
+/// [`detect_parent_cycle`] walks `nodes` by key, while
+/// [`ChildIndex`](crate::mindmap::model::ChildIndex) — which every
+/// scene build and fold walk uses — keys children by `parent_id` and
+/// looks them up by `node.id`. Let the two disagree and a file can
+/// describe a chain that is acyclic in the key graph and a loop in
+/// the id graph: `{"k": {"id": "a", "parent_id": "a"}}` is its own
+/// child under `ChildIndex` and a dangling-parent root under the
+/// cycle check. The scene builder then descends that self-edge
+/// forever, appending to the arena until the allocator gives up.
+///
+/// `maptool verify` has always called this an error
+/// (`verify/ids.rs`); the loader accepting it is what left the gap.
+/// Nodes are visited in sorted-key order so the reported node is
+/// deterministic across `HashMap` iteration order.
+fn detect_id_key_mismatch(map: &MindMap) -> Option<String> {
+    let mut keys: Vec<&String> = map.nodes.keys().collect();
+    keys.sort();
+    let key = keys.into_iter().find(|key| &map.nodes[*key].id != *key)?;
+    Some(format!(
+        "node {:?}: `id` is {:?} but the key in `nodes` is {:?} — they address the same node \
+         and must match. A mismatch makes the parent-cycle check and the scene builder walk \
+         different graphs; see format/ids.md.",
+        key, map.nodes[key].id, key
     ))
 }
 
@@ -1998,6 +2123,213 @@ mod tests {
         let err = load_from_str(&json).expect_err("self-parent cycle must be rejected");
         assert!(err.contains("cycle"), "error must mention cycle: {err}");
         assert!(err.contains('a'), "error must name node 'a': {err}");
+    }
+
+    /// A `nodes` key that disagrees with the node's own `id` is
+    /// rejected.
+    ///
+    /// Not a tidiness rule — it is what makes the cycle check below
+    /// sound. The two spellings address different graphs, so a
+    /// mismatch lets a file be acyclic to `detect_parent_cycle`
+    /// (which walks keys) and a self-loop to `ChildIndex` (which
+    /// walks `node.id`), which is what every scene build and fold
+    /// walk actually traverses.
+    #[test]
+    fn test_node_key_must_match_node_id() {
+        let json = map_json_with_nodes(&node_json("0", "null").replace(r#""id": "0""#, r#""id": "elsewhere""#));
+        let err = load_from_str(&json).expect_err("a key / id mismatch must be rejected");
+        assert!(err.contains("elsewhere"), "must name the node's id: {err}");
+        assert!(err.contains("must match"), "must state the rule: {err}");
+    }
+
+    /// **The self-loop the key / id mismatch used to smuggle past
+    /// the cycle check.** `detect_parent_cycle` sees key `"k"` whose
+    /// parent `"a"` is absent — a dangling root, no cycle. But the
+    /// node's `id` *is* `"a"`, so `ChildIndex` files it as its own
+    /// child, and the scene builder descending that edge never
+    /// terminates.
+    #[test]
+    fn test_id_graph_self_loop_is_rejected() {
+        let node = node_json("k", "\"a\"").replace(r#""id": "k""#, r#""id": "a""#);
+        let err = load_from_str(&map_json_with_nodes(&node))
+            .expect_err("a node that is its own child in the id graph must be rejected");
+        assert!(
+            err.contains("must match"),
+            "the key / id rule is what catches this: {err}"
+        );
+    }
+
+    /// **The stack-overflow regression, on a deliberately small
+    /// stack.**
+    ///
+    /// A linear `parent_id` chain is a legal acyclic tree, so the
+    /// loader accepts it and every walker downstream inherits its
+    /// depth. While those walkers recursed, a chain like this
+    /// exhausted the thread stack and killed the process with
+    /// `SIGABRT` — not a panic, so nothing could catch, log, or
+    /// degrade it, and the user's unsaved work went with it.
+    ///
+    /// The walks run on a 256 KiB stack rather than a test
+    /// thread's default couple of megabytes. That is what keeps the
+    /// test both fast and honest: a few thousand nodes is cheap to
+    /// build, and any reintroduced recursion blows a stack that
+    /// small long before the chain ends, while the iterative form
+    /// is indifferent to it because its frontier lives on the heap.
+    ///
+    /// A failure here aborts the test binary instead of failing the
+    /// assertion — that is what a stack overflow does, and it is
+    /// precisely the outcome under test.
+    #[test]
+    fn test_deep_parent_chain_does_not_exhaust_the_stack() {
+        const DEPTH: usize = 6_000;
+        const SMALL_STACK: usize = 256 * 1024;
+
+        let nodes = (0..DEPTH)
+            .map(|i| {
+                let parent = if i == 0 {
+                    "null".to_string()
+                } else {
+                    format!("\"n{}\"", i - 1)
+                };
+                node_json(&format!("n{i}"), &parent)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let map = load_from_str(&map_json_with_nodes(&nodes)).expect("a deep chain is acyclic and loads");
+
+        let walked = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(move || {
+                let hidden = map.fold_hidden_set().len();
+                let descendants = map.all_descendants("n0").len();
+                let tree = crate::mindmap::tree_builder::build_mindmap_tree(&map);
+                (hidden, descendants, tree.tree.arena.count())
+            })
+            .expect("spawn the small-stack walker")
+            .join()
+            .expect("the walkers must not exhaust a 256 KiB stack");
+
+        let (hidden, descendants, arena_nodes) = walked;
+        assert_eq!(hidden, 0, "nothing is folded, so nothing is hidden");
+        assert_eq!(descendants, DEPTH - 1, "every node below the root is a descendant");
+        assert!(
+            arena_nodes >= DEPTH,
+            "the scene tree must carry every node: {arena_nodes} < {DEPTH}"
+        );
+    }
+
+    /// **The zero that aborted the process.** A border font size of
+    /// zero reaches cosmic-text's `Buffer::new`, whose
+    /// `assert_ne!(line_height, 0.0)` fires on the scene-build path
+    /// — outside any `catch_unwind`, so the editor dies on the frame
+    /// after the map opens.
+    #[test]
+    fn test_zero_border_font_size_is_rejected() {
+        let node = node_json("0", "null").replace(
+            r#""show_shadow":false"#,
+            r#""show_shadow":false,"border":{"font_size_pt":0.0}"#,
+        );
+        let err = load_from_str(&map_json_with_nodes(&node)).expect_err("a zero font size must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(err.contains("font_size_pt"), "must name the field: {err}");
+    }
+
+    /// JSON has no `Infinity` literal, but `1e39` does not fit an
+    /// `f32` and arrives as one — so the finiteness screens are
+    /// reachable from an ordinary-looking number rather than an
+    /// exotic token.
+    #[test]
+    fn test_f32_overflow_to_infinity_is_rejected() {
+        let node = node_json("0", "null").replace(
+            r#""show_shadow":false"#,
+            r#""show_shadow":false,"border":{"font_size_pt":1e39}"#,
+        );
+        let err = load_from_str(&map_json_with_nodes(&node))
+            .expect_err("a font size that overflows f32 must be rejected");
+        assert!(
+            err.contains("not finite") || err.contains("ceiling"),
+            "must reject the overflowed size: {err}"
+        );
+    }
+
+    /// **The inverted clamp.** `f32::clamp` panics when its bounds
+    /// cross, and every size cascade resolves a `min` / `max` pair
+    /// straight out of the document into one.
+    #[test]
+    fn test_inverted_font_size_clamp_is_rejected() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        let edge = edge_json_with(r#", "glyph_connection": {"min_font_size_pt": 40.0, "max_font_size_pt": 8.0}"#);
+        let err = load_from_str(&map_json(&nodes, &edge)).expect_err("an inverted clamp must be rejected");
+        assert!(err.contains("edge[0]"), "must name the edge: {err}");
+        assert!(err.contains("above max"), "must explain the inversion: {err}");
+    }
+
+    /// A canvas default is the fallback for every element that does
+    /// not override it, so one hostile number there poisons the
+    /// whole document rather than a single node.
+    #[test]
+    fn test_canvas_default_border_is_screened_too() {
+        let json = map_json_with_nodes(&node_json("0", "null")).replace(
+            r##""canvas": {"background_color": "#000"}"##,
+            r##""canvas": {"background_color": "#000", "default_border": {"font_size_pt": 0.0}}"##,
+        );
+        let err = load_from_str(&json).expect_err("a hostile canvas default must be rejected");
+        assert!(err.contains("canvas:"), "must name the canvas: {err}");
+    }
+
+    /// Node geometry that would explode a downstream allocation is
+    /// refused at the boundary. `validate::node_size` had always
+    /// known this shape; nothing called it on the load path.
+    #[test]
+    fn test_absurd_node_size_is_rejected_at_load() {
+        let node = node_json("0", "null").replace(
+            r#""size": {"width": 100, "height": 50}"#,
+            r#""size": {"width": 1e12, "height": 50}"#,
+        );
+        let err = load_from_str(&map_json_with_nodes(&node)).expect_err("an absurd node size must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(err.contains("ceiling"), "must cite the ceiling: {err}");
+    }
+
+    /// Text runs must be sorted, non-overlapping, non-empty, and
+    /// inside the section's text — the invariants `text_run_ops`
+    /// and the styled-span bridge already assumed, and the same
+    /// four `maptool verify` reports. Each is checked with the
+    /// wording the tool uses so the two agree about what a valid
+    /// map is.
+    #[test]
+    fn test_malformed_text_runs_are_rejected() {
+        let run = |start: usize, end: usize| {
+            format!(
+                r##"{{"start":{start},"end":{end},"bold":false,"italic":false,"underline":false,
+                     "font":"LiberationSans","size_pt":14,"color":"#fff","hyperlink":null}}"##
+            )
+        };
+        let with_runs = |runs: String| {
+            let styled = node_json("0", "null").replace(
+                r#""sections": [{"text": "n"}]"#,
+                &format!(r#""sections": [{{"text": "abcdef", "text_runs": [{runs}]}}]"#),
+            );
+            map_json_with_nodes(&styled)
+        };
+
+        for (runs, expected) in [
+            (run(3, 3), "not less than end"),
+            (run(4, 2), "not less than end"),
+            (format!("{},{}", run(0, 4), run(2, 6)), "overlaps previous run"),
+            (run(0, 99), "exceeds text length"),
+        ] {
+            let err = load_from_str(&with_runs(runs)).expect_err("a malformed run table must be rejected");
+            assert!(
+                err.contains(expected),
+                "expected {expected:?} in the rejection, got: {err}"
+            );
+        }
+
+        // The well-formed table the four above are deviations from.
+        let map = load_from_str(&with_runs(format!("{},{}", run(0, 2), run(2, 6))))
+            .expect("sorted, non-overlapping, in-bounds runs load");
+        assert_eq!(map.nodes["0"].sections[0].text_runs.len(), 2);
     }
 
     /// A valid 3-generation chain (no cycle) must load without error

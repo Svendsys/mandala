@@ -583,16 +583,10 @@ pub fn border_run_specs_with(
     let top_corner_h = tl_ink.ink_height.max(tr_ink.ink_height);
     let bottom_corner_h = bl_ink.ink_height.max(br_ink.ink_height);
     let side_avail = (node_size.1 - top_corner_h - bottom_corner_h).max(0.0);
-    let left_row_count = if left_line_h > 0.0 {
-        (side_avail / left_line_h).floor().max(0.0) as usize
-    } else {
-        0
-    };
-    let right_row_count = if right_line_h > 0.0 {
-        (side_avail / right_line_h).floor().max(0.0) as usize
-    } else {
-        0
-    };
+    // Same clamp as the horizontal fill, and for the same reason:
+    // both terms are authored, and the quotient sizes a `String`.
+    let left_row_count = fill_copies(side_avail, left_line_h, 1);
+    let right_row_count = fill_copies(side_avail, right_line_h, 1);
     let left_text = border_style.left_column_text(left_row_count.max(1));
     let right_text = border_style.right_column_text(right_row_count.max(1));
     let left_v_height = left_row_count as f32 * left_line_h;
@@ -748,6 +742,44 @@ fn side_pattern_first_grapheme(pattern: &SidePattern) -> String {
 /// `floor(available / cluster_w)` picks the largest N copies
 /// that fit. The leftover sub-cluster pixels stay blank, so the
 /// rail terminates flush with the right corner.
+/// Hard ceiling on the grapheme count one border side may emit.
+///
+/// The copy count is `available width / cluster advance`, and
+/// **both terms are authored**: the width comes from `node.size`
+/// and the advance from the border's `font_size_pt`. A
+/// `.mindmap.json` is untrusted input, so their quotient is
+/// attacker-controlled, and it drives a `String` push loop — a
+/// hostile pair asks for a multi-gigabyte string on the scene-build
+/// path, which fails as an allocator abort rather than a catchable
+/// panic. The loader's numeric-domain check
+/// (`model::validate`) already rejects the sizes that make the
+/// quotient absurd; this is the second wall.
+///
+/// A border side spanning a full desktop viewport at a readable
+/// size runs to a few hundred graphemes, so this is generous by
+/// orders of magnitude and still bounded.
+pub const MAX_BORDER_SIDE_GLYPHS: usize = 100_000;
+
+/// How many whole copies of a `cluster_w`-wide, `cluster_len`-long
+/// cluster fit in `available_pt`, clamped so one side can never
+/// emit more than [`MAX_BORDER_SIDE_GLYPHS`] graphemes.
+///
+/// Total over hostile inputs: a non-finite or non-positive advance
+/// yields zero copies rather than a saturating cast into the push
+/// loop.
+///
+/// Cost: a few float ops, no allocation.
+fn fill_copies(available_pt: f32, cluster_w: f32, cluster_len: usize) -> usize {
+    if !available_pt.is_finite() || !cluster_w.is_finite() || cluster_w <= 0.0 || cluster_len == 0 {
+        return 0;
+    }
+    let copies = (available_pt / cluster_w).floor();
+    if !copies.is_finite() || copies <= 0.0 {
+        return 0;
+    }
+    (copies as usize).min(MAX_BORDER_SIDE_GLYPHS / cluster_len)
+}
+
 fn fit_pattern_to_width(
     font_system: &mut FontSystem,
     pattern: &SidePattern,
@@ -775,7 +807,7 @@ fn fit_pattern_to_width(
             if cluster_w <= 0.0 {
                 return (String::new(), 0, 0.0);
             }
-            let full_copies = (available_pt / cluster_w).floor() as usize;
+            let full_copies = fill_copies(available_pt, cluster_w, cluster.len());
             let mut emitted_w = full_copies as f32 * cluster_w;
             let mut text = String::new();
             for _ in 0..full_copies {
@@ -821,11 +853,7 @@ fn fit_pattern_to_width(
                 return (rendered.text, rendered.cluster_count, prefix_w + suffix_w);
             }
             let between_avail = available_pt - prefix_w - suffix_w;
-            let full_copies = if fill_cluster_w > 0.0 {
-                (between_avail / fill_cluster_w).floor() as usize
-            } else {
-                0
-            };
+            let full_copies = fill_copies(between_avail, fill_cluster_w, fill.len());
 
             let mut text = String::new();
             let mut cluster_count = 0;

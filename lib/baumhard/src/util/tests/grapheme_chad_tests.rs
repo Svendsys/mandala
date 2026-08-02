@@ -3,7 +3,7 @@
 use lazy_static::lazy_static;
 
 use crate::util::grapheme_chad::{
-    count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
+    byte_indices_of_graphemes, count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
     delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_grapheme_range,
     first_non_whitespace_grapheme, grapheme_display_width, insert_new_lines, insert_spaces,
     insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
@@ -1612,4 +1612,59 @@ pub fn do_join_graphemes() {
         );
         assert_eq!(joined.replace('\n', ""), input, "round-trip for {:?}", input);
     }
+}
+
+#[test]
+fn test_byte_indices_of_graphemes() {
+    do_byte_indices_of_graphemes();
+}
+
+/// The batched grapheme→byte conversion must agree with the
+/// single-index helper on every index, including the surprising
+/// ones: multi-scalar clusters, an index exactly at the cluster
+/// count (which has a byte offset but no cluster living there), and
+/// an index past the end.
+pub fn do_byte_indices_of_graphemes() {
+    for text in [
+        "",
+        "abc",
+        "abcd🍕1234",
+        "🙏🏻👨‍👩‍👧🇺🇸",
+        "e\u{0301}x",
+        "a\r\nb",
+    ] {
+        let total = count_grapheme_clusters(text);
+        // Two past the end so the "no cluster here" boundary is
+        // covered from both sides.
+        let probes: Vec<usize> = (0..total + 2).collect();
+        let batched = byte_indices_of_graphemes(text, &probes);
+        assert_eq!(batched.len(), probes.len());
+        for (i, &probe) in probes.iter().enumerate() {
+            assert_eq!(
+                batched[i],
+                find_byte_index_of_grapheme(text, probe),
+                "index {probe} of {text:?} disagrees with the single-index helper"
+            );
+        }
+    }
+
+    // Out-of-order input still resolves correctly — the contract
+    // asks for ascending indices, but breaking it must cost speed,
+    // never correctness.
+    let text = "abcd🍕1234";
+    let scrambled = [6usize, 1, 4, 0, 8];
+    let batched = byte_indices_of_graphemes(text, &scrambled);
+    for (i, &probe) in scrambled.iter().enumerate() {
+        assert_eq!(batched[i], find_byte_index_of_grapheme(text, probe));
+    }
+
+    // A run table over the text resolves to the same byte slices a
+    // per-boundary walk would produce — the property the styled-span
+    // bridge depends on.
+    let bounds = byte_indices_of_graphemes(text, &[0, 4, 4, 5, 5, 9]);
+    let slices: Vec<&str> = bounds
+        .chunks(2)
+        .map(|p| &text[p[0].unwrap_or(text.len())..p[1].unwrap_or(text.len())])
+        .collect();
+    assert_eq!(slices, vec!["abcd", "🍕", "1234"]);
 }

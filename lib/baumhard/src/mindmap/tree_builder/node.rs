@@ -11,7 +11,7 @@
 //!     │                   per-component mutations)
 //!     ├── GlyphArea (section 1)
 //!     │   └── GlyphModel (section 1 model)
-//!     └── GlyphArea (child mind-node, recursive)
+//!     └── GlyphArea (child mind-node, nested the same way)
 //!         └── …
 //! ```
 //!
@@ -352,26 +352,46 @@ pub(super) fn append_node_sections(
     }
 }
 
-/// Recursive child walker — for each non-folded child mind-node
-/// of `parent_mind_id`, append the container area, then its
-/// section subtree, then recurse into its own children. Keeps the
-/// container, sections, and child mind-nodes as a flat sibling
-/// list under the parent container — same shape as the
-/// pre-section tree, just with extra section siblings.
+/// Descendant walker — for every visible mind-node under
+/// `parent_mind_id`, append the container area then its section
+/// subtree. Keeps the container, sections, and child mind-nodes as
+/// a flat sibling list under the parent container — same shape as
+/// the pre-section tree, just with extra section siblings.
 ///
 /// `parent_folded` is `true` when an ancestor (including the
-/// immediate parent) is folded. Children of a folded node are
-/// hidden by construction, so the recursive fold check from the
-/// old `is_hidden_by_fold` path is redundant here.
-// `clippy::too_many_arguments`: a recursive arena walk threading
-// four out-parameters (`tree`, `node_map`, `section_map`,
-// `id_counter`) plus the read-only `(map, index, parent)` triple.
-// Bundling the out-params into a struct would just add a borrow
-// indirection on every recursion step.
+/// immediate parent) is folded. A folded node's subtree is hidden
+/// by construction, so it is never descended into — which is also
+/// why the fold check from the old `is_hidden_by_fold` path is
+/// redundant here.
+///
+/// **The descent is iterative, and that is load-bearing.** This
+/// walker's depth is `parent_id` nesting depth, authored in a
+/// `.mindmap.json` — untrusted input, where a linear chain of N
+/// nodes is a legal acyclic tree the loader's cycle check accepts.
+/// The recursive form overflowed the thread stack on such a map
+/// and took the process down with `SIGABRT`: not a panic, so there
+/// was no frame to degrade and nothing to log
+/// (CODE_CONVENTIONS §9). Depth now costs heap. The scene rebuild
+/// runs this on every structural change, so a hostile map that
+/// merely *opens* reached it.
+///
+/// Nodes are visited in the same pre-order the recursive form
+/// produced — children are pushed in reverse so the lowest-sorted
+/// sibling pops first. That order is not cosmetic: it fixes arena
+/// sibling order and the `unique_id` values handed out from
+/// `id_counter`, both of which the renderer and the scene cache
+/// key on.
+///
+/// Cost: O(visible descendants). One heap vector holding the
+/// frontier — the widest sibling set on the path, not the subtree.
+// `clippy::too_many_arguments`: an arena walk threading four
+// out-parameters (`tree`, `node_map`, `section_map`, `id_counter`)
+// plus the read-only `(map, index, parent)` triple. Bundling the
+// out-params into a struct would just add a borrow indirection.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn build_children_recursive(
+pub(super) fn build_descendants<'a>(
     map: &MindMap,
-    index: &ChildIndex<'_>,
+    index: &ChildIndex<'a>,
     parent_mind_id: &str,
     parent_folded: bool,
     parent_node_id: NodeId,
@@ -380,33 +400,34 @@ pub(super) fn build_children_recursive(
     section_map: &mut HashMap<(String, usize), NodeId>,
     id_counter: &mut usize,
 ) {
+    if parent_folded {
+        return;
+    }
     let vars = &map.canvas.theme_variables;
     let canvas_default_border = map.canvas.default_border.as_ref();
-    let children = index.children_of(parent_mind_id);
-    for child in children {
-        if parent_folded {
-            continue;
-        }
+
+    let mut pending: Vec<(&'a MindNode, NodeId)> = index
+        .children_of(parent_mind_id)
+        .iter()
+        .rev()
+        .map(|child| (*child, parent_node_id))
+        .collect();
+
+    while let Some((child, arena_parent)) = pending.pop() {
         let area = mindnode_container_area(child, vars, canvas_default_border);
         let element = GfxElement::new_area_non_indexed_with_id(area, child.channel, *id_counter);
         *id_counter += 1;
 
         let child_node_id = tree.arena.new_node(element);
-        parent_node_id.append(child_node_id, &mut tree.arena);
+        arena_parent.append(child_node_id, &mut tree.arena);
         node_map.insert(child.id.clone(), child_node_id);
 
         append_node_sections(child, child_node_id, vars, tree, section_map, id_counter);
 
-        build_children_recursive(
-            map,
-            index,
-            &child.id,
-            child.folded,
-            child_node_id,
-            tree,
-            node_map,
-            section_map,
-            id_counter,
-        );
+        if !child.folded {
+            for grandchild in index.children_of(&child.id).iter().rev() {
+                pending.push((grandchild, child_node_id));
+            }
+        }
     }
 }
