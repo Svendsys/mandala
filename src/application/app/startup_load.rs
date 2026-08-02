@@ -505,6 +505,52 @@ mod tests {
         );
     }
 
+    /// **A placard is not announced as a map that loaded.** Under
+    /// `RUST_LOG=info` the shell used to print
+    /// `document: loaded mindmap "load-failure" with 1 node(s)`
+    /// immediately beside `startup: could not load …`, because
+    /// `MindMapDocument::finalize` carried the announcement and the
+    /// placard goes through `finalize` like any other map. A log
+    /// that contradicts itself in two consecutive lines is worse
+    /// than a quiet one.
+    ///
+    /// The same shape as the pin above, for the same reason — an
+    /// `info!` has no sink the suite installs — and the same two
+    /// scopings: [`production_code`] strips the comments that quote
+    /// these names, and [`braced_block_after`] asks the question of
+    /// one function body at a time. Both directions are checked, so
+    /// deleting the announcement outright fails here too.
+    #[test]
+    fn test_the_placard_is_not_announced_as_a_loaded_map() {
+        const DOCUMENT: &str = "src/application/document/mod.rs";
+        let code = production_code(DOCUMENT);
+        // A file whose test modules are all external: if the reader
+        // ever truncates at one of those declarations it hands back
+        // nothing, and every assertion below passes vacuously.
+        assert!(
+            code.contains("fn finalize("),
+            "{DOCUMENT} did not reach this test — the reader truncated it"
+        );
+
+        for (item, announces) in [
+            ("pub fn load(", true),
+            ("pub fn from_json_str(", true),
+            ("pub fn load_failure_placard(", false),
+            ("fn finalize(", false),
+        ] {
+            let body = braced_block_after(&code, item)
+                .unwrap_or_else(|| panic!("{DOCUMENT} must still declare `{item}`"));
+            assert_eq!(
+                body.contains("log_loaded("),
+                announces,
+                "`{item}` {} announce the load. The line belongs to the constructors that \
+                 really loaded a map — not to `finalize`, which the load-failure placard also \
+                 goes through. Body seen: {body}",
+                if announces { "must" } else { "must not" }
+            );
+        }
+    }
+
     /// **[`adopt`] still logs.** The placard is an addition to the
     /// stderr line, not a replacement for it — a terminal user and a
     /// bug report both want the line, and removing it would make
@@ -715,11 +761,12 @@ mod tests {
     /// 1. every path-shaped name the bullet backticks is in
     ///    [`STARTUP_SITES`] — so adding a stale one fails here rather
     ///    than surviving a decade;
-    /// 2. every roster entry occurs in the file the roster names — so
-    ///    a rename fails;
-    /// 3. every entry the roster marks fallible occurs in a statement
-    ///    that also carries an `.expect(` — so listing something that
-    ///    cannot fail fails.
+    /// 2. every roster entry is *called* in the file the roster names
+    ///    — so a rename fails;
+    /// 3. every call of an entry the roster marks fallible sits in a
+    ///    statement that also carries an `.expect(` — so listing
+    ///    something that cannot fail fails, and so does one arm of a
+    ///    two-arm site quietly dropping its reason.
     ///
     /// All three read [`production_code`], so a name that survives
     /// only in a comment does not count as surviving.
@@ -749,19 +796,32 @@ mod tests {
                 "CODE_CONVENTIONS.md §9's `expect` bullet must still name `{name}`"
             );
             let code = production_code(relative);
+            // The paren makes this a *call* rather than a mention:
+            // without it `create_surface` also matches
+            // `create_surface_config`, which is infallible and would
+            // answer the next question wrongly.
+            let call = format!("{name}(");
+            let calls: Vec<String> = statements(&code)
+                .into_iter()
+                .filter(|s| s.contains(&call))
+                .collect();
             assert!(
-                code.contains(name),
-                "§9 names `{name}` but {relative} does not contain it — the convention is \
+                !calls.is_empty(),
+                "§9 names `{name}` but {relative} never calls it — the convention is \
                  pointing at something that moved"
             );
-            let with_expect = statements(&code)
-                .iter()
-                .any(|s| s.contains(name) && s.contains(".expect("));
+            // *Every* call, not merely one of them. `create_surface`
+            // is reached from both `bootstrap_native` and
+            // `bootstrap_wasm`; an `any` here would let one of the
+            // two stop saying why it died while §9 goes on claiming
+            // both do.
+            let all_expect = calls.iter().all(|s| s.contains(".expect("));
             assert_eq!(
-                with_expect,
+                all_expect,
                 *fallible,
-                "§9 classes `{name}` as {} , but {relative} says otherwise: a fallible \
-                 startup site is one whose call carries an `.expect(\"<reason>\")`",
+                "§9 classes `{name}` as {}, but {relative} says otherwise: a fallible startup \
+                 site is one whose every call carries an `.expect(\"<reason>\")`. \
+                 Calls seen: {calls:#?}",
                 if *fallible {
                     "a site that can fail"
                 } else {

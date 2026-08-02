@@ -61,6 +61,13 @@ pub fn do_strip_comments_removes_only_comments() {
         // side cannot fuse into one.
         ("a/*x*/b", &["x"], &["a b"]),
     ];
+    // The replacement is exactly one space, in both comment shapes.
+    // For a block comment that is load-bearing — `a/*x*/b` must not
+    // become `ab` — and for a line comment it is the documented
+    // contract, which the newline would otherwise make unobservable.
+    assert_eq!(strip_comments("a // b\nc"), "a  \nc");
+    assert_eq!(strip_comments("a/*x*/b"), "a b");
+
     for (input, absent, present) in cases {
         let stripped = strip_comments(input);
         for needle in *absent {
@@ -113,15 +120,20 @@ pub fn do_strip_comments_survives_unterminated_input() {
     assert!(!strip_comments("keep /* gone").contains("gone"));
 }
 
-/// A test *module* ends the production half; a `#[cfg(test)]` on
-/// anything smaller does not.
+/// An *inline* test module ends the production half; nothing else
+/// does.
 ///
-/// The second half is the one that matters and the one that was got
-/// wrong first: `src/application/renderer/mod.rs` opens with a
-/// `#[cfg(test)] use …` five hundred lines above the code its pin is
-/// about. Truncating there returns an empty string, and an empty
-/// string satisfies every negative assertion and no positive one —
-/// a scan that silently cannot fail.
+/// The negative cases are the ones that matter, and each cost a real
+/// pin before it was handled. Truncating early returns a shorter
+/// string — in both cases here, an empty one — and an empty string
+/// satisfies every negative assertion and no positive one: a scan
+/// that silently cannot fail.
+///
+/// - `src/application/renderer/mod.rs` opens with a `#[cfg(test)]
+///   use …` five hundred lines above the code its pin is about.
+/// - `src/application/document/mod.rs` declares fourteen
+///   `#[cfg(test)] mod tests_*;` **before its first real item**.
+///   None of that text is in the file, so there is nothing to cut.
 pub fn do_above_test_modules_cuts_at_the_module_only() {
     let attribute = concat!("#[cfg(", "test)]");
 
@@ -135,6 +147,13 @@ pub fn do_above_test_modules_cuts_at_the_module_only() {
     assert!(
         above_test_modules(&helper).contains("fn ships()"),
         "a test-only helper fn must not truncate the file"
+    );
+
+    let external =
+        format!("{attribute}\nmod tests_nodes;\n{attribute}\nmod tests_edges;\nfn ships() {{ keep(); }}\n");
+    assert!(
+        above_test_modules(&external).contains("fn ships()"),
+        "an external test-module declaration holds no text in this file and must not truncate it"
     );
 
     for module in [
@@ -155,6 +174,21 @@ pub fn do_above_test_modules_cuts_at_the_module_only() {
             "{module}: the test module survived"
         );
     }
+
+    // Declarations first, then an inline module: the inline one is
+    // still the cut, and the declarations above it do not move it.
+    let mixed = format!(
+        "{attribute}\nmod tests_nodes;\nfn ships() {{ keep(); }}\n{attribute}\nmod tests {{\n  fn hidden() {{ needle(); }}\n}}\n"
+    );
+    let production = above_test_modules(&mixed);
+    assert!(
+        production.contains("fn ships()"),
+        "mixed: production code was cut away"
+    );
+    assert!(
+        !production.contains("needle()"),
+        "mixed: the inline module survived"
+    );
 
     // No test module at all: the whole file is production.
     assert_eq!(above_test_modules("fn ships() {}"), "fn ships() {}");

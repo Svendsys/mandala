@@ -109,24 +109,35 @@ pub fn production_code(relative: &str) -> String {
     above_test_modules(&strip_comments(&source)).to_string()
 }
 
-/// `code` up to its first `#[cfg(test)]` **module**, or all of it
-/// when there is none.
+/// `code` up to its first **inline** `#[cfg(test)]` module, or all of
+/// it when there is none.
 ///
-/// The anchor is the module, not the attribute, and the difference is
-/// load-bearing: `src/application/renderer/mod.rs` opens with a
-/// `#[cfg(test)] use …` five hundred lines above the code a pin cares
-/// about, and truncating there would hand every caller an empty
-/// string — a scan that cannot fail, which is worse than no scan.
+/// Only one shape hides text inside *this* file, and it is the only
+/// shape that truncates. The two near-misses each cost a real pin
+/// before they were handled:
 ///
-/// A visibility in front of the `mod` is accepted, since a
-/// benchmark-reusable test tree is declared `pub mod tests;`
-/// (`lib/baumhard/CONVENTIONS.md` §B8).
+/// - **`#[cfg(test)] use …`, or any smaller item.**
+///   `src/application/renderer/mod.rs` opens with a test-only import
+///   five hundred lines above the code a pin cares about.
+/// - **`#[cfg(test)] mod tests_nodes;` — an *external* module.**
+///   `src/application/document/mod.rs` declares fourteen of them
+///   before its first real item. None of their text is in this file,
+///   so there is nothing here to exclude.
+///
+/// Truncating at either returns a shorter string — in both those
+/// cases an empty one — and an empty string satisfies every negative
+/// assertion and no positive one: a scan that silently cannot fail is
+/// worse than no scan.
+///
+/// So the anchor is `mod name {`, with the brace. A visibility in
+/// front of it is accepted, since a benchmark-reusable test tree is
+/// declared `pub mod tests;` (`lib/baumhard/CONVENTIONS.md` §B8).
 ///
 /// **What this deliberately does not remove:** a `#[cfg(test)]` on a
-/// smaller item — a `use`, a helper `fn`, an `impl`. Those are code
-/// that exists rather than prose that does not, so a needle inside
-/// one is a needle in a real function, and the narrower pins built
-/// on [`braced_block_after`] do not reach them anyway.
+/// smaller item. Those are code that exists rather than prose that
+/// does not, so a needle inside one is a needle in a real function,
+/// and the narrower pins built on [`braced_block_after`] do not reach
+/// them anyway.
 ///
 /// `code` should already be comment-free; a mention of the attribute
 /// in prose would otherwise truncate a file at its own module docs.
@@ -137,7 +148,7 @@ pub fn above_test_modules(code: &str) -> &str {
     while let Some(offset) = code[from..].find(TEST_ATTRIBUTE) {
         let at = from + offset;
         let after = &code[at + TEST_ATTRIBUTE.len()..];
-        if declares_a_module(after) {
+        if opens_an_inline_module(after) {
             return &code[..at];
         }
         from = at + TEST_ATTRIBUTE.len();
@@ -146,8 +157,9 @@ pub fn above_test_modules(code: &str) -> &str {
 }
 
 /// Whether `after` — the text immediately following a `#[cfg(test)]`
-/// — opens a module declaration, allowing a leading visibility.
-fn declares_a_module(after: &str) -> bool {
+/// — opens an *inline* module: an optional visibility, `mod`, a name,
+/// then `{` rather than `;`.
+fn opens_an_inline_module(after: &str) -> bool {
     let rest = after.trim_start();
     let rest = match rest.strip_prefix("pub") {
         // `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`.
@@ -160,8 +172,19 @@ fn declares_a_module(after: &str) -> bool {
         },
         None => rest,
     };
-    rest.strip_prefix("mod")
-        .is_some_and(|tail| tail.starts_with(char::is_whitespace))
+    let Some(tail) = rest.strip_prefix("mod") else {
+        return false;
+    };
+    if !tail.starts_with(char::is_whitespace) {
+        return false;
+    }
+    // Past `mod` and its name, an inline module opens a block and an
+    // external one ends the statement.
+    let named = tail.trim_start();
+    let end = named
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(named.len());
+    named[end..].trim_start().starts_with('{')
 }
 
 /// Replace every Rust comment in `src` with a single space, leaving
