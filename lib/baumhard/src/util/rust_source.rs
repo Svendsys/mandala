@@ -31,9 +31,22 @@
 //!   production code, and a two-line shim underneath it revived a
 //!   mutation four pins had killed. What the recognizer accepts is
 //!   spelled out on
-//!   [`above_test_modules`](crate::util::rust_source::above_test_modules),
-//!   and held against every shape *in this tree* — not against
-//!   invented ones — by the sweep in `util::tests::rust_source_tests`.
+//!   [`above_test_modules`](crate::util::rust_source::above_test_modules).
+//!
+//!   **A tree-wide sweep is not enough to hold that down, and the
+//!   reason is worth stating once.** The sweep in
+//!   `util::tests::rust_source_tests` reads all 447 files and agrees
+//!   with an independently written recognizer on every cut — and it
+//!   still cannot see a hole, because a shim author writes a *new*
+//!   shape rather than reusing one the tree already contains. Three
+//!   were found that way after the sweep went green: an attribute run
+//!   (`#[cfg(test)] #[allow(dead_code)]`), a raw identifier
+//!   (`mod r#tests_shim {`), and one added space (`#[ cfg(test) ]`).
+//!   So the recognizer is written against Rust's grammar — whitespace
+//!   between every token, identifiers rather than ASCII words — and
+//!   the spellings this tree does *not* write are enumerated
+//!   separately, in `LEGAL_UNWRITTEN_HEADERS`, each one compiled
+//!   before being listed.
 //!
 //! [`production_code`](crate::util::rust_source::production_code)
 //! closes both: it replaces every comment with a space
@@ -83,10 +96,19 @@
 
 use crate::util::doc_fixtures::repo_path;
 
-/// The call [`above_test_modules`] scans for. Every `cfg` attribute
-/// in the file is a candidate; `attribute_opening_at` sorts the ones
+/// The word [`above_test_modules`] scans for. Every `cfg` in the
+/// file is a candidate; `attribute_opening_before` sorts the ones
 /// that are attributes from the ones that are not, and `implies_test`
 /// decides which of those gate on `test`.
+///
+/// **The word alone, not `cfg(`.** Rust's attribute grammar is a
+/// token grammar, and `#[cfg (test)]` compiles exactly as
+/// `#[cfg(test)]` does — `rustc` was asked. Matching the parenthesis
+/// as part of the needle made a single space enough to hide a whole
+/// module from this reader. The `(` is still required, found by
+/// [`skip_whitespace_forward`] past the word, and that is also what
+/// keeps `cfg_attr` out: the character after the word is `_`,
+/// neither whitespace nor a parenthesis.
 ///
 /// Spelled as a `concat!` so this file's own text does not contain
 /// the literal it searches for:
@@ -99,20 +121,7 @@ use crate::util::doc_fixtures::repo_path;
 /// occurrence inside a *string literal* still truncates early, which
 /// is the safe direction — a pin then scans less code and fails
 /// rather than passing on text it should not have seen.
-const CFG_CALL: &str = concat!("cfg", "(");
-
-/// The two ways a `cfg` can be written as an attribute: `#[cfg(…)]`
-/// on the item below it, and `#![cfg(…)]` on the module — or file —
-/// it is written inside. Both gate code; only the second gates a
-/// whole file, and this workspace writes two of those.
-///
-/// Anything else spelled `cfg(` — a `cfg!` macro, a function of that
-/// name, a fragment of a string literal — matches neither and is
-/// skipped.
-const ATTRIBUTE_OPENINGS: &[(&str, AttributeScope)] = &[
-    (concat!("#", "["), AttributeScope::Item),
-    (concat!("#!", "["), AttributeScope::Enclosing),
-];
+const CFG_WORD: &str = concat!("cf", "g");
 
 /// What a `cfg` attribute gates: the item written after it, or
 /// everything inside the module it is written in.
@@ -235,18 +244,21 @@ pub fn production_code(relative: &str) -> String {
 /// `code` should already be comment-free; a mention of the attribute
 /// in prose would otherwise truncate a file at its own module docs.
 ///
-/// Cost: one substring search per `cfg(` in the file, plus a
+/// Cost: one substring search per `cfg` in the file, plus a
 /// balanced-paren walk of each predicate and a few bytes of lookahead
 /// past the ones that imply `test`.
 pub fn above_test_modules(code: &str) -> &str {
     let mut from = 0usize;
-    while let Some(offset) = code[from..].find(CFG_CALL) {
+    while let Some(offset) = code[from..].find(CFG_WORD) {
         let call = from + offset;
-        // `CFG_CALL` ends with its own `(`, so the last byte of the
-        // match is the delimiter the predicate is wrapped in.
-        let open = call + CFG_CALL.len() - 1;
-        from = call + CFG_CALL.len();
-        let Some((at, scope)) = attribute_opening_at(code, call) else {
+        from = call + CFG_WORD.len();
+        // The predicate's `(` may be a space away from the word, and
+        // `cfg_attr` fails here rather than being special-cased.
+        let open = skip_whitespace_forward(code, from);
+        if code[open..].as_bytes().first() != Some(&b'(') {
+            continue;
+        }
+        let Some((at, scope)) = attribute_opening_before(code, call) else {
             continue;
         };
         let Some(close) = matching_delimiter(code, open, b'(', b')') else {
@@ -268,17 +280,51 @@ pub fn above_test_modules(code: &str) -> &str {
     code
 }
 
-/// Where the attribute wrapping the `cfg(` at `call` begins, and what
-/// it gates — or `None` when the `cfg(` is not an attribute at all.
+/// Where the attribute wrapping the `cfg` word at `call` begins, and
+/// what it gates — or `None` when that `cfg` is not an attribute at
+/// all.
 ///
 /// The distinction is what keeps a `cfg!(test)` macro, a local
 /// binding named `cfg`, or the word inside a string literal from
-/// truncating a file.
-fn attribute_opening_at(code: &str, call: usize) -> Option<(usize, AttributeScope)> {
-    ATTRIBUTE_OPENINGS
-        .iter()
-        .find(|(opening, _)| code[..call].ends_with(opening))
-        .map(|(opening, scope)| (call - opening.len(), *scope))
+/// truncating a file: none of them is preceded by `#[`.
+///
+/// Read backwards, one token at a time, skipping whitespace between
+/// every pair — `[`, then an optional `!`, then `#`. There are still
+/// exactly two scopes, [`AttributeScope::Item`] for `#[` and
+/// [`AttributeScope::Enclosing`] for `#![`; what changed is that they
+/// are recognized token by token rather than as two fixed strings.
+/// Rust puts no constraint on the whitespace between those tokens, so
+/// neither does this. `#[` and `#![` are what the workspace writes,
+/// but `#[ ` and `# ! [` compile identically and an earlier
+/// `ends_with("#[")` saw neither — a shim under `#[ cfg(test) ]` was
+/// handed back as production code, reviving a killed mutation with
+/// one added space.
+///
+/// Cost: a bounded backwards walk over whitespace and three
+/// punctuation bytes.
+fn attribute_opening_before(code: &str, call: usize) -> Option<(usize, AttributeScope)> {
+    let bracket = strip_char_back(code, skip_whitespace_back(code, call), '[')?;
+    let before_bracket = skip_whitespace_back(code, bracket);
+    let (hash_end, scope) = match strip_char_back(code, before_bracket, '!') {
+        Some(bang) => (skip_whitespace_back(code, bang), AttributeScope::Enclosing),
+        None => (before_bracket, AttributeScope::Item),
+    };
+    Some((strip_char_back(code, hash_end, '#')?, scope))
+}
+
+/// The index of the first non-whitespace byte at or after `from`.
+fn skip_whitespace_forward(code: &str, from: usize) -> usize {
+    code.len() - code[from..].trim_start().len()
+}
+
+/// The index just past the last non-whitespace byte before `end`.
+fn skip_whitespace_back(code: &str, end: usize) -> usize {
+    code[..end].trim_end().len()
+}
+
+/// The index of `wanted` when `code[..end]` ends with it, else `None`.
+fn strip_char_back(code: &str, end: usize, wanted: char) -> Option<usize> {
+    code[..end].strip_suffix(wanted).map(str::len)
 }
 
 /// Whether a `cfg` predicate — the text between the parentheses of
@@ -374,6 +420,15 @@ fn split_top_level(list: &str) -> Vec<&str> {
 /// attribute — opens an *inline* module: any run of further
 /// attributes, an optional visibility, `mod`, a name, then `{` rather
 /// than `;`.
+///
+/// Whitespace is skipped between every pair of tokens, and the name
+/// is a Rust identifier rather than an ASCII word — `r#` prefix
+/// included. Both are the same lesson from the same direction: the
+/// shapes worth handling are the ones somebody can *write*, not the
+/// ones the tree happens to contain today. `mod r#tests_shim {`
+/// stopped the old name scan at the `#`, left `"#tests_shim {…"`,
+/// failed `starts_with('{')`, and handed the shim back as production
+/// code — a killed mutation revived by two characters.
 fn opens_an_inline_module(after: &str) -> bool {
     let mut rest = after.trim_start();
     // The attribute run. `#[cfg(test)] #[cfg(not(target_arch =
@@ -381,39 +436,53 @@ fn opens_an_inline_module(after: &str) -> bool {
     // test module the browser build cannot compile, and requiring
     // `mod` immediately is what let a shim under one of those revive
     // a killed mutation.
-    while rest.starts_with("#[") {
-        // From the `[`, so the offset handed to the matcher is the
-        // delimiter it is told to match.
-        let bracketed = &rest[1..];
-        let Some(close) = matching_delimiter(bracketed, 0, b'[', b']') else {
+    while let Some(hashed) = rest.strip_prefix('#') {
+        // `matching_delimiter` is told where the `[` is, so it is
+        // handed a slice that begins with one.
+        let from_bracket = hashed.trim_start();
+        if !from_bracket.starts_with('[') {
+            return false;
+        }
+        let Some(close) = matching_delimiter(from_bracket, 0, b'[', b']') else {
             return false;
         };
-        rest = bracketed[close + 1..].trim_start();
+        rest = from_bracket[close + 1..].trim_start();
     }
-    let rest = match rest.strip_prefix("pub") {
+    let rest = match strip_word(rest, "pub") {
         // `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`.
         Some(tail) => match tail.strip_prefix('(') {
             Some(paren) => match paren.find(')') {
                 Some(close) => paren[close + 1..].trim_start(),
                 None => return false,
             },
-            None => tail.trim_start(),
+            None => tail,
         },
         None => rest,
     };
-    let Some(tail) = rest.strip_prefix("mod") else {
+    let Some(named) = strip_word(rest, "mod") else {
         return false;
     };
-    if !tail.starts_with(char::is_whitespace) {
-        return false;
-    }
     // Past `mod` and its name, an inline module opens a block and an
     // external one ends the statement.
-    let named = tail.trim_start();
+    let named = named.strip_prefix("r#").unwrap_or(named);
     let end = named
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
         .unwrap_or(named.len());
     named[end..].trim_start().starts_with('{')
+}
+
+/// `rest` past a leading `word` and the whitespace after it, or
+/// `None` when `rest` does not begin with that whole word.
+///
+/// The whole word: `pubfn` and `models` each start with one of the
+/// two keywords this is asked about, and neither is that keyword.
+fn strip_word<'a>(rest: &'a str, word: &str) -> Option<&'a str> {
+    let tail = rest.strip_prefix(word)?;
+    let boundary = tail
+        .chars()
+        .next()
+        .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+    boundary.then(|| tail.trim_start())
 }
 
 /// `code` split into statements: the pieces between the `;`, `{` and

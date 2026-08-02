@@ -73,6 +73,34 @@ const TEST_MODULE_HEADERS: &[(&str, bool)] = &[
     ("#[cfg(not(test))]", false),
 ];
 
+/// Attribute headers Rust accepts that **no file here writes**, and
+/// which must cut anyway.
+///
+/// The counterpart to [`TEST_MODULE_HEADERS`], and the reason the two
+/// lists are separate rather than one. That one is enumerated from
+/// the tree and is kept honest by
+/// [`do_above_test_modules_knows_every_shape_in_this_tree`], which
+/// sweeps all 447 files. A tree-wide sweep can only ever find shapes
+/// that exist — and every hole this recognizer has had since that
+/// sweep went green was reachable only by *writing* a new one. A shim
+/// is written by whoever wants a pin to stop looking; they are not
+/// restricted to the spellings already in the repository, and one
+/// added space was the whole difference between `#[cfg(test)]`, which
+/// cut, and `#[ cfg(test) ]`, which did not.
+///
+/// Rust's attribute grammar is a token grammar: whitespace — spaces
+/// or newlines — is allowed between every pair of `#`, `!`, `[`,
+/// `cfg`, `(`, the predicate, `)` and `]`. `rustc` accepting each of
+/// these is what makes them holes rather than curiosities; every row
+/// below was compiled before it was written down.
+const LEGAL_UNWRITTEN_HEADERS: &[&str] = &[
+    concat!("#[ cfg(", "test) ]"),
+    concat!("#[cfg ", "(test)]"),
+    concat!("# [cfg(", "test)]"),
+    concat!("#\n[\ncfg\n(\ntest\n)\n]"),
+    concat!("#[cfg(", "test)]\n# [allow(dead_code)]"),
+];
+
 /// Every comment shape in the workspace disappears; nothing that is
 /// not a comment moves.
 ///
@@ -229,6 +257,14 @@ pub fn do_above_test_modules_cuts_at_the_module_only() {
         "pub(crate) mod tests {",
         "pub(super) mod tests {",
         "pub(in crate::application::console) mod tests {",
+        // Legal, unwritten here, and each one a shim's spelling.
+        // `r#` stopped the old ASCII-word name scan dead: it read
+        // `"#tests_shim {…"`, failed `starts_with('{')`, and reported
+        // the module as production code.
+        "mod r#tests_shim {",
+        "pub mod r#tests {",
+        "mod tests\n{",
+        "pub (crate) mod tests {",
     ] {
         let src =
             format!("fn ships() {{ keep(); }}\n{attribute}\n{module}\n  fn hidden() {{ needle(); }}\n}}\n");
@@ -262,6 +298,35 @@ pub fn do_above_test_modules_cuts_at_the_module_only() {
             if *cuts { "be" } else { "not be" }
         );
     }
+
+    // The spellings Rust accepts and this tree does not write. A
+    // sweep over the tree cannot reach these; a shim author can.
+    for header in LEGAL_UNWRITTEN_HEADERS {
+        let src =
+            format!("fn ships() {{ keep(); }}\n{header}\nmod tests {{\n  fn hidden() {{ needle(); }}\n}}\n");
+        let production = above_test_modules(&src);
+        assert!(
+            production.contains("fn ships()"),
+            "{header:?}: production code was cut away"
+        );
+        assert!(
+            !production.contains("needle()"),
+            "{header:?} is a legal spelling of a test gate and the module under it \
+             survived as production code. Production seen: {production:?}"
+        );
+    }
+
+    // The near-miss the whitespace tolerance must not swallow:
+    // `cfg_attr` is a different attribute, and the `_` after the word
+    // is what says so.
+    let cfg_attr = format!(
+        "fn ships() {{ keep(); }}\n#[{}_attr(test, allow(dead_code))]\nmod helpers {{ fn kept() {{ needle(); }} }}\n",
+        "cfg"
+    );
+    assert!(
+        above_test_modules(&cfg_attr).contains("needle()"),
+        "`cfg_attr` is not a test gate and must not cut: {cfg_attr:?}"
+    );
 
     // A `]` inside an attribute's own string argument does not end
     // the attribute, so the `mod` after it is still found.
