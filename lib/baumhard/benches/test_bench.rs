@@ -480,7 +480,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_find_byte_index_of_grapheme())
     });
     c.bench_function("byte_indices_of_graphemes", |b| {
-        b.iter(|| do_byte_indices_of_graphemes())
+        b.iter(do_byte_indices_of_graphemes)
     });
     c.bench_function("font_metric_setters_clamp", |b| {
         b.iter(do_font_metric_setters_clamp_to_the_shaper_domain)

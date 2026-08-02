@@ -317,7 +317,7 @@ impl Tree<GfxElement, GfxMutator> {
     /// # Costs
     ///
     /// O(n) on the first call after mutation, plus the one heap
-    /// vector [`Self::compute_subtree_aabbs`] carries its post-order
+    /// vector `compute_subtree_aabbs` carries its post-order
     /// frontier in. O(1) on subsequent calls while the cache is
     /// clean.
     pub fn ensure_subtree_aabbs(&mut self) {

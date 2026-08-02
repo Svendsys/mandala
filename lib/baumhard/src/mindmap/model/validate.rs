@@ -34,8 +34,7 @@ use crate::util::grapheme_chad::count_grapheme_clusters;
 
 use super::{
     Canvas, ControlPoint, EdgeLabelConfig, GlyphBorderConfig, GlyphConnectionConfig, MindEdge, MindMap,
-    MindNode, MindSection, PortalEndpointState, Position, Size, MAX_NODE_AXIS,
-    MAX_SECTIONS_PER_NODE,
+    MindNode, MindSection, PortalEndpointState, Position, Size, MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE,
 };
 
 /// The font-metric domain, defined beside the text shaper that
@@ -139,7 +138,12 @@ pub fn section_aabb_violations(
     size: Option<Size>,
 ) -> Vec<String> {
     let mut out = section_extent_violations(parent_size, section_idx, offset, size);
-    out.extend(section_containment_violations(parent_size, section_idx, offset, size));
+    out.extend(section_containment_violations(
+        parent_size,
+        section_idx,
+        offset,
+        size,
+    ));
     out
 }
 
@@ -296,8 +300,7 @@ const INVERTED_SIZE_WINDOW: &str =
 /// are two independent comparisons — but no zoom satisfies both, so
 /// the element is invisible at every zoom level, which is rarely what
 /// an author meant to write.
-const INVERTED_ZOOM_WINDOW: &str =
-    "no zoom satisfies both bounds, so this never renders at any zoom level";
+const INVERTED_ZOOM_WINDOW: &str = "no zoom satisfies both bounds, so this never renders at any zoom level";
 
 /// Join a label prefix and a field name, tolerating an empty prefix
 /// so a top-level field reads `min_zoom_to_render` rather than
@@ -402,11 +405,7 @@ pub fn border_config_violations(label: &str, border: &GlyphBorderConfig) -> Vec<
     // Padding is a signed inset; only its magnitude and finiteness
     // matter, since the border geometry adds it to an axis already
     // bounded by MAX_NODE_AXIS.
-    out.extend(bounded(
-        label, "padding",
-        border.padding as f64,
-        MAX_NODE_AXIS,
-    ));
+    out.extend(bounded(label, "padding", border.padding as f64, MAX_NODE_AXIS));
     out
 }
 
@@ -443,14 +442,8 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
         }
     }
     out.extend(font_size(label, "font_size_pt", conn.font_size_pt));
-    out.extend(font_size(
-        label, "min_font_size_pt",
-        conn.min_font_size_pt,
-    ));
-    out.extend(font_size(
-        label, "max_font_size_pt",
-        conn.max_font_size_pt,
-    ));
+    out.extend(font_size(label, "min_font_size_pt", conn.min_font_size_pt));
+    out.extend(font_size(label, "max_font_size_pt", conn.max_font_size_pt));
     out.extend(ordered_pair(
         label,
         "font_size",
@@ -469,11 +462,7 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
     // like (a step that never advances) is already total at the
     // sampler: `sample_count` returns a single point for any
     // non-positive step rather than looping.
-    out.extend(bounded(
-        label, "spacing",
-        conn.spacing as f64,
-        MAX_NODE_AXIS,
-    ));
+    out.extend(bounded(label, "spacing", conn.spacing as f64, MAX_NODE_AXIS));
     out
 }
 
@@ -481,14 +470,8 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
 pub fn label_config_violations(label: &str, cfg: &EdgeLabelConfig) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(opt_font_size(label, "font_size_pt", cfg.font_size_pt));
-    out.extend(opt_font_size(
-        label, "min_font_size_pt",
-        cfg.min_font_size_pt,
-    ));
-    out.extend(opt_font_size(
-        label, "max_font_size_pt",
-        cfg.max_font_size_pt,
-    ));
+    out.extend(opt_font_size(label, "min_font_size_pt", cfg.min_font_size_pt));
+    out.extend(opt_font_size(label, "max_font_size_pt", cfg.max_font_size_pt));
     out.extend(ordered_pair(
         label,
         "font_size",
@@ -497,10 +480,7 @@ pub fn label_config_violations(label: &str, cfg: &EdgeLabelConfig) -> Vec<String
         INVERTED_SIZE_WINDOW,
     ));
     out.extend(finite(label, "position_t", cfg.position_t));
-    out.extend(finite(
-        label, "perpendicular_offset",
-        cfg.perpendicular_offset,
-    ));
+    out.extend(finite(label, "perpendicular_offset", cfg.perpendicular_offset));
     out.extend(zoom_window_violations(
         label,
         cfg.min_zoom_to_render,
@@ -513,28 +493,29 @@ pub fn label_config_violations(label: &str, cfg: &EdgeLabelConfig) -> Vec<String
 pub fn portal_endpoint_violations(label: &str, portal: &PortalEndpointState) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(opt_font_size(
-        label, "text_font_size_pt",
+        label,
+        "text_font_size_pt",
         portal.text_font_size_pt,
     ));
     out.extend(opt_font_size(
-        label, "text_min_font_size_pt",
+        label,
+        "text_min_font_size_pt",
         portal.text_min_font_size_pt,
     ));
     out.extend(opt_font_size(
-        label, "text_max_font_size_pt",
+        label,
+        "text_max_font_size_pt",
         portal.text_max_font_size_pt,
     ));
     out.extend(ordered_pair(
-        label, "text",
+        label,
+        "text",
         portal.text_min_font_size_pt,
         portal.text_max_font_size_pt,
         INVERTED_SIZE_WINDOW,
     ));
     out.extend(finite(label, "border_t", portal.border_t));
-    out.extend(finite(
-        label, "perpendicular_offset",
-        portal.perpendicular_offset,
-    ));
+    out.extend(finite(label, "perpendicular_offset", portal.perpendicular_offset));
     out.extend(zoom_window_violations(
         label,
         portal.min_zoom_to_render,
@@ -680,15 +661,24 @@ pub fn node_numeric_violations(node: &MindNode) -> Vec<String> {
     out.extend(bounded("position", "x", node.position.x, MAX_CANVAS_COORD));
     out.extend(bounded("position", "y", node.position.y, MAX_CANVAS_COORD));
     out.extend(node_size_violations(node.size));
-    out.extend(bounded("style", "corner_radius_percent",
+    out.extend(bounded(
+        "style",
+        "corner_radius_percent",
         node.style.corner_radius_percent,
         MAX_NODE_AXIS,
     ));
-    out.extend(bounded("style", "frame_thickness",
+    out.extend(bounded(
+        "style",
+        "frame_thickness",
         node.style.frame_thickness,
         MAX_NODE_AXIS,
     ));
-    out.extend(bounded("layout", "spacing", node.layout.spacing, MAX_CANVAS_COORD));
+    out.extend(bounded(
+        "layout",
+        "spacing",
+        node.layout.spacing,
+        MAX_CANVAS_COORD,
+    ));
     if let Some(border) = node.style.border.as_ref() {
         out.extend(border_config_violations("style.border", border));
     }
@@ -754,7 +744,10 @@ pub fn canvas_numeric_violations(canvas: &Canvas) -> Vec<String> {
     let mut out = Vec::new();
     for (label, border) in [
         ("default_border", canvas.default_border.as_ref()),
-        ("default_section_frame_border", canvas.default_section_frame_border.as_ref()),
+        (
+            "default_section_frame_border",
+            canvas.default_section_frame_border.as_ref(),
+        ),
         (
             "default_focused_section_frame_border",
             canvas.default_focused_section_frame_border.as_ref(),
@@ -803,10 +796,7 @@ pub const MAX_ANIMATION_MS: u32 = 60_000;
 pub fn mutation_numeric_violations(mutation: &CustomMutation) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(timing) = mutation.timing.as_ref() {
-        for (field, value) in [
-            ("duration_ms", timing.duration_ms),
-            ("delay_ms", timing.delay_ms),
-        ] {
+        for (field, value) in [("duration_ms", timing.duration_ms), ("delay_ms", timing.delay_ms)] {
             if value > MAX_ANIMATION_MS {
                 out.push(format!(
                     "{:?}: timing.{field} ({value}ms) is over the {MAX_ANIMATION_MS}ms ceiling — \
@@ -847,10 +837,7 @@ pub fn map_numeric_domain(map: &MindMap) -> Option<String> {
         }
         for (idx, mutation) in node.inline_mutations.iter().enumerate() {
             if let Some(message) = mutation_numeric_violations(mutation).into_iter().next() {
-                return Some(format!(
-                    "node {:?}: inline_mutations[{idx}]: {message}",
-                    node.id
-                ));
+                return Some(format!("node {:?}: inline_mutations[{idx}]: {message}", node.id));
             }
         }
     }

@@ -343,7 +343,10 @@ impl GlyphArea {
                 ApplyOperation::Add => self.text += text,
                 ApplyOperation::Delete => self.text.clear(),
                 ApplyOperation::Subtract | ApplyOperation::Multiply => {
-                    warn!("gfx_structs::area: {:?} is not defined for text; ignoring", operation)
+                    warn!(
+                        "gfx_structs::area: {:?} is not defined for text; ignoring",
+                        operation
+                    )
                 }
                 ApplyOperation::Noop => {}
             }
@@ -415,7 +418,6 @@ impl GlyphArea {
     pub fn grow_font(&mut self, value: &f32) {
         self.set_scale_clamped(self.scale.into_inner() + value);
     }
-
 
     /// Write `scale`, forced into the shaper's usable range.
     ///

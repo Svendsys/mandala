@@ -160,7 +160,6 @@ pub fn clamp_to_font_window(value: f32, min: f32, max: f32) -> f32 {
     value.clamp(low, high)
 }
 
-
 /// Force the font lazy-statics a `FONT_SYSTEM` write acquire depends
 /// on to build **now** — `COMPILED_FONT_ID_MAP` (via `load_fonts`,
 /// which itself takes the write guard) and `FAMILY_INDEX` (via

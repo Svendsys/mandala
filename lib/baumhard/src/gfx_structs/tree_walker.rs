@@ -148,7 +148,9 @@ fn process_instruction_node(
             // mutation application. The caller treats a no-op as
             // success.
             if mutator.first_child().is_none() {
-                warn!("gfx_structs::tree_walker: RepeatWhile instruction node has no children, skipping branch");
+                warn!(
+                    "gfx_structs::tree_walker: RepeatWhile instruction node has no children, skipping branch"
+                );
                 return;
             }
             if target.first_child().is_none() {

@@ -118,9 +118,7 @@ mod tests {
         n.sections[0] = section(Position { x: -1.0, y: 0.0 }, None);
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("offset.x is negative")));
+        assert!(v.iter().any(|x| x.message.contains("offset.x is negative")));
     }
 
     #[test]
@@ -130,9 +128,7 @@ mod tests {
         n.sections[0] = section(Position { x: 0.0, y: -2.0 }, None);
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("offset.y is negative")));
+        assert!(v.iter().any(|x| x.message.contains("offset.y is negative")));
     }
 
     #[test]
@@ -142,9 +138,7 @@ mod tests {
         n.sections[0] = section(Position { x: f64::NAN, y: 0.0 }, None);
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("non-finite")));
+        assert!(v.iter().any(|x| x.message.contains("non-finite")));
     }
 
     #[test]
@@ -160,9 +154,7 @@ mod tests {
         );
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("size.width is not positive")));
+        assert!(v.iter().any(|x| x.message.contains("size.width is not positive")));
     }
 
     #[test]
@@ -196,9 +188,7 @@ mod tests {
         );
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("non-finite")));
+        assert!(v.iter().any(|x| x.message.contains("non-finite")));
     }
 
     #[test]
@@ -214,9 +204,7 @@ mod tests {
         );
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("past node right edge")));
+        assert!(v.iter().any(|x| x.message.contains("past node right edge")));
     }
 
     #[test]
@@ -232,9 +220,7 @@ mod tests {
         );
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("past node bottom edge")));
+        assert!(v.iter().any(|x| x.message.contains("past node bottom edge")));
     }
 
     #[test]
@@ -302,8 +288,7 @@ mod tests {
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
         assert!(
-            v.iter()
-                .any(|x| x.message.contains("node.size has non-finite")),
+            v.iter().any(|x| x.message.contains("node.size has non-finite")),
             "expected non-finite-node-size violation, got {:?}",
             v
         );
@@ -372,9 +357,7 @@ mod tests {
         );
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
-        assert!(v
-            .iter()
-            .any(|x| x.message.contains("over 100× the node's width")));
+        assert!(v.iter().any(|x| x.message.contains("over 100× the node's width")));
     }
 
     #[test]

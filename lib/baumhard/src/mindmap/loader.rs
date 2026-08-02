@@ -2162,7 +2162,8 @@ mod tests {
     /// walk actually traverses.
     #[test]
     fn test_node_key_must_match_node_id() {
-        let json = map_json_with_nodes(&node_json("0", "null").replace(r#""id": "0""#, r#""id": "elsewhere""#));
+        let json =
+            map_json_with_nodes(&node_json("0", "null").replace(r#""id": "0""#, r#""id": "elsewhere""#));
         let err = load_from_str(&json).expect_err("a key / id mismatch must be rejected");
         assert!(err.contains("elsewhere"), "must name the node's id: {err}");
         assert!(err.contains("must match"), "must state the rule: {err}");
@@ -2246,7 +2247,11 @@ mod tests {
 
         let (hidden, descendants, arena_nodes) = walked;
         assert_eq!(hidden, 0, "nothing is folded, so nothing is hidden");
-        assert_eq!(descendants, DEPTH - 1, "every node below the root is a descendant");
+        assert_eq!(
+            descendants,
+            DEPTH - 1,
+            "every node below the root is a descendant"
+        );
         assert!(
             arena_nodes >= DEPTH,
             "the scene tree must carry every node: {arena_nodes} < {DEPTH}"
@@ -2293,7 +2298,8 @@ mod tests {
     #[test]
     fn test_inverted_font_size_clamp_is_rejected() {
         let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
-        let edge = edge_json_with(r#", "glyph_connection": {"min_font_size_pt": 40.0, "max_font_size_pt": 8.0}"#);
+        let edge =
+            edge_json_with(r#", "glyph_connection": {"min_font_size_pt": 40.0, "max_font_size_pt": 8.0}"#);
         let err = load_from_str(&map_json(&nodes, &edge)).expect_err("an inverted clamp must be rejected");
         assert!(err.contains("edge[0]"), "must name the edge: {err}");
         assert!(err.contains("above max"), "must explain the inversion: {err}");
@@ -2321,7 +2327,8 @@ mod tests {
             r#""size": {"width": 100, "height": 50}"#,
             r#""size": {"width": 1e12, "height": 50}"#,
         );
-        let err = load_from_str(&map_json_with_nodes(&node)).expect_err("an absurd node size must be rejected");
+        let err =
+            load_from_str(&map_json_with_nodes(&node)).expect_err("an absurd node size must be rejected");
         assert!(err.contains("node \"0\""), "must name the node: {err}");
         assert!(err.contains("ceiling"), "must cite the ceiling: {err}");
     }
@@ -2382,17 +2389,24 @@ mod tests {
             )
         };
         let map_with = |body: String| {
-            map_json_with_nodes(&node_json("0", "null"))
-                .replace(r#""edges": []"#, &format!(r#""edges": [], "custom_mutations": [{body}]"#))
+            map_json_with_nodes(&node_json("0", "null")).replace(
+                r#""edges": []"#,
+                &format!(r#""edges": [], "custom_mutations": [{body}]"#),
+            )
         };
 
         let err = load_from_str(&map_with(mutation(r#"{"duration_ms": 4000000000}"#)))
             .expect_err("an absurd animation duration must be rejected");
-        assert!(err.contains("custom_mutations[0]"), "must name the mutation: {err}");
+        assert!(
+            err.contains("custom_mutations[0]"),
+            "must name the mutation: {err}"
+        );
         assert!(err.contains("duration_ms"), "must name the field: {err}");
 
-        let err = load_from_str(&map_with(mutation(r#"{"duration_ms": 200, "delay_ms": 4000000000}"#)))
-            .expect_err("an absurd animation delay must be rejected");
+        let err = load_from_str(&map_with(mutation(
+            r#"{"duration_ms": 200, "delay_ms": 4000000000}"#,
+        )))
+        .expect_err("an absurd animation delay must be rejected");
         assert!(err.contains("delay_ms"), "the delay is the invisible half: {err}");
 
         // An ordinary transition is untouched.
@@ -2434,8 +2448,8 @@ mod tests {
         let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
         let long = "\u{25c8}".repeat(64);
         let edge = edge_json_with(&format!(r#", "glyph_connection": {{"body": "{long}"}}"#));
-        let err = load_from_str(&map_json(&nodes, &edge))
-            .expect_err("an overlong body glyph must be rejected");
+        let err =
+            load_from_str(&map_json(&nodes, &edge)).expect_err("an overlong body glyph must be rejected");
         assert!(err.contains("edge[0]"), "must name the edge: {err}");
         assert!(err.contains("body"), "must name the field: {err}");
         assert!(

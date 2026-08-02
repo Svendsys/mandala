@@ -62,7 +62,7 @@ use crate::util::grapheme_chad;
 /// carries grapheme-cluster indices (the unit baumhard's text
 /// primitives speak in — see `lib/baumhard/CONVENTIONS.md §B3` and
 /// `CONCEPTS.md`'s `Range` entry). The conversion goes through
-/// [`region_byte_bounds`] so a region whose end lands on a
+/// `region_byte_bounds` so a region whose end lands on a
 /// ZWJ-emoji or combining-mark cluster boundary produces a
 /// UTF-8-valid byte range that matches the visual glyph.
 ///
@@ -73,10 +73,12 @@ use crate::util::grapheme_chad;
 /// own walk and costs O(n_text) for itself — correct, just not
 /// linear. Plus one `font_system.db().face()` lookup per region
 /// carrying a font id, and the two `Vec`s
-/// [`region_byte_bounds`] builds — the flattened boundary list and
-/// the resolved pairs, both sized to the region count. The caller is expected to hold the `FONT_SYSTEM` write
-/// lock for the same scope it uses the returned list — that's how
-/// the renderer wires it today.
+/// `region_byte_bounds` builds — the flattened boundary list and
+/// the resolved pairs, both sized to the region count.
+///
+/// The caller is expected to hold the `FONT_SYSTEM` write lock for
+/// the same scope it uses the returned list — that's how the
+/// renderer wires it today.
 pub fn attrs_list_from_regions(
     text: &str,
     source: &ColorFontRegions,

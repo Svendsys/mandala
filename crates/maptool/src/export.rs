@@ -267,7 +267,11 @@ mod tests {
         let mut nodes = Vec::with_capacity(DEPTH);
         for i in 0..DEPTH {
             let parent = if i == 0 { None } else { Some(format!("n{}", i - 1)) };
-            nodes.push(make_node(&format!("n{i}"), parent.as_deref(), &format!("node {i}")));
+            nodes.push(make_node(
+                &format!("n{i}"),
+                parent.as_deref(),
+                &format!("node {i}"),
+            ));
         }
         let map = make_map(nodes);
 

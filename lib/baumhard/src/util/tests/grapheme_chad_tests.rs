@@ -3,8 +3,8 @@
 use lazy_static::lazy_static;
 
 use crate::util::grapheme_chad::{
-    byte_indices_of_graphemes, count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
-    delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_grapheme_range,
+    byte_indices_of_graphemes, count_grapheme_clusters, count_number_lines, delete_back_unicode,
+    delete_front_unicode, delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_grapheme_range,
     first_non_whitespace_grapheme, grapheme_display_width, insert_new_lines, insert_spaces,
     insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
     prev_word_boundary_ws, push_spaces, replace_graphemes_until_newline, scalar_display_width,
@@ -1625,14 +1625,7 @@ fn test_byte_indices_of_graphemes() {
 /// count (which has a byte offset but no cluster living there), and
 /// an index past the end.
 pub fn do_byte_indices_of_graphemes() {
-    for text in [
-        "",
-        "abc",
-        "abcd🍕1234",
-        "🙏🏻👨‍👩‍👧🇺🇸",
-        "e\u{0301}x",
-        "a\r\nb",
-    ] {
+    for text in ["", "abc", "abcd🍕1234", "🙏🏻👨‍👩‍👧🇺🇸", "e\u{0301}x", "a\r\nb"] {
         let total = count_grapheme_clusters(text);
         // Two past the end so the "no cluster here" boundary is
         // covered from both sides.

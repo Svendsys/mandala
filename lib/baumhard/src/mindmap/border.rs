@@ -274,7 +274,10 @@ impl PaletteField {
             Some("text") => PaletteField::Text,
             Some("title") => PaletteField::Title,
             Some(other) => {
-                log::warn!("mindmap::border: color_palette_field '{}' unknown; using 'frame'", other);
+                log::warn!(
+                    "mindmap::border: color_palette_field '{}' unknown; using 'frame'",
+                    other
+                );
                 PaletteField::Frame
             }
         }

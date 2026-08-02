@@ -140,11 +140,16 @@ mod tests {
             "overlapping runs must still be reported: {messages:?}"
         );
         assert!(
-            messages.iter().any(|m| m.contains("no zoom satisfies both bounds")),
+            messages
+                .iter()
+                .any(|m| m.contains("no zoom satisfies both bounds")),
             "an inverted zoom window must still be reported: {messages:?}"
         );
         assert_eq!(
-            messages.iter().filter(|m| m.contains("overlaps previous run")).count(),
+            messages
+                .iter()
+                .filter(|m| m.contains("overlaps previous run"))
+                .count(),
             1,
             "and reported exactly once — the duplicate module is what this replaced"
         );
@@ -167,7 +172,9 @@ mod tests {
         n.max_zoom_to_render = inverted.1;
         map.nodes.insert("0".into(), n);
         assert!(
-            check(&map).iter().any(|v| v.message.contains("no zoom satisfies")),
+            check(&map)
+                .iter()
+                .any(|v| v.message.contains("no zoom satisfies")),
             "node zoom window"
         );
 
@@ -220,6 +227,9 @@ mod tests {
         let mut map = MindMap::new_blank("t");
         map.nodes.insert("0".into(), node("0", None));
         map.nodes.insert("0.0".into(), node("0.0", Some("0")));
-        assert!(check(&map).is_empty(), "a well-formed map has no numeric violations");
+        assert!(
+            check(&map).is_empty(),
+            "a well-formed map has no numeric violations"
+        );
     }
 }
