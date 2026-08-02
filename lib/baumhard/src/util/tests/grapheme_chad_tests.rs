@@ -9,7 +9,7 @@ use crate::util::grapheme_chad::{
     insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
     prev_word_boundary_ws, push_spaces, replace_graphemes_until_newline, scalar_display_width,
     slice_to_newline, split_graphemes_owned, split_off_graphemes, take_graphemes, token_start_ws,
-    truncate_to_display_width, word_left, word_right, LineReplacement,
+    truncate_to_display_width, word_left, word_right, wrap_to_display_width, LineReplacement,
 };
 
 lazy_static! {
@@ -1612,4 +1612,116 @@ pub fn do_join_graphemes() {
         );
         assert_eq!(joined.replace('\n', ""), input, "round-trip for {:?}", input);
     }
+}
+
+#[test]
+pub fn test_wrap_to_display_width() {
+    do_wrap_to_display_width();
+}
+
+/// [`wrap_to_display_width`] is the reflow half of the display-width
+/// family — [`truncate_to_display_width`] clips the overflow away,
+/// this folds it onto the next line. The load-failure placard
+/// ([`crate::mindmap::placard`]) turns a loader message into node
+/// sections with it, so every clause of its contract is something a
+/// user can see on a rejected map: a mid-cluster split would shatter
+/// an emoji in a file path, a dropped over-wide cluster would
+/// silently edit the error message, and a word longer than the
+/// column would run off the placard instead of folding.
+pub fn do_wrap_to_display_width() {
+    // Nothing in, nothing out — `"".lines()` yields no lines, and
+    // the wrapper does not invent one.
+    assert!(wrap_to_display_width("", 10).is_empty());
+
+    // Fits: one line out, unchanged.
+    assert_eq!(wrap_to_display_width("hello", 10), vec!["hello"]);
+    assert_eq!(wrap_to_display_width("hello", 5), vec!["hello"]);
+
+    // Break at the space, and the space itself goes with the break.
+    assert_eq!(wrap_to_display_width("aaa bbb", 3), vec!["aaa", "bbb"]);
+    assert_eq!(wrap_to_display_width("aaa   bbb", 3), vec!["aaa", "bbb"]);
+    assert_eq!(
+        wrap_to_display_width("the quick brown fox", 10),
+        vec!["the quick", "brown fox"]
+    );
+
+    // Indentation is content and survives on the first line; the
+    // continuation is flush left.
+    assert_eq!(wrap_to_display_width("  hello world", 7), vec!["  hello", "world"]);
+
+    // Trailing whitespace is trimmed rather than pushing the line
+    // over its width or spilling into a blank continuation.
+    assert_eq!(wrap_to_display_width("aaaa  ", 4), vec!["aaaa"]);
+    assert_eq!(wrap_to_display_width("ab  ", 10), vec!["ab"]);
+
+    // Hard newlines are paragraph structure, preserved verbatim —
+    // including the blank line between two paragraphs.
+    assert_eq!(wrap_to_display_width("one\n\ntwo", 10), vec!["one", "", "two"]);
+
+    // A word wider than the column splits mid-word rather than
+    // running off the edge. Loader messages carry long paths.
+    assert_eq!(wrap_to_display_width("aaaaaaaa", 3), vec!["aaa", "aaa", "aa"]);
+    assert_eq!(wrap_to_display_width("  aaaaaaaa", 4), vec!["  aa", "aaaa", "aa"]);
+
+    // Clusters are never split. A ZWJ family, a flag, and a
+    // skin-toned emoji each stay whole across a break — each counts
+    // as one cell, since `scalar_display_width`'s wide table is
+    // East-Asian blocks only and deliberately does not claim emoji.
+    assert_eq!(
+        wrap_to_display_width("👨‍👩‍👧🇺🇸🙏🏻", 2),
+        vec!["👨‍👩‍👧🇺🇸", "🙏🏻"]
+    );
+    // A combining acute rides with its base rather than starting a
+    // line of its own.
+    assert_eq!(wrap_to_display_width("e\u{0301}xy", 2), vec!["e\u{0301}x", "y"]);
+
+    // Wide (East-Asian) clusters count two cells each, so two of
+    // them fill a four-cell column and the third folds over.
+    assert_eq!(wrap_to_display_width("日本語", 4), vec!["日本", "語"]);
+
+    // A cluster wider than the whole column still gets a line — the
+    // wrapper never drops input, it only over-runs.
+    assert_eq!(wrap_to_display_width("日本", 1), vec!["日", "本"]);
+    // `max_width == 0` is not a representable column; it is clamped
+    // to one rather than looping or returning nothing.
+    assert_eq!(wrap_to_display_width("ab", 0), vec!["a", "b"]);
+
+    // Property: no emitted line exceeds the column unless it is a
+    // single indivisible cluster, and concatenating the output
+    // recovers every non-whitespace grapheme of the input in order.
+    for (input, width) in [
+        ("the quick brown fox jumps over the lazy dog", 7usize),
+        ("Failed to parse mindmap JSON: unknown field `colour`", 24),
+        ("/home/user/maps/a-very-long-file-name.mindmap.json", 12),
+        ("👨‍👩‍👧 family 🇺🇸 flag 日本語 text", 6),
+        ("   leading and trailing   ", 5),
+        ("one\ntwo\n\nthree", 3),
+    ] {
+        let lines = wrap_to_display_width(input, width);
+        for line in &lines {
+            let cells = grapheme_display_width(line);
+            assert!(
+                cells <= width || count_grapheme_clusters(line) == 1,
+                "line {:?} is {} cells wide (limit {}) for input {:?}",
+                line,
+                cells,
+                width,
+                input
+            );
+        }
+        let rejoined = non_whitespace_graphemes(&lines.join(""));
+        let expected = non_whitespace_graphemes(input);
+        assert_eq!(rejoined, expected, "wrap lost or reordered text in {:?}", input);
+    }
+}
+
+/// Every grapheme of `s` that carries at least one non-whitespace
+/// scalar, concatenated. Wrapping rewrites whitespace by design, so
+/// the round-trip property in [`do_wrap_to_display_width`] is stated
+/// over what wrapping must *not* touch.
+fn non_whitespace_graphemes(s: &str) -> String {
+    split_graphemes_owned(s)
+        .into_iter()
+        .filter(|g| g.chars().any(|c| !c.is_whitespace()))
+        .collect()
 }

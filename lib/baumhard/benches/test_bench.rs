@@ -509,6 +509,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("truncate_to_display_width", |b| {
         b.iter(|| do_truncate_to_display_width())
     });
+    c.bench_function("wrap_to_display_width", |b| {
+        b.iter(|| do_wrap_to_display_width())
+    });
     c.bench_function("word_left", |b| b.iter(|| do_word_left()));
     c.bench_function("word_right", |b| b.iter(|| do_word_right()));
     c.bench_function("prev_word_boundary_ws", |b| b.iter(do_prev_word_boundary_ws));

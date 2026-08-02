@@ -690,6 +690,148 @@ pub fn truncate_to_display_width(s: &str, max_width: usize) -> &str {
     &s[..byte_end]
 }
 
+/// Break `s` into lines no wider than `max_width` display cells,
+/// preferring a break at a whitespace run and never splitting a
+/// grapheme cluster.
+///
+/// [`truncate_to_display_width`]'s counterpart: that one clips the
+/// overflow away, this one folds it onto the next line. Both measure
+/// in the same monospace cells [`grapheme_display_width`] counts, so
+/// a caller rendering into a proportional font — the load-failure
+/// placard in [`crate::mindmap::placard`] is the one in-tree example
+/// — is using a column count as an approximation of a pixel width,
+/// deliberately, because the alternative costs a `FONT_SYSTEM`
+/// acquisition per candidate break.
+///
+/// Contract, in the order a caller trips over it:
+///
+/// - **Hard line breaks in `s` are preserved.** Input is split on
+///   `str::lines` first and each line wrapped independently, so
+///   `""` yields no lines at all (matching `"".lines()`) and a blank
+///   line inside `s` yields an empty `String` that keeps the
+///   paragraph gap.
+/// - **Leading whitespace survives; trailing whitespace does not.**
+///   Indentation is content, so the first wrapped line keeps the
+///   spaces it started with. The run that justified a break is
+///   consumed by the break rather than dangling off the end or
+///   heading the next line, and every emitted line is right-trimmed —
+///   which is also what keeps a run sitting on the right margin from
+///   pushing the line past `max_width`.
+/// - **A word wider than `max_width` is split mid-word** at the cell
+///   boundary, because the alternative is a line that silently
+///   ignores the width it was given. Long paths and serde messages
+///   are the reason this is not an error case.
+/// - **A single cluster wider than `max_width` still gets its own
+///   line**, over-wide, rather than being dropped: this function
+///   never loses input. `max_width == 0` is not representable and is
+///   clamped to 1 for the same reason.
+///
+/// Cost: one pass over the graphemes of `s` (widths accumulate as it
+/// goes, so a break never rescans), one `Vec` of per-grapheme
+/// bookkeeping sized to the longest hard line, and one `String` per
+/// emitted line. Cold-path shaped — the callers are error placards
+/// and console reflow, not the frame loop.
+pub fn wrap_to_display_width(s: &str, max_width: usize) -> Vec<String> {
+    let max_width = max_width.max(1);
+    let mut out: Vec<String> = Vec::new();
+    let mut scratch: Vec<WrapCell> = Vec::new();
+    for hard_line in s.lines() {
+        wrap_one_line(hard_line, max_width, &mut scratch, &mut out);
+    }
+    out
+}
+
+/// One grapheme of a line being wrapped: the byte range it occupies
+/// in the line, the display width of the line up to and including it,
+/// and whether it can serve as a break point.
+struct WrapCell {
+    byte_start: usize,
+    byte_end: usize,
+    cumulative_width: usize,
+    is_whitespace: bool,
+}
+
+/// Wrap a single hard line (guaranteed newline-free) into `out`.
+/// `scratch` is reused across lines so the per-grapheme bookkeeping
+/// is allocated once per [`wrap_to_display_width`] call rather than
+/// once per line.
+fn wrap_one_line(line: &str, max_width: usize, scratch: &mut Vec<WrapCell>, out: &mut Vec<String>) {
+    scratch.clear();
+    let mut width = 0usize;
+    for (byte_start, g) in line.grapheme_indices(true) {
+        width += g.chars().next().map_or(0, scalar_display_width);
+        scratch.push(WrapCell {
+            byte_start,
+            byte_end: byte_start + g.len(),
+            cumulative_width: width,
+            is_whitespace: !grapheme_is_not_whitespace(g),
+        });
+    }
+    if scratch.is_empty() {
+        // A blank line is a paragraph gap, not nothing.
+        out.push(String::new());
+        return;
+    }
+
+    let mut start = 0usize;
+    // Display width consumed by everything before `start`, so the
+    // width of the current line through cell `i` is one subtraction.
+    let mut consumed = 0usize;
+    // The most recent *completed* whitespace run beginning after
+    // `start`, as (first cell, one past last cell) — the break the
+    // wrapper prefers. `open_run` is the run currently being scanned.
+    let mut break_run: Option<(usize, usize)> = None;
+    let mut open_run: Option<usize> = None;
+
+    let mut i = 0usize;
+    while i < scratch.len() {
+        if scratch[i].is_whitespace {
+            // Whitespace never overflows a line: a run at the right
+            // margin is trimmed off when the line is emitted, so
+            // letting it "fit" is what keeps `"word  "` from
+            // producing a second, blank line.
+            open_run.get_or_insert(i);
+            i += 1;
+            continue;
+        }
+        if let Some(run_start) = open_run.take() {
+            if run_start > start {
+                break_run = Some((run_start, i));
+            }
+        }
+
+        if scratch[i].cumulative_width - consumed > max_width && i > start {
+            // Cell `i` does not fit. Break at the last whitespace run
+            // when one lies strictly inside the line so far;
+            // otherwise split the word at `i`. `i > start` guarantees
+            // both cuts leave at least one cell behind, so the loop
+            // always makes progress.
+            let (cut, next_start) = match break_run {
+                Some((run_start, run_end)) if run_start > start && run_end <= i => (run_start, run_end),
+                _ => (i, i),
+            };
+            push_trimmed(line, scratch[start].byte_start, scratch[cut - 1].byte_end, out);
+            consumed = scratch[next_start - 1].cumulative_width;
+            start = next_start;
+            break_run = None;
+            // `i` is re-examined against the fresh line rather than
+            // advanced past: when the break was a word split it is
+            // the first cell of the next line.
+            continue;
+        }
+        i += 1;
+    }
+    let line_end = scratch[scratch.len() - 1].byte_end;
+    push_trimmed(line, scratch[start].byte_start, line_end, out);
+}
+
+/// Emit `line[from..to]` with trailing whitespace removed. The right
+/// margin is where a wrap discards whitespace; the left margin is
+/// where it preserves it, so only the end is trimmed.
+fn push_trimmed(line: &str, from: usize, to: usize, out: &mut Vec<String>) {
+    out.push(line[from..to].trim_end().to_string());
+}
+
 /// Display width of a single scalar. Exposed for tests; call sites
 /// that have a string should use [`grapheme_display_width`] instead so
 /// combining marks fold into their base cluster.
