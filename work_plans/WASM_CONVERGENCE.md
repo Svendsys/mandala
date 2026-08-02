@@ -207,12 +207,23 @@ Three funnel gaps closed with them:
 
 `DoubleClickActivate` stays `wasm = NativeOnly`: its `EdgeLabel`
 branch still reaches the single-line editor, and the "ANY NativeOnly
-branch" rule classifies on that. It is the fourth member of the
-mixed-branch set — the set
+branch" rule classifies on that. Flipping it to `Compatible` waits on
+the browser gaining a single-line editor.
+
+It is a member of the **mixed-branch set**, which is now one list —
+`keybinds::action::MIXED_BRANCH_ACTIONS` — read by both
 `lift_mixed_branch_for_wasm_macro` and
-`keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only`
-must agree on. Flipping it to `Compatible` waits on the browser
-gaining a single-line editor.
+`keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only`.
+Written out twice, the two drifted: the test named three members and
+the lift named four. They could not simply be merged, either, because
+the members do **not** share a classification — `ExitMode` is
+mixed-branch and `Compatible`, since its native leftover is a step
+(the `hovered_node` clear) rather than a branch reaching native-only
+state. The list therefore carries the expected `WasmCompatibility`
+alongside each member: the test asserts it per member instead of
+asserting a blanket `NativeOnly`, and the lift's `debug_assert` fires
+in any test build for a member with no verdict arm. Adding a member
+now obliges both consumers instead of silently satisfying neither.
 
 ## Per-arm event-handler shape divergence
 
