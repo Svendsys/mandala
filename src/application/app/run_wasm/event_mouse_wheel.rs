@@ -16,8 +16,14 @@
 use crate::application::platform::input::MouseScrollDelta;
 
 use super::PendingClick;
+use crate::application::app::dispatch::DispatchOutcome;
 use crate::application::app::scene_rebuild::rebuild_camera_geometry;
 use crate::application::app::{dispatch, wheel_gesture, wheel_lines};
+use std::sync::atomic::AtomicBool;
+
+/// One-shot latch for the wheel input class. See
+/// [`super::warn_unhandled_native_only_once`].
+static WARNED_NATIVE_ONLY_WHEEL: AtomicBool = AtomicBool::new(false);
 
 impl super::WasmApp {
     pub(super) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
@@ -52,9 +58,23 @@ impl super::WasmApp {
         let Some(a) = action else {
             return;
         };
-        {
+        let outcome = {
             let mut core = input.input_context_core(renderer, &self.keybinds);
-            let _ = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
+            dispatch::action_core::dispatch_compatible(&a, &mut core, None)
+        };
+        // The wheel has no sanctioned carve-out — every wheel
+        // binding either runs or does nothing at all — so an
+        // `Unhandled` here is always a `NativeOnly` Action the user
+        // bound to the wheel. Newly reachable: before this PR the
+        // browser hardcoded the zoom and never consulted the table.
+        if matches!(outcome, DispatchOutcome::Unhandled) {
+            super::warn_unhandled_native_only_once(
+                &WARNED_NATIVE_ONLY_WHEEL,
+                gesture_name,
+                &a,
+                "Rebind the wheel to a Compatible action (e.g. zoom_in / zoom_out) \
+                 to opt out.",
+            );
         }
         // Native picks the post-camera-change reprojection up in its
         // per-frame drain (`drain_camera_geometry_rebuild`); the

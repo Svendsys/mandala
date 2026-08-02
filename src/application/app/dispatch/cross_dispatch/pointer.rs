@@ -93,9 +93,16 @@ pub(in crate::application::app) enum DoubleClickResidual {
     Done,
     /// The edge-label selection is committed and the scene is
     /// rebuilt. Native additionally opens the single-line editor on
-    /// `edge_ref`; WASM has no single-line editor yet, so the browser
-    /// stops at "the label is selected".
-    OpenEdgeLabelEditor { edge_ref: EdgeRef },
+    /// the clicked label; WASM has no single-line editor yet, so the
+    /// browser stops at "the label is selected".
+    ///
+    /// Carries no payload on purpose. The identity is already in the
+    /// caller's `DispatchHit`, and both consumers recover it through
+    /// [`edge_label_target`] — the single conversion this module
+    /// exists to keep them agreeing on. A copy threaded through here
+    /// would be a second source for the same fact, readable only by
+    /// the consumer that needs it least.
+    OpenEdgeLabelEditor,
 }
 
 /// The `EdgeRef` identity a `ClickHit::EdgeLabel` names, if the hit
@@ -267,7 +274,7 @@ pub(in crate::application::app) fn apply_double_click_activate(
                     );
                 }
             }
-            DoubleClickResidual::OpenEdgeLabelEditor { edge_ref }
+            DoubleClickResidual::OpenEdgeLabelEditor
         }
         DoubleClickRoute::CreateOrphanAndEdit => {
             if let Some(doc) = core.document.as_deref_mut() {

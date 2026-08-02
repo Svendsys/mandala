@@ -90,6 +90,28 @@ the parity trajectory (or why none is owed):
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").
+- **Single-line editor** (`src/application/app/single_line_edit/`)
+  — edge-label and portal-caption inline editing is native-only;
+  the browser has no single-line editor yet. Consequence for
+  input: an edge-label double-click commits the selection on both
+  targets and opens the editor only on native, surfaced as
+  `DoubleClickResidual::OpenEdgeLabelEditor` rather than a `cfg`,
+  and logged at `debug!` on the browser side so the stop is
+  observable. Parity unblocks `Action::DoubleClickActivate` and
+  `Action::EditSelection*` flipping to `Compatible`; tracked in
+  `work_plans/WASM_CONVERGENCE.md`.
+- **Per-frame animation drain**
+  (`src/application/app/drain_frame.rs`) — native-only, so
+  *animated* `CustomMutation`s (`timing.duration_ms > 0`) start on
+  the browser and never tick: `drain_animation_tick` is the only
+  advance site and there is no browser rAF-driven equivalent
+  wired to it. Instant mutations are unaffected and work on both
+  targets; both browser entry points (the `custom_mutation_bindings`
+  keystroke tier in `run_wasm/event_keyboard.rs` and
+  `click_triggers.rs`) reach the same `start_animation` branch in
+  `apply_keybind_custom_mutation`. Parity is a browser drain loop
+  hung off the existing rAF render loop, pumping the same
+  `drain_animation_tick` body; not yet scheduled.
 
 ## Common tasks
 

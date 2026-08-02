@@ -148,6 +148,28 @@ impl super::WasmApp {
                 // stopped at Macro, so a `custom_mutation_bindings`
                 // entry worked on the desktop and was silently dead
                 // on the web.
+                //
+                // **Instant mutations only.** An entry carrying
+                // `timing.duration_ms > 0` takes
+                // `apply_keybind_custom_mutation`'s `start_animation`
+                // branch, which only *queues* the envelope. The one
+                // site that advances it is
+                // `drain_frame::drain_animation_tick`, and
+                // `drain_frame.rs` is `#[cfg(not(target_arch =
+                // "wasm32"))]` — the browser has no per-frame drain
+                // loop, so an animated mutation started here never
+                // lerps, never completes, and never reaches the
+                // completion `apply_custom_mutation` / undo push. The
+                // user gets `apply_document_actions`' side effects
+                // without the mutation.
+                //
+                // Registered in CLAUDE.md's "Dual-target status" with
+                // the parity trajectory. Pre-existing on the click
+                // path (`click_triggers.rs` calls
+                // `start_animation_at` the same way); this tier
+                // widens the surface from click triggers to every
+                // bound keystroke, which is why it is stated here
+                // rather than left implicit.
                 let mut core = input.input_context_core(renderer, &self.keybinds);
                 let _ = dispatch::dispatch_custom_mutation_for_key(&mut core, k, ctrl, shift, alt);
             }

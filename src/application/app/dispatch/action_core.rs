@@ -89,47 +89,61 @@ where
     }
 }
 
-/// Lift `Unhandled → Handled` for the two mixed-branch arms whose
+/// Lift `Unhandled → Handled` for the mixed-branch arms whose
 /// cross-platform slice IS the totality of what WASM can do
-/// (`ExitMode`, `EditSelection*`). On native, `Unhandled` flows
-/// to the dispatcher's existing match for the target-picker
-/// (Reparent / Connect) overlay clear or
-/// EdgeLabel/Portal editor open. WASM has no such fall-through —
+/// (`ExitMode`, `EditSelection*`, and `DoubleClickActivate`'s
+/// edge-label branch). On native, `Unhandled` flows to the
+/// dispatcher's existing match for the target-picker
+/// (Reparent / Connect) overlay clear or EdgeLabel/Portal editor
+/// open. WASM has no such fall-through —
 /// `WasmMacroDispatchTarget::dispatch_action` calls
 /// [`dispatch_compatible`] directly, so the macro loop's
 /// `any_ran` flag would stop bumping for these arms without this
 /// lift.
+///
+/// `hit` is what makes the `DoubleClickActivate` entry safe to
+/// list. That arm produces **two different** `Unhandled`s and they
+/// mean opposite things:
+///
+/// - **With** a `DispatchHit`: the edge-label selection committed
+///   and the scene rebuilt; only the native-only single-line editor
+///   open is missing. Work ran, so the macro runner must see
+///   `Handled`.
+/// - **Without** one: a soft-skip. The arm logged and returned
+///   without touching the document, which
+///   `MacroDispatchTarget::dispatch_action`'s contract defines as
+///   "did not run". Lifting it would report `any_ran=true` for a
+///   step that did nothing, and a User-tier macro whose step list
+///   is `[Action(DoubleClickActivate)]` would stop falling through
+///   to the custom-mutation tier.
+///
+/// Discriminating on `hit` is what keeps the entry live and correct
+/// rather than either dead or actively wrong. A macro carries no
+/// hit today, so today the entry only ever declines to lift — but
+/// it is the correct answer, not an accident of reachability, and
+/// it stays correct the moment macros gain a hit payload.
 ///
 /// Public-in-app so the WASM macro target's impl can call it,
 /// and so unit tests under `#[cfg(test)]` can pin the contract
 /// without spinning up a `WasmInputState`.
 pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
     action: &Action,
+    hit: Option<&super::cross_dispatch::DispatchHit>,
     outcome: DispatchOutcome,
 ) -> DispatchOutcome {
-    if matches!(outcome, DispatchOutcome::Unhandled)
-        && matches!(
-            action,
-            Action::ExitMode
-                | Action::EditSelection
-                | Action::EditSelectionClean
-                // Fourth member of the mixed-branch set — the same
-                // set `keybinds::tests::
-                // test_wasm_compatibility_mixed_branch_actions_are_native_only`
-                // names. Its `Unhandled` means "the edge-label
-                // selection committed; only the single-line editor
-                // open is missing", which is work done, so the macro
-                // runner must not report `any_ran=false`.
-                //
-                // Unreachable today: a macro carries no `DispatchHit`,
-                // and the arm returns `Handled` early when `hit` is
-                // `None`. Listed anyway because this function is the
-                // written-down mixed-branch set, and an arm that is
-                // in the set but not in the list is a silent
-                // misreport the moment macros gain a hit payload.
-                | Action::DoubleClickActivate,
-        )
-    {
+    if !matches!(outcome, DispatchOutcome::Unhandled) {
+        return outcome;
+    }
+    // The written-down mixed-branch set — the same one
+    // `keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only`
+    // names. An arm in that set but missing here is a silent
+    // misreport; an arm here that did no work is the opposite one.
+    let work_ran = match action {
+        Action::ExitMode | Action::EditSelection | Action::EditSelectionClean => true,
+        Action::DoubleClickActivate => hit.is_some(),
+        _ => false,
+    };
+    if work_ran {
         DispatchOutcome::Handled
     } else {
         outcome
@@ -273,9 +287,18 @@ pub(in crate::application::app) fn dispatch_compatible(
             // it there is no target and the gesture silently no-ops
             // (it was bound but fired from a non-pointer source, e.g.
             // a macro carrying no hit context).
+            // Soft-skip, and reported as one. The step logs and
+            // changes no document state, which is exactly the case
+            // `MacroDispatchTarget::dispatch_action`'s contract
+            // (`macro_core.rs`) pins as "did not run" — so this
+            // returns `Unhandled` and the macro loop's `any_ran`
+            // flag does not bump. Returning `Handled` here would let
+            // a User-tier macro whose step list is
+            // `[Action(DoubleClickActivate)]` consume the keystroke
+            // instead of falling through to the custom-mutation tier.
             let Some(h) = hit else {
                 log::debug!("DoubleClickActivate: no DispatchHit; skipping");
-                return DispatchOutcome::Handled;
+                return DispatchOutcome::Unhandled;
             };
             return match super::cross_dispatch::apply_double_click_activate(h, core) {
                 super::cross_dispatch::DoubleClickResidual::Done => DispatchOutcome::Handled,
@@ -284,7 +307,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 // `NativeContextExt`. Native's fall-through finishes
                 // it; WASM has no single-line editor yet and stops
                 // here with the label selected.
-                super::cross_dispatch::DoubleClickResidual::OpenEdgeLabelEditor { .. } => {
+                super::cross_dispatch::DoubleClickResidual::OpenEdgeLabelEditor => {
                     DispatchOutcome::Unhandled
                 }
             };
@@ -698,32 +721,70 @@ mod tests {
     use super::*;
     use crate::application::keybinds::Action;
 
+    /// A pointer-sourced `DispatchHit` landing on an edge label —
+    /// the only shape that makes `DoubleClickActivate`'s `Unhandled`
+    /// mean "the selection committed". Plain values throughout, so
+    /// no renderer is involved (`TEST_CONVENTIONS §T8`).
+    fn dispatch_hit_on_edge_label() -> super::super::cross_dispatch::DispatchHit {
+        super::super::cross_dispatch::DispatchHit {
+            click_hit: crate::application::app::ClickHit::EdgeLabel(
+                baumhard::mindmap::scene_cache::EdgeKey::new("a", "b", "cross_link"),
+            ),
+            canvas_pos: glam::Vec2::ZERO,
+        }
+    }
+
     #[test]
     fn exit_mode_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(&Action::ExitMode, DispatchOutcome::Unhandled);
+        let out = lift_mixed_branch_for_wasm_macro(&Action::ExitMode, None, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
     #[test]
     fn edit_selection_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(&Action::EditSelection, DispatchOutcome::Unhandled);
+        let out = lift_mixed_branch_for_wasm_macro(&Action::EditSelection, None, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
     #[test]
     fn edit_selection_clean_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(&Action::EditSelectionClean, DispatchOutcome::Unhandled);
+        let out = lift_mixed_branch_for_wasm_macro(&Action::EditSelectionClean, None, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
-    /// `DoubleClickActivate`'s `Unhandled` means the edge-label
-    /// selection committed and only the native single-line editor
-    /// open is missing — the same "cross-platform slice ran" shape
-    /// `EditSelection` has, so it lifts the same way.
+    /// A `DispatchHit` is what tells the two `DoubleClickActivate`
+    /// `Unhandled`s apart. With one, the arm committed the edge-label
+    /// selection and rebuilt the scene, and only the native
+    /// single-line editor open is missing — the same "cross-platform
+    /// slice ran" shape `EditSelection` has, so it lifts the same way.
     #[test]
-    fn test_double_click_activate_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(&Action::DoubleClickActivate, DispatchOutcome::Unhandled);
+    fn test_double_click_activate_unhandled_with_a_hit_lifts_to_handled() {
+        let hit = dispatch_hit_on_edge_label();
+        let out = lift_mixed_branch_for_wasm_macro(
+            &Action::DoubleClickActivate,
+            Some(&hit),
+            DispatchOutcome::Unhandled,
+        );
         assert_eq!(out, DispatchOutcome::Handled);
+    }
+
+    /// Without a hit the arm is a soft-skip: it logs and touches no
+    /// document state. `MacroDispatchTarget::dispatch_action`'s
+    /// contract defines that as "did not run", so the lift must
+    /// decline and the macro loop's `any_ran` must stay `false`.
+    ///
+    /// This is the shape a macro actually reaches today — macros
+    /// carry no hit — so it is the case that decides whether a
+    /// User-tier `[Action(DoubleClickActivate)]` macro falls through
+    /// to the custom-mutation tier on WASM. It must.
+    #[test]
+    fn test_double_click_activate_unhandled_without_a_hit_stays_unhandled() {
+        let out = lift_mixed_branch_for_wasm_macro(
+            &Action::DoubleClickActivate,
+            None,
+            DispatchOutcome::Unhandled,
+        );
+        assert_eq!(out, DispatchOutcome::Unhandled);
     }
 
     #[test]
@@ -738,7 +799,7 @@ mod tests {
             Action::EditSelectionClean,
             Action::DoubleClickActivate,
         ] {
-            let out = lift_mixed_branch_for_wasm_macro(&action, DispatchOutcome::Handled);
+            let out = lift_mixed_branch_for_wasm_macro(&action, None, DispatchOutcome::Handled);
             assert_eq!(out, DispatchOutcome::Handled, "action={:?}", action);
         }
     }
@@ -757,7 +818,7 @@ mod tests {
             (Action::SelectAll, DispatchOutcome::Unhandled),
         ];
         for (action, outcome) in cases {
-            let out = lift_mixed_branch_for_wasm_macro(&action, outcome);
+            let out = lift_mixed_branch_for_wasm_macro(&action, None, outcome);
             assert_eq!(out, outcome, "action={:?}", action);
         }
     }
@@ -775,7 +836,7 @@ mod tests {
             Action::SaveDocument,
         ];
         for action in cases {
-            let out = lift_mixed_branch_for_wasm_macro(&action, DispatchOutcome::Unhandled);
+            let out = lift_mixed_branch_for_wasm_macro(&action, None, DispatchOutcome::Unhandled);
             assert_eq!(
                 out,
                 DispatchOutcome::Unhandled,

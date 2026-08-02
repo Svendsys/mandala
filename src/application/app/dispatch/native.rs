@@ -87,12 +87,21 @@ fn quote_console_arg(s: &str) -> String {
 ///   - a mixed-branch arm's native residual (`ExitMode`'s mode
 ///     reset + rebuild; `EditSelection*` on EdgeLabel / Portal
 ///     selections),
-///   - the mouse-mixed branch of `DoubleClickActivate` and the
-///     mouse-with-hit branch of `CreateOrphanNodeAndEdit`, both
-///     of which need `DispatchHit::canvas_pos` (a payload
-///     `dispatch_compatible` doesn't carry). The keyboard /
-///     no-hit branch of `CreateOrphanNodeAndEdit` is handled
-///     in `dispatch_compatible` (uses `cursor_pos`).
+///   - the edge-label branch of `DoubleClickActivate`. Not a
+///     payload question — `dispatch_compatible` takes the same
+///     `Option<&DispatchHit>` this function does, and both targets
+///     populate it from their mouse handlers. What the branch needs
+///     is `single_line_edit_state`, a `NativeContextExt` field the
+///     browser has no counterpart for; the arm below is that one
+///     step and nothing else. `CreateOrphanNodeAndEdit` no longer
+///     appears here at all: `dispatch_create_orphan_and_edit` is
+///     gone and the mouse path reaches
+///     `apply_create_orphan_node_and_edit` through
+///     `DoubleClickRoute::CreateOrphanAndEdit`,
+///   - a `DoubleClickActivate` dispatched with no `DispatchHit` at
+///     all (a macro, say). That is a soft-skip: nothing ran, and
+///     `Unhandled` is how the macro loop is told so. Native's arm
+///     below finds no target and does nothing either.
 ///
 /// `WASM_CONVERGENCE.md` Track C records the architecture; calling
 /// `dispatch_compatible` from this fn is the seam.
@@ -421,7 +430,7 @@ pub(in crate::application::app) fn dispatch_action(
             // conversion the route resolver used, so the editor
             // cannot open on a different edge than the one the
             // selection just committed to.
-            let target = hit.and_then(|h| super::cross_dispatch::edge_label_target(&h.click_hit));
+            let target = hit.and_then(|h| super::edge_label_target(&h.click_hit));
             if let (Some(edge_ref), Some(doc)) = (target, ctx.document.as_mut()) {
                 // Double-click on an edge label edits the existing
                 // text — not clean.

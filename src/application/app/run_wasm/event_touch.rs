@@ -17,7 +17,7 @@
 
 use crate::application::app::dispatch::{self, DispatchOutcome};
 use crate::application::app::touch_gesture::Phase;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use web_time::Instant;
 use winit::event::Touch;
 
@@ -71,22 +71,21 @@ impl super::WasmApp {
                 // `dispatch_compatible` returns `Unhandled` and
                 // there's no graceful fallback on WASM. A user who
                 // long-presses on mobile gets *literally nothing* —
-                // no log, no chrome, no model change. Warn-log once
-                // per session so the failure is at least observable
-                // in the dev console; the underlying fix (lifting
-                // those Actions to `Compatible` + porting the
-                // DragState plumbing) is tracked in the plan's
-                // open follow-ups.
-                if matches!(outcome, DispatchOutcome::Unhandled)
-                    && !WARNED_NATIVE_ONLY.swap(true, Ordering::Relaxed)
-                {
-                    log::warn!(
-                        "touch gesture '{}' dispatched a NativeOnly action ({:?}) — \
-                         no-op on WASM until DragState / modal-stealer plumbing \
-                         lands cross-platform (SECTIONS_BORDERS_RESIZE_PLAN.md \
-                         Open follow-ups). Rebind {} to a Compatible action \
-                         (e.g. ZoomIn / SelectAll / a custom macro) to opt out.",
-                        name, a, name
+                // no log, no chrome, no model change.
+                //
+                // The reporting body is shared with the double-click
+                // and wheel sites, which reach the same dead end now
+                // that they consult the keybind table too; only the
+                // latch and the remedy are per-input-class.
+                if matches!(outcome, DispatchOutcome::Unhandled) {
+                    super::warn_unhandled_native_only_once(
+                        &WARNED_NATIVE_ONLY,
+                        name,
+                        &a,
+                        "Blocked on DragState / modal-stealer plumbing landing \
+                         cross-platform (SECTIONS_BORDERS_RESIZE_PLAN.md Open \
+                         follow-ups). Rebind the gesture to a Compatible action \
+                         (e.g. zoom_in / select_all / a custom macro) to opt out.",
                     );
                 }
                 return true;

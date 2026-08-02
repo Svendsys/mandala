@@ -108,6 +108,13 @@ pub(crate) fn apply_keybind_custom_mutation(
     now_ms: u64,
 ) -> bool {
     if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+        // Queues the envelope only. Advancing it is
+        // `drain_frame::drain_animation_tick`, which is native-only —
+        // so on WASM this branch starts an animation that never ticks.
+        // A sanctioned carve-out, registered in CLAUDE.md's
+        // "Dual-target status"; both browser callers (the keystroke
+        // tier in `run_wasm/event_keyboard.rs` and
+        // `click_triggers.rs`) reach it.
         doc.start_animation(cm, node_id, now_ms);
     } else if let Some(tree) = mindmap_tree.as_mut() {
         doc.apply_custom_mutation(cm, node_id, Some(tree));
