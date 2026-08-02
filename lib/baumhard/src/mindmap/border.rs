@@ -585,8 +585,12 @@ pub fn border_run_specs_with(
     let side_avail = (node_size.1 - top_corner_h - bottom_corner_h).max(0.0);
     // Same clamp as the horizontal fill, and for the same reason:
     // both terms are authored, and the quotient sizes a `String`.
-    let left_row_count = fill_copies(side_avail, left_line_h, 1);
-    let right_row_count = fill_copies(side_avail, right_line_h, 1);
+    // One grapheme per row, but its *byte* cost is whatever the
+    // author's pattern spells — a ZWJ sequence is one cluster and
+    // dozens of bytes — so the byte ceiling gets the real number
+    // rather than the row count.
+    let left_row_count = fill_copies(side_avail, left_line_h, 1, left_first_glyph.len().max(1));
+    let right_row_count = fill_copies(side_avail, right_line_h, 1, right_first_glyph.len().max(1));
     let left_text = border_style.left_column_text(left_row_count.max(1));
     let right_text = border_style.right_column_text(right_row_count.max(1));
     let left_v_height = left_row_count as f32 * left_line_h;
@@ -755,10 +759,6 @@ pub const MAX_BORDER_SIDE_GLYPHS: usize = 100_000;
 /// loop.
 ///
 /// Cost: a few float ops, no allocation.
-fn fill_copies(available_pt: f32, cluster_w: f32, cluster_len: usize) -> usize {
-    fill_copies_bounded(available_pt, cluster_w, cluster_len, cluster_len)
-}
-
 /// Ceiling on the byte length of one border side's emitted string.
 ///
 /// [`MAX_BORDER_SIDE_GLYPHS`] bounds the *grapheme* count, which is
@@ -770,9 +770,22 @@ fn fill_copies(available_pt: f32, cluster_w: f32, cluster_len: usize) -> usize {
 /// whichever binds first wins.
 pub const MAX_BORDER_SIDE_BYTES: usize = 1024 * 1024;
 
-/// [`fill_copies`] with the cluster's byte length passed separately,
-/// so the byte ceiling can bind independently of the grapheme one.
-fn fill_copies_bounded(
+/// How many whole copies of a cluster fit in `available_pt`, bounded
+/// in **both** units the emitted string is measured in.
+///
+/// The two ceilings are separate because a grapheme is not a byte:
+/// [`MAX_BORDER_SIDE_GLYPHS`] bounds how much border is drawn, and
+/// [`MAX_BORDER_SIDE_BYTES`] bounds what it costs, and an
+/// author-supplied pattern can make one cluster arbitrarily long in
+/// bytes while staying one grapheme. Whichever binds first wins, so
+/// `cluster_bytes` is a required argument rather than something a
+/// caller can default — a caller that passed the grapheme count here
+/// would silently disable the byte ceiling.
+///
+/// Total over hostile inputs: a non-finite or non-positive advance
+/// yields zero copies rather than a saturating cast into the push
+/// loop. Cost: a few float ops, no allocation.
+fn fill_copies(
     available_pt: f32,
     cluster_w: f32,
     cluster_len: usize,
@@ -832,7 +845,7 @@ fn fit_pattern_to_width(
                 return (String::new(), 0, 0.0);
             }
             let cluster_bytes: usize = cluster.iter().map(|g| g.len()).sum();
-            let full_copies = fill_copies_bounded(available_pt, cluster_w, cluster.len(), cluster_bytes);
+            let full_copies = fill_copies(available_pt, cluster_w, cluster.len(), cluster_bytes);
             let mut emitted_w = full_copies as f32 * cluster_w;
             let mut text = String::new();
             for _ in 0..full_copies {
@@ -879,7 +892,7 @@ fn fit_pattern_to_width(
             }
             let between_avail = available_pt - prefix_w - suffix_w;
             let fill_bytes: usize = fill.iter().map(|g| g.len()).sum();
-            let full_copies = fill_copies_bounded(between_avail, fill_cluster_w, fill.len(), fill_bytes);
+            let full_copies = fill_copies(between_avail, fill_cluster_w, fill.len(), fill_bytes);
 
             let mut text = String::new();
             let mut cluster_count = 0;

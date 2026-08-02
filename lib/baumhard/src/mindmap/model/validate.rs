@@ -282,19 +282,21 @@ fn field(prefix: &str, name: &str) -> String {
 /// `Some(message)` unless `value` is a font size the text shaper can
 /// survive: finite and inside
 /// [`MIN_FONT_SIZE_PT`]..=[`MAX_FONT_SIZE_PT`].
-fn font_size(label: &str, value: f32) -> Option<String> {
+fn font_size(prefix: &str, name: &str, value: f32) -> Option<String> {
     if !value.is_finite() {
-        return Some(format!("{label} is not finite ({value})"));
+        return Some(format!("{} is not finite ({value})", field(prefix, name)));
     }
     if value < MIN_FONT_SIZE_PT {
         return Some(format!(
-            "{label} ({value}) is under the {MIN_FONT_SIZE_PT}pt floor — zero aborts the \
-             text shaper, and a sub-point size asks the border fitter for millions of glyphs"
+            "{} ({value}) is under the {MIN_FONT_SIZE_PT}pt floor — zero aborts the \
+             text shaper, and a sub-point size asks the border fitter for millions of glyphs",
+            field(prefix, name)
         ));
     }
     if value > MAX_FONT_SIZE_PT {
         return Some(format!(
-            "{label} ({value}) is over the {MAX_FONT_SIZE_PT}pt ceiling"
+            "{} ({value}) is over the {MAX_FONT_SIZE_PT}pt ceiling",
+            field(prefix, name)
         ));
     }
     None
@@ -302,17 +304,20 @@ fn font_size(label: &str, value: f32) -> Option<String> {
 
 /// [`font_size`] for an optional field — absent means "inherit",
 /// which is always in domain.
-fn opt_font_size(label: &str, value: Option<f32>) -> Option<String> {
-    font_size(label, value?)
+fn opt_font_size(prefix: &str, name: &str, value: Option<f32>) -> Option<String> {
+    font_size(prefix, name, value?)
 }
 
 /// `Some(message)` unless `value` is finite and within `±limit`.
-fn bounded(label: &str, value: f64, limit: f64) -> Option<String> {
+fn bounded(prefix: &str, name: &str, value: f64, limit: f64) -> Option<String> {
     if !value.is_finite() {
-        return Some(format!("{label} is not finite ({value})"));
+        return Some(format!("{} is not finite ({value})", field(prefix, name)));
     }
     if value.abs() > limit {
-        return Some(format!("{label} ({value}) is outside the ±{limit} bound"));
+        return Some(format!(
+            "{} ({value}) is outside the ±{limit} bound",
+            field(prefix, name)
+        ));
     }
     None
 }
@@ -320,12 +325,12 @@ fn bounded(label: &str, value: f64, limit: f64) -> Option<String> {
 /// `Some(message)` unless `value` is finite. For fields whose
 /// magnitude carries no risk on its own but whose `NaN` poisons a
 /// comparison — a zoom bound, a normalized position along a path.
-fn finite(label: &str, value: Option<f32>) -> Option<String> {
+fn finite(prefix: &str, name: &str, value: Option<f32>) -> Option<String> {
     let value = value?;
     if value.is_finite() {
         None
     } else {
-        Some(format!("{label} is not finite ({value})"))
+        Some(format!("{} is not finite ({value})", field(prefix, name)))
     }
 }
 
@@ -337,10 +342,19 @@ fn finite(label: &str, value: Option<f32>) -> Option<String> {
 /// is two independent comparisons that are total for any ordering.
 /// Reporting the wrong one would tell an author to fear a crash that
 /// cannot happen, or shrug at an element that silently never renders.
-fn ordered_pair(label: &str, min: Option<f32>, max: Option<f32>, consequence: &str) -> Option<String> {
+fn ordered_pair(
+    prefix: &str,
+    name: &str,
+    min: Option<f32>,
+    max: Option<f32>,
+    consequence: &str,
+) -> Option<String> {
     let (min, max) = (min?, max?);
     if min > max {
-        return Some(format!("{label}: min ({min}) is above max ({max}) — {consequence}"));
+        return Some(format!(
+            "{}: min ({min}) is above max ({max}) — {consequence}",
+            field(prefix, name)
+        ));
     }
     None
 }
@@ -351,12 +365,12 @@ fn ordered_pair(label: &str, min: Option<f32>, max: Option<f32>, consequence: &s
 /// stamped with `label` (the document part that carries it).
 pub fn border_config_violations(label: &str, border: &GlyphBorderConfig) -> Vec<String> {
     let mut out = Vec::new();
-    out.extend(font_size(&field(label, "font_size_pt"), border.font_size_pt));
+    out.extend(font_size(label, "font_size_pt", border.font_size_pt));
     // Padding is a signed inset; only its magnitude and finiteness
     // matter, since the border geometry adds it to an axis already
     // bounded by MAX_NODE_AXIS.
     out.extend(bounded(
-        &field(label, "padding"),
+        label, "padding",
         border.padding as f64,
         MAX_NODE_AXIS,
     ));
@@ -395,17 +409,18 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
             ));
         }
     }
-    out.extend(font_size(&field(label, "font_size_pt"), conn.font_size_pt));
+    out.extend(font_size(label, "font_size_pt", conn.font_size_pt));
     out.extend(font_size(
-        &field(label, "min_font_size_pt"),
+        label, "min_font_size_pt",
         conn.min_font_size_pt,
     ));
     out.extend(font_size(
-        &field(label, "max_font_size_pt"),
+        label, "max_font_size_pt",
         conn.max_font_size_pt,
     ));
     out.extend(ordered_pair(
         label,
+        "font_size",
         Some(conn.min_font_size_pt),
         Some(conn.max_font_size_pt),
         INVERTED_SIZE_WINDOW,
@@ -422,7 +437,7 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
     // sampler: `sample_count` returns a single point for any
     // non-positive step rather than looping.
     out.extend(bounded(
-        &field(label, "spacing"),
+        label, "spacing",
         conn.spacing as f64,
         MAX_NODE_AXIS,
     ));
@@ -432,24 +447,25 @@ pub fn connection_config_violations(label: &str, conn: &GlyphConnectionConfig) -
 /// Every numeric-domain violation on an [`EdgeLabelConfig`].
 pub fn label_config_violations(label: &str, cfg: &EdgeLabelConfig) -> Vec<String> {
     let mut out = Vec::new();
-    out.extend(opt_font_size(&field(label, "font_size_pt"), cfg.font_size_pt));
+    out.extend(opt_font_size(label, "font_size_pt", cfg.font_size_pt));
     out.extend(opt_font_size(
-        &field(label, "min_font_size_pt"),
+        label, "min_font_size_pt",
         cfg.min_font_size_pt,
     ));
     out.extend(opt_font_size(
-        &field(label, "max_font_size_pt"),
+        label, "max_font_size_pt",
         cfg.max_font_size_pt,
     ));
     out.extend(ordered_pair(
         label,
+        "font_size",
         cfg.min_font_size_pt,
         cfg.max_font_size_pt,
         INVERTED_SIZE_WINDOW,
     ));
-    out.extend(finite(&field(label, "position_t"), cfg.position_t));
+    out.extend(finite(label, "position_t", cfg.position_t));
     out.extend(finite(
-        &field(label, "perpendicular_offset"),
+        label, "perpendicular_offset",
         cfg.perpendicular_offset,
     ));
     out.extend(zoom_window_violations(
@@ -464,26 +480,26 @@ pub fn label_config_violations(label: &str, cfg: &EdgeLabelConfig) -> Vec<String
 pub fn portal_endpoint_violations(label: &str, portal: &PortalEndpointState) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(opt_font_size(
-        &field(label, "text_font_size_pt"),
+        label, "text_font_size_pt",
         portal.text_font_size_pt,
     ));
     out.extend(opt_font_size(
-        &field(label, "text_min_font_size_pt"),
+        label, "text_min_font_size_pt",
         portal.text_min_font_size_pt,
     ));
     out.extend(opt_font_size(
-        &field(label, "text_max_font_size_pt"),
+        label, "text_max_font_size_pt",
         portal.text_max_font_size_pt,
     ));
     out.extend(ordered_pair(
-        &field(label, "text"),
+        label, "text",
         portal.text_min_font_size_pt,
         portal.text_max_font_size_pt,
         INVERTED_SIZE_WINDOW,
     ));
-    out.extend(finite(&field(label, "border_t"), portal.border_t));
+    out.extend(finite(label, "border_t", portal.border_t));
     out.extend(finite(
-        &field(label, "perpendicular_offset"),
+        label, "perpendicular_offset",
         portal.perpendicular_offset,
     ));
     out.extend(zoom_window_violations(
@@ -504,8 +520,8 @@ pub fn portal_endpoint_violations(label: &str, portal: &PortalEndpointState) -> 
 /// nonsense rather than a wider window.
 pub fn zoom_window_violations(label: &str, min: Option<f32>, max: Option<f32>) -> Vec<String> {
     let mut out = Vec::new();
-    out.extend(finite(&field(label, "min_zoom_to_render"), min));
-    out.extend(finite(&field(label, "max_zoom_to_render"), max));
+    out.extend(finite(label, "min_zoom_to_render", min));
+    out.extend(finite(label, "max_zoom_to_render", max));
     for (field, value) in [("min_zoom_to_render", min), ("max_zoom_to_render", max)] {
         if let Some(value) = value {
             if value.is_finite() && value < 0.0 {
@@ -513,7 +529,7 @@ pub fn zoom_window_violations(label: &str, min: Option<f32>, max: Option<f32>) -
             }
         }
     }
-    out.extend(ordered_pair(&field(label, "zoom"), min, max, INVERTED_ZOOM_WINDOW));
+    out.extend(ordered_pair(label, "zoom", min, max, INVERTED_ZOOM_WINDOW));
     out
 }
 
@@ -597,11 +613,11 @@ fn text_run_violations(section_idx: usize, section: &MindSection) -> Vec<String>
 pub fn section_numeric_violations(idx: usize, section: &MindSection) -> Vec<String> {
     let mut out = Vec::new();
     let label = format!("section[{idx}]");
-    out.extend(bounded(&field(&label, "offset.x"), section.offset.x, MAX_CANVAS_COORD));
-    out.extend(bounded(&field(&label, "offset.y"), section.offset.y, MAX_CANVAS_COORD));
+    out.extend(bounded(&label, "offset.x", section.offset.x, MAX_CANVAS_COORD));
+    out.extend(bounded(&label, "offset.y", section.offset.y, MAX_CANVAS_COORD));
     if let Some(size) = section.size {
-        out.extend(bounded(&field(&label, "size.width"), size.width, MAX_NODE_AXIS));
-        out.extend(bounded(&field(&label, "size.height"), size.height, MAX_NODE_AXIS));
+        out.extend(bounded(&label, "size.width", size.width, MAX_NODE_AXIS));
+        out.extend(bounded(&label, "size.height", size.height, MAX_NODE_AXIS));
         if size.width.is_finite() && size.width <= 0.0 {
             out.push(format!("{label}.size.width is not positive ({})", size.width));
         }
@@ -620,24 +636,24 @@ pub fn section_numeric_violations(idx: usize, section: &MindSection) -> Vec<Stri
 /// its own geometry, its style and layout numbers, its border
 /// override, and each of its sections.
 ///
-/// Cost: O(sections + text runs) on the node; no allocation beyond
-/// the returned messages, which are empty for a well-formed node.
+/// Cost: O(sections + text runs) on the node. Labels are built only
+/// on the failing arm, so a well-formed node allocates nothing at
+/// all — which matters because this runs over every node of every
+/// map at load, and `maptool verify` runs it again.
 pub fn node_numeric_violations(node: &MindNode) -> Vec<String> {
     let mut out = Vec::new();
-    out.extend(bounded("position.x", node.position.x, MAX_CANVAS_COORD));
-    out.extend(bounded("position.y", node.position.y, MAX_CANVAS_COORD));
+    out.extend(bounded("position", "x", node.position.x, MAX_CANVAS_COORD));
+    out.extend(bounded("position", "y", node.position.y, MAX_CANVAS_COORD));
     out.extend(node_size_violations(node.size));
-    out.extend(bounded(
-        "style.corner_radius_percent",
+    out.extend(bounded("style", "corner_radius_percent",
         node.style.corner_radius_percent,
         MAX_NODE_AXIS,
     ));
-    out.extend(bounded(
-        "style.frame_thickness",
+    out.extend(bounded("style", "frame_thickness",
         node.style.frame_thickness,
         MAX_NODE_AXIS,
     ));
-    out.extend(bounded("layout.spacing", node.layout.spacing, MAX_CANVAS_COORD));
+    out.extend(bounded("layout", "spacing", node.layout.spacing, MAX_CANVAS_COORD));
     if let Some(border) = node.style.border.as_ref() {
         out.extend(border_config_violations("style.border", border));
     }
@@ -687,8 +703,8 @@ pub fn edge_numeric_violations(edge: &MindEdge) -> Vec<String> {
 fn control_point_violations(idx: usize, point: &ControlPoint) -> Vec<String> {
     let label = format!("control_points[{idx}]");
     let mut out = Vec::new();
-    out.extend(bounded(&field(&label, "x"), point.x, MAX_CANVAS_COORD));
-    out.extend(bounded(&field(&label, "y"), point.y, MAX_CANVAS_COORD));
+    out.extend(bounded(&label, "x", point.x, MAX_CANVAS_COORD));
+    out.extend(bounded(&label, "y", point.y, MAX_CANVAS_COORD));
     out
 }
 

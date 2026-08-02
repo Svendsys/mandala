@@ -13,12 +13,38 @@ Exit code 0 if clean, or if only warnings are found. Nonzero with a
 list of violations if any error is found. Warnings are still printed so
 a CI recipe that captures stderr can see them.
 
-The split is between *spelling* and *meaning*. Spelling is the
-loader's: every object in the format is closed, so a key no field
-claims fails the load outright rather than being dropped and then
-erased at the next save — see [schema.md](./schema.md#unknown-keys-are-rejected).
-Everything below is about correctly-spelled files that still say
-something incoherent, and that is `verify`'s.
+The split is three-way, not two, and the middle column is the one
+that moved.
+
+1. **Spelling — the loader refuses.** Every object in the format is
+   closed, so a key no field claims fails the load outright rather
+   than being dropped and then erased at the next save. See
+   [schema.md](./schema.md#unknown-keys-are-rejected).
+2. **Render safety — the loader also refuses.** A correctly-spelled
+   file can still carry numbers that take the editor down rather
+   than merely looking wrong: a zero font size trips an assert
+   inside the text shaper, a crossed size window used to reach an
+   `f32::clamp`, and node geometry sizes real allocations. Those are
+   rejected at load, because a map that would abort the process must
+   not open. The rules are listed under
+   [Numeric domain](#numeric-domain) below, and the reasoning is in
+   [macros.md](./macros.md#the-load-time-trust-boundary).
+   **Parent cycles and the key-equals-`node.id` rule are in this
+   column too** — both are load-blocking, because the cycle check
+   and the scene builder address nodes by different spellings, and a
+   disagreement between them is a walk that never terminates.
+3. **Coherence — `verify` reports.** Everything else: a file that
+   loads and renders but still says something incoherent. Dangling
+   edge references, a Dewey ID that disagrees with `parent_id`, an
+   unresolved palette name, a section hanging past its node's edge.
+
+`verify` sees all three. It loads through
+`loader::parse_for_inspection` rather than the editor's strict door,
+precisely so it can still open the files column 1 and 2 reject — a
+tool whose job is saying *what is wrong with this map* would be
+useless if it could only read maps that were already fine. So a
+violation listed in column 2 appears in a `verify` report **and**
+blocks the load; one in column 3 appears only in the report.
 
 ## What gets checked
 
@@ -144,8 +170,12 @@ element that never renders at any zoom is almost always a typo. See
   says hex or `var(--name)`, but the renderer is lenient. We don't verify
   color syntax — authors who type `"red"` will see default colors, and
   that's easy to diagnose visually.
-- **Positions and sizes**: negative positions are valid (the canvas is
-  unbounded). Zero-size nodes are rare but not forbidden.
+- **Positions and sizes** are only *partly* unchecked now. A negative
+  position is still valid — the canvas is unbounded — but a zero,
+  negative, non-finite, or astronomically large extent is a
+  load-blocking violation rather than a curiosity, because those
+  numbers size real allocations downstream. See
+  [Numeric domain](#numeric-domain).
 - **ID stability after reparent**: Dewey IDs can drift from parent_id
   after a runtime reparent (documented in [ids.md](./ids.md)). Verify
   **does** flag ID/parent_id mismatches — saving a reparented map and
@@ -156,6 +186,32 @@ element that never renders at any zoom is almost always a typo. See
   binding references a mutation ID that doesn't exist, the binding is a
   no-op at runtime. Verify could be extended to flag this; currently it
   doesn't.
+
+## Numeric domain
+
+Load-blocking. Every number a `.mindmap.json` carries into the scene
+build has to be one the renderer survives, because the code
+downstream of it is not defensive — the text shaper asserts, and the
+border and connection builders size a `String` and a `Vec` from
+authored geometry. `verify` reports these under the `numeric`
+category; the loader refuses them outright.
+
+| Rule | Bound |
+|---|---|
+| Font metrics — `font_size_pt`, `size_pt`, every min / max on borders, connections, labels, portals and text runs | finite, `0.5`..=`4096` pt |
+| Min / max font pairs | not inverted (the cascades clamp with them) |
+| Node extent | finite, positive, ≤ `1_000_000` per axis |
+| Positions, section offsets, Bezier control points | finite, `|v|` ≤ `1e9` |
+| Text runs | sorted, non-overlapping, non-empty, `end` ≤ the section's grapheme count |
+| Connection body / cap glyphs | ≤ 16 grapheme clusters (each is re-emitted per sampled point) |
+| Animation envelope — `duration_ms`, `delay_ms` | ≤ `60_000` ms each |
+| Zoom windows | finite, non-negative, not inverted |
+| Whole file | ≤ 256 MiB |
+
+The constants live in `lib/baumhard/src/mindmap/model/validate.rs`
+and `lib/baumhard/src/font/fonts.rs`, and the loader, the document
+setters, and `verify` all read the same ones — a value the editor can
+write is by construction a value the loader accepts.
 
 ## Running verify in CI
 

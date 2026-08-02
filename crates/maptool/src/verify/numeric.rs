@@ -103,6 +103,116 @@ mod tests {
         );
     }
 
+    /// **The rules this module absorbed.** Text-run ordering and
+    /// zoom-window inversion used to live in their own verify
+    /// modules, restating rules `validate` already owned — so a
+    /// single bad run was reported twice, in two near-identical
+    /// wordings. They report through the shared helpers now; these
+    /// pin that the coverage came with them.
+    #[test]
+    fn test_numeric_check_covers_the_rules_it_absorbed() {
+        use baumhard::mindmap::model::TextRun;
+
+        let run = |start: usize, end: usize| TextRun {
+            start,
+            end,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            color: "#ffffff".into(),
+            hyperlink: None,
+        };
+
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.sections[0].text = "abcdef".into();
+        n.sections[0].text_runs = vec![run(0, 4), run(2, 6)];
+        n.min_zoom_to_render = Some(5.0);
+        n.max_zoom_to_render = Some(1.0);
+        map.nodes.insert("0".into(), n);
+
+        let violations = check(&map);
+        let messages: Vec<&str> = violations.iter().map(|v| v.message.as_str()).collect();
+        assert!(
+            messages.iter().any(|m| m.contains("overlaps previous run")),
+            "overlapping runs must still be reported: {messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("no zoom satisfies both bounds")),
+            "an inverted zoom window must still be reported: {messages:?}"
+        );
+        assert_eq!(
+            messages.iter().filter(|m| m.contains("overlaps previous run")).count(),
+            1,
+            "and reported exactly once — the duplicate module is what this replaced"
+        );
+    }
+
+    /// The zoom window is carried by four different objects, and the
+    /// absorbed module checked each one. Losing that breadth would be
+    /// a silent coverage drop, so it is pinned here instead.
+    #[test]
+    fn test_numeric_check_reaches_every_zoom_window_carrier() {
+        use crate::verify::test_helpers::edge as make_edge;
+        use baumhard::mindmap::model::{EdgeLabelConfig, PortalEndpointState};
+
+        let inverted = (Some(5.0_f32), Some(1.0_f32));
+
+        // Node.
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.min_zoom_to_render = inverted.0;
+        n.max_zoom_to_render = inverted.1;
+        map.nodes.insert("0".into(), n);
+        assert!(
+            check(&map).iter().any(|v| v.message.contains("no zoom satisfies")),
+            "node zoom window"
+        );
+
+        // Edge, its label config, and both portal endpoints.
+        for label in ["edge", "label_config", "portal_from", "portal_to"] {
+            let mut map = MindMap::new_blank("t");
+            map.nodes.insert("0".into(), node("0", None));
+            map.nodes.insert("0.0".into(), node("0.0", Some("0")));
+            let mut e = make_edge("0", "0.0");
+            match label {
+                "edge" => {
+                    e.min_zoom_to_render = inverted.0;
+                    e.max_zoom_to_render = inverted.1;
+                }
+                "label_config" => {
+                    e.label_config = Some(EdgeLabelConfig {
+                        min_zoom_to_render: inverted.0,
+                        max_zoom_to_render: inverted.1,
+                        ..Default::default()
+                    });
+                }
+                "portal_from" => {
+                    e.portal_from = Some(PortalEndpointState {
+                        min_zoom_to_render: inverted.0,
+                        max_zoom_to_render: inverted.1,
+                        ..Default::default()
+                    });
+                }
+                _ => {
+                    e.portal_to = Some(PortalEndpointState {
+                        min_zoom_to_render: inverted.0,
+                        max_zoom_to_render: inverted.1,
+                        ..Default::default()
+                    });
+                }
+            }
+            map.edges.push(e);
+            let violations = check(&map);
+            assert!(
+                violations.iter().any(|v| v.message.contains("no zoom satisfies")),
+                "{label} zoom window must be reported: {violations:?}"
+            );
+        }
+    }
+
     /// The canonical fixture is the control: it loads through the
     /// strict door, so it must produce nothing here.
     #[test]
