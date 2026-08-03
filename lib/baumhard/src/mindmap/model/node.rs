@@ -457,7 +457,12 @@ pub struct NodeStyle {
     pub text_color: String,
     /// Background shape spelling — matched against
     /// [`crate::gfx_structs::shape::NodeShape::from_style_string`].
-    /// Falls back to rectangle on unknown values.
+    /// Falls back to rectangle for any spelling with no
+    /// [`NodeShape`](crate::gfx_structs::shape::NodeShape) variant
+    /// behind it, quietly when the spelling is canonical
+    /// ([`KNOWN_SHAPES`](crate::gfx_structs::shape::KNOWN_SHAPES))
+    /// and with a `log::warn!` when it is not. Free-form either way:
+    /// whatever is on disk is what gets written back.
     #[serde(default = "default_shape")]
     pub shape: String,
     /// Corner radius as a percentage of the smaller AABB dimension
