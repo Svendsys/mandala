@@ -202,9 +202,9 @@ impl ShapeSpelling {
     pub const fn resolve(self) -> NodeShape {
         match self {
             ShapeSpelling::Rendered(shape) => shape,
-            ShapeSpelling::Unspecified
-            | ShapeSpelling::KnownNotYetRendered
-            | ShapeSpelling::Unrecognized => NodeShape::Rectangle,
+            ShapeSpelling::Unspecified | ShapeSpelling::KnownNotYetRendered | ShapeSpelling::Unrecognized => {
+                NodeShape::Rectangle
+            }
         }
     }
 }

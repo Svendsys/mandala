@@ -65,9 +65,7 @@ fn warns(spelling: ShapeSpelling) -> bool {
         ShapeSpelling::Unrecognized => true,
         // Spelled out rather than `_ =>` so a fourth non-warning
         // classification cannot join the quiet set unnoticed.
-        ShapeSpelling::Unspecified
-        | ShapeSpelling::Rendered(_)
-        | ShapeSpelling::KnownNotYetRendered => false,
+        ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::KnownNotYetRendered => false,
     }
 }
 
@@ -119,8 +117,7 @@ pub fn test_shape_classification_partitions_by_warning() {
 
 pub fn do_shape_classification_partitions_by_warning() {
     for known in KNOWN_SHAPES {
-        let claimed_by = NodeShape::iter()
-            .find(|shape| shape.style_spellings().contains(known));
+        let claimed_by = NodeShape::iter().find(|shape| shape.style_spellings().contains(known));
         let expected = match claimed_by {
             Some(shape) => ShapeSpelling::Rendered(shape),
             None => ShapeSpelling::KnownNotYetRendered,
@@ -236,7 +233,10 @@ pub fn do_shape_classify_case_and_alias() {
         ShapeSpelling::classify("HEXAGON"),
         ShapeSpelling::KnownNotYetRendered
     );
-    assert_eq!(ShapeSpelling::classify("hexagon"), ShapeSpelling::KnownNotYetRendered);
+    assert_eq!(
+        ShapeSpelling::classify("hexagon"),
+        ShapeSpelling::KnownNotYetRendered
+    );
     assert_eq!(NodeShape::from_style_string("HEXAGON"), NodeShape::Rectangle);
 
     assert_eq!(
