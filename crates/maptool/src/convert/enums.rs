@@ -290,14 +290,27 @@ mod tests {
     }
 
     /// [`published_shape_ordinals`] over supplied text, so where the
-    /// section ends and what the row reader does with a duplicate are
-    /// controllable rather than only exercised against the one
-    /// document on disk.
+    /// section starts, where it ends, and what the row reader does
+    /// with a duplicate are controllable rather than only exercised
+    /// against the one document on disk.
+    ///
+    /// The heading has to occur **once**. `split_once` takes the first
+    /// occurrence, so a correct copy of the table planted above the
+    /// real one shadows it and this reader checks the copy. That is a
+    /// milder hazard than the one the `log_routing` pin faces — a
+    /// duplicate h3 in a spec file is visible in any diff, and this
+    /// document *is* the contract rather than a proxy for it — but the
+    /// check costs one line and removes the question.
     fn shape_ordinals_in(doc: &str) -> Vec<(usize, String)> {
-        let after_heading = doc
-            .split_once("### miMind `shape_type` ordinals")
-            .expect("format/migration.md must still publish the shape_type ordinals")
-            .1;
+        let heading = "### miMind `shape_type` ordinals";
+        let headings = doc.matches(heading).count();
+        assert_eq!(
+            headings, 1,
+            "format/migration.md must publish the shape_type ordinals under \
+             exactly one {heading:?} heading; it has {headings}, and this \
+             reader would take the first"
+        );
+        let after_heading = doc.split_once(heading).expect("the heading was just counted").1;
         // `skip(1)` drops what is left of the heading's own line.
         let section: Vec<&str> = after_heading
             .lines()
@@ -353,6 +366,28 @@ mod tests {
             vec![(0, "rectangle".to_string()), (1, "rounded_rectangle".to_string())],
             "the reader ran past the sibling h3 and harvested another \
              enum's ordinals as shape_type rows"
+        );
+    }
+
+    /// **The section start, controlled.** `split_once` takes the
+    /// first occurrence, so a copy of the heading above the real table
+    /// shadows it: the copy can publish the numbering the converter
+    /// has while the real table below publishes anything at all.
+    #[test]
+    #[should_panic(expected = "exactly one")]
+    fn shape_ordinals_reject_a_duplicated_heading() {
+        shape_ordinals_in(
+            "\
+### miMind `shape_type` ordinals
+
+| 0 | `rectangle` |
+
+### miMind `shape_type` ordinals
+
+| 0 | `hexagon` |
+
+## Known limitations
+",
         );
     }
 

@@ -665,10 +665,14 @@ searching it for `log::` calls.
 three lists in `format/enums.md`, `LEGACY_SHAPE_ORDINALS` in
 `crates/maptool/src/convert/enums.rs`, and the `shape_type`
 ordinal table in `format/migration.md` — and each is pinned
-back by a test that reads the restatement and derives the
-expectation from the constant, so widening the vocabulary is
-still one edit plus the copies the suite names for you. The
-table in `shape.rs`'s `KNOWN_SHAPES` doc is the index.
+back by a test that reads the restatement. The first four
+derive their expectation from the constant directly; the
+ordinal table is pinned to `LEGACY_SHAPE_ORDINALS` instead,
+which is itself pinned to the constant, so the chain closes
+in two hops rather than one. Either way, widening the
+vocabulary is still one edit plus the copies the suite names
+for you. The table in `shape.rs`'s `KNOWN_SHAPES` doc is the
+index.
 
 Shape-aware borders (glyph-drawn frames that follow
 the ellipse outline, not just the AABB) wait on the

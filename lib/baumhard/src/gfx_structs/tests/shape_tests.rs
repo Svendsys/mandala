@@ -535,8 +535,7 @@ pub fn do_shape_format_doc_publishes_exactly_known_shapes() {
     }
 }
 
-/// The body of `format/enums.md`'s `### \`style.shape\`` section:
-/// everything between that heading and the next `###`.
+/// The body of `format/enums.md`'s `### \`style.shape\`` section.
 ///
 /// Panics rather than returning empty if the heading is gone — a
 /// silent fallback would let this whole test pass vacuously, which is
@@ -544,14 +543,102 @@ pub fn do_shape_format_doc_publishes_exactly_known_shapes() {
 fn documented_shape_section() -> String {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../format/enums.md");
     let doc = std::fs::read_to_string(path).expect("format/enums.md must be readable");
-    let after = doc
-        .split_once("### `style.shape`")
-        .expect("format/enums.md must still document `style.shape`")
-        .1;
-    match after.split_once("\n### ") {
-        Some((section, _)) => section.to_string(),
-        None => after.to_string(),
+    shape_section_in(&doc)
+}
+
+/// [`documented_shape_section`] over supplied text, so where the
+/// section starts and where it ends are controllable rather than only
+/// exercised against the one document on disk. This is the same split
+/// maptool's `shape_ordinals_in` carries, for the same two reasons.
+///
+/// **The heading has to occur once.** `split_once` takes the first
+/// occurrence, so a correct copy of the section planted above the real
+/// one shadows it and every assertion below runs against the copy.
+///
+/// **The section ends at the next heading of any level.** It used to
+/// end at the next `### ` — an h3, the level it starts from — so a
+/// sibling h2 did not end it and the next chapter's prose would have
+/// been read as part of `style.shape`. That is the same asymmetry
+/// maptool's reader had in mirror image, and it is fixed here for the
+/// same reason: what level the *next* section's heading is at is not
+/// something this reader should have an opinion about.
+fn shape_section_in(doc: &str) -> String {
+    let heading = "### `style.shape`";
+    let headings = doc.matches(heading).count();
+    assert_eq!(
+        headings, 1,
+        "format/enums.md must document `style.shape` under exactly one \
+         {heading:?} heading; it has {headings}, and this reader would take \
+         the first"
+    );
+    let after = doc.split_once(heading).expect("the heading was just counted").1;
+    let mut section = String::new();
+    // `skip(1)` drops what is left of the heading's own line.
+    for line in after.lines().skip(1) {
+        if line.trim_start().starts_with('#') {
+            break;
+        }
+        section.push_str(line);
+        section.push('\n');
     }
+    section
+}
+
+/// **The section start, controlled.** `split_once` takes the first
+/// occurrence, so a copy of the heading above the real section shadows
+/// it: the copy can publish the vocabulary `KNOWN_SHAPES` has while
+/// the real section below publishes anything at all.
+///
+/// `#[should_panic]` and so no `do_*()` body or bench entry, the same
+/// carve-out `region_indexer_tests`'s two out-of-bounds tests take —
+/// a benchmark of a panicking body is not a benchmark.
+#[test]
+#[should_panic(expected = "exactly one")]
+fn test_shape_section_rejects_a_duplicated_heading() {
+    shape_section_in(
+        "\
+### `style.shape`
+
+```
+\"rectangle\"
+```
+
+### `style.shape`
+
+```
+\"hexagoon\"
+```
+",
+    );
+}
+
+/// **The section boundary, controlled.** A sibling `##` ends the
+/// `style.shape` section. Before this was fixed the reader stopped
+/// only at an h3 — the level it starts from — so the next *chapter*
+/// did not end it, the mirror image of the h2-only stop
+/// `shape_ordinals_in` had on maptool's side.
+#[test]
+pub fn test_shape_section_stops_at_the_next_heading_of_any_level() {
+    do_shape_section_stops_at_the_next_heading_of_any_level();
+}
+
+pub fn do_shape_section_stops_at_the_next_heading_of_any_level() {
+    let doc = "\
+### `style.shape`
+
+in the section
+
+## The next chapter
+
+### `style.shape_but_not`
+
+not in the section
+";
+    assert_eq!(
+        shape_section_in(doc),
+        "\nin the section\n\n",
+        "the reader ran past the sibling h2 and harvested the next chapter"
+    );
 }
 
 /// The `"quoted"` spellings inside the section's first fenced code
@@ -875,13 +962,29 @@ pub fn do_shape_shader_ids_are_stable() {
 /// anywhere in the body but a doc comment. An unmodeled construct
 /// fails by not matching, which is the property a search cannot have.
 ///
+/// **Round 4 gave the *selection* the same treatment.** Whitelisting
+/// a body is worth nothing if the pin then searches for which body to
+/// read: [`from_style_string_fn`] used to take the first
+/// `impl NodeShape` that happened to define the name, so a decoy
+/// above the real definition — a `#[cfg(any())]` impl, a
+/// `#[cfg(target_arch)]` pair, or an ordinary
+/// `impl SomeTrait for NodeShape` needing no conditional compilation
+/// at all — was what the pin reported on while the real definition
+/// went back to warning per node. [`select_from_style_string`] is the
+/// requirement that replaced it: every `from_style_string` under a
+/// `NodeShape` impl is a candidate, there must be exactly one, its
+/// enclosing block must carry no attribute but a doc comment, and
+/// that block must be the inherent impl.
+///
 /// **What it still cannot see**, stated plainly because the round-2
 /// disclosure was not:
 ///
 /// - **Anything outside `from_style_string`.** A `log::warn!` added
 ///   to `ShapeSpelling::classify` would recreate #118's symptom and
-///   this pin would not notice. The claim here is about one function
-///   body, and it is complete only about that.
+///   this pin would not notice. The claim here is about
+///   `NodeShape::from_style_string` — the body *and* the choice of
+///   it, which is what [`select_from_style_string`] makes provable —
+///   and it is complete only about that one function.
 /// - **What the macro is handed.** The message string, its format
 ///   arguments and its `"<area>: "` prefix (CODE_CONVENTIONS §9) are
 ///   not read. A `log::warn!("")` in the right arm passes.
@@ -910,7 +1013,7 @@ pub fn do_shape_shader_ids_are_stable() {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod log_routing {
     use strum::IntoEnumIterator;
-    use syn::{Attribute, Expr, ImplItem, ImplItemFn, Item, Pat, Path, PathArguments, Stmt, Type};
+    use syn::{Attribute, Expr, ImplItem, ImplItemFn, Item, ItemImpl, Pat, Path, PathArguments, Stmt, Type};
 
     use crate::gfx_structs::shape::ShapeReport;
 
@@ -1136,6 +1239,134 @@ mod log_routing {
         );
     }
 
+    /// **Finding B of the round-4 review, as a control.** Statement 3
+    /// is pinned to `spelling.resolve()` and not merely to *being* a
+    /// trailing expression, because a block is a trailing expression
+    /// too — `{ log::warn!(…); spelling.resolve() }` returns the same
+    /// value and restores #118 verbatim. Deleting the `expect_expr`
+    /// call one line below the `Stmt::Expr` destructure left the whole
+    /// suite green, so this is what says the clause is still there.
+    #[test]
+    fn test_log_routing_check_rejects_a_block_tail() {
+        let source = MODELED.replace(
+            "        spelling.resolve()\n",
+            "        {\n            log::warn!(\"unknown\");\n            spelling.resolve()\n        }\n",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("a block tail must be rejected");
+        assert!(
+            why.contains("the trailing expression"),
+            "the rejection must name the trailing expression; it said {why:?}"
+        );
+    }
+
+    /// The same finding one statement up. The `let` initializer is
+    /// pinned to `ShapeSpelling::classify(s)` for the same reason:
+    /// `let spelling = { log::warn!(…); ShapeSpelling::classify(s) };`
+    /// binds the same value, is still statement 1, and warns on every
+    /// node.
+    #[test]
+    fn test_log_routing_check_rejects_a_block_initializer() {
+        let source = MODELED.replace(
+            "        let spelling = ShapeSpelling::classify(s);\n",
+            "        let spelling = {\n            log::warn!(\"unknown\");\n            ShapeSpelling::classify(s)\n        };\n",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("a block initializer must be rejected");
+        assert!(
+            why.contains("the `let` binding's initializer"),
+            "the rejection must name the initializer; it said {why:?}"
+        );
+    }
+
+    /// And the third: the `None` arm's body must be an *empty* block,
+    /// not merely a block. `None => { log::warn!(…); }` is the arm the
+    /// classifier reaches for every node that names no shape and every
+    /// node that names a drawable one — which on
+    /// `maps/testament.mindmap.json` is most of them.
+    #[test]
+    fn test_log_routing_check_rejects_a_reporting_silent_arm() {
+        let source = MODELED.replace(
+            "            None => {}\n",
+            "            None => {\n                log::warn!(\"unknown\");\n            }\n",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("a reporting None arm must be rejected");
+        assert!(
+            why.contains("statements"),
+            "the rejection must say the silent arm's block is not empty; it \
+             said {why:?}"
+        );
+    }
+
+    /// **Finding A of the round-4 review, as a control.** The pin
+    /// whitelists the body but must not *search* for it: a second
+    /// definition means the body this module reads is not provably the
+    /// body the compiler takes. Here the decoy is `#[cfg(any())]`, so
+    /// it compiles into nothing while the real definition — free to be
+    /// anything at all — is what runs.
+    #[test]
+    fn test_log_routing_selection_rejects_a_second_candidate() {
+        let why = select_from_style_string(&format!(
+            "#[cfg(any())]\nimpl NodeShape {{{MODELED}}}\nimpl NodeShape {{{MODELED}}}\n"
+        ))
+        .err()
+        .expect("a second candidate must be rejected");
+        assert!(
+            why.contains("exactly one"),
+            "the rejection must say one definition is all the pin models; it \
+             said {why:?}"
+        );
+    }
+
+    /// The other half of finding A's first exploit: one candidate, but
+    /// its `impl` block carries a `#[cfg]`. `only_doc_attrs` already
+    /// guarded five positions *inside* the body and none of them
+    /// reached the enclosing block, so
+    /// `#[cfg(target_arch = "wasm32")]` moved up one level was the same
+    /// CODE_CONVENTIONS §4 divergence
+    /// `test_log_routing_check_rejects_a_cfg_stripped_macro` exists to
+    /// catch, in a position nothing looked at.
+    #[test]
+    fn test_log_routing_selection_rejects_an_attributed_impl() {
+        let why = select_from_style_string(&format!(
+            "#[cfg(target_arch = \"wasm32\")]\nimpl NodeShape {{{MODELED}}}\n"
+        ))
+        .err()
+        .expect("an attributed impl must be rejected");
+        assert!(
+            why.contains("the enclosing `impl` block") && why.contains("cfg"),
+            "the rejection must name the block and the attribute; it said {why:?}"
+        );
+    }
+
+    /// The cheapest exploit of the three, and the only one needing no
+    /// conditional compilation at all: an ordinary
+    /// `impl SomeTrait for NodeShape` shipped in every build. Its
+    /// `self_ty` is `NodeShape`, so it read as the definition; its
+    /// body is not the one `NodeShape::from_style_string` resolves to.
+    #[test]
+    fn test_log_routing_selection_rejects_a_trait_impl() {
+        let why = select_from_style_string(&format!("impl ShapeParse for NodeShape {{{MODELED}}}\n"))
+            .err()
+            .expect("a trait impl must be rejected");
+        assert!(
+            why.contains("ShapeParse"),
+            "the rejection must name the trait it found; it said {why:?}"
+        );
+    }
+
+    /// Positive control for the three above, so each is a single
+    /// deliberate deviation from a source the selector accepts rather
+    /// than a rejection that might have come from anywhere.
+    #[test]
+    fn test_log_routing_selection_accepts_one_unattributed_inherent_impl() {
+        let function = select_from_style_string(&format!("impl NodeShape {{{MODELED}}}\n"))
+            .expect("one unattributed inherent impl must be accepted");
+        assert_eq!(
+            check_routing(&function).expect("and its body must be the modeled shape"),
+            check_routing(&fixture(MODELED)).expect("as the fixture's is"),
+            "the selector returned a different body than the fixture holds"
+        );
+    }
+
     /// The shape the pin models, written once so each control above
     /// is a single deliberate deviation from it. Held to the shipped
     /// function by `test_log_routing_check_accepts_the_modeled_shape`
@@ -1169,6 +1400,30 @@ mod log_routing {
     /// reports what it happens to find and says nothing about the
     /// rest, so a construct outside its model passes; a requirement
     /// that cannot be satisfied fails.
+    ///
+    /// **Four clauses here are deliberately redundant, and are kept
+    /// anyway.** Deleting any one of them leaves the suite green, so
+    /// naming them is what stops a reader mistaking a control gap for
+    /// them being load-bearing:
+    ///
+    /// - `arm.guard.is_some()` — a guard makes the `match`
+    ///   non-exhaustive, so the shipped function is `error[E0004]`
+    ///   first. The clause is what lets this checker say so without
+    ///   the compiler's help, the same reason
+    ///   `test_log_routing_check_rejects_a_cfg_stripped_arm` exists.
+    /// - `silent_arms != 1` — a second `None` arm is unreachable, and
+    ///   each one still has to be an empty block to get here at all.
+    /// - `routing.len()` in the pin's own assertion — subsumed by the
+    ///   `covered != wanted` compare below, which is per-variant.
+    /// - [`render_expr`]'s `_ => None` catch-all — every caller runs
+    ///   the result through [`expect_expr`], which fails an unmodeled
+    ///   form on the string compare regardless.
+    ///
+    /// The clauses that are *not* redundant have a control each: the
+    /// three-statement count, the `let` binding's name and
+    /// initializer, the `match` scrutinee, the trailing expression,
+    /// the silent arm's empty block, the bare-macro arm body, the
+    /// derived macro name, and `only_doc_attrs` at every position.
     fn check_routing(function: &ImplItemFn) -> Result<Vec<(String, String)>, String> {
         only_doc_attrs(&function.attrs, "the function")?;
 
@@ -1439,26 +1694,65 @@ mod log_routing {
     }
 
     /// `NodeShape::from_style_string`, parsed out of `shape.rs`.
-    /// Panics if the function is gone: a silent skip would turn the
-    /// pin into a no-op.
+    /// Panics if the selection is not unambiguous: a silent skip, or a
+    /// body picked out of several, would turn the pin into a no-op.
     fn from_style_string_fn() -> ImplItemFn {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/gfx_structs/shape.rs");
         let text = std::fs::read_to_string(path).expect("shape.rs must be readable");
-        let file = syn::parse_file(&text).expect("shape.rs must parse as Rust");
+        select_from_style_string(&text).unwrap_or_else(|why| {
+            panic!("shape.rs no longer offers one unambiguous NodeShape::from_style_string: {why}")
+        })
+    }
+
+    /// **The selection, as a requirement rather than a search.**
+    /// [`from_style_string_fn`] over supplied source, so what happens
+    /// to a second candidate is controllable instead of only ever
+    /// exercised against the one file on disk.
+    ///
+    /// [`check_routing`] is a whitelist over a body; this is the
+    /// whitelist over *which* body. Reading the first `impl NodeShape`
+    /// that happens to define the name is a search, with a search's
+    /// weakness: a decoy above the real definition is what the pin
+    /// then reports on. So every `from_style_string` under a
+    /// `NodeShape` impl is a candidate — attributed or not, inherent
+    /// or trait — and there must be exactly one of them, carrying no
+    /// attribute but a doc comment, in an inherent impl. That is what
+    /// makes the body this module reads provably the body the compiler
+    /// takes.
+    fn select_from_style_string(source: &str) -> Result<ImplItemFn, String> {
+        let file = syn::parse_file(source).expect("the source must parse as Rust");
+        let mut candidates: Vec<(&ItemImpl, &ImplItemFn)> = Vec::new();
         for item in &file.items {
-            let Item::Impl(item) = item else { continue };
-            if !is_impl_for(&item.self_ty, "NodeShape") {
+            let Item::Impl(block) = item else { continue };
+            if !is_impl_for(&block.self_ty, "NodeShape") {
                 continue;
             }
-            for member in &item.items {
-                if let ImplItem::Fn(function) = member {
-                    if function.sig.ident == "from_style_string" {
-                        return function.clone();
-                    }
+            for member in &block.items {
+                let ImplItem::Fn(function) = member else { continue };
+                if function.sig.ident == "from_style_string" {
+                    candidates.push((block, function));
                 }
             }
         }
-        panic!("shape.rs no longer defines NodeShape::from_style_string");
+        let [(block, function)] = candidates[..] else {
+            return Err(format!(
+                "{} definitions of `from_style_string` sit under a `NodeShape` \
+                 impl; the pin models exactly one, because with two it would \
+                 be reading a body it cannot show is the one that compiles",
+                candidates.len()
+            ));
+        };
+        only_doc_attrs(&block.attrs, "the enclosing `impl` block")?;
+        if let Some((_, path, _)) = &block.trait_ {
+            return Err(format!(
+                "`from_style_string` is defined in `impl {} for NodeShape`; \
+                 the pin models the inherent impl, and a trait impl is a \
+                 second definition of the name that a call site can resolve \
+                 to instead",
+                path_string(path)
+            ));
+        }
+        Ok(function.clone())
     }
 
     fn is_impl_for(ty: &Type, name: &str) -> bool {
