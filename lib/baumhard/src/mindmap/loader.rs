@@ -2413,6 +2413,33 @@ mod tests {
         assert_load_save_loses_no_authored_key(&source, &saved);
     }
 
+    /// The file
+    /// `test_every_mindmap_write_goes_through_the_contract` proves it
+    /// can read past a test gate in: twelve `#[cfg(test)] mod
+    /// tests_*;` declarations at line 35, and everything a save path
+    /// would plausibly live among below them.
+    const COVERAGE_WITNESS: &str = "application/document/mod.rs";
+
+    /// Whether the production text of a file still carries code below
+    /// the file's first `#[cfg(test)]` — the one measurement that
+    /// tells a correct excision from a truncating one, since the
+    /// truncating reader could not leave anything there by
+    /// construction.
+    ///
+    /// The gate is located in the *source* by text, which is all this
+    /// needs: the question is only "was there a gate, and did the scan
+    /// keep reading past it".
+    fn reads_below_the_first_test_gate(source: &str, shipped: &str) -> bool {
+        let Some(at) = source.find("#[cfg(test)]") else {
+            return false;
+        };
+        let gate_line = source[..at].lines().count();
+        shipped
+            .lines()
+            .skip(gate_line)
+            .any(|line| !line.trim().is_empty())
+    }
+
     /// The serialization verbs that put bytes somewhere — a file, a
     /// socket, a string that is about to become one.
     const PERSISTING_VERBS: &[&str] = &[
@@ -2518,11 +2545,29 @@ mod tests {
     /// reader deciding rather than a silent gap. Test sources are
     /// excluded: a test that serializes a map to compare it against
     /// something is not a persistence path.
+    ///
+    /// **How they are excluded is the part that was wrong.** This used
+    /// to split each file at the first `#[cfg(test)]` and keep the
+    /// text before it, on the premise that test modules hang off the
+    /// end of a file. 140 of the 321 files it collects carry a gate
+    /// before the end, and in 28 of them shipped code goes on below it
+    /// — `#[cfg(test)] mod tests_delete;` and its eleven neighbors sit
+    /// in the *module list* of `src/application/document/mod.rs`, the
+    /// most plausible home for a save path, which was therefore read
+    /// to line 35 of 757. A `serde_json::to_string_pretty(&map)`
+    /// planted at line 79 of that file compiled clean and passed this
+    /// test; the same function above line 35 failed it.
+    /// [`source_scan::production_source`] excises the gated items and
+    /// leaves everything else where it was, so the scan sees shipped
+    /// code wherever it sits.
     #[test]
     fn test_every_mindmap_write_goes_through_the_contract() {
+        use crate::util::source_scan::production_source;
         let workspace = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
         let mut offenders: Vec<String> = Vec::new();
         let mut scanned = 0usize;
+        let mut read_below_a_gate = 0usize;
+        let mut witness_read_below_its_gate = false;
         for root in ["lib/baumhard/src", "src", "crates"] {
             let mut files = Vec::new();
             collect_rust_sources(&workspace.join(root), &mut files);
@@ -2535,11 +2580,23 @@ mod tests {
                 }
                 scanned += 1;
                 let text = std::fs::read_to_string(&file).expect("readable source");
-                // Test modules hang off the end of a file in this
-                // workspace; nothing after the gate is a shipped path.
-                let shipped = text.split("#[cfg(test)]").next().unwrap_or_default();
-                let aliases = map_aliases(shipped);
+                let shipped = production_source(&file, &text);
+                if reads_below_the_first_test_gate(&text, &shipped) {
+                    read_below_a_gate += 1;
+                    witness_read_below_its_gate |= file.ends_with(COVERAGE_WITNESS);
+                }
+                let aliases = map_aliases(&shipped);
                 for (number, line) in shipped.lines().enumerate() {
+                    // A line that *begins* with `//` is prose, and
+                    // prose about this contract is exactly what the
+                    // modules around it are full of — the sentence
+                    // naming the forbidden call is not the call. A
+                    // trailing comment on a line of code is left in,
+                    // since dropping it would need the scan to know
+                    // where a string literal ends.
+                    if line.trim_start().starts_with("//") {
+                        continue;
+                    }
                     if serializes_a_map(line, &aliases) {
                         offenders.push(format!("{}:{}: {}", file.display(), number + 1, line.trim()));
                     }
@@ -2550,6 +2607,37 @@ mod tests {
             scanned > 100,
             "the scan found only {scanned} source files — it is looking in the wrong \
              place and would pass no matter what the code did"
+        );
+        // **A file count cannot notice that most of a *file* went
+        // unread**, and that is the failure it presided over: 321
+        // files collected, 321 counted, and 31k lines below a gate
+        // never looked at.
+        //
+        // A line total is no better a discriminator than it sounds.
+        // The truncating reader still saw 71% of the non-blank source
+        // against 77% for the correct excision, so any floor
+        // separating the two would sit inside the noise of how much
+        // inline test code the workspace happens to carry, and would
+        // need moving every time that changed.
+        //
+        // What separates them absolutely is *where* the unread lines
+        // were. Truncation blanks a suffix, so **no** file can have
+        // shipped code below its first `#[cfg(test)]`; a correct
+        // excision blanks interiors, and 28 of these files do. So the
+        // scan holds itself to reading past a gate in the one file the
+        // planted bypass actually exploited — a named witness rather
+        // than a threshold, because the count is a property of how the
+        // workspace is laid out and the witness is a property of the
+        // reader.
+        assert!(
+            witness_read_below_its_gate,
+            "the scan never read below the first `#[cfg(test)]` in {COVERAGE_WITNESS}, \
+             where twelve gated `mod` declarations sit above 700 lines of shipped \
+             re-exports and setters. Either the excision in \
+             `source_scan::production_source` is discarding the rest of a file rather \
+             than the gated item — which is a scan that passes no matter what is written \
+             below the gate, and did — or that file was reorganized and this witness \
+             needs repointing at one of the {read_below_a_gate} others like it."
         );
         assert!(
             offenders.is_empty(),

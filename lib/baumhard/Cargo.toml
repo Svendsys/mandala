@@ -112,6 +112,19 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # does not mean compiling against less — see
 # `lib/mandala_derive/Cargo.toml`.
 syn = { workspace = true, features = ["full"] }
+# `util::source_scan` excises `#[cfg(test)]` items from a file's text
+# and has to leave the surviving lines *at their own line numbers*, so
+# a guard reporting an offender can say `file:line`. That needs the
+# span of the item syn parsed, and a span carries a line only when
+# proc-macro2 was built with `span-locations` — without it every
+# `Span::start()` answers line 0 and the excision would blank the
+# wrong rows in silence.
+#
+# Additive on the shared entry, like `syn`'s `full` above, and landing
+# on the target-graph node for the same resolver-2 reason: the derive
+# macros the workspace expands go through a different `proc-macro2`
+# and do not pay for this.
+proc-macro2 = { workspace = true, features = ["span-locations"] }
 
 [[bench]]
 name = "test_bench"

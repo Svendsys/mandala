@@ -232,6 +232,7 @@ dependencies = [
  "log",
  "ordered-float",
  "path-slash",
+ "proc-macro2",
  "rand 0.10.1",
  "rustc-hash 2.1.2",
  "serde",

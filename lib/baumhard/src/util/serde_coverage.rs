@@ -36,6 +36,7 @@
 //! dev-dependency and nothing in a shipped build should carry a
 //! parser for its own source.
 
+use crate::util::source_scan::{is_test_gated, skip_unmodeled_option, test_gated_module_files};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use syn::{Attribute, Fields, GenericArgument, Item, PathArguments, Type};
@@ -294,18 +295,33 @@ impl TypeGraph {
     ///
     /// Test sources are skipped — a `struct StubCtx` inside a test
     /// module is not part of any on-disk contract, and letting one
-    /// shadow a real model type would silently move the walk. Files
-    /// named `tests.rs` / `*_tests.rs` / `*_test.rs`, directories
-    /// named `tests`, and `#[cfg(test)]` modules are all excluded.
+    /// shadow a real model type would silently move the walk. Four
+    /// shapes are excluded, and they are four because the first three
+    /// left a hole: files named `tests.rs` / `*_tests.rs` /
+    /// `*_test.rs`, directories named `tests`, inline `#[cfg(test)]
+    /// mod x { … }` blocks, and — through
+    /// [`test_gated_module_files`] — the files named by an
+    /// **out-of-line** `#[cfg(test)] mod x;` together with everything
+    /// those files declare.
     ///
-    /// Panics if a file cannot be read or parsed: this backs a test
-    /// whose entire job is to notice that the source moved, so a
-    /// silent skip would defeat it.
+    /// That fourth one is not a corner. `util/mod.rs` gates
+    /// `manifests`, `serde_coverage` and `test_logger` exactly that
+    /// way, and until it was closed all eleven of their types sat in
+    /// this index — `TypeGraph` and `TypeInfo` among them — while the
+    /// doc here said `#[cfg(test)]` modules were all excluded.
+    /// Nothing had collided yet, which is the only reason it was
+    /// quiet.
+    ///
+    /// Panics if a file cannot be read or parsed, or if a `mod x;`
+    /// names no file on disk: this backs a test whose entire job is to
+    /// notice that the source moved, so a silent skip would defeat it.
     pub fn build(src_root: &Path) -> Self {
         let mut graph = TypeGraph::default();
         let mut files = Vec::new();
         collect_source_files(src_root, &mut files);
         files.sort();
+        let test_only = test_gated_module_files(&files);
+        files.retain(|file| !test_only.contains(file));
         for file in files {
             let text = std::fs::read_to_string(&file)
                 .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
@@ -671,48 +687,6 @@ fn is_test_file_name(name: &str) -> bool {
     name == "tests.rs" || name.ends_with("_tests.rs") || name.ends_with("_test.rs")
 }
 
-/// Whether `attrs` compile the item only under `cfg(test)`.
-///
-/// `all(...)` is descended into and `any(...)` / `not(...)`
-/// deliberately are not: `#[cfg(all(test, not(target_arch =
-/// "wasm32")))]` — the spelling this crate actually uses for its
-/// native-only test modules — gates on `test`, while
-/// `#[cfg(any(test, feature = "x"))]` does not and
-/// `#[cfg(not(test))]` gates on its absence. Reading the bare
-/// `test` ident alone missed the `all(...)` form, which is the
-/// same list-form blind spot [`skip_unmodeled_option`] closes on
-/// the serde side, with the same consequence: a test-only
-/// declaration was indexed as though it were part of the on-disk
-/// model.
-fn is_test_gated(attrs: &[Attribute]) -> bool {
-    attrs
-        .iter()
-        .any(|attr| attr.path().is_ident("cfg") && cfg_predicate_requires_test(attr))
-}
-
-/// `true` when the `cfg` predicate written in `attr`, or in an
-/// `all(...)` nested to any depth inside it, names the bare `test`
-/// flag.
-fn cfg_predicate_requires_test(attr: &Attribute) -> bool {
-    let mut gated = false;
-    let _ = attr.parse_nested_meta(|meta| cfg_arm_requires_test(&meta, &mut gated));
-    gated
-}
-
-/// One arm of a `cfg` predicate. `all(...)` conjoins, so descending
-/// into it preserves the meaning; every other shape is consumed
-/// whole so the arms after it are still read.
-fn cfg_arm_requires_test(meta: &syn::meta::ParseNestedMeta, gated: &mut bool) -> syn::Result<()> {
-    if meta.path.is_ident("test") {
-        *gated = true;
-    } else if meta.path.is_ident("all") {
-        meta.parse_nested_meta(|nested| cfg_arm_requires_test(&nested, gated))?;
-    } else {
-        skip_unmodeled_option(meta)?;
-    }
-    Ok(())
-}
-
 fn derives_deserialize(attrs: &[Attribute]) -> bool {
     let mut found = false;
     for attr in attrs {
@@ -781,37 +755,6 @@ impl SerdeAttrs {
         }
         out
     }
-}
-
-/// Consume whatever follows a serde option this walk does not model,
-/// so the options written **after** it in the same attribute are
-/// still seen.
-///
-/// Serde's option grammar has three shapes: a bare flag
-/// (`deny_unknown_fields`), a `name = value` pair (`tag = "kind"`),
-/// and a nested list (`rename_all(deserialize = "camelCase")`,
-/// `bound(...)`, `rename(...)`). The list form is the one that used
-/// to end the parse — `parse_nested_meta` hands over the path, finds
-/// `(` where it wanted `,`, and errors; the caller discards the
-/// error, and every option after it in that attribute is never read.
-/// `#[serde(rename_all(deserialize = "camelCase"), deny_unknown_fields)]`
-/// therefore read as carrying no `deny_unknown_fields` at all, which
-/// is a *silent* restoration of reject-at-load.
-///
-/// The list arm recurses through syn's own nested-meta parser rather
-/// than matching the three spellings serde has today: the next option
-/// serde grows would re-open the hole, and the point of this module
-/// is that nothing is listed.
-///
-/// Cost: one token-tree walk of the skipped option; no allocation
-/// beyond what syn's parser needs.
-fn skip_unmodeled_option(meta: &syn::meta::ParseNestedMeta) -> syn::Result<()> {
-    if meta.input.peek(syn::Token![=]) {
-        meta.value()?.parse::<syn::Expr>()?;
-    } else if meta.input.peek(syn::token::Paren) {
-        meta.parse_nested_meta(|nested| skip_unmodeled_option(&nested))?;
-    }
-    Ok(())
 }
 
 /// Every `#[serde(...)]` attribute in `attrs` that this module's
@@ -1339,13 +1282,39 @@ mod tests {
 
     /// Test-only declarations must stay out of the index, or a stub
     /// struct in a test module could shadow a real model type.
+    ///
+    /// **Both spellings of "test module", because for a long time
+    /// only one of them was excluded.** `StubCtx` sits inside an
+    /// inline `#[cfg(test)] mod tests { … }`, which the walk sees as
+    /// an attribute on an item it is holding. The four types below
+    /// are declared by *files* — `util/mod.rs` gates `manifests`,
+    /// `serde_coverage` and `test_logger` with an out-of-line
+    /// `#[cfg(test)] mod x;`, and a walk over the filesystem never
+    /// meets that attribute at all. All eleven of their types were
+    /// indexed as model types while this test passed on the strength
+    /// of the one case it did check.
+    ///
+    /// The four named here are this module's own and the recording
+    /// logger's, chosen because a rename that emptied the check would
+    /// be a rename of something a reader of this file is already
+    /// looking at. The planted case that depends on nothing in the
+    /// crate is
+    /// `source_scan::tests::test_an_out_of_line_test_module_and_its_subtree_are_excluded`.
     #[test]
     fn test_type_graph_excludes_test_sources() {
         let graph = TypeGraph::build(&crate_src_root());
         assert!(
             graph.get("StubCtx").is_none(),
-            "a struct declared inside a test module must not be indexed"
+            "a struct declared inside an inline test module must not be indexed"
         );
+        for test_only in ["TypeGraph", "TypeInfo", "Recorder", "Manifest"] {
+            assert!(
+                graph.get(test_only).is_none(),
+                "`{test_only}` is declared in a file that `util/mod.rs` gates with an \
+                 out-of-line `#[cfg(test)] mod`, so it is no more part of the on-disk \
+                 contract than `StubCtx` is — and the index promises to hold neither"
+            );
+        }
     }
 
     /// The attributes below are parsed rather than planted on a real
@@ -1830,37 +1799,48 @@ mod tests {
         }
     }
 
-    /// The `cfg` reader has the same list-form blind spot, and it was
-    /// live: this crate gates its native-only test modules with
-    /// `#[cfg(all(test, not(target_arch = "wasm32")))]`, and reading
-    /// only the bare `test` ident classified every one of them as
-    /// production source. Nothing collided yet — the modules declare
-    /// no types today — which is exactly why the claim
-    /// `test_type_graph_excludes_test_sources` makes is pinned here
-    /// against the reader rather than against the current sources.
+    /// **The field half of the fail-safe, which nothing observed.**
+    /// [`unread_serde_attrs_with_fields`] exists because a field-level
+    /// attribute the reader cannot finish hides a later `flatten` on
+    /// the same field exactly the way a container-level one hides a
+    /// later `deny_unknown_fields` — and its own doc says so. Every
+    /// other test here drives the container half, so dropping the
+    /// field loop entirely left the suite green.
+    ///
+    /// What that costs is the whole contract:
+    /// `#[serde("not a meta item", flatten)]` defeats
+    /// [`flattened_fields`] too, so with the loop gone the type
+    /// reports **no hiding reason at all** — "unknown is safe"
+    /// restored, which is the one answer
+    /// [`TypeInfo::unknown_key_hiding_reasons`] must never give.
     #[test]
-    fn test_a_test_gate_written_as_all_is_still_a_test_gate() {
-        for source in [
-            "#[cfg(test)]",
-            r#"#[cfg(all(test, not(target_arch = "wasm32")))]"#,
-            "#[cfg(all(unix, all(test)))]",
-        ] {
-            assert!(
-                is_test_gated(&parse_attrs(source)),
-                "{source} compiles its item only under `cfg(test)`, so the item is not \
-                 part of any on-disk contract and must stay out of the index"
-            );
-        }
-        for source in [
-            "#[cfg(not(test))]",
-            r#"#[cfg(any(test, feature = "x"))]"#,
-            r#"#[cfg(target_arch = "wasm32")]"#,
-        ] {
-            assert!(
-                !is_test_gated(&parse_attrs(source)),
-                "{source} does not gate on `test`, and treating it as a test gate would \
-                 drop real model types out of the walk"
-            );
-        }
+    fn test_a_field_serde_attribute_the_reader_cannot_finish_is_a_hiding_reason() {
+        let planted = graph_of(
+            "#[derive(Deserialize)] pub struct Planted { \
+               #[serde(\"not a meta item\", flatten)] pub rest: Value }\n",
+        );
+        let info = planted.get("Planted").expect("the planted type must be indexed");
+        assert!(
+            info.flattened_fields.is_empty(),
+            "the premise: the same attribute defeats the flatten reader, so nothing else \
+             is left to report this type"
+        );
+        let reasons = info.unknown_key_hiding_reasons();
+        assert_eq!(reasons.len(), 1, "expected one reason, got {reasons:?}");
+        assert!(reasons[0].contains("unread"), "{}", reasons[0]);
+
+        // The same attribute on an enum's struct variant, which is a
+        // second call site of the field loop and would otherwise be
+        // covered only by inference.
+        let variant = graph_of(
+            "#[derive(Deserialize)] pub enum Planted { \
+               A { #[serde(\"not a meta item\", flatten)] rest: Value } }\n",
+        );
+        let reasons = variant
+            .get("Planted")
+            .expect("the planted enum must be indexed")
+            .unknown_key_hiding_reasons();
+        assert_eq!(reasons.len(), 1, "expected one reason, got {reasons:?}");
+        assert!(reasons[0].contains("unread"), "{}", reasons[0]);
     }
 }

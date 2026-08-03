@@ -211,11 +211,11 @@ are deliberately *not* on it — their elements are opaque JSON, so
 nothing inside one is ever reported as unrecognized and no route
 crosses their indexes.
 
-Position alone is not
-trusted there: the load records what each array looked like, so the save
-re-finds the element the key was attached to after a deletion or a
-reorder, and keeps it through an edit to that element. Three cases still
-lose the key, and all three say so at `warn!`:
+Position alone is not trusted there: the load records what each array
+looked like, so the save re-finds the element the key was attached to
+after a deletion or a reorder, and keeps it through an edit to that
+element. Three cases still lose the key, and all three say so at
+`warn!`:
 
 - the route is gone entirely — the node, edge or section it hung off was
   deleted, and the key goes with it;
