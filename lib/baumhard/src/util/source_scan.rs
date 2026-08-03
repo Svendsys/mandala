@@ -517,17 +517,30 @@ fn check_citations(
     scan: &mut CitationScan,
 ) {
     for name in test_names_in(text) {
-        let resolved = if name.ends_with('_') {
-            declared.iter().any(|known| known.starts_with(&name))
-        } else {
-            declared.contains(&name)
-        };
         let where_written = relative_to_repo(file);
-        if resolved {
+        if citation_resolves(&name, declared) {
             *scan.resolved.entry(where_written).or_default() += 1;
         } else {
             scan.unresolved.push(format!("{where_written}:{line}: {name}"));
         }
+    }
+}
+
+/// Whether `name` points at something the sources declare.
+///
+/// A name ending in `_` is a family and resolves against any
+/// declaration it prefixes; anything else has to be declared
+/// verbatim. Resolving *every* citation by prefix would look like a
+/// kindness and is not one: a citation of `test_<short>` would then
+/// be satisfied by a declaration of `test_<short>_<and_more>`, so the
+/// commonest rename there is — growing a test's name — would leave
+/// the prose pointing at a function that no longer exists and nothing
+/// would say so.
+fn citation_resolves(name: &str, declared: &BTreeSet<String>) -> bool {
+    if name.ends_with('_') {
+        declared.iter().any(|known| known.starts_with(name))
+    } else {
+        declared.contains(name)
     }
 }
 
@@ -816,6 +829,28 @@ mod tests {
         assert!(
             test_names_in("no_test_foo and pretest_bar name nothing").is_empty(),
             "a `test_` inside a longer word is not a citation"
+        );
+    }
+
+    /// And the family rule has to stay the exception. Resolving every
+    /// citation by prefix would look generous and would hide the
+    /// commonest rename there is: growing a test's name. Prose naming
+    /// the short spelling would then be satisfied by the long one and
+    /// point at a function that no longer exists.
+    #[test]
+    fn test_a_citation_that_only_prefixes_a_declared_name_does_not_resolve() {
+        let declared: BTreeSet<String> = ["test_delete_node_by_prefix".to_string()].into_iter().collect();
+        assert!(
+            !citation_resolves("test_delete_node", &declared),
+            "a whole-name citation must name the whole name"
+        );
+        assert!(
+            citation_resolves("test_delete_node_", &declared),
+            "written as a family, the same text resolves"
+        );
+        assert!(
+            citation_resolves("test_delete_node_by_prefix", &declared),
+            "and the exact name always does"
         );
     }
 

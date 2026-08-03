@@ -2440,6 +2440,32 @@ mod tests {
             .any(|line| !line.trim().is_empty())
     }
 
+    /// The coverage assertion in
+    /// `test_every_mindmap_write_goes_through_the_contract` is only as
+    /// sharp as the predicate behind it, and a predicate that always
+    /// answered `true` would restore the very silence it was added to
+    /// end. So it is driven over the two texts it has to tell apart:
+    /// what a correct excision leaves behind, and what the truncating
+    /// reader left.
+    #[test]
+    fn test_only_a_non_truncating_excision_reads_below_a_test_gate() {
+        let source = "pub fn a() {}\n#[cfg(test)]\nmod tests;\npub fn b() {}\n";
+        assert!(
+            reads_below_the_first_test_gate(source, "pub fn a() {}\n\n\npub fn b() {}\n"),
+            "the gated declaration is blanked and `b` survives — that is what reading \
+             past the gate looks like"
+        );
+        assert!(
+            !reads_below_the_first_test_gate(source, "pub fn a() {}\n"),
+            "the truncating reader stops at the gate, so it can never witness anything \
+             below one"
+        );
+        assert!(
+            !reads_below_the_first_test_gate("pub fn a() {}\n", "pub fn a() {}\n"),
+            "a file with no gate at all witnesses nothing either way"
+        );
+    }
+
     /// The serialization verbs that put bytes somewhere — a file, a
     /// socket, a string that is about to become one.
     const PERSISTING_VERBS: &[&str] = &[
@@ -2638,6 +2664,17 @@ mod tests {
              than the gated item — which is a scan that passes no matter what is written \
              below the gate, and did — or that file was reorganized and this witness \
              needs repointing at one of the {read_below_a_gate} others like it."
+        );
+        // And the witness has to *discriminate*, or it is satisfied by
+        // a predicate that answers yes to everything. Most of these
+        // files carry no test gate at all, so a count equal to the
+        // whole set is not a better answer than the one above — it is
+        // the same silence wearing a tick.
+        assert!(
+            read_below_a_gate < scanned,
+            "every one of the {scanned} scanned files reports shipped code below a \
+             `#[cfg(test)]`, including the ones that contain no gate. The measurement \
+             is not looking at anything."
         );
         assert!(
             offenders.is_empty(),
