@@ -286,6 +286,14 @@ mod tests {
     fn published_shape_ordinals() -> Vec<(usize, String)> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../format/migration.md");
         let doc = std::fs::read_to_string(path).expect("format/migration.md must be readable");
+        shape_ordinals_in(&doc)
+    }
+
+    /// [`published_shape_ordinals`] over supplied text, so where the
+    /// section ends and what the row reader does with a duplicate are
+    /// controllable rather than only exercised against the one
+    /// document on disk.
+    fn shape_ordinals_in(doc: &str) -> Vec<(usize, String)> {
         let after_heading = doc
             .split_once("### miMind `shape_type` ordinals")
             .expect("format/migration.md must still publish the shape_type ordinals")
@@ -313,5 +321,62 @@ mod tests {
             "the shape_type section of format/migration.md has no ordinal rows"
         );
         out
+    }
+
+    /// **The section boundary, controlled.** A sibling `###` ends the
+    /// shape table. Before this was fixed the reader stopped only at
+    /// an h2, so the `line_style` table below — which
+    /// `format/migration.md` explicitly invites — would have been
+    /// read as four more `shape_type` rows and reported as a
+    /// `shape_type` disagreement.
+    #[test]
+    fn shape_ordinals_stop_at_the_next_heading_of_any_level() {
+        let doc = "\
+### miMind `shape_type` ordinals
+
+| `shape_type` | `shape` |
+| --- | --- |
+| 0 | `rectangle` |
+| 1 | `rounded_rectangle` |
+
+### miMind `line_style` ordinals
+
+| `line_style` | name |
+| --- | --- |
+| 0 | `solid` |
+| 1 | `dashed` |
+
+## Known limitations
+";
+        assert_eq!(
+            shape_ordinals_in(doc),
+            vec![(0, "rectangle".to_string()), (1, "rounded_rectangle".to_string())],
+            "the reader ran past the sibling h3 and harvested another \
+             enum's ordinals as shape_type rows"
+        );
+    }
+
+    /// **The duplicate, controlled.** The reader must hand a repeated
+    /// ordinal to the caller rather than collapsing it, because
+    /// `legacy_shape_ordinals_match_the_published_table`'s numbering
+    /// assertion is what turns a duplicate into a failure — and a
+    /// duplicate is how a row can be retired while the row count and
+    /// every surviving row still agree.
+    #[test]
+    fn shape_ordinals_keep_a_duplicated_ordinal() {
+        let doc = "\
+### miMind `shape_type` ordinals
+
+| 0 | `rectangle` |
+| 0 | `rectangle` |
+
+## Known limitations
+";
+        assert_eq!(
+            shape_ordinals_in(doc),
+            vec![(0, "rectangle".to_string()), (0, "rectangle".to_string())],
+            "a duplicated ordinal was collapsed, so the numbering assertion \
+             downstream would never see it"
+        );
     }
 }
