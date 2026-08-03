@@ -170,12 +170,6 @@ pub struct UnknownKey {
     scaffold: Option<Scaffold>,
     /// Element identities for every positional step of the route.
     anchors: Vec<IndexAnchor>,
-    /// Whether a save can put this key back at all. `false` only when
-    /// the route dies at a positional step the load could not anchor
-    /// and the splice cannot rebuild — the one shape this mechanism
-    /// cannot honor, and the load says so rather than promising
-    /// otherwise.
-    preservable: bool,
 }
 
 impl UnknownKey {
@@ -226,33 +220,25 @@ impl UnknownKey {
     /// requires, so the `log::warn!` call site formats nothing of its
     /// own and a test can assert the exact text.
     ///
-    /// **Two wordings, because there are two outcomes.** Almost every
-    /// captured key is written back byte-for-byte by the next save,
-    /// and the line says so. A key whose route the save cannot
-    /// reconstruct is told apart at load time rather than promised
-    /// something the save will not deliver — see
-    /// `UnknownKey::preservable`.
+    /// **One wording, because there is one outcome.** A captured key
+    /// is carried by the next save, with the value it was authored
+    /// with; only an *edit* to the surroundings can cost it, and the
+    /// three shapes that can are refused loudly at save time by
+    /// [`UnknownKeys::splice_into`] rather than guessed at here. This
+    /// line used to have a second wording for a key the load could
+    /// tell in advance the save would not carry, and nothing could
+    /// reach it — see `plan_write_back` for the shape that would have
+    /// to exist first.
     ///
     /// Cost: one `String` allocation.
     pub fn warning(&self) -> String {
-        if self.preservable {
-            format!(
-                "loader: {}: unrecognized key `{}` — this build has no field for it, so it is \
-                 kept as written and saved back unchanged. Check the spelling if you meant an \
-                 existing key; see format/schema.md.",
-                self.location(),
-                self.path_within_location()
-            )
-        } else {
-            format!(
-                "loader: {}: unrecognized key `{}` — this build has no field for it, and the \
-                 place it sits in has no counterpart in what this build writes, so the next \
-                 save will not carry it. Copy it out before saving if you need it; see \
-                 format/schema.md.",
-                self.location(),
-                self.path_within_location()
-            )
-        }
+        format!(
+            "loader: {}: unrecognized key `{}` — this build has no field for it, so it is \
+             kept as written and saved back with the value it was authored with. Check the \
+             spelling if you meant an existing key; see format/schema.md.",
+            self.location(),
+            self.path_within_location()
+        )
     }
 }
 
@@ -734,7 +720,7 @@ pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
     let value: T = serde_ignored::deserialize(&mut deserializer, |path| routes.push(route_of(&path)))?;
     // `serde_json::from_str` does this for us; a hand-driven
     // `Deserializer` has to, or trailing garbage after the closing
-    // brace parses clean. `loader::tests::test_trailing_garbage_after_the_document_is_rejected`
+    // brace parses clean. `loader::tests::test_trailing_content_after_the_document_is_rejected`
     // is what notices when it goes away.
     deserializer.end()?;
     Ok((value, routes))
@@ -813,7 +799,6 @@ pub fn take_from(document: &mut Value, probe: Option<&Value>, routes: Vec<Vec<St
                 value,
                 scaffold: plan.scaffold,
                 anchors: plan.anchors,
-                preservable: plan.preservable,
             }
         })
         .collect();
@@ -825,7 +810,6 @@ pub fn take_from(document: &mut Value, probe: Option<&Value>, routes: Vec<Vec<St
 struct WriteBackPlan {
     anchors: Vec<IndexAnchor>,
     scaffold: Option<Scaffold>,
-    preservable: bool,
 }
 
 /// Walk the probe alongside a captured key's route and record what the
@@ -845,7 +829,6 @@ fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> W
     let unanchored = WriteBackPlan {
         anchors: Vec::new(),
         scaffold: None,
-        preservable: true,
     };
     let (Some(probe), Some((_, parent))) = (probe, route.split_last()) else {
         return unanchored;
@@ -870,11 +853,26 @@ fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> W
             // has none, and inventing an array element the model does
             // not hold would put a value into the document that
             // nothing in the model stands behind.
+            //
+            // **Nothing reaches the positional case today.** It needs
+            // the probe's array to be shorter than the authored one
+            // at the first level the two differ, and no type on the
+            // load graph changes a sequence's length across the round
+            // trip: a `Vec` field writes one element per element it
+            // read, and the constructs the tolerant path excises come
+            // out of the authored document too, so both sides shorten
+            // together. A `from`/`into` proxy that folds or drops
+            // elements, or a hand-written `Serialize` that does, is
+            // what would make it live. Until then the key is simply
+            // left with no scaffold, and `splice_into`'s "could not
+            // be written back" refusal reports it at save — which is
+            // where the fact becomes observable at all. There is no
+            // load-time flag for it, because a flag no load can set
+            // is a promise nobody is keeping.
             let (Step::Key(member), Some(value)) = (step, value_at(document, &route[..=position])) else {
                 return WriteBackPlan {
                     anchors,
                     scaffold: None,
-                    preservable: false,
                 };
             };
             return WriteBackPlan {
@@ -884,7 +882,6 @@ fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> W
                     member: member.clone(),
                     value: value.clone(),
                 }),
-                preservable: true,
             };
         };
         current = next;
@@ -892,7 +889,6 @@ fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> W
     WriteBackPlan {
         anchors,
         scaffold: None,
-        preservable: true,
     }
 }
 
@@ -1110,7 +1106,6 @@ mod tests {
             value,
             scaffold: None,
             anchors: Vec::new(),
-            preservable: true,
         }
     }
 
@@ -1659,20 +1654,87 @@ mod tests {
     }
 
     /// The load-time line must not promise what the save cannot
-    /// deliver. A route the save has no way to rebuild says so at the
-    /// moment the reader is looking, rather than reading as preserved
-    /// and vanishing later.
+    /// deliver, and what it can deliver is the *value* — key order and
+    /// number spelling are normalized for the whole document, the
+    /// captured key included, because the save renders every member
+    /// through the same `serde_json::Value`.
+    ///
+    /// This test used to have a second half, over an entry the load
+    /// had marked unpreservable. That state existed but nothing could
+    /// produce it — it was constructed here by hand — so the line it
+    /// selected was a wording no reader could ever be shown. Both are
+    /// gone; `plan_write_back` records what would have to change for
+    /// the case to become real.
     #[test]
-    fn test_the_warning_stops_promising_what_cannot_be_written_back() {
+    fn test_the_warning_promises_the_value_and_not_the_bytes() {
         let kept = plain(serde_json::json!(["canvas", "grid_snap"]), serde_json::json!(1));
-        assert!(kept.warning().contains("saved back unchanged"));
-        let mut lost = kept.clone();
-        lost.preservable = false;
         assert!(
-            lost.warning().contains("the next save will not carry it"),
+            kept.warning()
+                .contains("saved back with the value it was authored with"),
             "got: {}",
-            lost.warning()
+            kept.warning()
         );
-        assert!(!lost.warning().contains("saved back unchanged"));
+        assert!(
+            !kept.warning().contains("unchanged"),
+            "the save re-renders the whole document, so it cannot promise the bytes: {}",
+            kept.warning()
+        );
+    }
+
+    /// **The one list of arrays, held to the model in both
+    /// directions.** `format/schema.md` publishes where a captured
+    /// key's route turns positional, because that is where an edit
+    /// can move it and where the three save-time refusals live. It
+    /// published a hand-written version of that list first, and the
+    /// list had already drifted: `edges[i].control_points` and
+    /// `palettes.<name>.groups` both hold objects, both carry
+    /// positional routes, and neither was on it — the twin surface
+    /// `lib/baumhard/CONVENTIONS.md` §B4 is about, in a doc rather
+    /// than in code.
+    ///
+    /// So the set comes off the model's own source now, the doc
+    /// publishes it, and this compares the two. Both directions
+    /// matter: an array the doc omits is a place a reader does not
+    /// know to be careful about, and an array the doc names that the
+    /// model no longer has is a claim that stopped being true.
+    ///
+    /// The discriminator is **"can a key be captured at or below an
+    /// element"**, not "is a `Vec`": `macros` and `inline_macros` are
+    /// `Vec<Value>`, deliberately opaque, so no member of one is ever
+    /// unrecognized and no route crosses their indexes. The doc says
+    /// that in prose next to the list.
+    #[test]
+    fn test_the_published_positional_arrays_are_the_ones_the_model_has() {
+        use crate::util::doc_fixtures::{documented_plain_block, format_doc_path};
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph};
+
+        let derived = TypeGraph::build(&crate_src_root()).key_bearing_sequences_from("MindMap");
+        assert!(
+            !derived.is_empty(),
+            "the walk found no positional array at all — the model cannot have lost \
+             every one of them, so the derivation broke rather than the model"
+        );
+
+        let doc = format_doc_path("schema.md");
+        let published: std::collections::BTreeSet<String> =
+            documented_plain_block(&doc, "## Unknown keys are kept", 1)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect();
+
+        let missing: Vec<&String> = derived.difference(&published).collect();
+        let stale: Vec<&String> = published.difference(&derived).collect();
+        assert!(
+            missing.is_empty() && stale.is_empty(),
+            "format/schema.md §\"Unknown keys are kept\" publishes the arrays a captured \
+             key's route can cross, and it no longer matches the model.\n  \
+             the model has, the doc does not list: {missing:?}\n  \
+             the doc lists, the model does not have: {stale:?}\n\n\
+             The block is one name per line, sorted. An array whose elements cannot hold \
+             an unrecognized key — `Vec<Value>`, `Vec<String>` — is correctly absent; if \
+             one of those is what showed up here, the derivation is what to look at."
+        );
     }
 }

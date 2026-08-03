@@ -261,14 +261,20 @@ fn excise_unreadable_constructs(document: &mut Value) -> unknown_keys::SkippedCo
         &mut skipped,
     );
 
-    let mut node_ids: Vec<String> = document
+    // The warnings a reader sees come out in node-id order. Nothing
+    // here sorts for that: `serde_json::Map` is a `BTreeMap` unless
+    // serde_json's `preserve_order` feature is on, and no member of
+    // this workspace turns it on, so `keys()` already yields sorted.
+    // The explicit `sort()` that used to sit here re-stated a
+    // guarantee the type was already giving and no test could tell
+    // apart from its absence. `tests::test_skip_warnings_come_out_in_node_id_order`
+    // holds the *property* instead, which is what actually goes red
+    // if some future dependency unions that feature in.
+    let node_ids: Vec<String> = document
         .get("nodes")
         .and_then(Value::as_object)
         .map(|nodes| nodes.keys().cloned().collect())
         .unwrap_or_default();
-    // Sorted so the warnings a reader sees come out in the same order
-    // every time, whatever the object's own iteration order is.
-    node_ids.sort();
     for id in node_ids {
         let node = [Step::Key("nodes".to_string()), Step::Key(id.clone())];
         let at = |field: &str| {
@@ -718,13 +724,24 @@ pub fn to_json_value(map: &MindMap) -> Result<Value, String> {
     // route was recorded against, so the common path is an exact match
     // at the recorded index rather than a search.
     //
-    // It stops being merely defensive exactly where the fingerprints
-    // run out — two elements that serialize identically, where a
-    // search cannot say which one the key came from. Then this
-    // ordering is the whole difference between writing the key where
-    // it belongs and dropping it with a warning, and
-    // `tests::test_the_splice_order_decides_when_two_elements_are_alike`
-    // is that case.
+    // It stops being merely defensive wherever the fingerprint search
+    // cannot finish the job on its own, and there are two such shapes
+    // — both ordinary rather than exotic:
+    //
+    // - **Two elements that serialize identically.** The fingerprint
+    //   matches in more than one place, so a search cannot say which
+    //   one the key came from.
+    //   `tests::test_the_splice_order_decides_when_two_elements_are_alike`.
+    // - **An element that was edited**, sharing its array with a
+    //   skipped construct. Its fingerprint now matches *nowhere*, and
+    //   the last rung `resolve_index` has left is "every other element
+    //   is unchanged and the array is still the length the route was
+    //   recorded against". Re-inserting the construct first lengthens
+    //   the array and breaks the second half of that.
+    //   `tests::test_the_splice_order_survives_an_edit_beside_a_skipped_construct`.
+    //
+    // In both, this ordering is the whole difference between writing
+    // the key where it belongs and dropping it with a warning.
     map.skipped_constructs.splice_into(&mut value);
     Ok(value)
 }
@@ -920,6 +937,24 @@ mod tests {
     /// deserializes its own fields, so the requirement follows the
     /// proxy — which the walk also reaches, and holds to the same
     /// rule there.
+    ///
+    /// **A fifth reason exists and is not about serde at all: an
+    /// attribute the source reader could not finish.** The four above
+    /// are read off the text by a hand-rolled parser, and this test
+    /// asserts a list is *empty* — so a flag that parser never saw
+    /// reads exactly like a flag that is not there, and the run goes
+    /// green. A list-form option (`rename_all(...)`) used to end that
+    /// parse where it started, which made
+    /// `#[serde(rename_all(deserialize = "camelCase"),
+    /// deny_unknown_fields)]` a silent restoration of reject-at-load.
+    /// `TypeInfo::unread_serde` is the answer: unknown is reported as
+    /// unsafe, not as safe.
+    ///
+    /// The per-type predicate itself is
+    /// [`TypeInfo::unknown_key_hiding_reasons`], next to the
+    /// attributes it reads, where a test can drive it over types this
+    /// crate does not contain. What lives here is the policy and the
+    /// walk it is applied to.
     #[test]
     fn test_no_loadable_type_can_swallow_an_unknown_key() {
         use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
@@ -927,40 +962,7 @@ mod tests {
         let graph = TypeGraph::build(&crate_src_root());
         let mut offenders: Vec<String> = Vec::new();
         for info in graph.reachable_from("MindMap") {
-            if !info.derives_deserialize || info.deserialize_proxy.is_some() {
-                continue;
-            }
-            let mut reasons: Vec<String> = Vec::new();
-            // `deny_unknown_fields` and `flatten` act on *named
-            // members*: they decide what happens to a key no declared
-            // field claimed. A type with no named fields anywhere —
-            // an enum whose variants are all newtype, tuple, or unit
-            // — has no such key to decide about, and serde rejects
-            // both attributes there anyway.
-            if info.has_named_fields {
-                if info.denies_unknown_fields {
-                    reasons.push("`deny_unknown_fields` (fails the load)".to_string());
-                }
-                for field in &info.flattened_fields {
-                    reasons.push(format!("`flatten` on `{field}` (absorbs the key)"));
-                }
-            }
-            // `untagged` and `tag = "…"` act on the *whole value*:
-            // serde buffers the object into its own `Content` and
-            // replays it through a deserializer the capture is not
-            // wrapping. Variant shape has nothing to do with it — a
-            // newtype-only enum buffers exactly the same way — so
-            // these two are asked of every reachable type. The
-            // `has_named_fields` guard above used to sit in front of
-            // them, which left 24 of the 70 reachable types unchecked
-            // and let a planted `#[serde(untagged)]` on `Mutation`
-            // through.
-            if info.untagged {
-                reasons.push("`untagged` (replays through a buffered Content)".to_string());
-            }
-            if info.internally_tagged {
-                reasons.push("`tag = \"...\"` (replays through a buffered Content)".to_string());
-            }
+            let reasons = info.unknown_key_hiding_reasons();
             if reasons.is_empty() {
                 continue;
             }
@@ -990,7 +992,11 @@ mod tests {
              no field claimed, so they are asked only of types that have named fields.\n  \
              * `untagged` / `tag = \"...\"` buffer the whole value through serde's \
              `Content` and replay it outside the capture, which has nothing to do with \
-             variant shape, so they are asked of every reachable Deserialize type.",
+             variant shape, so they are asked of every reachable Deserialize type.\n\n\
+             An entry reading `unread` is neither: it means the source reader stopped \
+             partway through that attribute, so the flags written after that point were \
+             never looked at. Teach `serde_coverage::skip_unmodeled_option` the shape \
+             rather than deleting the entry.",
             offenders.join("\n  ")
         );
 
@@ -1718,7 +1724,7 @@ mod tests {
     fn test_save_to_file_inline_macros_round_trip() {
         // Build a map with one node carrying a populated
         // `inline_macros`. Empty case is implicitly covered by
-        // `test_save_blank_map_round_trip` (every node has an
+        // `test_save_to_file_round_trip_for_loaded_and_blank_maps` (every node has an
         // empty Vec).
         use crate::mindmap::model::{Canvas, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size};
         use std::collections::HashMap;
@@ -2233,7 +2239,7 @@ mod tests {
         assert!(warning.contains("node \"1.2\""), "must name the node: {warning}");
         assert!(warning.contains("portal_form"), "must name the key: {warning}");
         assert!(
-            warning.contains("kept as written and saved back unchanged"),
+            warning.contains("kept as written and saved back with the value it was authored with"),
             "must state what happened to the key, not just that it is unknown: {warning}"
         );
         assert!(
@@ -2965,6 +2971,117 @@ mod tests {
         );
     }
 
+    /// **The order a reader is told things in is behavior too.** A
+    /// map whose nodes each carry a construct from the future
+    /// produces one `warn!` per construct, and which order they come
+    /// out in is decided by the order
+    /// `excise_unreadable_constructs` walks `nodes`. Two nodes
+    /// authored high-id-first must still be reported low-id-first, or
+    /// the same file read twice tells the user two different stories.
+    ///
+    /// The mechanism is that `serde_json::Map` is a `BTreeMap` here,
+    /// so `keys()` is already sorted; an explicit `sort()` used to
+    /// restate that and was indistinguishable from its own absence.
+    /// This pins the property rather than the restatement, so it goes
+    /// red exactly when the mechanism stops holding — which is when
+    /// something in the dependency graph unions serde_json's
+    /// `preserve_order` feature in and object iteration becomes
+    /// document order. The fix then is to sort explicitly again.
+    #[test]
+    fn test_skip_warnings_come_out_in_node_id_order() {
+        crate::util::test_logger::install();
+        let binding = |variant: &str| {
+            format!(r#", "trigger_bindings": [{{"trigger": "{variant}", "mutation_id": "m"}}]"#)
+        };
+        // Authored high id first, so document order and id order
+        // disagree and only one of them can be what comes out.
+        let json = map_json_with_nodes(&format!(
+            "{}, {}",
+            node_json_with("2", "null", &binding("zzOrderProbeHigh")),
+            node_json_with("1", "null", &binding("zzOrderProbeLow")),
+        ));
+
+        let map = load_from_str(&json).expect("the map loads around both constructs");
+        assert_eq!(map.skipped_constructs.len(), 2);
+
+        let reported = crate::util::test_logger::lines_containing("zzOrderProbe");
+        assert_eq!(reported.len(), 2, "expected both warnings, got {reported:?}");
+        assert!(
+            reported[0].contains("node \"1\""),
+            "node \"1\" must be reported before node \"2\" even though the file authors \
+             \"2\" first — if this went red, serde_json's `preserve_order` feature is on \
+             somewhere in the graph and `excise_unreadable_constructs` has to sort the \
+             node ids itself again:\n  {reported:?}"
+        );
+        assert!(reported[1].contains("node \"2\""), "{reported:?}");
+    }
+
+    /// **The second shape the splice order decides, and the one the
+    /// twins test misses.** Its sibling above needs two
+    /// indistinguishable elements; this one needs no duplicates at
+    /// all, only an ordinary **edit** to the element the key hangs
+    /// off while a skipped construct shares its array.
+    ///
+    /// After the edit the element's load-time fingerprint matches
+    /// nowhere, so `resolve_index`'s first two rungs — exact position,
+    /// then unique match — both come up empty. The one left is "every
+    /// *other* element is unchanged and the array is still the length
+    /// the route was recorded against", and the route was recorded
+    /// against the array with the construct lifted out. Splice the
+    /// construct back first and the array is one longer than that, the
+    /// last rung fails on the length alone, and the key is dropped
+    /// with a warning — from nothing more unusual than renaming a
+    /// custom mutation in a map that also carries one from the future.
+    #[test]
+    fn test_the_splice_order_survives_an_edit_beside_a_skipped_construct() {
+        let unreadable = r#"{"id": "future", "name": "future", "target_scope": "SelfOnly",
+             "mutator": {"zzEditGlow": {"channel": 0}}}"#;
+        let carrying = r#"{"id": "keep", "name": "as authored", "target_scope": "SelfOnly",
+             "zzedited_note": 1}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}, {carrying}]"#),
+        );
+
+        let mut map = load_from_str(&json).expect("the map loads around the unreadable entry");
+        assert_eq!(map.custom_mutations.len(), 1, "one readable entry survives");
+        assert_eq!(map.skipped_constructs.len(), 1);
+        assert_eq!(map.unknown_keys.len(), 1);
+
+        // The edit. **The premise, checked rather than assumed:** the
+        // element the key hangs off has to actually change on the
+        // wire, or its load-time fingerprint still matches and the
+        // last rung is never the one deciding.
+        let before = serde_json::to_value(&map).expect("the model serializes");
+        map.custom_mutations[0].name = "renamed by the user".to_string();
+        let after = serde_json::to_value(&map).expect("the model serializes");
+        assert_ne!(
+            before["custom_mutations"][0], after["custom_mutations"][0],
+            "the edit has to be visible on the wire for this to test the splice order"
+        );
+
+        let saved = to_json_value(&map).expect("serializes");
+        let entries = saved["custom_mutations"].as_array().expect("an array");
+        assert_eq!(entries.len(), 2, "everything authored comes back: {saved}");
+        assert!(
+            entries[0]["mutator"].get("zzEditGlow").is_some(),
+            "the skipped construct belongs at index 0: {}",
+            entries[0]
+        );
+        assert_eq!(
+            entries[1]["zzedited_note"],
+            serde_json::json!(1),
+            "an edit to the element must not cost the key it carried: {saved}"
+        );
+        assert_eq!(
+            entries[1]["name"],
+            serde_json::json!("renamed by the user"),
+            "and the edit itself has to be what was saved: {saved}"
+        );
+    }
+
     /// A trigger binding is the other unit — on a node and on a
     /// section, both of which a newer build can attach a trigger kind
     /// to.
@@ -3019,34 +3136,66 @@ mod tests {
     /// `excise_unreadable_constructs`, which is exactly the twin
     /// surface §B4 warns about — so the source walk checks the claim
     /// rather than the comment asserting it.
+    ///
+    /// **"Only reachable through a skippable construct", not "also
+    /// reachable from one."** The distinction is the whole strength
+    /// of the check. An enum used *both* inside a custom mutation and
+    /// directly on a node passes the weaker test — it is reachable
+    /// from `CustomMutation`, after all — and a variant a newer build
+    /// adds to it still kills the document when it turns up at the
+    /// node. The skippable use is not what makes the unskippable one
+    /// safe. So the walk cuts the skippable roots out of the graph
+    /// and asks what enums are still reachable, which is a question
+    /// the double use cannot satisfy.
+    ///
+    /// It costs nothing today — the model deliberately spells the
+    /// unskippable open vocabularies (`shape`, `line_style`,
+    /// `edge_type`) as `String` with a documented fallback, so the
+    /// unskippable closure holds no variant-bearing Deserialize enum
+    /// at all. That is the property being pinned, and it is only
+    /// worth pinning in the form that would notice it breaking.
     #[test]
     fn test_every_variant_bearing_enum_sits_inside_a_skippable_construct() {
         use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
 
+        // The units `excise_unreadable_constructs` lifts out, plus
+        // the proxy that carries `CustomMutation`'s on-disk shape.
+        const SKIPPABLE: &[&str] = &["CustomMutation", "CustomMutationIn", "TriggerBinding"];
+
         let graph = TypeGraph::build(&crate_src_root());
-        let mut skippable: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for root in ["CustomMutation", "CustomMutationIn", "TriggerBinding"] {
-            skippable.extend(graph.reachable_from(root).iter().map(|info| info.name.as_str()));
-        }
-        let stranded: Vec<&str> = graph
-            .reachable_from("MindMap")
+        let unskippable = graph.reachable_from_excluding("MindMap", SKIPPABLE);
+        let stranded: Vec<&str> = unskippable
             .iter()
             .filter(|info| {
-                info.kind == TypeKind::Enum
-                    && info.derives_deserialize
-                    && !info.variants.is_empty()
-                    && !skippable.contains(info.name.as_str())
+                info.kind == TypeKind::Enum && info.derives_deserialize && !info.variants.is_empty()
             })
             .map(|info| info.name.as_str())
             .collect();
         assert!(
             stranded.is_empty(),
-            "these enums are reachable from a `.mindmap.json` load but not from any \
-             construct the loader can skip, so a variant a newer build adds to one of \
-             them still makes the whole document unloadable. Either widen the skippable \
-             set in `excise_unreadable_constructs` — and say why the new unit's absence \
-             is visible rather than a silent partial behavior — or record why this one \
-             cannot be skipped: {stranded:?}"
+            "these enums are reachable from a `.mindmap.json` load along a path that \
+             passes through no construct the loader can skip, so a variant a newer build \
+             adds to one of them still makes the whole document unloadable. Being \
+             reachable from a custom mutation as well does not help — the unskippable \
+             use is the one that decides. Either widen the skippable set in \
+             `excise_unreadable_constructs` — and say why the new unit's absence is \
+             visible rather than a silent partial behavior — or spell the field as a \
+             `String` with a documented fallback the way the open vocabularies are: \
+             {stranded:?}"
+        );
+
+        // An exclusion that excluded everything would pass this just
+        // as loudly, so the walk has to prove it still reached the
+        // unskippable part of the model *and* that cutting the
+        // skippable roots out removed something.
+        assert!(
+            unskippable.iter().any(|info| info.name == "MindNode"),
+            "cutting the skippable roots must not cut the model out from under the check"
+        );
+        assert!(
+            !unskippable.iter().any(|info| info.name == "MutationBehavior"),
+            "a type only reachable through a skippable construct must be excluded, or \
+             the check has stopped distinguishing the two paths"
         );
     }
 

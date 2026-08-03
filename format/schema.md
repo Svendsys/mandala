@@ -59,9 +59,9 @@ and says so:
 
 ```
 loader: node "0": unrecognized key `min_zoom_to_rendr` — this build
-has no field for it, so it is kept as written and saved back
-unchanged. Check the spelling if you meant an existing key; see
-format/schema.md.
+has no field for it, so it is kept as written and saved back with the
+value it was authored with. Check the spelling if you meant an
+existing key; see format/schema.md.
 ```
 
 The node renders, `min_zoom_to_render` is unset because nothing set
@@ -130,7 +130,8 @@ the instruction. `{"mutator": {"Glow": …}}` from a newer build used to
 make the whole document unloadable, which is the empty window this
 policy exists to avoid. The load now lifts the construct out, opens the
 rest of the map, warns saying that nothing it describes will run, and
-writes it back byte-for-byte at the index it was authored at.
+writes it back at the index it was authored at, with every value it
+carried intact.
 
 The unit that is skipped is a whole custom mutation (`custom_mutations[i]`
 or a node's `inline_mutations[i]`) or a whole trigger binding (a node's
@@ -166,13 +167,51 @@ It does **not** cover a structural change to a part that cannot be
 skipped: a node, an edge, the canvas or a palette whose shape this build
 cannot read still fails the load.
 
+**What "preserved" guarantees, precisely: the value, not the bytes.**
+Every preserved key comes back with exactly the value it was authored
+with — `1.0` stays `1.0`, an integer past 2^53 keeps every digit,
+`0.30000000000000004` keeps all seventeen, an emoji stays a literal
+emoji rather than a surrogate escape, and a `\n` inside a string stays
+an escape. What is *not* promised is the spelling: a save renders the
+whole document through one writer, so an author's `1e2` comes back as
+`100.0`, `1.5E-3` as `0.0015`, and members are written in sorted order
+wherever they were authored. That is the same normalization every
+key this build does understand gets — preserved keys are not treated
+specially, which is the point. Nothing that carries information is
+lost, and a `diff` against the authored file will still show
+un-edited lines moving.
+
 **Where a preserved key can still be lost.** A key is written back at
 the route it was read from. Above an array — a node by its id, a palette
 by its name — that route is stable across any edit. Below one, it is
-positional, and every `Vec` on the load graph is below one:
-`edges`, `custom_mutations`, `macros`, a node's `sections`,
-`inline_mutations`, `inline_macros` and `trigger_bindings`, and a
-section's `text_runs` and `trigger_bindings`. Position alone is not
+positional. These are the arrays a captured key's route can cross:
+
+```
+children
+control_points
+custom_mutations
+edges
+fields
+groups
+inline_mutations
+line
+matrix
+mutations
+sections
+text_runs
+trigger_bindings
+```
+
+That list is **derived from the model, not kept by hand**:
+`unknown_keys::tests::test_the_published_positional_arrays_are_the_ones_the_model_has`
+walks the load graph and fails in both directions, because the
+hand-written version of it had already drifted past `control_points`
+and a palette's `groups`. `macros` and `inline_macros` are arrays and
+are deliberately *not* on it — their elements are opaque JSON, so
+nothing inside one is ever reported as unrecognized and no route
+crosses their indexes.
+
+Position alone is not
 trusted there: the load records what each array looked like, so the save
 re-finds the element the key was attached to after a deletion or a
 reorder, and keeps it through an edit to that element. Three cases still
