@@ -207,6 +207,35 @@ impl ShapeSpelling {
             }
         }
     }
+
+    /// Is this classification something the map's author can fix?
+    ///
+    /// Only [`ShapeSpelling::Unrecognized`] is — the other three are
+    /// the format working as designed, and issue #118 is what
+    /// happened when they were reported as if they were not. This is
+    /// the predicate [`NodeShape::from_style_string`] reaches for
+    /// `log::warn!` on, and it is `pub` so that a consumer with a
+    /// different reporting surface (a linter, `maptool`, an editor
+    /// gutter) asks the same question rather than restating the
+    /// answer and drifting from it.
+    ///
+    /// What this does *not* pin is which `log::` macro
+    /// `from_style_string` actually writes — that is observable only
+    /// through a log sink, and the crate has no test logger yet.
+    /// Keep the two aligned by hand until one lands.
+    ///
+    /// # Costs
+    /// O(1), branch-only. No allocation.
+    pub const fn is_author_error(self) -> bool {
+        match self {
+            ShapeSpelling::Unrecognized => true,
+            // Spelled out rather than `_` so a fifth classification
+            // cannot join the quiet set without a decision.
+            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::KnownNotYetRendered => {
+                false
+            }
+        }
+    }
 }
 
 impl NodeShape {
@@ -269,6 +298,11 @@ impl NodeShape {
     ///   (issue #118);
     /// - anything else keeps the `log::warn!`, because there it is
     ///   accurate.
+    ///
+    /// The `warn!` arm is exactly
+    /// [`ShapeSpelling::is_author_error`]'s `true` case; that
+    /// predicate is the library's answer to "should anyone be told?",
+    /// and this function's job is only to pick the macro.
     ///
     /// Unknown values stay on disk untouched either way, so a
     /// round-trip through `maptool convert` doesn't lose them.

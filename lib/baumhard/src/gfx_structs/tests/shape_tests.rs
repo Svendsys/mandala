@@ -55,20 +55,6 @@ pub fn do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle() {
     assert_eq!(NodeShape::from_style_string("zigzag"), NodeShape::Rectangle);
 }
 
-/// Does this classification make `from_style_string` emit a
-/// `log::warn!`? The one question issue #118 is about, asked of the
-/// classifier rather than of a log sink — there is no logger to
-/// install here, and asserting on the returned value is a stronger
-/// test than scraping records anyway.
-fn warns(spelling: ShapeSpelling) -> bool {
-    match spelling {
-        ShapeSpelling::Unrecognized => true,
-        // Spelled out rather than `_ =>` so a fourth non-warning
-        // classification cannot join the quiet set unnoticed.
-        ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::KnownNotYetRendered => false,
-    }
-}
-
 /// **Issue #118.** Every canonical spelling — iterated from
 /// `KNOWN_SHAPES`, never re-spelled here — is a shape the format
 /// publishes, `maptool convert --legacy` emits and `maptool verify`
@@ -92,7 +78,7 @@ pub fn do_shape_every_known_spelling_is_non_warning() {
     for known in KNOWN_SHAPES {
         let spelling = ShapeSpelling::classify(known);
         assert!(
-            !warns(spelling),
+            !spelling.is_author_error(),
             "canonical shape {known:?} classified as {spelling:?}, which warns"
         );
         assert_ne!(
@@ -200,6 +186,11 @@ pub fn do_shape_known_shapes_are_lowercase() {
 /// is a typo or a value from a newer build — exactly the case the
 /// warning was written for. The empty string is *not* that case;
 /// it means the field was left unset.
+///
+/// Also pins `is_author_error` one classification at a time, since
+/// it is the predicate every other test in this file asks. A blanket
+/// `true` or `false` there would otherwise make several of them pass
+/// for the wrong reason.
 #[test]
 pub fn test_shape_unrecognized_spelling_still_warns() {
     do_shape_unrecognized_spelling_still_warns();
@@ -208,13 +199,23 @@ pub fn test_shape_unrecognized_spelling_still_warns() {
 pub fn do_shape_unrecognized_spelling_still_warns() {
     let spelling = ShapeSpelling::classify("pentagram");
     assert_eq!(spelling, ShapeSpelling::Unrecognized);
-    assert!(warns(spelling));
+    assert!(spelling.is_author_error());
     assert_eq!(spelling.resolve(), NodeShape::Rectangle);
     assert_eq!(NodeShape::from_style_string("pentagram"), NodeShape::Rectangle);
 
     // Unset is silent, and has been since before #118.
     assert_eq!(ShapeSpelling::classify(""), ShapeSpelling::Unspecified);
-    assert!(!warns(ShapeSpelling::classify("")));
+    assert!(!ShapeSpelling::classify("").is_author_error());
+
+    assert!(ShapeSpelling::Unrecognized.is_author_error());
+    assert!(!ShapeSpelling::Unspecified.is_author_error());
+    assert!(!ShapeSpelling::KnownNotYetRendered.is_author_error());
+    for shape in NodeShape::iter() {
+        assert!(
+            !ShapeSpelling::Rendered(shape).is_author_error(),
+            "{shape:?} renders as asked, so there is nothing to report"
+        );
+    }
 }
 
 /// The three spellings named in the issue, asserted one at a time
@@ -287,7 +288,7 @@ pub fn do_shape_testament_map_has_no_unknown_shapes() {
     for (location, node) in map.node_locations() {
         let spelling = ShapeSpelling::classify(&node.style.shape);
         assert!(
-            !warns(spelling),
+            !spelling.is_author_error(),
             "{location}: style.shape {:?} classified as {spelling:?} — \
              loading the demo map would warn",
             node.style.shape
