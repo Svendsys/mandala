@@ -795,8 +795,9 @@ fn walk_drag_node_and_sections(
 ///
 /// Costs: O(n) in the subtree size, plus one heap vector holding
 /// the frontier — the sum of the unprocessed sibling rows along the
-/// current path, so O(depth) for a chain and O(n) for a shallow
-/// wide tree. §B7 — the previous doc claimed zero allocations,
+/// current path — **one element for a linear chain**, since each
+/// node's only child replaces it, O(n) for a shallow wide tree, and
+/// O(depth x branching) in general. §B7 — the previous doc claimed zero allocations,
 /// which the recursive form bought at the price of the stack, and
 /// then claimed a branching width, which is what a *breadth*-first
 /// frontier would hold rather than this one.

@@ -28,8 +28,9 @@ use indextree::{Arena, NodeId};
 /// Costs: O(n) in the descendant count, one `T::clone()` per node,
 /// one `Arena` slot allocation per node in `destination`, plus one
 /// heap vector holding the frontier — the sum of the unprocessed
-/// sibling rows along the current path, so O(depth) for a chain and
-/// O(n) for a shallow wide tree. (Not a branching width: this
+/// sibling rows along the current path — **one element for a
+/// linear chain**, since each node's only child replaces it, O(n)
+/// for a shallow wide tree, and O(depth x branching) in general. (Not a branching width: this
 /// test module's own seven-node fixture reaches four entries
 /// against a branching width of three.) Benched as
 /// `arena_utils_clone`.

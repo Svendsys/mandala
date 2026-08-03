@@ -244,8 +244,9 @@ impl Tree<GfxElement, GfxMutator> {
     /// frontier on the heap and so allocates per call — the price of
     /// not recursing over a depth a `.mindmap.json` chooses. The
     /// frontier holds the unprocessed sibling rows along its current
-    /// path — O(depth) for a chain, O(n) for a shallow wide tree —
-    /// rather than a whole subtree.
+    /// path — one element for a linear chain, O(n) for a shallow
+    /// wide tree, O(depth x branching) in general — rather than a
+    /// whole subtree.
     ///
     /// When multiple areas contain the point, the smallest by area
     /// wins — the "innermost first" convention.
@@ -352,8 +353,9 @@ impl Tree<GfxElement, GfxMutator> {
     ///
     /// Cost: O(n), plus one heap vector holding the post-order
     /// frontier — the sum of the unprocessed sibling rows along the
-    /// current path, so O(depth) for a chain and O(n) for a shallow
-    /// wide tree.
+    /// current path — one element for a linear chain, since each
+    /// node's only child replaces it, O(n) for a shallow wide tree,
+    /// and O(depth x branching) in general.
     /// That vector is a deliberate trade against §B7's
     /// allocation-free preference: the recursive shape did not avoid
     /// the storage, it put the same data on the call stack, where

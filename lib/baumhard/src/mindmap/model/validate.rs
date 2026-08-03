@@ -55,6 +55,32 @@ pub use crate::font::fonts::{MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT};
 /// see `connection::bezier` and `mindmap::border`.
 pub const MAX_CANVAS_COORD: f64 = 1.0e9;
 
+/// Bring a computed canvas coordinate inside [`MAX_CANVAS_COORD`].
+///
+/// The `f64` sibling of [`clamp_to_bound`], for `Position`, whose
+/// components are `f64` rather than `f32`.
+///
+/// **Clamped rather than rejected, unlike the setter path.** A
+/// *derived* position — a layout placing a child at
+/// `parent + radius`, a cascade repositioning a subtree — has no
+/// user input to decline. Both take in-bound inputs and can compute
+/// an out-of-bound result, and refusing there would silently drop a
+/// node out of its layout; pinning it at the boundary keeps the
+/// document loadable and the node visible. `set_node_aabb`, which
+/// takes a position straight from the caller, still rejects.
+///
+/// A non-finite input resolves to `0.0`: a computed `NaN` has no
+/// nearest edge, and every downstream comparison against it is
+/// false, so the node would silently never render.
+///
+/// Cost: O(1), no allocation.
+pub fn clamp_canvas_coord(value: f64) -> f64 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+    value.clamp(-MAX_CANVAS_COORD, MAX_CANVAS_COORD)
+}
+
 /// Validate a node size candidate, returning the first violation.
 pub fn node_size(size: Size) -> Result<(), String> {
     first_or_ok(node_size_violations(size))

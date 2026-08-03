@@ -129,8 +129,11 @@ pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
     // dropped, allowing the mutable model update.
     for (id, (x, y)) in planned {
         if let Some(node) = doc.mindmap.nodes.get_mut(&id) {
-            node.position.x = x;
-            node.position.y = y;
+            // Clamped: a cascade computes a position from its
+            // parent's, so in-bound inputs can produce an
+            // out-of-bound result, and the loader rejects those.
+            node.position.x = baumhard::mindmap::model::validate::clamp_canvas_coord(x);
+            node.position.y = baumhard::mindmap::model::validate::clamp_canvas_coord(y);
         }
     }
 }

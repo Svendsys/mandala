@@ -993,13 +993,7 @@ fn fit_pattern_to_width(
             // emitted string.
             let fixed_bytes: usize =
                 prefix.iter().map(|g| g.len()).sum::<usize>() + suffix.iter().map(|g| g.len()).sum::<usize>();
-            let full_copies = fill_copies(
-                between_avail,
-                fill_cluster_w,
-                fill.len(),
-                fill_bytes,
-                fixed_bytes,
-            );
+            let full_copies = fill_copies(between_avail, fill_cluster_w, fill.len(), fill_bytes, fixed_bytes);
 
             let mut text = String::new();
             let mut cluster_count = 0;

@@ -742,6 +742,43 @@ fn test_text_floor_past_budget_beats_both_samples() {
         floor_w > narrow_w,
         "the floor must beat the proxy-only sample, got {floor_w} <= {narrow_w}"
     );
+
+    // The other direction, and the one the first version of this
+    // test missed. Above, every wide-shaping line sits inside the
+    // first MEASURED_LINE_BUDGET, so the positional prefix alone
+    // already measures them — deleting the widest sample left the
+    // whole suite green. Here the widest line sits PAST the budget
+    // and the proxy ranks it top, so the prefix cannot see it and
+    // only the widest sample can. Between the two cases, deleting
+    // either sample fails.
+    let long = "W".repeat(300);
+    let mut past = String::new();
+    for _ in 0..MEASURED_LINE_BUDGET {
+        past.push_str("x\n");
+    }
+    past.push_str(&long);
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        n.sections[0].text = past;
+    }
+    let (past_floor_w, _) = compute_one_node_text_floor(&doc.mindmap.nodes[&id]);
+
+    let mut long_only = doc.mindmap.nodes[&id].clone();
+    long_only.sections[0].text = long.clone();
+    let (long_w, _) = compute_one_node_text_floor(&long_only);
+
+    let mut short_only = doc.mindmap.nodes[&id].clone();
+    short_only.sections[0].text = "x".to_string();
+    let (short_w, _) = compute_one_node_text_floor(&short_only);
+
+    assert!(
+        long_w > short_w,
+        "fixture is wrong: the long line must shape wider ({long_w} vs {short_w})"
+    );
+    assert!(
+        past_floor_w >= long_w,
+        "the floor must cover a widest line that sits past the budget, got {past_floor_w} < {long_w}"
+    );
 }
 
 /// A non-finite section offset is skipped — the verifier flags
@@ -3798,7 +3835,9 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
         ),
         (
             "MAX_CANVAS_COORD",
-            "validate_node_position rejects out-of-bound node positions",
+            "validate_node_position rejects a caller-supplied node position; \
+             clamp_canvas_coord pins the computed ones (tree_cascade, flower_layout), \
+             which take in-bound inputs and can compute an out-of-bound result",
         ),
         (
             "MAX_NODE_AXIS",
@@ -3818,10 +3857,7 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
             "MAX_ANIMATION_MS",
             "no editor writer — animation timings are authored in the file only",
         ),
-        (
-            "MAX_SECTIONS_PER_NODE",
-            "add_section refuses past the cap",
-        ),
+        ("MAX_SECTIONS_PER_NODE", "add_section refuses past the cap"),
         (
             "MAX_MAP_BYTES",
             "no editor writer — a saved map's size is a consequence, not a set field",

@@ -647,8 +647,9 @@ fn spatial_descend_best(
 ///
 /// Cost: O(visited), plus one heap `Vec` holding the pending
 /// frontier — the sum of the unprocessed sibling rows along the
-/// current path, so O(depth) for a chain and O(n) for a shallow
-/// wide tree. That allocation is a deliberate trade against §B7:
+/// current path — **one element for a linear chain**, since each
+/// node's only child replaces it, O(n) for a shallow wide tree, and
+/// O(depth x branching) in general. That allocation is a deliberate trade against §B7:
 /// the previous shape did not avoid the storage, it kept the same
 /// data on the call stack, where a `.mindmap.json` deep enough to
 /// exhaust it aborted the process instead of merely costing memory.
