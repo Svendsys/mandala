@@ -56,9 +56,26 @@ they are canonical, `maptool verify` accepts them, and
 rectangle at `log::trace!` and says nothing in release. A spelling
 that is *not* in the list — a typo, or a value from a newer build —
 falls back the same way but emits a `log::warn!` naming it. The
-classifier behind that split is `ShapeSpelling` in `shape.rs`, and it
-reads the same list this section publishes, so a spelling added here
-becomes non-warning without a parser change.
+classifier behind that split is `ShapeSpelling` in `shape.rs`, and the
+list it consults is the `KNOWN_SHAPES` constant there — the only list
+any parser reads. Adding a spelling to that constant makes it
+non-warning at load time and valid under `maptool verify` with no
+parser change.
+
+The three lists in this section — the fence above, the live-shapes
+sentence, the "remaining values" parenthesis — are **restatements** of
+`KNOWN_SHAPES`, as is the ordinal table in
+`crates/maptool/src/convert/enums.rs` that `convert --legacy` emits
+from. None of the four is trusted. Baumhard's
+`test_shape_format_doc_publishes_exactly_known_shapes` reads this
+section back off disk and checks all three lists against the constant,
+deriving each expectation from the code rather than restating it;
+maptool's `legacy_shape_ordinals_are_canonical_spellings` does the same
+for the converter. So a spelling added to `KNOWN_SHAPES` and not to
+this section fails the first test, and a rename that leaves the
+converter emitting the old spelling — which would make every converted
+node warn on load and `maptool verify` reject a file this repo's own
+tool just wrote — fails the second.
 
 Today, `show_frame = true` only emits the glyph border when
 `shape == "rectangle"` — the four-run frame layout assumes an

@@ -198,6 +198,43 @@ path and move the result into place yourself.
    pass `convert --sections` runs, applied last so an already-cleaned
    tree converges on the post-section shape.
 
+### miMind `shape_type` ordinals
+
+Step 3 rewrites the integer `style.shape_type` as the named
+`style.shape`. The mapping is miMind's own Java enum order:
+
+| `shape_type` | `shape` |
+| --- | --- |
+| 0 | `rectangle` |
+| 1 | `rounded_rectangle` |
+| 2 | `ellipse` |
+| 3 | `diamond` |
+| 4 | `parallelogram` |
+| 5 | `hexagon` |
+
+Any other value — including a non-integer — converts to `rectangle`,
+ordinal 0, which is also the format default and the shape the runtime
+substitutes for anything it cannot draw.
+
+**This table is the contract, not a description of the code.**
+`LEGACY_SHAPE_ORDINALS` in `crates/maptool/src/convert/enums.rs` is an
+array indexed by the ordinal, so a row inserted in the middle would
+silently renumber every row below it and quietly change what old files
+convert to. `legacy_shape_ordinals_match_the_published_table` reads
+this table back off disk and fails when the two disagree, and
+`legacy_shape_ordinals_are_canonical_spellings` separately holds every
+spelling here to `KNOWN_SHAPES` in
+`lib/baumhard/src/gfx_structs/shape.rs` — the one list the runtime
+classifier and `maptool verify` both consult, so a spelling that
+drifted out of it would make `convert --legacy` write files
+`maptool verify` rejects.
+
+The other five enums step 3 converts (`layout.type`,
+`layout.direction`, `line_style`, `anchor_from`, `anchor_to`) have no
+published ordinal table and no pin; their mappings live only in
+`convert/enums.rs`. Giving them the same treatment is a separate
+change.
+
 ## Known limitations
 
 - **Orphaned nodes** (nodes whose `parent_id` references a non-existent
