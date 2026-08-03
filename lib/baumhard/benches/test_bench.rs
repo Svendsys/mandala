@@ -409,8 +409,17 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("shape_unrecognized_spelling_still_warns", |b| {
         b.iter(do_shape_unrecognized_spelling_still_warns)
     });
+    c.bench_function("shape_reporting_predicates_partition", |b| {
+        b.iter(do_shape_reporting_predicates_partition)
+    });
     c.bench_function("shape_classify_case_and_alias", |b| {
         b.iter(do_shape_classify_case_and_alias)
+    });
+    // Reads `format/enums.md` from disk on every iteration — same
+    // caveat as the testament entry below: this is a file-read
+    // number, kept for the §B8 one-bench-per-`do_*()` contract.
+    c.bench_function("shape_format_doc_publishes_exactly_known_shapes", |b| {
+        b.iter(do_shape_format_doc_publishes_exactly_known_shapes)
     });
     // Loads the demo map from disk on every iteration — a file-read
     // benchmark, not a classifier one. Kept in the harness for the

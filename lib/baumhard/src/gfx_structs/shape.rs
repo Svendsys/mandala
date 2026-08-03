@@ -81,19 +81,42 @@ pub const SHAPE_ID_RECTANGLE: u32 = 0;
 pub const SHAPE_ID_ELLIPSE: u32 = 1;
 
 /// Canonical named-enum spellings for `NodeStyle.shape`, as used by
-/// `format/enums.md` and by `maptool verify`. The runtime accepts
-/// these case-insensitively (and treats `"circle"` as an alias for
-/// `"ellipse"`); verify normalizes to lowercase before matching.
+/// `format/enums.md` and by `maptool verify`. Both sides compare the
+/// same way and therefore agree by construction:
+/// [`ShapeSpelling::classify`] here and `check_value` in
+/// `crates/maptool/src/verify/enums.rs` each reach for
+/// `eq_ignore_ascii_case` against this list, so `"HEXAGON"` loads
+/// quietly *and* verifies clean. `"circle"` is the runtime's one
+/// alias for `"ellipse"`; verify has no alias machinery and simply
+/// lists it.
 ///
-/// This is the **only** list of canonical spellings in the tree, and
-/// deliberately so: [`ShapeSpelling::classify`] consults it rather
-/// than repeating a set of literals, so adding a spelling here makes
-/// it a documented, non-warning value everywhere at once —
-/// `maptool verify` accepts it and the runtime stops calling it
-/// unknown — without anyone editing the parser. Entries are written
-/// lowercase; `test_shape_known_shapes_are_lowercase` pins that,
-/// because the case-insensitive compare here and verify's
-/// lowercase normalization only agree while it holds.
+/// This is the **only** list of canonical spellings any parser
+/// consults, and deliberately so: [`ShapeSpelling::classify`] reads
+/// it rather than repeating a set of literals, so adding a spelling
+/// here makes it a non-warning value at load time and an accepted one
+/// under `maptool verify` with nobody editing a parser. Two
+/// **restatements** of it exist elsewhere and are pinned back to it
+/// rather than trusted — `LEGACY_SHAPE_ORDINALS` in
+/// `crates/maptool/src/convert/enums.rs`, the legacy-ordinal →
+/// spelling table `convert --legacy` emits from, and the list
+/// `format/enums.md` publishes. Their pins are maptool's
+/// `legacy_shape_ordinals_are_canonical_spellings` and
+/// `test_shape_format_doc_publishes_exactly_known_shapes`; without
+/// them a rename here would leave the converter writing files this
+/// crate warns about and `maptool verify` rejects.
+///
+/// Entries are written lowercase and
+/// `test_shape_known_shapes_are_lowercase` pins that — **not**
+/// because the runtime and verify would otherwise disagree, since
+/// the paragraph above is why they cannot, but because two sibling
+/// tests compare with `slice::contains`, which is case-*sensitive*.
+/// `do_shape_classification_partitions_by_warning` asks whether a
+/// variant's [`NodeShape::style_spellings`] contains the entry, and
+/// `do_shape_variant_spellings_are_all_known` asks the mirror
+/// question of this list. An uppercase entry moves a spelling across
+/// the rendered / not-yet-rendered partition and sends both of them
+/// red; the lowercase pin is what names the cause instead of leaving
+/// two derived tests failing for a reason neither states.
 ///
 /// Membership here is a claim about the *format*, not about the
 /// renderer: most of these have no [`NodeShape`] variant yet and
@@ -137,6 +160,21 @@ pub enum ShapeSpelling {
     /// The empty string — the node names no shape at all, which is
     /// not an error and never was. Resolves to the
     /// [`NodeShape::default`] rectangle silently.
+    ///
+    /// **This is the one place the runtime and `maptool verify`
+    /// deliberately disagree, and the disagreement is correct.**
+    /// Verify runs `""` through the same `check_value` as every other
+    /// spelling, no entry matches, and it is flagged. The two tools
+    /// are asked different questions: verify is a linter run before
+    /// the map is opened, and an explicit `"shape": ""` is almost
+    /// certainly a mistake worth catching there; the loader is on an
+    /// interactive path where CODE_CONVENTIONS §9 says degrade and
+    /// keep running, and "the field is unset" is the one reading of
+    /// an empty string that cannot be an author error. Reaching this
+    /// case at all takes an explicit `"shape": ""` in the JSON —
+    /// `NodeStyle`'s `#[serde(default = "default_shape")]` fills an
+    /// absent key with `"rectangle"` — so the divergence is confined
+    /// to a value somebody typed on purpose.
     Unspecified,
     /// A canonical spelling that has a [`NodeShape`] variant behind
     /// it, so the renderer draws what the author asked for.
@@ -212,17 +250,25 @@ impl ShapeSpelling {
     ///
     /// Only [`ShapeSpelling::Unrecognized`] is — the other three are
     /// the format working as designed, and issue #118 is what
-    /// happened when they were reported as if they were not. This is
-    /// the predicate [`NodeShape::from_style_string`] reaches for
-    /// `log::warn!` on, and it is `pub` so that a consumer with a
-    /// different reporting surface (a linter, `maptool`, an editor
-    /// gutter) asks the same question rather than restating the
-    /// answer and drifting from it.
+    /// happened when they were reported as if they were not.
     ///
-    /// What this does *not* pin is which `log::` macro
-    /// `from_style_string` actually writes — that is observable only
-    /// through a log sink, and the crate has no test logger yet.
-    /// Keep the two aligned by hand until one lands.
+    /// **This is not a description of what
+    /// [`NodeShape::from_style_string`] does; it is what
+    /// `from_style_string` calls.** The distinction is the whole
+    /// point. An earlier draft had the judgment written out twice —
+    /// once here and once as a `match` arm at the log site — which is
+    /// precisely the twin surface `lib/baumhard/CONVENTIONS.md` §B4
+    /// records as the thing that drifts, and it would have been
+    /// introduced by the fix for a drift bug. There is one copy, and
+    /// the reporting path consults it, so a consumer with a different
+    /// surface (a linter, `maptool`, an editor gutter) asking the same
+    /// question gets the same answer the loader acted on rather than a
+    /// restatement of it.
+    ///
+    /// Paired with [`Self::is_quiet_fallback`], which answers the
+    /// remaining half of the reporting decision. The two are disjoint
+    /// and neither uses a `_` arm, so a fifth classification is a
+    /// build error in both.
     ///
     /// # Costs
     /// O(1), branch-only. No allocation.
@@ -234,6 +280,34 @@ impl ShapeSpelling {
             ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::KnownNotYetRendered => {
                 false
             }
+        }
+    }
+
+    /// Did the renderer substitute a rectangle for a spelling that is
+    /// perfectly valid, just not drawable yet?
+    ///
+    /// True for [`ShapeSpelling::KnownNotYetRendered`] alone.
+    /// [`ShapeSpelling::Unspecified`] is *not* a substitution — an
+    /// unset field asked for nothing — and
+    /// [`ShapeSpelling::Unrecognized`] is
+    /// [`Self::is_author_error`]'s business, not this one.
+    ///
+    /// The counterpart to [`Self::is_author_error`]: together the two
+    /// carry the entire "should anyone be told, and how loudly?"
+    /// decision, and [`NodeShape::from_style_string`] is a caller of
+    /// both rather than a second author of either. Also `pub` for the
+    /// same reason — an editor that wants to gray out "drawn as a
+    /// rectangle until a shader case lands" should ask rather than
+    /// re-derive.
+    ///
+    /// # Costs
+    /// O(1), branch-only. No allocation.
+    pub const fn is_quiet_fallback(self) -> bool {
+        match self {
+            ShapeSpelling::KnownNotYetRendered => true,
+            // Spelled out rather than `_`, for the reason
+            // `is_author_error` spells its own arms out.
+            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::Unrecognized => false,
         }
     }
 }
@@ -299,34 +373,48 @@ impl NodeShape {
     /// - anything else keeps the `log::warn!`, because there it is
     ///   accurate.
     ///
-    /// The `warn!` arm is exactly
-    /// [`ShapeSpelling::is_author_error`]'s `true` case; that
-    /// predicate is the library's answer to "should anyone be told?",
-    /// and this function's job is only to pick the macro.
+    /// **The two branches below are not a second copy of that
+    /// judgment — they are calls to it.**
+    /// [`ShapeSpelling::is_author_error`] owns "should anyone be
+    /// told?" and [`ShapeSpelling::is_quiet_fallback`] owns "was a
+    /// rectangle substituted for something valid?"; this function
+    /// only picks the macro each answer reaches. Hard-wiring either
+    /// predicate changes what a shipped build logs, which is the
+    /// property that makes a mutation test of them worth anything.
+    ///
+    /// The exhaustiveness that a `match` on [`ShapeSpelling`] used to
+    /// provide here has moved rather than gone: both predicates match
+    /// every variant with no `_` arm, so a fifth classification is a
+    /// build error in two places and cannot default into silence.
+    ///
+    /// Which macro each branch writes is pinned by
+    /// `log_routing::test_from_style_string_log_routing_is_pinned`,
+    /// which parses this file with `syn` and reads the macro path out
+    /// of each guarded block. That is the only observation of a `log::`
+    /// call available without a log sink, and it is enough: deleting
+    /// the reporting entirely, swapping the two macros, or moving one
+    /// out from behind its guard all fail it.
     ///
     /// Unknown values stay on disk untouched either way, so a
     /// round-trip through `maptool convert` doesn't lose them.
     ///
     /// # Costs
-    /// [`ShapeSpelling::classify`]'s compares plus one branch. No
-    /// allocation on any path; the `trace!` arm compiles out
-    /// entirely in release (`release_max_level_warn`).
+    /// [`ShapeSpelling::classify`]'s compares plus at most two
+    /// branch-only predicate calls. No allocation on any path; the
+    /// `trace!` arm compiles out entirely in release
+    /// (`release_max_level_warn`).
     pub fn from_style_string(s: &str) -> Self {
         let spelling = ShapeSpelling::classify(s);
-        match spelling {
-            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) => {}
-            ShapeSpelling::KnownNotYetRendered => {
-                log::trace!(
-                    "shape: {s:?} is a canonical shape with no renderer yet, \
-                     drawing it as Rectangle"
-                );
-            }
-            ShapeSpelling::Unrecognized => {
-                log::warn!(
-                    "shape: unknown shape {s:?}, \
-                     falling back to Rectangle"
-                );
-            }
+        if spelling.is_author_error() {
+            log::warn!(
+                "shape: unknown shape {s:?}, \
+                 falling back to Rectangle"
+            );
+        } else if spelling.is_quiet_fallback() {
+            log::trace!(
+                "shape: {s:?} is a canonical shape with no renderer yet, \
+                 drawing it as Rectangle"
+            );
         }
         spelling.resolve()
     }

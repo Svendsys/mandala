@@ -162,10 +162,25 @@ pub fn do_shape_variant_spellings_are_all_known() {
     }
 }
 
-/// `KNOWN_SHAPES` entries are written lowercase. The runtime's
-/// `eq_ignore_ascii_case` compare and `maptool verify`'s
-/// lowercase-normalize-then-match only agree while that holds, and
-/// nothing in the type system says so.
+/// `KNOWN_SHAPES` entries are written lowercase, and nothing in the
+/// type system says so.
+///
+/// **Not** because the runtime and `maptool verify` would otherwise
+/// disagree — both compare with `eq_ignore_ascii_case` against this
+/// same list (`ShapeSpelling::classify` here, `check_value` in
+/// `crates/maptool/src/verify/enums.rs`), so they agree on case by
+/// construction and `"HEXAGON"` in the list still verifies clean.
+///
+/// What the invariant protects is the two case-*sensitive*
+/// `slice::contains` calls in the sibling tests below:
+/// `do_shape_classification_partitions_by_warning` asks whether a
+/// variant's `style_spellings` contains the entry, and
+/// `do_shape_variant_spellings_are_all_known` asks the mirror
+/// question of `KNOWN_SHAPES`. Uppercase a variant-claimed spelling
+/// and it silently changes sides of the rendered / not-yet-rendered
+/// partition; both go red, and this test is what names the cause
+/// rather than leaving two derived failures neither of which says
+/// "the list is mixed case".
 #[test]
 pub fn test_shape_known_shapes_are_lowercase() {
     do_shape_known_shapes_are_lowercase();
@@ -218,6 +233,59 @@ pub fn do_shape_unrecognized_spelling_still_warns() {
     }
 }
 
+/// The two library-owned reporting predicates, pinned **as a pair**
+/// for every classification. `from_style_string` calls
+/// `is_author_error` to reach `log::warn!` and `is_quiet_fallback` to
+/// reach `log::trace!`, so between them these two booleans are the
+/// entire reporting contract of the shipped loader — not a test-only
+/// restatement of it.
+///
+/// Exhaustive by construction: the expectation comes out of a `match`
+/// with no `_` arm, so a fifth `ShapeSpelling` variant fails to
+/// compile here rather than defaulting into silence at the log site.
+///
+/// Disjointness is asserted too. A classification answering `true` to
+/// both would make what a load actually logs depend on the order
+/// `from_style_string` happens to test them in, which is exactly the
+/// kind of coupling the split was meant to remove.
+#[test]
+pub fn test_shape_reporting_predicates_partition() {
+    do_shape_reporting_predicates_partition();
+}
+
+pub fn do_shape_reporting_predicates_partition() {
+    let mut cases = vec![
+        ShapeSpelling::Unspecified,
+        ShapeSpelling::KnownNotYetRendered,
+        ShapeSpelling::Unrecognized,
+    ];
+    cases.extend(NodeShape::iter().map(ShapeSpelling::Rendered));
+    assert!(
+        cases.len() > 3,
+        "no NodeShape variant produced a Rendered case — the loop below \
+         would never exercise one"
+    );
+
+    for spelling in cases {
+        let expected = match spelling {
+            ShapeSpelling::Unrecognized => (true, false),
+            ShapeSpelling::KnownNotYetRendered => (false, true),
+            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) => (false, false),
+        };
+        assert_eq!(
+            (spelling.is_author_error(), spelling.is_quiet_fallback()),
+            expected,
+            "{spelling:?} answers the wrong (is_author_error, \
+             is_quiet_fallback) pair, which is what from_style_string logs on"
+        );
+        assert!(
+            !(spelling.is_author_error() && spelling.is_quiet_fallback()),
+            "{spelling:?} is both an author error and a quiet fallback, so \
+             what a load logs would depend on branch order"
+        );
+    }
+}
+
 /// The three spellings named in the issue, asserted one at a time
 /// because each pins a different property: `"HEXAGON"` that the
 /// canonical-but-unrendered path is case-insensitive (uppercase is
@@ -261,6 +329,172 @@ pub fn do_shape_classify_case_and_alias() {
 
     assert_eq!(ShapeSpelling::classify(""), ShapeSpelling::Unspecified);
     assert_eq!(ShapeSpelling::classify("").resolve(), NodeShape::Rectangle);
+}
+
+/// **`format/enums.md` restates `KNOWN_SHAPES`, so the doc is read
+/// rather than trusted.**
+///
+/// `shape.rs` calls its list the only one a parser consults, which is
+/// true, and the PR that introduced the classifier went further and
+/// called it the only list in the tree, which was not: the format doc
+/// publishes the vocabulary three times over in its `style.shape`
+/// section — once as the canonical fence, once as the "live shapes"
+/// sentence, once as the "remaining values" parenthesis — and nothing
+/// tied any of them to the constant. Drop or rename a `KNOWN_SHAPES`
+/// entry and the doc keeps publishing the old spelling to authors who
+/// will then write maps `maptool verify` rejects.
+///
+/// Each of the three is checked against a set *derived* from the code
+/// rather than restated here: the fence against `KNOWN_SHAPES` in
+/// order, the live sentence against the canonical spelling of each
+/// `NodeShape` variant, the remaining parenthesis against the entries
+/// that classify `KnownNotYetRendered`. The three are then required
+/// to cover `KNOWN_SHAPES` between them, so an entry cannot be
+/// dropped from the section as a whole either.
+///
+/// The converter's copy of the same vocabulary is pinned on maptool's
+/// side, by `legacy_shape_ordinals_are_canonical_spellings` — it lives
+/// there because baumhard does not depend on `maptool`.
+#[test]
+pub fn test_shape_format_doc_publishes_exactly_known_shapes() {
+    do_shape_format_doc_publishes_exactly_known_shapes();
+}
+
+pub fn do_shape_format_doc_publishes_exactly_known_shapes() {
+    let section = documented_shape_section();
+
+    // 1. The canonical fenced list, in order.
+    let fence = fenced_spellings(&section);
+    assert_eq!(
+        fence,
+        KNOWN_SHAPES.to_vec(),
+        "the `style.shape` code fence in format/enums.md no longer \
+         publishes exactly KNOWN_SHAPES, in order"
+    );
+
+    // 2. The "live shapes" sentence: one canonical spelling per
+    //    drawable variant, in variant order.
+    let live = backticked_spellings(paragraph_before(&section, "are **live shapes**"));
+    let expected_live: Vec<&str> = NodeShape::iter()
+        .map(|shape| {
+            *shape
+                .style_spellings()
+                .first()
+                .expect("every variant declares a canonical spelling")
+        })
+        .collect();
+    assert_eq!(
+        live, expected_live,
+        "format/enums.md's live-shapes sentence and the NodeShape \
+         variant set disagree about what the renderer can draw"
+    );
+
+    // 3. The "remaining values" parenthesis: exactly the canonical
+    //    spellings with no variant behind them yet.
+    let remaining = backticked_spellings(parenthesized_after(&section, "The remaining values ("));
+    let expected_remaining: Vec<&str> = KNOWN_SHAPES
+        .iter()
+        .copied()
+        .filter(|known| ShapeSpelling::classify(known) == ShapeSpelling::KnownNotYetRendered)
+        .collect();
+    assert_eq!(
+        remaining, expected_remaining,
+        "format/enums.md's \"remaining values\" list and the classifier \
+         disagree about which canonical spellings are not drawn yet"
+    );
+
+    // 4. Between them the two prose lists plus the aliases must cover
+    //    the whole constant, so no entry can quietly leave the
+    //    section.
+    for known in KNOWN_SHAPES {
+        // The alias case (`"circle"`) is named in prose rather than
+        // in either list, so a bare code span counts as coverage.
+        let code_span = format!("`{known:?}`");
+        let covered = live.contains(known) || remaining.contains(known) || section.contains(&code_span);
+        assert!(
+            covered,
+            "canonical spelling {known:?} is published by KNOWN_SHAPES but \
+             appears nowhere in format/enums.md's `style.shape` section"
+        );
+    }
+}
+
+/// The body of `format/enums.md`'s `### \`style.shape\`` section:
+/// everything between that heading and the next `###`.
+///
+/// Panics rather than returning empty if the heading is gone — a
+/// silent fallback would let this whole test pass vacuously, which is
+/// the failure mode it exists to prevent.
+fn documented_shape_section() -> String {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../format/enums.md");
+    let doc = std::fs::read_to_string(path).expect("format/enums.md must be readable");
+    let after = doc
+        .split_once("### `style.shape`")
+        .expect("format/enums.md must still document `style.shape`")
+        .1;
+    match after.split_once("\n### ") {
+        Some((section, _)) => section.to_string(),
+        None => after.to_string(),
+    }
+}
+
+/// The `"quoted"` spellings inside the section's first fenced code
+/// block, in source order.
+fn fenced_spellings(section: &str) -> Vec<&str> {
+    let after = section
+        .split_once("```")
+        .expect("the `style.shape` section must open a code fence")
+        .1;
+    let fence = after
+        .split_once("```")
+        .expect("the `style.shape` code fence must be closed")
+        .0;
+    quoted_spans(fence)
+}
+
+/// The part of the paragraph that runs up to `marker` — everything
+/// after the last blank line preceding it. Scoping to one paragraph
+/// is what keeps the fenced list and neighboring prose out of a
+/// sentence-level assertion.
+fn paragraph_before<'a>(section: &'a str, marker: &str) -> &'a str {
+    let head = section
+        .split_once(marker)
+        .unwrap_or_else(|| panic!("format/enums.md must still contain {marker:?}"))
+        .0;
+    head.rsplit("\n\n")
+        .next()
+        .expect("rsplit always yields a first element")
+}
+
+/// The text between `marker` and the first following `)`.
+fn parenthesized_after<'a>(section: &'a str, marker: &str) -> &'a str {
+    let after = section
+        .split_once(marker)
+        .unwrap_or_else(|| panic!("format/enums.md must still contain {marker:?}"))
+        .1;
+    after
+        .split_once(')')
+        .expect("the parenthesis opened by that marker must be closed")
+        .0
+}
+
+/// Spellings written as prose code spans — a backtick, a quoted
+/// spelling, a backtick. Prose also contains bare quoted words
+/// (`"conical"`), so the backticks are what tell a published spelling
+/// from an ordinary one.
+fn backticked_spellings(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for span in text.split('`') {
+        if let Some(inner) = span.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+            out.push(inner);
+        }
+    }
+    out
+}
+
+/// Every `"quoted"` span in `text`, in order.
+fn quoted_spans(text: &str) -> Vec<&str> {
+    text.split('"').skip(1).step_by(2).collect()
 }
 
 /// **Issue #118, against the file that produced it.** Every
@@ -476,4 +710,207 @@ pub fn do_shape_shader_ids_are_stable() {
     // alone can't drift them.
     assert_eq!(NodeShape::Rectangle.shader_id(), 0);
     assert_eq!(NodeShape::Ellipse.shader_id(), 1);
+}
+
+/// **Which `log::` macro each reporting branch reaches, pinned by
+/// parsing `shape.rs` itself.**
+///
+/// Every other test in this file asserts on a returned value, and a
+/// returned value cannot see a log call. That left issue #118's
+/// *second* requirement — "a value not in `KNOWN_SHAPES`: keep the
+/// `warn!`" — untested in a way that mattered: deleting the entire
+/// reporting block from `from_style_string` left the suite green, and
+/// so did swapping the two macros. The gap was never "which macro is
+/// written"; it was whether anything is written at all.
+///
+/// The closure everyone reached for first is a test logger, and
+/// `util::test_logger` really is on an unmerged branch (#117). It is
+/// not the only one. `syn` is already a baumhard dev-dependency for
+/// exactly this class of question — `util::serde_coverage` parses the
+/// crate's own sources so a contract can be *derived* from the code
+/// instead of restated beside it — and the routing of a `log::` macro
+/// is a fact about the source text. So this module reads it out of
+/// the source.
+///
+/// §B8 asks for a `do_*()` body and a bench entry per test; these two
+/// have neither, deliberately and with precedent. `syn` is a
+/// dev-dependency, so a `pub` body in this `pub mod tests` tree would
+/// not compile into the library, and `serde_coverage`'s own consumer
+/// tests are plain `#[cfg(test)]` tests for the same reason. Native
+/// only: it reads a file.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod log_routing {
+    use syn::{Block, Expr, ImplItem, Item, Path, Stmt, Type};
+
+    /// The `(guard predicate, `log::` macro)` pairs
+    /// `NodeShape::from_style_string` must contain, in source order.
+    ///
+    /// This is the reporting contract in one place: `warn!` behind
+    /// `is_author_error`, `trace!` behind `is_quiet_fallback`, and
+    /// nothing else. Changing the shape of the routing — a `match` on
+    /// some future `report()` enum, say — is meant to fail here, so
+    /// that moving the decision is a decision somebody makes rather
+    /// than one that happens.
+    const EXPECTED_ROUTING: &[(&str, &str)] = &[("is_author_error", "warn"), ("is_quiet_fallback", "trace")];
+
+    /// Stands in for the guard of a `log::` call that is not inside
+    /// an `if` at all — an unconditional warning, for instance.
+    const UNGUARDED: &str = "<unguarded>";
+
+    /// Macro names that count as reporting. `log` itself is here so a
+    /// switch to `log::log!(level, …)`, which moves the level into a
+    /// runtime value and out of this test's sight, shows up as a
+    /// changed pair rather than as silence.
+    const LOG_MACROS: &[&str] = &["error", "warn", "info", "debug", "trace", "log"];
+
+    /// The pinned routing, read out of the shipped source.
+    #[test]
+    fn test_from_style_string_log_routing_is_pinned() {
+        let mut found = Vec::new();
+        walk_block(&from_style_string_body(), None, &mut found);
+
+        let expected: Vec<(String, String)> = EXPECTED_ROUTING
+            .iter()
+            .map(|(guard, level)| ((*guard).to_string(), (*level).to_string()))
+            .collect();
+        assert!(
+            !expected.is_empty(),
+            "EXPECTED_ROUTING is empty — this test would pass vacuously"
+        );
+        assert_eq!(
+            found, expected,
+            "NodeShape::from_style_string's log routing changed. An empty \
+             list means the reporting was deleted outright, which is issue \
+             #118's second requirement silently removed; a {UNGUARDED:?} \
+             guard means a log call escaped both reporting predicates; a \
+             changed level means warn! and trace! swapped places."
+        );
+    }
+
+    /// Positive control for the walker, so a green run above cannot
+    /// mean "the parse found nothing and said nothing". Feeds it a
+    /// block with both levels transposed and one unguarded call, and
+    /// requires it to report all three.
+    #[test]
+    fn test_log_routing_walker_reports_a_mis_routed_call() {
+        let block: Block = syn::parse_str(
+            r#"{
+                if spelling.is_author_error() {
+                    log::trace!("transposed");
+                } else if spelling.is_quiet_fallback() {
+                    log::warn!("transposed");
+                }
+                log::error!("no guard at all");
+            }"#,
+        )
+        .expect("the control snippet must parse as a block");
+
+        let mut found = Vec::new();
+        walk_block(&block, None, &mut found);
+        assert_eq!(
+            found,
+            vec![
+                ("is_author_error".to_string(), "trace".to_string()),
+                ("is_quiet_fallback".to_string(), "warn".to_string()),
+                (UNGUARDED.to_string(), "error".to_string()),
+            ],
+            "the walker did not see a routing it was handed directly"
+        );
+    }
+
+    /// The body of `NodeShape::from_style_string`, parsed out of
+    /// `shape.rs`. Panics if the function is gone: a silent skip
+    /// would turn the pin above into a no-op.
+    fn from_style_string_body() -> Block {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/gfx_structs/shape.rs");
+        let text = std::fs::read_to_string(path).expect("shape.rs must be readable");
+        let file = syn::parse_file(&text).expect("shape.rs must parse as Rust");
+        for item in &file.items {
+            let Item::Impl(item) = item else { continue };
+            if !is_impl_for(&item.self_ty, "NodeShape") {
+                continue;
+            }
+            for member in &item.items {
+                if let ImplItem::Fn(function) = member {
+                    if function.sig.ident == "from_style_string" {
+                        return function.block.clone();
+                    }
+                }
+            }
+        }
+        panic!("shape.rs no longer defines NodeShape::from_style_string");
+    }
+
+    fn is_impl_for(ty: &Type, name: &str) -> bool {
+        match ty {
+            Type::Path(path) => path
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == name),
+            _ => false,
+        }
+    }
+
+    /// Record every reporting macro in `block`, tagged with the
+    /// method name of the `if` condition guarding it.
+    fn walk_block(block: &Block, guard: Option<&str>, out: &mut Vec<(String, String)>) {
+        for stmt in &block.stmts {
+            match stmt {
+                Stmt::Expr(expr, _) => walk_expr(expr, guard, out),
+                Stmt::Local(local) => {
+                    if let Some(init) = &local.init {
+                        walk_expr(&init.expr, guard, out);
+                    }
+                }
+                Stmt::Macro(node) => record(&node.mac.path, guard, out),
+                Stmt::Item(_) => {}
+            }
+        }
+    }
+
+    fn walk_expr(expr: &Expr, guard: Option<&str>, out: &mut Vec<(String, String)>) {
+        match expr {
+            Expr::If(node) => {
+                let inner = guard_name(&node.cond);
+                walk_block(&node.then_branch, inner.as_deref(), out);
+                if let Some((_, otherwise)) = &node.else_branch {
+                    walk_expr(otherwise, guard, out);
+                }
+            }
+            Expr::Match(node) => {
+                for arm in &node.arms {
+                    walk_expr(&arm.body, guard, out);
+                }
+            }
+            Expr::Block(node) => walk_block(&node.block, guard, out),
+            Expr::Macro(node) => record(&node.mac.path, guard, out),
+            _ => {}
+        }
+    }
+
+    /// The method an `if` condition calls, which is how a guard is
+    /// named here. A condition that is not a plain method call
+    /// leaves its branch `UNGUARDED`, so replacing
+    /// `spelling.is_author_error()` with an inlined comparison fails
+    /// the pin rather than passing it under a new name.
+    fn guard_name(cond: &Expr) -> Option<String> {
+        match cond {
+            Expr::MethodCall(call) => Some(call.method.to_string()),
+            _ => None,
+        }
+    }
+
+    fn record(path: &Path, guard: Option<&str>, out: &mut Vec<(String, String)>) {
+        let Some(last) = path.segments.last() else { return };
+        let name = last.ident.to_string();
+        let from_log = path.segments.len() == 1
+            || path
+                .segments
+                .first()
+                .is_some_and(|segment| segment.ident == "log");
+        if from_log && LOG_MACROS.contains(&name.as_str()) {
+            out.push((guard.unwrap_or(UNGUARDED).to_string(), name));
+        }
+    }
 }

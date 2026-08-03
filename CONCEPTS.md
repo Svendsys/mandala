@@ -641,10 +641,21 @@ than the variant set: `"hexagon"`, `"diamond"`,
 have no shader case yet. `ShapeSpelling` is the pure
 classifier that separates those from a genuine typo —
 `Rendered` / `KnownNotYetRendered` / `Unrecognized` /
-`Unspecified` — so `from_style_string` can degrade a
-canonical-but-undrawn spelling at `trace!` and reserve
-`warn!` for values nobody knows. Before it existed, every
-hexagon in the demo map warned on every load (issue #118).
+`Unspecified` — and `is_author_error` / `is_quiet_fallback`
+are the two predicates it exposes for the reporting
+decision. `from_style_string` *calls* those rather than
+restating them, so a canonical-but-undrawn spelling degrades
+at `trace!` and `warn!` stays reserved for values nobody
+knows. Before it existed, every hexagon in the demo map
+warned on every load (issue #118).
+
+`KNOWN_SHAPES` is restated in two other places — the
+published list in `format/enums.md` and the legacy-ordinal
+table in `crates/maptool/src/convert/enums.rs` — and both are
+pinned back to it by tests that read the restatement and
+derive the expectation from the constant, so widening the
+vocabulary is still one edit plus the copies the suite names
+for you.
 
 Shape-aware borders (glyph-drawn frames that follow
 the ellipse outline, not just the AABB) wait on the
