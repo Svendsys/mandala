@@ -263,13 +263,10 @@ impl MindMapDocument {
     pub fn set_node_border_config(&mut self, node_id: &str, edits: BorderConfigEdits) -> BorderEditOutcome {
         // Screened before anything is touched, and against the
         // loader's own rule rather than a copy of it. Atomic: a
-        // refusal leaves the node exactly as it was.
-        let rejected = border_glyph_edit_violations(&edits);
-        if !rejected.is_empty() {
-            return BorderEditOutcome {
-                rejected,
-                ..Default::default()
-            };
+        // refusal leaves the node exactly as it was, preview
+        // included.
+        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+            return refusal;
         }
         // Scope-gated implicit cancel: a committing per-node edit
         // only clears previews whose visual scope it overlaps —
@@ -353,6 +350,14 @@ impl MindMapDocument {
         section_idx: usize,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
+        // See `set_node_border_config`: refuse an over-ceiling glyph
+        // before the preview is canceled. The loader screens a
+        // section's `frame_border` exactly as it screens a node's
+        // `style.border`, so this surface authors the same
+        // unopenable file when it is left unguarded.
+        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+            return refusal;
+        }
         // Scope-gated implicit cancel — only clear previews whose
         // visual scope this commit overlaps: `Sections(_)` (same
         // per-section surface) and the two `CanvasSectionFrame*`
@@ -417,6 +422,14 @@ impl MindMapDocument {
     /// field in one step. Same posture as the
     /// `theme switch` verb.
     pub fn set_canvas_default_border(&mut self, edits: BorderConfigEdits) -> BorderEditOutcome {
+        // See `set_node_border_config`: refuse before the preview is
+        // canceled and the `Canvas` is cloned for undo.
+        // `canvas_numeric_violations` screens `default_border` with
+        // the same rule the per-node door uses, so this surface is
+        // no less able to author a map that will not reopen.
+        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+            return refusal;
+        }
         // Scope-gated implicit cancel — `CanvasDefault` previews
         // share the canvas-border slot directly; `Nodes(_)`
         // previews render against per-node-resolved styles which
@@ -483,6 +496,13 @@ impl MindMapDocument {
         focused: bool,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
+        // See `set_node_border_config`. Both slots this writes —
+        // `default_section_frame_border` and
+        // `default_focused_section_frame_border` — are screened by
+        // `canvas_numeric_violations` at load.
+        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+            return refusal;
+        }
         // Scope-gated implicit cancel — clear previews whose
         // visual scope this commit overlaps:
         // `CanvasSectionFrame[Focused]` (same canvas slot) and
@@ -836,14 +856,21 @@ pub(super) fn apply_border_edits(
     edits: &BorderConfigEdits,
     outcome: &mut BorderEditOutcome,
 ) -> bool {
-    let mut changed = false;
+    // Config fields first: the slot applier screens the eight glyph
+    // fields and refuses the whole bundle. Running it *before* the
+    // `visible` write is what keeps that refusal atomic — otherwise
+    // `border on top=<over-ceiling>` would flip `show_frame` and
+    // then decline the glyph, leaving half the command applied.
+    let mut changed = apply_glyph_border_edits_to_slot(&mut node.style.border, edits, outcome);
+    if !outcome.rejected.is_empty() {
+        return false;
+    }
     if let Some(v) = edits.visible {
         if node.style.show_frame != v {
             node.style.show_frame = v;
             changed = true;
         }
     }
-    changed |= apply_glyph_border_edits_to_slot(&mut node.style.border, edits, outcome);
     changed
 }
 
@@ -868,6 +895,25 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
     edits: &BorderConfigEdits,
     outcome: &mut BorderEditOutcome,
 ) -> bool {
+    // The eight glyph fields are screened *here* — at the one point
+    // every border writer funnels through — rather than at each
+    // setter. This is the same layer the `font_size_pt` and
+    // `padding` clamps below already occupy, and putting the glyph
+    // screen anywhere else is what let three of the four writers go
+    // unguarded (`section frame`, `canvas border`,
+    // `canvas section-frame`) while the fourth looked like it
+    // settled the class.
+    //
+    // Returning `false` means "nothing changed", so a refusal cannot
+    // push an undo entry or flip `dirty`; the caller reads
+    // `outcome.rejected` to report it. The screen runs before the
+    // slot is touched, which is what makes the refusal atomic.
+    let rejected = border_glyph_edit_violations(edits);
+    if !rejected.is_empty() {
+        outcome.rejected = rejected;
+        return false;
+    }
+
     if let OptionEdit::Set(p) = &edits.preset {
         outcome.requested_preset = Some(p.clone());
     }
@@ -962,6 +1008,29 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
 /// `validate::border_glyph_violations`, so the writer and the door
 /// cannot drift to different ceilings. Empty for an edit set that
 /// touches no glyph.
+/// Refuse a glyph-bearing edit bundle before the setter takes any
+/// side effect — canceling a live preview, cloning a `Canvas` for
+/// the undo stack.
+///
+/// [`apply_glyph_border_edits_to_slot`] screens the same fields and
+/// is the guarantee that no writer can save a map the loader then
+/// refuses to open. This is the earlier, politer stop, so a declined
+/// edit does not also throw away the preview the user was looking
+/// at. A writer that forgets to call it loses a preview and nothing
+/// more; a writer that skipped the screen entirely would author an
+/// unopenable file, which is why the load-bearing copy lives at the
+/// chokepoint and not here.
+fn refuse_border_glyph_edits(edits: &BorderConfigEdits) -> Option<BorderEditOutcome> {
+    let rejected = border_glyph_edit_violations(edits);
+    if rejected.is_empty() {
+        return None;
+    }
+    Some(BorderEditOutcome {
+        rejected,
+        ..Default::default()
+    })
+}
+
 fn border_glyph_edit_violations(edits: &BorderConfigEdits) -> Vec<String> {
     use crate::application::document::OptionEdit;
     let mut out = Vec::new();

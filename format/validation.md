@@ -204,7 +204,7 @@ category; the loader refuses them outright.
 | Positions, section offsets, Bezier control points | finite, `|v|` ≤ `1e9` |
 | Text runs | sorted, non-overlapping, non-empty, `end` ≤ the section's grapheme count |
 | Connection body / cap glyphs | ≤ 16 grapheme clusters **and** ≤ 512 bytes (each is re-emitted per sampled point, and one cluster can carry unlimited combining marks — the cluster count keeps it a motif, the byte count keeps `bytes × samples` finite) |
-| Border glyphs — all eight of `style.border.glyphs` | ≤ 64 grapheme clusters **and** ≤ 1024 bytes. The four sides are patterns repeated to fill an edge; the four corners are emitted verbatim and looked up in the glyph-metric cache four times per node **per frame**. The shaping is memoized, but the cache key is an owned copy of the glyph built before the lookup, so an unbounded corner is an unbounded clone every frame and a permanent cache entry. Paired for the same reason as the connection glyph |
+| Border glyphs — all eight of `glyphs`, on every slot that carries a border config: a node's `style.border`, a section's `frame_border`, and the canvas's `default_border` / `default_section_frame_border` / `default_focused_section_frame_border` | ≤ 64 grapheme clusters **and** ≤ 1024 bytes. The four sides are patterns repeated to fill an edge; the four corners are emitted verbatim and looked up in the glyph-metric cache four times per node **per frame**. The shaping is memoized, but the cache key is an owned copy of the glyph built before the lookup, so an unbounded corner is an unbounded clone every frame and a permanent cache entry. Paired for the same reason as the connection glyph |
 | Animation envelope — `duration_ms`, `delay_ms` | ≤ `60_000` ms each |
 | Zoom windows | finite, non-negative, not inverted |
 | Whole file | ≤ 256 MiB |
@@ -225,6 +225,25 @@ clamped too. `border padding=` and `spacing` were exactly that, and
 `test_extreme_editor_writes_still_reload` is where the property is
 pinned: it drives each setter past its bound and round-trips through
 the real save and the real strict load.
+
+**Guard at the chokepoint, not at the caller.** Where several setters
+write the same bounded field, the screen belongs in the one function
+they share. The border glyphs are the cautionary case: the same
+ceiling governs five slots across four setters, the screen was first
+added to the per-node setter, and the other three kept writing maps
+that would not reopen — while the per-node round-trip test passed and
+made the gap invisible. `apply_glyph_border_edits_to_slot` holds it
+now, beside the `font_size_pt` and `padding` clamps that were always
+at that level and were always complete because of it.
+
+`test_every_loader_bound_names_its_writer_side_guard` is the
+registry that keeps the two ends in step. It **derives** the bound
+set rather than listing it — every constant declared in baumhard that
+`model/validate.rs` or `mindmap/loader.rs` consults in code — so a
+bound added in any file, at any visibility, needs a row naming the
+writer that guards it. What it cannot check is that the named writer
+is the *only* one; that is what the per-surface round-trip cases are
+for.
 
 ## Running verify in CI
 

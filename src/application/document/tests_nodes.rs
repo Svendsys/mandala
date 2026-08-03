@@ -3784,6 +3784,71 @@ fn test_extreme_editor_writes_still_reload() {
         }
     }
 
+    // ...on **every** surface that writes a `GlyphBorderConfig`, not
+    // just the per-node one. The loader screens a section's
+    // `frame_border` and all three canvas slots with the same
+    // `border_config_violations`, so each of these authored an
+    // unopenable map for as long as only `set_node_border_config`
+    // screened. That the per-node case above passed is exactly what
+    // made the gap invisible.
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let glyph_edits = |g: &str| BorderConfigEdits {
+        side_top: OptionEdit::Set(g.to_string()),
+        ..Default::default()
+    };
+
+    let id = node_id.clone();
+    let g = over.clone();
+    let reloaded = round_trip("section-frame-glyph", &move |doc| {
+        let outcome = doc.set_section_frame_border_config(&id, 0, glyph_edits(&g));
+        assert!(
+            !outcome.rejected.is_empty() && !outcome.changed,
+            "`section frame top=` must refuse an over-long glyph atomically"
+        );
+    });
+    assert!(
+        reloaded.nodes[&node_id].sections[0]
+            .frame_border
+            .as_ref()
+            .and_then(|b| b.glyphs.as_ref())
+            .is_none_or(|g| baumhard::util::grapheme_chad::count_grapheme_clusters(&g.top)
+                <= baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS),
+        "a refused section-frame glyph must not have reached the file"
+    );
+
+    // The three canvas slots. These matter more than the per-element
+    // ones, not less: a canvas default is the fallback for every
+    // node or section that does not override it.
+    let canvas_cases: [(&str, Option<bool>); 3] = [
+        ("canvas-default-glyph", None),
+        ("canvas-section-frame-glyph", Some(false)),
+        ("canvas-section-frame-focused-glyph", Some(true)),
+    ];
+    for (label, focused) in canvas_cases {
+        let g = over.clone();
+        let reloaded = round_trip(label, &move |doc| {
+            let outcome = match focused {
+                None => doc.set_canvas_default_border(glyph_edits(&g)),
+                Some(f) => doc.set_canvas_default_section_frame_border_config(f, glyph_edits(&g)),
+            };
+            assert!(
+                !outcome.rejected.is_empty() && !outcome.changed,
+                "{label}: an over-long canvas border glyph must be refused atomically"
+            );
+        });
+        let slot = match focused {
+            None => reloaded.canvas.default_border.as_ref(),
+            Some(false) => reloaded.canvas.default_section_frame_border.as_ref(),
+            Some(true) => reloaded.canvas.default_focused_section_frame_border.as_ref(),
+        };
+        assert!(
+            slot.and_then(|b| b.glyphs.as_ref())
+                .is_none_or(|g| baumhard::util::grapheme_chad::count_grapheme_clusters(&g.top)
+                    <= baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS),
+            "{label}: a refused glyph must not have reached the file"
+        );
+    }
+
     // A negative gap is a legitimate tightening, so it must survive
     // the round trip unchanged rather than be clamped away.
     let reloaded = round_trip("spacing-tight", &|doc| {
@@ -3802,7 +3867,7 @@ fn test_extreme_editor_writes_still_reload() {
 /// `format/validation.md` states the property this pins: a value the
 /// editor can write must be a value the loader accepts. It is not
 /// enforced by the type system — it holds because each setter
-/// screens or clamps — and it has now been broken three separate
+/// screens or clamps — and it has now been broken four separate
 /// times, each time by adding a bound at the loader and forgetting
 /// the writer. `font size=`, `border padding=`, `spacing`, node
 /// position and the eight border glyphs were each found that way,
@@ -3810,10 +3875,54 @@ fn test_extreme_editor_writes_still_reload() {
 ///
 /// The tests that were supposed to catch it enumerate *setters*, so
 /// they only ever cover the ones somebody remembered. This
-/// enumerates the **bounds** instead: every constant the loader
-/// rejects on is listed here with the writer that guards it, and a
-/// new constant with no entry fails the build rather than shipping
-/// a lockout.
+/// enumerates the **bounds** instead.
+///
+/// # The bound set is derived, not listed
+///
+/// An earlier version of this test read one file —
+/// `model/validate.rs` — for `pub const`. That was wrong in four
+/// ways at once, and a review round demonstrated each against a
+/// modified tree:
+///
+/// - **Four of its own rows named constants declared elsewhere**
+///   (`fonts.rs`, `model/node.rs`, `loader.rs`), so those rows were
+///   inert prose. The two bounds behind two of the historical
+///   lockouts live in the unscanned files — this test would not have
+///   caught either of the bugs it cites as its motivation.
+/// - **`pub(crate) const` and `pub static` were invisible**, since
+///   only the literal prefix `pub const ` was matched.
+/// - **Membership was a substring test**, so a new constant whose
+///   name is a substring of an existing row was absorbed silently.
+/// - **The writer column was never read**, so a row naming a deleted
+///   function stayed green — and the row for the border glyphs was
+///   false at the moment it was written.
+///
+/// So the set is derived instead. A loader-enforced bound is a
+/// constant the rejection path *consults*: every `const` / `static`
+/// declared anywhere in baumhard, intersected with the identifiers
+/// `model/validate.rs` and `mindmap/loader.rs` reference outside
+/// their own test modules. That reaches bounds in five files today
+/// and follows one that moves to a sixth tomorrow, with nothing to
+/// update here.
+///
+/// # What it still cannot see
+///
+/// Stated so this reads as a decision rather than a claim of
+/// completeness — the *previous* version of this test was described
+/// as closing the class, and a live fourth instance was sitting in
+/// the same delta while it passed:
+///
+/// - **An inlined literal.** A bound written as `1.0e9` at the
+///   comparison site is not a constant and is not derivable here.
+/// - **A rejection path outside those two files.** The scan reads
+///   `validate.rs` and `loader.rs`; a module that grows its own
+///   rejection is invisible until it is added to `REJECTION_PATHS`.
+/// - **Whether the named writer is the *only* writer.** The row for
+///   the border glyphs was true of one writer and false of three
+///   others when it was written. What is checked is that each named
+///   symbol exists; that it is exhaustive is a claim the prose
+///   makes and `test_extreme_editor_writes_still_reload` exercises
+///   per surface.
 ///
 /// This is a registry, not a behavior test — the behavior is pinned
 /// by `test_extreme_editor_writes_still_reload`, which drives the
@@ -3821,75 +3930,388 @@ fn test_extreme_editor_writes_still_reload() {
 /// no writer at all.
 #[test]
 fn test_every_loader_bound_names_its_writer_side_guard() {
-    // (constant, the writer that keeps the editor inside it)
+    // (constant, the symbols that keep the editor inside it, prose)
     //
-    // Adding a `pub const MAX_*` to `model::validate` that the
-    // loader rejects on, without adding a row here, is the bug this
-    // exists to make loud.
-    let registry: &[(&str, &str)] = &[
+    // The symbol list is read: each name must exist as a function in
+    // the workspace, so a row naming something deleted or renamed
+    // fails rather than sitting green. An empty list means "no
+    // editor writer" and the prose must say why.
+    let registry: &[(&str, &[&str], &str)] = &[
         (
-            "MIN_FONT_SIZE_PT / MAX_FONT_SIZE_PT",
+            "MIN_FONT_SIZE_PT",
+            &["clamp_font_metric", "clamp_run_size_pt", "resolve_font_triple"],
+            "the same three clamps as MAX_FONT_SIZE_PT — it is the lower half of one window",
+        ),
+        (
+            "MAX_FONT_SIZE_PT",
+            &["clamp_font_metric", "clamp_run_size_pt", "resolve_font_triple"],
             "GlyphArea::set_*_clamped + apply_operation; clamp_run_size_pt for the three \
              text-run setters; resolve_font_triple for the edge channels; clamp_font_metric \
              for the border font size",
         ),
         (
             "MAX_CANVAS_COORD",
+            &["validate_node_position", "clamp_canvas_coord"],
             "validate_node_position rejects a caller-supplied node position; \
              clamp_canvas_coord pins the computed ones (tree_cascade, flower_layout), \
              which take in-bound inputs and can compute an out-of-bound result",
         ),
         (
             "MAX_NODE_AXIS",
+            &["clamp_node_size_to_ceiling", "clamp_to_bound"],
             "clamp_node_size_to_ceiling for node size; clamp_to_bound for border padding \
              and edge spacing",
         ),
         (
-            "MAX_BORDER_GLYPH_CLUSTERS / MAX_BORDER_GLYPH_BYTES",
-            "set_node_border_config refuses the edit via border_glyph_edit_violations",
+            "MAX_BORDER_GLYPH_CLUSTERS",
+            &["apply_glyph_border_edits_to_slot", "border_glyph_edit_violations"],
+            "screened at apply_glyph_border_edits_to_slot — the chokepoint every border \
+             writer funnels through, so all four surfaces (node style.border, section \
+             frame_border, canvas default_border, canvas section-frame) are covered by \
+             one screen. An earlier row named the per-node setter instead, which is \
+             precisely how the other three stayed unguarded",
         ),
         (
-            "MAX_CONNECTION_GLYPH_GRAPHEMES / MAX_CONNECTION_GLYPH_BYTES",
+            "MAX_BORDER_GLYPH_BYTES",
+            &["apply_glyph_border_edits_to_slot", "border_glyph_edit_violations"],
+            "same screen as MAX_BORDER_GLYPH_CLUSTERS — border_glyph_violations checks \
+             both ceilings in one call",
+        ),
+        (
+            "MAX_CONNECTION_GLYPH_GRAPHEMES",
+            &[],
             "no editor writer — the connection body/cap glyphs are authored in the file \
              only; there is no console verb or setter that writes them",
         ),
         (
+            "MAX_CONNECTION_GLYPH_BYTES",
+            &[],
+            "no editor writer — same field as MAX_CONNECTION_GLYPH_GRAPHEMES, second ceiling",
+        ),
+        (
             "MAX_ANIMATION_MS",
+            &[],
             "no editor writer — animation timings are authored in the file only",
         ),
-        ("MAX_SECTIONS_PER_NODE", "add_section refuses past the cap"),
+        (
+            "MAX_SECTIONS_PER_NODE",
+            &["add_section"],
+            "add_section refuses past the cap",
+        ),
         (
             "MAX_MAP_BYTES",
+            &[],
             "no editor writer — a saved map's size is a consequence, not a set field",
+        ),
+        (
+            "INVERTED_SIZE_WINDOW",
+            &["clamp_node_size_to_ceiling"],
+            "not a magnitude bound but a consistency one: the loader rejects a min/max \
+             window whose ends are crossed. No setter writes both ends of a window in one \
+             call, and clamp_node_size_to_ceiling keeps the size it does write inside \
+             MAX_NODE_AXIS",
+        ),
+        (
+            "INVERTED_ZOOM_WINDOW",
+            &[],
+            "no editor writer — the zoom-visibility window is authored in the file only; \
+             no console verb or setter writes either end",
         ),
     ];
 
-    // Every `pub const` the validate module exposes must appear.
-    // Read from the source rather than a hand-copied list, so the
-    // check cannot silently fall behind the module.
-    let src = include_str!("../../../lib/baumhard/src/mindmap/model/validate.rs");
-    let mut declared: Vec<&str> = Vec::new();
-    for line in src.lines() {
-        let line = line.trim_start();
-        if let Some(rest) = line.strip_prefix("pub const ") {
-            if let Some(name) = rest.split(':').next() {
-                declared.push(name.trim());
+    // The files whose contents *are* the rejection. A constant one of
+    // these consults is a bound a hostile or mistaken value is
+    // measured against, which is exactly the set that needs a
+    // writer-side guard.
+    const REJECTION_PATHS: &[&str] = &[
+        "lib/baumhard/src/mindmap/model/validate.rs",
+        "lib/baumhard/src/mindmap/loader.rs",
+    ];
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Every `const` / `static` declared anywhere in baumhard, at any
+    // visibility. `pub(crate) const` and `pub static` were both
+    // invisible to the previous scan.
+    let mut declared: std::collections::BTreeMap<String, String> = Default::default();
+    let mut stack = vec![root.join("lib/baumhard/src")];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}"));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("read a baumhard source file");
+            for line in src.lines() {
+                let line = line.trim_start();
+                // Step past any visibility qualifier, then require
+                // `const` or `static` and an ALL-CAPS name.
+                let rest = match line.strip_prefix("pub") {
+                    Some(after) => after.trim_start().strip_prefix('(').map_or(after, |p| {
+                        p.split_once(')').map_or(p, |(_, tail)| tail)
+                    }),
+                    None => line,
+                }
+                .trim_start();
+                let rest = match rest
+                    .strip_prefix("const ")
+                    .or_else(|| rest.strip_prefix("static "))
+                {
+                    Some(r) => r,
+                    None => continue,
+                };
+                let name: String = rest
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
+                    .collect();
+                // Require the declaration to actually be `NAME:` —
+                // otherwise `const fn foo` and friends leak in.
+                if name.len() > 2 && rest.trim_start()[name.len()..].trim_start().starts_with(':') {
+                    declared
+                        .entry(name)
+                        .or_insert_with(|| path.display().to_string());
+                }
             }
         }
     }
     assert!(
-        !declared.is_empty(),
-        "the source scan found no `pub const` — the parse, not the module, is what broke"
+        declared.len() > 50,
+        "the declaration scan found only {} constants — the parse, not the crate, is what \
+         broke",
+        declared.len()
     );
 
-    for name in &declared {
-        let covered = registry.iter().any(|(consts, _)| consts.contains(name));
+    // Comments and string literals are not references. `validate.rs`
+    // *documents* `MAX_BORDER_SIDE_BYTES` and `MAX_PATH_SAMPLES` in
+    // prose while consulting neither, so a raw text scan reports two
+    // bounds that have no rejection behind them — and the registry
+    // grows two rows describing a check that does not exist.
+    //
+    // Over-stripping is the dangerous direction (a swallowed
+    // reference silently shrinks the bound set), so the two controls
+    // below hold this to a known-code and a known-prose mention.
+    fn code_only(src: &str) -> String {
+        let b: Vec<char> = src.chars().collect();
+        let mut out = String::with_capacity(src.len());
+        let mut i = 0;
+        while i < b.len() {
+            // Line comment.
+            if b[i] == '/' && b.get(i + 1) == Some(&'/') {
+                while i < b.len() && b[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            // Block comment, nested per Rust's rules.
+            if b[i] == '/' && b.get(i + 1) == Some(&'*') {
+                let mut depth = 1usize;
+                i += 2;
+                while i < b.len() && depth > 0 {
+                    if b[i] == '/' && b.get(i + 1) == Some(&'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if b[i] == '*' && b.get(i + 1) == Some(&'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push(' ');
+                continue;
+            }
+            // Char literal — checked before the raw-string and string
+            // arms so a `'"'` cannot open a string that eats the code
+            // after it. A lifetime (`'a`) has no closing quote and
+            // falls through to the copy arm.
+            if b[i] == '\'' && (b.get(i + 2) == Some(&'\'') || b.get(i + 1) == Some(&'\\')) {
+                i += 1;
+                if b.get(i) == Some(&'\\') {
+                    i += 1;
+                }
+                while i < b.len() && b[i] != '\'' {
+                    i += 1;
+                }
+                i += 1;
+                out.push(' ');
+                continue;
+            }
+            // Raw string, any hash count.
+            if b[i] == 'r' && matches!(b.get(i + 1), Some('"') | Some('#')) {
+                let mut j = i + 1;
+                let mut hashes = 0usize;
+                while b.get(j) == Some(&'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if b.get(j) == Some(&'"') {
+                    j += 1;
+                    while j < b.len() {
+                        if b[j] == '"' {
+                            let mut k = j + 1;
+                            let mut n = 0;
+                            while n < hashes && b.get(k) == Some(&'#') {
+                                k += 1;
+                                n += 1;
+                            }
+                            if n == hashes {
+                                j = k;
+                                break;
+                            }
+                        }
+                        j += 1;
+                    }
+                    out.push(' ');
+                    i = j;
+                    continue;
+                }
+            }
+            // Ordinary string.
+            if b[i] == '"' {
+                i += 1;
+                while i < b.len() {
+                    if b[i] == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if b[i] == '"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                out.push(' ');
+                continue;
+            }
+            out.push(b[i]);
+            i += 1;
+        }
+        out
+    }
+
+    // Which of them the rejection path consults.
+    let mut bounds: Vec<&String> = Vec::new();
+    let mut rejection_src = String::new();
+    for rel in REJECTION_PATHS {
+        let src = std::fs::read_to_string(root.join(rel))
+            .unwrap_or_else(|e| panic!("read the rejection path {rel}: {e}"));
+        // Everything above the file's own test module — a constant a
+        // test mentions is not thereby a loader bound.
+        rejection_src.push_str(&code_only(src.split("#[cfg(test)]").next().unwrap_or(&src)));
+        rejection_src.push('\n');
+    }
+    // The stripper's two controls, against this exact source: a
+    // constant used in code survives, a constant named only in a doc
+    // comment does not. Both were verified by hand against
+    // `validate.rs` — `INVERTED_ZOOM_WINDOW` is passed to
+    // `ordered_pair`, `MAX_BORDER_SIDE_BYTES` appears only inside
+    // `MAX_BORDER_GLYPH_BYTES`'s doc comment.
+    assert!(
+        rejection_src.contains("INVERTED_ZOOM_WINDOW"),
+        "the comment stripper ate a real code reference — every bound below it would go \
+         unlisted and this test would pass by seeing nothing"
+    );
+    assert!(
+        !rejection_src.contains("MAX_BORDER_SIDE_BYTES"),
+        "the comment stripper left a doc-comment mention in place, so prose about a bound \
+         reads as a rejection consulting it"
+    );
+    for name in declared.keys() {
+        // Word-boundary match: `MAX_BORDER_GLYPH_BYTES` must not be
+        // found inside a longer identifier that merely contains it.
+        if rejection_src
+            .match_indices(name.as_str())
+            .any(|(at, _)| {
+                let before = rejection_src[..at].chars().next_back();
+                let after = rejection_src[at + name.len()..].chars().next();
+                let continues = |c: Option<char>| {
+                    c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                };
+                !continues(before) && !continues(after)
+            })
+        {
+            bounds.push(name);
+        }
+    }
+    assert!(
+        bounds.len() >= 12,
+        "the rejection path consults only {} of baumhard's constants — that is fewer than \
+         the bounds this registry already knows about, so the scan is what broke:\n  {:?}",
+        bounds.len(),
+        bounds
+    );
+
+    // Every derived bound needs a row, matched by **name**, not by
+    // substring — a shorter new constant must not be absorbed by an
+    // existing row that happens to contain its name.
+    for name in &bounds {
+        let covered = registry.iter().any(|(constant, _, _)| constant == &name.as_str());
         assert!(
             covered,
-            "`validate::{name}` is a loader-enforced bound with no row in this registry.\n\
+            "`{name}` (declared in {}) is consulted by the loader's rejection path and has \
+             no row in this registry.\n\
              Add one naming the writer that keeps the editor inside it — or, if no writer \
-             can reach the field, say so explicitly. Three lockout bugs on this branch were \
-             a bound added without a writer; this is the check that makes that loud."
+             can reach the field, say so explicitly and leave the symbol list empty. Four \
+             lockout bugs on this branch were a bound added without a writer; this is the \
+             check that makes that loud.",
+            declared[*name]
+        );
+    }
+
+    // Every row must name a bound that still exists, so a row does
+    // not outlive the constant it describes.
+    for (constant, _, _) in registry {
+        assert!(
+            bounds.iter().any(|b| b.as_str() == *constant),
+            "the registry has a row for `{constant}`, which the loader's rejection path no \
+             longer consults. Delete the row, or fix the rejection that stopped reading it."
+        );
+    }
+
+    // And every named writer must still exist. This is the half that
+    // was missing: the border-glyph row named a real function that
+    // guarded one of four writers, and no amount of re-reading the
+    // constant column could have shown that. Reading the symbol
+    // column at least catches the row that names nothing at all.
+    let mut workspace_src = String::new();
+    let mut stack = vec![
+        root.join("src"),
+        root.join("lib/baumhard/src"),
+        root.join("crates"),
+    ];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                workspace_src.push_str(&std::fs::read_to_string(&path).expect("read a source"));
+                workspace_src.push('\n');
+            }
+        }
+    }
+    for (constant, guards, prose) in registry {
+        for guard in *guards {
+            assert!(
+                workspace_src.contains(&format!("fn {guard}")),
+                "the row for `{constant}` names `{guard}` as its writer-side guard, and no \
+                 `fn {guard}` exists in the workspace. A renamed or deleted guard must fail \
+                 here rather than leave the row quietly describing nothing."
+            );
+        }
+        assert!(
+            !guards.is_empty() || prose.starts_with("no editor writer"),
+            "`{constant}` names no guard, so its prose must begin \"no editor writer\" and \
+             say why the field is out of every writer's reach"
         );
     }
 }
