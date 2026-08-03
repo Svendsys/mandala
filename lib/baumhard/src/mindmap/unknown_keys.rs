@@ -711,19 +711,96 @@ fn resolve_index(items: &[Value], index: usize, anchor: Option<&IndexAnchor>) ->
 /// diagnose them.
 ///
 /// Cost: one parse of `json`, plus one `Vec<Step>` per unrecognized
-/// key.
+/// key — bounded by [`MAX_UNKNOWN_KEYS`], which is what keeps that
+/// second term from being chosen by the document.
 pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
     json: &'de str,
 ) -> Result<(T, Vec<Vec<Step>>), serde_json::Error> {
     let mut routes: Vec<Vec<Step>> = Vec::new();
     let mut deserializer = serde_json::Deserializer::from_str(json);
-    let value: T = serde_ignored::deserialize(&mut deserializer, |path| routes.push(route_of(&path)))?;
+    let value: T = serde_ignored::deserialize(&mut deserializer, |path| {
+        push_route_capped(&mut routes, &path)
+    })?;
     // `serde_json::from_str` does this for us; a hand-driven
     // `Deserializer` has to, or trailing garbage after the closing
     // brace parses clean. `loader::tests::test_trailing_content_after_the_document_is_rejected`
     // is what notices when it goes away.
     deserializer.end()?;
     Ok((value, routes))
+}
+
+/// Ceiling on how many unrecognized keys one document may carry.
+///
+/// **This is a memory bound, and without it `MAX_MAP_BYTES` is not
+/// one.** Every captured key costs a heap-allocated `Vec<Step>` whose
+/// `Step::Key`s own their strings, and reaching *one* unknown key also
+/// commits the load to two full `serde_json::Value` trees of the whole
+/// document — the re-parse in `adopt_unknown_keys` and the model's own
+/// probe. Measured on this build, with `maptool grep` driving the
+/// strict door:
+///
+/// | document | peak RSS |
+/// | --- | --- |
+/// | 7 MiB, no unknown key | 53 MiB |
+/// | 7 MiB, **one** unknown key | 197 MiB |
+/// | 3 MiB, 200 000 unknown keys | 113 MiB |
+/// | 10 MiB, 800 000 unknown keys | 438 MiB |
+///
+/// The last two are linear at roughly 575 bytes of peak per captured
+/// key, and the file that buys them is tiny: `{"k1":0,"k2":0,…}` is
+/// about 12 bytes per key on disk. Extrapolated to a document at the
+/// `MAX_MAP_BYTES` ceiling, an uncapped capture reaches something like
+/// **11 GB** — from a file the size limit was written to permit. The
+/// process is killed before any of the numeric-domain checks below it
+/// ever run, which is exactly the shape `format/macros.md` calls the
+/// load-time trust boundary.
+///
+/// The value is set for the legitimate case rather than the hostile
+/// one. Unknown keys are counted per *occurrence*, not per distinct
+/// name, so a newer build that adds ten keys to every node spends ten
+/// per node: 100 000 covers a 10 000-node map with room over, at a
+/// worst-case capture cost around 57 MiB. `maps/testament.mindmap.json`,
+/// the largest map in the repository, has 252 nodes.
+///
+/// Past the ceiling the load is **refused**, not truncated. Dropping
+/// the excess would break the promise the capture exists to keep — an
+/// older build must not silently destroy what a newer one wrote — and
+/// it would break it invisibly, on save, long after the load that
+/// decided it. A document carrying more unrecognized keys than this is
+/// damaged or hostile rather than merely newer, and refusing to open it
+/// is a better answer than being killed while trying.
+pub const MAX_UNKNOWN_KEYS: usize = 100_000;
+
+/// Push one route unless [`MAX_UNKNOWN_KEYS`] is already reached.
+///
+/// Stopping *here* rather than after the walk is the point: the
+/// allocation this bounds is `routes` itself, so a check applied to the
+/// finished vector would be a check applied after the memory was
+/// already spent. One route past the ceiling is kept, and it is what
+/// tells the caller the document overflowed —
+/// `unknown_key_count_violation` reads `routes.len() > MAX_UNKNOWN_KEYS`
+/// and the loader refuses.
+fn push_route_capped(routes: &mut Vec<Vec<Step>>, path: &serde_ignored::Path<'_>) {
+    if routes.len() <= MAX_UNKNOWN_KEYS {
+        routes.push(route_of(path));
+    }
+}
+
+/// The refusal message for a document over [`MAX_UNKNOWN_KEYS`], or
+/// `None` when it is inside the ceiling.
+///
+/// The count is reported as "more than" rather than exactly, because
+/// the capture stops counting at the ceiling — deliberately, since
+/// counting them all is the cost being avoided.
+pub fn unknown_key_count_violation(routes: &[Vec<Step>]) -> Option<String> {
+    (routes.len() > MAX_UNKNOWN_KEYS).then(|| {
+        format!(
+            "map carries more than {MAX_UNKNOWN_KEYS} unrecognized keys — refusing to load \
+             it. Keys this build has no field for are normally kept and saved back \
+             untouched, but capturing them costs memory per key, and a document with this \
+             many is damaged or hostile rather than merely written by a newer version."
+        )
+    })
 }
 
 /// Deserialize `T` out of an already-parsed document, collecting the
@@ -738,12 +815,16 @@ pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
 /// for a key to go missing.
 ///
 /// Cost: one walk of `document`, plus one `Vec<Step>` per
-/// unrecognized key.
+/// unrecognized key, under the same [`MAX_UNKNOWN_KEYS`] ceiling
+/// [`deserialize_capturing`] applies. Both doors, or the tolerant path
+/// would be the way around the bound.
 pub fn deserialize_value_capturing<T: serde::de::DeserializeOwned>(
     document: &Value,
 ) -> Result<(T, Vec<Vec<Step>>), serde_json::Error> {
     let mut routes: Vec<Vec<Step>> = Vec::new();
-    let value: T = serde_ignored::deserialize(document, |path| routes.push(route_of(&path)))?;
+    let value: T = serde_ignored::deserialize(document, |path| {
+        push_route_capped(&mut routes, &path)
+    })?;
     Ok((value, routes))
 }
 

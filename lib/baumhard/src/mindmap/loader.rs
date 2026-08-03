@@ -199,6 +199,12 @@ pub fn parse_for_inspection(json: &str) -> Result<MindMap, String> {
                     .unwrap_or_else(|| Err(diagnose_rejected_json(json, &e)));
             }
         };
+    // Refused *before* `adopt_unknown_keys`, which is where the two
+    // full `Value` trees are built — a count check made after them
+    // would be made after the memory was already spent.
+    if let Some(err) = unknown_keys::unknown_key_count_violation(&routes) {
+        return Err(err);
+    }
     if !routes.is_empty() {
         map.unknown_keys = adopt_unknown_keys(json, &map, routes)?;
     }
@@ -331,6 +337,12 @@ fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, Str
     // the caller's ordinary diagnosis is the better answer.
     let (mut map, routes): (MindMap, Vec<Vec<Step>>) =
         unknown_keys::deserialize_value_capturing(&raw).ok()?;
+    if unknown_keys::unknown_key_count_violation(&routes).is_some() {
+        // Same ceiling as the strict door. Returning `None` hands the
+        // caller back to its ordinary diagnosis rather than reporting
+        // a partial load of a document this size.
+        return None;
+    }
     for entry in skipped.iter() {
         log::warn!("{}", entry.warning());
     }
@@ -4161,6 +4173,81 @@ mod tests {
             r#""show_shadow":false,"border":{"glyphs":{"top":"◆·","top_left":"◆"}}"#,
         );
         load_from_str(&map_json_with_nodes(&ordinary)).expect("an ordinary authored border still loads");
+    }
+
+    /// **The byte ceiling stopped being a memory bound when unknown
+    /// keys began to be kept, and this is what restores it.**
+    ///
+    /// Every captured key costs a heap-allocated route whose steps own
+    /// their strings, and the file that buys one is about twelve bytes
+    /// (`"k1":0,`). Measured on this build with `maptool grep` driving
+    /// this door: 3 MiB / 200 000 keys reached 113 MiB peak RSS,
+    /// 10 MiB / 800 000 keys reached 438 MiB — linear, at roughly 575
+    /// bytes of peak per key. Extrapolated to a document at
+    /// `MAX_MAP_BYTES`, that is on the order of 11 GB, from a file the
+    /// size limit was written to permit. With the cap the same three
+    /// fixtures peak at 29, 35 and 45 MiB: the cost follows the file
+    /// again, not the key count.
+    ///
+    /// Both doors, because the tolerant path collects its own routes
+    /// and would otherwise be the way around the ceiling.
+    #[test]
+    fn test_a_document_over_the_unknown_key_ceiling_is_refused_at_both_doors() {
+        use crate::mindmap::unknown_keys::MAX_UNKNOWN_KEYS;
+
+        // Comfortably past the ceiling rather than one over it. An
+        // exactly-one-over fixture cannot tell a working cap from a
+        // missing one: both leave `MAX_UNKNOWN_KEYS + 1` routes, so
+        // the length assertion below passes either way. The boundary
+        // itself is covered by the under-ceiling control at the end.
+        let mut extra = String::new();
+        for i in 0..MAX_UNKNOWN_KEYS + 64 {
+            extra.push_str(&format!(r#", "k{i}": 0"#));
+        }
+        let json = map_json_with_nodes(&node_json_with("0", "null", &extra));
+
+        // **The allocation is what is bounded, so that is what is
+        // asserted.** Refusing after the walk would refuse just as
+        // loudly while the route vector had already grown to whatever
+        // the document asked for — which is the cost, not the
+        // symptom. `deserialize_capturing` stops pushing at the
+        // ceiling and keeps exactly one route past it as the signal,
+        // so the vector can never exceed `MAX_UNKNOWN_KEYS + 1` no
+        // matter how many keys the file carries.
+        let (_, routes): (MindMap, Vec<Vec<crate::mindmap::unknown_keys::Step>>) =
+            unknown_keys::deserialize_capturing(&json).expect("the document parses");
+        assert_eq!(
+            routes.len(),
+            MAX_UNKNOWN_KEYS + 1,
+            "the capture must stop one past the ceiling rather than collecting every key"
+        );
+
+        let err = load_from_str(&json).expect_err("over the ceiling must be refused");
+        assert!(
+            err.contains("unrecognized keys") && err.contains(&MAX_UNKNOWN_KEYS.to_string()),
+            "must name the ceiling it refused on: {err}"
+        );
+        let err = parse_for_inspection(&json).expect_err("the inspection door carries it too");
+        assert!(
+            err.contains("unrecognized keys"),
+            "the inspection door must refuse on the same ceiling: {err}"
+        );
+
+        // The negative control, and the half that matters most: a
+        // document *inside* the ceiling still loads and still keeps
+        // every key. A cap that refused the ordinary forward-compat
+        // case would break the promise the capture exists to keep.
+        let mut few = String::new();
+        for i in 0..8 {
+            few.push_str(&format!(r#", "k{i}": {i}"#));
+        }
+        let map = load_from_str(&map_json_with_nodes(&node_json_with("0", "null", &few)))
+            .expect("a handful of unknown keys must still load");
+        assert_eq!(
+            map.unknown_keys.len(),
+            8,
+            "every key inside the ceiling must still be captured"
+        );
     }
 
     /// **Both doors carry the size ceiling, and that is the point.**

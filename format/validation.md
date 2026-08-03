@@ -269,6 +269,7 @@ category; the loader refuses them outright.
 | Animation envelope — `duration_ms`, `delay_ms` | ≤ `60_000` ms each |
 | Zoom windows | finite, non-negative, not inverted |
 | Whole file | ≤ 256 MiB |
+| Unrecognized keys per document | ≤ 100 000. Keys this build has no field for are kept and written back untouched, but each costs a heap-allocated capture route, and the file that buys one is about twelve bytes. Without a ceiling the byte limit above stops bounding memory: measured at roughly 575 bytes of peak RSS per captured key, a document at the 256 MiB limit reaches something on the order of 11 GB and the process dies before any check below it runs. Counted per *occurrence*, not per distinct name, so ten new keys on each of ten thousand nodes fits with room over |
 
 The constants live in `lib/baumhard/src/mindmap/model/validate.rs`
 and `lib/baumhard/src/font/fonts.rs` (with `MAX_NODE_AXIS` in
