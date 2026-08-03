@@ -132,8 +132,7 @@ pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
             // Clamped: a cascade computes a position from its
             // parent's, so in-bound inputs can produce an
             // out-of-bound result, and the loader rejects those.
-            node.position.x = baumhard::mindmap::model::validate::clamp_canvas_coord(x);
-            node.position.y = baumhard::mindmap::model::validate::clamp_canvas_coord(y);
+            node.set_position_clamped(x, y);
         }
     }
 }

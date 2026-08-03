@@ -4017,10 +4017,19 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
         ),
         (
             "MAX_CANVAS_COORD",
-            &["validate_node_position", "clamp_canvas_coord"],
-            "validate_node_position rejects a caller-supplied node position; \
-             clamp_canvas_coord pins the computed ones (tree_cascade, flower_layout), \
-             which take in-bound inputs and can compute an out-of-bound result",
+            &[
+                "validate_node_position",
+                "set_position_clamped",
+                "offset_position_clamped",
+            ],
+            "validate_node_position rejects an *authored* position — one a caller \
+             supplied, at the loader and at set_node_aabb. Every *computed* one goes \
+             through MindNode::set_position_clamped or its offset sibling, and \
+             test_every_node_position_write_goes_through_the_clamp fails the build for a \
+             writer that does not. This row named two computed writers and was false when \
+             it was written: the drag, two nudge handlers, the lerp and the \
+             custom-mutation sync-back were all unclamped, and the last is reachable from \
+             a map's own trigger bindings",
         ),
         (
             "MAX_NODE_AXIS",

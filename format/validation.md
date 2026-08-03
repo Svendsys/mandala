@@ -288,6 +288,31 @@ clamped too. `border padding=` and `spacing` were exactly that, and
 pinned: it drives each setter past its bound and round-trips through
 the real save and the real strict load.
 
+**Where a chokepoint cannot be arranged, make one.** `node.position`
+is a public field with no setter, so there was nothing to guard: the
+clamp went on one writer, then three, and a review round then found
+six more — the interactive drag, four animation handlers, and the
+custom-mutation sync-back, the last reachable from a map's own trigger
+bindings rather than from the editor. Two of those six were missed
+again by a hand-written enumeration and found only by the mechanical
+scan.
+
+So `MindNode::set_position_clamped` and `offset_position_clamped` are
+now the only writers of a position *component*, and
+`test_every_node_position_write_goes_through_the_clamp` reads the
+workspace's own shipped source and fails the build for any other. The
+offset entry point exists because the drag and animation writers
+accumulate: clamping the sum is what bounds a coordinate that walks out
+of the domain a step at a time, and clamping the delta would not.
+Whole-struct assignment (`node.position = other`) is out of scope and
+stays so — it copies a `Position` already in the domain rather than
+deriving a new one.
+
+Computed positions are **clamped**; authored ones are **rejected**, at
+the loader and at `set_node_aabb` via `validate_node_position`. The
+useful answer to a layout pass that ran off the canvas is the edge of
+the canvas; the useful answer to a file that says `1e30` is no.
+
 **Guard at the chokepoint, not at the caller.** Where several setters
 write the same bounded field, the screen belongs in the one function
 they share. The border glyphs are the cautionary case: the same

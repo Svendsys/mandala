@@ -415,8 +415,7 @@ impl MindMapDocument {
         let tree_px = new_pos.0 as f32;
         let tree_py = new_pos.1 as f32;
         if model_node.position.x as f32 != tree_px || model_node.position.y as f32 != tree_py {
-            model_node.position.x = new_pos.0;
-            model_node.position.y = new_pos.1;
+            model_node.set_position_clamped(new_pos.0, new_pos.1);
             changed = true;
         }
         let node_pos_x = tree_px;

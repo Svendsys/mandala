@@ -80,10 +80,8 @@ pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
         // computed from a parent position plus a radius, so it can
         // leave the domain the loader accepts even when every input
         // is inside it.
-        child.position.x = baumhard::mindmap::model::validate::clamp_canvas_coord(
+        child.set_position_clamped(
             cx + radius * theta.cos() - child.size.width / 2.0,
-        );
-        child.position.y = baumhard::mindmap::model::validate::clamp_canvas_coord(
             cy + radius * theta.sin() - child.size.height / 2.0,
         );
     }

@@ -385,8 +385,7 @@ impl MindMapDocument {
         for id in &ids {
             if let Some(node) = self.mindmap.nodes.get_mut(id) {
                 original_positions.push((id.clone(), node.position.clone()));
-                node.position.x += dx;
-                node.position.y += dy;
+                node.offset_position_clamped(dx, dy);
             }
         }
         original_positions
@@ -396,8 +395,7 @@ impl MindMapDocument {
     pub fn apply_move_single(&mut self, node_id: &str, dx: f64, dy: f64) -> Option<(String, Position)> {
         if let Some(node) = self.mindmap.nodes.get_mut(node_id) {
             let original = (node_id.to_string(), node.position.clone());
-            node.position.x += dx;
-            node.position.y += dy;
+            node.offset_position_clamped(dx, dy);
             Some(original)
         } else {
             None

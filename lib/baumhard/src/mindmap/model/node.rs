@@ -145,6 +145,50 @@ pub struct MindNode {
 }
 
 impl MindNode {
+    /// Move this node to an absolute canvas position, clamped into the
+    /// domain the loader accepts.
+    ///
+    /// **Every write to [`Self::position`] goes through this or
+    /// [`Self::offset_position_clamped`]**, and
+    /// `test_every_node_position_write_goes_through_the_clamp` fails
+    /// the build if a new one does not. That is the shape this bound
+    /// needs, because the alternative was tried and did not hold: the
+    /// guard began on one writer, grew to two, and a review round found
+    /// five more — the interactive drag, two animation writers, and the
+    /// custom-mutation sync-back, the last reachable from a map's own
+    /// trigger bindings rather than from the editor. Clamping each site
+    /// as it is discovered is what produced that history.
+    ///
+    /// Clamped rather than refused because these are computed metrics,
+    /// not authored strings: a layout pass, a drag and an animation
+    /// each *derive* a coordinate, and the useful answer to one that
+    /// left the canvas is the edge of the canvas. A refusal would have
+    /// to be handled at every call site, and the sites that would have
+    /// to handle it are exactly the interactive ones
+    /// (CODE_CONVENTIONS §9). Authored positions are different and are
+    /// **rejected** at the loader and at `set_node_aabb`, which is what
+    /// `validate_node_position` is for.
+    ///
+    /// Non-finite in becomes `0.0`, per [`validate::clamp_canvas_coord`].
+    pub fn set_position_clamped(&mut self, x: f64, y: f64) {
+        self.position.x = crate::mindmap::model::validate::clamp_canvas_coord(x);
+        self.position.y = crate::mindmap::model::validate::clamp_canvas_coord(y);
+    }
+
+    /// Offset this node's position by a delta, clamped into the same
+    /// domain as [`Self::set_position_clamped`].
+    ///
+    /// Separate from the absolute setter because the drag and animation
+    /// writers accumulate: `position += delta` applied repeatedly is
+    /// how a coordinate walks out of the domain a step at a time, with
+    /// no single step looking wrong. Clamping the *sum* is what stops
+    /// it; clamping the delta would not.
+    pub fn offset_position_clamped(&mut self, dx: f64, dy: f64) {
+        self.set_position_clamped(self.position.x + dx, self.position.y + dy);
+    }
+}
+
+impl MindNode {
     /// This node's authored zoom window, as a
     /// [`ZoomVisibility`]. O(1).
     ///
@@ -648,4 +692,122 @@ pub struct ColorGroup {
     /// First-line / title color — overrides `text` for the first
     /// line of a node's text when present.
     pub title: String,
+}
+
+#[cfg(test)]
+mod position_clamp_tests {
+    use super::*;
+    use crate::mindmap::model::validate::MAX_CANVAS_COORD;
+
+    /// **The clamp is enforced by construction, not by remembering.**
+    ///
+    /// `MAX_CANVAS_COORD` is the bound with the worst history on this
+    /// branch. The guard began on one writer (`set_node_aabb`), grew to
+    /// three (the two layout passes), and a review round then found
+    /// five more that no one had counted: the interactive drag through
+    /// `apply_move_subtree` / `apply_move_single`, two animation
+    /// writers, and the custom-mutation sync-back — the last reachable
+    /// from a map's own trigger bindings rather than from the editor.
+    /// Meanwhile the registry row for the constant claimed the writers
+    /// were covered. Every one of those was found by a human reading
+    /// code, which is the process this replaces.
+    ///
+    /// So the rule is not "clamp each writer" but "there is one
+    /// writer". Anything that computes a coordinate goes through
+    /// [`MindNode::set_position_clamped`] or
+    /// [`MindNode::offset_position_clamped`], and this fails the build
+    /// for anything that does not.
+    ///
+    /// What it does not cover, stated because the last three
+    /// completeness claims on this branch were false: whole-struct
+    /// assignment (`node.position = other`) is not a component write
+    /// and is not scanned — see
+    /// [`node_position_component_writes`](crate::util::source_scan::node_position_component_writes)
+    /// for why. A coordinate written through a raw pointer, a
+    /// `std::mem::swap`, or a macro that expands to an assignment is
+    /// text this scan cannot see.
+    #[test]
+    fn test_every_node_position_write_goes_through_the_clamp() {
+        let writes = crate::util::source_scan::node_position_component_writes();
+
+        // `GlyphArea` also has a `position` with `x`/`y`, and the scan
+        // is textual, so it sees both. The two are different rules and
+        // this is the line between them: a `GlyphArea` coordinate is
+        // *scene* space, deliberately unbounded, and the boundary that
+        // matters is where a scene coordinate re-enters the model —
+        // `sync_node_from_tree`, which is one of the sites this test
+        // exists to hold. Bounding the scene as well would clamp a
+        // camera-space value against a canvas-space ceiling.
+        //
+        // One carve-out with one reason, not a list of sites: anything
+        // under `gfx_structs/` is scene space. The count is asserted
+        // below so it cannot quietly grow into the whole set.
+        let (scene, model): (Vec<_>, Vec<_>) =
+            writes.iter().partition(|(file, _, _)| file.contains("gfx_structs/"));
+
+        let stray: Vec<_> = model
+            .iter()
+            .filter(|(file, _, _)| !file.ends_with("mindmap/model/node.rs"))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "these lines compute a node position and write it without the clamp:\n{}\n\n\
+             Use `MindNode::set_position_clamped` (absolute) or \
+             `offset_position_clamped` (delta). The loader rejects a position past \
+             MAX_CANVAS_COORD, so an unclamped write authors a map that will not reopen — \
+             and clamping writers one at a time is what produced five separate misses.",
+            stray
+                .iter()
+                .map(|(f, n, line)| format!("  {f}:{n}   {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert_eq!(
+            model.len(),
+            2,
+            "expected exactly the two writes inside `set_position_clamped`, got {model:#?}"
+        );
+        assert_eq!(
+            scene.len(),
+            12,
+            "the scene-space carve-out covers the six `GlyphArea` movers in \
+             `gfx_structs/area.rs` and the six on the glyph model in \
+             `gfx_structs/model/glyph_model.rs` — every one a `self.position` write \
+             inside the type that owns it. It now covers {} sites; check each new one is \
+             really scene space and not a model position that slipped under the \
+             exemption:\n{scene:#?}",
+            scene.len()
+        );
+    }
+
+    /// The clamp actually clamps, on both entry points, and the
+    /// accumulating one clamps the **sum** rather than the delta.
+    #[test]
+    fn test_the_position_clamp_bounds_both_entry_points() {
+        let mut node = crate::mindmap::test_helpers::synthetic_node_full("0", None, 0.0, 0.0, 100.0, 50.0, false);
+
+        node.set_position_clamped(1.0e30, -1.0e30);
+        assert_eq!(node.position.x, MAX_CANVAS_COORD);
+        assert_eq!(node.position.y, -MAX_CANVAS_COORD);
+
+        node.set_position_clamped(f64::NAN, f64::INFINITY);
+        assert_eq!(node.position.x, 0.0, "non-finite becomes zero, never NaN");
+        assert_eq!(node.position.y, 0.0);
+
+        // Walking out a step at a time is the drag/animation shape, and
+        // is why the offset entry point exists at all: each delta is
+        // ordinary, the running total is not.
+        node.set_position_clamped(MAX_CANVAS_COORD, 0.0);
+        for _ in 0..4 {
+            node.offset_position_clamped(MAX_CANVAS_COORD, 0.0);
+        }
+        assert_eq!(
+            node.position.x, MAX_CANVAS_COORD,
+            "the sum is clamped, so repeated in-domain deltas cannot accumulate past the bound"
+        );
+
+        // Negative control: an ordinary move is untouched.
+        node.set_position_clamped(120.0, -40.5);
+        assert_eq!((node.position.x, node.position.y), (120.0, -40.5));
+    }
 }
