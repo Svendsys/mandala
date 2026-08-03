@@ -337,11 +337,14 @@ fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, Str
     // the caller's ordinary diagnosis is the better answer.
     let (mut map, routes): (MindMap, Vec<Vec<Step>>) =
         unknown_keys::deserialize_value_capturing(&raw).ok()?;
-    if unknown_keys::unknown_key_count_violation(&routes).is_some() {
-        // Same ceiling as the strict door. Returning `None` hands the
-        // caller back to its ordinary diagnosis rather than reporting
-        // a partial load of a document this size.
-        return None;
+    if let Some(err) = unknown_keys::unknown_key_count_violation(&routes) {
+        // Same ceiling as the strict door, and reported as itself.
+        // `None` here would hand the caller back to
+        // `diagnose_rejected_json`, which would name the unreadable
+        // construct that sent the load down this path — true, but not
+        // the reason the document was refused, and not the one the
+        // author can act on.
+        return Some(Err(err));
     }
     for entry in skipped.iter() {
         log::warn!("{}", entry.warning());
@@ -3160,6 +3163,69 @@ mod tests {
         let reloaded = load_from_str(&serde_json::to_string(&saved).expect("render"))
             .expect("the saved document still loads");
         assert_eq!(reloaded.skipped_constructs.len(), 1, "and still carries it");
+    }
+
+    /// **The tolerant door carries the ceiling too, and nothing used
+    /// to check that.**
+    ///
+    /// `load_from_str` has two ways in. The strict one refuses over
+    /// `MAX_UNKNOWN_KEYS` before `adopt_unknown_keys`; the tolerant one
+    /// — reached when the typed parse fails on a construct this build
+    /// cannot name — collects its own routes in
+    /// `deserialize_value_capturing` and has its own refusal. The
+    /// sibling test above drives `load_from_str` and
+    /// `parse_for_inspection`, which is the *same* door twice, so
+    /// deleting the tolerant guard left the whole workspace green. A
+    /// review round found it by deleting it.
+    ///
+    /// Reaching this door needs a fixture that satisfies four things at
+    /// once: the typed parse must fail, the document must not be a
+    /// legacy shape, at least one construct must be excisable, and the
+    /// remainder must carry more than the ceiling in unknown keys.
+    #[test]
+    fn test_the_tolerant_door_carries_the_unknown_key_ceiling() {
+        use crate::mindmap::unknown_keys::MAX_UNKNOWN_KEYS;
+
+        // An unreadable mutator variant is what sends the load down the
+        // tolerant path at all.
+        let unreadable =
+            r#"{"id": "mid", "name": "mid", "target_scope": "SelfOnly", "mutator": {"zzOrderGlow": {}}}"#;
+        let mut extra = String::new();
+        for i in 0..MAX_UNKNOWN_KEYS + 64 {
+            extra.push_str(&format!(r#", "k{i}": 0"#));
+        }
+        let json = shape_map(
+            "",
+            &node_json_with("0", "null", &extra),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}]"#),
+        );
+
+        let err = load_from_str(&json)
+            .expect_err("the tolerant door must refuse past the ceiling, not load partially");
+        assert!(
+            err.contains("unrecognized keys") && !err.contains("zzOrderGlow"),
+            "must refuse on the ceiling and say so, not fall through to the construct \
+             diagnosis that merely sent it down this path: {err}"
+        );
+
+        // The control that makes the fixture honest: the SAME document
+        // with a handful of unknown keys instead of too many really does
+        // take the tolerant path and load. Without this, the assertion
+        // above would pass on a fixture that never reached this door.
+        let mut few = String::new();
+        for i in 0..8 {
+            few.push_str(&format!(r#", "k{i}": 0"#));
+        }
+        let json = shape_map(
+            "",
+            &node_json_with("0", "null", &few),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}]"#),
+        );
+        let map = load_from_str(&json).expect("the tolerant path loads around the construct");
+        assert_eq!(map.skipped_constructs.len(), 1, "and it really was the tolerant path");
+        assert_eq!(map.unknown_keys.len(), 8, "with the keys captured");
     }
 
     /// A skipped construct goes back at the index it was authored at,

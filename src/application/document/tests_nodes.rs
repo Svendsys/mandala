@@ -3864,6 +3864,70 @@ fn test_extreme_editor_writes_still_reload() {
     );
 }
 
+/// **The backstop screen, observed directly.**
+///
+/// `apply_glyph_border_edits_to_slot` is where the eight glyph fields
+/// are screened, and the four public setters each refuse earlier so a
+/// declined edit does not also discard a live preview. That layering
+/// left the backstop untested: deleting the screen at the chokepoint
+/// left every test in the workspace green, because the early refusals
+/// caught the same fixtures first. A review round found it by deleting
+/// the screen and watching nothing happen.
+///
+/// The reason the backstop matters is precisely that it is *not* the
+/// early refusals: a fifth writer added later reaches the applier
+/// without going through any of them, and the applier is what has to
+/// stop it. So this drives the applier directly, past the setters, and
+/// is the only test that fails when the chokepoint screen is removed
+/// and the early refusals are left in place.
+#[test]
+fn test_the_chokepoint_screen_refuses_without_help_from_any_setter() {
+    use crate::application::document::nodes::apply_glyph_border_edits_to_slot;
+    use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionEdit};
+
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let mut slot: Option<baumhard::mindmap::model::GlyphBorderConfig> = None;
+    let mut outcome = BorderEditOutcome::default();
+    let changed = apply_glyph_border_edits_to_slot(
+        &mut slot,
+        &BorderConfigEdits {
+            side_top: OptionEdit::Set(over),
+            ..Default::default()
+        },
+        &mut outcome,
+    );
+
+    assert!(
+        !outcome.rejected.is_empty(),
+        "the chokepoint must refuse an over-ceiling glyph on its own, with no setter above it"
+    );
+    assert!(!changed, "a refusal must report no change, so no caller pushes an undo entry");
+    assert!(
+        slot.is_none(),
+        "the refusal must be atomic — the slot must not even be allocated"
+    );
+
+    // The negative control: an ordinary glyph still writes, so the
+    // assertions above cannot be passing because the applier refuses
+    // everything.
+    let mut slot = None;
+    let mut outcome = BorderEditOutcome::default();
+    let changed = apply_glyph_border_edits_to_slot(
+        &mut slot,
+        &BorderConfigEdits {
+            side_top: OptionEdit::Set("◆·".to_string()),
+            ..Default::default()
+        },
+        &mut outcome,
+    );
+    assert!(outcome.rejected.is_empty() && changed, "an ordinary glyph must still be written");
+    assert_eq!(
+        slot.and_then(|c| c.glyphs).map(|g| g.top).as_deref(),
+        Some("◆·"),
+        "and must land in the slot"
+    );
+}
+
 /// **The writer-side invariant, checked mechanically.**
 ///
 /// `format/validation.md` states the property this pins: a value the

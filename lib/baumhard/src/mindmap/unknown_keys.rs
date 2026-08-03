@@ -71,14 +71,16 @@
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// One step of the route from the document root to a captured key.
 ///
 /// A route is what a JSON pointer would be, kept structured rather
 /// than joined: a Dewey-decimal node id contains `.` and `/`-joining
 /// it would make the route ambiguous to read back.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Step {
     /// An object member, named by its key.
     Key(String),
@@ -117,7 +119,19 @@ struct IndexAnchor {
     step: usize,
     /// [`fingerprint`] of every element of the array as the model
     /// serialized it at load time, in order.
-    siblings: Vec<u64>,
+    ///
+    /// **Shared, not copied.** Every key captured under the same array
+    /// needs the same vector, and building one per key made the capture
+    /// quadratic: `K` keys inside an `N`-element array cost `K × N`
+    /// fingerprints to compute and `K × N` `u64`s to retain, each
+    /// fingerprint rendering its element with `to_string()` first. At
+    /// the `MAX_UNKNOWN_KEYS` ceiling that is 10^10 fingerprints — so
+    /// the ceiling bounded the route vector while the anchors behind it
+    /// stayed unbounded. Measured before the fix, one unknown key per
+    /// element: 2 000 keys / 404 KB reached 46 MiB, 6 000 keys /
+    /// 1.2 MB reached 311 MiB, and 12 000 keys / 2.4 MB did not finish
+    /// in two minutes. `Arc` makes it `O(N)` per array instead.
+    siblings: Arc<Vec<u64>>,
 }
 
 /// A container the saver leaves out, and the value that puts it back.
@@ -692,7 +706,7 @@ fn resolve_index(items: &[Value], index: usize, anchor: Option<&IndexAnchor>) ->
     let only_this_one_changed = now.len() == anchor.siblings.len()
         && now
             .iter()
-            .zip(&anchor.siblings)
+            .zip(anchor.siblings.iter())
             .enumerate()
             .all(|(position, (seen, was))| position == index || seen == was);
     only_this_one_changed.then_some(index)
@@ -871,10 +885,13 @@ pub fn take_from(document: &mut Value, probe: Option<&Value>, routes: Vec<Vec<St
         };
         taken.push((route, value));
     }
+    // One cache for the whole pass — the point of it is sharing
+    // *across* routes, so it cannot live inside `plan_write_back`.
+    let mut arrays: HashMap<Vec<Step>, Arc<Vec<u64>>> = HashMap::new();
     let entries = taken
         .into_iter()
         .map(|(route, value)| {
-            let plan = plan_write_back(document, probe, &route);
+            let plan = plan_write_back(document, probe, &route, &mut arrays);
             UnknownKey {
                 route,
                 value,
@@ -904,9 +921,18 @@ struct WriteBackPlan {
 /// back. Recording only the first is enough: re-inserting the authored
 /// container restores everything below it in one move.
 ///
-/// Cost: O(route length), plus one fingerprint pass over each array on
-/// the way.
-fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> WriteBackPlan {
+/// Cost: O(route length). The fingerprint pass over each array on the
+/// way is paid **once per array**, not once per key: `siblings` is
+/// memoized in `arrays`, keyed by the route prefix that reaches it.
+/// Every key under one array produces the identical vector, so before
+/// the cache a document with `K` keys inside an `N`-element array paid
+/// `K × N` fingerprints — see [`IndexAnchor::siblings`].
+fn plan_write_back(
+    document: &Value,
+    probe: Option<&Value>,
+    route: &[Step],
+    arrays: &mut HashMap<Vec<Step>, Arc<Vec<u64>>>,
+) -> WriteBackPlan {
     let unanchored = WriteBackPlan {
         anchors: Vec::new(),
         scaffold: None,
@@ -920,9 +946,22 @@ fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> W
         let next = match (current, step) {
             (Value::Object(members), Step::Key(key)) => members.get(key),
             (Value::Array(items), Step::Index(index)) => {
+                // Keyed by the prefix that reaches this array, which is
+                // what makes two keys under the same array share one
+                // vector. The prefix is walked from `probe`, which is
+                // immutable for the whole of `take_from`, so the same
+                // prefix always names the same array.
+                let siblings = match arrays.get(&parent[..position]) {
+                    Some(cached) => Arc::clone(cached),
+                    None => {
+                        let built: Arc<Vec<u64>> = Arc::new(items.iter().map(fingerprint).collect());
+                        arrays.insert(parent[..position].to_vec(), Arc::clone(&built));
+                        built
+                    }
+                };
                 anchors.push(IndexAnchor {
                     step: position,
-                    siblings: items.iter().map(fingerprint).collect(),
+                    siblings,
                 });
                 items.get(*index)
             }
@@ -1817,5 +1856,61 @@ mod tests {
              an unrecognized key — `Vec<Value>`, `Vec<String>` — is correctly absent; if \
              one of those is what showed up here, the derivation is what to look at."
         );
+    }
+
+    /// **The anchor vector is shared, and that is a memory bound, not
+    /// a tidiness preference.**
+    ///
+    /// `plan_write_back` records an `IndexAnchor` per array on a
+    /// captured key's route, and its `siblings` fingerprints *every*
+    /// element of that array. Built per key, `K` keys inside an
+    /// `N`-element array cost `K x N` fingerprints to compute and
+    /// `K x N` `u64`s to keep — and `fingerprint` renders each element
+    /// with `to_string()` first, so the CPU cost is quadratic too.
+    /// `MAX_UNKNOWN_KEYS` bounds `K` and does nothing about the
+    /// product, which is why the ceiling alone was not the bound its
+    /// commit claimed. Measured through `maptool grep` with one unknown
+    /// key per element, before the fix: 2 000 keys / 404 KB reached
+    /// 46 MiB, 6 000 / 1.2 MB reached 311 MiB, 12 000 / 2.4 MB did not
+    /// finish in two minutes. After: 15, 36 and 68 MiB.
+    ///
+    /// Asserting on `Arc::ptr_eq` rather than on equal contents is the
+    /// point — the contents were always equal; it is the *allocation*
+    /// that used to be per key.
+    #[test]
+    fn test_one_fingerprint_vector_is_shared_by_every_key_under_an_array() {
+        const ELEMENTS: usize = 12;
+        let items: Vec<Value> = (0..ELEMENTS)
+            .map(|i| serde_json::json!({ "known": i, format!("u{i}"): i }))
+            .collect();
+        let mut document = serde_json::json!({ "list": items });
+        // The probe is what the walk reads: same shape, minus the keys
+        // the model had no field for.
+        let probe = serde_json::json!({
+            "list": (0..ELEMENTS).map(|i| serde_json::json!({ "known": i })).collect::<Vec<_>>()
+        });
+        let routes: Vec<Vec<Step>> = (0..ELEMENTS)
+            .map(|i| vec![Step::Key("list".into()), Step::Index(i), Step::Key(format!("u{i}"))])
+            .collect();
+
+        let captured = take_from(&mut document, Some(&probe), routes);
+        assert_eq!(captured.entries.len(), ELEMENTS, "every key must be captured");
+
+        let first = captured.entries[0]
+            .anchors
+            .first()
+            .expect("a key inside an array carries an anchor")
+            .siblings
+            .clone();
+        assert_eq!(first.len(), ELEMENTS, "the anchor fingerprints every sibling");
+        for (i, entry) in captured.entries.iter().enumerate() {
+            let anchor = entry.anchors.first().expect("each key sits under the same array");
+            assert!(
+                Arc::ptr_eq(&anchor.siblings, &first),
+                "entry {i} built its own fingerprint vector — the capture is quadratic again"
+            );
+        }
+        // Guards the assertion above against passing on a single entry.
+        assert!(ELEMENTS > 1);
     }
 }
