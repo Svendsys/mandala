@@ -55,11 +55,11 @@ use std::sync::{Mutex, Once, OnceLock};
 /// be the one trimmed, and the failure would read as "the loader did
 /// not warn".
 ///
-/// So the buffer stops instead of forgetting, and
-/// [`lines_containing`] refuses to answer once it has. Sized well
-/// above what a full run produces at [`RECORDED_LEVEL`] — reaching it
-/// means something started logging in a loop, which is a thing to
-/// find out about rather than absorb.
+/// So the buffer stops instead of forgetting, and [`Buffer::matching`]
+/// refuses to answer once it has. Sized well above what a full run
+/// produces at [`RECORDED_LEVEL`] — reaching it means something
+/// started logging in a loop, which is a thing to find out about
+/// rather than absorb.
 const CAPACITY: usize = 8192;
 
 /// The level the recorder keeps.
@@ -72,15 +72,72 @@ const CAPACITY: usize = 8192;
 /// and with the volume it implies visible in the diff.
 const RECORDED_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
 
-/// Every line the recording logger has been handed, formatted the way
-/// a reader sees it: `"<LEVEL> <message>"`.
-fn buffer() -> &'static Mutex<Vec<String>> {
-    static BUFFER: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-    BUFFER.get_or_init(|| Mutex::new(Vec::with_capacity(64)))
+/// The recorded lines and whether recording has stopped, in one
+/// value — because the bound and the refusal to answer past it are
+/// one decision, and holding them apart in a `Vec` plus a separate
+/// atomic is what made both untestable. Split that way, the only
+/// thing that could exercise either was the process-global buffer,
+/// and filling *that* to [`CAPACITY`] would make every other logging
+/// test in the binary fail. Owning the pair means an ordinary local
+/// value runs the same code the recorder runs.
+///
+/// Lines are formatted the way a reader sees them:
+/// `"<LEVEL> <message>"`.
+#[derive(Debug, Default)]
+struct Buffer {
+    lines: Vec<String>,
+    /// Set once the buffer filled up and started dropping records.
+    stopped: bool,
 }
 
-/// Set once the buffer filled up and started dropping records.
-static OVERFLOWED: AtomicBool = AtomicBool::new(false);
+impl Buffer {
+    /// Keep `line`, or stop recording if the buffer is already full.
+    ///
+    /// Stops rather than forgetting: trimming the oldest line
+    /// instead could trim the very line a test is about to search
+    /// for, and that failure would read as "the code under test did
+    /// not warn".
+    fn record(&mut self, line: String) {
+        if self.lines.len() >= CAPACITY {
+            self.stopped = true;
+            return;
+        }
+        self.lines.push(line);
+    }
+
+    /// Every recorded line containing `needle`, oldest first.
+    ///
+    /// **Panics once recording has stopped.** Past [`CAPACITY`] a
+    /// "not found" no longer means "not logged", and letting an
+    /// unrelated test fail with that wrong reason is worse than
+    /// refusing to answer.
+    ///
+    /// Cost: O(lines recorded so far).
+    fn matching(&self, needle: &str) -> Vec<String> {
+        assert!(
+            !self.stopped,
+            "util::test_logger recorded {CAPACITY} lines and stopped; a search of the \
+             buffer can no longer tell 'never logged' from 'logged and dropped'. \
+             Something in this run is logging in a loop."
+        );
+        self.lines
+            .iter()
+            .filter(|line| line.contains(needle))
+            .cloned()
+            .collect()
+    }
+}
+
+/// The process-global buffer every [`Recorder`] record lands in.
+fn buffer() -> &'static Mutex<Buffer> {
+    static BUFFER: OnceLock<Mutex<Buffer>> = OnceLock::new();
+    BUFFER.get_or_init(|| {
+        Mutex::new(Buffer {
+            lines: Vec::with_capacity(64),
+            stopped: false,
+        })
+    })
+}
 
 /// Set once [`install`] has actually put the recorder in place.
 /// Distinct from "install was called": the difference is exactly the
@@ -103,12 +160,11 @@ impl log::Log for Recorder {
         // A poisoned buffer means some other test panicked mid-push.
         // Recording is not what that test failed at, so recover the
         // lock rather than turning one failure into many.
-        let mut lines = buffer().lock().unwrap_or_else(|e| e.into_inner());
-        if lines.len() >= CAPACITY {
-            OVERFLOWED.store(true, Ordering::Relaxed);
-            return;
-        }
-        lines.push(format!("{} {}", record.level(), record.args()));
+        buffer().lock().unwrap_or_else(|e| e.into_inner()).record(format!(
+            "{} {}",
+            record.level(),
+            record.args()
+        ));
     }
 
     fn flush(&self) {}
@@ -172,27 +228,16 @@ fn assert_recording(recording: bool) {
 ///
 /// Only `warn!` and `error!` are recorded — see [`RECORDED_LEVEL`].
 ///
-/// **Panics if the buffer overflowed.** Past [`CAPACITY`] the
-/// recorder stops, so "not found" would stop meaning "not logged";
-/// saying so beats letting an unrelated test fail with a wrong
-/// reason.
+/// **Panics if recording stopped**; see [`Buffer::matching`].
 ///
 /// Cost: O(lines recorded so far) per call, under one mutex
 /// acquisition.
 pub(crate) fn lines_containing(needle: &str) -> Vec<String> {
     install();
-    let lines = buffer().lock().unwrap_or_else(|e| e.into_inner());
-    assert!(
-        !OVERFLOWED.load(Ordering::Relaxed),
-        "util::test_logger recorded {CAPACITY} lines and stopped; a search of the \
-         buffer can no longer tell 'never logged' from 'logged and dropped'. \
-         Something in this run is logging in a loop."
-    );
-    lines
-        .iter()
-        .filter(|line| line.contains(needle))
-        .cloned()
-        .collect()
+    buffer()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .matching(needle)
 }
 
 #[cfg(test)]
@@ -254,5 +299,59 @@ mod tests {
             "an info! must not reach the buffer"
         );
         assert_eq!(lines_containing("above-threshold-needle-77b2").len(), 1);
+    }
+
+    /// **The bound is behavior, not a comment.** Without it the
+    /// buffer grows for every record every test in the binary emits
+    /// and [`Buffer::matching`] gets slower for each one — and the
+    /// bound that replaced it must *stop* rather than forget, because
+    /// a ring buffer would drop the line a test is about to look for
+    /// and report it as "the code under test did not warn".
+    ///
+    /// Driven over a local [`Buffer`] rather than the process-global
+    /// one: filling that to [`CAPACITY`] would set its stopped flag
+    /// and make every other logging test in this binary panic. Same
+    /// code, no blast radius.
+    #[test]
+    fn test_the_buffer_stops_recording_rather_than_forgetting() {
+        let mut buffer = Buffer::default();
+        for i in 0..CAPACITY {
+            buffer.record(format!("WARN line {i}"));
+        }
+        assert!(!buffer.stopped, "the buffer holds exactly CAPACITY lines");
+        assert_eq!(buffer.matching("line 0"), vec!["WARN line 0".to_string()]);
+
+        buffer.record("WARN one line too many".to_string());
+        assert_eq!(
+            buffer.lines.len(),
+            CAPACITY,
+            "past CAPACITY the recorder stops; it must not keep growing"
+        );
+        assert!(
+            buffer.stopped,
+            "dropping a record without marking the buffer stopped would leave a search \
+             answering 'not logged' about a line that was logged"
+        );
+        assert_eq!(
+            buffer.lines[0], "WARN line 0",
+            "the oldest line must survive — trimming it to make room could trim the \
+             very line a test is about to search for"
+        );
+    }
+
+    /// And once it has stopped, a search must refuse rather than
+    /// answer: "not found" no longer distinguishes "never logged"
+    /// from "logged and dropped", so an innocent test would fail with
+    /// a wrong reason. The same shape as
+    /// `test_a_failed_install_says_what_actually_went_wrong` — the
+    /// diagnosis is what is exercised.
+    #[test]
+    #[should_panic(expected = "logging in a loop")]
+    fn test_a_search_of_a_stopped_buffer_refuses_to_answer() {
+        let mut buffer = Buffer::default();
+        for i in 0..=CAPACITY {
+            buffer.record(format!("WARN line {i}"));
+        }
+        let _ = buffer.matching("line 0");
     }
 }
