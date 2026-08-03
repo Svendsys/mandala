@@ -975,7 +975,64 @@ model means something else by, and each has a `maptool convert` verb.
 [`format/schema.md`](./format/schema.md) §"Unknown keys are kept" for
 the policy as authors read it, and
 [`format/validation.md`](./format/validation.md) for the split between
-what the loader reports and what `verify` fails on.
+what the loader reports and what `verify` fails on. Its severe
+counterpart is [skipped constructs](#skippedconstruct--skippedconstructs),
+below.
+
+### `SkippedConstruct` / `SkippedConstructs`
+
+One construct a load could not read at all, lifted out of the document
+so the rest of the map opens, and written back untouched at the next
+save. `SkippedConstructs` is the ordered collection of them, carried
+on `MindMap` beside `unknown_keys` and with the same `#[serde(skip)]`:
+they go back at their own routes, not into a side object.
+
+The problem is the acute form of the one
+[preserved unknown keys](#preserved-unknown-keys) solves. A key from a
+newer build is **inert** — nothing reads it, so ignoring it changes
+nothing about what the map does. A **variant** from a newer build is
+the opposite: it *is* the instruction. `{"mutator": {"Glow": …}}` used
+to make the whole document unloadable, so opening a newer map in an
+older build gave an empty window and the newer feature was one
+accidental save away from gone.
+
+**The unit is the whole construct**, never the part inside it that
+failed, and that is the load-bearing design decision. Dropping one
+`Mutation` out of a macro would leave a custom mutation that still
+appears in `mutation list`, still fires, and now does two of the three
+things it says it does — a silent partial behavior with nothing to
+see. So the unit is the nearest container whose absence reads *as*
+absence: a whole `custom_mutations[i]`, a whole node
+`inline_mutations[i]`, or a whole node-or-section
+`trigger_bindings[i]`. Nothing else is skippable — a node, an edge,
+the canvas or a palette this build cannot read still fails the load,
+because a map missing part of itself with no sign of which part is
+worse than no map.
+
+**Refused for any reason, not only an unknown variant.** Sorting
+serde's message into "from the future" and "a typo" would mean parsing
+that message — the twin surface `lib/baumhard/CONVENTIONS.md` §B4 is
+about — and it sorts on the wrong axis anyway: the load's question is
+"can I carry this out?", and the answer is no in both cases. So the
+load skips what it cannot read, warns saying what serde said and that
+nothing the construct describes will run, and `maptool verify` reports
+every one as an `unknown_variant` violation with a nonzero exit. The
+two questions — *can I open this?* and *is this file right?* — stay
+separate.
+
+Ordering matters at save: captured keys are spliced back **before**
+skipped constructs, because a key's positional route was resolved
+against the array with the constructs already lifted out. See
+`loader::to_json_value`.
+
+`lib/baumhard/src/mindmap/unknown_keys.rs` (the types),
+`lib/baumhard/src/mindmap/loader.rs`
+(`load_skipping_unreadable_constructs`,
+`excise_unreadable_constructs`),
+`crates/maptool/src/verify/unknown_keys.rs`
+(`check_skipped_constructs`). See
+[`format/schema.md`](./format/schema.md) §"Unknown keys are kept" and
+[`format/validation.md`](./format/validation.md) §"Unknown variants".
 
 ### `Canvas`
 

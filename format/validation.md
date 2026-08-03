@@ -163,6 +163,35 @@ tell you the build is behind the file. See
 Interiors of `macros` and a node's `inline_macros` are exempt: they
 are opaque JSON by design and nothing in them is ever unrecognized.
 
+### Unknown variants
+
+- Every construct the loader could not read at all and therefore
+  skipped — a whole `custom_mutations[i]`, a node's
+  `inline_mutations[i]`, or a node's or section's
+  `trigger_bindings[i]` — reported at the part of the document that
+  carried it, quoting serde's own account of what it refused
+  (`unknown variant 'Glwo', expected one of ...`)
+
+**Why**: this is the severe half of the same bargain as unknown keys,
+and the reason it is a separate category is that the *consequence*
+differs. An unrecognized key is inert — nothing reads it, so the map
+behaves exactly as authored minus a key nobody acts on. An
+unrecognized **variant** is the instruction: the load lifts the whole
+construct out so a map from a newer build opens instead of showing
+nothing, and what that construct described does not happen. The file
+still has it and a save writes it back, but in *this* build the
+mutation does not appear in `mutation list` and the trigger does not
+fire. `{"mutator": {"Glwo": …}}` is a typo that silently costs
+behavior, so there has to be a moment at which somebody finds out —
+this is that moment, on a file that nonetheless loads and renders.
+
+The unit is always the whole construct, never the part inside it that
+failed: dropping one `Mutation` out of a macro would leave an entry
+that still fires and silently does less than it says. Nothing else is
+skippable — a node, an edge, the canvas or a palette this build cannot
+read still fails the load outright. See
+[schema.md](./schema.md#unknown-keys-are-kept).
+
 ## What's not checked
 
 - **Color format** (`#RRGGBB` vs `rgb(...)` vs named colors): the format
