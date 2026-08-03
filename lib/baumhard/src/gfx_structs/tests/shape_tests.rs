@@ -12,8 +12,11 @@
 //! frame — benching is §B8-mandatory, not optional.
 
 use glam::Vec2;
+use strum::IntoEnumIterator;
 
-use crate::gfx_structs::shape::{NodeShape, SHAPE_ID_ELLIPSE, SHAPE_ID_RECTANGLE};
+use crate::gfx_structs::shape::{
+    NodeShape, ShapeSpelling, KNOWN_SHAPES, SHAPE_ID_ELLIPSE, SHAPE_ID_RECTANGLE,
+};
 
 /// Parse every documented shape spelling, plus the `"circle"`
 /// alias and the empty-string fallback. Pins the author-facing
@@ -36,9 +39,11 @@ pub fn do_shape_from_style_string_known_names() {
 }
 
 /// An empty or unknown string falls back to the default
-/// `Rectangle` variant (and logs a warning). Mirrors how
-/// `tree_builder/node.rs` treats malformed background hex:
-/// survive a typo rather than crash the render.
+/// `Rectangle` variant. Mirrors how `tree_builder/node.rs` treats
+/// malformed background hex: survive a typo rather than crash the
+/// render. Which of these is *reported* is
+/// `test_shape_classification_partitions_by_warning`'s subject —
+/// the resolved shape is the same either way.
 #[test]
 pub fn test_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle() {
     do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle();
@@ -48,6 +53,252 @@ pub fn do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle() {
     assert_eq!(NodeShape::from_style_string(""), NodeShape::Rectangle);
     assert_eq!(NodeShape::from_style_string("diamond"), NodeShape::Rectangle);
     assert_eq!(NodeShape::from_style_string("zigzag"), NodeShape::Rectangle);
+}
+
+/// Does this classification make `from_style_string` emit a
+/// `log::warn!`? The one question issue #118 is about, asked of the
+/// classifier rather than of a log sink — there is no logger to
+/// install here, and asserting on the returned value is a stronger
+/// test than scraping records anyway.
+fn warns(spelling: ShapeSpelling) -> bool {
+    match spelling {
+        ShapeSpelling::Unrecognized => true,
+        // Spelled out rather than `_ =>` so a fourth non-warning
+        // classification cannot join the quiet set unnoticed.
+        ShapeSpelling::Unspecified
+        | ShapeSpelling::Rendered(_)
+        | ShapeSpelling::KnownNotYetRendered => false,
+    }
+}
+
+/// **Issue #118.** Every canonical spelling — iterated from
+/// `KNOWN_SHAPES`, never re-spelled here — is a shape the format
+/// publishes, `maptool convert --legacy` emits and `maptool verify`
+/// accepts. None of them may be reported as unknown, whether or not
+/// a `NodeShape` variant draws it yet. `"hexagon"` is the one that
+/// produced 242 warnings per load of `maps/testament.mindmap.json`.
+///
+/// Iterating is the point: a spelling added to `KNOWN_SHAPES`
+/// tomorrow is covered by this test the moment it lands, with
+/// nobody editing the parser or this file.
+#[test]
+pub fn test_shape_every_known_spelling_is_non_warning() {
+    do_shape_every_known_spelling_is_non_warning();
+}
+
+pub fn do_shape_every_known_spelling_is_non_warning() {
+    assert!(
+        !KNOWN_SHAPES.is_empty(),
+        "KNOWN_SHAPES is empty — this test would pass vacuously"
+    );
+    for known in KNOWN_SHAPES {
+        let spelling = ShapeSpelling::classify(known);
+        assert!(
+            !warns(spelling),
+            "canonical shape {known:?} classified as {spelling:?}, which warns"
+        );
+        assert_ne!(
+            spelling,
+            ShapeSpelling::Unspecified,
+            "canonical shape {known:?} must not classify as unset"
+        );
+    }
+}
+
+/// The classification of every canonical spelling, derived from the
+/// two sources of truth rather than restated: a spelling one of the
+/// `NodeShape` variants claims is `Rendered`, and every other
+/// `KNOWN_SHAPES` entry is `KnownNotYetRendered`. This is the pin
+/// that fails when a `KNOWN_SHAPES` entry is added that the
+/// classifier does not account for, and equally when a spelling
+/// silently changes sides.
+#[test]
+pub fn test_shape_classification_partitions_by_warning() {
+    do_shape_classification_partitions_by_warning();
+}
+
+pub fn do_shape_classification_partitions_by_warning() {
+    for known in KNOWN_SHAPES {
+        let claimed_by = NodeShape::iter()
+            .find(|shape| shape.style_spellings().contains(known));
+        let expected = match claimed_by {
+            Some(shape) => ShapeSpelling::Rendered(shape),
+            None => ShapeSpelling::KnownNotYetRendered,
+        };
+        assert_eq!(
+            ShapeSpelling::classify(known),
+            expected,
+            "canonical shape {known:?} is not classified the way the \
+             NodeShape variant set says it should be"
+        );
+    }
+    // Both halves must be non-empty, or the partition above is
+    // asserting nothing about one of them. Today: three rendered
+    // spellings, four awaiting a shader case.
+    let rendered = KNOWN_SHAPES
+        .iter()
+        .filter(|known| matches!(ShapeSpelling::classify(known), ShapeSpelling::Rendered(_)))
+        .count();
+    assert!(rendered > 0, "no canonical spelling maps to a NodeShape variant");
+    assert!(
+        rendered < KNOWN_SHAPES.len(),
+        "every canonical spelling is rendered — the KnownNotYetRendered \
+         half of this test is now vacuous and needs rewriting"
+    );
+}
+
+/// A spelling no `NodeShape` variant claims may still be canonical,
+/// but a spelling that claims to be canonical while sitting outside
+/// `KNOWN_SHAPES` is a bug in the other direction: `maptool verify`
+/// would reject a map the runtime renders correctly. Exhaustive over
+/// the variants via `EnumIter`, so a new variant is covered
+/// automatically.
+#[test]
+pub fn test_shape_variant_spellings_are_all_known() {
+    do_shape_variant_spellings_are_all_known();
+}
+
+pub fn do_shape_variant_spellings_are_all_known() {
+    for shape in NodeShape::iter() {
+        assert!(
+            !shape.style_spellings().is_empty(),
+            "{shape:?} declares no canonical spelling, so no map can ask for it"
+        );
+        for spelling in shape.style_spellings() {
+            assert!(
+                KNOWN_SHAPES.contains(spelling),
+                "{shape:?} claims spelling {spelling:?}, which is not in \
+                 KNOWN_SHAPES — maptool verify would reject it"
+            );
+            assert_eq!(
+                ShapeSpelling::classify(spelling),
+                ShapeSpelling::Rendered(shape),
+                "{spelling:?} does not classify back to {shape:?}"
+            );
+        }
+    }
+}
+
+/// `KNOWN_SHAPES` entries are written lowercase. The runtime's
+/// `eq_ignore_ascii_case` compare and `maptool verify`'s
+/// lowercase-normalize-then-match only agree while that holds, and
+/// nothing in the type system says so.
+#[test]
+pub fn test_shape_known_shapes_are_lowercase() {
+    do_shape_known_shapes_are_lowercase();
+}
+
+pub fn do_shape_known_shapes_are_lowercase() {
+    for known in KNOWN_SHAPES {
+        assert_eq!(
+            *known,
+            known.to_ascii_lowercase().as_str(),
+            "KNOWN_SHAPES entry {known:?} is not lowercase"
+        );
+    }
+}
+
+/// The other half of issue #118: a value that really is unknown
+/// stays reported. `"pentagram"` is nowhere in `KNOWN_SHAPES`, so it
+/// is a typo or a value from a newer build — exactly the case the
+/// warning was written for. The empty string is *not* that case;
+/// it means the field was left unset.
+#[test]
+pub fn test_shape_unrecognized_spelling_still_warns() {
+    do_shape_unrecognized_spelling_still_warns();
+}
+
+pub fn do_shape_unrecognized_spelling_still_warns() {
+    let spelling = ShapeSpelling::classify("pentagram");
+    assert_eq!(spelling, ShapeSpelling::Unrecognized);
+    assert!(warns(spelling));
+    assert_eq!(spelling.resolve(), NodeShape::Rectangle);
+    assert_eq!(NodeShape::from_style_string("pentagram"), NodeShape::Rectangle);
+
+    // Unset is silent, and has been since before #118.
+    assert_eq!(ShapeSpelling::classify(""), ShapeSpelling::Unspecified);
+    assert!(!warns(ShapeSpelling::classify("")));
+}
+
+/// The three spellings named in the issue, asserted one at a time
+/// because each pins a different property: `"HEXAGON"` that the
+/// canonical-but-unrendered path is case-insensitive (uppercase is
+/// how the warning was first noticed to be spelling-sensitive),
+/// `"Circle"` that the alias survives mixed case, `""` that unset
+/// is still silent.
+#[test]
+pub fn test_shape_classify_case_and_alias() {
+    do_shape_classify_case_and_alias();
+}
+
+pub fn do_shape_classify_case_and_alias() {
+    assert_eq!(
+        ShapeSpelling::classify("HEXAGON"),
+        ShapeSpelling::KnownNotYetRendered
+    );
+    assert_eq!(ShapeSpelling::classify("hexagon"), ShapeSpelling::KnownNotYetRendered);
+    assert_eq!(NodeShape::from_style_string("HEXAGON"), NodeShape::Rectangle);
+
+    assert_eq!(
+        ShapeSpelling::classify("Circle"),
+        ShapeSpelling::Rendered(NodeShape::Ellipse)
+    );
+    assert_eq!(
+        ShapeSpelling::classify("CIRCLE"),
+        ShapeSpelling::Rendered(NodeShape::Ellipse)
+    );
+    assert_eq!(NodeShape::from_style_string("Circle"), NodeShape::Ellipse);
+
+    assert_eq!(
+        ShapeSpelling::classify("RECTANGLE"),
+        ShapeSpelling::Rendered(NodeShape::Rectangle)
+    );
+    assert_eq!(
+        ShapeSpelling::classify("Ellipse"),
+        ShapeSpelling::Rendered(NodeShape::Ellipse)
+    );
+
+    assert_eq!(ShapeSpelling::classify(""), ShapeSpelling::Unspecified);
+    assert_eq!(ShapeSpelling::classify("").resolve(), NodeShape::Rectangle);
+}
+
+/// **Issue #118, against the file that produced it.** Every
+/// `style.shape` string in `maps/testament.mindmap.json` — the demo
+/// map the app opens by default, 242 of whose nodes are hexagons —
+/// must classify as non-warning. Asserted over the map's real shape
+/// strings rather than over emitted log records: there is no logger
+/// to install from here, and the classification is the thing the
+/// warning is a function of.
+///
+/// The map is loaded through `mindmap::loader`, so a shape string
+/// the loader would reject never reaches the assertion — which is
+/// the point: this is the load path, not a synthetic list.
+#[test]
+pub fn test_shape_testament_map_has_no_unknown_shapes() {
+    do_shape_testament_map_has_no_unknown_shapes();
+}
+
+pub fn do_shape_testament_map_has_no_unknown_shapes() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../maps/testament.mindmap.json");
+    let map = crate::mindmap::loader::load_from_file(std::path::Path::new(path))
+        .expect("maps/testament.mindmap.json must load");
+
+    let mut inspected = 0usize;
+    for (location, node) in map.node_locations() {
+        let spelling = ShapeSpelling::classify(&node.style.shape);
+        assert!(
+            !warns(spelling),
+            "{location}: style.shape {:?} classified as {spelling:?} — \
+             loading the demo map would warn",
+            node.style.shape
+        );
+        inspected += 1;
+    }
+    assert!(
+        inspected > 0,
+        "no nodes inspected — the fixture walk found nothing and the \
+         assertion above never ran"
+    );
 }
 
 /// Rectangle `contains_local` matches the classic inclusive-AABB

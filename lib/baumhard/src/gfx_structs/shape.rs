@@ -11,17 +11,37 @@
 //! Extending the set is deliberately local:
 //!
 //! 1. Add a variant to the enum below.
-//! 2. Add a `SHAPE_*` constant + a `case` arm to the rect pipeline's
+//! 2. Give it its canonical `NodeStyle.shape` spelling(s) in
+//!    [`crate::gfx_structs::shape::NodeShape::style_spellings`], and
+//!    add that spelling to
+//!    [`crate::gfx_structs::shape::KNOWN_SHAPES`] if it is not
+//!    already listed. The `match` in `style_spellings` is
+//!    exhaustive, so step 1 does not compile until this one is
+//!    done — a new variant cannot silently stay on the
+//!    quiet-fallback path.
+//! 3. Add a `SHAPE_*` constant + a `case` arm to the rect pipeline's
 //!    fragment shader (`src/application/renderer/mod.rs`,
 //!    `RECT_SHADER_WGSL`).
-//! 3. Add a branch in
+//! 4. Add a branch in
 //!    [`crate::gfx_structs::shape::NodeShape::contains_local`] and
 //!    [`crate::gfx_structs::shape::NodeShape::intersects_local_aabb`].
 //!
 //! No new structs, no new mutation surfaces, no new mesh builders.
+//!
+//! The format's shape vocabulary is deliberately wider than the set
+//! this module can draw:
+//! [`crate::gfx_structs::shape::KNOWN_SHAPES`] lists every canonical
+//! spelling `format/enums.md` publishes and `maptool verify` accepts,
+//! while `NodeShape` names only the ones with a shader case behind
+//! them. [`crate::gfx_structs::shape::ShapeSpelling`] is the pure
+//! classifier that tells those two populations apart, so a canonical
+//! spelling awaiting its shader case degrades quietly to a rectangle
+//! and only a genuine typo is reported to the author.
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 /// The background / hit shape of a node. Stored on
 /// [`crate::gfx_structs::area::GlyphArea`] next to `background_color`
@@ -32,7 +52,13 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Costs
 /// O(1) to copy, hash, compare. No heap allocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+///
+/// `EnumIter` is derived rather than hand-maintained so that
+/// [`ShapeSpelling::classify`] enumerates exactly the variants that
+/// exist — the same reason `GlyphAreaFieldType` derives it. A
+/// hand-written `ALL` array would let a new variant be added without
+/// ever becoming parseable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, EnumIter)]
 pub enum NodeShape {
     /// Fills the bounding box exactly — the legacy behaviour and the
     /// default for any node that doesn't opt in to a different shape.
@@ -57,7 +83,21 @@ pub const SHAPE_ID_ELLIPSE: u32 = 1;
 /// Canonical named-enum spellings for `NodeStyle.shape`, as used by
 /// `format/enums.md` and by `maptool verify`. The runtime accepts
 /// these case-insensitively (and treats `"circle"` as an alias for
-/// `"ellipse"`); verify normalises to lowercase before matching.
+/// `"ellipse"`); verify normalizes to lowercase before matching.
+///
+/// This is the **only** list of canonical spellings in the tree, and
+/// deliberately so: [`ShapeSpelling::classify`] consults it rather
+/// than repeating a set of literals, so adding a spelling here makes
+/// it a documented, non-warning value everywhere at once —
+/// `maptool verify` accepts it and the runtime stops calling it
+/// unknown — without anyone editing the parser. Entries are written
+/// lowercase; `test_shape_known_shapes_are_lowercase` pins that,
+/// because the case-insensitive compare here and verify's
+/// lowercase normalization only agree while it holds.
+///
+/// Membership here is a claim about the *format*, not about the
+/// renderer: most of these have no [`NodeShape`] variant yet and
+/// draw as a rectangle until one lands.
 pub const KNOWN_SHAPES: &[&str] = &[
     "rectangle",
     "rounded_rectangle",
@@ -67,6 +107,107 @@ pub const KNOWN_SHAPES: &[&str] = &[
     "parallelogram",
     "hexagon",
 ];
+
+/// What a format-level `NodeStyle.shape` string turns out to be,
+/// decided without side effects so the decision and the reporting of
+/// it can be tested apart.
+///
+/// The distinction that matters is between a spelling the *format*
+/// knows and a spelling nobody knows. [`KNOWN_SHAPES`] is wider than
+/// the [`NodeShape`] variant set — `"hexagon"` is published in
+/// `format/enums.md`, emitted by `maptool convert --legacy` and
+/// accepted by `maptool verify`, yet has no shader case — so
+/// collapsing it to `Rectangle` is the intended behavior and there is
+/// nothing for an author to fix. Telling them otherwise is noise, and
+/// on `maps/testament.mindmap.json` it was 242 lines of it per load
+/// (issue #118). A spelling outside `KNOWN_SHAPES` is a different
+/// thing entirely: a typo, or a value written by a newer build, and
+/// worth a `log::warn!`.
+///
+/// [`NodeShape::from_style_string`] is the caller that maps these to
+/// a log level; anything else that needs to know *why* a shape
+/// resolved the way it did — a linter, a script API, an editor
+/// surfacing "this shape isn't drawn yet" — reads the classification
+/// directly instead of scraping the log.
+///
+/// # Costs
+/// O(1) to copy, hash, compare. Borrows nothing, allocates nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ShapeSpelling {
+    /// The empty string — the node names no shape at all, which is
+    /// not an error and never was. Resolves to the
+    /// [`NodeShape::default`] rectangle silently.
+    Unspecified,
+    /// A canonical spelling that has a [`NodeShape`] variant behind
+    /// it, so the renderer draws what the author asked for.
+    Rendered(NodeShape),
+    /// Listed in [`KNOWN_SHAPES`], but no [`NodeShape`] variant
+    /// exists for it yet. Documented, tool-emitted, round-trips
+    /// intact — and draws as a rectangle until a shader case lands.
+    /// Not an author error.
+    KnownNotYetRendered,
+    /// Not in [`KNOWN_SHAPES`] at all: a typo, or a value from a
+    /// build that knows more shapes than this one. The only case
+    /// that warrants a warning.
+    Unrecognized,
+}
+
+impl ShapeSpelling {
+    /// Classify a `NodeStyle.shape` string. Pure — no logging, no
+    /// allocation, no I/O.
+    ///
+    /// Matching is ASCII-case-insensitive throughout, against the
+    /// per-variant spellings from [`NodeShape::style_spellings`]
+    /// first and [`KNOWN_SHAPES`] second. The empty string is
+    /// [`ShapeSpelling::Unspecified`] rather than unrecognized: it
+    /// means "unset", and every `NodeStyle` that omits the field
+    /// would otherwise be an error.
+    ///
+    /// # Costs
+    /// At most one `eq_ignore_ascii_case` per canonical spelling —
+    /// bounded by `KNOWN_SHAPES.len()` plus the (subset) spellings
+    /// of the drawable variants, each O(`s.len()`). No allocation.
+    /// Runs once per node per scene rebuild, not per frame.
+    pub fn classify(s: &str) -> Self {
+        if s.is_empty() {
+            return ShapeSpelling::Unspecified;
+        }
+        for shape in NodeShape::iter() {
+            if shape
+                .style_spellings()
+                .iter()
+                .any(|spelling| s.eq_ignore_ascii_case(spelling))
+            {
+                return ShapeSpelling::Rendered(shape);
+            }
+        }
+        if KNOWN_SHAPES.iter().any(|known| s.eq_ignore_ascii_case(known)) {
+            ShapeSpelling::KnownNotYetRendered
+        } else {
+            ShapeSpelling::Unrecognized
+        }
+    }
+
+    /// The [`NodeShape`] the renderer and the hit test should use for
+    /// this classification. Every non-[`ShapeSpelling::Rendered`]
+    /// case degrades to [`NodeShape::Rectangle`] — the bounding box
+    /// is the one silhouette that is always correct to fall back to,
+    /// because it is what the shape's AABB already occupies.
+    ///
+    /// # Costs
+    /// O(1), branch-only. No allocation. Deliberately not
+    /// `#[inline]`: §B7 wants a benchmark that resolves the effect
+    /// before the attribute goes on, and this is not a per-frame
+    /// call.
+    pub const fn resolve(self) -> NodeShape {
+        match self {
+            ShapeSpelling::Rendered(shape) => shape,
+            ShapeSpelling::Unspecified
+            | ShapeSpelling::KnownNotYetRendered
+            | ShapeSpelling::Unrecognized => NodeShape::Rectangle,
+        }
+    }
+}
 
 impl NodeShape {
     /// Stable id fed to the fragment shader. Must stay in lock-step
@@ -82,40 +223,78 @@ impl NodeShape {
         }
     }
 
-    /// Parse the format-level `NodeStyle.shape` string. Recognised
-    /// values (case-insensitive) map to a variant; anything else
-    /// (including the empty string) falls back to
-    /// [`NodeShape::Rectangle`] and a `log::warn!`, mirroring how
-    /// the tree builder treats malformed background hex colors.
+    /// The canonical `NodeStyle.shape` spellings that resolve to this
+    /// variant, in the order [`ShapeSpelling::classify`] tries them.
+    /// Every returned spelling must also appear in [`KNOWN_SHAPES`]
+    /// — `test_shape_variant_spellings_are_all_known` pins that, so a
+    /// variant cannot claim a spelling `maptool verify` would reject.
     ///
-    /// The format doc at `format/enums.md` lists the canonical
-    /// spellings; unknown values stay on disk untouched so a
+    /// The `match` is exhaustive on purpose. It is the guarantee that
+    /// adding a `NodeShape` variant is a **build error** rather than
+    /// a silent no-op: a new variant with no spelling here would
+    /// otherwise be unreachable from the format, and its canonical
+    /// name would keep resolving to a quiet `Rectangle` forever.
+    ///
+    /// `"circle"` is the one alias: a `width == height` ellipse *is*
+    /// a circle, and it is the spelling authors reach for first. It
+    /// costs nothing to accept and round-trips intact, because
+    /// `NodeStyle.shape` stays a free-form `String` at the format
+    /// layer and is never written back from here.
+    ///
+    /// # Costs
+    /// O(1) — returns a `'static` slice. No allocation.
+    pub const fn style_spellings(self) -> &'static [&'static str] {
+        match self {
+            NodeShape::Rectangle => &["rectangle"],
+            NodeShape::Ellipse => &["ellipse", "circle"],
+        }
+    }
+
+    /// Parse the format-level `NodeStyle.shape` string into the shape
+    /// the renderer and hit test should use, reporting only the case
+    /// an author can act on.
+    ///
+    /// The decision is [`ShapeSpelling::classify`]'s and is pure;
+    /// this function is the one place that turns it into a log line,
+    /// which is what keeps the classifier testable without a logger:
+    ///
+    /// - a canonical spelling with a variant renders as asked;
+    /// - the empty string means "unset" and is silent;
+    /// - a [`KNOWN_SHAPES`] spelling with no variant yet
+    ///   (`"hexagon"`, `"diamond"`, `"parallelogram"`,
+    ///   `"rounded_rectangle"`) falls back to
+    ///   [`NodeShape::Rectangle`] at `log::trace!`. It is documented,
+    ///   tool-emitted and correct; warning about it told authors a
+    ///   valid value was unknown, 242 times per load of the demo map
+    ///   (issue #118);
+    /// - anything else keeps the `log::warn!`, because there it is
+    ///   accurate.
+    ///
+    /// Unknown values stay on disk untouched either way, so a
     /// round-trip through `maptool convert` doesn't lose them.
     ///
-    /// O(n) in `s.len()` for the ASCII-lowercase compare; no
-    /// allocation for recognised spellings.
+    /// # Costs
+    /// [`ShapeSpelling::classify`]'s compares plus one branch. No
+    /// allocation on any path; the `trace!` arm compiles out
+    /// entirely in release (`release_max_level_warn`).
     pub fn from_style_string(s: &str) -> Self {
-        if s.is_empty() {
-            return NodeShape::Rectangle;
+        let spelling = ShapeSpelling::classify(s);
+        match spelling {
+            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) => {}
+            ShapeSpelling::KnownNotYetRendered => {
+                log::trace!(
+                    "shape: {s:?} is a canonical shape with no renderer yet, \
+                     drawing it as Rectangle"
+                );
+            }
+            ShapeSpelling::Unrecognized => {
+                log::warn!(
+                    "shape: unknown shape {s:?}, \
+                     falling back to Rectangle"
+                );
+            }
         }
-        if s.eq_ignore_ascii_case("rectangle") {
-            NodeShape::Rectangle
-        } else if s.eq_ignore_ascii_case("ellipse") || s.eq_ignore_ascii_case("circle") {
-            // "circle" isn't one of the canonical named-enum
-            // spellings, but accepting it is free and matches
-            // common-sense author expectation — a `width == height`
-            // ellipse *is* a circle. The round-trip stays correct
-            // because `NodeStyle.shape` is a free-form String at
-            // the format layer; we never write this value back from
-            // here.
-            NodeShape::Ellipse
-        } else {
-            log::warn!(
-                "NodeShape::from_style_string: unknown shape {s:?}, \
-                 falling back to Rectangle"
-            );
-            NodeShape::Rectangle
-        }
+        spelling.resolve()
     }
 
     /// Point-in-shape test in the node's **local** coordinate space,

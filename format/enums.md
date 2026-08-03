@@ -47,9 +47,18 @@ authors reach for first.
 The remaining values (`"rounded_rectangle"`, `"diamond"`,
 `"parallelogram"`, `"hexagon"`) still round-trip but currently render
 as `"rectangle"` — adding one is a small change (one `NodeShape`
-variant, one WGSL `case`, one `contains_local` arm; see the header
-doc in `shape.rs`). An unknown spelling emits a `log::warn!` at
-load time and falls back to `"rectangle"`.
+variant, one `style_spellings` arm, one WGSL `case`, one
+`contains_local` arm; see the header doc in `shape.rs`).
+
+Falling back is **not** an error for any of the values listed above:
+they are canonical, `maptool verify` accepts them, and
+`maptool convert --legacy` emits them, so the runtime substitutes a
+rectangle at `log::trace!` and says nothing in release. A spelling
+that is *not* in the list — a typo, or a value from a newer build —
+falls back the same way but emits a `log::warn!` naming it. The
+classifier behind that split is `ShapeSpelling` in `shape.rs`, and it
+reads the same list this section publishes, so a spelling added here
+becomes non-warning without a parser change.
 
 Today, `show_frame = true` only emits the glyph border when
 `shape == "rectangle"` — the four-run frame layout assumes an

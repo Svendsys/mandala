@@ -98,11 +98,16 @@ pub(super) fn mindnode_container_area(
         bounds,
     );
 
+    // Parsed once and read twice below. The two reads used to parse
+    // separately, which on an unrecognized spelling meant the same
+    // node reported the same typo twice from inside one function.
+    let shape = NodeShape::from_style_string(&node.style.shape);
+
     // `background_padding` math — see `mindmap/border.rs` for the
     // derivation. Same shape as pre-section nodes; the container
     // is the natural carrier because a section sits *inside* the
     // node AABB and never touches the surrounding border.
-    if node.style.show_frame && NodeShape::from_style_string(&node.style.shape) == NodeShape::Rectangle {
+    if node.style.show_frame && shape == NodeShape::Rectangle {
         let frame_color_resolved = color::resolve_var(&node.style.frame_color, vars);
         let border_style = resolve_border_style(
             node.style.border.as_ref(),
@@ -139,7 +144,7 @@ pub(super) fn mindnode_container_area(
         }
     };
 
-    area.shape = NodeShape::from_style_string(&node.style.shape);
+    area.shape = shape;
     area.zoom_visibility = node.zoom_window();
     area
 }
