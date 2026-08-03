@@ -204,7 +204,7 @@ category; the loader refuses them outright.
 | Positions, section offsets, Bezier control points | finite, `|v|` ≤ `1e9` |
 | Text runs | sorted, non-overlapping, non-empty, `end` ≤ the section's grapheme count |
 | Connection body / cap glyphs | ≤ 16 grapheme clusters **and** ≤ 512 bytes (each is re-emitted per sampled point, and one cluster can carry unlimited combining marks — the cluster count keeps it a motif, the byte count keeps `bytes × samples` finite) |
-| Border glyphs — all eight of `style.border.glyphs` | ≤ 64 grapheme clusters **and** ≤ 1024 bytes. The four sides are patterns repeated to fill an edge; the four corners are emitted verbatim and shaped once per node **per frame**, so an unbounded corner is an unbounded shape call on every frame rather than a one-off allocation. Paired for the same reason as the connection glyph |
+| Border glyphs — all eight of `style.border.glyphs` | ≤ 64 grapheme clusters **and** ≤ 1024 bytes. The four sides are patterns repeated to fill an edge; the four corners are emitted verbatim and looked up in the glyph-metric cache four times per node **per frame**. The shaping is memoized, but the cache key is an owned copy of the glyph built before the lookup, so an unbounded corner is an unbounded clone every frame and a permanent cache entry. Paired for the same reason as the connection glyph |
 | Animation envelope — `duration_ms`, `delay_ms` | ≤ `60_000` ms each |
 | Zoom windows | finite, non-negative, not inverted |
 | Whole file | ≤ 256 MiB |

@@ -278,9 +278,15 @@ impl MindMapDocument {
         let offset = control_point_canvas - from_center;
 
         let before = self.mindmap.edges[idx].clone();
+        // Clamped: the offset is computed from two node centers plus
+        // a quarter of the distance between them, so two positions
+        // that are individually inside `MAX_CANVAS_COORD` can produce
+        // a control point outside it — and the loader bounds control
+        // points at that same ceiling, so an unclamped write here
+        // saves a map that will not reopen.
         self.mindmap.edges[idx].control_points.push(ControlPoint {
-            x: offset.x as f64,
-            y: offset.y as f64,
+            x: baumhard::mindmap::model::validate::clamp_canvas_coord(offset.x as f64),
+            y: baumhard::mindmap::model::validate::clamp_canvas_coord(offset.y as f64),
         });
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
         self.dirty = true;

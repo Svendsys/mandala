@@ -508,9 +508,18 @@ pub const MAX_BORDER_GLYPH_CLUSTERS: usize = 64;
 /// The cost here is not only the repetition — `MAX_BORDER_SIDE_BYTES`
 /// bounds what a side rail *emits*. It is the corners, which are
 /// copied verbatim into their run specs and handed to
-/// `glyph_ink_with` four times per node per frame, so an unbounded
-/// corner is an unbounded shape call on every frame rather than a
-/// one-off allocation.
+/// `glyph_ink_with` four times per node per frame.
+///
+/// That is **not** an unbounded shape call per frame: `glyph_ink_with`
+/// memoizes through `INK_EXTENT_CACHE`, so a given corner is
+/// rasterized once. The per-frame cost is the *lookup*, whose key is
+/// `(face, size, grapheme.to_string())` — an owned copy of the glyph,
+/// allocated unconditionally before the cache is even read. So a
+/// megabyte corner is a megabyte cloned four times per node per
+/// frame, and the cache then retains a copy per distinct glyph.
+/// Bounded either way, and worth stating correctly: an earlier
+/// version of this comment blamed the shaper, which is the one cost
+/// the cache already removes.
 pub const MAX_BORDER_GLYPH_BYTES: usize = 1024;
 
 /// Both ceilings on one authored border glyph.
@@ -536,7 +545,7 @@ pub fn border_glyph_violations(label: &str, name: &str, glyph: &str) -> Vec<Stri
         out.push(format!(
             "{where_} is {bytes} bytes, over the {MAX_BORDER_GLYPH_BYTES} byte ceiling — a \
              single grapheme cluster can carry any number of combining marks, and a corner \
-             glyph is shaped once per node per frame"
+             glyph is cloned into a metric-cache key four times per node per frame"
         ));
     }
     out

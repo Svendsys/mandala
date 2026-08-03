@@ -2539,12 +2539,14 @@ mod tests {
     /// **The corners were bounded in no unit at all.** The two side
     /// patterns each got a ceiling on what they *emit*, but the four
     /// corner glyphs are copied verbatim out of the file into their
-    /// run specs and handed to `glyph_ink_with` — four cosmic-text
-    /// shaping calls per node per frame, over a string the map
-    /// chose. A multi-megabyte corner is therefore not a one-off
-    /// allocation but an unbounded shape call on every frame, which
-    /// is the same "opening a map cannot kill the editor" property
-    /// the rest of this module exists to hold.
+    /// run specs and handed to `glyph_ink_with` four times per node
+    /// per frame, over a string the map chose. The shaping itself is
+    /// memoized, so the recurring cost is the cache *key* — an owned
+    /// copy of the glyph, built before the cache is read — which
+    /// makes a multi-megabyte corner a multi-megabyte clone on every
+    /// frame, and a permanent cache entry besides. Same "opening a
+    /// map cannot kill the editor" property the rest of this module
+    /// exists to hold.
     ///
     /// All eight authored glyph fields carry both ceilings, because
     /// the sides are an authored string too and the emitted-side cap

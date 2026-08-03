@@ -633,7 +633,11 @@ fn test_color_picker_preview_does_not_push_undo_or_dirty() {
     // And the scene builder substitutes the preview color into
     // the matching edge's label element.
     doc.selection = SelectionState::Edge(er.clone());
-    let scene = crate::application::document::tests_common::project_roles(&doc, 1.0, InteractionModeOverrides::none());
+    let scene = crate::application::document::tests_common::project_roles(
+        &doc,
+        1.0,
+        InteractionModeOverrides::none(),
+    );
     // The edge has a glyph label → the label pass should emit a
     // ConnectionLabelElement for it. If the edge has no label
     // this test case simply verifies nothing crashes.
@@ -676,12 +680,12 @@ fn test_edge_label_selection_paints_label_cyan() {
         1.0,
         InteractionModeOverrides::none(),
     )
-        .connection_label_elements
-        .iter()
-        .find(|c| c.edge_key == edge_key)
-        .expect("baseline label element")
-        .color
-        .clone();
+    .connection_label_elements
+    .iter()
+    .find(|c| c.edge_key == edge_key)
+    .expect("baseline label element")
+    .color
+    .clone();
     assert_ne!(
         baseline.to_lowercase(),
         "#00e5ff",
@@ -695,12 +699,12 @@ fn test_edge_label_selection_paints_label_cyan() {
         1.0,
         InteractionModeOverrides::none(),
     )
-        .connection_label_elements
-        .iter()
-        .find(|c| c.edge_key == edge_key)
-        .expect("highlighted label element")
-        .color
-        .clone();
+    .connection_label_elements
+    .iter()
+    .find(|c| c.edge_key == edge_key)
+    .expect("highlighted label element")
+    .color
+    .clone();
     assert_eq!(highlighted.to_uppercase(), "#00E5FF");
 
     // Whole-edge selection: same tint applied to the label so
@@ -712,12 +716,12 @@ fn test_edge_label_selection_paints_label_cyan() {
         1.0,
         InteractionModeOverrides::none(),
     )
-        .connection_label_elements
-        .iter()
-        .find(|c| c.edge_key == edge_key)
-        .expect("edge-selected label element")
-        .color
-        .clone();
+    .connection_label_elements
+    .iter()
+    .find(|c| c.edge_key == edge_key)
+    .expect("edge-selected label element")
+    .color
+    .clone();
     assert_eq!(edge_selected.to_uppercase(), "#00E5FF");
 }
 
@@ -1646,4 +1650,56 @@ fn test_edge_font_triple_clamps_into_the_loaders_domain() {
     baumhard::mindmap::loader::load_from_file(&path).unwrap_or_else(|e| {
         panic!("the editor wrote an edge its own loader refuses — the lockout case: {e}")
     });
+}
+
+/// **A curve reset must not write a control point the loader
+/// refuses.** `add_edge_curve` computes the control point from two
+/// node centers plus a quarter of the distance between them, so two
+/// positions that are each inside `MAX_CANVAS_COORD` can produce an
+/// offset outside it — and the loader bounds control points at that
+/// same ceiling. Unclamped, the verb reported success and the saved
+/// map would not reopen.
+#[test]
+fn test_curve_reset_on_distant_nodes_still_reloads() {
+    use baumhard::mindmap::model::{Position, Size};
+
+    let mut doc = load_test_doc();
+    let er = first_testament_edge_ref(&doc);
+
+    // Both endpoints inside the loader's bound, as far apart as it
+    // allows — the shape that made the midpoint-plus-quarter-length
+    // arithmetic leave the domain.
+    let coord = baumhard::mindmap::model::validate::MAX_CANVAS_COORD;
+    for (id, sign) in [(er.from_id.clone(), -1.0), (er.to_id.clone(), 1.0)] {
+        if let Some(n) = doc.mindmap.nodes.get_mut(&id) {
+            n.position = Position {
+                x: coord * sign,
+                y: coord * sign,
+            };
+            n.size = Size {
+                width: 100.0,
+                height: 50.0,
+            };
+        }
+    }
+
+    doc.curve_straight_edge(&er);
+
+    let dir = baumhard::util::test_temp::TempDir::new("curve-reset-reload");
+    let path = dir.join("curved.mindmap.json");
+    baumhard::mindmap::loader::save_to_file(&path, &doc.mindmap).expect("save must succeed");
+    let reloaded = baumhard::mindmap::loader::load_from_file(&path).unwrap_or_else(|e| {
+        panic!("the editor wrote a curve its own loader refuses — the lockout case: {e}")
+    });
+
+    for edge in &reloaded.edges {
+        for cp in &edge.control_points {
+            assert!(
+                cp.x.abs() <= coord && cp.y.abs() <= coord,
+                "control point ({}, {}) is outside the loader's bound",
+                cp.x,
+                cp.y
+            );
+        }
+    }
 }
