@@ -391,29 +391,32 @@ fn criterion_benchmark(c: &mut Criterion) {
         "shape_from_style_string_empty_and_unknown_fall_back_to_rectangle",
         |b| b.iter(|| do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle()),
     );
+    // Written as `b.iter(do_*)` rather than `b.iter(|| do_*())`.
+    // Both spellings are already in this file; only this one is
+    // clippy-clean (`redundant_closure`), so new entries use it.
     c.bench_function("shape_every_known_spelling_is_non_warning", |b| {
-        b.iter(|| do_shape_every_known_spelling_is_non_warning())
+        b.iter(do_shape_every_known_spelling_is_non_warning)
     });
     c.bench_function("shape_classification_partitions_by_warning", |b| {
-        b.iter(|| do_shape_classification_partitions_by_warning())
+        b.iter(do_shape_classification_partitions_by_warning)
     });
     c.bench_function("shape_variant_spellings_are_all_known", |b| {
-        b.iter(|| do_shape_variant_spellings_are_all_known())
+        b.iter(do_shape_variant_spellings_are_all_known)
     });
     c.bench_function("shape_known_shapes_are_lowercase", |b| {
-        b.iter(|| do_shape_known_shapes_are_lowercase())
+        b.iter(do_shape_known_shapes_are_lowercase)
     });
     c.bench_function("shape_unrecognized_spelling_still_warns", |b| {
-        b.iter(|| do_shape_unrecognized_spelling_still_warns())
+        b.iter(do_shape_unrecognized_spelling_still_warns)
     });
     c.bench_function("shape_classify_case_and_alias", |b| {
-        b.iter(|| do_shape_classify_case_and_alias())
+        b.iter(do_shape_classify_case_and_alias)
     });
     // Loads the demo map from disk on every iteration — a file-read
     // benchmark, not a classifier one. Kept in the harness for the
     // §B8 one-bench-per-`do_*()` contract; read its number as I/O.
     c.bench_function("shape_testament_map_has_no_unknown_shapes", |b| {
-        b.iter(|| do_shape_testament_map_has_no_unknown_shapes())
+        b.iter(do_shape_testament_map_has_no_unknown_shapes)
     });
     c.bench_function("shape_rectangle_contains_local", |b| {
         b.iter(|| do_shape_rectangle_contains_local())
