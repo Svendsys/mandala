@@ -1277,6 +1277,28 @@ mod tests {
             "a `from` proxy written after a list-form option must be read — missing it \
              leaves the type that really owns the on-disk shape out of the walk"
         );
+
+        // **The spelling must not matter.** `rename_all`, `rename` and
+        // `bound` are the three list-form options serde has today, and
+        // a fix that recognized those three by name would be re-opened
+        // by the fourth. `skip_unmodeled_option` recurses through syn's
+        // own nested-meta grammar instead, so an option nobody has
+        // written yet — nested to any depth, with or without values —
+        // is consumed the same way.
+        let invented = parse_attrs(
+            r#"#[serde(zz_from_a_future_serde(alpha = "x", beta, gamma(delta = 1)), deny_unknown_fields)]"#,
+        );
+        assert!(
+            SerdeAttrs::read(&invented).deny_unknown_fields,
+            "the reader must handle list *shape*, not the three list-form spellings serde \
+             happens to have today — otherwise the next option serde adds re-opens the \
+             evasion this whole file exists to close"
+        );
+        assert!(
+            unread_serde_attrs(&invented).is_empty(),
+            "and it must be consumed cleanly rather than merely survived: {:?}",
+            unread_serde_attrs(&invented)
+        );
     }
 
     /// The same shape on a *field* attribute, where all three of the
