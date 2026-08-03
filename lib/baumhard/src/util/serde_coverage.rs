@@ -1434,6 +1434,42 @@ mod tests {
         );
     }
 
+    /// The derived array list is **published in a spec authors
+    /// read**, so the names in it have to be the names the file uses,
+    /// not the identifiers the model happens to spell them with —
+    /// `MindEdge::edge_type` is written `"type"`. And a field serde
+    /// never populates is not a place a route can cross, so it has no
+    /// business on the list either.
+    ///
+    /// Neither is exercised by the model today: nothing renames a
+    /// sequence field and nothing skips one. That is precisely why
+    /// they are planted here — an unexercised branch of a *published*
+    /// derivation is a wrong doc waiting for the first field that
+    /// uses it.
+    #[test]
+    fn test_the_published_member_name_is_the_one_the_file_uses() {
+        let graph = graph_of(
+            "#[derive(Deserialize)] pub struct Root { \
+               #[serde(rename = \"points\")] pub control: Vec<Leaf>, \
+               #[serde(skip)] pub hidden: Vec<Leaf> }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let names = graph.key_bearing_sequences_from("Root");
+        assert!(
+            names.contains("points"),
+            "a renamed field must be published under the name the file carries: {names:?}"
+        );
+        assert!(
+            !names.contains("control"),
+            "and not under the identifier, which appears in no document: {names:?}"
+        );
+        assert!(
+            !names.contains("hidden"),
+            "a `#[serde(skip)]` field never receives on-disk data, so no captured \
+             route crosses it: {names:?}"
+        );
+    }
+
     /// **"Reachable from X" and "only reachable through X" are
     /// different questions, and only the second one is worth
     /// asking.** `loader`'s
