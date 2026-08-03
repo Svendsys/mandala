@@ -861,7 +861,8 @@ pub fn do_shape_shader_ids_are_stable() {
 /// Patching in three more cases would have left the thirty-third.
 ///
 /// So the decision moved out of the source and into a value —
-/// [`ShapeSpelling::report`] returns a
+/// [`ShapeSpelling::report`](crate::gfx_structs::shape::ShapeSpelling::report)
+/// returns a
 /// [`ShapeReport`](crate::gfx_structs::shape::ShapeReport), which
 /// `do_shape_report_routes_every_classification` tests as ordinary
 /// data — and what is left here is a **whitelist** over what remains:
@@ -897,8 +898,8 @@ pub fn do_shape_shader_ids_are_stable() {
 ///
 /// One escape closed itself in the restructure and is worth naming
 /// because it costs nothing: `#[cfg(any())]` on a `match` arm now
-/// makes the `match` non-exhaustive, so it is a *compile* error
-/// before it is a test failure.
+/// makes the `match` non-exhaustive, so it is `error[E0004]` before
+/// it is ever a test failure. Verified, not assumed.
 ///
 /// §B8 asks for a `do_*()` body and a bench entry per test; the tests
 /// in this module have neither, deliberately and with precedent.
