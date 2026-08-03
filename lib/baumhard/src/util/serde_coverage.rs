@@ -171,6 +171,18 @@ pub struct TypeInfo {
     /// [`unread_serde_attrs`] for how it is produced and
     /// [`TypeGraph::unread_serde_attrs`] for the crate-wide view.
     pub unread_serde: Vec<String>,
+    /// `true` when the item carries a container-level
+    /// `#[serde(...)]`, whatever its derive list looks like.
+    ///
+    /// The second half of "does this type take part in
+    /// deserialization?", and the half [`Self::derives_deserialize`]
+    /// cannot answer: that one matches the identifier `Deserialize`
+    /// in a `derive` list, so `use serde::Deserialize as De;` +
+    /// `#[derive(De)]` answers `false` and takes the type out of
+    /// [`Self::unknown_key_hiding_reasons`] altogether — a
+    /// `#[serde(untagged)]` sitting right beside it and never looked
+    /// at. See [`has_serde_container_attr`].
+    pub has_serde_container_attr: bool,
 }
 
 impl TypeInfo {
@@ -190,12 +202,30 @@ impl TypeInfo {
     /// Cost: O(flattened fields + unread attributes); allocates one
     /// `String` per reason and nothing when there are none.
     pub fn unknown_key_hiding_reasons(&self) -> Vec<String> {
-        // A type serde never deserializes cannot hide a key from a
-        // load, and one that delegates its shape through
-        // `#[serde(from = "...")]` never reads its own fields — the
-        // requirement follows the proxy, which the walk also reaches.
-        if !self.derives_deserialize || self.deserialize_proxy.is_some() {
-            return Vec::new();
+        // **Unknown beats known.** Both exemptions below read a flag
+        // off the source, and a flag is only worth as much as the
+        // reading that produced it. If any attribute on this type
+        // went unread, neither exemption is trustworthy — so they are
+        // skipped and the unread entries are reported instead.
+        if self.unread_serde.is_empty() {
+            // A type serde never deserializes cannot hide a key from
+            // a load. "Never deserializes" has to mean more than "no
+            // `Deserialize` in its derive list", because
+            // [`derives_deserialize`] matches an identifier: an
+            // aliased import or a wrapped derive answers `false`, and
+            // `false` here does not mis-flag — it drops the type out
+            // of the check entirely. A container-level `serde`
+            // attribute is independent evidence that it takes part.
+            if !self.derives_deserialize && !self.has_serde_container_attr {
+                return Vec::new();
+            }
+            // A type that delegates its shape through
+            // `#[serde(from = "...")]` never reads its own fields —
+            // the requirement follows the proxy, which the walk also
+            // reaches.
+            if self.deserialize_proxy.is_some() {
+                return Vec::new();
+            }
         }
         let mut reasons = Vec::new();
         // `deny_unknown_fields` and `flatten` act on *named members*:
@@ -525,6 +555,7 @@ impl TypeGraph {
                         omit_predicates: omit_predicates(&item.fields),
                         sequence_fields: sequence_fields(&item.fields),
                         unread_serde: unread_serde_attrs_with_fields(&item.attrs, &item.fields),
+                        has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
                 }
                 Item::Enum(item) => {
@@ -562,6 +593,7 @@ impl TypeGraph {
                         omit_predicates: predicates,
                         sequence_fields: sequences,
                         unread_serde: unread,
+                        has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
                 }
                 Item::Type(item) => {
@@ -584,6 +616,7 @@ impl TypeGraph {
                         omit_predicates: Vec::new(),
                         sequence_fields: Vec::new(),
                         unread_serde: unread_serde_attrs(&item.attrs),
+                        has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
                 }
                 Item::Mod(item) => {
@@ -793,6 +826,31 @@ fn skip_unmodeled_option(meta: &syn::meta::ParseNestedMeta) -> syn::Result<()> {
 fn unread_serde_attrs(attrs: &[Attribute]) -> Vec<String> {
     let mut out = Vec::new();
     for attr in attrs {
+        // **An attribute this walk never looks inside is the third
+        // way to be wrong, and until this it had no reporter.** The
+        // readers here all decide what to examine by matching the
+        // attribute's path, so anything that *wraps* a serde option
+        // is invisible to every one of them — and invisible to the
+        // check below, which only reports attributes it tried and
+        // could not finish. `#[cfg_attr(all(), serde(untagged))]`
+        // therefore made a reachable enum genuinely untagged while
+        // the drift test stayed green.
+        //
+        // Reading through it is not the answer: that would mean
+        // deciding which `cfg` predicates are active, which a source
+        // walk cannot know, and it would turn a fail-safe into a
+        // judgment call. Reporting it keeps the module's own rule —
+        // nothing is listed, and unknown is not safe.
+        if attr.path().is_ident("cfg_attr") {
+            out.push(format!(
+                "{} — not read, so any serde option inside it was never seen. This is \
+                 not a claim that it hides a key; it is a claim that nobody can tell. \
+                 Either move the option out of the `cfg_attr`, or add the type here \
+                 once somebody has looked.",
+                attribute_source(attr)
+            ));
+            continue;
+        }
         if !attr.path().is_ident("serde") {
             continue;
         }
@@ -803,14 +861,38 @@ fn unread_serde_attrs(attrs: &[Attribute]) -> Vec<String> {
     out
 }
 
+/// Whether `attrs` carries a container-level `#[serde(...)]`.
+///
+/// Read as "this type is configured for serde, however its derive is
+/// spelled". [`derives_deserialize`] matches the identifier
+/// `Deserialize` in a `derive` list, so an aliased import
+/// (`use serde::Deserialize as De;`) or a `cfg_attr`-wrapped derive
+/// answers `false` — and `false` does not mis-flag, it removes the
+/// type from the check altogether. A serde container attribute is
+/// independent evidence that the type takes part, and a serde
+/// container attribute on a type that really does not derive serde
+/// traits is itself something a reader should be shown.
+///
+/// Container-level only, deliberately: a field-level
+/// `skip_serializing_if` says nothing about whether the *container*
+/// is deserialized, and counting it would pull every serialize-only
+/// type into the check.
+fn has_serde_container_attr(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident("serde"))
+}
+
 /// A `#[serde(...)]` attribute rendered back toward source text, so a
 /// failure message names the attribute a reader has to go and look
 /// at. Leans on the token stream's own `Display` rather than adding
 /// `quote` as a dependency for one string.
 fn attribute_source(attr: &Attribute) -> String {
+    let name = attr
+        .path()
+        .get_ident()
+        .map_or_else(|| "?".to_string(), ToString::to_string);
     match &attr.meta {
-        syn::Meta::List(list) => format!("#[serde({})]", list.tokens),
-        _ => "#[serde]".to_string(),
+        syn::Meta::List(list) => format!("#[{name}({})]", list.tokens),
+        _ => format!("#[{name}]"),
     }
 }
 
@@ -974,9 +1056,23 @@ fn is_skipped(attrs: &[Attribute]) -> bool {
     skipped
 }
 
+/// Stand-in names for the three `Type` forms [`collect_type_names`]
+/// cannot read the inner types out of. Angle-bracketed so they can
+/// never be confused with a Rust identifier, and deliberately absent
+/// from [`EXPECTED_TERMINATORS`] so the first one to appear on the
+/// load graph goes red rather than quiet.
+const UNREADABLE_DYN: &str = "<dyn Trait>";
+/// See [`UNREADABLE_DYN`].
+const UNREADABLE_IMPL: &str = "<impl Trait>";
+/// See [`UNREADABLE_DYN`].
+const UNREADABLE_MACRO: &str = "<macro-generated type>";
+
 /// Every identifier appearing in `ty`, including generic arguments.
 /// Module qualifiers come along harmlessly — a name only matters when
 /// the index holds a type by that name.
+///
+/// A form whose inner types cannot be named contributes a sentinel
+/// instead of nothing — see [`UNREADABLE_DYN`].
 fn collect_type_names(ty: &Type, out: &mut Vec<String>) {
     match ty {
         Type::Path(path) => {
@@ -1013,6 +1109,22 @@ fn collect_type_names(ty: &Type, out: &mut Vec<String>) {
                 collect_type_names(inner, out);
             }
         }
+        // **A type form this walk cannot read becomes a name it
+        // cannot resolve, on purpose.** These three carry inner types
+        // this function has no way to name, and dropping them was
+        // silent: unlike an unresolved *name*, a dropped one leaves
+        // nothing for `unresolved_from` to report and nothing for
+        // [`EXPECTED_TERMINATORS`] to adjudicate. Pushing a sentinel
+        // routes the case into the fail-safe that already works
+        // rather than adding a second one — the walk reports a
+        // terminator nobody has vetted, and a reader decides.
+        //
+        // Not a claim that anything is hidden here; a claim that the
+        // walk cannot say. The sentinels are angle-bracketed so they
+        // cannot collide with a Rust identifier.
+        Type::TraitObject(_) => out.push(UNREADABLE_DYN.to_string()),
+        Type::ImplTrait(_) => out.push(UNREADABLE_IMPL.to_string()),
+        Type::Macro(_) => out.push(UNREADABLE_MACRO.to_string()),
         _ => {}
     }
 }
@@ -1572,6 +1684,148 @@ mod tests {
     /// no types today — which is exactly why the claim
     /// `test_type_graph_excludes_test_sources` makes is pinned here
     /// against the reader rather than against the current sources.
+
+    /// **The third way to be wrong: a construct the walk never looked
+    /// at.** Two fail-safes already existed — `unresolved_from` +
+    /// [`EXPECTED_TERMINATORS`] for a *name* that would not resolve,
+    /// and [`unread_serde_attrs`] for an *attribute* the reader tried
+    /// and could not finish. Neither covered an attribute it never
+    /// tried, because every reader here decides what to examine by
+    /// matching the attribute's path, and the fail-safe inherited the
+    /// same filter.
+    ///
+    /// `#[cfg_attr(all(), serde(untagged))]` is that case, and `all()`
+    /// is unconditionally true — the enum really is untagged in the
+    /// built artifact, a key inside a payload really is swallowed,
+    /// and the drift test really did stay green.
+    #[test]
+    fn test_a_serde_option_wrapped_in_cfg_attr_is_reported_not_missed() {
+        let graph = graph_of(
+            "#[derive(Deserialize)] #[cfg_attr(all(), serde(untagged))] \
+             pub enum Root { A(Leaf) }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let reasons = graph.get("Root").expect("indexed").unknown_key_hiding_reasons();
+        assert_eq!(reasons.len(), 1, "expected one reason, got {reasons:?}");
+        assert!(reasons[0].contains("cfg_attr"), "{}", reasons[0]);
+        assert!(
+            reasons[0].contains("nobody can tell"),
+            "the message must not accuse — it reports that the option was never seen: {}",
+            reasons[0]
+        );
+    }
+
+    /// The same wrapper on a *field*, where it hides `flatten` — one
+    /// of the four attributes the check exists for. Container-level
+    /// reporting alone would leave this silent.
+    #[test]
+    fn test_a_field_serde_option_wrapped_in_cfg_attr_is_reported() {
+        let graph = graph_of(
+            "#[derive(Deserialize)] pub struct Root { \
+               #[cfg_attr(all(), serde(flatten))] pub extra: Leaf }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let reasons = graph.get("Root").expect("indexed").unknown_key_hiding_reasons();
+        assert_eq!(reasons.len(), 1, "expected one reason, got {reasons:?}");
+        assert!(reasons[0].contains("cfg_attr"), "{}", reasons[0]);
+    }
+
+    /// **The derive wrapped too**, which is the worse half: a type
+    /// whose `Deserialize` this walk cannot see is not mis-flagged, it
+    /// leaves the check altogether. Reporting the `cfg_attr` is only
+    /// useful if the type is still asked, so the exemption has to
+    /// stand down when anything went unread.
+    #[test]
+    fn test_a_type_whose_derive_is_also_wrapped_is_still_asked() {
+        let graph = graph_of(
+            "#[cfg_attr(all(), derive(Deserialize))] #[cfg_attr(all(), serde(untagged))] \
+             pub enum Root { A(Leaf) }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let info = graph.get("Root").expect("indexed");
+        assert!(
+            !info.derives_deserialize,
+            "the premise: the walk cannot see the derive, which is why the old gate \
+             dropped this type"
+        );
+        assert_eq!(
+            info.unknown_key_hiding_reasons().len(),
+            2,
+            "both wrapped attributes are reported: {:?}",
+            info.unknown_key_hiding_reasons()
+        );
+    }
+
+    /// **A serde container attribute is evidence in its own right.**
+    /// [`derives_deserialize`] matches the identifier `Deserialize`,
+    /// so an aliased import defeats it — and `false` there removes
+    /// the type from the check rather than mis-flagging it, with a
+    /// `#[serde(untagged)]` sitting right beside it.
+    ///
+    /// Nothing is resolved through the `use`: the fix is that a
+    /// container-level `serde` attribute is enough to ask the
+    /// question, whatever the derive list looks like.
+    #[test]
+    fn test_a_serde_configured_type_is_asked_however_its_derive_is_spelled() {
+        let graph = graph_of(
+            "#[derive(De)] #[serde(untagged)] pub enum Root { A(Leaf) }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let info = graph.get("Root").expect("indexed");
+        assert!(!info.derives_deserialize, "the premise: the derive is unrecognizable");
+        assert!(
+            info.has_serde_container_attr,
+            "but the serde attribute is right there"
+        );
+        let reasons = info.unknown_key_hiding_reasons();
+        assert_eq!(reasons.len(), 1, "expected one reason, got {reasons:?}");
+        assert!(reasons[0].contains("untagged"), "{}", reasons[0]);
+    }
+
+    /// The negative control for the two widenings above: a type that
+    /// is neither derived nor serde-configured, and one that is
+    /// ordinary, both stay silent. Without this the widened gate
+    /// could be passing by flagging everything.
+    #[test]
+    fn test_widening_the_gate_does_not_flag_an_innocent_type() {
+        let graph = graph_of(
+            "pub struct Bare { pub x: f64 }\n\
+             #[derive(Deserialize)] pub struct Clean { pub leaf: Leaf }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        for name in ["Bare", "Clean", "Leaf"] {
+            let reasons = graph.get(name).expect("indexed").unknown_key_hiding_reasons();
+            assert!(reasons.is_empty(), "{name} must stay silent, got {reasons:?}");
+        }
+    }
+
+    /// **A type form the walk cannot read becomes a name it cannot
+    /// resolve.** `collect_type_names` used to drop `dyn Trait`,
+    /// `impl Trait` and a macro-generated type on the floor, and
+    /// unlike an unresolved name a dropped one leaves nothing for
+    /// [`EXPECTED_TERMINATORS`] to adjudicate. Routing them into the
+    /// fail-safe that already works costs no second mechanism.
+    #[test]
+    fn test_an_unreadable_type_form_surfaces_as_a_terminator() {
+        let graph = graph_of(
+            "#[derive(Deserialize)] pub struct Root { \
+               pub a: Box<dyn Something>, pub b: Wrapper<impl Other>, pub c: some_macro!() }\n",
+        );
+        let stops = graph.unresolved_from("Root");
+        for sentinel in ["<dyn Trait>", "<impl Trait>", "<macro-generated type>"] {
+            assert!(
+                stops.contains(sentinel),
+                "{sentinel} must reach the terminator allowlist for a reader to \
+                 adjudicate: {stops:?}"
+            );
+            assert!(
+                !EXPECTED_TERMINATORS.contains(&sentinel),
+                "{sentinel} must NOT be pre-vetted, or the first one on the load graph \
+                 passes in silence"
+            );
+        }
+    }
+
     #[test]
     fn test_a_test_gate_written_as_all_is_still_a_test_gate() {
         for source in [
