@@ -608,17 +608,19 @@ pub fn build_connection_tree(elements: &[ConnectionElement]) -> Tree<GfxElement,
 
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
-        let edge_root = tree
-            .arena
-            .new_node(GfxElement::new_void_with_id(edge_channel, unique_id));
+        let edge_root = tree.root.append_value(
+            GfxElement::new_void_with_id(edge_channel, unique_id),
+            &mut tree.arena,
+        );
         unique_id += 1;
-        tree.root.append(edge_root, &mut tree.arena);
 
         for (channel, area) in children {
             let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
             unique_id += 1;
-            let leaf = tree.arena.new_node(element);
-            edge_root.append(leaf, &mut tree.arena);
+            let leaf = edge_root.append_value(
+                element,
+                &mut tree.arena,
+            );
         }
     }
 
@@ -643,15 +645,17 @@ pub fn build_connection_mutator_tree(
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
-        let edge_node = mt.arena.new_node(GfxMutator::new_void(edge_channel));
-        mt.root.append(edge_node, &mut mt.arena);
+        let edge_node = mt.root.append_value(
+            GfxMutator::new_void(edge_channel),
+            &mut mt.arena,
+        );
 
         for (channel, area) in children {
             let delta = DeltaGlyphArea::full_assign_from(&area);
-            let leaf = mt
-                .arena
-                .new_node(GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel));
-            edge_node.append(leaf, &mut mt.arena);
+            let leaf = edge_node.append_value(
+                GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel),
+                &mut mt.arena,
+            );
         }
     }
     mt

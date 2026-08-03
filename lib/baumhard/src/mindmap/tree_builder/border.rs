@@ -373,8 +373,9 @@ pub fn build_border_mutator_tree_from_nodes(
 
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
     for node in nodes {
-        let parent_node = mt.arena.new_node(GfxMutator::new_void(node.parent_channel));
-        mt.root.append(parent_node, &mut mt.arena);
+        let parent_node = mt
+            .root
+            .append_value(GfxMutator::new_void(node.parent_channel), &mut mt.arena);
 
         let specs = crate::mindmap::border::border_run_specs(
             &node.border_style,
@@ -398,11 +399,10 @@ pub fn build_border_mutator_tree_from_nodes(
             area.regions = regions;
             area.zoom_visibility = node.zoom_visibility;
             let delta = DeltaGlyphArea::full_assign_from(&area);
-            let leaf = mt.arena.new_node(GfxMutator::new(
-                Mutation::AreaDelta(Box::new(delta)),
-                spec.channel,
-            ));
-            parent_node.append(leaf, &mut mt.arena);
+            parent_node.append_value(
+                GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), spec.channel),
+                &mut mt.arena,
+            );
         }
     }
     mt
@@ -427,10 +427,10 @@ fn append_border_sub_tree(
     // Per-node Void parent — groups the four runs for targeted
     // mutation. The parent's channel is the stable sorted-index
     // value so distinct nodes never collide across rebuilds.
-    let parent_id = tree
-        .arena
-        .new_node(GfxElement::new_void_with_id(node.parent_channel, *unique_id));
-    tree.root.append(parent_id, &mut tree.arena);
+    let parent_id = tree.root.append_value(
+        GfxElement::new_void_with_id(node.parent_channel, *unique_id),
+        &mut tree.arena,
+    );
     *unique_id += 1;
 
     // Stable channels 1..=4 inside each border sub-tree. The
@@ -495,6 +495,5 @@ pub(super) fn append_border_run(
     area.regions = build_border_regions(cluster_count, palette_cycle, color_rgba, palette_offset);
 
     let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
-    let node = tree.arena.new_node(element);
-    parent_id.append(node, &mut tree.arena);
+    parent_id.append_value(element, &mut tree.arena);
 }

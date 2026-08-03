@@ -683,6 +683,47 @@ pub(crate) fn node_position_component_writes() -> Vec<(String, usize, String)> {
     out
 }
 
+/// Every shipped `NodeId::append(` call under `mindmap/tree_builder/`,
+/// as `(repo-relative file, 1-based line, the line's text)`.
+///
+/// `indextree`'s `append` is a wrapper over `checked_append`, whose
+/// third act is `self.ancestors(arena).any(|a| new_child == a)` —
+/// an O(depth) walk, on every append. The scene builder appends once
+/// per node and once per section, and a `.mindmap.json` may declare a
+/// linear `parent_id` chain, which is a legal acyclic tree the loader
+/// accepts. Depth then equals the node count and the build is O(N²).
+///
+/// `append_value` is indextree's documented O(1) fast path. Every
+/// append in the tree builder is of a node `arena.new_node` produced
+/// on the line above, so it is detached by construction and the
+/// ancestor walk can never fire — the check is pure cost.
+///
+/// Reads shipped text only, so a test that builds a fixture tree with
+/// `append` is not a finding.
+pub(crate) fn tree_builder_checked_appends() -> Vec<(String, usize, String)> {
+    let mut out = Vec::new();
+    let sources = workspace_rust_sources();
+    let test_only = test_gated_module_files(&sources);
+    for file in sources {
+        if test_only.contains(&file) {
+            continue;
+        }
+        let rel = relative_to_repo(&file);
+        if !rel.contains("mindmap/tree_builder") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        for (number, line) in production_source(&file, &text).lines().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            if code.contains(".append(") {
+                out.push((rel.clone(), number + 1, code.trim().to_string()));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
