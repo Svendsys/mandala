@@ -1297,3 +1297,51 @@ fn test_portal_endpoint_color_does_not_leak_across_endpoints() {
     assert_eq!(edge.portal_endpoint_color(&canvas, to), "#edge");
     assert_eq!(edge.portal_endpoint_text_color(&canvas, to), "#edge");
 }
+
+/// **The clamp helpers must not reintroduce the panic this module
+/// exists to name.** `f32::clamp` aborts on `min > max` or a `NaN`
+/// bound, and `clamp_to_bound` builds that pair from a
+/// caller-supplied `limit` — so a negative limit spelled the pair
+/// backwards and a `NaN` limit made both bounds `NaN`. Both
+/// panicked, inside the module whose own header cites inverted
+/// `f32::clamp` bounds as a hazard it exists to prevent.
+#[test]
+fn test_clamp_to_bound_is_total_over_hostile_limits() {
+    use super::validate::clamp_to_bound;
+
+    // Ordinary cases are unchanged.
+    assert_eq!(clamp_to_bound(5.0, 10.0, 0.0), 5.0);
+    assert_eq!(clamp_to_bound(50.0, 10.0, 0.0), 10.0);
+    assert_eq!(clamp_to_bound(-50.0, 10.0, 0.0), -10.0);
+
+    // A negative limit is a caller bug, not a crash: taken by
+    // magnitude, so the pair is ordered.
+    assert_eq!(clamp_to_bound(50.0, -10.0, 0.0), 10.0);
+    assert_eq!(clamp_to_bound(-50.0, -10.0, 0.0), -10.0);
+
+    // A NaN limit has no usable bound, so the caller's previous
+    // value is the answer rather than a NaN or an abort.
+    assert_eq!(clamp_to_bound(5.0, f64::NAN, 3.0), 3.0);
+
+    // A non-finite value still falls back rather than propagating
+    // NaN into every downstream comparison.
+    assert_eq!(clamp_to_bound(f32::NAN, 10.0, 3.0), 3.0);
+    assert_eq!(clamp_to_bound(f32::INFINITY, 10.0, 3.0), 3.0);
+
+    // A limit past f32::MAX casts to infinity — total, if useless
+    // as a bound.
+    assert_eq!(clamp_to_bound(5.0, f64::MAX, 0.0), 5.0);
+}
+
+/// `clamp_canvas_coord` is the `f64` sibling and takes the same
+/// treatment: a computed `NaN` resolves rather than poisoning every
+/// comparison it reaches.
+#[test]
+fn test_clamp_canvas_coord_is_total() {
+    use super::validate::{clamp_canvas_coord, MAX_CANVAS_COORD};
+    assert_eq!(clamp_canvas_coord(5.0), 5.0);
+    assert_eq!(clamp_canvas_coord(1.0e30), MAX_CANVAS_COORD);
+    assert_eq!(clamp_canvas_coord(-1.0e30), -MAX_CANVAS_COORD);
+    assert_eq!(clamp_canvas_coord(f64::NAN), 0.0);
+    assert_eq!(clamp_canvas_coord(f64::INFINITY), 0.0);
+}

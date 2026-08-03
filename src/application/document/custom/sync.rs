@@ -73,7 +73,10 @@ pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
 /// Clamp a `size_pt` into the domain the loader would accept on the
 /// way back in.
 ///
-/// **Every writer of `TextRun.size_pt` goes through here.** The
+/// **Every writer that takes a caller-supplied size goes through
+/// here.** (`section_structure` writes a hardcoded `12` when it
+/// synthesizes a run; that is a constant inside the domain, not an
+/// input.) The
 /// loader rejects a run whose `size_pt` is zero or past
 /// [`validate::MAX_FONT_SIZE_PT`], so any writer that can leave that
 /// range produces a model the editor itself would refuse to

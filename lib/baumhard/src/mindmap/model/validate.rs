@@ -393,7 +393,19 @@ pub fn clamp_to_bound(value: f32, limit: f64, fallback: f32) -> f32 {
     if !value.is_finite() {
         return fallback;
     }
+    // The limit is normalized before it reaches `f32::clamp`, which
+    // panics on `min > max` or a `NaN` bound — the exact hazard this
+    // module exists to name, and one this function could otherwise
+    // reintroduce. A negative limit spells the pair backwards
+    // (`clamp(5.0, -5.0)`); a `NaN` limit makes both bounds `NaN`;
+    // a `limit` past `f32::MAX` casts to infinity, which clamps to
+    // nothing but is at least total. Taking the magnitude and
+    // screening non-finite covers all three.
     let limit = limit as f32;
+    if limit.is_nan() {
+        return fallback;
+    }
+    let limit = limit.abs();
     value.clamp(-limit, limit)
 }
 
@@ -480,9 +492,9 @@ pub fn border_config_violations(label: &str, border: &GlyphBorderConfig) -> Vec<
 ///
 /// A border glyph is a motif: the four sides are patterns repeated
 /// to fill an edge, and the four corners are single marks. The
-/// longest one authored anywhere in this repository is six clusters
-/// (`+=#(\(\))#=+`), so this is generous by an order of magnitude
-/// and still bounded.
+/// longest one authored anywhere in this repository is twelve
+/// clusters (`+=#(\(\))#=+`), so this is generous by several times
+/// over and still bounded.
 pub const MAX_BORDER_GLYPH_CLUSTERS: usize = 64;
 
 /// Ceiling on the byte length of one authored border glyph.
