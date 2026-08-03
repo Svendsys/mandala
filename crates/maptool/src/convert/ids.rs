@@ -42,8 +42,7 @@ fn assign_children(
     id_map: &mut HashMap<String, String>,
 ) {
     // (old id of the subtree root, the new id already assigned to it)
-    let mut frontier: Vec<(String, String)> =
-        vec![(parent_old_id.to_string(), parent_new_id.to_string())];
+    let mut frontier: Vec<(String, String)> = vec![(parent_old_id.to_string(), parent_new_id.to_string())];
 
     while let Some((old_id, new_id)) = frontier.pop() {
         let children = sorted_children_of(nodes, Some(&old_id));
@@ -181,10 +180,7 @@ mod deep_chain_tests {
                     } else {
                         json!(format!("n{}", i - 1))
                     };
-                    nodes.insert(
-                        format!("n{i}"),
-                        json!({ "parent_id": parent, "index": 0 }),
-                    );
+                    nodes.insert(format!("n{i}"), json!({ "parent_id": parent, "index": 0 }));
                 }
                 assign_dewey_ids(&nodes).len()
             })

@@ -1749,13 +1749,19 @@ fn reference_recursive_walk(
 /// The iterative drag walk must emit exactly the sequence the
 /// recursion emitted — not merely the same set.
 ///
-/// Order is observable: `patches` is consumed positionally by
-/// `patch_drag_positions`, so a walk that visited the same nodes in
-/// a different order would still move every element to the right
-/// place while handing the renderer a differently-ordered buffer.
-/// A green suite does not catch that, which is why this compares
-/// against the previous implementation rather than against a
-/// property.
+/// Not because the renderer needs it: `patch_drag_positions` looks
+/// each patch up by `unique_id` in a map, so it is keyed and
+/// order-independent, and a reordered buffer would render
+/// identically. An earlier version of this comment claimed the
+/// consumer was positional, which was simply wrong.
+///
+/// The order is pinned because it is what makes the
+/// recursion→iteration rewrite *checkable*. "Same set" is a
+/// property a green suite already implies; "same sequence" is a
+/// statement about this walk against the one it replaced, and it is
+/// the only cheap evidence that the rewrite changed nothing. If a
+/// future change has a reason to reorder, this test is the place to
+/// argue it — not an obstacle, but a prompt.
 ///
 /// Zero delta is included on purpose: it makes the test sensitive to
 /// visit order alone, with no positional arithmetic to mask a

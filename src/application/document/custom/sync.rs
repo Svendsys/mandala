@@ -68,7 +68,7 @@ pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = {
 /// `u32`, so a naive cast of a negative scale would saturate to 0
 /// and render invisible, un-regrowable text. Clamp to 1pt so a
 /// shrunk run stays legible and can be grown back.
-pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
+pub(in crate::application::document) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
 
 /// Clamp a `size_pt` into the domain the loader would accept on the
 /// way back in.

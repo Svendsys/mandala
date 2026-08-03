@@ -2243,14 +2243,18 @@ fn test_shrink_font_clamps_to_minimum() {
     );
 }
 
-/// The other end of the same clamp. `grow-font` adds an unbounded
-/// delta, so a run can be pushed past the shaper's ceiling in one
-/// click — and the loader rejects a `size_pt` above
-/// `MAX_FONT_SIZE_PT`, which would make the editor author a map it
-/// then refused to reopen.
+/// The other end of the same clamp, **end to end**: a `grow-font`
+/// delta large enough to leave the shaper's domain still produces a
+/// run the loader accepts, and the saved map reopens.
 ///
-/// Only the floor was covered before: `clamp_run_size_pt` grew a
-/// ceiling in this branch and nothing exercised it.
+/// What this does *not* cover is `clamp_run_size_pt`'s own ceiling.
+/// The mutation path clamps at `GlyphArea`'s scale setters first, so
+/// the tree scale handed to the reverse converter is already inside
+/// the domain and the converter's ceiling never binds here — this
+/// test passes with that ceiling deleted. That guard is pinned
+/// directly by `test_clamp_run_size_pt_bounds_both_ends` instead.
+/// An earlier version of this docstring claimed the coverage it
+/// does not have.
 #[test]
 fn test_grow_font_clamps_to_maximum() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
@@ -2719,4 +2723,37 @@ fn test_active_toggles_replay_in_activation_order() {
         (x - 222.0).abs() < 1e-3,
         "ordered replay must apply move-a then move-b, leaving x at 222 (got {x})"
     );
+}
+
+
+/// **`clamp_run_size_pt`'s ceiling, pinned where it can actually
+/// bind.** The reverse converter is reachable with an out-of-domain
+/// scale in principle — a `grow-font` delta is unbounded and the
+/// `as u32` cast saturates rather than wrapping — but every path
+/// that reaches it today clamps at `GlyphArea`'s setters first, so
+/// no end-to-end test exercises the ceiling. Testing the function
+/// directly is what keeps the guard honest rather than incidental.
+#[test]
+fn test_clamp_run_size_pt_bounds_both_ends() {
+    use crate::application::document::custom::sync::{clamp_run_size_pt, MIN_TEXT_RUN_SIZE_PT};
+
+    let max = baumhard::font::fonts::MAX_FONT_SIZE_PT as u32;
+
+    // Ordinary sizes pass through, truncating rather than rounding —
+    // callers that want rounding do it before calling.
+    assert_eq!(clamp_run_size_pt(12.0), 12);
+    assert_eq!(clamp_run_size_pt(12.9), 12);
+
+    // The ceiling: the loader rejects anything above it.
+    assert_eq!(clamp_run_size_pt(1.0e6), max);
+    assert_eq!(clamp_run_size_pt(f32::INFINITY), max);
+
+    // The floor: a shrunk run must stay legible and re-growable
+    // rather than casting to an invisible 0.
+    assert_eq!(clamp_run_size_pt(0.0), MIN_TEXT_RUN_SIZE_PT);
+    assert_eq!(clamp_run_size_pt(-1.0e6), MIN_TEXT_RUN_SIZE_PT);
+    assert_eq!(clamp_run_size_pt(f32::NEG_INFINITY), MIN_TEXT_RUN_SIZE_PT);
+
+    // NaN has no nearest edge; the floor is the safe answer.
+    assert_eq!(clamp_run_size_pt(f32::NAN), MIN_TEXT_RUN_SIZE_PT);
 }

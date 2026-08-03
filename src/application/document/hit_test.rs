@@ -790,8 +790,11 @@ fn walk_drag_node_and_sections(
 ///
 /// Children are pushed in reverse so `pop()` yields them
 /// left-to-right, which preserves the pre-order the recursion
-/// produced. That ordering is observable: `patches` is consumed
-/// positionally by `patch_drag_positions`.
+/// produced. Not for the renderer's sake — `patch_drag_positions`
+/// looks each patch up by `unique_id`, so it is keyed and
+/// order-independent — but so this rewrite stays exactly
+/// comparable to the recursion it replaced, which is what
+/// `test_iterative_drag_matches_the_recursive_order` checks.
 ///
 /// Costs: O(n) in the subtree size, plus one heap vector holding
 /// the frontier — the sum of the unprocessed sibling rows along the
