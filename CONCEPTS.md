@@ -623,14 +623,56 @@ A node's visual silhouette and its clickable
 silhouette must agree. `NodeShape` names the two today
 (rectangle, ellipse) and gives both pipelines one source of
 truth for "is this point inside?". Adding a new shape is
-three small changes: one enum variant, one WGSL shader `case`,
-one `contains_local` arm.
+four small changes: one enum variant, one `style_spellings`
+arm, one WGSL shader `case`, one `contains_local` arm. The
+`style_spellings` `match` is exhaustive over the variants, so
+the first change does not compile without the second.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
 (normalized coordinates, `nx² + ny² ≤ 1`); degenerate bounds
 always return `false`. `intersects_local_aabb` supports
 rect-select with conservative approximation for ellipses.
+
+The format's shape vocabulary (`KNOWN_SHAPES`, published in
+`format/enums.md` and enforced by `maptool verify`) is wider
+than the variant set: `"hexagon"`, `"diamond"`,
+`"parallelogram"` and `"rounded_rectangle"` are canonical but
+have no shader case yet. `ShapeSpelling` is the pure
+classifier that separates those from a genuine typo —
+`Rendered` / `KnownNotYetRendered` / `Unrecognized` /
+`Unspecified` — and `is_author_error` / `is_quiet_fallback`
+are the two predicates it exposes for the reporting
+decision. Before it existed, every hexagon in the demo map
+warned on every load (issue #118).
+
+`ShapeReport` is the second half of the split: the *routing*
+as a value. `ShapeSpelling::report` composes the two
+predicates into `Some(UnknownSpelling)` /
+`Some(RectangleSubstituted)` / `None`, `ShapeReport::level`
+is the single definition of which `log::Level` each carries,
+and `from_style_string` does nothing but pick the literal
+macro per arm — literal because `log`'s release compile-out
+folds on a level the compiler can see, which a
+`log::log!(computed, …)` would defeat. The value being a
+value is what makes the decision ordinary testable data;
+what is left, arm-to-macro, is a fact about source text and
+`shape_tests.rs`'s `log_routing` reads it as one, holding
+`from_style_string`'s body to a whitelist rather than
+searching it for `log::` calls.
+
+`KNOWN_SHAPES` is restated five times across three files —
+three lists in `format/enums.md`, `LEGACY_SHAPE_ORDINALS` in
+`crates/maptool/src/convert/enums.rs`, and the `shape_type`
+ordinal table in `format/migration.md` — and each is pinned
+back by a test that reads the restatement. The first four
+derive their expectation from the constant directly; the
+ordinal table is pinned to `LEGACY_SHAPE_ORDINALS` instead,
+which is itself pinned to the constant, so the chain closes
+in two hops rather than one. Either way, widening the
+vocabulary is still one edit plus the copies the suite names
+for you. The table in `shape.rs`'s `KNOWN_SHAPES` doc is the
+index.
 
 Shape-aware borders (glyph-drawn frames that follow
 the ellipse outline, not just the AABB) wait on the
