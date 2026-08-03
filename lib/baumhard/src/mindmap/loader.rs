@@ -993,10 +993,13 @@ mod tests {
              * `untagged` / `tag = \"...\"` buffer the whole value through serde's \
              `Content` and replay it outside the capture, which has nothing to do with \
              variant shape, so they are asked of every reachable Deserialize type.\n\n\
-             An entry reading `unread` is neither: it means the source reader stopped \
-             partway through that attribute, so the flags written after that point were \
-             never looked at. Teach `serde_coverage::skip_unmodeled_option` the shape \
-             rather than deleting the entry.",
+             An entry naming an attribute rather than a flag is neither class: it means \
+             the source reader could not account for that attribute, so whatever serde \
+             options it carries were never looked at, and \"carries none of them\" is \
+             the answer a silent pass would have produced. The entry says which of the \
+             two it is — an attribute the reader stopped partway through, or one it \
+             never looks inside at all — and what to do about it. Neither is a claim \
+             that the type hides a key; both are a claim that nobody can tell.",
             offenders.join("\n  ")
         );
 

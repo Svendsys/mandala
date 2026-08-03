@@ -265,7 +265,12 @@ impl TypeInfo {
         // offender in its own right: what it does is unknown, and
         // unknown is not safe.
         for attribute in &self.unread_serde {
-            reasons.push(format!("{attribute} — unread, so its flags were never seen"));
+            // Verbatim: each entry already carries the explanation
+            // that fits it. A half-read attribute and an attribute
+            // nobody looked inside are unread for different reasons
+            // and ask the reader for different things, and one
+            // appended sentence cannot say both.
+            reasons.push(attribute.clone());
         }
         reasons
     }
@@ -855,7 +860,12 @@ fn unread_serde_attrs(attrs: &[Attribute]) -> Vec<String> {
             continue;
         }
         if let Err(e) = attr.parse_nested_meta(|meta| skip_unmodeled_option(&meta)) {
-            out.push(format!("{}: {e}", attribute_source(attr)));
+            out.push(format!(
+                "{}: {e} — unread from that point on, so the flags written after it \
+                 were never seen. Teach `skip_unmodeled_option` the shape rather than \
+                 deleting the entry.",
+                attribute_source(attr)
+            ));
         }
     }
     out
