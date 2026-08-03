@@ -37,6 +37,10 @@
 //! classifier that tells those two populations apart, so a canonical
 //! spelling awaiting its shader case degrades quietly to a rectangle
 //! and only a genuine typo is reported to the author.
+//! [`crate::gfx_structs::shape::ShapeReport`] is the second half of
+//! that split: the *reporting* decision as a value, so what a load
+//! says is data a test can read rather than a shape of `if`s only a
+//! log sink could observe.
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -94,16 +98,29 @@ pub const SHAPE_ID_ELLIPSE: u32 = 1;
 /// consults, and deliberately so: [`ShapeSpelling::classify`] reads
 /// it rather than repeating a set of literals, so adding a spelling
 /// here makes it a non-warning value at load time and an accepted one
-/// under `maptool verify` with nobody editing a parser. Two
-/// **restatements** of it exist elsewhere and are pinned back to it
-/// rather than trusted — `LEGACY_SHAPE_ORDINALS` in
-/// `crates/maptool/src/convert/enums.rs`, the legacy-ordinal →
-/// spelling table `convert --legacy` emits from, and the list
-/// `format/enums.md` publishes. Their pins are maptool's
-/// `legacy_shape_ordinals_are_canonical_spellings` and
-/// `test_shape_format_doc_publishes_exactly_known_shapes`; without
-/// them a rename here would leave the converter writing files this
-/// crate warns about and `maptool verify` rejects.
+/// under `maptool verify` with nobody editing a parser.
+///
+/// **Five restatements** of it exist elsewhere, across three files,
+/// and none of them is trusted — each is read back and checked
+/// against this constant:
+///
+/// | # | Restatement | Pinned by |
+/// | --- | --- | --- |
+/// | 1 | the fenced spelling list in `format/enums.md` | `test_shape_format_doc_publishes_exactly_known_shapes` |
+/// | 2 | its "live shapes" sentence | the same test |
+/// | 3 | its "remaining values" parenthesis | the same test |
+/// | 4 | `LEGACY_SHAPE_ORDINALS` in `crates/maptool/src/convert/enums.rs` | maptool's `legacy_shape_ordinals_are_canonical_spellings` |
+/// | 5 | the `shape_type` ordinal table in `format/migration.md` | maptool's `legacy_shape_ordinals_match_the_published_table`, against row 4 |
+///
+/// Row 5 is pinned to row 4 rather than to this constant directly,
+/// and that is sufficient because row 4 is pinned here: the two
+/// together mean a rename in this list cannot leave the converter
+/// writing a spelling `maptool verify` rejects, and cannot leave the
+/// published ordinal table describing a conversion the converter no
+/// longer performs. `format/enums.md` and `format/migration.md` state
+/// the same counts; `test_shape_format_doc_publishes_exactly_known_shapes`
+/// and the maptool pair are what make the claim checkable rather than
+/// a comment.
 ///
 /// Entries are written lowercase and
 /// `test_shape_known_shapes_are_lowercase` pins that — **not**
@@ -147,11 +164,13 @@ pub const KNOWN_SHAPES: &[&str] = &[
 /// thing entirely: a typo, or a value written by a newer build, and
 /// worth a `log::warn!`.
 ///
-/// [`NodeShape::from_style_string`] is the caller that maps these to
-/// a log level; anything else that needs to know *why* a shape
-/// resolved the way it did — a linter, a script API, an editor
-/// surfacing "this shape isn't drawn yet" — reads the classification
-/// directly instead of scraping the log.
+/// [`Self::report`] is what turns a classification into the
+/// [`ShapeReport`] a load acts on, and
+/// [`NodeShape::from_style_string`] is its only caller; anything else
+/// that needs to know *why* a shape resolved the way it did — a
+/// linter, a script API, an editor surfacing "this shape isn't drawn
+/// yet" — reads the classification or the report directly instead of
+/// scraping the log.
 ///
 /// # Costs
 /// O(1) to copy, hash, compare. Borrows nothing, allocates nothing.
@@ -268,7 +287,11 @@ impl ShapeSpelling {
     /// Paired with [`Self::is_quiet_fallback`], which answers the
     /// remaining half of the reporting decision. The two are disjoint
     /// and neither uses a `_` arm, so a fifth classification is a
-    /// build error in both.
+    /// build error in both. [`Self::report`] is the sole production
+    /// consumer of the pair and is what
+    /// [`NodeShape::from_style_string`] reads, so hard-wiring this
+    /// predicate changes a value a test can hold — not only a log
+    /// line no test can see.
     ///
     /// # Costs
     /// O(1), branch-only. No allocation.
@@ -294,9 +317,9 @@ impl ShapeSpelling {
     ///
     /// The counterpart to [`Self::is_author_error`]: together the two
     /// carry the entire "should anyone be told, and how loudly?"
-    /// decision, and [`NodeShape::from_style_string`] is a caller of
-    /// both rather than a second author of either. Also `pub` for the
-    /// same reason — an editor that wants to gray out "drawn as a
+    /// decision, which [`Self::report`] composes into one value and
+    /// [`NodeShape::from_style_string`] then routes. Also `pub` for
+    /// the same reason — an editor that wants to gray out "drawn as a
     /// rectangle until a shader case lands" should ask rather than
     /// re-derive.
     ///
@@ -308,6 +331,99 @@ impl ShapeSpelling {
             // Spelled out rather than `_`, for the reason
             // `is_author_error` spells its own arms out.
             ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) | ShapeSpelling::Unrecognized => false,
+        }
+    }
+
+    /// Should this classification be reported, and as what?
+    ///
+    /// The entire reporting decision as one pure value, and the only
+    /// thing [`NodeShape::from_style_string`] consults. Composed from
+    /// [`Self::is_author_error`] and [`Self::is_quiet_fallback`]
+    /// rather than from a third `match` over the variants: those two
+    /// are the semantic questions a consumer asks, this is the
+    /// routing they imply, and there is exactly one copy of each.
+    ///
+    /// **This is what made the reporting testable.** Before it, the
+    /// predicates' only production consumer was a pair of `if`s whose
+    /// sole effect was a log line, and with no log sink in this crate
+    /// nothing could observe them through the call the loader
+    /// actually makes; a test could only ask the predicates the same
+    /// question directly. `report` is shipped code on the path
+    /// `from_style_string` takes, so a test of it observes the
+    /// predicates the way the loader does — everything except which
+    /// macro carries the result, which is a source fact and is pinned
+    /// as one in `shape_tests.rs`'s `log_routing`.
+    ///
+    /// The order the two predicates are tested in is not
+    /// load-bearing: `do_shape_reporting_predicates_partition`
+    /// asserts no classification answers `true` to both. It is
+    /// written most-serious-first regardless.
+    ///
+    /// # Costs
+    /// O(1), at most two branch-only predicate calls. No allocation.
+    pub const fn report(self) -> Option<ShapeReport> {
+        if self.is_author_error() {
+            Some(ShapeReport::UnknownSpelling)
+        } else if self.is_quiet_fallback() {
+            Some(ShapeReport::RectangleSubstituted)
+        } else {
+            None
+        }
+    }
+}
+
+/// What [`NodeShape::from_style_string`] tells the log about a
+/// classification — the reporting decision lifted out of the log site
+/// so it is ordinary data instead of a shape of `if`s only a log sink
+/// could observe.
+///
+/// Two questions were fused here and are now separate. *Whether to
+/// report, and why* is a property of the classification, and this
+/// enum names it. *Which `log::` macro carries it* is a property of
+/// the call site, and stays a **literal** macro there deliberately:
+/// `log::trace!` expands to `log::log!(Level::Trace, …)`, whose
+/// release compile-out is `lvl <= STATIC_MAX_LEVEL` constant-folding
+/// on a level the compiler can see (`log-0.4.29/src/macros.rs:137`
+/// and `:356`). A `log::log!(computed_level, …)` driven off
+/// [`Self::level`] would defeat that fold and keep the `trace!` arm's
+/// formatting in every shipped binary, which is the opposite of what
+/// CODE_CONVENTIONS §9's release cap buys. So the level is defined
+/// once, here, and the call site restates it as a macro name that a
+/// source pin holds to this definition.
+///
+/// # Costs
+/// O(1) to copy, hash, compare. No heap allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
+pub enum ShapeReport {
+    /// The spelling is in no list this repo publishes: a typo, or a
+    /// value from a build that knows more shapes than this one.
+    /// Reported at [`log::Level::Warn`] because an author can act on
+    /// it.
+    UnknownSpelling,
+    /// A canonical spelling with no shader case yet, drawn as a
+    /// rectangle. Reported at [`log::Level::Trace`]: the format is
+    /// working as designed, and saying otherwise was issue #118 —
+    /// 242 warnings per load of `maps/testament.mindmap.json`.
+    RectangleSubstituted,
+}
+
+impl ShapeReport {
+    /// The [`log::Level`] this report is written at. The single
+    /// definition of that mapping.
+    ///
+    /// [`NodeShape::from_style_string`] does not call this — it
+    /// reaches a literal `log::` macro per arm, for the
+    /// constant-folding reason in the type doc — and
+    /// `log_routing::test_from_style_string_log_routing_is_pinned`
+    /// derives its expectation from *this* function, so the arm and
+    /// the level cannot drift apart without a red test.
+    ///
+    /// # Costs
+    /// O(1), branch-only. No allocation.
+    pub const fn level(self) -> log::Level {
+        match self {
+            ShapeReport::UnknownSpelling => log::Level::Warn,
+            ShapeReport::RectangleSubstituted => log::Level::Trace,
         }
     }
 }
@@ -357,9 +473,11 @@ impl NodeShape {
     /// the renderer and hit test should use, reporting only the case
     /// an author can act on.
     ///
-    /// The decision is [`ShapeSpelling::classify`]'s and is pure;
-    /// this function is the one place that turns it into a log line,
-    /// which is what keeps the classifier testable without a logger:
+    /// The classification is [`ShapeSpelling::classify`]'s and the
+    /// routing is [`ShapeSpelling::report`]'s; both are pure. This
+    /// function is the one place that turns a report into a log line,
+    /// which is what keeps everything upstream of it testable without
+    /// a logger:
     ///
     /// - a canonical spelling with a variant renders as asked;
     /// - the empty string means "unset" and is silent;
@@ -373,27 +491,39 @@ impl NodeShape {
     /// - anything else keeps the `log::warn!`, because there it is
     ///   accurate.
     ///
-    /// **The two branches below are not a second copy of that
-    /// judgment — they are calls to it.**
-    /// [`ShapeSpelling::is_author_error`] owns "should anyone be
-    /// told?" and [`ShapeSpelling::is_quiet_fallback`] owns "was a
-    /// rectangle substituted for something valid?"; this function
-    /// only picks the macro each answer reaches. Hard-wiring either
-    /// predicate changes what a shipped build logs, which is the
-    /// property that makes a mutation test of them worth anything.
+    /// **This function authors no part of that judgment.** It calls
+    /// [`ShapeSpelling::report`], which composes
+    /// [`ShapeSpelling::is_author_error`] and
+    /// [`ShapeSpelling::is_quiet_fallback`] into a
+    /// [`ShapeReport`], and then does one thing: pick the literal
+    /// `log::` macro that carries each report. Splitting it that way
+    /// is what makes the whole decision testable — `report` is
+    /// ordinary shipped code returning an ordinary value, so a test
+    /// reaches it through the same path the loader takes, and the
+    /// only fact left over is which macro sits in which arm.
     ///
-    /// The exhaustiveness that a `match` on [`ShapeSpelling`] used to
-    /// provide here has moved rather than gone: both predicates match
-    /// every variant with no `_` arm, so a fifth classification is a
-    /// build error in two places and cannot default into silence.
+    /// That leftover is a fact about *source text*, and
+    /// `log_routing::test_from_style_string_log_routing_is_pinned`
+    /// reads it as one: it parses this file with `syn` and checks
+    /// this body against a **whitelist** — three statements, exactly
+    /// the ones written below; one `match` arm per [`ShapeReport`]
+    /// variant plus the `None` arm; each reporting arm a bare
+    /// `log::<macro>!` whose name equals
+    /// [`ShapeReport::level`]'s answer for the variant that arm
+    /// matches; and no attribute anywhere in the body but a doc
+    /// comment. Anything the whitelist does not model — a condition
+    /// wrapped around the `match`, a `#[cfg]` on an arm, an extra
+    /// statement that logs from inside a loop — fails it by *not
+    /// matching*, rather than passing because the check happened not
+    /// to look there. That is the property the round-2 walker did not
+    /// have.
     ///
-    /// Which macro each branch writes is pinned by
-    /// `log_routing::test_from_style_string_log_routing_is_pinned`,
-    /// which parses this file with `syn` and reads the macro path out
-    /// of each guarded block. That is the only observation of a `log::`
-    /// call available without a log sink, and it is enough: deleting
-    /// the reporting entirely, swapping the two macros, or moving one
-    /// out from behind its guard all fail it.
+    /// Exhaustiveness is threefold and none of it is a `_` arm: the
+    /// `match` below covers `Option<ShapeReport>` completely, both
+    /// predicates behind `report` match every [`ShapeSpelling`]
+    /// variant, and the pin requires one arm per [`ShapeReport`]
+    /// variant. A fifth classification or a third report kind is a
+    /// build error or a red test, never a silent default.
     ///
     /// Unknown values stay on disk untouched either way, so a
     /// round-trip through `maptool convert` doesn't lose them.
@@ -402,19 +532,20 @@ impl NodeShape {
     /// [`ShapeSpelling::classify`]'s compares plus at most two
     /// branch-only predicate calls. No allocation on any path; the
     /// `trace!` arm compiles out entirely in release
-    /// (`release_max_level_warn`).
+    /// (`release_max_level_warn`), which is why the arm names the
+    /// macro literally instead of calling [`ShapeReport::level`].
     pub fn from_style_string(s: &str) -> Self {
         let spelling = ShapeSpelling::classify(s);
-        if spelling.is_author_error() {
-            log::warn!(
+        match spelling.report() {
+            Some(ShapeReport::UnknownSpelling) => log::warn!(
                 "shape: unknown shape {s:?}, \
                  falling back to Rectangle"
-            );
-        } else if spelling.is_quiet_fallback() {
-            log::trace!(
+            ),
+            Some(ShapeReport::RectangleSubstituted) => log::trace!(
                 "shape: {s:?} is a canonical shape with no renderer yet, \
                  drawing it as Rectangle"
-            );
+            ),
+            None => {}
         }
         spelling.resolve()
     }

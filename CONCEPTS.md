@@ -643,19 +643,32 @@ classifier that separates those from a genuine typo —
 `Rendered` / `KnownNotYetRendered` / `Unrecognized` /
 `Unspecified` — and `is_author_error` / `is_quiet_fallback`
 are the two predicates it exposes for the reporting
-decision. `from_style_string` *calls* those rather than
-restating them, so a canonical-but-undrawn spelling degrades
-at `trace!` and `warn!` stays reserved for values nobody
-knows. Before it existed, every hexagon in the demo map
+decision. Before it existed, every hexagon in the demo map
 warned on every load (issue #118).
 
-`KNOWN_SHAPES` is restated in two other places — the
-published list in `format/enums.md` and the legacy-ordinal
-table in `crates/maptool/src/convert/enums.rs` — and both are
-pinned back to it by tests that read the restatement and
-derive the expectation from the constant, so widening the
-vocabulary is still one edit plus the copies the suite names
-for you.
+`ShapeReport` is the second half of the split: the *routing*
+as a value. `ShapeSpelling::report` composes the two
+predicates into `Some(UnknownSpelling)` /
+`Some(RectangleSubstituted)` / `None`, `ShapeReport::level`
+is the single definition of which `log::Level` each carries,
+and `from_style_string` does nothing but pick the literal
+macro per arm — literal because `log`'s release compile-out
+folds on a level the compiler can see, which a
+`log::log!(computed, …)` would defeat. The value being a
+value is what makes the decision ordinary testable data;
+what is left, arm-to-macro, is a fact about source text and
+`shape_tests.rs`'s `log_routing` reads it as one, holding
+`from_style_string`'s body to a whitelist rather than
+searching it for `log::` calls.
+
+`KNOWN_SHAPES` is restated five times across three files —
+three lists in `format/enums.md`, `LEGACY_SHAPE_ORDINALS` in
+`crates/maptool/src/convert/enums.rs`, and the `shape_type`
+ordinal table in `format/migration.md` — and each is pinned
+back by a test that reads the restatement and derives the
+expectation from the constant, so widening the vocabulary is
+still one edit plus the copies the suite names for you. The
+table in `shape.rs`'s `KNOWN_SHAPES` doc is the index.
 
 Shape-aware borders (glyph-drawn frames that follow
 the ellipse outline, not just the AABB) wait on the

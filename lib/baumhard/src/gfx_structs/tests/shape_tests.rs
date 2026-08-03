@@ -15,7 +15,7 @@ use glam::Vec2;
 use strum::IntoEnumIterator;
 
 use crate::gfx_structs::shape::{
-    NodeShape, ShapeSpelling, KNOWN_SHAPES, SHAPE_ID_ELLIPSE, SHAPE_ID_RECTANGLE,
+    NodeShape, ShapeReport, ShapeSpelling, KNOWN_SHAPES, SHAPE_ID_ELLIPSE, SHAPE_ID_RECTANGLE,
 };
 
 /// Parse every documented shape spelling, plus the `"circle"`
@@ -284,6 +284,122 @@ pub fn do_shape_reporting_predicates_partition() {
              what a load logs would depend on branch order"
         );
     }
+}
+
+/// **The routing decision, held as data.**
+///
+/// `ShapeSpelling::report` is the value
+/// `NodeShape::from_style_string` matches on, so this test observes
+/// the two reporting predicates the way the loader does rather than
+/// only asking them the same question directly. That distinction is
+/// the round-3 correction to a round-2 claim: before `report`
+/// existed, the predicates' one production consumer was a pair of
+/// `if`s whose only effect was a log line, and with no log sink in
+/// this crate nothing could reach them through the call the loader
+/// makes. Hard-wiring `is_author_error` now changes a value this test
+/// holds; all that is left over is which macro carries the result,
+/// which `log_routing` pins as the source fact it is.
+///
+/// Exhaustive by construction: the expectation comes out of a `match`
+/// with no `_` arm, so a fifth `ShapeSpelling` fails to compile here.
+#[test]
+pub fn test_shape_report_routes_every_classification() {
+    do_shape_report_routes_every_classification();
+}
+
+pub fn do_shape_report_routes_every_classification() {
+    let mut cases = vec![
+        ShapeSpelling::Unspecified,
+        ShapeSpelling::KnownNotYetRendered,
+        ShapeSpelling::Unrecognized,
+    ];
+    cases.extend(NodeShape::iter().map(ShapeSpelling::Rendered));
+    assert!(
+        cases.len() > 3,
+        "no NodeShape variant produced a Rendered case — the loop below \
+         would never exercise one"
+    );
+
+    for spelling in cases {
+        let expected = match spelling {
+            ShapeSpelling::Unrecognized => Some(ShapeReport::UnknownSpelling),
+            ShapeSpelling::KnownNotYetRendered => Some(ShapeReport::RectangleSubstituted),
+            ShapeSpelling::Unspecified | ShapeSpelling::Rendered(_) => None,
+        };
+        assert_eq!(
+            spelling.report(),
+            expected,
+            "{spelling:?} routes to the wrong report, which is the value \
+             from_style_string picks its log macro from"
+        );
+    }
+
+    // Through the strings the loader actually hands it, so a change
+    // to `classify` shows up here too and not only in the variant
+    // table above. `"hexagon"` is the #118 spelling; `"pentagram"` is
+    // the one that must still be reported.
+    assert_eq!(
+        ShapeSpelling::classify("pentagram").report(),
+        Some(ShapeReport::UnknownSpelling)
+    );
+    assert_eq!(
+        ShapeSpelling::classify("hexagon").report(),
+        Some(ShapeReport::RectangleSubstituted)
+    );
+    assert_eq!(ShapeSpelling::classify("").report(), None);
+    assert_eq!(ShapeSpelling::classify("ellipse").report(), None);
+}
+
+/// **Which level each report is written at, and why those two.**
+///
+/// `log_routing` holds `from_style_string`'s arms to whatever
+/// `ShapeReport::level` says, so `level` is where being *right* has
+/// to be asserted — a pin against a wrong definition is faithful and
+/// useless.
+///
+/// The two claims are separate on purpose. The per-variant table is
+/// the exact mapping. The two comparisons under it are the reason it
+/// is that mapping: CODE_CONVENTIONS §9 caps release builds at
+/// `warn`, so a report at or above `Warn` reaches a user's bug report
+/// and one below it costs nothing in the binaries `./build.sh` ships.
+/// Issue #118 was the second kind filed under the first — 242 lines
+/// per load of the demo map telling authors a documented, tool-
+/// emitted spelling was unknown.
+#[test]
+pub fn test_shape_report_levels_are_warn_and_trace() {
+    do_shape_report_levels_are_warn_and_trace();
+}
+
+pub fn do_shape_report_levels_are_warn_and_trace() {
+    assert!(
+        ShapeReport::iter().count() > 0,
+        "ShapeReport has no variants — the loop below would not run"
+    );
+    for report in ShapeReport::iter() {
+        let expected = match report {
+            ShapeReport::UnknownSpelling => log::Level::Warn,
+            ShapeReport::RectangleSubstituted => log::Level::Trace,
+        };
+        assert_eq!(
+            report.level(),
+            expected,
+            "{report:?} is written at the wrong level, and log_routing pins \
+             from_style_string's macro to whatever this says"
+        );
+    }
+
+    // `log::Level` orders by severity, `Error` first, so "at least as
+    // severe as `Warn`" is `<=`.
+    assert!(
+        ShapeReport::UnknownSpelling.level() <= log::Level::Warn,
+        "an unknown spelling is something an author can fix, so it has to \
+         survive the release cap and reach a bug report"
+    );
+    assert!(
+        ShapeReport::RectangleSubstituted.level() > log::Level::Warn,
+        "a canonical spelling awaiting its shader case is the format working \
+         as designed; reporting it above the release cap is issue #118"
+    );
 }
 
 /// The three spellings named in the issue, asserted one at a time
@@ -712,116 +828,619 @@ pub fn do_shape_shader_ids_are_stable() {
     assert_eq!(NodeShape::Ellipse.shader_id(), 1);
 }
 
-/// **Which `log::` macro each reporting branch reaches, pinned by
-/// parsing `shape.rs` itself.**
+/// **The reporting half of `from_style_string`, pinned by parsing
+/// `shape.rs` itself — as a whitelist, not as a search.**
 ///
 /// Every other test in this file asserts on a returned value, and a
 /// returned value cannot see a log call. That left issue #118's
 /// *second* requirement — "a value not in `KNOWN_SHAPES`: keep the
 /// `warn!`" — untested in a way that mattered: deleting the entire
 /// reporting block from `from_style_string` left the suite green, and
-/// so did swapping the two macros. The gap was never "which macro is
-/// written"; it was whether anything is written at all.
+/// so did swapping the two macros.
 ///
-/// The closure everyone reached for first is a test logger, and
+/// The closure everyone reaches for first is a test logger, and
 /// `util::test_logger` really is on an unmerged branch (#117). It is
 /// not the only one. `syn` is already a baumhard dev-dependency for
 /// exactly this class of question — `util::serde_coverage` parses the
 /// crate's own sources so a contract can be *derived* from the code
-/// instead of restated beside it — and the routing of a `log::` macro
-/// is a fact about the source text. So this module reads it out of
-/// the source.
+/// instead of restated beside it — and which `log::` macro sits in
+/// which arm is a fact about source text. So this module reads it out
+/// of the source.
 ///
-/// §B8 asks for a `do_*()` body and a bench entry per test; these two
-/// have neither, deliberately and with precedent. `syn` is a
-/// dev-dependency, so a `pub` body in this `pub mod tests` tree would
-/// not compile into the library, and `serde_coverage`'s own consumer
-/// tests are plain `#[cfg(test)]` tests for the same reason. Native
-/// only: it reads a file.
+/// **What changed in round 3, and why it is not three more cases.**
+/// The first version of this module *searched* for `log::` calls: it
+/// walked the body looking for `if`s, remembered the method name of
+/// each condition, and reported the pairs it happened to find. A
+/// search over a language model that covers four of Rust's roughly
+/// forty expression forms passes vacuously for the other thirty-six.
+/// Three spellings proved it: an outer `if` wrapped around the whole
+/// reporting block made `from_style_string` log nothing at all and
+/// left the pin green; `#[cfg(any())]` on the `warn!` deleted it from
+/// every build and left the pin green; a second `warn!` added inside
+/// a `for` loop restored issue #118 verbatim and left the pin green.
+/// Patching in three more cases would have left the thirty-third.
+///
+/// So the decision moved out of the source and into a value —
+/// [`ShapeSpelling::report`] returns a
+/// [`ShapeReport`](crate::gfx_structs::shape::ShapeReport), which
+/// `do_shape_report_routes_every_classification` tests as ordinary
+/// data — and what is left here is a **whitelist** over what remains:
+/// [`check_routing`] states the exact shape the body is allowed to
+/// have and returns `Err` for everything else. Three statements, no
+/// more and no fewer; each one pinned to the expression it must be;
+/// one `match` arm per `ShapeReport` variant plus one `None` arm;
+/// each reporting arm a bare `log::<macro>!` whose name is derived
+/// from `ShapeReport::level()` rather than restated; and no attribute
+/// anywhere in the body but a doc comment. An unmodeled construct
+/// fails by not matching, which is the property a search cannot have.
+///
+/// **What it still cannot see**, stated plainly because the round-2
+/// disclosure was not:
+///
+/// - **Anything outside `from_style_string`.** A `log::warn!` added
+///   to `ShapeSpelling::classify` would recreate #118's symptom and
+///   this pin would not notice. The claim here is about one function
+///   body, and it is complete only about that.
+/// - **What the macro is handed.** The message string, its format
+///   arguments and its `"<area>: "` prefix (CODE_CONVENTIONS §9) are
+///   not read. A `log::warn!("")` in the right arm passes.
+/// - **What `log::warn!` means at the point it is compiled.** A
+///   `macro_rules! warn` shadowing the real one, or a `use` that
+///   rebinds `log`, is text this pin accepts and behavior it cannot
+///   evaluate. Nothing here does that; the pin does not prove it.
+/// - **Whether the level is right.** `ShapeReport::level()` is the
+///   definition, so the pin holds the arm to whatever that says. If
+///   `level()` itself were wrong, the pin would faithfully hold the
+///   arms to the wrong answer —
+///   `do_shape_report_levels_are_warn_and_trace` is the separate
+///   assertion that the two levels are the ones §9 and #118 call for.
+///
+/// One escape closed itself in the restructure and is worth naming
+/// because it costs nothing: `#[cfg(any())]` on a `match` arm now
+/// makes the `match` non-exhaustive, so it is a *compile* error
+/// before it is a test failure.
+///
+/// §B8 asks for a `do_*()` body and a bench entry per test; the tests
+/// in this module have neither, deliberately and with precedent.
+/// `syn` is a dev-dependency, so a `pub` body in this `pub mod tests`
+/// tree would not compile into the library, and `serde_coverage`'s
+/// own consumer tests are plain `#[cfg(test)]` tests for the same
+/// reason. Native only: it reads a file.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod log_routing {
-    use syn::{Block, Expr, ImplItem, Item, Path, Stmt, Type};
+    use strum::IntoEnumIterator;
+    use syn::{Attribute, Expr, ImplItem, ImplItemFn, Item, Pat, Path, PathArguments, Stmt, Type};
 
-    /// The `(guard predicate, `log::` macro)` pairs
-    /// `NodeShape::from_style_string` must contain, in source order.
-    ///
-    /// This is the reporting contract in one place: `warn!` behind
-    /// `is_author_error`, `trace!` behind `is_quiet_fallback`, and
-    /// nothing else. Changing the shape of the routing — a `match` on
-    /// some future `report()` enum, say — is meant to fail here, so
-    /// that moving the decision is a decision somebody makes rather
-    /// than one that happens.
-    const EXPECTED_ROUTING: &[(&str, &str)] = &[("is_author_error", "warn"), ("is_quiet_fallback", "trace")];
+    use crate::gfx_structs::shape::ShapeReport;
 
-    /// Stands in for the guard of a `log::` call that is not inside
-    /// an `if` at all — an unconditional warning, for instance.
-    const UNGUARDED: &str = "<unguarded>";
+    /// The name `from_style_string` must bind its classification to.
+    const BOUND_NAME: &str = "spelling";
+    /// The initializer of that binding, in [`render_expr`]'s grammar.
+    const CLASSIFY_CALL: &str = "ShapeSpelling::classify(s)";
+    /// The `match` scrutinee. Pinning it is what stops the routing
+    /// decision being moved somewhere this module cannot follow: a
+    /// `match spelling.is_author_error()` fails here by name.
+    const REPORT_CALL: &str = "spelling.report()";
+    /// The trailing expression, which is also the whole return value.
+    const RESOLVE_TAIL: &str = "spelling.resolve()";
+    /// The pattern of the arm that reports nothing.
+    const SILENT_ARM: &str = "None";
 
-    /// Macro names that count as reporting. `log` itself is here so a
-    /// switch to `log::log!(level, …)`, which moves the level into a
-    /// runtime value and out of this test's sight, shows up as a
-    /// changed pair rather than as silence.
-    const LOG_MACROS: &[&str] = &["error", "warn", "info", "debug", "trace", "log"];
-
-    /// The pinned routing, read out of the shipped source.
+    /// The pin: the shipped `from_style_string` is exactly the shape
+    /// [`check_routing`] models, with one reporting arm per
+    /// [`ShapeReport`] variant.
     #[test]
     fn test_from_style_string_log_routing_is_pinned() {
-        let mut found = Vec::new();
-        walk_block(&from_style_string_body(), None, &mut found);
-
-        let expected: Vec<(String, String)> = EXPECTED_ROUTING
-            .iter()
-            .map(|(guard, level)| ((*guard).to_string(), (*level).to_string()))
-            .collect();
         assert!(
-            !expected.is_empty(),
-            "EXPECTED_ROUTING is empty — this test would pass vacuously"
+            ShapeReport::iter().count() > 0,
+            "ShapeReport has no variants — every derived expectation \
+             below would be empty and this test would pass vacuously"
         );
+
+        let function = from_style_string_fn();
+        let routing = check_routing(&function).unwrap_or_else(|why| {
+            panic!(
+                "NodeShape::from_style_string is no longer the shape this pin \
+                 models, so what a load logs is once again unobserved: {why}"
+            )
+        });
         assert_eq!(
-            found, expected,
-            "NodeShape::from_style_string's log routing changed. An empty \
-             list means the reporting was deleted outright, which is issue \
-             #118's second requirement silently removed; a {UNGUARDED:?} \
-             guard means a log call escaped both reporting predicates; a \
-             changed level means warn! and trace! swapped places."
+            routing.len(),
+            ShapeReport::iter().count(),
+            "check_routing accepted {routing:?}, which is not one arm per \
+             ShapeReport variant"
         );
     }
 
-    /// Positive control for the walker, so a green run above cannot
-    /// mean "the parse found nothing and said nothing". Feeds it a
-    /// block with both levels transposed and one unguarded call, and
-    /// requires it to report all three.
+    /// Positive control. The checker accepts the shape it models, and
+    /// the fixture it accepts routes the same way the shipped
+    /// function does — so this fixture drifting away from `shape.rs`
+    /// is itself a failure rather than a control quietly testing a
+    /// shape nobody ships.
     #[test]
-    fn test_log_routing_walker_reports_a_mis_routed_call() {
-        let block: Block = syn::parse_str(
-            r#"{
-                if spelling.is_author_error() {
-                    log::trace!("transposed");
-                } else if spelling.is_quiet_fallback() {
-                    log::warn!("transposed");
-                }
-                log::error!("no guard at all");
-            }"#,
-        )
-        .expect("the control snippet must parse as a block");
-
-        let mut found = Vec::new();
-        walk_block(&block, None, &mut found);
+    fn test_log_routing_check_accepts_the_modeled_shape() {
+        let accepted = check_routing(&fixture(MODELED)).expect("the modeled shape must be accepted");
+        let shipped = check_routing(&from_style_string_fn()).expect("the shipped function must be accepted");
         assert_eq!(
-            found,
-            vec![
-                ("is_author_error".to_string(), "trace".to_string()),
-                ("is_quiet_fallback".to_string(), "warn".to_string()),
-                (UNGUARDED.to_string(), "error".to_string()),
-            ],
-            "the walker did not see a routing it was handed directly"
+            accepted, shipped,
+            "the control fixture and the shipped from_style_string route \
+             differently, so the controls below are checking a shape this \
+             crate does not have"
         );
     }
 
-    /// The body of `NodeShape::from_style_string`, parsed out of
-    /// `shape.rs`. Panics if the function is gone: a silent skip
-    /// would turn the pin above into a no-op.
-    fn from_style_string_body() -> Block {
+    /// **Finding 1 of the round-2 review, as a control.** A condition
+    /// wrapped *around* the reporting silences `from_style_string`
+    /// completely — `"pentagram"` stops warning, issue #118's second
+    /// requirement is gone — and the old walker composed the outer
+    /// condition away to `None` and stayed green. Here the wrap
+    /// displaces the `match` from the one position the pin allows it.
+    #[test]
+    fn test_log_routing_check_rejects_a_condition_wrapped_around_the_match() {
+        let source = MODELED
+            .replace(
+                "        match spelling.report() {",
+                "        if s.len() > 1000 {\n        match spelling.report() {",
+            )
+            .replace(
+                "        }\n        spelling.resolve()",
+                "        }\n        }\n        spelling.resolve()",
+            );
+        let why = check_routing(&fixture(&source)).expect_err("an outer condition must be rejected");
+        assert!(
+            why.contains("`match`"),
+            "the rejection must say the `match` is not where the pin models \
+             it; it said {why:?}"
+        );
+    }
+
+    /// The same silencing spelled as a flag, which is the shape that
+    /// reaches the pin as a fourth statement rather than as a
+    /// displaced `match`. Both spellings are rejected; they are
+    /// rejected by different clauses, so both are controlled.
+    #[test]
+    fn test_log_routing_check_rejects_a_flag_wrapped_around_the_match() {
+        let source = MODELED
+            .replace(
+                "        match spelling.report() {",
+                "        let report = false;\n        if report {\n        match spelling.report() {",
+            )
+            .replace(
+                "        }\n        spelling.resolve()",
+                "        }\n        }\n        spelling.resolve()",
+            );
+        let why = check_routing(&fixture(&source)).expect_err("a flag wrap must be rejected");
+        assert!(
+            why.contains("statements"),
+            "the rejection must name the statement count; it said {why:?}"
+        );
+    }
+
+    /// **Finding 2, as a control.** `#[cfg(any())]` on an arm strips
+    /// the arm from every build. In the shipped function that is a
+    /// compile error as well — the `match` stops covering
+    /// `Option<ShapeReport>` — but the checker must not need the
+    /// compiler's help to say so.
+    #[test]
+    fn test_log_routing_check_rejects_a_cfg_stripped_arm() {
+        let source = MODELED.replace(
+            "            Some(ShapeReport::UnknownSpelling)",
+            "            #[cfg(any())]\n            Some(ShapeReport::UnknownSpelling)",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("a cfg-stripped arm must be rejected");
+        assert!(
+            why.contains("cfg"),
+            "the rejection must name the attribute; it said {why:?}"
+        );
+    }
+
+    /// The other half of finding 2: a `#[cfg]` that hides the macro
+    /// rather than the arm. `#[cfg(target_arch = "wasm32")]` here
+    /// deletes the warning from the *native* build while this test,
+    /// which is itself `not(target_arch = "wasm32")`-gated, keeps
+    /// running — a CODE_CONVENTIONS §4 divergence that source text
+    /// alone does not show.
+    #[test]
+    fn test_log_routing_check_rejects_a_cfg_stripped_macro() {
+        let source = MODELED.replace(
+            "log::warn!(\"unknown\")",
+            "{\n                #[cfg(target_arch = \"wasm32\")]\n                log::warn!(\"unknown\");\n            }",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("a cfg-stripped macro must be rejected");
+        assert!(
+            why.contains("bare macro invocation"),
+            "the rejection must say the arm body is not a bare macro; it said {why:?}"
+        );
+    }
+
+    /// **Finding 3, as a control.** An *added* `log::warn!` — here in
+    /// a `for` loop, the spelling that restores issue #118 verbatim
+    /// at 242 lines per load of the demo map — is a fourth statement,
+    /// and the pin admits exactly three.
+    #[test]
+    fn test_log_routing_check_rejects_an_added_log_call() {
+        let source = MODELED.replace(
+            "        spelling.resolve()",
+            "        for _ in 0..1 {\n            log::warn!(\"unknown\");\n        }\n        spelling.resolve()",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("an added log call must be rejected");
+        assert!(
+            why.contains("statements"),
+            "the rejection must name the statement count; it said {why:?}"
+        );
+    }
+
+    /// Swapping the two macros is the failure the first version of
+    /// this module was written for, and it still fails — now against
+    /// `ShapeReport::level()` rather than against a table written
+    /// beside the test.
+    #[test]
+    fn test_log_routing_check_rejects_swapped_macros() {
+        let source = MODELED
+            .replace("log::warn!(\"unknown\")", "log::swapped!(\"unknown\")")
+            .replace("log::trace!(\"substituted\")", "log::warn!(\"substituted\")")
+            .replace("log::swapped!(\"unknown\")", "log::trace!(\"unknown\")");
+        let why = check_routing(&fixture(&source)).expect_err("swapped macros must be rejected");
+        assert!(
+            why.contains("log::warn"),
+            "the rejection must name the macro the level calls for; it said {why:?}"
+        );
+    }
+
+    /// The residual disclosed in round 2, now a rejection rather than
+    /// a "changed pair": `log::log!(level, …)` with a computed level
+    /// is what defeats `log`'s release compile-out, so the pin
+    /// refuses it by name instead of recording it and moving on.
+    #[test]
+    fn test_log_routing_check_rejects_a_computed_level() {
+        let source = MODELED.replace(
+            "log::warn!(\"unknown\")",
+            "log::log!(ShapeReport::UnknownSpelling.level(), \"unknown\")",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("a computed level must be rejected");
+        assert!(
+            why.contains("log::log"),
+            "the rejection must name what it found; it said {why:?}"
+        );
+    }
+
+    /// A dropped reporting arm. In the shipped function the compiler
+    /// catches this first, since `Option<ShapeReport>` stops being
+    /// covered; the checker says so on its own anyway, because a
+    /// future variant swept into a widened pattern would compile.
+    #[test]
+    fn test_log_routing_check_rejects_a_missing_reporting_arm() {
+        let source = MODELED.replace(
+            "            Some(ShapeReport::RectangleSubstituted) => log::trace!(\"substituted\"),\n",
+            "",
+        );
+        let why = check_routing(&fixture(&source)).expect_err("a missing arm must be rejected");
+        assert!(
+            why.contains("RectangleSubstituted"),
+            "the rejection must name the variant with no arm; it said {why:?}"
+        );
+    }
+
+    /// Moving the decision somewhere the pin cannot follow. The
+    /// scrutinee is pinned by name for this reason: a `match` on
+    /// something other than `spelling.report()` is a different
+    /// routing, whatever its arms look like.
+    #[test]
+    fn test_log_routing_check_rejects_a_different_scrutinee() {
+        let source = MODELED.replace("match spelling.report()", "match spelling.some_other_report()");
+        let why = check_routing(&fixture(&source)).expect_err("a moved decision must be rejected");
+        assert!(
+            why.contains(REPORT_CALL),
+            "the rejection must name the scrutinee the pin models; it said {why:?}"
+        );
+    }
+
+    /// The shape the pin models, written once so each control above
+    /// is a single deliberate deviation from it. Held to the shipped
+    /// function by `test_log_routing_check_accepts_the_modeled_shape`
+    /// — the message strings are the only part that may differ, since
+    /// [`check_routing`] does not read them.
+    const MODELED: &str = r#"
+    pub fn from_style_string(s: &str) -> Self {
+        let spelling = ShapeSpelling::classify(s);
+        match spelling.report() {
+            Some(ShapeReport::UnknownSpelling) => log::warn!("unknown"),
+            Some(ShapeReport::RectangleSubstituted) => log::trace!("substituted"),
+            None => {}
+        }
+        spelling.resolve()
+    }
+"#;
+
+    /// Parse a control fixture. Panics rather than returning `Err`:
+    /// a fixture that does not parse is a bug in this file, not a
+    /// finding about `shape.rs`.
+    fn fixture(source: &str) -> ImplItemFn {
+        syn::parse_str(source).expect("a control fixture must parse as an impl method")
+    }
+
+    /// **The whitelist.** `Ok` carries the `(arm pattern, macro path)`
+    /// pairs the body was found to contain, in source order; `Err`
+    /// carries the first way the body departs from the modeled shape.
+    ///
+    /// Every clause below is a *requirement*, never a search. The
+    /// difference is the whole point of the round-3 rewrite: a search
+    /// reports what it happens to find and says nothing about the
+    /// rest, so a construct outside its model passes; a requirement
+    /// that cannot be satisfied fails.
+    fn check_routing(function: &ImplItemFn) -> Result<Vec<(String, String)>, String> {
+        only_doc_attrs(&function.attrs, "the function")?;
+
+        let stmts = &function.block.stmts;
+        if stmts.len() != 3 {
+            return Err(format!(
+                "the body has {} statements; the pin models exactly three — \
+                 bind the classification, match on its report, return the \
+                 resolved shape. An added `log::` call, or a flag wrapped \
+                 around the reporting, arrives here as a fourth",
+                stmts.len()
+            ));
+        }
+
+        let Stmt::Local(local) = &stmts[0] else {
+            return Err("statement 1 is not a `let` binding".to_string());
+        };
+        only_doc_attrs(&local.attrs, "the `let` binding")?;
+        let Pat::Ident(bound) = &local.pat else {
+            return Err("the `let` binding does not bind a plain name".to_string());
+        };
+        if bound.ident != BOUND_NAME {
+            return Err(format!(
+                "the `let` binding names `{}`; the pin models `{BOUND_NAME}`",
+                bound.ident
+            ));
+        }
+        let Some(init) = &local.init else {
+            return Err(format!("`{BOUND_NAME}` is declared without an initializer"));
+        };
+        if init.diverge.is_some() {
+            return Err("the `let` binding grew an `else` branch".to_string());
+        }
+        expect_expr(&init.expr, CLASSIFY_CALL, "the `let` binding's initializer")?;
+
+        let Stmt::Expr(Expr::Match(reporting), _) = &stmts[1] else {
+            return Err(format!(
+                "statement 2 of the body is not a `match`; the pin models \
+                 `match {REPORT_CALL} {{ … }}` there, and a condition wrapped \
+                 around the reporting displaces it"
+            ));
+        };
+        only_doc_attrs(&reporting.attrs, "the `match`")?;
+        expect_expr(&reporting.expr, REPORT_CALL, "the `match` scrutinee")?;
+
+        let Stmt::Expr(tail, None) = &stmts[2] else {
+            return Err("statement 3 is not a trailing expression".to_string());
+        };
+        expect_expr(tail, RESOLVE_TAIL, "the trailing expression")?;
+
+        let mut routing = Vec::new();
+        let mut silent_arms = 0usize;
+        for (index, arm) in reporting.arms.iter().enumerate() {
+            let position = format!("`match` arm {}", index + 1);
+            only_doc_attrs(&arm.attrs, &position)?;
+            if arm.guard.is_some() {
+                return Err(format!("{position} carries an `if` guard"));
+            }
+            let Some(pattern) = render_pat(&arm.pat) else {
+                return Err(format!(
+                    "{position} has a pattern outside the forms this pin \
+                     models — a name, a path, or a tuple struct over those"
+                ));
+            };
+            if pattern == SILENT_ARM {
+                expect_empty_block(&arm.body, &position)?;
+                silent_arms += 1;
+                continue;
+            }
+            let Some(report) = report_for_pattern(&pattern) else {
+                return Err(format!(
+                    "{position} matches `{pattern}`, which is neither \
+                     `{SILENT_ARM}` nor `Some(ShapeReport::…)`"
+                ));
+            };
+            let Expr::Macro(invocation) = &*arm.body else {
+                return Err(format!(
+                    "{position}'s body is not a bare macro invocation. A block \
+                     is the shape a `#[cfg]` on the macro needs, and a `#[cfg]` \
+                     can delete the call from a build the source text still shows"
+                ));
+            };
+            only_doc_attrs(&invocation.attrs, &format!("{position}'s macro"))?;
+            let called = path_string(&invocation.mac.path);
+            let wanted = format!("log::{}", macro_for(report.level()));
+            if called != wanted {
+                return Err(format!(
+                    "{position} matches `{pattern}`, whose \
+                     `ShapeReport::level()` is `{:?}`, so its body must be \
+                     `{wanted}!`; it is `{called}!`",
+                    report.level()
+                ));
+            }
+            routing.push((pattern, called));
+        }
+
+        if silent_arms != 1 {
+            return Err(format!(
+                "the `match` has {silent_arms} `{SILENT_ARM}` arms; it must \
+                 have exactly one, or a classification nobody reports would \
+                 have nowhere to land"
+            ));
+        }
+        let mut covered: Vec<String> = routing.iter().map(|(pattern, _)| pattern.clone()).collect();
+        covered.sort();
+        let mut wanted: Vec<String> = ShapeReport::iter().map(arm_pattern_for).collect();
+        wanted.sort();
+        if covered != wanted {
+            return Err(format!(
+                "the reporting arms are {covered:?}; there must be exactly one \
+                 per ShapeReport variant, which is {wanted:?}"
+            ));
+        }
+        Ok(routing)
+    }
+
+    /// The `log::` macro that writes at `level`. Total over
+    /// [`log::Level`] with no `_` arm, so a sixth level would be a
+    /// build error here rather than a silently unroutable report.
+    fn macro_for(level: log::Level) -> &'static str {
+        match level {
+            log::Level::Error => "error",
+            log::Level::Warn => "warn",
+            log::Level::Info => "info",
+            log::Level::Debug => "debug",
+            log::Level::Trace => "trace",
+        }
+    }
+
+    /// The arm pattern that reports `report`, derived from the
+    /// variant name rather than written out.
+    fn arm_pattern_for(report: ShapeReport) -> String {
+        format!("Some(ShapeReport::{report:?})")
+    }
+
+    /// The inverse of [`arm_pattern_for`], over the variants that
+    /// exist.
+    fn report_for_pattern(pattern: &str) -> Option<ShapeReport> {
+        ShapeReport::iter().find(|report| arm_pattern_for(*report) == pattern)
+    }
+
+    /// Reject any attribute but a doc comment.
+    ///
+    /// Conditional compilation is why this is a whitelist and not a
+    /// `cfg` denylist: `#[cfg(any())]` deletes the item from every
+    /// build, `#[cfg(target_arch = "wasm32")]` from the native one
+    /// only, and `#[cfg_attr(all(), cfg(any()))]` spells the first
+    /// without the word `cfg` reaching the attribute's path in the
+    /// obvious place. All three leave source text this module would
+    /// otherwise read as present.
+    fn only_doc_attrs(attrs: &[Attribute], position: &str) -> Result<(), String> {
+        for attr in attrs {
+            if !attr.path().is_ident("doc") {
+                return Err(format!(
+                    "{position} carries `#[{}]`. The pin models doc comments \
+                     and nothing else, because an attribute can remove from a \
+                     build what the source still shows",
+                    path_string(attr.path())
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The silent arm's body must be an empty, unlabeled,
+    /// unattributed block — there is nothing for it to do.
+    fn expect_empty_block(body: &Expr, position: &str) -> Result<(), String> {
+        let Expr::Block(node) = body else {
+            return Err(format!(
+                "{position} is the `{SILENT_ARM}` arm, so its body must be an \
+                 empty block"
+            ));
+        };
+        only_doc_attrs(&node.attrs, &format!("{position}'s block"))?;
+        if node.label.is_some() {
+            return Err(format!("{position}'s block carries a label"));
+        }
+        if !node.block.stmts.is_empty() {
+            return Err(format!(
+                "{position} is the `{SILENT_ARM}` arm, but its block has {} \
+                 statements",
+                node.block.stmts.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Require `expr` to be exactly `wanted`, in [`render_expr`]'s
+    /// grammar.
+    fn expect_expr(expr: &Expr, wanted: &str, position: &str) -> Result<(), String> {
+        match render_expr(expr) {
+            Some(actual) if actual == wanted => Ok(()),
+            Some(actual) => Err(format!("{position} is `{actual}`; the pin models `{wanted}`")),
+            None => Err(format!(
+                "{position} is an expression form outside the grammar this pin \
+                 models — a path, a call, or a method call over those; the pin \
+                 models `{wanted}` there"
+            )),
+        }
+    }
+
+    /// Render the small expression grammar this module models: a
+    /// path, a call, or a method call whose receiver and arguments
+    /// are themselves in the grammar. `None` for everything else,
+    /// which is what turns an unmodeled construct into a failure
+    /// rather than a silent pass.
+    fn render_expr(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Path(node) if node.attrs.is_empty() && node.qself.is_none() => {
+                Some(path_string(&node.path))
+            }
+            Expr::Call(node) if node.attrs.is_empty() => {
+                let args: Vec<String> = node.args.iter().map(render_expr).collect::<Option<_>>()?;
+                Some(format!("{}({})", render_expr(&node.func)?, args.join(", ")))
+            }
+            Expr::MethodCall(node) if node.attrs.is_empty() && node.turbofish.is_none() => {
+                let args: Vec<String> = node.args.iter().map(render_expr).collect::<Option<_>>()?;
+                Some(format!(
+                    "{}.{}({})",
+                    render_expr(&node.receiver)?,
+                    node.method,
+                    args.join(", ")
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// The pattern counterpart of [`render_expr`], over the three
+    /// forms an arm here is allowed to take.
+    fn render_pat(pat: &Pat) -> Option<String> {
+        match pat {
+            Pat::Ident(node)
+                if node.attrs.is_empty()
+                    && node.by_ref.is_none()
+                    && node.mutability.is_none()
+                    && node.subpat.is_none() =>
+            {
+                Some(node.ident.to_string())
+            }
+            Pat::Path(node) if node.attrs.is_empty() && node.qself.is_none() => Some(path_string(&node.path)),
+            Pat::TupleStruct(node) if node.attrs.is_empty() && node.qself.is_none() => {
+                let elems: Vec<String> = node.elems.iter().map(render_pat).collect::<Option<_>>()?;
+                Some(format!("{}({})", path_string(&node.path), elems.join(", ")))
+            }
+            _ => None,
+        }
+    }
+
+    /// `a::b::c`. A segment carrying generic arguments renders with a
+    /// marker no modeled string contains, so it fails the compare
+    /// rather than being silently discarded.
+    fn path_string(path: &Path) -> String {
+        let mut out = String::new();
+        if path.leading_colon.is_some() {
+            out.push_str("::");
+        }
+        for (index, segment) in path.segments.iter().enumerate() {
+            if index > 0 {
+                out.push_str("::");
+            }
+            out.push_str(&segment.ident.to_string());
+            if !matches!(segment.arguments, PathArguments::None) {
+                out.push_str("<generic arguments>");
+            }
+        }
+        out
+    }
+
+    /// `NodeShape::from_style_string`, parsed out of `shape.rs`.
+    /// Panics if the function is gone: a silent skip would turn the
+    /// pin into a no-op.
+    fn from_style_string_fn() -> ImplItemFn {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/gfx_structs/shape.rs");
         let text = std::fs::read_to_string(path).expect("shape.rs must be readable");
         let file = syn::parse_file(&text).expect("shape.rs must parse as Rust");
@@ -833,7 +1452,7 @@ mod log_routing {
             for member in &item.items {
                 if let ImplItem::Fn(function) = member {
                     if function.sig.ident == "from_style_string" {
-                        return function.block.clone();
+                        return function.clone();
                     }
                 }
             }
@@ -849,68 +1468,6 @@ mod log_routing {
                 .last()
                 .is_some_and(|segment| segment.ident == name),
             _ => false,
-        }
-    }
-
-    /// Record every reporting macro in `block`, tagged with the
-    /// method name of the `if` condition guarding it.
-    fn walk_block(block: &Block, guard: Option<&str>, out: &mut Vec<(String, String)>) {
-        for stmt in &block.stmts {
-            match stmt {
-                Stmt::Expr(expr, _) => walk_expr(expr, guard, out),
-                Stmt::Local(local) => {
-                    if let Some(init) = &local.init {
-                        walk_expr(&init.expr, guard, out);
-                    }
-                }
-                Stmt::Macro(node) => record(&node.mac.path, guard, out),
-                Stmt::Item(_) => {}
-            }
-        }
-    }
-
-    fn walk_expr(expr: &Expr, guard: Option<&str>, out: &mut Vec<(String, String)>) {
-        match expr {
-            Expr::If(node) => {
-                let inner = guard_name(&node.cond);
-                walk_block(&node.then_branch, inner.as_deref(), out);
-                if let Some((_, otherwise)) = &node.else_branch {
-                    walk_expr(otherwise, guard, out);
-                }
-            }
-            Expr::Match(node) => {
-                for arm in &node.arms {
-                    walk_expr(&arm.body, guard, out);
-                }
-            }
-            Expr::Block(node) => walk_block(&node.block, guard, out),
-            Expr::Macro(node) => record(&node.mac.path, guard, out),
-            _ => {}
-        }
-    }
-
-    /// The method an `if` condition calls, which is how a guard is
-    /// named here. A condition that is not a plain method call
-    /// leaves its branch `UNGUARDED`, so replacing
-    /// `spelling.is_author_error()` with an inlined comparison fails
-    /// the pin rather than passing it under a new name.
-    fn guard_name(cond: &Expr) -> Option<String> {
-        match cond {
-            Expr::MethodCall(call) => Some(call.method.to_string()),
-            _ => None,
-        }
-    }
-
-    fn record(path: &Path, guard: Option<&str>, out: &mut Vec<(String, String)>) {
-        let Some(last) = path.segments.last() else { return };
-        let name = last.ident.to_string();
-        let from_log = path.segments.len() == 1
-            || path
-                .segments
-                .first()
-                .is_some_and(|segment| segment.ident == "log");
-        if from_log && LOG_MACROS.contains(&name.as_str()) {
-            out.push((guard.unwrap_or(UNGUARDED).to_string(), name));
         }
     }
 }

@@ -412,6 +412,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("shape_reporting_predicates_partition", |b| {
         b.iter(do_shape_reporting_predicates_partition)
     });
+    c.bench_function("shape_report_routes_every_classification", |b| {
+        b.iter(do_shape_report_routes_every_classification)
+    });
+    c.bench_function("shape_report_levels_are_warn_and_trace", |b| {
+        b.iter(do_shape_report_levels_are_warn_and_trace)
+    });
     c.bench_function("shape_classify_case_and_alias", |b| {
         b.iter(do_shape_classify_case_and_alias)
     });
