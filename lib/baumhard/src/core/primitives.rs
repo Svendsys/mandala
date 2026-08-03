@@ -30,7 +30,6 @@ use crate::util::color::FloatRgba;
 /// range so two regions with the same bounds collide in the owning
 /// [`ColorFontRegions`] set regardless of color / font.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ColorFontRegion {
     /// Half-open grapheme-cluster span this region covers in the
     /// backing text. Sole key for `Eq` / `Ord` / `Hash` on the
@@ -115,7 +114,6 @@ impl ColorFontRegion {
 /// is a mutation primitive that keeps the set consistent under
 /// insertion / deletion of characters in the backing text.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
-#[serde(deny_unknown_fields)]
 pub struct ColorFontRegions {
     /// Sorted set of styled spans, keyed on
     /// [`ColorFontRegion::range`]. Stored in a `BTreeSet` so range
@@ -704,7 +702,6 @@ impl ApplyOperation {
 /// [`ColorFontRegion`] and any other span-of-chars payload in the
 /// core model. Totally ordered for `BTreeSet` storage.
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Range {
     /// Inclusive start index in grapheme clusters (not bytes, not
     /// chars). User-derived offsets land here.
@@ -932,7 +929,6 @@ pub enum AnchorBox {
 /// world / …), the point on the target this element pins to, and the
 /// point on the element itself that meets it.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Anchor {
     target: AnchorTarget,
     self_point: AnchorPoint,
@@ -1009,7 +1005,6 @@ impl Default for Anchor {
 /// tree by `generation_offset` or `child_num`; `Window` / `Display` /
 /// `World` use global coordinate systems.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub enum AnchorTarget {
     /// Pin to an ancestor. `generation_offset == 0` is the
     /// immediate parent, `1` is the grandparent, and so on.

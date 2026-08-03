@@ -48,6 +48,18 @@ pub mod primes;
 /// parser for its own source.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod serde_coverage;
+/// Readers over the workspace's own source text — which bytes are
+/// shipped code, and whether a `test_*` name a comment writes down is
+/// one that exists. The single place `#[cfg(test)]` is reasoned
+/// about. Test-only and native-only, for the same reasons
+/// `serde_coverage` is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod source_scan;
+/// A recording `log::Log` sink, so a test can assert that a degrade
+/// path emitted the `warn!` CODE_CONVENTIONS §9 promises. Test-only
+/// and native-only — the browser build installs `console_log`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod test_logger;
 /// Collision-free scratch directories for filesystem tests, so
 /// concurrent `cargo test` runs cannot race on a shared path.
 /// Native-only — there is no filesystem to scratch on under wasm32.

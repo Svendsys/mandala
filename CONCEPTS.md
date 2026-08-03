@@ -623,14 +623,56 @@ A node's visual silhouette and its clickable
 silhouette must agree. `NodeShape` names the two today
 (rectangle, ellipse) and gives both pipelines one source of
 truth for "is this point inside?". Adding a new shape is
-three small changes: one enum variant, one WGSL shader `case`,
-one `contains_local` arm.
+four small changes: one enum variant, one `style_spellings`
+arm, one WGSL shader `case`, one `contains_local` arm. The
+`style_spellings` `match` is exhaustive over the variants, so
+the first change does not compile without the second.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
 (normalized coordinates, `nx² + ny² ≤ 1`); degenerate bounds
 always return `false`. `intersects_local_aabb` supports
 rect-select with conservative approximation for ellipses.
+
+The format's shape vocabulary (`KNOWN_SHAPES`, published in
+`format/enums.md` and enforced by `maptool verify`) is wider
+than the variant set: `"hexagon"`, `"diamond"`,
+`"parallelogram"` and `"rounded_rectangle"` are canonical but
+have no shader case yet. `ShapeSpelling` is the pure
+classifier that separates those from a genuine typo —
+`Rendered` / `KnownNotYetRendered` / `Unrecognized` /
+`Unspecified` — and `is_author_error` / `is_quiet_fallback`
+are the two predicates it exposes for the reporting
+decision. Before it existed, every hexagon in the demo map
+warned on every load (issue #118).
+
+`ShapeReport` is the second half of the split: the *routing*
+as a value. `ShapeSpelling::report` composes the two
+predicates into `Some(UnknownSpelling)` /
+`Some(RectangleSubstituted)` / `None`, `ShapeReport::level`
+is the single definition of which `log::Level` each carries,
+and `from_style_string` does nothing but pick the literal
+macro per arm — literal because `log`'s release compile-out
+folds on a level the compiler can see, which a
+`log::log!(computed, …)` would defeat. The value being a
+value is what makes the decision ordinary testable data;
+what is left, arm-to-macro, is a fact about source text and
+`shape_tests.rs`'s `log_routing` reads it as one, holding
+`from_style_string`'s body to a whitelist rather than
+searching it for `log::` calls.
+
+`KNOWN_SHAPES` is restated five times across three files —
+three lists in `format/enums.md`, `LEGACY_SHAPE_ORDINALS` in
+`crates/maptool/src/convert/enums.rs`, and the `shape_type`
+ordinal table in `format/migration.md` — and each is pinned
+back by a test that reads the restatement. The first four
+derive their expectation from the constant directly; the
+ordinal table is pinned to `LEGACY_SHAPE_ORDINALS` instead,
+which is itself pinned to the constant, so the chain closes
+in two hops rather than one. Either way, widening the
+vocabulary is still one edit plus the copies the suite names
+for you. The table in `shape.rs`'s `KNOWN_SHAPES` doc is the
+index.
 
 Shape-aware borders (glyph-drawn frames that follow
 the ellipse outline, not just the AABB) wait on the
@@ -901,8 +943,9 @@ palettes, custom mutations.
 
 Everything a user can save and reload is here.
 The `MindMap` is a plain serializable struct — no derived state, no
-runtime caches. The loader deserializes it from JSON, rejecting any
-key no field claims ([closed objects](#closed-objects)); the
+runtime caches. The loader deserializes it from JSON and carries any
+key no field claims along untouched, so the save writes it back
+([preserved unknown keys](#preserved-unknown-keys)); the
 [canvas-role projection](#canvas-role-projection) and
 [tree builder](#tree-builder) turn it into renderable form;
 mutations transform it in place.
@@ -919,48 +962,119 @@ HashMap<String, Palette>`, and
 [`format/README.md`](./format/README.md) for a minimum-viable
 example.
 
-### Closed objects
+### Preserved unknown keys
 
-Every object in `.mindmap.json` is **closed**: a key no field claims
-is a load error, never a key the loader quietly ignores.
+Every object in `.mindmap.json` is **open**: a key no field claims
+neither fails the load nor disappears from the file. The loader warns
+once, carries the key on the map, and writes it back at the next save.
 
-The reason is on the save path, not the load path. Mandala is an
-editor — it loads the whole map, mutates it, and writes the whole
-model back — so a key dropped at load is a key **deleted from the
-file at the next save**, and for a hand-authored map that file was
-the only copy. A `log::warn!` nobody reads turns silent data loss
-into logged data loss; refusing the load is the only outcome that
-leaves the author holding what they wrote at the moment they find
-out. A typo (`"min_zoom_to_rendr"`) and a field that does not exist
-yet fail the same way, and the message names the part of the
-document that carries the key — `node "1.2"`, `edge[3]`,
-`palette "coral"` — rather than a byte offset.
+The reason is version skew, in both directions at once. A map authored
+by a newer build carries keys an older build has never heard of;
+refusing the document leaves the reader with an empty window, and
+Mandala is an editor — it loads the whole map, mutates it, and writes
+the whole model back — so ignoring the keys deletes them at the next
+save. Keeping them is what lets an older build open, edit and resave a
+newer map without destroying the newer features. A typo
+(`"min_zoom_to_rendr"`) is kept the same way, and named the same way,
+because a key you still have is a key you can still fix;
+[`maptool verify`](#maptool-cli) is where it becomes a nonzero exit.
+The warning names the part of the document that carries the key —
+`node "1.2"`, `edge[3]`, `palette "coral"` — rather than a byte
+offset.
 
-Mechanically it is `#[serde(deny_unknown_fields)]` on every type
-reachable from a load. That set is not written down anywhere: a
-hand-kept list of "types that must carry the attribute" is the twin
-surface `lib/baumhard/CONVENTIONS.md` §B4 warns about, so
-`lib/baumhard/src/util/serde_coverage.rs` walks baumhard's own
-sources with `syn` and
-`loader::tests::test_every_loadable_type_rejects_unknown_keys`
-fails until a newly reachable type opts in.
+Mechanically it is **not** a per-type `#[serde(flatten)]` catch-all,
+and could not be: `serde_json::Value` implements neither `Eq` nor
+`Hash`, and the graph reachable from a load is full of types that
+derive `Copy`, `Eq` or `Hash` (`Color`, `OrderedVec2`, `Position`,
+`Anchor`, `Range`, `GlyphMatrix`). A catch-all on only the types that
+can hold one would preserve keys in some places and drop them in
+others. Instead `mindmap::unknown_keys` wraps the one parse a load
+already pays for and records the route to every key serde handed to
+`deserialize_ignored_any` — which covers the whole graph, including
+types the source walk cannot see. What the model owes the mechanism is
+only that no type absorbs a key first: no `deny_unknown_fields`, no
+`flatten`, no `untagged` or `tag`. That set is not written down
+anywhere — a hand-kept list is the twin surface
+`lib/baumhard/CONVENTIONS.md` §B4 warns about — so
+`lib/baumhard/src/util/serde_coverage.rs` walks baumhard's own sources
+with `syn` and
+`loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`
+fails the moment one appears.
 
-Closedness is about **keys, not meanings**. An `edge_type` the
-renderer does not know still loads — open vocabularies stay open —
-and semantic violations (an edge pointing at no node, a
-`color_schema` naming a palette that is not there) are
-[`maptool verify`](#maptool-cli)'s business, not the loader's. The
-interiors of `macros` / `inline_macros` are deliberately opaque.
-The IPC boundary made the same call for the same reason
-([`format/ipc.md`](./format/ipc.md): unknown parameters are rejected
-with `invalid_params`).
+Openness is about **keys, not meanings**. An `edge_type` the renderer
+does not know still loads — open vocabularies stay open — and semantic
+violations (an edge pointing at no node, a `color_schema` naming a
+palette that is not there) are [`maptool verify`](#maptool-cli)'s
+business. The interiors of `macros` / `inline_macros` are deliberately
+opaque and are never reported. Three legacy spellings are the
+exception and still refuse the load: a top-level `portals`, per-node
+`text` / `text_runs`, and a non-array `sections` are names the current
+model means something else by, and each has a `maptool convert` verb.
 
+`lib/baumhard/src/mindmap/unknown_keys.rs`,
 `lib/baumhard/src/mindmap/loader.rs`,
 `lib/baumhard/src/util/serde_coverage.rs`. See
-[`format/schema.md`](./format/schema.md) §"Unknown keys are
-rejected" for the policy as authors read it, and
-[`format/validation.md`](./format/validation.md) for the split
-between what the loader checks and what `verify` checks.
+[`format/schema.md`](./format/schema.md) §"Unknown keys are kept" for
+the policy as authors read it, and
+[`format/validation.md`](./format/validation.md) for the split between
+what the loader reports and what `verify` fails on. Its severe
+counterpart is [skipped constructs](#skippedconstruct--skippedconstructs),
+below.
+
+### `SkippedConstruct` / `SkippedConstructs`
+
+One construct a load could not read at all, lifted out of the document
+so the rest of the map opens, and written back untouched at the next
+save. `SkippedConstructs` is the ordered collection of them, carried
+on `MindMap` beside `unknown_keys` and with the same `#[serde(skip)]`:
+they go back at their own routes, not into a side object.
+
+The problem is the acute form of the one
+[preserved unknown keys](#preserved-unknown-keys) solves. A key from a
+newer build is **inert** — nothing reads it, so ignoring it changes
+nothing about what the map does. A **variant** from a newer build is
+the opposite: it *is* the instruction. `{"mutator": {"Glow": …}}` used
+to make the whole document unloadable, so opening a newer map in an
+older build gave an empty window and the newer feature was one
+accidental save away from gone.
+
+**The unit is the whole construct**, never the part inside it that
+failed, and that is the load-bearing design decision. Dropping one
+`Mutation` out of a macro would leave a custom mutation that still
+appears in `mutation list`, still fires, and now does two of the three
+things it says it does — a silent partial behavior with nothing to
+see. So the unit is the nearest container whose absence reads *as*
+absence: a whole `custom_mutations[i]`, a whole node
+`inline_mutations[i]`, or a whole node-or-section
+`trigger_bindings[i]`. Nothing else is skippable — a node, an edge,
+the canvas or a palette this build cannot read still fails the load,
+because a map missing part of itself with no sign of which part is
+worse than no map.
+
+**Refused for any reason, not only an unknown variant.** Sorting
+serde's message into "from the future" and "a typo" would mean parsing
+that message — the twin surface `lib/baumhard/CONVENTIONS.md` §B4 is
+about — and it sorts on the wrong axis anyway: the load's question is
+"can I carry this out?", and the answer is no in both cases. So the
+load skips what it cannot read, warns saying what serde said and that
+nothing the construct describes will run, and `maptool verify` reports
+every one as an `unknown_variant` violation with a nonzero exit. The
+two questions — *can I open this?* and *is this file right?* — stay
+separate.
+
+Ordering matters at save: captured keys are spliced back **before**
+skipped constructs, because a key's positional route was resolved
+against the array with the constructs already lifted out. See
+`loader::to_json_value`.
+
+`lib/baumhard/src/mindmap/unknown_keys.rs` (the types),
+`lib/baumhard/src/mindmap/loader.rs`
+(`load_skipping_unreadable_constructs`,
+`excise_unreadable_constructs`),
+`crates/maptool/src/verify/unknown_keys.rs`
+(`check_skipped_constructs`). See
+[`format/schema.md`](./format/schema.md) §"Unknown keys are kept" and
+[`format/validation.md`](./format/validation.md) §"Unknown variants".
 
 ### `Canvas`
 

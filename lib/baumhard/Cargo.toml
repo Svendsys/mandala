@@ -38,6 +38,13 @@ strum.workspace = true
 strum_macros.workspace = true
 ordered-float = {version = "5.3.0", features = ["serde"]}
 derivative = "2.2.0"
+# The loader's unknown-key capture. serde reports a key no field
+# matches by handing its value to `deserialize_ignored_any`, and
+# nothing in `serde` itself says *where* that happened; this wraps a
+# deserializer to answer that. `mindmap::unknown_keys` is the only
+# consumer, and the only crate member that loads `.mindmap.json` is
+# this one — so it stays out of `[workspace.dependencies]` per §13.
+serde_ignored = "0.1.14"
 
 # `env_logger` is load-bearing, not a leftover — and it is the native
 # half of a matched pair with `console_log` below. `util::log::init()`
@@ -105,6 +112,19 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # does not mean compiling against less — see
 # `lib/mandala_derive/Cargo.toml`.
 syn = { workspace = true, features = ["full"] }
+# `util::source_scan` excises `#[cfg(test)]` items from a file's text
+# and has to leave the surviving lines *at their own line numbers*, so
+# a guard reporting an offender can say `file:line`. That needs the
+# span of the item syn parsed, and a span carries a line only when
+# proc-macro2 was built with `span-locations` — without it every
+# `Span::start()` answers line 0 and the excision would blank the
+# wrong rows in silence.
+#
+# Additive on the shared entry, like `syn`'s `full` above, and landing
+# on the target-graph node for the same resolver-2 reason: the derive
+# macros the workspace expands go through a different `proc-macro2`
+# and do not pay for this.
+proc-macro2 = { workspace = true, features = ["span-locations"] }
 
 [[bench]]
 name = "test_bench"

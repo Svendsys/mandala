@@ -1002,7 +1002,8 @@ mod flat_mutations_tests {
     /// An **empty** `Void` child carries nothing, so nothing can be
     /// lost by keeping the root's payload. Declining here would kill
     /// a well-formed mutator to protect a payload that does not
-    /// exist. Contrast [`test_single_child_is_not_flat_extractable`].
+    /// exist. Contrast
+    /// [`test_single_child_is_not_flat_extractable_with_a_runtime_hole`].
     #[test]
     fn test_empty_void_child_does_not_decline_the_mutator() {
         let node = MutatorNode::Macro {

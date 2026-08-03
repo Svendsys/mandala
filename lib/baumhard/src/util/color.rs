@@ -98,7 +98,6 @@ pub const VAL_MAX: u8 = 255;
 /// [`Index`] / [`IndexMut`] for channel access. `Copy`, zero
 /// allocation, serde-serializable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Color {
     /// Raw `[R, G, B, A]` byte channels. Exposed `pub` so palette
     /// constants can be written as struct literals at compile time.

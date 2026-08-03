@@ -13,21 +13,28 @@ Exit code 0 if clean, or if only warnings are found. Nonzero with a
 list of violations if any error is found. Warnings are still printed so
 a CI recipe that captures stderr can see them.
 
-The split is three-way, not two, and the middle column is the one
+The split is three-way, not two, and the first column is the one
 that moved.
 
-1. **Spelling — the loader refuses.** Every object in the format is
-   closed, so a key no field claims fails the load outright rather
-   than being dropped and then erased at the next save. See
-   [schema.md](./schema.md#unknown-keys-are-rejected).
-2. **Render safety — the loader also refuses.** A correctly-spelled
-   file can still carry numbers that take the editor down rather
-   than merely looking wrong: a zero font size trips an assert
-   inside the text shaper, a crossed size window used to reach an
-   `f32::clamp`, and node geometry sizes real allocations. Those are
-   rejected at load, because a map that would abort the process must
-   not open. The rules are listed under
-   [Numeric domain](#numeric-domain) below, and the reasoning is in
+1. **Spelling — `verify` reports.** It used to be the loader's: every
+   object was closed, and a key no field claimed failed the load. It
+   is not any more, and the reason matters — a key no field claims is
+   now **kept**, so an older build can open a newer map without losing
+   what it does not understand. See
+   [schema.md](./schema.md#unknown-keys-are-kept). The loader warns
+   once, into a log, and carries on. A warning at load is not a moment
+   at which anybody finds out; a nonzero exit is. So an unrecognized
+   key is an **error** under `verify`, reported at the part of the
+   document that carries it, even though the map loads and renders
+   fine.
+2. **Render safety — the loader refuses.** A correctly-spelled file
+   can still carry numbers that take the editor down rather than
+   merely looking wrong: a zero font size trips an assert inside the
+   text shaper, a crossed size window used to reach an `f32::clamp`,
+   and node geometry sizes real allocations. Those are rejected at
+   load, because a map that would abort the process must not open.
+   The rules are listed under [Numeric domain](#numeric-domain)
+   below, and the reasoning is in
    [macros.md](./macros.md#the-load-time-trust-boundary).
    **Parent cycles and the key-equals-`node.id` rule are in this
    column too** — both are load-blocking, because the cycle check
@@ -38,13 +45,20 @@ that moved.
    edge references, a Dewey ID that disagrees with `parent_id`, an
    unresolved palette name, a section hanging past its node's edge.
 
+Columns 1 and 3 are both `verify`'s, and they differ in what they
+say rather than in who says it: one is *this file is misspelled*, the
+other *this file is spelled correctly and still incoherent*.
+
 `verify` sees all three. It loads through
 `loader::parse_for_inspection` rather than the editor's strict door,
-precisely so it can still open the files column 1 and 2 reject — a
-tool whose job is saying *what is wrong with this map* would be
-useless if it could only read maps that were already fine. So a
-violation listed in column 2 appears in a `verify` report **and**
-blocks the load; one in column 3 appears only in the report.
+precisely so it can still open the files column 2 rejects — a tool
+whose job is saying *what is wrong with this map* would be useless if
+it could only read maps that were already fine. That path captures
+unknown keys and skipped constructs exactly as the strict door does,
+and drops only column 2's checks; without the capture, the two
+reports in column 1 would be silently empty. So a violation listed in
+column 2 appears in a `verify` report **and** blocks the load; one in
+column 1 or 3 appears only in the report.
 
 ## What gets checked
 
@@ -163,6 +177,53 @@ edit and a `verify` violation read identically.
 window — the render-time check still terminates cleanly, but an
 element that never renders at any zoom is almost always a typo. See
 [zoom-bounds.md](./zoom-bounds.md).
+
+### Unknown keys
+
+- Every key the loader kept without recognizing it, reported at the
+  part of the document that carries it — `node "1.2"`, `edge[3]`,
+  `palette "coral"`, `canvas`, `custom_mutations[0]`, or `map` —
+  followed by the field path inside that part
+
+**Why**: the load keeps such a key so a newer map is not damaged by an
+older build, and warns about it once. Nothing else ever mentions it
+again: it is written back at every save and read by nothing. A typo
+(`min_zoom_to_rendr`) and a genuinely newer field look identical from
+here, and both are worth a nonzero exit — one to fix, the other to
+tell you the build is behind the file. See
+[schema.md](./schema.md#unknown-keys-are-kept).
+
+Interiors of `macros` and a node's `inline_macros` are exempt: they
+are opaque JSON by design and nothing in them is ever unrecognized.
+
+### Unknown variants
+
+- Every construct the loader could not read at all and therefore
+  skipped — a whole `custom_mutations[i]`, a node's
+  `inline_mutations[i]`, or a node's or section's
+  `trigger_bindings[i]` — reported at the part of the document that
+  carried it, quoting serde's own account of what it refused
+  (`unknown variant 'Glwo', expected one of ...`)
+
+**Why**: this is the severe half of the same bargain as unknown keys,
+and the reason it is a separate category is that the *consequence*
+differs. An unrecognized key is inert — nothing reads it, so the map
+behaves exactly as authored minus a key nobody acts on. An
+unrecognized **variant** is the instruction: the load lifts the whole
+construct out so a map from a newer build opens instead of showing
+nothing, and what that construct described does not happen. The file
+still has it and a save writes it back, but in *this* build the
+mutation does not appear in `mutation list` and the trigger does not
+fire. `{"mutator": {"Glwo": …}}` is a typo that silently costs
+behavior, so there has to be a moment at which somebody finds out —
+this is that moment, on a file that nonetheless loads and renders.
+
+The unit is always the whole construct, never the part inside it that
+failed: dropping one `Mutation` out of a macro would leave an entry
+that still fires and silently does less than it says. Nothing else is
+skippable — a node, an edge, the canvas or a palette this build cannot
+read still fails the load outright. See
+[schema.md](./schema.md#unknown-keys-are-kept).
 
 ## What's not checked
 
