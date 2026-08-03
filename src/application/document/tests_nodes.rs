@@ -3714,6 +3714,39 @@ fn test_extreme_editor_writes_still_reload() {
         "an ordinary size must round to 13 and survive unchanged"
     );
 
+    // The eight border glyphs. The loader *rejects* these rather
+    // than clamping, so the writer refuses the edit — and the map
+    // that reaches disk is the unmodified one, which reloads.
+    let id = node_id.clone();
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let reloaded = round_trip("border-glyph", &move |doc| {
+        let outcome = doc.set_node_border_config(
+            &id,
+            BorderConfigEdits {
+                side_top: OptionEdit::Set(over.clone()),
+                visible: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(
+            !outcome.rejected.is_empty(),
+            "an over-long border glyph must be refused, not written"
+        );
+        assert!(
+            !outcome.changed,
+            "the refusal must be atomic — nothing on the node changed"
+        );
+    });
+    if let Some(border) = reloaded.nodes[&node_id].style.border.as_ref() {
+        if let Some(glyphs) = border.glyphs.as_ref() {
+            assert!(
+                baumhard::util::grapheme_chad::count_grapheme_clusters(&glyphs.top)
+                    <= baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS,
+                "a refused glyph must not have reached the file"
+            );
+        }
+    }
+
     // A negative gap is a legitimate tightening, so it must survive
     // the round trip unchanged rather than be clamped away.
     let reloaded = round_trip("spacing-tight", &|doc| {
@@ -3725,4 +3758,102 @@ fn test_extreme_editor_writes_still_reload() {
         -2.0,
         "a negative gap is authorable and must survive unclamped"
     );
+}
+
+/// **The writer-side invariant, checked mechanically.**
+///
+/// `format/validation.md` states the property this pins: a value the
+/// editor can write must be a value the loader accepts. It is not
+/// enforced by the type system — it holds because each setter
+/// screens or clamps — and it has now been broken three separate
+/// times, each time by adding a bound at the loader and forgetting
+/// the writer. `font size=`, `border padding=`, `spacing`, node
+/// position and the eight border glyphs were each found that way,
+/// by a review round rather than by a test.
+///
+/// The tests that were supposed to catch it enumerate *setters*, so
+/// they only ever cover the ones somebody remembered. This
+/// enumerates the **bounds** instead: every constant the loader
+/// rejects on is listed here with the writer that guards it, and a
+/// new constant with no entry fails the build rather than shipping
+/// a lockout.
+///
+/// This is a registry, not a behavior test — the behavior is pinned
+/// by `test_extreme_editor_writes_still_reload`, which drives the
+/// writers. What this catches is the *omission*: a bound added with
+/// no writer at all.
+#[test]
+fn test_every_loader_bound_names_its_writer_side_guard() {
+    // (constant, the writer that keeps the editor inside it)
+    //
+    // Adding a `pub const MAX_*` to `model::validate` that the
+    // loader rejects on, without adding a row here, is the bug this
+    // exists to make loud.
+    let registry: &[(&str, &str)] = &[
+        (
+            "MIN_FONT_SIZE_PT / MAX_FONT_SIZE_PT",
+            "GlyphArea::set_*_clamped + apply_operation; clamp_run_size_pt for the three \
+             text-run setters; resolve_font_triple for the edge channels; clamp_font_metric \
+             for the border font size",
+        ),
+        (
+            "MAX_CANVAS_COORD",
+            "validate_node_position rejects out-of-bound node positions",
+        ),
+        (
+            "MAX_NODE_AXIS",
+            "clamp_node_size_to_ceiling for node size; clamp_to_bound for border padding \
+             and edge spacing",
+        ),
+        (
+            "MAX_BORDER_GLYPH_CLUSTERS / MAX_BORDER_GLYPH_BYTES",
+            "set_node_border_config refuses the edit via border_glyph_edit_violations",
+        ),
+        (
+            "MAX_CONNECTION_GLYPH_GRAPHEMES / MAX_CONNECTION_GLYPH_BYTES",
+            "no editor writer — the connection body/cap glyphs are authored in the file \
+             only; there is no console verb or setter that writes them",
+        ),
+        (
+            "MAX_ANIMATION_MS",
+            "no editor writer — animation timings are authored in the file only",
+        ),
+        (
+            "MAX_SECTIONS_PER_NODE",
+            "add_section refuses past the cap",
+        ),
+        (
+            "MAX_MAP_BYTES",
+            "no editor writer — a saved map's size is a consequence, not a set field",
+        ),
+    ];
+
+    // Every `pub const` the validate module exposes must appear.
+    // Read from the source rather than a hand-copied list, so the
+    // check cannot silently fall behind the module.
+    let src = include_str!("../../../lib/baumhard/src/mindmap/model/validate.rs");
+    let mut declared: Vec<&str> = Vec::new();
+    for line in src.lines() {
+        let line = line.trim_start();
+        if let Some(rest) = line.strip_prefix("pub const ") {
+            if let Some(name) = rest.split(':').next() {
+                declared.push(name.trim());
+            }
+        }
+    }
+    assert!(
+        !declared.is_empty(),
+        "the source scan found no `pub const` — the parse, not the module, is what broke"
+    );
+
+    for name in &declared {
+        let covered = registry.iter().any(|(consts, _)| consts.contains(name));
+        assert!(
+            covered,
+            "`validate::{name}` is a loader-enforced bound with no row in this registry.\n\
+             Add one naming the writer that keeps the editor inside it — or, if no writer \
+             can reach the field, say so explicitly. Three lockout bugs on this branch were \
+             a bound added without a writer; this is the check that makes that loud."
+        );
+    }
 }

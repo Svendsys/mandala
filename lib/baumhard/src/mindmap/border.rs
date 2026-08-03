@@ -598,18 +598,21 @@ pub fn border_run_specs_with(
     // (`cluster[i % unit]`), so a pattern whose first cluster is one
     // byte and whose second is a thousand would otherwise set the
     // ceiling from the byte and then emit the thousand.
+    // `+ VERTICAL_ROW_SEPARATOR_BYTES`: the rail is joined with
+    // newlines after rendering, so each row costs its cluster plus
+    // the separator that follows it.
     let left_row_count = fill_copies(
         side_avail,
         left_line_h,
         1,
-        side_pattern_bytes_per_row(&border_style.side_patterns.left),
+        side_pattern_bytes_per_row(&border_style.side_patterns.left) + VERTICAL_ROW_SEPARATOR_BYTES,
         side_pattern_fixed_bytes(&border_style.side_patterns.left),
     );
     let right_row_count = fill_copies(
         side_avail,
         right_line_h,
         1,
-        side_pattern_bytes_per_row(&border_style.side_patterns.right),
+        side_pattern_bytes_per_row(&border_style.side_patterns.right) + VERTICAL_ROW_SEPARATOR_BYTES,
         side_pattern_fixed_bytes(&border_style.side_patterns.right),
     );
     let left_text = border_style.left_column_text(left_row_count.max(1));
@@ -938,11 +941,18 @@ fn fit_pattern_to_width(
                 }
             }
             let mut cluster_count = full_copies * cluster.len();
-            // Greedy partial-cluster fill.
+            // Greedy partial-cluster fill. Bounded by the byte
+            // ceiling as well as by width: `fill_copies` priced the
+            // whole copies above, and this loop runs *after* it, so
+            // checking width alone let the emitted string overshoot
+            // MAX_BORDER_SIDE_BYTES by up to one cluster vector.
             let mut idx = 0;
             while idx < cluster.len() {
                 let next_w = g_widths[idx];
                 if emitted_w + next_w > available_pt {
+                    break;
+                }
+                if text.len() + cluster[idx].len() > MAX_BORDER_SIDE_BYTES {
                     break;
                 }
                 text.push_str(&cluster[idx]);
@@ -1011,11 +1021,20 @@ fn fit_pattern_to_width(
 
             // Partial-fill: greedy add fill graphemes until the
             // next would push us past `available_pt - suffix_w`
-            // (we have to leave room for the suffix).
+            // (we have to leave room for the suffix), or past the
+            // byte ceiling. The byte half matters for the same
+            // reason as in the atomic arm: this loop runs after
+            // `fill_copies` has already priced the whole copies, so
+            // width alone let the result overshoot. The suffix is
+            // still to come, so its bytes are reserved too.
             let mut idx = 0;
             while idx < fill.len() {
                 let next_w = fill_widths[idx];
                 if emitted_w + next_w + suffix_w > available_pt {
+                    break;
+                }
+                let suffix_bytes: usize = suffix.iter().map(|g| g.len()).sum();
+                if text.len() + fill[idx].len() + suffix_bytes > MAX_BORDER_SIDE_BYTES {
                     break;
                 }
                 text.push_str(&fill[idx]);
@@ -1730,3 +1749,14 @@ fn build_vertical_text(pattern: &SidePattern, rows: usize) -> String {
     let rendered = pattern.render(rows);
     join_graphemes(&rendered.text, "\n")
 }
+
+/// The newline a vertical rail spends per row.
+///
+/// [`build_vertical_text`] joins the rendered clusters with `'\n'`,
+/// which adds `cluster_count - 1` bytes *after* `fill_copies` has
+/// applied the byte ceiling. Charging it as part of the per-row
+/// cost is what keeps [`MAX_BORDER_SIDE_BYTES`] a bound on the
+/// string the rail actually emits rather than on the string before
+/// it is joined — at the 100,000-row grapheme ceiling the
+/// separators alone are ~100 KB.
+const VERTICAL_ROW_SEPARATOR_BYTES: usize = 1;

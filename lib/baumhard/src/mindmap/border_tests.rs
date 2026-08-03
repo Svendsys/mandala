@@ -634,9 +634,7 @@ mod side_rail_byte_ceiling_tests {
 /// first is what makes the constant bound the emitted string.
 #[cfg(test)]
 mod fixed_part_ceiling_tests {
-    use crate::mindmap::border::{
-        fill_copies, side_pattern_fixed_bytes, MAX_BORDER_SIDE_BYTES,
-    };
+    use crate::mindmap::border::{fill_copies, side_pattern_fixed_bytes, MAX_BORDER_SIDE_BYTES};
     use crate::mindmap::border_pattern::SidePattern;
 
     #[test]
@@ -673,11 +671,99 @@ mod fixed_part_ceiling_tests {
         const FAT: usize = 64;
         let whole = fill_copies(1.0e9, 0.001, 1, FAT, 0);
         let half = fill_copies(1.0e9, 0.001, 1, FAT, MAX_BORDER_SIDE_BYTES / 2);
-        assert_eq!(whole, MAX_BORDER_SIDE_BYTES / FAT, "the byte ceiling must be the binding one");
+        assert_eq!(
+            whole,
+            MAX_BORDER_SIDE_BYTES / FAT,
+            "the byte ceiling must be the binding one"
+        );
         assert_eq!(
             half,
             (MAX_BORDER_SIDE_BYTES - MAX_BORDER_SIDE_BYTES / 2) / FAT,
             "the remaining budget is what decides the repeat count"
+        );
+    }
+}
+
+/// **The ceiling must bound the string that is actually emitted.**
+///
+/// Two overshoots survived the first byte-ceiling pass, both because
+/// they add bytes *after* `fill_copies` has done its arithmetic: the
+/// greedy partial-cluster fill appends whole clusters checking only
+/// width, and the vertical rails are newline-joined after rendering.
+/// Measured at 1,049,598 bytes against a 1,048,576 ceiling on the
+/// horizontal path, and up to ~100 KB of separators on the vertical
+/// one.
+///
+/// This drives `border_run_specs` on the worst shape that still
+/// passes every loader ceiling and asserts on the emitted text, not
+/// on the arithmetic that produced it.
+#[cfg(test)]
+mod emitted_rail_ceiling_tests {
+    use crate::mindmap::border::{border_run_specs, BorderStyle, MAX_BORDER_SIDE_BYTES};
+    use crate::mindmap::border_pattern::SidePattern;
+
+    #[test]
+    fn test_every_emitted_rail_respects_the_byte_ceiling() {
+        // One grapheme cluster of 1023 bytes — inside both authored
+        // ceilings (64 clusters, 1024 bytes), so a map carrying this
+        // loads. The old code then emitted 1,022 bytes past the rail
+        // ceiling on top of it.
+        let fat = format!("A{}", "\u{0301}".repeat(511));
+        assert!(
+            fat.len() <= crate::mindmap::model::validate::MAX_BORDER_GLYPH_BYTES,
+            "the fixture must be a glyph the loader accepts, or it tests the wrong thing"
+        );
+
+        let mut style = BorderStyle::default_with_color("#ffffff");
+        for slot in [
+            &mut style.side_patterns.top,
+            &mut style.side_patterns.bottom,
+            &mut style.side_patterns.left,
+            &mut style.side_patterns.right,
+        ] {
+            *slot = SidePattern::AtomicRepeat {
+                cluster: vec![fat.clone()],
+            };
+        }
+
+        // MAX_NODE_AXIS on both axes — the largest node the loader
+        // accepts, so the row and column counts are as large as an
+        // authored map can make them.
+        let specs = border_run_specs(&style, (0.0, 0.0), (1_000_000.0, 1_000_000.0));
+        for spec in &specs {
+            assert!(
+                spec.text.len() <= MAX_BORDER_SIDE_BYTES,
+                "channel {} emitted {} bytes, over the {MAX_BORDER_SIDE_BYTES} ceiling",
+                spec.channel,
+                spec.text.len()
+            );
+        }
+    }
+
+    /// The vertical rails specifically, because their overshoot is
+    /// the newline separators rather than a partial cluster — a
+    /// different mechanism that the horizontal case would not catch.
+    #[test]
+    fn test_vertical_rail_separators_are_inside_the_ceiling() {
+        let mut style = BorderStyle::default_with_color("#ffffff");
+        // Fat clusters, so the *byte* ceiling is what caps the row
+        // count. That is the only configuration where the
+        // separators can push the result over: with single-byte
+        // clusters the grapheme ceiling (100,000 rows) binds first
+        // and the separators top out around 200 KB, comfortably
+        // inside 1 MiB. A single-byte fixture here passes whether
+        // or not the separator is charged, and proves nothing.
+        let fat = format!("A{}", "\u{0301}".repeat(511));
+        style.side_patterns.left = SidePattern::AtomicRepeat { cluster: vec![fat] };
+        let specs = border_run_specs(&style, (0.0, 0.0), (100.0, 1_000_000.0));
+        let left = specs
+            .iter()
+            .find(|s| s.channel == 3)
+            .expect("channel 3 is the left rail");
+        assert!(
+            left.text.len() <= MAX_BORDER_SIDE_BYTES,
+            "left rail emitted {} bytes including separators, over the ceiling",
+            left.text.len()
         );
     }
 }

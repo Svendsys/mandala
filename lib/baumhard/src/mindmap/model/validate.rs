@@ -476,7 +476,14 @@ pub const MAX_BORDER_GLYPH_CLUSTERS: usize = 64;
 pub const MAX_BORDER_GLYPH_BYTES: usize = 1024;
 
 /// Both ceilings on one authored border glyph.
-fn border_glyph_violations(label: &str, name: &str, glyph: &str) -> Vec<String> {
+///
+/// `pub` because the document setter screens the same eight fields
+/// with it before writing. That is not defense in depth for its own
+/// sake: the loader *rejects* an over-long glyph, so a writer that
+/// did not screen would let the editor author a map it then refused
+/// to reopen — and sharing this function is what keeps the two ends
+/// from drifting to different ceilings.
+pub fn border_glyph_violations(label: &str, name: &str, glyph: &str) -> Vec<String> {
     let mut out = Vec::new();
     let where_ = field(label, &format!("glyphs.{name}"));
     let clusters = count_grapheme_clusters(glyph);

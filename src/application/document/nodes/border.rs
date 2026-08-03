@@ -130,6 +130,20 @@ pub struct BorderEditOutcome {
     /// `preset_auto_promoted` to phrase the auto-promotion note
     /// (`"preset=heavy was auto-promoted to 'custom'…"`).
     pub requested_preset: Option<String>,
+    /// Why the edit was refused, empty when it was not.
+    ///
+    /// The loader **rejects** a border glyph past
+    /// `MAX_BORDER_GLYPH_CLUSTERS` / `MAX_BORDER_GLYPH_BYTES`, so a
+    /// writer that accepted one would author a map the editor then
+    /// refused to reopen. Refused rather than truncated because
+    /// these are strings, not metrics: cutting a pattern at the
+    /// ceiling can leave an unbalanced fill region, and silently
+    /// rewriting what the author typed is worse than declining it.
+    ///
+    /// The refusal is atomic — when this is non-empty nothing on the
+    /// node changed, so a single bad glyph does not half-apply the
+    /// rest of the same command.
+    pub rejected: Vec<String>,
 }
 
 /// Active live-preview substitution captured on
@@ -247,6 +261,16 @@ impl MindMapDocument {
     /// `preset=heavy top=…` request resulted in a `custom` border,
     /// not a `heavy` one with a side override.
     pub fn set_node_border_config(&mut self, node_id: &str, edits: BorderConfigEdits) -> BorderEditOutcome {
+        // Screened before anything is touched, and against the
+        // loader's own rule rather than a copy of it. Atomic: a
+        // refusal leaves the node exactly as it was.
+        let rejected = border_glyph_edit_violations(&edits);
+        if !rejected.is_empty() {
+            return BorderEditOutcome {
+                rejected,
+                ..Default::default()
+            };
+        }
         // Scope-gated implicit cancel: a committing per-node edit
         // only clears previews whose visual scope it overlaps —
         // `Nodes(_)` previews target the same surface, and
@@ -930,6 +954,34 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
         changed |= apply_string_set(&edits.corner_bottom_right, &mut g.bottom_right);
     }
     changed
+}
+
+/// Every border-glyph ceiling violation carried by one edit set.
+///
+/// Runs the eight authored glyph fields through the loader's
+/// `validate::border_glyph_violations`, so the writer and the door
+/// cannot drift to different ceilings. Empty for an edit set that
+/// touches no glyph.
+fn border_glyph_edit_violations(edits: &BorderConfigEdits) -> Vec<String> {
+    use crate::application::document::OptionEdit;
+    let mut out = Vec::new();
+    for (name, edit) in [
+        ("top", &edits.side_top),
+        ("bottom", &edits.side_bottom),
+        ("left", &edits.side_left),
+        ("right", &edits.side_right),
+        ("top_left", &edits.corner_top_left),
+        ("top_right", &edits.corner_top_right),
+        ("bottom_left", &edits.corner_bottom_left),
+        ("bottom_right", &edits.corner_bottom_right),
+    ] {
+        if let OptionEdit::Set(glyph) = edit {
+            out.extend(baumhard::mindmap::model::validate::border_glyph_violations(
+                "border", name, glyph,
+            ));
+        }
+    }
+    out
 }
 
 fn edits_touch_cfg_field(edits: &BorderConfigEdits) -> bool {
