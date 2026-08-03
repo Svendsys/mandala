@@ -221,13 +221,18 @@ substitutes for anything it cannot draw.
 array indexed by the ordinal, so a row inserted in the middle would
 silently renumber every row below it and quietly change what old files
 convert to. `legacy_shape_ordinals_match_the_published_table` reads
-this table back off disk and fails when the two disagree, and
+this table back off disk and fails when the two disagree — on row
+count, on any row's spelling, and on the numbering itself, which has
+to be each ordinal `0..n-1` exactly once, so a duplicated ordinal
+cannot quietly retire the row it displaced.
 `legacy_shape_ordinals_are_canonical_spellings` separately holds every
 spelling here to `KNOWN_SHAPES` in
 `lib/baumhard/src/gfx_structs/shape.rs` — the one list the runtime
 classifier and `maptool verify` both consult, so a spelling that
 drifted out of it would make `convert --legacy` write files
-`maptool verify` rejects.
+`maptool verify` rejects. This table is restatement 5 of the five
+[enums.md](./enums.md#styleshape) counts; it is pinned to
+`LEGACY_SHAPE_ORDINALS`, which is pinned to `KNOWN_SHAPES`.
 
 The other five enums step 3 converts (`layout.type`,
 `layout.direction`, `line_style`, `anchor_from`, `anchor_to`) have no

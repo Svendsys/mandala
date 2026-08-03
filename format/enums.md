@@ -62,20 +62,28 @@ any parser reads. Adding a spelling to that constant makes it
 non-warning at load time and valid under `maptool verify` with no
 parser change.
 
-The three lists in this section — the fence above, the live-shapes
-sentence, the "remaining values" parenthesis — are **restatements** of
-`KNOWN_SHAPES`, as is the ordinal table in
-`crates/maptool/src/convert/enums.rs` that `convert --legacy` emits
-from. None of the four is trusted. Baumhard's
-`test_shape_format_doc_publishes_exactly_known_shapes` reads this
-section back off disk and checks all three lists against the constant,
-deriving each expectation from the code rather than restating it;
-maptool's `legacy_shape_ordinals_are_canonical_spellings` does the same
-for the converter. So a spelling added to `KNOWN_SHAPES` and not to
-this section fails the first test, and a rename that leaves the
+**Five restatements** of `KNOWN_SHAPES` exist, across three files, and
+none of them is trusted:
+
+| # | Restatement | Pinned by |
+| --- | --- | --- |
+| 1 | the fence above | `test_shape_format_doc_publishes_exactly_known_shapes` |
+| 2 | the live-shapes sentence | the same test |
+| 3 | the "remaining values" parenthesis | the same test |
+| 4 | `LEGACY_SHAPE_ORDINALS` in `crates/maptool/src/convert/enums.rs` | `legacy_shape_ordinals_are_canonical_spellings` |
+| 5 | the `shape_type` ordinal table in [migration.md](./migration.md#mimind-shape_type-ordinals) | `legacy_shape_ordinals_match_the_published_table`, against row 4 |
+
+Baumhard's `test_shape_format_doc_publishes_exactly_known_shapes`
+reads this section back off disk and checks rows 1–3 against the
+constant, deriving each expectation from the code rather than
+restating it; maptool's two tests do the same for the converter and
+for the published numbering. So a spelling added to `KNOWN_SHAPES` and
+not to this section fails the first test, and a rename that leaves the
 converter emitting the old spelling — which would make every converted
 node warn on load and `maptool verify` reject a file this repo's own
-tool just wrote — fails the second.
+tool just wrote — fails the second. Row 5 is pinned to row 4 rather
+than to the constant directly; since row 4 is pinned to the constant,
+the chain still closes.
 
 Today, `show_frame = true` only emits the glyph border when
 `shape == "rectangle"` — the four-run frame layout assumes an

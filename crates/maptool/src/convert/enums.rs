@@ -236,6 +236,24 @@ mod tests {
             published.len(),
             LEGACY_SHAPE_ORDINALS.len()
         );
+
+        // Row count and per-row agreement are not enough on their
+        // own: replacing the `| 5 | hexagon |` row with a second
+        // `| 0 | rectangle |` keeps both, publishes no mapping for
+        // ordinal 5 at all, and drops `hexagon`'s contract silently.
+        // The published ordinals have to *be* the numbering — every
+        // index once, none missing, none twice.
+        let mut ordinals: Vec<usize> = published.iter().map(|(ordinal, _)| *ordinal).collect();
+        ordinals.sort_unstable();
+        let complete: Vec<usize> = (0..LEGACY_SHAPE_ORDINALS.len()).collect();
+        assert_eq!(
+            ordinals,
+            complete,
+            "format/migration.md must publish each shape_type ordinal \
+             0..{} exactly once; it publishes {ordinals:?}",
+            LEGACY_SHAPE_ORDINALS.len() - 1
+        );
+
         for (ordinal, spelling) in &published {
             assert_eq!(
                 LEGACY_SHAPE_ORDINALS.get(*ordinal).copied(),
@@ -250,20 +268,37 @@ mod tests {
     /// The `| ordinal | `spelling` |` rows of the `shape_type` table
     /// in `format/migration.md`.
     ///
+    /// The section ends at the next heading of **any** level. It used
+    /// to end at the next `## ` — an h2 — while the heading it starts
+    /// from is an h3, so a sibling h3 would have been read as part of
+    /// this table. That is not hypothetical: the paragraph below the
+    /// table in `format/migration.md` names the five other enums
+    /// `convert --legacy` rewrites and says giving them the same
+    /// treatment is a separate change. The first such table would
+    /// have been harvested here and reported as a `shape_type`
+    /// disagreement, sending someone to the wrong file. What level
+    /// the *next* section's heading is at is not something this test
+    /// should have an opinion about.
+    ///
     /// Panics if the section or the table is gone rather than
     /// returning an empty vector — the caller's length assertion would
     /// catch that too, but a pointed message beats `0 != 6`.
     fn published_shape_ordinals() -> Vec<(usize, String)> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../format/migration.md");
         let doc = std::fs::read_to_string(path).expect("format/migration.md must be readable");
-        let section = doc
+        let after_heading = doc
             .split_once("### miMind `shape_type` ordinals")
             .expect("format/migration.md must still publish the shape_type ordinals")
             .1;
-        let section = section.split("\n## ").next().unwrap_or(section);
+        // `skip(1)` drops what is left of the heading's own line.
+        let section: Vec<&str> = after_heading
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.trim_start().starts_with('#'))
+            .collect();
 
         let mut out = Vec::new();
-        for line in section.lines() {
+        for line in section {
             let cells: Vec<&str> = line.trim().trim_matches('|').split('|').collect();
             if cells.len() != 2 {
                 continue;
