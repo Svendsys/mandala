@@ -2725,7 +2725,6 @@ fn test_active_toggles_replay_in_activation_order() {
     );
 }
 
-
 /// **`clamp_run_size_pt`'s ceiling, pinned where it can actually
 /// bind.** The reverse converter is reachable with an out-of-domain
 /// scale in principle — a `grow-font` delta is unbounded and the

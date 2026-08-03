@@ -415,8 +415,11 @@ impl MindMapDocument {
     /// size runs would already have been flattened by the text
     /// editor's collapse step in `set_node_text`).
     ///
-    /// `size_pt` is rounded to the nearest positive integer; values
-    /// below 1 clamp to 1.
+    /// `size_pt` is rounded to the nearest integer and then clamped
+    /// into the domain the loader accepts — floor 1, ceiling
+    /// `MAX_FONT_SIZE_PT`. Both ends matter: below the floor a run
+    /// casts to an invisible 0, and above the ceiling the loader
+    /// refuses the saved file. See `custom::sync::clamp_run_size_pt`.
     pub fn set_node_font_size(&mut self, node_id: &str, size_pt: f32) -> bool {
         if !size_pt.is_finite() {
             return false;
@@ -537,10 +540,11 @@ impl MindMapDocument {
     }
 }
 
-/// Validate a candidate `(x, y)` for a node — finite components
-/// only. Nodes float freely on the canvas (no parent AABB), so
-/// negative coordinates are legal — a node can sit at a negative
-/// canvas-x to the left of the origin.
+/// Validate a candidate `(x, y)` for a node: finite components,
+/// each inside `MAX_CANVAS_COORD`. Nodes float freely on the canvas
+/// (no parent AABB), so negative coordinates are legal — a node can
+/// sit at a negative canvas-x to the left of the origin — but the
+/// *magnitude* is bounded, because the loader bounds it too.
 fn validate_node_position(pos: baumhard::mindmap::model::Position) -> Result<(), String> {
     use baumhard::mindmap::model::validate::MAX_CANVAS_COORD;
     if !pos.x.is_finite() || !pos.y.is_finite() {

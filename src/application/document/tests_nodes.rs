@@ -3893,3 +3893,79 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
         );
     }
 }
+
+/// **The magnitude half of the position guard, pinned.**
+///
+/// `validate_node_position` gained a `MAX_CANVAS_COORD` rejection
+/// after a review found `set_node_aabb` accepting `x: 1e30` and
+/// saving a map that would not reopen. Nothing exercised it — the
+/// guard shipped on the strength of the argument for it.
+#[test]
+fn test_set_node_aabb_rejects_out_of_bound_positions() {
+    use baumhard::mindmap::model::validate::MAX_CANVAS_COORD;
+    use baumhard::mindmap::model::{Position, Size};
+
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let size = Size {
+        width: 100.0,
+        height: 50.0,
+    };
+
+    // Inside the bound: accepted.
+    let ok = doc.set_node_aabb(
+        &id,
+        Position {
+            x: MAX_CANVAS_COORD,
+            y: -MAX_CANVAS_COORD,
+        },
+        size,
+    );
+    assert!(ok.is_ok(), "a position at the bound must be accepted: {ok:?}");
+
+    // Past it: refused, and the node is untouched.
+    let before = doc.mindmap.nodes[&id].position;
+    let err = doc.set_node_aabb(&id, Position { x: 1.0e30, y: 0.0 }, size);
+    assert!(err.is_err(), "a position past the bound must be refused");
+    assert_eq!(
+        doc.mindmap.nodes[&id].position, before,
+        "a refused position must leave the node where it was"
+    );
+
+    // Non-finite is still refused, as it was before the magnitude
+    // half existed.
+    assert!(doc
+        .set_node_aabb(&id, Position { x: f64::NAN, y: 0.0 }, size)
+        .is_err());
+}
+
+/// **The blank-line case in `widest_lines`' separator.**
+///
+/// The separator was driven by `out.is_empty()`, so a selected blank
+/// line left `out` empty and suppressed the newline before the next
+/// one — splicing two selected lines into one and losing a line from
+/// a sample whose contract is a fixed count of them. Fixed by
+/// counting emissions instead; this is the case that distinguishes
+/// the two.
+#[test]
+fn test_widest_lines_keeps_blank_lines_separate() {
+    use crate::application::document::widest_lines;
+
+    // A leading blank line is selected (everything is, at this
+    // budget), and must not swallow the line after it.
+    assert_eq!(widest_lines("\nabc\nde", 3), "\nabc\nde");
+
+    // Blank first *and* the widest line after it, with a budget that
+    // forces a choice: the blank still cannot merge with its
+    // neighbour.
+    let picked = widest_lines("\nlonger\nxy", 2);
+    assert_eq!(
+        picked.lines().count(),
+        2,
+        "two lines selected must stay two lines: {picked:?}"
+    );
+    assert!(
+        picked.contains("longer"),
+        "the widest line must be there: {picked:?}"
+    );
+}

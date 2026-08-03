@@ -581,12 +581,19 @@ pub const MAX_CONNECTION_GLYPH_GRAPHEMES: usize = 16;
 /// the cluster count is what makes the field a motif rather than a
 /// paragraph, and this is what makes the product finite. At
 /// [`MAX_PATH_SAMPLES`](crate::mindmap::connection::MAX_PATH_SAMPLES)
-/// (10,000) the worst case is 10,000 × 512 B ≈ 5 MB of text — large,
-/// bounded, and reached only by a file built to reach it.
+/// (10,000) one path costs at most 10,000 × 512 B ≈ 5 MB of text.
+/// That is the ceiling for a *single* connection, not for the
+/// document: element count is not capped, so N edges cost N times
+/// it. Bounding the total is a frame budget, which
+/// `format/macros.md` names as still open.
 ///
-/// 512 B across 16 clusters leaves 32 B per cluster, which clears
-/// the longest emoji ZWJ sequences in common use with room to
-/// spare; a legitimate motif is nowhere near it.
+/// 512 B across 16 clusters leaves 32 B per cluster. The longest
+/// RGI emoji sequences land just inside that — a subdivision flag
+/// is 28 bytes, a four-person family 25, a kiss sequence 27 — so
+/// the margin is a few bytes on the worst realistic cluster rather
+/// than the comfortable headroom an earlier version of this comment
+/// claimed. A motif of ordinary glyphs is nowhere near either
+/// ceiling.
 pub const MAX_CONNECTION_GLYPH_BYTES: usize = 512;
 
 /// Every numeric-domain violation on a [`GlyphConnectionConfig`].

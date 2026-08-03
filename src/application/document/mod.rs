@@ -314,9 +314,12 @@ pub(super) fn measured_prefix(text: &str, max_lines: usize) -> (&str, usize) {
 /// Cost: O(lines) calls to `grapheme_display_width`, each linear in
 /// its line — so O(text) overall, which dominates the O(lines ·
 /// log max_lines) heap work. O(max_lines) memory for the heap,
-/// which holds `(width, index)` pairs rather than the text, plus
-/// the chosen indices and one allocation for the joined result. Two
-/// passes over `text`, no layout.
+/// which holds `(width, index)` pairs rather than the text, plus a
+/// `Vec` of the chosen indices. The joined result is built by
+/// repeated `push_str` into a `String` with no reserved capacity,
+/// so it reallocates as it grows rather than allocating once — it
+/// is bounded by the selected lines' total length, which is bounded
+/// by the text. Two passes over `text`, no layout.
 pub(super) fn widest_lines(text: &str, max_lines: usize) -> String {
     use baumhard::util::grapheme_chad::grapheme_display_width;
     use std::cmp::Reverse;
