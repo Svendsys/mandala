@@ -2,27 +2,41 @@
 
 //! `.mindmap.json` loader + saver.
 //!
-//! **The loader never drops what it does not understand.** A key the
-//! model has no field for is a load error, not a shrug: the editor
-//! resaves the map it loaded, so a key ignored at load is a key
-//! deleted at save, and the file the author hand-wrote was the only
-//! copy. Every type reachable from a load therefore carries
-//! `#[serde(deny_unknown_fields)]` — enforced against the model that
-//! exists, not a list of it, by
-//! `tests::test_every_loadable_type_rejects_unknown_keys`.
+//! **The loader never drops what it does not understand, and never
+//! refuses a document for carrying it.** A map authored by a newer
+//! build has keys this one has no field for. Refusing the load leaves
+//! the reader with an empty window; ignoring the keys is worse,
+//! because the editor resaves the whole model and the next save
+//! deletes them. So the load keeps them: every unrecognized key is
+//! captured with the route back to where it sat, warned about once,
+//! carried on
+//! [`MindMap::unknown_keys`](crate::mindmap::model::MindMap::unknown_keys),
+//! and written back untouched at
+//! save. See [`crate::mindmap::unknown_keys`] for the mechanism and
+//! why it is not a per-type `#[serde(flatten)]` catch-all.
 //!
-//! That posture is what the pre-refactor rejections were always an
-//! instance of: a top-level `portals[]` array or per-node `text` /
-//! `text_runs` is a shape serde would otherwise ignore, and those get
-//! a concrete `maptool convert ...` pointer instead of the generic
-//! message.
+//! What the model owes that mechanism is only that no type between the
+//! document root and a key can absorb it first — no
+//! `deny_unknown_fields`, no `flatten`, no `untagged` or `tag`. That is
+//! enforced against the model that exists, not a list of it, by
+//! `tests::test_no_loadable_type_can_swallow_an_unknown_key`.
 //!
-//! Everything expensive lives on the failure path. A successful load
-//! parses the document exactly once; the raw JSON is re-examined only
-//! to explain a parse that already failed.
+//! **Three shapes are still refused, and all three are pre-refactor
+//! spellings with a migration verb**: a top-level `portals[]`, per-node
+//! `text` / `text_runs`, and a `sections` that is not an array. Those
+//! are not keys from the future — they are keys from the past that the
+//! current model means something else by, so preserving them would
+//! carry a contradiction forward. Each gets a concrete `maptool convert
+//! ...` pointer.
+//!
+//! A successful load parses the document exactly once. A map that does
+//! carry unknown keys pays one more pass, to lift their values out;
+//! everything else expensive lives on the failure path, where the raw
+//! JSON is re-examined only to explain a parse that already failed.
 
-use crate::mindmap::custom_mutation::CustomMutation;
+use crate::mindmap::custom_mutation::{CustomMutation, TriggerBinding};
 use crate::mindmap::model::{validate, Canvas, MindEdge, MindMap, MindNode, Palette};
+use crate::mindmap::unknown_keys::{self, Step};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -45,38 +59,300 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 
 /// Parse a `MindMap` from a JSON string.
 ///
-/// A key the model does not know is rejected rather than dropped —
-/// see the module header for why that is the only policy that keeps
-/// a hand-authored file intact across a load / save cycle. Legacy
-/// shapes (a top-level `portals[]`, per-node `text` / `text_runs`)
-/// get a concrete `maptool convert ...` pointer instead of serde's
-/// generic complaint.
+/// A key the model does not know is **kept**, not dropped and not
+/// grounds for refusing the document — see the module header for why
+/// that is what lets an older build open a newer map. Each one is
+/// warned about once, naming the node / edge / palette it sits in, and
+/// travels on [`MindMap::unknown_keys`] to the next save. Pre-refactor
+/// shapes (a top-level `portals[]`, per-node `text` / `text_runs`) are
+/// the exception and still fail, with a concrete `maptool convert ...`
+/// pointer.
 ///
-/// Cost on the happy path: **exactly one parse of `json`**, and
-/// nothing that walks the text again. The raw string is not even in
-/// scope below the parse — every remaining invariant is expressed
-/// against the typed map, which is what keeps that property true as
-/// the invariant list grows.
+/// Cost on the happy path: **exactly one parse of `json`** for a map
+/// with nothing unknown in it, which is every map this build wrote.
+/// The capture rides that parse rather than adding one.
 ///
-/// Cost on the failure path: roughly **2× the happy path**, and
+/// Cost when the map *does* carry unknown keys: one more parse, into a
+/// `serde_json::Value`, to lift the captured values out and to answer
+/// the legacy-shape question — the three legacy spellings are
+/// themselves unrecognized keys, so nothing looks for them until the
+/// capture reports something. The extra pass is paid by the documents
+/// that need it and by no others.
+///
+/// Cost on the failure path: roughly **2× a successful load**, and
 /// worth naming because it is more than the extra `Value` parse it
 /// looks like. `diagnose_rejected_json` pays that parse *plus*
 /// `locate_typed_failure`, which re-deserializes the canvas, then
-/// every palette, then every node, then every edge, then every
-/// custom mutation, stopping at the first that fails. When the
-/// offending key is in the last node, that second stage has typed the
-/// whole document a second time. The trade is deliberate: the load is
-/// not going to complete, and a node id beats a byte offset into a
-/// 545 KB file.
+/// every palette, then every node, then every edge, then every custom
+/// mutation, stopping at the first that fails. When the offending part
+/// is the last node, that second stage has typed the whole document a
+/// second time. The trade is deliberate: the load is not going to
+/// complete, and a node id beats a byte offset into a 545 KB file.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
-    let map = match serde_json::from_str::<MindMap>(json) {
-        Ok(map) => map,
-        Err(e) => return Err(diagnose_rejected_json(json, &e)),
+    let (mut map, routes): (MindMap, Vec<Vec<Step>>) = match unknown_keys::deserialize_capturing(json) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            // A construct from a newer build must not take the whole
+            // document down with it — see
+            // `load_skipping_unreadable_constructs`.
+            return load_skipping_unreadable_constructs(json)
+                .unwrap_or_else(|| Err(diagnose_rejected_json(json, &e)));
+        }
     };
-    // `json` deliberately ends here. `check_invariants` is not given
-    // it, so no future invariant can quietly reintroduce a second
-    // pass over the document text.
+    if !routes.is_empty() {
+        map.unknown_keys = adopt_unknown_keys(json, &map, routes)?;
+    }
     check_invariants(map)
+}
+
+/// Turn the routes a capturing parse collected into the
+/// [`UnknownKeys`](crate::mindmap::unknown_keys::UnknownKeys) the map
+/// carries, warning once per key — or refuse the document when what
+/// the capture found is a pre-refactor spelling with a migration verb.
+///
+/// The second parse is what makes the values available: the capture
+/// rides the typed parse and learns *where* each key was, not what it
+/// held. Reaching this at all means the map has at least one
+/// unrecognized key, so the parse is never paid by a document that
+/// does not need it.
+///
+/// Re-parsing cannot fail — `json` has already parsed once, as a
+/// stricter shape — but the failure is reported rather than
+/// `expect`ed, because `load_from_str` sits on the interactive
+/// `console open` path (CODE_CONVENTIONS §9).
+///
+/// **The model's own serialization is taken here too**, and handed to
+/// the capture as its oracle. It answers two questions nothing else
+/// can: which JSON levels are enum-variant wrappers serde's path
+/// elides (a key the model writes at a level is not the key serde
+/// ignored there), and which containers the saver will leave out, so
+/// the save can rebuild them rather than lose the keys nested inside.
+/// See [`crate::mindmap::unknown_keys`]. Serializing cannot fail for a
+/// value that just deserialized, but the failure degrades to "no
+/// oracle" rather than failing a load the user asked for
+/// (CODE_CONVENTIONS §9).
+///
+/// Cost: one `serde_json::Value` parse of `json`, one serialization of
+/// `map`, one route resolution per captured key, and one `log::warn!`
+/// per captured key.
+fn adopt_unknown_keys(
+    json: &str,
+    map: &MindMap,
+    routes: Vec<Vec<Step>>,
+) -> Result<crate::mindmap::unknown_keys::UnknownKeys, String> {
+    let mut raw: Value = serde_json::from_str(json)
+        .map_err(|e| format!("Failed to re-read mindmap JSON to preserve unknown keys: {e}"))?;
+    if let Some(message) = detect_legacy_shape(&raw) {
+        return Err(message);
+    }
+    let probe = serde_json::to_value(map).ok();
+    let captured = unknown_keys::take_from(&mut raw, probe.as_ref(), routes);
+    for entry in captured.iter() {
+        log::warn!("{}", entry.warning());
+    }
+    Ok(captured)
+}
+
+/// Load the map around the constructs this build cannot read, or
+/// `None` when there is nothing of the kind to skip.
+///
+/// **The motivating scenario for #115, in its acute form.** An
+/// unrecognized *key* is inert — this build has no field for it, so
+/// ignoring it changes nothing. An unrecognized **enum variant** is
+/// not: `{"mutator": {"Glow": …}}` from a newer build made the whole
+/// document unloadable, so opening a newer map in an older build gave
+/// an empty window and the newer feature was one accidental save away
+/// from being gone. The maintainer's rule is that this build can
+/// *offer to load what it knows how to handle*: the map appears, the
+/// construct it cannot name does not, and the file keeps it.
+///
+/// # What gets skipped, and why that unit
+///
+/// Two, and only two: a whole `CustomMutation` (map-level
+/// `custom_mutations[i]` or a node's `inline_mutations[i]`) and a
+/// whole `TriggerBinding` (on a node or on one of its sections).
+///
+/// The unit is not "the part that failed", and the reason is the
+/// difference between a missing key and a missing instruction.
+/// Dropping one `Mutation` from a macro's list leaves a custom
+/// mutation that still shows up in `mutation list`, still fires, and
+/// silently does less than it says — a behavior change with no
+/// symptom. Dropping the whole entry is *visible as absence*: it is
+/// not in the registry, nothing triggers it, and the load said so.
+/// Neither drop violates a `format/validation.md` invariant — a
+/// `trigger_bindings.mutation_id` pointing at a mutation that is not
+/// there is already a documented runtime no-op — so the choice is
+/// made on which failure a user can see, and partial execution is the
+/// one they cannot.
+///
+/// Nothing else is skippable. A node, an edge, the canvas, a palette:
+/// removing any of them changes the map the reader is looking at
+/// rather than one thing it can do, so an unreadable one still fails
+/// the load with the message it always had.
+///
+/// # What it does not soften
+///
+/// **Loading and validating are different questions.** Every skipped
+/// construct is carried on
+/// [`MindMap::skipped_constructs`](crate::mindmap::model::MindMap::skipped_constructs),
+/// and `maptool verify` reports each as a violation and exits
+/// nonzero, naming the variant serde refused. A typo is still caught
+/// at the moment it is a typo; it just no longer costs the author the
+/// whole document while they find it.
+///
+/// # Cost
+///
+/// Nothing on a load that succeeds — this is only reached after the
+/// typed parse has already failed. When it is reached: one `Value`
+/// parse, one typed re-read of each custom mutation and trigger
+/// binding, and one more full deserialization of the remainder.
+fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, String>> {
+    let mut raw: Value = serde_json::from_str(json).ok()?;
+    // A pre-refactor spelling has a migration verb, and the message
+    // that names it is more use than a partial load would be.
+    if detect_legacy_shape(&raw).is_some() {
+        return None;
+    }
+    let skipped = excise_unreadable_constructs(&mut raw);
+    if skipped.is_empty() {
+        return None;
+    }
+    // The remainder still has to load on its own terms. If it does
+    // not, the failure was never about a construct we could skip, and
+    // the caller's ordinary diagnosis is the better answer.
+    let (mut map, routes): (MindMap, Vec<Vec<Step>>) =
+        unknown_keys::deserialize_value_capturing(&raw).ok()?;
+    for entry in skipped.iter() {
+        log::warn!("{}", entry.warning());
+    }
+    map.skipped_constructs = skipped;
+    if !routes.is_empty() {
+        let probe = serde_json::to_value(&map).ok();
+        let captured = unknown_keys::take_from(&mut raw, probe.as_ref(), routes);
+        for entry in captured.iter() {
+            log::warn!("{}", entry.warning());
+        }
+        map.unknown_keys = captured;
+    }
+    Some(check_invariants(map))
+}
+
+/// Lift every custom mutation and trigger binding the typed model
+/// cannot read out of `document`, in document order.
+///
+/// Refused for **any** reason, not only an unknown variant. Sorting
+/// serde's message into "a variant from the future" and "a typo"
+/// would mean parsing that message, which is the twin surface
+/// `lib/baumhard/CONVENTIONS.md` §B4 is about — and it would be
+/// sorting on the wrong axis anyway. The load's question is "can I
+/// carry this out?", and the answer is no in both cases;
+/// `maptool verify`'s question is "is this file right?", and it
+/// reports both. So the load skips whatever it cannot read and says
+/// what serde said, and the two questions stay separate.
+///
+/// Cost: one typed re-read per custom mutation and per trigger
+/// binding in the document. Only reached on a load that has already
+/// failed.
+fn excise_unreadable_constructs(document: &mut Value) -> unknown_keys::SkippedConstructs {
+    let mut skipped = unknown_keys::SkippedConstructs::default();
+    excise_from::<CustomMutation>(
+        document,
+        &[Step::Key("custom_mutations".to_string())],
+        &mut skipped,
+    );
+
+    // The warnings a reader sees come out in node-id order. Nothing
+    // here sorts for that: `serde_json::Map` is a `BTreeMap` unless
+    // serde_json's `preserve_order` feature is on, and no member of
+    // this workspace turns it on, so `keys()` already yields sorted.
+    // The explicit `sort()` that used to sit here re-stated a
+    // guarantee the type was already giving and no test could tell
+    // apart from its absence. `tests::test_skip_warnings_come_out_in_node_id_order`
+    // holds the *property* instead, which is what actually goes red
+    // if some future dependency unions that feature in.
+    let node_ids: Vec<String> = document
+        .get("nodes")
+        .and_then(Value::as_object)
+        .map(|nodes| nodes.keys().cloned().collect())
+        .unwrap_or_default();
+    for id in node_ids {
+        let node = [Step::Key("nodes".to_string()), Step::Key(id.clone())];
+        let at = |field: &str| {
+            let mut route = node.to_vec();
+            route.push(Step::Key(field.to_string()));
+            route
+        };
+        excise_from::<CustomMutation>(document, &at("inline_mutations"), &mut skipped);
+        excise_from::<TriggerBinding>(document, &at("trigger_bindings"), &mut skipped);
+
+        let section_count = value_at(document, &at("sections"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        for index in 0..section_count {
+            let mut route = at("sections");
+            route.push(Step::Index(index));
+            route.push(Step::Key("trigger_bindings".to_string()));
+            excise_from::<TriggerBinding>(document, &route, &mut skipped);
+        }
+    }
+    skipped
+}
+
+/// Remove every element of the array at `route` that does not
+/// deserialize as `T`, recording each with the index it was authored
+/// at.
+///
+/// Indices are recorded **before** anything is removed, so a save
+/// puts the elements back where the author had them rather than where
+/// the shortened array happened to leave a gap.
+fn excise_from<T: serde::de::DeserializeOwned>(
+    document: &mut Value,
+    route: &[Step],
+    skipped: &mut unknown_keys::SkippedConstructs,
+) {
+    let Some(items) = value_at_mut(document, route).and_then(Value::as_array_mut) else {
+        return;
+    };
+    let mut refused: Vec<(usize, Value, String)> = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        if let Err(e) = T::deserialize(item) {
+            refused.push((index, item.clone(), e.to_string()));
+        }
+    }
+    for (index, _, _) in refused.iter().rev() {
+        items.remove(*index);
+    }
+    for (index, value, reason) in refused {
+        let mut full = route.to_vec();
+        full.push(Step::Index(index));
+        skipped.push(full, value, reason);
+    }
+}
+
+/// Follow a literal route through a document without modifying it.
+fn value_at<'v>(root: &'v Value, route: &[Step]) -> Option<&'v Value> {
+    let mut current = root;
+    for step in route {
+        current = match (current, step) {
+            (Value::Object(members), Step::Key(key)) => members.get(key)?,
+            (Value::Array(items), Step::Index(index)) => items.get(*index)?,
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
+/// [`value_at`], mutably.
+fn value_at_mut<'v>(root: &'v mut Value, route: &[Step]) -> Option<&'v mut Value> {
+    let mut current = root;
+    for step in route {
+        current = match (current, step) {
+            (Value::Object(members), Step::Key(key)) => members.get_mut(key)?,
+            (Value::Array(items), Step::Index(index)) => items.get_mut(*index)?,
+            _ => return None,
+        };
+    }
+    Some(current)
 }
 
 /// Post-parse invariants that live in the typed model rather than in
@@ -154,13 +430,32 @@ fn diagnose_rejected_json(json: &str, error: &serde_json::Error) -> String {
     if let Some(message) = locate_typed_failure(&raw) {
         return message;
     }
-    format!("Failed to parse mindmap JSON: {}", explain(error.to_string()))
+    format!("Failed to parse mindmap JSON: {error}")
 }
 
 /// Legacy field shapes that predate the current format, each with the
-/// `maptool convert` verb that migrates it. These win over the
-/// generic per-part diagnosis because "unknown field `text`" is a
-/// true but useless thing to tell someone holding a pre-section map.
+/// `maptool convert` verb that migrates it.
+///
+/// **Reachable from both a successful parse and a failed one**, and
+/// the successful one is the case that matters. `portals` and per-node
+/// `text` / `text_runs` are keys the current model has no field for,
+/// so under the unknown-key policy they load clean and would be
+/// preserved forever — a stale spelling carried across every save with
+/// nothing ever acting on it. They are not keys from the future; they
+/// are keys the model means something else by now, and the author has
+/// a one-command migration. So they are asked about explicitly, before
+/// the capture is adopted. On the failure path the same three
+/// questions win over the generic per-part diagnosis, because "unknown
+/// field `text`" is a true but useless thing to tell someone holding a
+/// pre-section map.
+///
+/// The third shape — a `sections` that is not an array — can only
+/// arrive on the failure path; the typed parse rejects it before the
+/// capture is consulted. It lives here because it belongs to the same
+/// migration story, and asking it twice costs nothing.
+///
+/// Cost: O(nodes) in the worst case, two `Value::get`s per node. Only
+/// reached when a load already found something it did not recognize.
 fn detect_legacy_shape(raw: &Value) -> Option<String> {
     // Pre-refactor maps stored portals in a separate `portals[]`
     // array. Post-refactor portals are edges with
@@ -250,30 +545,7 @@ fn locate_typed_failure(raw: &Value) -> Option<String> {
 /// `label` so the reader knows which part of the map it is.
 fn part_failure<'de, T: Deserialize<'de>>(label: &str, value: &'de Value) -> Option<String> {
     let error = T::deserialize(value).err()?;
-    Some(format!("{label}: {}", explain(error.to_string())))
-}
-
-/// Spell out the unknown-key policy on the one message where a reader
-/// would otherwise assume the friendlier behavior.
-///
-/// serde words a `deny_unknown_fields` rejection as ``unknown field
-/// `x`, expected one of ...``, which reads like pedantry until you
-/// know what the alternative was: the key silently gone from the file
-/// after the next save. Matching on serde's wording is a message
-/// nicety, not a control-flow decision — a reworded serde would cost
-/// the extra sentence and nothing else, and
-/// `test_unknown_node_key_is_rejected_with_the_policy` fails loudly
-/// if that day comes.
-fn explain(message: String) -> String {
-    if message.starts_with("unknown field") {
-        format!(
-            "{message} — unknown keys are rejected, not dropped: a load that ignored \
-             this key would erase it from the file on the next save. \
-             See format/schema.md."
-        )
-    } else {
-        message
-    }
+    Some(format!("{label}: {error}"))
 }
 
 /// Reject a `MindMap` whose `parent_id` links form a cycle. A cycle
@@ -393,6 +665,16 @@ fn detect_section_count_cap(map: &MindMap) -> Option<String> {
 /// Serialize a `MindMap` to pretty-printed JSON and write it to disk
 /// atomically and deterministically.
 ///
+/// **Preservation**: the keys the load did not recognize
+/// ([`MindMap::unknown_keys`]) are spliced back into the serialized
+/// document before it is rendered, each at the route it came from. A
+/// map this build authored carries none and the step is a no-op; a map
+/// authored by a newer build comes back out with its newer features
+/// intact. This is the save half of the policy in the module header,
+/// and [`to_json_value`] is where it happens — anything that
+/// serializes a `MindMap` for persistence must go through that rather
+/// than calling `serde_json::to_value` directly.
+///
 /// **Determinism**: routes through `serde_json::Value` (which uses
 /// `BTreeMap` for object keys) so two saves of the same `MindMap` produce
 /// byte-identical output regardless of `HashMap` iteration order. Costs
@@ -407,9 +689,61 @@ fn detect_section_count_cap(map: &MindMap) -> Option<String> {
 /// Native-only (synchronous I/O via `std::fs`). Returns a `String`
 /// error describing the path + underlying cause.
 pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
-    let value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
+    let value = to_json_value(map)?;
     let json = serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
     write_atomic(path, &json)
+}
+
+/// The JSON a `MindMap` persists as: its typed shape plus the keys
+/// this build did not recognize when it loaded the map, each written
+/// back where it came from.
+///
+/// **This, not `serde_json::to_value`, is the map's on-disk form.**
+/// Serializing the typed shape alone drops whatever a newer build
+/// wrote, which is the data loss the unknown-key policy exists to
+/// prevent; `to_value` is only the first half of the answer. Exposed
+/// so `maptool` and any future export path can produce the same bytes
+/// [`save_to_file`] would.
+///
+/// Cost: one full `Value` copy of the model (`serde_json::to_value`),
+/// plus one route walk and one `Value` clone per preserved key —
+/// nothing at all for a map with none.
+pub fn to_json_value(map: &MindMap) -> Result<Value, String> {
+    let mut value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
+    map.unknown_keys.splice_into(&mut value);
+    // Keys first, constructs second, and the reason is narrower than
+    // it looks. A captured key's positional route was resolved against
+    // a document the skipped constructs had already been lifted out
+    // of, so its index counts the *shortened* array; re-inserting the
+    // constructs first would make that index name a different element.
+    // What stops that being a data-loss bug in the general case is not
+    // this ordering — it is the element fingerprints
+    // `UnknownKeys::splice_into` carries, which re-find the element
+    // whichever length the array is. The ordering is what keeps the
+    // fingerprints from having to: it holds the array in the shape the
+    // route was recorded against, so the common path is an exact match
+    // at the recorded index rather than a search.
+    //
+    // It stops being merely defensive wherever the fingerprint search
+    // cannot finish the job on its own, and there are two such shapes
+    // — both ordinary rather than exotic:
+    //
+    // - **Two elements that serialize identically.** The fingerprint
+    //   matches in more than one place, so a search cannot say which
+    //   one the key came from.
+    //   `tests::test_the_splice_order_decides_when_two_elements_are_alike`.
+    // - **An element that was edited**, sharing its array with a
+    //   skipped construct. Its fingerprint now matches *nowhere*, and
+    //   the last rung `resolve_index` has left is "every other element
+    //   is unchanged and the array is still the length the route was
+    //   recorded against". Re-inserting the construct first lengthens
+    //   the array and breaks the second half of that.
+    //   `tests::test_the_splice_order_survives_an_edit_beside_a_skipped_construct`.
+    //
+    // In both, this ordering is the whole difference between writing
+    // the key where it belongs and dropping it with a warning.
+    map.skipped_constructs.splice_into(&mut value);
+    Ok(value)
 }
 
 /// Write `contents` to `path` via `<dir>/.<name>.<pid>.tmp` + rename.
@@ -565,50 +899,127 @@ mod tests {
     /// **The unknown-key policy, enforced against the model that
     /// exists rather than a list of the model as it once was.**
     ///
-    /// A `.mindmap.json` key the model does not know must be a load
-    /// error. Without `deny_unknown_fields` serde drops it in
-    /// silence, the app resaves what it loaded, and a hand-authored
-    /// field is gone — the file was the only copy.
+    /// A `.mindmap.json` key this build has no field for is captured
+    /// at load and written back at save. That only works while every
+    /// type between the document root and the key hands the key to
+    /// `deserialize_ignored_any` — which is serde's default, and
+    /// which exactly four container attributes take away:
+    ///
+    /// - `deny_unknown_fields` fails the load instead. This is the
+    ///   policy #105 shipped and #115 reversed, and it is the one
+    ///   that comes back by accident: it and `#[serde(flatten)]`
+    ///   **compile together, with `deny` silently winning**, so a
+    ///   type carrying both rejects where it reads as preserving.
+    /// - `flatten` absorbs the key into the flattened field.
+    /// - `untagged`, and `tag = "…"` with or without `content`,
+    ///   buffer the object into serde's own `Content` and replay it
+    ///   through a deserializer the capture is not wrapping.
+    ///
+    /// The four split into two classes over **two different sets of
+    /// types**, and conflating them is what left a hole here once
+    /// already. `deny_unknown_fields` and `flatten` act on a named
+    /// member no field claimed, so they are asked only of types that
+    /// have named fields — which is also all serde permits. `untagged`
+    /// and `tag` act on the whole value, buffering it through
+    /// `Content` regardless of whether any variant has a field name in
+    /// it, so they are asked of **every** reachable Deserialize type.
+    /// Guarding both behind `has_named_fields` — correct in the
+    /// `deny_unknown_fields` era, never revisited when the predicate
+    /// grew — excluded 24 of the 70 reachable types, and a planted
+    /// `#[serde(untagged)]` on `Mutation` sailed through.
     ///
     /// The set of types this applies to is not written down here.
     /// [`crate::util::serde_coverage`] parses baumhard's own sources
     /// and walks outward from `MindMap` through every deserializable
-    /// field, so a new field of a new type extends the covered set
-    /// on its own and this test fails until that type opts in. Two
-    /// shapes are exempt, and only two: a container that delegates
-    /// its on-disk shape to a proxy via `#[serde(from = "...")]`
-    /// (the requirement follows the proxy, which the walk also
-    /// reaches), and an `#[serde(untagged)]` enum, where denying
-    /// unknown fields changes which variant matches rather than
-    /// merely tightening a check.
+    /// field, so a new field of a new type extends the covered set on
+    /// its own. One shape is exempt: a container that delegates its
+    /// on-disk shape to a proxy via `#[serde(from = "...")]` never
+    /// deserializes its own fields, so the requirement follows the
+    /// proxy — which the walk also reaches, and holds to the same
+    /// rule there.
+    ///
+    /// **A fifth reason exists and is not about serde at all: an
+    /// attribute the source reader could not finish.** The four above
+    /// are read off the text by a hand-rolled parser, and this test
+    /// asserts a list is *empty* — so a flag that parser never saw
+    /// reads exactly like a flag that is not there, and the run goes
+    /// green. A list-form option (`rename_all(...)`) used to end that
+    /// parse where it started, which made
+    /// `#[serde(rename_all(deserialize = "camelCase"),
+    /// deny_unknown_fields)]` a silent restoration of reject-at-load.
+    /// `TypeInfo::unread_serde` is the answer: unknown is reported as
+    /// unsafe, not as safe.
+    ///
+    /// The per-type predicate itself is
+    /// [`TypeInfo::unknown_key_hiding_reasons`], next to the
+    /// attributes it reads, where a test can drive it over types this
+    /// crate does not contain. What lives here is the policy and the
+    /// walk it is applied to.
     #[test]
-    fn test_every_loadable_type_rejects_unknown_keys() {
+    fn test_no_loadable_type_can_swallow_an_unknown_key() {
         use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
 
         let graph = TypeGraph::build(&crate_src_root());
-        let mut missing: Vec<String> = Vec::new();
+        let mut offenders: Vec<String> = Vec::new();
         for info in graph.reachable_from("MindMap") {
-            let exempt = info.deserialize_proxy.is_some() || info.untagged;
-            if !info.derives_deserialize || !info.has_named_fields || exempt {
+            let reasons = info.unknown_key_hiding_reasons();
+            if reasons.is_empty() {
                 continue;
             }
-            if !info.denies_unknown_fields {
-                // Naming the item kind matters for an enum: the
-                // attribute goes on the enum, not on the struct
-                // variant whose keys serde actually rejected.
-                let kind = match info.kind {
-                    TypeKind::Struct => "struct",
-                    TypeKind::Enum => "enum",
-                    TypeKind::Alias => "type",
-                };
-                missing.push(format!("{kind} {} — {}", info.name, info.file.display()));
-            }
+            // Naming the item kind matters for an enum: a container
+            // attribute goes on the enum, not on the struct variant
+            // whose keys serde was reading.
+            let kind = match info.kind {
+                TypeKind::Struct => "struct",
+                TypeKind::Enum => "enum",
+                TypeKind::Alias => "type",
+            };
+            offenders.push(format!(
+                "{kind} {} — {}: {}",
+                info.name,
+                info.file.display(),
+                reasons.join(", ")
+            ));
         }
         assert!(
-            missing.is_empty(),
-            "these types are reachable from a `.mindmap.json` load and would \
-             silently drop an unknown key (add `#[serde(deny_unknown_fields)]`):\n  {}",
-            missing.join("\n  ")
+            offenders.is_empty(),
+            "these types are reachable from a `.mindmap.json` load and can hide an \
+             unrecognized key from the loader's capture, so it would neither be warned \
+             about nor survive the next save:\n  {}\n\n\
+             Two classes of attribute, checked over different sets, and the difference \
+             is load-bearing — do not re-narrow one to match the other:\n  \
+             * `deny_unknown_fields` / `flatten` decide what happens to a named member \
+             no field claimed, so they are asked only of types that have named fields.\n  \
+             * `untagged` / `tag = \"...\"` buffer the whole value through serde's \
+             `Content` and replay it outside the capture, which has nothing to do with \
+             variant shape, so they are asked of every reachable Deserialize type.\n\n\
+             An entry naming an attribute rather than a flag is neither class: it means \
+             the source reader could not account for that attribute, so whatever serde \
+             options it carries were never looked at, and \"carries none of them\" is \
+             the answer a silent pass would have produced. The entry says which of the \
+             two it is — an attribute the reader stopped partway through, or one it \
+             never looks inside at all — and what to do about it. Neither is a claim \
+             that the type hides a key; both are a claim that nobody can tell.",
+            offenders.join("\n  ")
+        );
+
+        // The `Content`-buffering half of the check is the half that
+        // was silently switched off, and an empty check passes just
+        // as loudly as a real one. So the walk has to prove it
+        // reached a type the old guard skipped.
+        let shapeless: Vec<&str> = graph
+            .reachable_from("MindMap")
+            .iter()
+            .filter(|info| {
+                info.derives_deserialize && info.deserialize_proxy.is_none() && !info.has_named_fields
+            })
+            .map(|info| info.name.as_str())
+            .collect();
+        assert!(
+            !shapeless.is_empty(),
+            "the `untagged` / `tag` check is supposed to cover types with no named \
+             fields, and the walk reached none — either the model changed shape \
+             completely or the predicate narrowed again"
         );
     }
 
@@ -1316,7 +1727,7 @@ mod tests {
     fn test_save_to_file_inline_macros_round_trip() {
         // Build a map with one node carrying a populated
         // `inline_macros`. Empty case is implicitly covered by
-        // `test_save_blank_map_round_trip` (every node has an
+        // `test_save_to_file_round_trip_for_loaded_and_blank_maps` (every node has an
         // empty Vec).
         use crate::mindmap::model::{Canvas, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size};
         use std::collections::HashMap;
@@ -1378,6 +1789,8 @@ mod tests {
             edges: Vec::new(),
             custom_mutations: Vec::new(),
             macros: Vec::new(),
+            unknown_keys: Default::default(),
+            skipped_constructs: Default::default(),
         };
 
         let dir = TempDir::new("inline-macros-round-trip");
@@ -1668,93 +2081,226 @@ mod tests {
         false
     }
 
+    /// The one captured key whose `path_within_location` is `path`,
+    /// or a panic naming everything that *was* captured — a test that
+    /// fails because the loader stamped a key differently should say
+    /// so rather than report `None`.
+    fn captured<'m>(map: &'m MindMap, path: &str) -> &'m crate::mindmap::unknown_keys::UnknownKey {
+        map.unknown_keys
+            .iter()
+            .find(|entry| entry.path_within_location() == path)
+            .unwrap_or_else(|| {
+                let seen: Vec<String> = map
+                    .unknown_keys
+                    .iter()
+                    .map(|entry| format!("{}: {}", entry.location(), entry.path_within_location()))
+                    .collect();
+                panic!("no captured key at {path:?}; captured: {seen:?}")
+            })
+    }
+
+    /// Save `map` through the editor's own save path and read the
+    /// bytes back. The round-trip tests go through the real writer
+    /// rather than [`to_json_value`], because the guarantee is about
+    /// the file on disk.
+    fn saved_json(map: &MindMap, label: &str) -> String {
+        let dir = TempDir::new(label);
+        let path = dir.join("saved.mindmap.json");
+        save_to_file(&path, map).expect("save failed");
+        std::fs::read_to_string(&path).expect("read saved")
+    }
+
+    /// **The acceptance criterion, and the one that separates keeping
+    /// a key from merely warning about it.** A map with a key this
+    /// build has no field for loads, and after a save the key is
+    /// still there, holding what it held.
+    ///
+    /// Warn-and-drop passes every other test in this file. It fails
+    /// this one.
+    #[test]
+    fn test_an_unrecognized_key_survives_a_load_and_save_round_trip() {
+        let json = map_json_with_nodes(&node_json_with(
+            "1.2",
+            "null",
+            r#", "portal_form": {"glyphs": "◇◆", "spin": 3}"#,
+        ));
+        let map = load_from_str(&json).expect("an unrecognized key must not fail the load");
+        assert_eq!(
+            map.nodes["1.2"].sections[0].text, "n",
+            "the rest of the node must still load"
+        );
+
+        let saved: Value = serde_json::from_str(&saved_json(&map, "round-trip-unknown")).expect("valid JSON");
+        assert_eq!(
+            saved["nodes"]["1.2"]["portal_form"],
+            serde_json::json!({"glyphs": "◇◆", "spin": 3}),
+            "the unrecognized key must come back out of the save unchanged"
+        );
+
+        // And again, so a second generation of the file does not lose
+        // what the first one kept.
+        let reloaded =
+            load_from_str(&saved_json(&map, "round-trip-unknown-2")).expect("the saved map reloads");
+        assert_eq!(
+            captured(&reloaded, "portal_form").value()["spin"],
+            serde_json::json!(3)
+        );
+    }
+
+    /// The same guarantee at the bottom of the deepest thing a map
+    /// can hold. `custom_mutations[].mutator` is an externally tagged
+    /// enum, so the JSON has an object level — `{"Void": { … }}` —
+    /// that serde's ignored-key path does not report. If the route
+    /// did not account for that, this key would be captured and then
+    /// written back in the wrong place, or nowhere.
+    #[test]
+    fn test_an_unrecognized_key_inside_a_mutator_survives_the_round_trip() {
+        let json = map_json_with_nodes(&node_json("0", "null")).replace(
+            r#""edges": []"#,
+            r#""edges": [], "custom_mutations": [{
+                "id": "m", "name": "m", "target_scope": "SelfOnly",
+                "mutator": {"Void": {"channel": 0, "children": [], "afterglow": 0.5}}
+            }]"#,
+        );
+        let map = load_from_str(&json).expect("an unrecognized key must not fail the load");
+        let entry = captured(&map, "mutator.Void.afterglow");
+        assert_eq!(entry.location(), "custom_mutations[0]");
+
+        let saved: Value = serde_json::from_str(&saved_json(&map, "round-trip-mutator")).expect("valid JSON");
+        assert_eq!(
+            saved["custom_mutations"][0]["mutator"]["Void"]["afterglow"],
+            serde_json::json!(0.5)
+        );
+    }
+
     /// **The policy, spelled out where authors read it.**
-    /// `format/schema.md` publishes one map that must be rejected
-    /// for a mistyped key, the rejection message it produces, and
-    /// one map that must load once the spelling is fixed. All three
-    /// are read out of the spec rather than restated here, so the
-    /// pin follows the doc when the doc moves instead of agreeing
+    /// `format/schema.md` publishes one map carrying a mistyped key,
+    /// the warning it produces, and what the corrected map does. All
+    /// three are read out of the spec rather than restated here, so
+    /// the pin follows the doc when the doc moves instead of agreeing
     /// with a copy of its old self.
     ///
-    /// The published message is compared for **equality**, not
-    /// containment: the doc presents it as verbatim loader output,
-    /// and its `expected one of` clause is an enumeration of
-    /// `MindNode`'s keys that a hand-author reads as the field list.
-    /// A substring check would let a new field land, change the real
-    /// message, and leave the spec publishing a list that is missing
-    /// it — with the suite green. Only line wrapping is normalized
-    /// away ([`doc_fixtures::unwrapped`]): the doc wraps to the
-    /// column limit, the loader emits one line, and where the breaks
-    /// fall carries no meaning.
+    /// The published warning is compared for **equality**, not
+    /// containment: the doc presents it as verbatim loader output. A
+    /// substring check would let the wording drift and leave the spec
+    /// publishing something the loader no longer says, with the suite
+    /// green. Only line wrapping is normalized away
+    /// ([`doc_fixtures::unwrapped`]): the doc wraps to the column
+    /// limit, the loader emits one line, and where the breaks fall
+    /// carries no meaning.
     #[test]
-    fn test_documented_unknown_key_rejection_matches_the_spec() {
+    fn test_documented_unknown_key_warning_matches_the_spec() {
         use crate::util::doc_fixtures::{
             documented_json_block, documented_plain_block, format_doc_path, unwrapped,
         };
         let doc = format_doc_path("schema.md");
-        let heading = "## Unknown keys are rejected";
+        let heading = "## Unknown keys are kept";
 
-        let rejected = documented_json_block(&doc, heading, 0);
-        let err = match load_from_str(&rejected) {
-            Err(err) => err,
-            Ok(map) => {
-                panic!("the spec's mistyped-key example must not load:\n{rejected}\nbut it loaded: {map:?}")
-            }
-        };
+        let mistyped = documented_json_block(&doc, heading, 0);
+        let map = load_from_str(&mistyped)
+            .unwrap_or_else(|e| panic!("the spec's mistyped-key example must load: {e}\n{mistyped}"));
         assert!(
-            err.contains("min_zoom_to_rendr"),
-            "the error must name the key the author wrote: {err}"
+            map.nodes["0"].min_zoom_to_render.is_none(),
+            "a mistyped key must not reach the field it was aiming at"
         );
+        let entry = captured(&map, "min_zoom_to_rendr");
 
         let published = documented_plain_block(&doc, heading, 0);
         assert_eq!(
-            unwrapped(&err),
+            unwrapped(&entry.warning()),
             unwrapped(&published),
-            "format/schema.md §{heading} publishes this rejection as verbatim loader \
+            "format/schema.md §{heading} publishes this warning as verbatim loader \
              output and it no longer is. Re-wrap the block to match, or the spec is \
-             publishing a stale list of a node's keys.\n\
-             \n  loader: {err}\n  spec:   {published}\n"
+             publishing something the loader does not say.\n\
+             \n  loader: {}\n  spec:   {published}\n",
+            entry.warning()
         );
 
-        let accepted = documented_json_block(&doc, heading, 1);
-        let map = load_from_str(&accepted)
-            .unwrap_or_else(|e| panic!("the spec's corrected example must load: {e}\n{accepted}"));
+        let corrected = documented_json_block(&doc, heading, 1);
+        let map = load_from_str(&corrected)
+            .unwrap_or_else(|e| panic!("the spec's corrected example must load: {e}\n{corrected}"));
         assert_eq!(map.nodes["0"].min_zoom_to_render, Some(2.0));
+        assert!(
+            map.unknown_keys.is_empty(),
+            "the corrected example must have nothing left to preserve"
+        );
     }
 
-    /// An unknown key on a node names the node, names the key, and
-    /// says what the loader did about it. The last part is the point:
-    /// "unknown field" reads like pedantry until you know the
-    /// alternative was the key silently gone from the file after the
-    /// next save.
+    /// An unrecognized key on a node names the node, names the key,
+    /// and says what the loader did about it. The last part is the
+    /// point: an author who mistyped a real key needs to be told the
+    /// difference between "kept" and "understood".
     #[test]
-    fn test_unknown_node_key_is_rejected_with_the_policy() {
+    fn test_unknown_node_key_is_kept_and_named() {
         let json = map_json_with_nodes(&node_json_with("1.2", "null", r#", "portal_form": {"x": 1}"#));
-        let err = load_from_str(&json).expect_err("an unknown node key must be rejected");
-        assert!(err.contains("node \"1.2\""), "must name the node: {err}");
-        assert!(err.contains("portal_form"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized node key must not fail the load");
+        let warning = captured(&map, "portal_form").warning();
         assert!(
-            err.contains("rejected, not dropped"),
-            "must state the policy, not just the symptom: {err}"
+            warning.starts_with("loader: "),
+            "must carry the §9 area prefix: {warning}"
         );
-        assert!(err.contains("format/schema.md"), "must point at the spec: {err}");
+        assert!(warning.contains("node \"1.2\""), "must name the node: {warning}");
+        assert!(warning.contains("portal_form"), "must name the key: {warning}");
         assert!(
-            err.contains("expected one of") && err.contains("`inline_mutations`"),
-            "must list what the loader would have accepted: {err}"
+            warning.contains("kept as written and saved back with the value it was authored with"),
+            "must state what happened to the key, not just that it is unknown: {warning}"
+        );
+        assert!(
+            warning.contains("format/schema.md"),
+            "must point at the spec: {warning}"
         );
     }
 
-    /// The same rejection reaches keys nested inside a node — a typo
-    /// in `style` is as destructive as one at the node level, and
-    /// the message still resolves to the node the author has to open.
+    /// **The warning is emitted, not merely available.** Every other
+    /// test here reads `map.unknown_keys`, which stays true of a
+    /// loader that captured the key and told nobody — deleting the
+    /// `log::warn!` leaves them all green.
+    ///
+    /// So this one reads the log. `crate::util::test_logger` is a
+    /// real `log::Log` sink rather than a mock (TEST_CONVENTIONS
+    /// §T10): it receives exactly what a real run sends. It is
+    /// process-global and the suite runs in parallel, so the key name
+    /// is deliberately one nothing else in the repository could
+    /// produce, and the search is for that needle rather than for
+    /// "the last line logged".
+    #[test]
+    fn test_the_unrecognized_key_warning_is_actually_logged() {
+        crate::util::test_logger::install();
+        let json = map_json_with_nodes(&node_json_with("7.7", "null", r#", "gnomon_bearing_9f31": 1"#));
+        let map = load_from_str(&json).expect("an unrecognized node key must not fail the load");
+
+        let logged = crate::util::test_logger::lines_containing("gnomon_bearing_9f31");
+        assert_eq!(
+            logged.len(),
+            1,
+            "the loader must warn exactly once per unrecognized key, logged: {logged:?}"
+        );
+        assert!(
+            logged[0].starts_with("WARN "),
+            "an unrecognized key is a `warn!`, not instrumentation: {}",
+            logged[0]
+        );
+        assert!(
+            logged[0].ends_with(&captured(&map, "gnomon_bearing_9f31").warning()),
+            "the logged line must be the one `UnknownKey::warning` builds, so the \
+             wording lives in one place: {}",
+            logged[0]
+        );
+    }
+
+    /// The same report reaches keys nested inside a node — a typo in
+    /// `style` is as invisible as one at the node level, and the
+    /// message still resolves to the node the author has to open,
+    /// with the field path inside it.
     #[test]
     fn test_unknown_key_inside_node_style_names_the_node() {
         let json = map_json_with_nodes(
             &node_json("0", "null").replace(r#""show_shadow":false"#, r#""show_shadow":false,"shpe":"star""#),
         );
-        let err = load_from_str(&json).expect_err("an unknown style key must be rejected");
-        assert!(err.contains("node \"0\""), "must name the node: {err}");
-        assert!(err.contains("shpe"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized style key must not fail the load");
+        let entry = captured(&map, "style.shpe");
+        assert_eq!(entry.location(), "node \"0\"");
+        assert_eq!(entry.value(), &serde_json::json!("star"));
     }
 
     /// Edges are addressed by index, matching `MindMap::edge_locations`
@@ -1764,37 +2310,80 @@ mod tests {
     fn test_unknown_edge_key_names_the_edge_index() {
         let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
         let json = map_json(&nodes, &edge_json_with(r#", "arrowhead": "open""#));
-        let err = load_from_str(&json).expect_err("an unknown edge key must be rejected");
-        assert!(err.contains("edge[0]"), "must name the edge index: {err}");
-        assert!(err.contains("arrowhead"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized edge key must not fail the load");
+        assert_eq!(captured(&map, "arrowhead").location(), "edge[0]");
     }
 
-    /// The canvas is a single named part rather than a collection,
-    /// so it is stamped by name.
+    /// The canvas is a single named part rather than a collection, so
+    /// it is stamped by name.
     #[test]
     fn test_unknown_canvas_key_names_the_canvas() {
         let json = map_json_with_nodes(&node_json("0", "null")).replace(
             r##""background_color": "#000""##,
             r##""background_color": "#000", "grid_snap": 8"##,
         );
-        let err = load_from_str(&json).expect_err("an unknown canvas key must be rejected");
-        assert!(err.contains("canvas:"), "must name the canvas: {err}");
-        assert!(err.contains("grid_snap"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized canvas key must not fail the load");
+        assert_eq!(captured(&map, "grid_snap").location(), "canvas");
     }
 
-    /// A key the model does not know at the top level has no
-    /// sub-object to attribute it to, so serde's own message — which
-    /// already names the key and the accepted set — carries the
-    /// report, with the policy sentence appended.
+    /// A key at the top level has no sub-object to attribute it to,
+    /// so it is stamped against the map itself.
     #[test]
-    fn test_unknown_top_level_key_is_rejected() {
+    fn test_unknown_top_level_key_is_kept_and_named() {
         let json = map_json_with_nodes(&node_json("0", "null"))
             .replace(r#""version": "1.0","#, r#""version": "1.0", "authors": ["me"],"#);
-        let err = load_from_str(&json).expect_err("an unknown top-level key must be rejected");
-        assert!(err.contains("authors"), "must name the key: {err}");
+        let map = load_from_str(&json).expect("an unrecognized top-level key must not fail the load");
+        let entry = captured(&map, "authors");
+        assert_eq!(entry.location(), "map");
+        assert_eq!(entry.value(), &serde_json::json!(["me"]));
+    }
+
+    /// Every unrecognized key is reported, and each exactly once — a
+    /// map that quietly kept the second one would satisfy every
+    /// single-key test above.
+    #[test]
+    fn test_every_unrecognized_key_is_reported_exactly_once() {
+        let nodes = format!(
+            "{},{}",
+            node_json_with("a", "null", r#", "alpha": 1"#),
+            node_json_with("b", "\"a\"", r#", "beta": 2, "gamma": 3"#)
+        );
+        let json =
+            map_json_with_nodes(&nodes).replace(r#""version": "1.0","#, r#""version": "1.0", "delta": 4,"#);
+        let map = load_from_str(&json).expect("unrecognized keys must not fail the load");
+
+        let mut reported: Vec<String> = map
+            .unknown_keys
+            .iter()
+            .map(|entry| format!("{} {}", entry.location(), entry.path_within_location()))
+            .collect();
+        reported.sort();
+        assert_eq!(
+            reported,
+            vec![
+                "map delta".to_string(),
+                "node \"a\" alpha".to_string(),
+                "node \"b\" beta".to_string(),
+                "node \"b\" gamma".to_string(),
+            ]
+        );
+    }
+
+    /// A map this build authored carries nothing to preserve, and the
+    /// capture must say so rather than collecting the keys serde
+    /// legitimately defaulted or omitted. This is what keeps the
+    /// second parse — and the warning stream — off every ordinary
+    /// load.
+    #[test]
+    fn test_a_current_map_captures_nothing() {
+        let map = load_from_file(&test_map_path()).expect("the fixture loads");
         assert!(
-            err.contains("rejected, not dropped"),
-            "must state the policy: {err}"
+            map.unknown_keys.is_empty(),
+            "testament must carry no unrecognized keys, found: {:?}",
+            map.unknown_keys
+                .iter()
+                .map(|entry| format!("{}: {}", entry.location(), entry.path_within_location()))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1822,6 +2411,969 @@ mod tests {
         let saved = std::fs::read_to_string(&saved_path).expect("read resaved");
 
         assert_load_save_loses_no_authored_key(&source, &saved);
+    }
+
+    /// The file
+    /// `test_every_mindmap_write_goes_through_the_contract` proves it
+    /// can read past a test gate in: twelve `#[cfg(test)] mod
+    /// tests_*;` declarations at line 35, and everything a save path
+    /// would plausibly live among below them.
+    const COVERAGE_WITNESS: &str = "application/document/mod.rs";
+
+    /// Whether the production text of a file still carries code below
+    /// the file's first `#[cfg(test)]` — the one measurement that
+    /// tells a correct excision from a truncating one, since the
+    /// truncating reader could not leave anything there by
+    /// construction.
+    ///
+    /// The gate is located in the *source* by text, which is all this
+    /// needs: the question is only "was there a gate, and did the scan
+    /// keep reading past it".
+    fn reads_below_the_first_test_gate(source: &str, shipped: &str) -> bool {
+        let Some(at) = source.find("#[cfg(test)]") else {
+            return false;
+        };
+        let gate_line = source[..at].lines().count();
+        shipped
+            .lines()
+            .skip(gate_line)
+            .any(|line| !line.trim().is_empty())
+    }
+
+    /// The coverage assertion in
+    /// `test_every_mindmap_write_goes_through_the_contract` is only as
+    /// sharp as the predicate behind it, and a predicate that always
+    /// answered `true` would restore the very silence it was added to
+    /// end. So it is driven over the two texts it has to tell apart:
+    /// what a correct excision leaves behind, and what the truncating
+    /// reader left.
+    #[test]
+    fn test_only_a_non_truncating_excision_reads_below_a_test_gate() {
+        let source = "pub fn a() {}\n#[cfg(test)]\nmod tests;\npub fn b() {}\n";
+        assert!(
+            reads_below_the_first_test_gate(source, "pub fn a() {}\n\n\npub fn b() {}\n"),
+            "the gated declaration is blanked and `b` survives — that is what reading \
+             past the gate looks like"
+        );
+        assert!(
+            !reads_below_the_first_test_gate(source, "pub fn a() {}\n"),
+            "the truncating reader stops at the gate, so it can never witness anything \
+             below one"
+        );
+        assert!(
+            !reads_below_the_first_test_gate("pub fn a() {}\n", "pub fn a() {}\n"),
+            "a file with no gate at all witnesses nothing either way"
+        );
+    }
+
+    /// The serialization verbs that put bytes somewhere — a file, a
+    /// socket, a string that is about to become one.
+    const PERSISTING_VERBS: &[&str] = &[
+        "to_string_pretty",
+        "to_string",
+        "to_vec_pretty",
+        "to_vec",
+        "to_writer_pretty",
+        "to_writer",
+        "to_value",
+    ];
+
+    /// Whether a name reads as holding a map: `map`, `mind_map`,
+    /// `stress_map`.
+    fn reads_as_a_map(name: &str) -> bool {
+        name.to_ascii_lowercase().ends_with("map")
+    }
+
+    /// Names bound by a `let` whose right-hand side is a map and whose
+    /// right-hand side is not the contract.
+    ///
+    /// One hop, because one hop is what a bypass looks like when it is
+    /// written by hand: `let value = map.clone();` followed by
+    /// `serde_json::to_string_pretty(&value)` puts a raw map on disk
+    /// while naming nothing map-shaped at the call site. A scan that
+    /// only looked at the argument would miss it, and did — it was a
+    /// surviving mutant before this existed.
+    fn map_aliases(shipped: &str) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for line in shipped.lines() {
+            let Some(binding) = line.trim().strip_prefix("let ") else {
+                continue;
+            };
+            let Some((name, value)) = binding.split_once('=') else {
+                continue;
+            };
+            let name = name.trim().trim_start_matches("mut ").trim();
+            if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            // *Is* the map, not merely reaches through one:
+            // `let value = map.clone()` renames it, `let node =
+            // map.nodes[id]` does not. Anything more elaborate than a
+            // borrow and a clone is out of scope for a source scan and
+            // says so rather than guessing.
+            let renamed = value
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .trim_start_matches(['&', '*'])
+                .trim()
+                .trim_end_matches(".to_owned()")
+                .trim_end_matches(".clone()");
+            if reads_as_a_map(renamed) && renamed.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                out.insert(name.to_string());
+            }
+        }
+        out
+    }
+
+    /// Whether `line` serializes something map-shaped with one of
+    /// [`PERSISTING_VERBS`] — `serde_json::to_string_pretty(&map)` and
+    /// its neighbors, matched on the argument's *name* rather than its
+    /// type, which a source scan cannot see.
+    fn serializes_a_map(line: &str, aliases: &std::collections::BTreeSet<String>) -> bool {
+        let mut rest = line;
+        while let Some(at) = rest.find("serde_json::to_") {
+            rest = &rest[at + "serde_json::".len()..];
+            let Some(open) = rest.find('(') else { break };
+            let verb = &rest[..open];
+            let argument = rest[open + 1..].trim_start().trim_start_matches('&').trim_start();
+            let name: String = argument
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if PERSISTING_VERBS.contains(&verb) && (reads_as_a_map(&name) || aliases.contains(&name)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// **The one place a `MindMap` may be turned into bytes.**
+    ///
+    /// [`to_json_value`] says so in prose, and prose does not fail a
+    /// build: `bin/generate_stress_map.rs` wrote a `.mindmap.json`
+    /// with a bare `serde_json::to_string_pretty(&map)` for as long as
+    /// the sentence has existed. It happened to be harmless — the map
+    /// is built in memory, so it carries no preserved keys to lose —
+    /// but a contract with a known exception is exactly the twin
+    /// surface `lib/baumhard/CONVENTIONS.md` §B4 is about, and the
+    /// next writer would not have been harmless.
+    ///
+    /// So the exception is gone and this is what keeps it gone. A
+    /// source scan, because the question is "does another call site
+    /// exist", which no runtime test can answer.
+    ///
+    /// Deliberately blunt in two directions, and both are the safe
+    /// direction. It matches on the argument's *name* — a scan cannot
+    /// see types — so a `MindMap` in a variable called something else
+    /// slips through; and it flags any map-shaped name, so a
+    /// `HashMap` called `map` would be a false positive, which is a
+    /// reader deciding rather than a silent gap. Test sources are
+    /// excluded: a test that serializes a map to compare it against
+    /// something is not a persistence path.
+    ///
+    /// **How they are excluded is the part that was wrong.** This used
+    /// to split each file at the first `#[cfg(test)]` and keep the
+    /// text before it, on the premise that test modules hang off the
+    /// end of a file. 140 of the 321 files it collects carry a gate
+    /// before the end, and in 28 of them shipped code goes on below it
+    /// — `#[cfg(test)] mod tests_delete;` and its eleven neighbors sit
+    /// in the *module list* of `src/application/document/mod.rs`, the
+    /// most plausible home for a save path, which was therefore read
+    /// to line 35 of 757. A `serde_json::to_string_pretty(&map)`
+    /// planted at line 79 of that file compiled clean and passed this
+    /// test; the same function above line 35 failed it.
+    /// [`source_scan::production_source`] excises the gated items and
+    /// leaves everything else where it was, so the scan sees shipped
+    /// code wherever it sits.
+    #[test]
+    fn test_every_mindmap_write_goes_through_the_contract() {
+        use crate::util::source_scan::production_source;
+        let workspace = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        let mut offenders: Vec<String> = Vec::new();
+        let mut scanned = 0usize;
+        let mut read_below_a_gate = 0usize;
+        let mut witness_read_below_its_gate = false;
+        for root in ["lib/baumhard/src", "src", "crates"] {
+            let mut files = Vec::new();
+            collect_rust_sources(&workspace.join(root), &mut files);
+            files.sort();
+            for file in files {
+                // `loader.rs` is the contract; it is allowed to be the
+                // one place that calls `serde_json::to_value` on a map.
+                if file.ends_with("mindmap/loader.rs") {
+                    continue;
+                }
+                scanned += 1;
+                let text = std::fs::read_to_string(&file).expect("readable source");
+                let shipped = production_source(&file, &text);
+                if reads_below_the_first_test_gate(&text, &shipped) {
+                    read_below_a_gate += 1;
+                    witness_read_below_its_gate |= file.ends_with(COVERAGE_WITNESS);
+                }
+                let aliases = map_aliases(&shipped);
+                for (number, line) in shipped.lines().enumerate() {
+                    // A line that *begins* with `//` is prose, and
+                    // prose about this contract is exactly what the
+                    // modules around it are full of — the sentence
+                    // naming the forbidden call is not the call. A
+                    // trailing comment on a line of code is left in,
+                    // since dropping it would need the scan to know
+                    // where a string literal ends.
+                    if line.trim_start().starts_with("//") {
+                        continue;
+                    }
+                    if serializes_a_map(line, &aliases) {
+                        offenders.push(format!("{}:{}: {}", file.display(), number + 1, line.trim()));
+                    }
+                }
+            }
+        }
+        assert!(
+            scanned > 100,
+            "the scan found only {scanned} source files — it is looking in the wrong \
+             place and would pass no matter what the code did"
+        );
+        // **A file count cannot notice that most of a *file* went
+        // unread**, and that is the failure it presided over: 321
+        // files collected, 321 counted, and 31k lines below a gate
+        // never looked at.
+        //
+        // A line total is no better a discriminator than it sounds.
+        // The truncating reader still saw 71% of the non-blank source
+        // against 77% for the correct excision, so any floor
+        // separating the two would sit inside the noise of how much
+        // inline test code the workspace happens to carry, and would
+        // need moving every time that changed.
+        //
+        // What separates them absolutely is *where* the unread lines
+        // were. Truncation blanks a suffix, so **no** file can have
+        // shipped code below its first `#[cfg(test)]`; a correct
+        // excision blanks interiors, and 28 of these files do. So the
+        // scan holds itself to reading past a gate in the one file the
+        // planted bypass actually exploited — a named witness rather
+        // than a threshold, because the count is a property of how the
+        // workspace is laid out and the witness is a property of the
+        // reader.
+        assert!(
+            witness_read_below_its_gate,
+            "the scan never read below the first `#[cfg(test)]` in {COVERAGE_WITNESS}, \
+             where twelve gated `mod` declarations sit above 700 lines of shipped \
+             re-exports and setters. Either the excision in \
+             `source_scan::production_source` is discarding the rest of a file rather \
+             than the gated item — which is a scan that passes no matter what is written \
+             below the gate, and did — or that file was reorganized and this witness \
+             needs repointing at one of the {read_below_a_gate} others like it."
+        );
+        // And the witness has to *discriminate*, or it is satisfied by
+        // a predicate that answers yes to everything. Most of these
+        // files carry no test gate at all, so a count equal to the
+        // whole set is not a better answer than the one above — it is
+        // the same silence wearing a tick.
+        assert!(
+            read_below_a_gate < scanned,
+            "every one of the {scanned} scanned files reports shipped code below a \
+             `#[cfg(test)]`, including the ones that contain no gate. The measurement \
+             is not looking at anything."
+        );
+        assert!(
+            offenders.is_empty(),
+            "these serialize a map outside `loader::to_json_value`, which is the only \
+             thing that puts the keys a load preserved back into the document — \
+             anything else writes a file with a newer build's data deleted from it. \
+             Route it through `to_json_value`:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// Every non-test `.rs` file under `dir`, recursively.
+    fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            if path.is_dir() {
+                if name != "tests" && name != "target" {
+                    collect_rust_sources(&path, out);
+                }
+            } else if name.ends_with(".rs")
+                && !name.starts_with("test")
+                && !name.ends_with("_tests.rs")
+                && !name.ends_with("_test.rs")
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// **The capture drives the deserializer by hand, and a
+    /// hand-driven `serde_json::Deserializer` does not check that the
+    /// document ended.** `serde_json::from_str` calls `end()` for you;
+    /// `unknown_keys::deserialize_capturing` has to call it itself,
+    /// and without that one line a `.mindmap.json` with a second
+    /// document glued onto the back of it loads clean — `maptool
+    /// verify` says `valid` and exits 0 where `main` exits 1. Nothing
+    /// in the suite noticed the line was load-bearing until this.
+    #[test]
+    fn test_trailing_content_after_the_document_is_rejected() {
+        let source = map_json_with_nodes(&node_json("0", "null"));
+        let doubled = format!("{source}\n{{\"and\": \"another document\"}}\n");
+        let error =
+            load_from_str(&doubled).expect_err("a file with a second document after the map must not load");
+        assert!(
+            error.contains("trailing characters"),
+            "the reader has to be told what is wrong with the file, got: {error}"
+        );
+    }
+
+    /// A whole map with one node, built so that every slot a
+    /// [`unknown_key_shapes`] case needs is a parameter rather than a
+    /// string edit.
+    fn shape_map(canvas_extra: &str, node_json: &str, edges_json: &str, tail: &str) -> String {
+        format!(
+            r##"{{
+                "version": "1.0",
+                "name": "unknown-key-shapes",
+                "canvas": {{"background_color": "#000"{canvas_extra}}},
+                "nodes": {{{node_json}}},
+                "edges": [{edges_json}]{tail}
+            }}"##
+        )
+    }
+
+    /// A node whose `sections` array is spelled out, so a case can put
+    /// an unrecognized key inside a section rather than only on the
+    /// node.
+    fn node_with_sections(sections_json: &str) -> String {
+        format!(
+            r##""0": {{
+                "id": "0", "parent_id": null,
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{sections_json}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": ""
+            }}"##
+        )
+    }
+
+    /// One `custom_mutations` entry around whatever payload the case
+    /// is about.
+    fn custom_mutation_tail(body: &str) -> String {
+        format!(
+            r##", "custom_mutations": [
+                {{"id": "m", "name": "m", "target_scope": "SelfOnly"{body}}}
+            ]"##
+        )
+    }
+
+    /// **Every place an unrecognized key can sit, and the reason each
+    /// one is here.**
+    ///
+    /// The shapes are not a sample. Each row is a distinct way the
+    /// route from the document root to a captured key can fail to
+    /// survive serialization, and the table exists because the first
+    /// implementation of this mechanism survived a fixture round trip
+    /// while losing keys in four of these positions:
+    ///
+    /// - a container the saver omits because it holds its own default
+    ///   (`sections[0].offset`) — the route simply is not there any
+    ///   more, on a save with **no edit at all**;
+    /// - an externally tagged enum, whose variant level serde's
+    ///   ignored-key path does not report;
+    /// - the same, where the payload carries a key spelled like the
+    ///   variant, which a member-count guess resolves backwards;
+    /// - a key below a `#[serde(from = "…")]` proxy, where what the
+    ///   load reads (`mutations`) is not what the save writes
+    ///   (`mutator`).
+    ///
+    /// The rest pin the ordinary positions so a fix for the four
+    /// cannot quietly cost one of them.
+    fn unknown_key_shapes() -> Vec<(&'static str, String)> {
+        let plain_node = node_json("0", "null");
+        vec![
+            (
+                "a key at the top level",
+                shape_map("", &plain_node, "", r#", "authors": ["ada"]"#),
+            ),
+            (
+                "a key on the canvas",
+                shape_map(r#", "grid_snap": 8"#, &plain_node, "", ""),
+            ),
+            (
+                "a key on a node",
+                shape_map("", &node_json_with("0", "null", r#", "hologram": true"#), "", ""),
+            ),
+            (
+                "a key inside a node's style",
+                shape_map(
+                    "",
+                    &node_json("0", "null")
+                        .replace(r#""show_shadow":false"#, r#""show_shadow":false,"glow":3"#),
+                    "",
+                    "",
+                ),
+            ),
+            (
+                "a key on a section",
+                shape_map(
+                    "",
+                    &node_with_sections(r#"{"text": "n", "txet": "typo"}"#),
+                    "",
+                    "",
+                ),
+            ),
+            (
+                "a key inside a section offset that holds its default",
+                shape_map(
+                    "",
+                    &node_with_sections(r#"{"text": "n", "offset": {"x": 0.0, "y": 0.0, "grid_hint": 7}}"#),
+                    "",
+                    "",
+                ),
+            ),
+            (
+                "a key inside a section's text run",
+                shape_map(
+                    "",
+                    &node_with_sections(
+                        r##"{"text": "n", "text_runs": [{"start":0,"end":1,"bold":false,
+                            "italic":false,"underline":false,"font":"","size_pt":12,
+                            "color":"#fff","hyperlink":null,"tracking":2}]}"##,
+                    ),
+                    "",
+                    "",
+                ),
+            ),
+            (
+                "a key on an edge",
+                shape_map(
+                    "",
+                    &plain_node,
+                    &edge_json_with(r#", "authored_note": "keep me""#)
+                        .replace(r#""to_id": "b""#, r#""to_id": "0""#)
+                        .replace(r#""from_id": "a""#, r#""from_id": "0""#),
+                    "",
+                ),
+            ),
+            (
+                "a key on a palette",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    r#", "palettes": {"coral": {"groups": [], "hue": 12}}"#,
+                ),
+            ),
+            (
+                "a key on a custom mutation",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(r#", "flavor": "sour""#),
+                ),
+            ),
+            (
+                "a key inside an externally tagged variant payload",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(r#", "mutator": {"Void": {"channel": 0, "surprise": 7}}"#),
+                ),
+            ),
+            (
+                "a key inside a variant payload spelled like the variant",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(r#", "mutator": {"Void": {"channel": 0, "Void": 99}}"#),
+                ),
+            ),
+            (
+                "a key below a serde `from` proxy, in the legacy mutation list",
+                shape_map(
+                    "",
+                    &plain_node,
+                    "",
+                    &custom_mutation_tail(
+                        r#", "mutations": [{"AreaDelta": {"fields": {}, "legacy_note": 1}}]"#,
+                    ),
+                ),
+            ),
+        ]
+    }
+
+    /// **The scenario #115 was opened for.** A map authored by a newer
+    /// build names a mutator variant this one has never heard of. It
+    /// used to take the whole document down — an empty window, and the
+    /// newer feature one accidental save away from gone. Now the map
+    /// opens, the construct is named in a warning that says it will not
+    /// run, and the bytes are still there.
+    #[test]
+    fn test_a_map_with_an_unknown_variant_loads_around_it() {
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &custom_mutation_tail(r#", "mutator": {"zzWarnGlow": {"channel": 0, "intensity": 3}}"#),
+        );
+        crate::util::test_logger::install();
+        let map = load_from_str(&json).expect("the rest of the map must still load");
+
+        assert_eq!(map.nodes.len(), 1, "the document around it is untouched");
+        assert_eq!(map.nodes["0"].sections[0].text, "n");
+        assert!(
+            map.custom_mutations.is_empty(),
+            "a construct this build cannot carry out must not appear in the model"
+        );
+        assert_eq!(map.skipped_constructs.len(), 1);
+
+        let reported = crate::util::test_logger::lines_containing("zzWarnGlow");
+        assert_eq!(reported.len(), 1, "expected one warning, got {reported:?}");
+        let line = &reported[0];
+        assert!(line.contains("custom_mutations[0]"), "{line}");
+        assert!(
+            line.contains("nothing it describes will run"),
+            "the consequence is the part the reader needs: {line}"
+        );
+    }
+
+    /// The construct comes back out of a save byte-for-byte, including
+    /// when the model has **no** custom mutations left to write —
+    /// `custom_mutations` carries `skip_serializing_if =
+    /// "Vec::is_empty"`, so the list the construct belongs in is not
+    /// even in the saved document until the splice puts it back. That
+    /// is the acute case of the whole feature: a map whose single
+    /// custom mutation is the one from the future.
+    #[test]
+    fn test_a_skipped_construct_survives_a_save_that_writes_no_others() {
+        let authored = r#"{"id": "glow-it", "name": "Glow it", "target_scope": "SelfOnly",
+             "mutator": {"zzSaveGlow": {"channel": 0, "intensity": 3}}}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(r#", "custom_mutations": [{authored}]"#),
+        );
+        let map = load_from_str(&json).expect("loads around the construct");
+        let saved = to_json_value(&map).expect("serializes");
+
+        assert_eq!(
+            saved["custom_mutations"],
+            serde_json::from_str::<serde_json::Value>(&format!("[{authored}]")).expect("valid"),
+            "the construct has to come back exactly as it was authored"
+        );
+        let reloaded = load_from_str(&serde_json::to_string(&saved).expect("render"))
+            .expect("the saved document still loads");
+        assert_eq!(reloaded.skipped_constructs.len(), 1, "and still carries it");
+    }
+
+    /// A skipped construct goes back at the index it was authored at,
+    /// between the entries the model does write, rather than at
+    /// whatever position the shortened list left behind.
+    #[test]
+    fn test_a_skipped_construct_goes_back_where_it_was_authored() {
+        let readable = |id: &str| format!(r#"{{"id": "{id}", "name": "{id}", "target_scope": "SelfOnly"}}"#);
+        let unreadable =
+            r#"{"id": "mid", "name": "mid", "target_scope": "SelfOnly", "mutator": {"zzOrderGlow": {}}}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(
+                r#", "custom_mutations": [{}, {unreadable}, {}]"#,
+                readable("first"),
+                readable("last")
+            ),
+        );
+        let map = load_from_str(&json).expect("loads around the construct");
+        assert_eq!(map.custom_mutations.len(), 2);
+
+        let saved = to_json_value(&map).expect("serializes");
+        let ids: Vec<&str> = saved["custom_mutations"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|entry| entry["id"].as_str().expect("id"))
+            .collect();
+        assert_eq!(ids, ["first", "mid", "last"]);
+    }
+
+    /// **Where the splice order stops being defensive and decides the
+    /// outcome.**
+    ///
+    /// `to_json_value` writes captured keys before skipped constructs
+    /// because a key's positional route counts the array *after* the
+    /// constructs were lifted out. For almost every map that ordering
+    /// is belt-and-braces: the element fingerprints
+    /// [`UnknownKeys::splice_into`](crate::mindmap::unknown_keys::UnknownKeys::splice_into)
+    /// carries re-find the element whichever length the array is, so
+    /// swapping the two lines changes nothing observable. That was a
+    /// surviving mutant, and the comment on those two lines used to
+    /// claim a guarantee the ordering was not the thing providing.
+    ///
+    /// This is the shape where it *is* the thing providing it. Two
+    /// custom mutations serialize identically — same id, same name,
+    /// same scope — so the fingerprint of the one that carried the key
+    /// matches in two places and a search cannot say which. With the
+    /// array at the length the route was recorded against, no search is
+    /// needed: the recorded index matches exactly. Re-insert the
+    /// skipped construct first and the index names the construct, the
+    /// fingerprint matches twice, the lengths no longer agree, and the
+    /// key is dropped with a warning instead of written.
+    ///
+    /// Duplicate entries are not hypothetical hygiene: nothing in the
+    /// loader or in `format/validation.md` makes a `custom_mutations`
+    /// id unique, and a map assembled by concatenating two files has
+    /// them by construction.
+    #[test]
+    fn test_the_splice_order_decides_when_two_elements_are_alike() {
+        // Two entries this build reads and cannot tell apart, and one
+        // it cannot read at all sitting in front of them.
+        let twin = r#"{"id": "dup", "name": "dup", "target_scope": "SelfOnly"}"#;
+        let unreadable = r#"{"id": "future", "name": "future", "target_scope": "SelfOnly",
+             "mutator": {"zzTieGlow": {"channel": 0}}}"#;
+        let carrying = r#"{"id": "dup", "name": "dup", "target_scope": "SelfOnly",
+             "zzambiguous_note": 1}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}, {carrying}, {twin}]"#),
+        );
+
+        let map = load_from_str(&json).expect("the map loads around the unreadable entry");
+        assert_eq!(map.custom_mutations.len(), 2, "the two twins survive the load");
+        assert_eq!(map.skipped_constructs.len(), 1);
+        assert_eq!(map.unknown_keys.len(), 1);
+
+        // **The premise, checked rather than assumed.** The whole test
+        // rests on this build being unable to tell the two entries
+        // apart. A field added to the written shape that happens to
+        // differ between them would make the fingerprint search
+        // succeed, the ordering stop mattering, and this test go on
+        // passing while proving nothing.
+        let written = serde_json::to_value(&map).expect("the model serializes");
+        let written = written["custom_mutations"].as_array().expect("an array");
+        assert_eq!(
+            written[0], written[1],
+            "the two entries have to be indistinguishable on the wire for this to be \
+             testing the splice order at all"
+        );
+
+        let saved = to_json_value(&map).expect("serializes");
+        let entries = saved["custom_mutations"].as_array().expect("an array");
+        assert_eq!(entries.len(), 3, "everything authored comes back: {saved}");
+
+        // The construct returns to the index it was authored at …
+        assert!(
+            entries[0]["mutator"].get("zzTieGlow").is_some(),
+            "the skipped construct belongs at index 0: {}",
+            entries[0]
+        );
+        // … and the key returns to the twin that carried it, not to
+        // its indistinguishable neighbor and not to nowhere.
+        assert_eq!(
+            entries[1]["zzambiguous_note"],
+            serde_json::json!(1),
+            "the preserved key belongs on the first twin: {saved}"
+        );
+        assert_eq!(
+            entries[2].get("zzambiguous_note"),
+            None,
+            "and on no other element: {saved}"
+        );
+    }
+
+    /// **The order a reader is told things in is behavior too.** A
+    /// map whose nodes each carry a construct from the future
+    /// produces one `warn!` per construct, and which order they come
+    /// out in is decided by the order
+    /// `excise_unreadable_constructs` walks `nodes`. Two nodes
+    /// authored high-id-first must still be reported low-id-first, or
+    /// the same file read twice tells the user two different stories.
+    ///
+    /// The mechanism is that `serde_json::Map` is a `BTreeMap` here,
+    /// so `keys()` is already sorted; an explicit `sort()` used to
+    /// restate that and was indistinguishable from its own absence.
+    /// This pins the property rather than the restatement, so it goes
+    /// red exactly when the mechanism stops holding — which is when
+    /// something in the dependency graph unions serde_json's
+    /// `preserve_order` feature in and object iteration becomes
+    /// document order. The fix then is to sort explicitly again.
+    #[test]
+    fn test_skip_warnings_come_out_in_node_id_order() {
+        crate::util::test_logger::install();
+        let binding = |variant: &str| {
+            format!(r#", "trigger_bindings": [{{"trigger": "{variant}", "mutation_id": "m"}}]"#)
+        };
+        // Authored high id first, so document order and id order
+        // disagree and only one of them can be what comes out.
+        let json = map_json_with_nodes(&format!(
+            "{}, {}",
+            node_json_with("2", "null", &binding("zzOrderProbeHigh")),
+            node_json_with("1", "null", &binding("zzOrderProbeLow")),
+        ));
+
+        let map = load_from_str(&json).expect("the map loads around both constructs");
+        assert_eq!(map.skipped_constructs.len(), 2);
+
+        let reported = crate::util::test_logger::lines_containing("zzOrderProbe");
+        assert_eq!(reported.len(), 2, "expected both warnings, got {reported:?}");
+        assert!(
+            reported[0].contains("node \"1\""),
+            "node \"1\" must be reported before node \"2\" even though the file authors \
+             \"2\" first — if this went red, serde_json's `preserve_order` feature is on \
+             somewhere in the graph and `excise_unreadable_constructs` has to sort the \
+             node ids itself again:\n  {reported:?}"
+        );
+        assert!(reported[1].contains("node \"2\""), "{reported:?}");
+    }
+
+    /// **The second shape the splice order decides, and the one the
+    /// twins test misses.** Its sibling above needs two
+    /// indistinguishable elements; this one needs no duplicates at
+    /// all, only an ordinary **edit** to the element the key hangs
+    /// off while a skipped construct shares its array.
+    ///
+    /// After the edit the element's load-time fingerprint matches
+    /// nowhere, so `resolve_index`'s first two rungs — exact position,
+    /// then unique match — both come up empty. The one left is "every
+    /// *other* element is unchanged and the array is still the length
+    /// the route was recorded against", and the route was recorded
+    /// against the array with the construct lifted out. Splice the
+    /// construct back first and the array is one longer than that, the
+    /// last rung fails on the length alone, and the key is dropped
+    /// with a warning — from nothing more unusual than renaming a
+    /// custom mutation in a map that also carries one from the future.
+    #[test]
+    fn test_the_splice_order_survives_an_edit_beside_a_skipped_construct() {
+        let unreadable = r#"{"id": "future", "name": "future", "target_scope": "SelfOnly",
+             "mutator": {"zzEditGlow": {"channel": 0}}}"#;
+        let carrying = r#"{"id": "keep", "name": "as authored", "target_scope": "SelfOnly",
+             "zzedited_note": 1}"#;
+        let json = shape_map(
+            "",
+            &node_json("0", "null"),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}, {carrying}]"#),
+        );
+
+        let mut map = load_from_str(&json).expect("the map loads around the unreadable entry");
+        assert_eq!(map.custom_mutations.len(), 1, "one readable entry survives");
+        assert_eq!(map.skipped_constructs.len(), 1);
+        assert_eq!(map.unknown_keys.len(), 1);
+
+        // The edit. **The premise, checked rather than assumed:** the
+        // element the key hangs off has to actually change on the
+        // wire, or its load-time fingerprint still matches and the
+        // last rung is never the one deciding.
+        let before = serde_json::to_value(&map).expect("the model serializes");
+        map.custom_mutations[0].name = "renamed by the user".to_string();
+        let after = serde_json::to_value(&map).expect("the model serializes");
+        assert_ne!(
+            before["custom_mutations"][0], after["custom_mutations"][0],
+            "the edit has to be visible on the wire for this to test the splice order"
+        );
+
+        let saved = to_json_value(&map).expect("serializes");
+        let entries = saved["custom_mutations"].as_array().expect("an array");
+        assert_eq!(entries.len(), 2, "everything authored comes back: {saved}");
+        assert!(
+            entries[0]["mutator"].get("zzEditGlow").is_some(),
+            "the skipped construct belongs at index 0: {}",
+            entries[0]
+        );
+        assert_eq!(
+            entries[1]["zzedited_note"],
+            serde_json::json!(1),
+            "an edit to the element must not cost the key it carried: {saved}"
+        );
+        assert_eq!(
+            entries[1]["name"],
+            serde_json::json!("renamed by the user"),
+            "and the edit itself has to be what was saved: {saved}"
+        );
+    }
+
+    /// A trigger binding is the other unit — on a node and on a
+    /// section, both of which a newer build can attach a trigger kind
+    /// to.
+    #[test]
+    fn test_an_unknown_trigger_variant_costs_only_its_binding() {
+        let node = node_with_sections(
+            r#"{"text": "n", "trigger_bindings": [{"trigger": "zzOnGaze", "mutation_id": "m"}]}"#,
+        )
+        .replace(
+            r#""folded": false"#,
+            r#""trigger_bindings": [{"trigger": "OnClick", "mutation_id": "keep"}], "folded": false"#,
+        );
+        let json = shape_map("", &node, "", "");
+        let map = load_from_str(&json).expect("the node must still load");
+
+        assert_eq!(map.nodes["0"].sections.len(), 1, "the section is still there");
+        assert!(map.nodes["0"].sections[0].trigger_bindings.is_empty());
+        assert_eq!(
+            map.nodes["0"].trigger_bindings.len(),
+            1,
+            "a binding this build *can* read is untouched"
+        );
+        assert_eq!(map.skipped_constructs.len(), 1);
+
+        let saved = to_json_value(&map).expect("serializes");
+        assert_eq!(
+            saved["nodes"]["0"]["sections"][0]["trigger_bindings"][0]["trigger"],
+            serde_json::json!("zzOnGaze")
+        );
+    }
+
+    /// **Skipping is for constructs, not for the map.** A node this
+    /// build cannot read is not a thing the reader can be shown
+    /// "around" — the map they get would be missing part of itself
+    /// with no sign of which part. So the load still refuses, with the
+    /// message it always had.
+    #[test]
+    fn test_an_unreadable_node_still_fails_the_whole_load() {
+        let json = shape_map(
+            "",
+            &node_json("0", "null").replace(r#""folded": false"#, r#""folded": "yes-please""#),
+            "",
+            "",
+        );
+        let error = load_from_str(&json).expect_err("an unreadable node must not be skipped");
+        assert!(error.contains("node \"0\""), "got: {error}");
+    }
+
+    /// **Every enum a load can meet has to sit inside something the
+    /// loader can skip**, or a variant from the future in it is still
+    /// a dead document. The two skippable units are hand-named in
+    /// `excise_unreadable_constructs`, which is exactly the twin
+    /// surface §B4 warns about — so the source walk checks the claim
+    /// rather than the comment asserting it.
+    ///
+    /// **"Only reachable through a skippable construct", not "also
+    /// reachable from one."** The distinction is the whole strength
+    /// of the check. An enum used *both* inside a custom mutation and
+    /// directly on a node passes the weaker test — it is reachable
+    /// from `CustomMutation`, after all — and a variant a newer build
+    /// adds to it still kills the document when it turns up at the
+    /// node. The skippable use is not what makes the unskippable one
+    /// safe. So the walk cuts the skippable roots out of the graph
+    /// and asks what enums are still reachable, which is a question
+    /// the double use cannot satisfy.
+    ///
+    /// It costs nothing today — the model deliberately spells the
+    /// unskippable open vocabularies (`shape`, `line_style`,
+    /// `edge_type`) as `String` with a documented fallback, so the
+    /// unskippable closure holds no variant-bearing Deserialize enum
+    /// at all. That is the property being pinned, and it is only
+    /// worth pinning in the form that would notice it breaking.
+    #[test]
+    fn test_every_variant_bearing_enum_sits_inside_a_skippable_construct() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
+
+        // The units `excise_unreadable_constructs` lifts out, plus
+        // the proxy that carries `CustomMutation`'s on-disk shape.
+        const SKIPPABLE: &[&str] = &["CustomMutation", "CustomMutationIn", "TriggerBinding"];
+
+        let graph = TypeGraph::build(&crate_src_root());
+        let unskippable = graph.reachable_from_excluding("MindMap", SKIPPABLE);
+        let stranded: Vec<&str> = unskippable
+            .iter()
+            .filter(|info| {
+                info.kind == TypeKind::Enum && info.derives_deserialize && !info.variants.is_empty()
+            })
+            .map(|info| info.name.as_str())
+            .collect();
+        assert!(
+            stranded.is_empty(),
+            "these enums are reachable from a `.mindmap.json` load along a path that \
+             passes through no construct the loader can skip, so a variant a newer build \
+             adds to one of them still makes the whole document unloadable. Being \
+             reachable from a custom mutation as well does not help — the unskippable \
+             use is the one that decides. Either widen the skippable set in \
+             `excise_unreadable_constructs` — and say why the new unit's absence is \
+             visible rather than a silent partial behavior — or spell the field as a \
+             `String` with a documented fallback the way the open vocabularies are: \
+             {stranded:?}"
+        );
+
+        // An exclusion that excluded everything would pass this just
+        // as loudly, so the walk has to prove it still reached the
+        // unskippable part of the model *and* that cutting the
+        // skippable roots out removed something.
+        assert!(
+            unskippable.iter().any(|info| info.name == "MindNode"),
+            "cutting the skippable roots must not cut the model out from under the check"
+        );
+        assert!(
+            !unskippable.iter().any(|info| info.name == "MutationBehavior"),
+            "a type only reachable through a skippable construct must be excluded, or \
+             the check has stopped distinguishing the two paths"
+        );
+    }
+
+    /// **A load followed by a save, with nothing touched in between,
+    /// must not lose a single authored key — in any of the places one
+    /// can sit.**
+    ///
+    /// That is issue #115's acceptance criterion, and it is the one
+    /// the first implementation of the capture failed: a key nested
+    /// inside a container the saver omits (a section `offset` holding
+    /// its own default) was warned about as "kept as written and saved
+    /// back unchanged" and then dropped by the very next save, with no
+    /// user action of any kind.
+    ///
+    /// Table-driven rather than one case per position on purpose. The
+    /// positions are a *set* — the property is "everywhere", and a
+    /// hand-picked case is exactly how four of them went unnoticed.
+    #[test]
+    fn test_a_zero_edit_round_trip_keeps_every_authored_key() {
+        let mut failures: Vec<String> = Vec::new();
+        for (what, source) in unknown_key_shapes() {
+            let map = match load_from_str(&source) {
+                Ok(map) => map,
+                Err(e) => {
+                    failures.push(format!("{what}: the fixture does not even load: {e}"));
+                    continue;
+                }
+            };
+            assert!(
+                !map.unknown_keys.is_empty(),
+                "{what}: the fixture is supposed to carry an unrecognized key, \
+                 and the loader found none — the shape stopped testing anything"
+            );
+            let saved = to_json_value(&map).expect("serializing a loaded map");
+            let before = key_path_set(&source);
+            let after = key_path_set(&serde_json::to_string(&saved).expect("render"));
+            let lost: Vec<&String> = before.difference(&after).collect();
+            if !lost.is_empty() {
+                failures.push(format!("{what}: lost {lost:?}"));
+            }
+            // A preserved key is worth nothing if the file it lands in
+            // no longer loads.
+            if let Err(e) = load_from_str(&serde_json::to_string(&saved).expect("render")) {
+                failures.push(format!("{what}: the saved document no longer loads: {e}"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "a load → save with no edit lost authored keys:\n  {}",
+            failures.join("\n  ")
+        );
     }
 
     /// **The hand-modeled half of the round trip, held to the

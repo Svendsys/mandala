@@ -128,6 +128,8 @@ mod tests {
             edges: Vec::new(),
             custom_mutations: Vec::new(),
             macros: Vec::new(),
+            unknown_keys: Default::default(),
+            skipped_constructs: Default::default(),
         }
     }
 

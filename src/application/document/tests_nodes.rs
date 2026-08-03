@@ -1803,6 +1803,8 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
         edges: vec![],
         custom_mutations: vec![],
         macros: vec![],
+        unknown_keys: Default::default(),
+        skipped_constructs: Default::default(),
     };
     // Round-trip through JSON to exercise the finalize hook
     // — `MindMapDocument::from_json_str` calls `finalize`,

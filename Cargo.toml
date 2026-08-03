@@ -66,6 +66,18 @@ indextree = { version = "4.8.1", features = ["serde"] }
 # above was read in, so a bump has to re-verify the citation rather
 # than inherit it.
 log = { version = "0.4.29", features = ["release_max_level_warn"] }
+# Two members name it, so it lives here: `mandala_derive` writes a
+# proc macro with it, and baumhard's dev-dependency asks for
+# `span-locations` on top (see `lib/baumhard/Cargo.toml`).
+#
+# Featureless here for the same reason `syn` is. `span-locations`
+# makes proc-macro2 record a line and column for every token it
+# parses, which is not free — and under resolver 2 the ask lands on
+# the *target*-graph node baumhard's tests compile against, not the
+# proc-macro-graph node every derive in the workspace goes through.
+# Putting the feature in this table would move that cost onto every
+# derive macro expansion for the benefit of one test-only reader.
+proc-macro2 = "1.0.106"
 rustc-hash = "2.1.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

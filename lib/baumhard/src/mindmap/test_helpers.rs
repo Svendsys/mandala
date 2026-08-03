@@ -122,6 +122,8 @@ pub(crate) fn synthetic_map(nodes_vec: Vec<MindNode>, edges: Vec<MindEdge>) -> M
         edges,
         custom_mutations: vec![],
         macros: vec![],
+        unknown_keys: Default::default(),
+        skipped_constructs: Default::default(),
     }
 }
 

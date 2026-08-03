@@ -18,9 +18,11 @@ An earlier revision stored portals in a separate top-level
 `edges[]` array — portals are now edges with
 `display_mode = "portal"`. The current loader refuses to read a
 file that still carries a `portals` key at all — an empty array is
-still a key the format has no field for, and one that would
-disappear from the file at the next save (see
-[schema.md](./schema.md#unknown-keys-are-rejected)). Migrate with:
+still the old spelling, and the loader would otherwise keep it
+forever as a key nothing acts on. This is the deliberate exception to
+[keeping unknown keys](./schema.md#unknown-keys-are-kept): a key from
+the *past* that the current model means something else by is not a
+key from the future, and it has a one-command answer. Migrate with:
 
 ```
 maptool convert --portals <input.json> <output.json>
@@ -104,8 +106,8 @@ survived. A `portals` key that is not an array at all is dropped the
 same way, with the same kind of warning. (The loader rejects the
 `portals` **key**, whatever its shape — an empty array and a string
 are as unreadable to the current format as a populated one, and
-leaving either in place would only mean losing it silently at the
-next save.)
+keeping either would only mean carrying a dead spelling through every
+future save.)
 
 Both blocks above are read straight out of this file by
 `convert::portals::tests::test_documented_fold_matches_converter_output`,
@@ -267,6 +269,14 @@ them. The format drift is too large to patch over with `#[serde(alias)]`
 and backward-compat struct fields — that approach bakes the legacy format
 into the runtime indefinitely. A dedicated migration tool keeps the
 runtime clean: it only ever reads the current format.
+
+That is not in tension with the loader keeping keys it does not
+recognize. The two rules answer different questions. An unrecognized
+key means *this build is older than the file* — there is nothing to
+migrate and nothing to decide, so the key rides along untouched. A
+legacy key means *the file is older than the format* — the name is
+taken, the migration exists, and preserving it would only carry a
+contradiction forward.
 
 The conversion is idempotent-safe for files that already look current
 (already-Dewey IDs survive unchanged, already-string enums pass through,

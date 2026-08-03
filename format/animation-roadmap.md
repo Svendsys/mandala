@@ -53,8 +53,9 @@ authors don't accidentally write maps that depend on them.
   natural seat for a perpetual border animation. **But** the
   field is `#[serde(skip)]` and the dispatcher in
   `tick_animations` only handles the no-followup case. The
-  test suite explicitly pins `test_followup_is_never_deserialized`
-  so a future deserializer change is forced through review.
+  test suite explicitly pins
+  `test_an_authored_followup_reaches_no_field` so a future
+  deserializer change is forced through review.
 - **`core/animation.rs::Timeline` / `TimelineEvent` skeleton.**
   A generic `Timeline = Vec<TimelineEvent>` machine with
   `Terminate`, `Goto`, `WaitMillis`, `Mutator(u16)`, and
