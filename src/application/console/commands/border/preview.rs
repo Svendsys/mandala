@@ -192,6 +192,14 @@ pub(crate) fn cancel_border_preview_verb(
 /// message; bare `preset=custom` (no glyph fields) gets the same
 /// hint the committing path emits.
 fn finish_preview(outcome: BorderEditOutcome, verb_label: &'static str, bare_custom: bool) -> ExecResult {
+    // A refused glyph is an error, not an active preview. The setter
+    // declined it because the loader would reject the saved file, and
+    // reporting "active" here would stage a border the commit cannot
+    // keep — the same shape as the committing verbs' refusal, which is
+    // where this wording comes from.
+    if !outcome.rejected.is_empty() {
+        return ExecResult::Err(format!("{}: {}", verb_label, outcome.rejected.join("; ")));
+    }
     let mut lines: Vec<String> = vec![format!(
         "{} active (commit / cancel to terminate)",
         verb_label

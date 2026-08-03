@@ -590,6 +590,14 @@ impl MindMapDocument {
         target: BorderPreviewTarget,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
+        // Refused before the preview is recorded at all. A preview the
+        // commit will decline is worse than a plain refusal: the scene
+        // renders the over-ceiling glyph, so the user is shown a border
+        // they cannot keep and finds out at commit — or, before
+        // `merge_outcome` carried the refusal, did not find out.
+        if let Some(refusal) = refuse_border_glyph_edits(&edits) {
+            return refusal;
+        }
         // Drop any orphan-by-drift preview before recording a new
         // one. Defer-clear posture: the scene-build path treats a
         // drifted preview as inactive; the actual slot empties
@@ -803,13 +811,26 @@ impl MindMapDocument {
 /// `changed` aggregates with OR; the first auto-promotion's
 /// `requested_preset` wins (same posture as
 /// `border/execute.rs::apply_edits`'s tally).
-fn merge_outcome(merged: &mut BorderEditOutcome, one: BorderEditOutcome) {
+pub(in crate::application::document) fn merge_outcome(
+    merged: &mut BorderEditOutcome,
+    one: BorderEditOutcome,
+) {
     if one.changed {
         merged.changed = true;
     }
     if one.preset_auto_promoted && !merged.preset_auto_promoted {
         merged.preset_auto_promoted = true;
         merged.requested_preset = one.requested_preset;
+    }
+    // Carried, not dropped. This fold is the whole of what
+    // `commit_border_preview` returns, so a `rejected` left behind here
+    // is a refusal the verb never hears about — and a preview commit
+    // that reports success for a border the model does not have is the
+    // same lie as the lockout this branch exists to remove, one step
+    // removed. First target to refuse wins; every target received the
+    // same edit struct, so the reasons are the same.
+    if merged.rejected.is_empty() {
+        merged.rejected = one.rejected;
     }
 }
 

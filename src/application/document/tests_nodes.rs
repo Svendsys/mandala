@@ -3864,6 +3864,63 @@ fn test_extreme_editor_writes_still_reload() {
     );
 }
 
+/// **A refused glyph must not commit as a success.**
+///
+/// The four `… preview` verbs stage edits and commit them through the
+/// same four setters the direct verbs use, so the *write* has been
+/// refused since the screen moved to the chokepoint. The **report**
+/// was not: `merge_outcome` folded `changed`, `preset_auto_promoted`
+/// and `requested_preset` across the committed targets and dropped
+/// `rejected` on the floor, so `commit_border_preview` handed back an
+/// outcome that said nothing was refused. The verb then printed
+/// success — or, worse, "no change", which is true of the model and
+/// says nothing about why.
+///
+/// The user-visible consequence is the one this whole branch is about,
+/// one step removed: the editor tells you your border was applied, the
+/// map on disk does not have it, and nothing said so.
+#[test]
+fn test_a_preview_commit_reports_a_refused_glyph_instead_of_success() {
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
+
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
+
+    let edits = BorderConfigEdits {
+        side_top: OptionEdit::Set(over.clone()),
+        ..Default::default()
+    };
+    let staged = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    assert!(
+        !staged.rejected.is_empty(),
+        "the preview itself must refuse — staging a glyph the commit will decline invites          the user to look at a border they cannot keep"
+    );
+    assert!(
+        doc.border_preview.is_none(),
+        "a refused preview must not be recorded, or the scene renders the over-ceiling glyph"
+    );
+
+    // And the commit path, reached by staging a legal preview and then
+    // committing an illegal edit through the same fold.
+    let mut doc = load_test_doc();
+    doc.selection = SelectionState::Single(nid.clone());
+    let outcome = doc.set_node_border_config(
+        &nid,
+        BorderConfigEdits {
+            side_top: OptionEdit::Set(over),
+            ..Default::default()
+        },
+    );
+    let mut merged = crate::application::document::BorderEditOutcome::default();
+    crate::application::document::nodes::merge_outcome(&mut merged, outcome);
+    assert!(
+        !merged.rejected.is_empty(),
+        "merge_outcome must carry the refusal — dropping it is what let a refused commit          report success"
+    );
+}
+
 /// **The backstop screen, observed directly.**
 ///
 /// `apply_glyph_border_edits_to_slot` is where the eight glyph fields
@@ -4069,6 +4126,14 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
             "no editor writer — animation timings are authored in the file only",
         ),
         (
+            "MAX_UNKNOWN_KEYS",
+            &[],
+            "no editor writer — the count of keys this build has no field for is a property \
+             of the document it read, not a value any setter writes. It is a resource \
+             ceiling rather than a domain bound: past it the load is refused, because \
+             capturing each key costs memory and MAX_MAP_BYTES does not bound the count",
+        ),
+        (
             "MAX_SECTIONS_PER_NODE",
             &["add_section"],
             "add_section refuses past the cap",
@@ -4101,6 +4166,14 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
     const REJECTION_PATHS: &[&str] = &[
         "lib/baumhard/src/mindmap/model/validate.rs",
         "lib/baumhard/src/mindmap/loader.rs",
+        // `MAX_UNKNOWN_KEYS` refuses a load and was invisible to this
+        // registry for two commits, because `loader.rs` calls
+        // `unknown_key_count_violation` and never names the constant.
+        // That is the "a rejection path outside those files" limitation
+        // in the docstring, met in practice within a day of it being
+        // written down — which is the argument for reading this list as
+        // a known-incomplete enumeration rather than a definition.
+        "lib/baumhard/src/mindmap/unknown_keys.rs",
     ];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -4315,7 +4388,7 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
         }
     }
     assert!(
-        bounds.len() >= 12,
+        bounds.len() >= 13,
         "the rejection path consults only {} of baumhard's constants — that is fewer than \
          the bounds this registry already knows about, so the scan is what broke:\n  {:?}",
         bounds.len(),
@@ -4376,10 +4449,19 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
     }
     for (constant, guards, prose) in registry {
         for guard in *guards {
+            // `fn {guard}(` rather than `fn {guard}`: the bare form is
+            // satisfied by this registry's own prose, by a doc comment
+            // naming the function, and by a `#[test] fn` — all three
+            // were demonstrated against it. The paren requires a
+            // declaration or a call. What it still cannot tell is
+            // *shipped* code from a test module; `util::source_scan`
+            // answers that, and is `#[cfg(test)]` inside baumhard, so
+            // it is not reachable from here.
+            let declared = workspace_src.contains(&format!("fn {guard}("));
             assert!(
-                workspace_src.contains(&format!("fn {guard}")),
+                declared,
                 "the row for `{constant}` names `{guard}` as its writer-side guard, and no \
-                 `fn {guard}` exists in the workspace. A renamed or deleted guard must fail \
+                 `fn {guard}(` exists in the workspace. A renamed or deleted guard must fail \
                  here rather than leave the row quietly describing nothing."
             );
         }

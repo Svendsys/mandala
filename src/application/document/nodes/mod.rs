@@ -30,6 +30,7 @@ pub use border::{BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderPrev
 // it against `apply_view_to_slot`.
 #[cfg(test)]
 pub(in crate::application) use border::apply_glyph_border_edits_to_slot;
+pub(in crate::application::document) use border::merge_outcome;
 pub use option_edit::OptionEdit;
 pub(in crate::application::document) use section_text::clamp_runs_to_text;
 
