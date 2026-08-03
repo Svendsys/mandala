@@ -1686,15 +1686,6 @@ mod tests {
         );
     }
 
-    /// The `cfg` reader has the same list-form blind spot, and it was
-    /// live: this crate gates its native-only test modules with
-    /// `#[cfg(all(test, not(target_arch = "wasm32")))]`, and reading
-    /// only the bare `test` ident classified every one of them as
-    /// production source. Nothing collided yet — the modules declare
-    /// no types today — which is exactly why the claim
-    /// `test_type_graph_excludes_test_sources` makes is pinned here
-    /// against the reader rather than against the current sources.
-
     /// **The third way to be wrong: a construct the walk never looked
     /// at.** Two fail-safes already existed — `unresolved_from` +
     /// [`EXPECTED_TERMINATORS`] for a *name* that would not resolve,
@@ -1782,7 +1773,10 @@ mod tests {
              #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
         );
         let info = graph.get("Root").expect("indexed");
-        assert!(!info.derives_deserialize, "the premise: the derive is unrecognizable");
+        assert!(
+            !info.derives_deserialize,
+            "the premise: the derive is unrecognizable"
+        );
         assert!(
             info.has_serde_container_attr,
             "but the serde attribute is right there"
@@ -1836,6 +1830,14 @@ mod tests {
         }
     }
 
+    /// The `cfg` reader has the same list-form blind spot, and it was
+    /// live: this crate gates its native-only test modules with
+    /// `#[cfg(all(test, not(target_arch = "wasm32")))]`, and reading
+    /// only the bare `test` ident classified every one of them as
+    /// production source. Nothing collided yet — the modules declare
+    /// no types today — which is exactly why the claim
+    /// `test_type_graph_excludes_test_sources` makes is pinned here
+    /// against the reader rather than against the current sources.
     #[test]
     fn test_a_test_gate_written_as_all_is_still_a_test_gate() {
         for source in [

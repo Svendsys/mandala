@@ -2887,7 +2887,6 @@ mod tests {
         assert_eq!(ids, ["first", "mid", "last"]);
     }
 
-
     /// **Where the splice order stops being defensive and decides the
     /// outcome.**
     ///
