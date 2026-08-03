@@ -49,6 +49,17 @@ Columns 1 and 3 are both `verify`'s, and they differ in what they
 say rather than in who says it: one is *this file is misspelled*, the
 other *this file is spelled correctly and still incoherent*.
 
+**Column 2 is `verify`'s too, and that is an obligation rather than a
+convenience.** Because `verify` loads through `parse_for_inspection`,
+which skips the loader's invariants so a broken map can still be
+inspected, every rule the loader refuses on needs a counterpart here or
+`verify` answers `valid` for a file the app will not open. The
+zero-section rule had none: a node with `"sections": []` was reported
+valid, exit 0, while the editor declined the file. That is checked
+mechanically now —
+`test_every_loader_invariant_has_a_verify_counterpart` reads
+`check_invariants`'s own body and fails for a rule with no row.
+
 `verify` sees all three. It loads through
 `loader::parse_for_inspection` rather than the editor's strict door,
 precisely so it can still open the files column 2 rejects — a tool

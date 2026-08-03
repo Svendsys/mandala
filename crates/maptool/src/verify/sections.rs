@@ -28,6 +28,15 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
     for (_loc, node) in map.node_locations() {
+        // Load-blocking, and it had no counterpart here at all: the
+        // loader refuses a node with no sections, and `verify` — whose
+        // contract is to diagnose exactly the maps the editor refuses —
+        // reported such a map as `valid`, exit 0. Every offender is
+        // listed rather than the loader's first, because a user fixing
+        // a map wants the list.
+        if let Some(message) = validate::zero_section_node(node) {
+            out.push(Violation::node(CATEGORY, node, message));
+        }
         if let Err(message) = validate::section_count(node) {
             out.push(Violation::node(CATEGORY, node, message));
         }
@@ -419,5 +428,55 @@ mod tests {
         map.nodes.insert("0".into(), n);
         let v = crate::verify::verify(&map);
         assert!(v.iter().any(|x| x.message.contains("exceeds cap 1024")));
+    }
+
+    /// **The rule the tool answered "valid" for.**
+    ///
+    /// The loader refuses a node with no sections. `verify` had no
+    /// counterpart, so a map with `"sections": []` was reported valid,
+    /// exit 0, while the app declined to open it — from the tool whose
+    /// documented contract is "diagnose exactly the maps the editor
+    /// refuses". The divergence only became reachable when `verify`
+    /// moved from the strict door to `parse_for_inspection`; before
+    /// that the load itself failed first and hid it.
+    ///
+    /// Driven through `crate::verify::verify` rather than this
+    /// module's `check`, because the registry test next door proves a
+    /// row exists and this has to prove the row is wired to something
+    /// that runs.
+    #[test]
+    fn test_a_node_with_no_sections_is_reported_and_not_called_valid() {
+        let mut map = MindMap::new_blank("t");
+        let mut node = crate::verify::test_helpers::node("0", None);
+        node.sections.clear();
+        map.nodes.insert("0".into(), node);
+
+        let found = crate::verify::verify(&map);
+        assert!(
+            found
+                .iter()
+                .any(|v| v.category == "sections" && v.message.contains("zero sections")),
+            "a node with no sections must be reported: {found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|v| v.message.contains("zero sections")
+                    && matches!(v.severity, crate::verify::Severity::Error)),
+            "and as an error, so `maptool verify` exits nonzero rather than printing `valid`"
+        );
+
+        // The negative control: the same map with a section is clean on
+        // this rule, so the assertion above cannot be passing because
+        // `verify` reports everything.
+        let mut map = MindMap::new_blank("t");
+        map.nodes
+            .insert("0".into(), crate::verify::test_helpers::node("0", None));
+        assert!(
+            !crate::verify::verify(&map)
+                .iter()
+                .any(|v| v.message.contains("zero sections")),
+            "an ordinary node must not be flagged"
+        );
     }
 }

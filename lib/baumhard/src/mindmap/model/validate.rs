@@ -462,6 +462,35 @@ fn ordered_pair(
 
 // ---- Per-struct numeric domain ------------------------------------
 
+/// The zero-section rule, for one node: every renderable node needs
+/// at least one section.
+///
+/// `pub` and per-node because it has two consumers that want different
+/// shapes of the same answer. The loader refuses the whole document at
+/// the first offender — it only needs to know the map cannot open.
+/// `maptool verify` reports every one, because a user fixing a map
+/// wants the list rather than one node per run.
+///
+/// Sharing it is what keeps the two ends in step. They were not: the
+/// loader has refused on this since before the invariant was written
+/// down, and `verify` had no counterpart at all, so a map with an empty
+/// `sections` array was reported **valid** by the tool whose contract
+/// is "diagnose exactly the maps the editor refuses". That went
+/// unnoticed while `verify` loaded through the strict door and would
+/// have failed earlier; it became visible the moment `verify` moved to
+/// `parse_for_inspection`, which deliberately skips the loader's
+/// invariants so a broken map can still be inspected.
+pub fn zero_section_node(node: &MindNode) -> Option<String> {
+    node.sections.is_empty().then(|| {
+        format!(
+            "node {:?} ships zero sections — every renderable node \
+             needs at least one. Run `maptool convert --sections <file>` \
+             to migrate, or add an explicit `sections` array.",
+            node.id
+        )
+    })
+}
+
 /// Every numeric-domain violation on a [`GlyphBorderConfig`],
 /// stamped with `label` (the document part that carries it).
 pub fn border_config_violations(label: &str, border: &GlyphBorderConfig) -> Vec<String> {

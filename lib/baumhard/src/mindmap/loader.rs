@@ -537,13 +537,11 @@ fn check_invariants(map: MindMap) -> Result<MindMap, String> {
 fn detect_zero_section_node(map: &MindMap) -> Option<String> {
     let mut ids: Vec<&String> = map.nodes.keys().collect();
     ids.sort();
-    let id = ids.into_iter().find(|id| map.nodes[*id].sections.is_empty())?;
-    Some(format!(
-        "node {:?} ships zero sections — every renderable node \
-         needs at least one. Run `maptool convert --sections <file>` \
-         to migrate, or add an explicit `sections` array.",
-        id
-    ))
+    // The rule itself is `validate::zero_section_node`, shared with
+    // `maptool verify` so the two ends cannot drift — they did, and
+    // `verify` called a map the editor refuses "valid".
+    ids.into_iter()
+        .find_map(|id| validate::zero_section_node(&map.nodes[id]))
 }
 
 /// Reject a map where a node's key in `nodes` differs from the
