@@ -50,6 +50,46 @@ pub fn load_web_layered<T>(
     )
 }
 
+/// The browser's fallback chain **without** the query-param layer:
+/// `localStorage[storage_key]`, then nothing.
+///
+/// **A URL query param is not the user's own configuration.** The
+/// trusted [`SourceTier::User`](crate::application::source_tier::SourceTier::User)
+/// is justified by "the user owns the file" — true of an XDG config
+/// on native, and true of `localStorage`, which only the user's own
+/// browser session writes. It is *not* true of `?name=<json>`, which
+/// is owned by whoever composed the link.
+///
+/// That distinction did not exist, and on the web the same URL carried
+/// both halves of the trust boundary: `?map=` supplied the document at
+/// the untrusted `Map` tier while `?macros=` supplied macros at the
+/// fully trusted `User` tier — where
+/// [`SourceTier::allows_console_line`](crate::application::source_tier::SourceTier::allows_console_line)
+/// permits `MacroStep::ConsoleLine`, an arbitrary console verb, and
+/// `allows_action` permits every destructive `Action`. One transport,
+/// two trust levels, decided by nothing but which parameter name the
+/// sender chose.
+///
+/// So the configs that can *execute* use this chain. The blast radius
+/// was bounded by the browser sandbox — no filesystem, no process —
+/// but "anyone who can send you a link can run editor commands against
+/// your open document" is not a boundary worth keeping.
+pub fn load_web_storage_only<T>(
+    label: &str,
+    storage_key: &str,
+    parse: impl Fn(&str) -> Result<T, String>,
+) -> Option<(T, &'static str)> {
+    let storage = || read_local_storage(storage_key).map(Ok);
+    load_layered(
+        label,
+        [ConfigLayer {
+            source: LOCAL_STORAGE_SOURCE,
+            fetch: &storage,
+        }],
+        parse,
+    )
+}
+
 /// Read a URL query parameter by name, percent-decoding the value.
 /// Returns `None` if `web_sys::window()`/location is missing, the
 /// query string is empty, the param is absent, or the decode fails.
