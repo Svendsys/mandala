@@ -695,10 +695,25 @@ fn resolve_index(items: &[Value], index: usize, anchor: Option<&IndexAnchor>) ->
         return (index < items.len()).then_some(index);
     };
     let want = *anchor.siblings.get(index)?;
-    let now: Vec<u64> = items.iter().map(fingerprint).collect();
-    if now.get(index) == Some(&want) {
+    // **The common answer costs one fingerprint, not `items.len()`.**
+    // Nothing moved is the overwhelmingly likely case — the array is
+    // the one the load saw and the element is still at its index — and
+    // deciding it needs only that element. Rendering every sibling
+    // first made `splice_into` O(keys x array length).
+    //
+    // The load side had the identical defect and was fixed by sharing
+    // one fingerprint vector per array. That cannot work here:
+    // `splice_into` writes keys back as it goes, so a cached
+    // fingerprint is stale the moment an element is spliced. Asking a
+    // cheaper question first is what works on this side.
+    //
+    // The full pass below still happens when the fast check fails,
+    // which is what the two fallbacks need. That is bounded by how many
+    // elements actually moved, not by how many keys the document has.
+    if items.get(index).map(fingerprint) == Some(want) {
         return Some(index);
     }
+    let now: Vec<u64> = items.iter().map(fingerprint).collect();
     let mut matches = now.iter().enumerate().filter(|(_, seen)| **seen == want);
     if let (Some((only, _)), None) = (matches.next(), matches.next()) {
         return Some(only);
@@ -1912,5 +1927,62 @@ mod tests {
         }
         // Guards the assertion above against passing on a single entry.
         assert!(ELEMENTS > 1);
+    }
+
+    /// **Saving must stay linear in the number of preserved keys.**
+    ///
+    /// `resolve_index` answers "which element does this route mean
+    /// now?", and its first question — is the element still where it
+    /// was — needs one fingerprint. Rendering every sibling before
+    /// asking made `splice_into` O(keys x array length). Measured
+    /// through `to_json_value` on a map with one unknown key per array
+    /// element: 2 000 keys took 5.39 s, 6 000 took 67.4 s, and 12 000
+    /// did not finish in two minutes. After: 6.4 ms, 28.2 ms, 62.2 ms.
+    ///
+    /// The load side had the identical defect and was fixed by sharing
+    /// one fingerprint vector per array. That cannot work here:
+    /// `splice_into` writes keys back as it goes, so a cached
+    /// fingerprint is stale the moment an element is spliced. Asking a
+    /// cheaper question first is what works on this side.
+    ///
+    /// This asserts a duration, which every other pin on this branch
+    /// deliberately avoids. It is justified by the margin rather than
+    /// by the number: the linear form is ~25 ms and the quadratic one
+    /// ~20 s, so the bound below sits two orders of magnitude above the
+    /// good case and two below the bad. A source pin would be steadier
+    /// but would only say "the fast check is present", not "the cost is
+    /// linear", and the cost is the property.
+    #[test]
+    fn test_splicing_keys_back_is_linear_in_their_count() {
+        const N: usize = 4000;
+        let items: Vec<Value> = (0..N)
+            .map(|i| serde_json::json!({ "known": i, format!("u{i}"): i }))
+            .collect();
+        let mut document = serde_json::json!({ "list": items });
+        let probe = serde_json::json!({
+            "list": (0..N).map(|i| serde_json::json!({ "known": i })).collect::<Vec<_>>()
+        });
+        let routes: Vec<Vec<Step>> = (0..N)
+            .map(|i| vec![Step::Key("list".into()), Step::Index(i), Step::Key(format!("u{i}"))])
+            .collect();
+        let captured = take_from(&mut document, Some(&probe), routes);
+        assert_eq!(captured.entries.len(), N, "every key must be captured");
+
+        let started = std::time::Instant::now();
+        captured.splice_into(&mut document);
+        let elapsed = started.elapsed();
+
+        // Every key really went back — otherwise this times an early exit.
+        for i in 0..N {
+            assert!(
+                document["list"][i].get(&format!("u{i}")).is_some(),
+                "key u{i} was not spliced back"
+            );
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "splicing {N} keys took {elapsed:?}; linear is tens of milliseconds and the \
+             quadratic form this guards against is tens of seconds"
+        );
     }
 }
