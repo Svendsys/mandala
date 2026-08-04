@@ -497,13 +497,13 @@ pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
             );
             unique_id += 1;
 
-            let icon_leaf = endpoint_void.append_value(
+            endpoint_void.append_value(
                 GfxElement::new_area_non_indexed_with_id( ep.icon.clone(), ICON_SLOT, unique_id, ),
                 &mut tree.arena,
             );
             unique_id += 1;
 
-            let text_leaf = endpoint_void.append_value(
+            endpoint_void.append_value(
                 GfxElement::new_area_non_indexed_with_id( ep.text.clone(), TEXT_SLOT, unique_id, ),
                 &mut tree.arena,
             );
@@ -577,7 +577,7 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
 
             for (slot, area) in [(ICON_SLOT, &ep.icon), (TEXT_SLOT, &ep.text)] {
                 let delta = DeltaGlyphArea::full_assign_from(area);
-                let leaf = endpoint_void.append_value(
+                endpoint_void.append_value(
                     GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), slot),
                     &mut mt.arena,
                 );

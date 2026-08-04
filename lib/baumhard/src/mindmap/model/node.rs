@@ -696,7 +696,7 @@ pub struct ColorGroup {
 
 #[cfg(test)]
 mod position_clamp_tests {
-    use super::*;
+    use super::MindNode;
     use crate::mindmap::model::validate::MAX_CANVAS_COORD;
 
     /// **The clamp is enforced by construction, not by remembering.**

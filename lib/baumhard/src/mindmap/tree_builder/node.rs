@@ -355,7 +355,7 @@ pub(super) fn append_node_sections(
         // arena edge.
         model_element.set_flag(Flag::SectionRoot);
         *id_counter += 1;
-        let model_node_id = section_id.append_value(model_element, &mut tree.arena);
+        section_id.append_value(model_element, &mut tree.arena);
     }
 }
 

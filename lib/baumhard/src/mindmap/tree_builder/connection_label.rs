@@ -443,7 +443,7 @@ pub fn build_connection_label_tree(elements: &[ConnectionLabelElement]) -> Conne
         let (channel, area) = connection_label_layout(idx + 1, elem);
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
         unique_id += 1;
-        let leaf = tree.root.append_value(
+        tree.root.append_value(
             element_node,
             &mut tree.arena,
         );
@@ -482,7 +482,7 @@ pub fn build_connection_label_mutator_tree(elements: &[ConnectionLabelElement]) 
     for (idx, elem) in elements.iter().enumerate() {
         let (channel, area) = connection_label_layout(idx + 1, elem);
         let delta = DeltaGlyphArea::full_assign_from(&area);
-        let leaf = mt.root.append_value(
+        mt.root.append_value(
             GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel),
             &mut mt.arena,
         );

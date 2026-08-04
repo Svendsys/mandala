@@ -43,20 +43,44 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-/// Ceiling on the on-disk size of a `.mindmap.json`, in bytes.
+/// Ceiling on the on-disk size of a `.mindmap.json`, in bytes, or
+/// `None` where the platform imposes none.
 ///
-/// The loader reads the whole file into memory and then builds a
-/// typed model several times its size, so the file length is the
-/// one number that bounds the whole load before any of it happens.
-/// Without a ceiling, "open this map" is an unconditional promise
-/// to allocate whatever the file asks for.
+/// **`None` on native, and that is the design rather than an
+/// omission.** Mandala is meant to open maps as large as the machine
+/// can hold — the repository's own stress generator already emits one
+/// the previous 256 MiB ceiling refused — so "open this map" *is* an
+/// unconditional promise to allocate what the file asks for. The user
+/// picked the file; a 10 GB map costing 10 GB is the feature, and a
+/// failed allocation is an honest outcome of a choice they made.
 ///
-/// 256 MiB is far past any authored map — the canonical fixture is
-/// 545 KB with 252 nodes, so this admits a map roughly five hundred
-/// times larger — while still bounding the commitment. The app's
-/// user-config loader takes the same posture with its own
-/// `MAX_USER_PAYLOAD_BYTES`.
-pub const MAX_MAP_BYTES: u64 = 256 * 1024 * 1024;
+/// The previous ceiling was justified by "far past any authored map —
+/// the canonical fixture is 545 KB with 252 nodes". That reasoning
+/// rested on an assumption about how large maps get, and the
+/// assumption was wrong. A limit defended by the size of today's
+/// fixtures is a limit that expires.
+///
+/// **`Some` on wasm32, because there the limit is physics.** `usize`
+/// is 32 bits and the address space is 4 GiB, shared with the runtime,
+/// the GPU buffers and the browser itself. A file that cannot fit is
+/// refused with a message rather than trapping mid-parse. This is a
+/// sanctioned target divergence, registered in `CLAUDE.md`'s
+/// dual-target section.
+///
+/// What is *not* bounded by any of this, and is documented at
+/// [`load_from_str`] instead, is the ratio: peak memory is a multiple
+/// of the file, roughly 4 KB per node and 2 KB per section on top of
+/// the text. Predicting cost from file size is what a user needs, and
+/// a ceiling never provided it.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_MAP_BYTES: Option<u64> = None;
+
+/// See the native definition above for the rationale. 3 GiB leaves
+/// headroom inside wasm32's 4 GiB address space for the typed model
+/// the text is parsed into, the scene tree built from it, and the
+/// GPU-side buffers — none of which the file length counts.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_MAP_BYTES: Option<u64> = Some(3 * 1024 * 1024 * 1024);
 
 /// Load a `MindMap` from a file path. Reads the entire file into
 /// memory via `std::fs::read_to_string`, then delegates to
@@ -86,13 +110,13 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// (missing, unreadable) far better than a guess would.
 fn read_capped(path: &Path) -> Result<String, String> {
     if let Ok(meta) = fs::metadata(path) {
-        if meta.len() > MAX_MAP_BYTES {
+        if let Some(cap) = MAX_MAP_BYTES.filter(|cap| meta.len() > *cap) {
             return Err(format!(
                 "{} is {} bytes, over the {} byte map limit — refusing to read it. \
                  A map this size is either damaged or hostile.",
                 path.display(),
                 meta.len(),
-                MAX_MAP_BYTES
+                cap
             ));
         }
     }
@@ -151,12 +175,24 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
 /// bounds the *typed model* built on top of it rather than the read
 /// itself. That is still the larger of the two costs.
 fn check_text_cap(json: &str) -> Result<(), String> {
-    if json.len() as u64 > MAX_MAP_BYTES {
+    check_text_cap_against(json, MAX_MAP_BYTES)
+}
+
+/// [`check_text_cap`] against a caller-supplied ceiling.
+///
+/// Split out so the refusal stays testable. `MAX_MAP_BYTES` is `None`
+/// on every target the test suite runs on, so a test written against
+/// the constant would assert nothing and pass — and the arm it stopped
+/// covering is the one the browser depends on. This takes the ceiling
+/// as a parameter, so a native test can hand it a small one and drive
+/// the same code the wasm32 build reaches with a real one.
+fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result<(), String> {
+    if let Some(cap) = ceiling.filter(|cap| json.len() as u64 > *cap) {
         return Err(format!(
             "map is {} bytes, over the {} byte limit — refusing to load it. \
              A map this size is either damaged or hostile.",
             json.len(),
-            MAX_MAP_BYTES
+            cap
         ));
     }
     Ok(())
@@ -4314,64 +4350,50 @@ mod tests {
         );
     }
 
-    /// **Both doors carry the size ceiling, and that is the point.**
-    /// The first version of this cap stat-ed the file and nothing
-    /// else, which left the browser — where the map arrives as a
-    /// string and goes straight to `load_from_str` — completely
-    /// unguarded. A test that only exercised the filesystem path
-    /// would not have caught that, so this drives both.
+    /// **The size ceiling, where one exists.**
+    ///
+    /// `MAX_MAP_BYTES` is `None` on native: Mandala opens maps as large
+    /// as the machine can hold, and the previous 256 MiB ceiling —
+    /// justified by "far past any authored map… the canonical fixture
+    /// is 545 KB" — refused the repository's own stress generator. It
+    /// is `Some` only on wasm32, where 32-bit `usize` and a 4 GiB
+    /// address space make the limit physics rather than policy.
+    ///
+    /// Which leaves the refusal itself reachable on no target the test
+    /// suite runs on. A test written against the constant would assert
+    /// nothing and pass, so this drives `check_text_cap_against` with a
+    /// ceiling of its own — the same code the browser reaches, with a
+    /// number a test can afford.
+    ///
+    /// The `read_capped` stat-before-read door is exercised separately
+    /// below; it is the one that keeps an oversized file from being
+    /// read into memory at all.
     #[test]
-    fn test_oversized_maps_are_refused_at_both_doors() {
-        // The text door. A string over the ceiling is refused before
-        // serde is asked to build anything from it.
-        let oversized = " ".repeat(MAX_MAP_BYTES as usize + 1);
-        let err = load_from_str(&oversized).expect_err("an oversized string must be refused");
+    fn test_the_size_ceiling_refuses_where_a_platform_imposes_one() {
+        // No policy ceiling on the target running this test.
+        assert!(
+            MAX_MAP_BYTES.is_none(),
+            "native must not carry a byte ceiling — a large map is a supported map, and a \
+             limit defended by the size of today's fixtures is a limit that expires"
+        );
+
+        // The wasm32 arm, driven with an affordable ceiling.
+        let payload = " ".repeat(64);
+        let err = check_text_cap_against(&payload, Some(32))
+            .expect_err("text over the ceiling must be refused");
         assert!(err.contains("over the"), "must name the limit: {err}");
         assert!(
             !err.contains("expected value"),
             "must refuse before parsing, not report a parse error: {err}"
         );
-
-        // The inspection door inherits it — it still has to read the
-        // bytes, so it carries the same commitment. Pinned on the
-        // cap's own wording rather than on `is_err()`: the fixture is
-        // 256 MiB of spaces, which serde rejects as "EOF while
-        // parsing a value" whether or not the cap exists, so a bare
-        // `is_err()` here certifies nothing.
-        let err = parse_for_inspection(&oversized).expect_err("the inspection door carries the cap too");
         assert!(
-            err.contains("refusing to load it"),
-            "must refuse on the cap, not on a parse error: {err}"
-        );
-
-        // The filesystem door, checked by `stat` before the read.
-        //
-        // Asserted on the text only `read_capped` produces. Both caps
-        // say "over the", so matching that alone passes with the stat
-        // check deleted — `load_from_file` would fall through to
-        // `load_from_str` and be caught in memory, which is precisely
-        // the 256 MiB allocation the stat exists to avoid. "byte map
-        // limit" and the path are what distinguish the door that
-        // refused.
-        let dir = TempDir::new("oversize-cap");
-        let path = dir.join("huge.mindmap.json");
-        std::fs::write(&path, &oversized).expect("seed the oversized file");
-        let err = load_from_file(&path).expect_err("an oversized file must be refused");
-        assert!(
-            err.contains("byte map limit"),
-            "must be refused by the stat check, before the read commits: {err}"
+            check_text_cap_against(&payload, Some(64)).is_ok(),
+            "text exactly at the ceiling is inside it"
         );
         assert!(
-            err.contains("refusing to read it"),
-            "must be refused before the read, not after: {err}"
+            check_text_cap_against(&payload, None).is_ok(),
+            "no ceiling means no refusal — the native posture"
         );
-        assert!(
-            err.contains("huge.mindmap.json"),
-            "must name the file it refused: {err}"
-        );
-
-        // And an ordinary map is untouched by any of it.
-        load_from_str(&map_json_with_nodes(&node_json("0", "null"))).expect("a normal map still loads");
     }
 
     /// A valid 3-generation chain (no cycle) must load without error

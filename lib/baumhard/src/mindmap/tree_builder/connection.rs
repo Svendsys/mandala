@@ -617,7 +617,7 @@ pub fn build_connection_tree(elements: &[ConnectionElement]) -> Tree<GfxElement,
         for (channel, area) in children {
             let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
             unique_id += 1;
-            let leaf = edge_root.append_value(
+            edge_root.append_value(
                 element,
                 &mut tree.arena,
             );
@@ -652,7 +652,7 @@ pub fn build_connection_mutator_tree(
 
         for (channel, area) in children {
             let delta = DeltaGlyphArea::full_assign_from(&area);
-            let leaf = edge_node.append_value(
+            edge_node.append_value(
                 GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel),
                 &mut mt.arena,
             );
