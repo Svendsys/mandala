@@ -3218,14 +3218,16 @@ mod tests {
     /// remainder must carry more than the ceiling in unknown keys.
     #[test]
     fn test_the_tolerant_door_carries_the_unknown_key_ceiling() {
-        use crate::mindmap::unknown_keys::MAX_UNKNOWN_KEYS;
+        // The ceiling is `None` on every target this suite runs on, so
+        // the test supplies one and drives the real door with it.
+        const CAP: usize = 64;
 
         // An unreadable mutator variant is what sends the load down the
         // tolerant path at all.
         let unreadable =
             r#"{"id": "mid", "name": "mid", "target_scope": "SelfOnly", "mutator": {"zzOrderGlow": {}}}"#;
         let mut extra = String::new();
-        for i in 0..MAX_UNKNOWN_KEYS + 64 {
+        for i in 0..CAP + 8 {
             extra.push_str(&format!(r#", "k{i}": 0"#));
         }
         let json = shape_map(
@@ -3235,7 +3237,7 @@ mod tests {
             &format!(r#", "custom_mutations": [{unreadable}]"#),
         );
 
-        let err = load_from_str(&json)
+        let err = crate::mindmap::unknown_keys::with_key_ceiling(Some(CAP), || load_from_str(&json))
             .expect_err("the tolerant door must refuse past the ceiling, not load partially");
         assert!(
             err.contains("unrecognized keys") && !err.contains("zzOrderGlow"),
@@ -3257,7 +3259,8 @@ mod tests {
             "",
             &format!(r#", "custom_mutations": [{unreadable}]"#),
         );
-        let map = load_from_str(&json).expect("the tolerant path loads around the construct");
+        let map = crate::mindmap::unknown_keys::with_key_ceiling(Some(CAP), || load_from_str(&json))
+            .expect("the tolerant path loads around the construct");
         assert_eq!(map.skipped_constructs.len(), 1, "and it really was the tolerant path");
         assert_eq!(map.unknown_keys.len(), 8, "with the keys captured");
     }
@@ -4293,7 +4296,13 @@ mod tests {
     /// and would otherwise be the way around the ceiling.
     #[test]
     fn test_a_document_over_the_unknown_key_ceiling_is_refused_at_both_doors() {
-        use crate::mindmap::unknown_keys::MAX_UNKNOWN_KEYS;
+        use crate::mindmap::unknown_keys::{with_key_ceiling, MAX_UNKNOWN_KEYS};
+        const CAP: usize = 64;
+        assert!(
+            MAX_UNKNOWN_KEYS.is_none(),
+            "native must not cap preserved keys — the cost of keeping them is linear in the \
+             document that carries them, and a large map is a supported map"
+        );
 
         // Comfortably past the ceiling rather than one over it. An
         // exactly-one-over fixture cannot tell a working cap from a
@@ -4301,7 +4310,7 @@ mod tests {
         // the length assertion below passes either way. The boundary
         // itself is covered by the under-ceiling control at the end.
         let mut extra = String::new();
-        for i in 0..MAX_UNKNOWN_KEYS + 64 {
+        for i in 0..CAP + 8 {
             extra.push_str(&format!(r#", "k{i}": 0"#));
         }
         let json = map_json_with_nodes(&node_json_with("0", "null", &extra));
@@ -4315,19 +4324,22 @@ mod tests {
         // so the vector can never exceed `MAX_UNKNOWN_KEYS + 1` no
         // matter how many keys the file carries.
         let (_, routes): (MindMap, Vec<Vec<crate::mindmap::unknown_keys::Step>>) =
-            unknown_keys::deserialize_capturing(&json).expect("the document parses");
+            with_key_ceiling(Some(CAP), || unknown_keys::deserialize_capturing(&json))
+                .expect("the document parses");
         assert_eq!(
             routes.len(),
-            MAX_UNKNOWN_KEYS + 1,
+            CAP + 1,
             "the capture must stop one past the ceiling rather than collecting every key"
         );
 
-        let err = load_from_str(&json).expect_err("over the ceiling must be refused");
+        let err = with_key_ceiling(Some(CAP), || load_from_str(&json))
+            .expect_err("over the ceiling must be refused");
         assert!(
-            err.contains("unrecognized keys") && err.contains(&MAX_UNKNOWN_KEYS.to_string()),
+            err.contains("unrecognized keys") && err.contains(&CAP.to_string()),
             "must name the ceiling it refused on: {err}"
         );
-        let err = parse_for_inspection(&json).expect_err("the inspection door carries it too");
+        let err = with_key_ceiling(Some(CAP), || parse_for_inspection(&json))
+            .expect_err("the inspection door carries it too");
         assert!(
             err.contains("unrecognized keys"),
             "the inspection door must refuse on the same ceiling: {err}"

@@ -4129,9 +4129,10 @@ fn test_every_loader_bound_names_its_writer_side_guard() {
             "MAX_UNKNOWN_KEYS",
             &[],
             "no editor writer — the count of keys this build has no field for is a property \
-             of the document it read, not a value any setter writes. It is a resource \
-             ceiling rather than a domain bound: past it the load is refused, because \
-             capturing each key costs memory and MAX_MAP_BYTES does not bound the count",
+             of the document it read, not a value any setter writes. `None` on native: it \
+             was a resource ceiling standing in for a cost defect, and once the capture and \
+             the write-back were both made linear there was nothing left for it to bound. \
+             `Some` on wasm32, where a 32-bit address space is physics",
         ),
         (
             "MAX_SECTIONS_PER_NODE",

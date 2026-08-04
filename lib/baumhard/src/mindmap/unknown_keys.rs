@@ -125,9 +125,10 @@ struct IndexAnchor {
     /// quadratic: `K` keys inside an `N`-element array cost `K × N`
     /// fingerprints to compute and `K × N` `u64`s to retain, each
     /// fingerprint rendering its element with `to_string()` first. At
-    /// the `MAX_UNKNOWN_KEYS` ceiling that is 10^10 fingerprints — so
-    /// the ceiling bounded the route vector while the anchors behind it
-    /// stayed unbounded. Measured before the fix, one unknown key per
+    /// a hundred thousand keys that is 10^10 fingerprints. The ceiling
+    /// then in force bounded the route vector while the anchors behind
+    /// it stayed unbounded, which is why bounding the input was the
+    /// wrong instrument and the cost itself had to be fixed. Measured before the fix, one unknown key per
     /// element: 2 000 keys / 404 KB reached 46 MiB, 6 000 keys /
     /// 1.2 MB reached 311 MiB, and 12 000 keys / 2.4 MB did not finish
     /// in two minutes. `Arc` makes it `O(N)` per array instead.
@@ -758,49 +759,89 @@ pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
     Ok((value, routes))
 }
 
-/// Ceiling on how many unrecognized keys one document may carry.
+/// Ceiling on how many unrecognized keys one document may carry, or
+/// `None` where the platform imposes none.
 ///
-/// **This is a memory bound, and without it `MAX_MAP_BYTES` is not
-/// one.** Every captured key costs a heap-allocated `Vec<Step>` whose
-/// `Step::Key`s own their strings, and reaching *one* unknown key also
-/// commits the load to two full `serde_json::Value` trees of the whole
-/// document — the re-parse in `adopt_unknown_keys` and the model's own
-/// probe. Measured on this build, with `maptool grep` driving the
-/// strict door:
+/// **`None` on native, because the cost is now proportional.** This
+/// began at 100 000 with a memory argument: every captured key cost a
+/// heap-allocated route, and reaching one committed the load to two
+/// full `serde_json::Value` trees — but the real problem was that both
+/// the capture and the write-back were *superlinear*. `plan_write_back`
+/// built one fingerprint vector per key rather than per array, and
+/// `resolve_index` rendered every sibling before asking whether the
+/// element had moved. At 6 000 keys the save alone took 67 seconds.
+/// A ceiling was the wrong instrument for that; it bounded the input
+/// instead of fixing the cost, and it did so at a number chosen against
+/// a 252-node fixture.
 ///
-/// | document | peak RSS |
-/// | --- | --- |
-/// | 7 MiB, no unknown key | 53 MiB |
-/// | 7 MiB, **one** unknown key | 197 MiB |
-/// | 3 MiB, 200 000 unknown keys | 113 MiB |
-/// | 10 MiB, 800 000 unknown keys | 438 MiB |
+/// Both halves are linear now, so the cost of preserving keys tracks
+/// the document that carries them — which is the property a user can
+/// reason about, and the one a ceiling never provided. A map with ten
+/// million unrecognized keys is a large map, and Mandala opens large
+/// maps.
 ///
-/// The last two are linear at roughly 575 bytes of peak per captured
-/// key, and the file that buys them is tiny: `{"k1":0,"k2":0,…}` is
-/// about 12 bytes per key on disk. Extrapolated to a document at the
-/// `MAX_MAP_BYTES` ceiling, an uncapped capture reaches something like
-/// **11 GB** — from a file the size limit was written to permit. The
-/// process is killed before any of the numeric-domain checks below it
-/// ever run, which is exactly the shape `format/macros.md` calls the
-/// load-time trust boundary.
+/// **`Some` on wasm32**, for the same reason [`MAX_MAP_BYTES`] is: a
+/// 32-bit address space is physics. The number is deliberately
+/// generous — it is a backstop against exhausting the browser's 4 GiB,
+/// not a judgment about how many keys a document should have.
 ///
-/// The value is set for the legitimate case rather than the hostile
-/// one. Unknown keys are counted per *occurrence*, not per distinct
-/// name, so a newer build that adds ten keys to every node spends ten
-/// per node: 100 000 covers a 10 000-node map with room over, at a
-/// worst-case capture cost around 57 MiB. `maps/testament.mindmap.json`,
-/// the largest map in the repository, has 252 nodes.
-///
-/// Past the ceiling the load is **refused**, not truncated. Dropping
-/// the excess would break the promise the capture exists to keep — an
-/// older build must not silently destroy what a newer one wrote — and
-/// it would break it invisibly, on save, long after the load that
-/// decided it. A document carrying more unrecognized keys than this is
-/// damaged or hostile rather than merely newer, and refusing to open it
-/// is a better answer than being killed while trying.
-pub const MAX_UNKNOWN_KEYS: usize = 100_000;
+/// [`MAX_MAP_BYTES`]: crate::mindmap::loader::MAX_MAP_BYTES
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_UNKNOWN_KEYS: Option<usize> = None;
 
-/// Push one route unless [`MAX_UNKNOWN_KEYS`] is already reached.
+/// See the native definition above. Sized so the capture cannot by
+/// itself exhaust wasm32's 4 GiB address space before the loader can
+/// report anything.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_UNKNOWN_KEYS: Option<usize> = Some(2_000_000);
+
+/// The ceiling in force for this call.
+///
+/// Reads [`MAX_UNKNOWN_KEYS`] in a shipped build. In a test build it
+/// reads a thread-local that defaults to the same value, so a test can
+/// drive the **real doors** — `load_from_str`, `parse_for_inspection`
+/// and the tolerant path — against a ceiling it can afford.
+///
+/// The seam exists because the alternative was worse. `MAX_UNKNOWN_KEYS`
+/// is `None` on every target the suite runs on, so a test written
+/// against the constant asserts nothing and passes, and the arm it
+/// stops covering is the browser's. Testing the predicate alone would
+/// keep that honest but would no longer catch a door that forgot to
+/// call it — which is exactly the defect a review round found on the
+/// tolerant path.
+fn active_key_ceiling() -> Option<usize> {
+    #[cfg(test)]
+    {
+        TEST_KEY_CEILING.with(|c| c.get())
+    }
+    #[cfg(not(test))]
+    {
+        MAX_UNKNOWN_KEYS
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_KEY_CEILING: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(MAX_UNKNOWN_KEYS) };
+}
+
+/// Run `body` with the unknown-key ceiling set to `ceiling`, restoring
+/// the previous value afterwards even if `body` panics.
+#[cfg(test)]
+pub fn with_key_ceiling<T>(ceiling: Option<usize>, body: impl FnOnce() -> T) -> T {
+    struct Restore(Option<usize>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_KEY_CEILING.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(TEST_KEY_CEILING.with(|c| c.get()));
+    TEST_KEY_CEILING.with(|c| c.set(ceiling));
+    body()
+}
+
+/// Push one route unless the active ceiling is already reached.
 ///
 /// Stopping *here* rather than after the walk is the point: the
 /// allocation this bounds is `routes` itself, so a check applied to the
@@ -810,7 +851,7 @@ pub const MAX_UNKNOWN_KEYS: usize = 100_000;
 /// `unknown_key_count_violation` reads `routes.len() > MAX_UNKNOWN_KEYS`
 /// and the loader refuses.
 fn push_route_capped(routes: &mut Vec<Vec<Step>>, path: &serde_ignored::Path<'_>) {
-    if routes.len() <= MAX_UNKNOWN_KEYS {
+    if active_key_ceiling().is_none_or(|cap| routes.len() <= cap) {
         routes.push(route_of(path));
     }
 }
@@ -822,12 +863,23 @@ fn push_route_capped(routes: &mut Vec<Vec<Step>>, path: &serde_ignored::Path<'_>
 /// the capture stops counting at the ceiling — deliberately, since
 /// counting them all is the cost being avoided.
 pub fn unknown_key_count_violation(routes: &[Vec<Step>]) -> Option<String> {
-    (routes.len() > MAX_UNKNOWN_KEYS).then(|| {
+    count_violation_against(routes.len(), active_key_ceiling())
+}
+
+/// [`unknown_key_count_violation`] against a caller-supplied ceiling.
+///
+/// Split out for the reason `loader::check_text_cap_against` is:
+/// `MAX_UNKNOWN_KEYS` is `None` on every target the suite runs on, so a
+/// test written against the constant asserts nothing and passes, and
+/// the arm it stops covering is the browser's.
+pub fn count_violation_against(found: usize, ceiling: Option<usize>) -> Option<String> {
+    let cap = ceiling.filter(|cap| found > *cap)?;
+    Some({
         format!(
-            "map carries more than {MAX_UNKNOWN_KEYS} unrecognized keys — refusing to load \
+            "map carries more than {cap} unrecognized keys — refusing to load \
              it. Keys this build has no field for are normally kept and saved back \
              untouched, but capturing them costs memory per key, and a document with this \
-             many is damaged or hostile rather than merely written by a newer version."
+             many cannot be held in this target's address space."
         )
     })
 }

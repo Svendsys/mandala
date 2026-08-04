@@ -93,6 +93,13 @@ the parity trajectory (or why none is owed):
   cannot, and says so with a message instead of trapping
   mid-parse. No parity is owed — the trajectory is the reverse,
   a 64-bit wasm target, which is not this project's to schedule.
+- **`MAX_UNKNOWN_KEYS`**
+  (`lib/baumhard/src/mindmap/unknown_keys.rs`) — `None` on
+  native, `Some(2_000_000)` on wasm32, for the same reason and
+  with the same trajectory as `MAX_MAP_BYTES` above. It began as
+  a resource ceiling standing in for a cost defect; once the
+  capture and the write-back were both made linear there was
+  nothing on native left for it to bound.
 - **Clipboard OS layer** (`src/application/clipboard.rs`) — native
   is backed by `arboard`; WASM is stubbed pending async-clipboard
   integration (CONCEPTS §6 "Clipboard").
