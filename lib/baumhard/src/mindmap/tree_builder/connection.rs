@@ -115,17 +115,17 @@ fn emit_connection_element(
     cap_start_raw: Option<(String, Vec2)>,
     cap_end_raw: Option<(String, Vec2)>,
     pre_clip_positions: &[Vec2],
-    node_aabbs: &[(Vec2, Vec2)],
+    node_clip: &NodeClipIndex,
 ) -> bool {
     let cap_start = cap_start_raw
-        .filter(|(_, p)| !point_inside_any_node(*p, node_aabbs))
+        .filter(|(_, p)| !node_clip.contains(*p))
         .map(|(g, p)| (g, (p.x, p.y)));
     let cap_end = cap_end_raw
-        .filter(|(_, p)| !point_inside_any_node(*p, node_aabbs))
+        .filter(|(_, p)| !node_clip.contains(*p))
         .map(|(g, p)| (g, (p.x, p.y)));
     let glyph_positions: Vec<(f32, f32)> = pre_clip_positions
         .iter()
-        .filter(|p| !point_inside_any_node(**p, node_aabbs))
+        .filter(|p| !node_clip.contains(**p))
         .map(|p| (p.x, p.y))
         .collect();
     if glyph_positions.is_empty() && cap_start.is_none() && cap_end.is_none() {
@@ -176,6 +176,11 @@ pub fn build_connection_elements(
 ) -> (Vec<ConnectionElement>, Vec<EdgeHandleElement>) {
     let vars = &map.canvas.theme_variables;
     let default_config = GlyphConnectionConfig::default();
+    // Indexed once per pass. The clip is queried once per sampled
+    // glyph on every edge, and `MAX_PATH_SAMPLES` caps a single path
+    // at 10 000 points — scanning every node for each of those is what
+    // made this pass quadratic in the map.
+    let node_clip = NodeClipIndex::build(node_aabbs);
     let mut connection_elements = Vec::new();
     // Grab-handles for the currently selected edge. Populated at most
     // once per scene build (selection is single-edge); empty otherwise.
@@ -280,7 +285,7 @@ pub fn build_connection_elements(
                     cached.cap_start.clone(),
                     cached.cap_end.clone(),
                     &cached.pre_clip_positions,
-                    node_aabbs,
+                    &node_clip,
                 );
                 continue;
             }
@@ -382,7 +387,7 @@ pub fn build_connection_elements(
                 entry.cap_start.clone(),
                 entry.cap_end.clone(),
                 &entry.pre_clip_positions,
-                node_aabbs,
+                &node_clip,
             );
             continue;
         }
@@ -462,7 +467,7 @@ pub fn build_connection_elements(
             cached_cap_start,
             cached_cap_end,
             &pre_clip_positions,
-            node_aabbs,
+            &node_clip,
         );
     }
 
@@ -477,6 +482,140 @@ pub fn build_connection_elements(
 /// small epsilon so points that sit exactly on a border (e.g. connection
 /// anchor points, which are placed at node-edge midpoints) are NOT
 /// considered inside — that would accidentally clip the endpoints.
+/// A spatial index over the node AABBs a connection pass clips
+/// against.
+///
+/// **The linear scan it replaces made the pass O(edges x samples x
+/// nodes).** `MAX_PATH_SAMPLES` caps one path at 10 000 points and
+/// nothing caps the node count, so every sampled glyph on every edge
+/// was tested against every node. Measured on
+/// `build_connection_elements` with glyph-rendered edges: 100 nodes
+/// took 77 ms, 200 took 294 ms, 400 took 1.23 s — roughly four times
+/// the cost for twice the map, from a 293 KB file. Past ten seconds
+/// `FreezeWatchdog` aborts the process, so this ended in unsaved work
+/// destroyed by opening a file.
+///
+/// A uniform hash grid, because the query is "does any AABB contain
+/// this point" rather than a range or a nearest-neighbour search: the
+/// point falls in exactly one cell, and only that cell's occupants can
+/// contain it. Occupied cells only, so an empty region of a
+/// `MAX_CANVAS_COORD`-wide canvas costs nothing.
+///
+/// An AABB spanning more cells than [`Self::MAX_CELLS_PER_AABB`] goes
+/// in `oversized` and is checked on every query. That keeps a single
+/// node the size of the canvas from inserting itself into millions of
+/// buckets — the failure this structure would otherwise introduce
+/// while fixing another.
+pub struct NodeClipIndex {
+    cell: f32,
+    buckets: std::collections::HashMap<(i32, i32), Vec<(Vec2, Vec2)>>,
+    oversized: Vec<(Vec2, Vec2)>,
+}
+
+impl NodeClipIndex {
+    /// Past this many cells an AABB is held aside and checked every
+    /// query, rather than inserted into each cell it covers.
+    const MAX_CELLS_PER_AABB: i64 = 64;
+
+    /// Smallest cell edge, so a map of degenerate zero-size nodes
+    /// cannot drive the cell coordinate past `i32`.
+    const MIN_CELL: f32 = 1.0;
+
+    /// Index `aabbs`. O(total cells covered), which
+    /// `MAX_CELLS_PER_AABB` bounds at 64 per AABB.
+    pub fn build(aabbs: &[(Vec2, Vec2)]) -> Self {
+        // Cell size from the mean node extent: big enough that an
+        // ordinary node touches a handful of cells, small enough that a
+        // cell holds a handful of nodes.
+        let mut total = 0.0f64;
+        let mut counted = 0u32;
+        for (_, size) in aabbs {
+            if size.x.is_finite() && size.y.is_finite() {
+                total += size.x.max(size.y).abs() as f64;
+                counted += 1;
+            }
+        }
+        let mean = if counted == 0 {
+            Self::MIN_CELL
+        } else {
+            (total / counted as f64) as f32
+        };
+        let cell = if mean.is_finite() && mean > Self::MIN_CELL {
+            mean
+        } else {
+            Self::MIN_CELL
+        };
+
+        let mut buckets: std::collections::HashMap<(i32, i32), Vec<(Vec2, Vec2)>> =
+            std::collections::HashMap::new();
+        let mut oversized = Vec::new();
+        for aabb in aabbs {
+            let (pos, size) = *aabb;
+            if !pos.x.is_finite() || !pos.y.is_finite() || !size.x.is_finite() || !size.y.is_finite()
+            {
+                // Nothing can be strictly inside a non-finite box, but
+                // keeping it out of the grid rather than reasoning
+                // about it is cheaper than being clever.
+                oversized.push(*aabb);
+                continue;
+            }
+            let (x0, y0) = (Self::cell_of(pos.x, cell), Self::cell_of(pos.y, cell));
+            let (x1, y1) = (
+                Self::cell_of(pos.x + size.x, cell),
+                Self::cell_of(pos.y + size.y, cell),
+            );
+            let (x0, x1) = (x0.min(x1), x0.max(x1));
+            let (y0, y1) = (y0.min(y1), y0.max(y1));
+            let spans = (x1 as i64 - x0 as i64 + 1) * (y1 as i64 - y0 as i64 + 1);
+            if spans > Self::MAX_CELLS_PER_AABB {
+                oversized.push(*aabb);
+                continue;
+            }
+            for cx in x0..=x1 {
+                for cy in y0..=y1 {
+                    buckets.entry((cx, cy)).or_default().push(*aabb);
+                }
+            }
+        }
+        Self {
+            cell,
+            buckets,
+            oversized,
+        }
+    }
+
+    /// Which cell a coordinate falls in, saturating rather than
+    /// wrapping — `MAX_CANVAS_COORD` divided by [`Self::MIN_CELL`] is
+    /// inside `i32`, but the cast is written to survive input that is
+    /// not.
+    fn cell_of(v: f32, cell: f32) -> i32 {
+        let scaled = (v / cell).floor();
+        if scaled >= i32::MAX as f32 {
+            i32::MAX
+        } else if scaled <= i32::MIN as f32 {
+            i32::MIN
+        } else {
+            scaled as i32
+        }
+    }
+
+    /// Whether any indexed AABB strictly contains `point`, by the same
+    /// rule as [`point_inside_any_node`] — which is the reference this
+    /// is property-tested against.
+    pub fn contains(&self, point: Vec2) -> bool {
+        if point_inside_any_node(point, &self.oversized) {
+            return true;
+        }
+        let key = (
+            Self::cell_of(point.x, self.cell),
+            Self::cell_of(point.y, self.cell),
+        );
+        self.buckets
+            .get(&key)
+            .is_some_and(|bucket| point_inside_any_node(point, bucket))
+    }
+}
+
 pub fn point_inside_any_node(point: Vec2, aabbs: &[(Vec2, Vec2)]) -> bool {
     const EDGE_EPSILON: f32 = 0.5;
     for (pos, size) in aabbs {
@@ -659,4 +798,159 @@ pub fn build_connection_mutator_tree(
         }
     }
     mt
+}
+
+#[cfg(test)]
+mod clip_index_tests {
+    use super::{point_inside_any_node, NodeClipIndex};
+    use glam::Vec2;
+
+    /// Deterministic pseudo-random source. A fixed LCG rather than
+    /// `rand`, so a failure reproduces exactly from the seed printed in
+    /// the assertion.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 >> 11
+        }
+        fn f32_in(&mut self, lo: f32, hi: f32) -> f32 {
+            lo + (self.next() % 100_000) as f32 / 100_000.0 * (hi - lo)
+        }
+    }
+
+    /// **The oversized path, which the random generator does not
+    /// reach.**
+    ///
+    /// A box goes in `oversized` only when it spans more than
+    /// `MAX_CELLS_PER_AABB`, and the cell size is the mean node extent
+    /// — so a map whose boxes are all roughly one size never produces
+    /// one, however large they are. It takes many small boxes (which
+    /// pull the cell small) plus one enormous one. Verified by deleting
+    /// the `oversized` check: without this case the suite stayed green,
+    /// which is the whole reason it is written separately.
+    #[test]
+    fn test_a_box_far_larger_than_the_cell_is_still_checked() {
+        let mut aabbs: Vec<(Vec2, Vec2)> = (0..40)
+            .map(|i| (Vec2::new(i as f32 * 12.0, 0.0), Vec2::new(10.0, 10.0)))
+            .collect();
+        // Mean extent is ~10, so the cell is ~10 and this spans
+        // 500 x 500 cells — far past the 64-cell limit.
+        aabbs.push((Vec2::new(-2500.0, -2500.0), Vec2::new(5000.0, 5000.0)));
+        let index = NodeClipIndex::build(&aabbs);
+
+        let deep_inside = Vec2::new(-1000.0, -1000.0);
+        assert!(
+            point_inside_any_node(deep_inside, &aabbs),
+            "fixture check: the scan must see this point inside the big box"
+        );
+        assert!(
+            index.contains(deep_inside),
+            "a box too large to bucket must still be checked — otherwise the index \
+             silently stops clipping against the biggest nodes on the canvas"
+        );
+
+        // And it must not over-report: a point outside everything.
+        let outside = Vec2::new(-9000.0, -9000.0);
+        assert_eq!(index.contains(outside), point_inside_any_node(outside, &aabbs));
+    }
+
+    /// **The index must answer exactly what the scan answered.**
+    ///
+    /// It replaces `point_inside_any_node` on the hot path, so a
+    /// disagreement is a connection glyph drawn inside a node or
+    /// clipped when it should not be — a rendering defect that no
+    /// timing improvement would justify. This holds the two to
+    /// bit-identical verdicts over random geometry, including the cases
+    /// the structure is most likely to get wrong: points exactly on a
+    /// border (the `EDGE_EPSILON` rule), boxes that straddle cell
+    /// boundaries, boxes far larger than a cell, negative coordinates,
+    /// and degenerate zero-size boxes.
+    #[test]
+    fn test_the_clip_index_agrees_with_the_linear_scan() {
+        let mut rng = Lcg(0x5EED_1234_ABCD_0001);
+        let mut checked = 0usize;
+        let mut inside_seen = 0usize;
+
+        for round in 0..40 {
+            // Mix of ordinary, huge, and degenerate boxes.
+            let count = 1 + (rng.next() % 40) as usize;
+            let aabbs: Vec<(Vec2, Vec2)> = (0..count)
+                .map(|i| {
+                    let pos = Vec2::new(rng.f32_in(-4000.0, 4000.0), rng.f32_in(-4000.0, 4000.0));
+                    let size = match i % 5 {
+                        0 => Vec2::new(0.0, 0.0),
+                        1 => Vec2::new(rng.f32_in(2000.0, 9000.0), rng.f32_in(2000.0, 9000.0)),
+                        _ => Vec2::new(rng.f32_in(1.0, 300.0), rng.f32_in(1.0, 300.0)),
+                    };
+                    (pos, size)
+                })
+                .collect();
+            let index = NodeClipIndex::build(&aabbs);
+
+            for _ in 0..200 {
+                // Half free points, half points aimed at a box's
+                // corners and edges, where the epsilon rule decides.
+                let point = if rng.next() % 2 == 0 {
+                    Vec2::new(rng.f32_in(-5000.0, 5000.0), rng.f32_in(-5000.0, 5000.0))
+                } else {
+                    let (pos, size) = aabbs[(rng.next() as usize) % aabbs.len()];
+                    let pick = rng.next() % 6;
+                    match pick {
+                        0 => pos,
+                        1 => pos + size,
+                        2 => pos + size * 0.5,
+                        3 => Vec2::new(pos.x + size.x, pos.y),
+                        4 => Vec2::new(pos.x + 0.5, pos.y + 0.5),
+                        _ => Vec2::new(pos.x + size.x - 0.5, pos.y + size.y - 0.5),
+                    }
+                };
+                let want = point_inside_any_node(point, &aabbs);
+                let got = index.contains(point);
+                assert_eq!(
+                    got, want,
+                    "round {round}: index and scan disagree at {point:?} \
+                     (scan says {want}, index says {got}) over {count} boxes"
+                );
+                checked += 1;
+                inside_seen += usize::from(want);
+            }
+        }
+
+        // Guard against a vacuous pass: the run must have produced both
+        // verdicts, or agreement proves nothing.
+        assert!(checked > 5000, "too few samples to mean anything: {checked}");
+        assert!(
+            inside_seen > 100 && inside_seen < checked - 100,
+            "the sample must contain both inside and outside points, got {inside_seen} \
+             inside of {checked}"
+        );
+    }
+
+    /// An empty clip list contains nothing, and a non-finite box is not
+    /// a trap — both are reachable from an authored map.
+    #[test]
+    fn test_the_clip_index_handles_empty_and_non_finite_inputs() {
+        let empty = NodeClipIndex::build(&[]);
+        assert!(!empty.contains(Vec2::new(0.0, 0.0)));
+
+        let odd = [
+            (Vec2::new(f32::NAN, 0.0), Vec2::new(10.0, 10.0)),
+            (Vec2::new(0.0, 0.0), Vec2::new(f32::INFINITY, 10.0)),
+            (Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0)),
+        ];
+        let index = NodeClipIndex::build(&odd);
+        for p in [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(15.0, 15.0),
+            Vec2::new(-1.0, -1.0),
+            Vec2::new(f32::NAN, 1.0),
+        ] {
+            assert_eq!(
+                index.contains(p),
+                point_inside_any_node(p, &odd),
+                "index and scan must agree at {p:?} even with non-finite geometry"
+            );
+        }
+    }
 }
