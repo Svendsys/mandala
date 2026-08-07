@@ -948,6 +948,18 @@ mod tests {
     /// Turning the browser's `create_window` `.expect(` into a bare
     /// `unwrap()` left 17/17 green. Both are on the list now.
     ///
+    /// **A third was found the same way, and it was this round's own
+    /// edit.** `loader.rs` is where `MindMapDocument::load` ends up,
+    /// so it is as much of the initial map load as this file is — and
+    /// the cycle reporter in it was rewritten *for* §9, its
+    /// `position(…).unwrap_or(0)` chosen over an `unwrap()` because
+    /// the load path may not panic. Restoring that `unwrap()` left
+    /// the sweep green, because the file it lives in was not on this
+    /// list. Which is the shape to watch for: the residual is not
+    /// only "a file nobody thought of", it is "a file somebody
+    /// deliberately made panic-free without adding it here", and the
+    /// second is the more likely of the two.
+    ///
     /// **Can it be derived instead?** Not by anything available here,
     /// and the reasons are worth writing down so the question is not
     /// re-opened by guesswork:
@@ -1001,6 +1013,11 @@ mod tests {
         (
             "src/application/app/startup_load.rs",
             "the initial map load — §9's carve-out, which must therefore panic nowhere",
+        ),
+        (
+            "lib/baumhard/src/mindmap/loader.rs",
+            "what the initial map load reaches — the parse and the validators behind \
+             `MindMapDocument::load`, inside the same carve-out",
         ),
     ];
 
