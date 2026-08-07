@@ -274,7 +274,10 @@ impl PaletteField {
             Some("text") => PaletteField::Text,
             Some("title") => PaletteField::Title,
             Some(other) => {
-                log::warn!("border color_palette_field '{}' unknown; using 'frame'", other);
+                log::warn!(
+                    "mindmap::border: color_palette_field '{}' unknown; using 'frame'",
+                    other
+                );
                 PaletteField::Frame
             }
         }
@@ -583,16 +586,35 @@ pub fn border_run_specs_with(
     let top_corner_h = tl_ink.ink_height.max(tr_ink.ink_height);
     let bottom_corner_h = bl_ink.ink_height.max(br_ink.ink_height);
     let side_avail = (node_size.1 - top_corner_h - bottom_corner_h).max(0.0);
-    let left_row_count = if left_line_h > 0.0 {
-        (side_avail / left_line_h).floor().max(0.0) as usize
-    } else {
-        0
-    };
-    let right_row_count = if right_line_h > 0.0 {
-        (side_avail / right_line_h).floor().max(0.0) as usize
-    } else {
-        0
-    };
+    // Same clamp as the horizontal fill, and for the same reason:
+    // both terms are authored, and the quotient sizes a `String`.
+    // One grapheme per row, but its *byte* cost is whatever the
+    // author's pattern spells — a ZWJ sequence is one cluster and
+    // dozens of bytes — so the byte ceiling gets the real number
+    // rather than the row count.
+    //
+    // That number is the pattern's per-row mean, not its first
+    // grapheme: the rail cycles through the whole cluster vector
+    // (`cluster[i % unit]`), so a pattern whose first cluster is one
+    // byte and whose second is a thousand would otherwise set the
+    // ceiling from the byte and then emit the thousand.
+    // `+ VERTICAL_ROW_SEPARATOR_BYTES`: the rail is joined with
+    // newlines after rendering, so each row costs its cluster plus
+    // the separator that follows it.
+    let left_row_count = fill_copies(
+        side_avail,
+        left_line_h,
+        1,
+        side_pattern_bytes_per_row(&border_style.side_patterns.left) + VERTICAL_ROW_SEPARATOR_BYTES,
+        side_pattern_fixed_bytes(&border_style.side_patterns.left),
+    );
+    let right_row_count = fill_copies(
+        side_avail,
+        right_line_h,
+        1,
+        side_pattern_bytes_per_row(&border_style.side_patterns.right) + VERTICAL_ROW_SEPARATOR_BYTES,
+        side_pattern_fixed_bytes(&border_style.side_patterns.right),
+    );
     let left_text = border_style.left_column_text(left_row_count.max(1));
     let right_text = border_style.right_column_text(right_row_count.max(1));
     let left_v_height = left_row_count as f32 * left_line_h;
@@ -734,6 +756,139 @@ fn side_pattern_first_grapheme(pattern: &SidePattern) -> String {
     }
 }
 
+/// Bytes a vertical rail spends per **row**, rounded up.
+///
+/// A rail emits one grapheme cluster per row, but not the *same*
+/// one: `SidePattern::render(rows)` writes `rows / unit` copies of
+/// the whole cluster vector, so row `i` carries `cluster[i % unit]`.
+/// Measuring the first grapheme instead — which is what the byte
+/// ceiling used to be handed — reads a pattern like `"A" + 1000
+/// combining marks` as one byte per row and lets the ceiling pass a
+/// hundred megabytes.
+///
+/// The mean is exact rather than approximate here, because `render`
+/// only ever emits whole copies: `rows / unit` copies of
+/// `total_bytes` is `rows × total_bytes / unit`. Rounded up so the
+/// ceiling never under-charges a row.
+///
+/// This prices only the **repeating** part. A `PrefixFillSuffix`
+/// pattern also emits a prefix and a suffix once each, which do not
+/// scale with the row count and are charged separately — see
+/// [`side_pattern_fixed_bytes`]. The horizontal fitter sums its own
+/// fill clusters but has the same fixed part, and takes the same
+/// treatment.
+///
+/// Cost: one pass over the pattern's clusters, no allocation.
+pub(crate) fn side_pattern_bytes_per_row(pattern: &SidePattern) -> usize {
+    use crate::mindmap::border_pattern::SidePattern;
+    let clusters: &[String] = match pattern {
+        SidePattern::AtomicRepeat { cluster } => cluster.as_slice(),
+        SidePattern::PrefixFillSuffix { fill, .. } => fill.as_slice(),
+    };
+    let unit = clusters.len();
+    if unit == 0 {
+        return 1;
+    }
+    let total: usize = clusters.iter().map(|g| g.len()).sum();
+    total.div_ceil(unit).max(1)
+}
+
+/// Bytes a rail emits **regardless** of its row count.
+///
+/// `SidePattern::render` writes a `PrefixFillSuffix` pattern's
+/// `prefix` and `suffix` once each, around the repeated fill, so
+/// neither scales with rows and neither is priced by
+/// [`side_pattern_bytes_per_row`]. Charging them separately is what
+/// keeps [`MAX_BORDER_SIDE_BYTES`] a bound on the emitted string
+/// rather than on its repeating part only.
+///
+/// An `AtomicRepeat` pattern has no fixed part and reports 0.
+///
+/// Cost: one pass over the fixed clusters, no allocation.
+pub(crate) fn side_pattern_fixed_bytes(pattern: &SidePattern) -> usize {
+    use crate::mindmap::border_pattern::SidePattern;
+    match pattern {
+        SidePattern::AtomicRepeat { .. } => 0,
+        SidePattern::PrefixFillSuffix { prefix, suffix, .. } => {
+            prefix.iter().map(|g| g.len()).sum::<usize>() + suffix.iter().map(|g| g.len()).sum::<usize>()
+        }
+    }
+}
+
+/// Hard ceiling on the grapheme count one border side may emit.
+///
+/// The copy count is `available width / cluster advance`, and
+/// **both terms are authored**: the width comes from `node.size`
+/// and the advance from the border's `font_size_pt`. A
+/// `.mindmap.json` is untrusted input, so their quotient is
+/// attacker-controlled, and it drives a `String` push loop — a
+/// hostile pair asks for a multi-gigabyte string on the scene-build
+/// path, which fails as an allocator abort rather than a catchable
+/// panic. The loader's numeric-domain check
+/// (`model::validate`) already rejects the sizes that make the
+/// quotient absurd; this is the second wall.
+///
+/// A border side spanning a full desktop viewport at a readable
+/// size runs to a few hundred graphemes, so this is generous by
+/// orders of magnitude and still bounded.
+pub const MAX_BORDER_SIDE_GLYPHS: usize = 100_000;
+
+/// Ceiling on the byte length of one border side's emitted string.
+///
+/// [`MAX_BORDER_SIDE_GLYPHS`] bounds the *grapheme* count, which is
+/// the right unit for "how much border is drawn" and the wrong one
+/// for "how much memory this costs". A grapheme is not a byte: a ZWJ
+/// sequence runs to dozens, and a side pattern is an author-supplied
+/// string, so a map can make each emitted cluster arbitrarily large
+/// and multiply it by the grapheme cap. Both units are bounded, and
+/// whichever binds first wins.
+pub const MAX_BORDER_SIDE_BYTES: usize = 1024 * 1024;
+
+/// How many whole copies of a cluster fit in `available_pt`, bounded
+/// in **both** units the emitted string is measured in.
+///
+/// The two ceilings are separate because a grapheme is not a byte:
+/// [`MAX_BORDER_SIDE_GLYPHS`] bounds how much border is drawn, and
+/// [`MAX_BORDER_SIDE_BYTES`] bounds what it costs, and an
+/// author-supplied pattern can make one cluster arbitrarily long in
+/// bytes while staying one grapheme. Whichever binds first wins, so
+/// `cluster_bytes` is a required argument rather than something a
+/// caller can default — a caller that passed the grapheme count here
+/// would silently disable the byte ceiling.
+///
+/// `fixed_bytes` is what the rail emits **regardless** of the copy
+/// count — the `prefix` and `suffix` of a `PrefixFillSuffix`
+/// pattern, which `render` writes once each around the repeated
+/// fill. It is charged against the byte ceiling before the repeats
+/// are, because a ceiling that only prices the repeating part does
+/// not bound the emitted string: an authored prefix rides straight
+/// through it. Pass 0 for a pattern with no fixed part.
+///
+/// Total over hostile inputs: a non-finite or non-positive advance
+/// yields zero copies rather than a saturating cast into the push
+/// loop, and a `fixed_bytes` at or over the ceiling yields zero
+/// repeats rather than underflowing. Cost: a few float ops, no
+/// allocation.
+pub(crate) fn fill_copies(
+    available_pt: f32,
+    cluster_w: f32,
+    cluster_len: usize,
+    cluster_bytes: usize,
+    fixed_bytes: usize,
+) -> usize {
+    if !available_pt.is_finite() || !cluster_w.is_finite() || cluster_w <= 0.0 || cluster_len == 0 {
+        return 0;
+    }
+    let copies = (available_pt / cluster_w).floor();
+    if !copies.is_finite() || copies <= 0.0 {
+        return 0;
+    }
+    let by_graphemes = MAX_BORDER_SIDE_GLYPHS / cluster_len;
+    let byte_budget = MAX_BORDER_SIDE_BYTES.saturating_sub(fixed_bytes);
+    let by_bytes = byte_budget / cluster_bytes.max(1);
+    (copies as usize).min(by_graphemes).min(by_bytes)
+}
+
 /// Fit `pattern` into `available_pt` of horizontal space, given
 /// the active face's measured per-grapheme advances. Returns
 /// `(rendered_text, cluster_count, rendered_width_pt)`. The
@@ -775,7 +930,9 @@ fn fit_pattern_to_width(
             if cluster_w <= 0.0 {
                 return (String::new(), 0, 0.0);
             }
-            let full_copies = (available_pt / cluster_w).floor() as usize;
+            let cluster_bytes: usize = cluster.iter().map(|g| g.len()).sum();
+            // AtomicRepeat has no fixed prefix/suffix.
+            let full_copies = fill_copies(available_pt, cluster_w, cluster.len(), cluster_bytes, 0);
             let mut emitted_w = full_copies as f32 * cluster_w;
             let mut text = String::new();
             for _ in 0..full_copies {
@@ -784,11 +941,18 @@ fn fit_pattern_to_width(
                 }
             }
             let mut cluster_count = full_copies * cluster.len();
-            // Greedy partial-cluster fill.
+            // Greedy partial-cluster fill. Bounded by the byte
+            // ceiling as well as by width: `fill_copies` priced the
+            // whole copies above, and this loop runs *after* it, so
+            // checking width alone let the emitted string overshoot
+            // MAX_BORDER_SIDE_BYTES by up to one cluster vector.
             let mut idx = 0;
             while idx < cluster.len() {
                 let next_w = g_widths[idx];
                 if emitted_w + next_w > available_pt {
+                    break;
+                }
+                if text.len() + cluster[idx].len() > MAX_BORDER_SIDE_BYTES {
                     break;
                 }
                 text.push_str(&cluster[idx]);
@@ -821,11 +985,15 @@ fn fit_pattern_to_width(
                 return (rendered.text, rendered.cluster_count, prefix_w + suffix_w);
             }
             let between_avail = available_pt - prefix_w - suffix_w;
-            let full_copies = if fill_cluster_w > 0.0 {
-                (between_avail / fill_cluster_w).floor() as usize
-            } else {
-                0
-            };
+            let fill_bytes: usize = fill.iter().map(|g| g.len()).sum();
+            // The prefix and suffix are emitted unconditionally below,
+            // so they are charged against the ceiling before the
+            // repeats are — otherwise an authored prefix rides
+            // straight past a cap that claims to bound the whole
+            // emitted string.
+            let fixed_bytes: usize =
+                prefix.iter().map(|g| g.len()).sum::<usize>() + suffix.iter().map(|g| g.len()).sum::<usize>();
+            let full_copies = fill_copies(between_avail, fill_cluster_w, fill.len(), fill_bytes, fixed_bytes);
 
             let mut text = String::new();
             let mut cluster_count = 0;
@@ -847,11 +1015,20 @@ fn fit_pattern_to_width(
 
             // Partial-fill: greedy add fill graphemes until the
             // next would push us past `available_pt - suffix_w`
-            // (we have to leave room for the suffix).
+            // (we have to leave room for the suffix), or past the
+            // byte ceiling. The byte half matters for the same
+            // reason as in the atomic arm: this loop runs after
+            // `fill_copies` has already priced the whole copies, so
+            // width alone let the result overshoot. The suffix is
+            // still to come, so its bytes are reserved too.
             let mut idx = 0;
             while idx < fill.len() {
                 let next_w = fill_widths[idx];
                 if emitted_w + next_w + suffix_w > available_pt {
+                    break;
+                }
+                let suffix_bytes: usize = suffix.iter().map(|g| g.len()).sum();
+                if text.len() + fill[idx].len() + suffix_bytes > MAX_BORDER_SIDE_BYTES {
                     break;
                 }
                 text.push_str(&fill[idx]);
@@ -1186,7 +1363,7 @@ pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
             // override these defaults," with the per-side fallback
             // to `light`. Anything else gets a warn-log.
             if name != CUSTOM_PRESET_NAME {
-                log::warn!("border preset '{}' unknown; using 'light'", preset);
+                log::warn!("mindmap::border: preset '{}' unknown; using 'light'", preset);
             }
             &PRESET_TABLE[0]
         });
@@ -1566,3 +1743,14 @@ fn build_vertical_text(pattern: &SidePattern, rows: usize) -> String {
     let rendered = pattern.render(rows);
     join_graphemes(&rendered.text, "\n")
 }
+
+/// The newline a vertical rail spends per row.
+///
+/// [`build_vertical_text`] joins the rendered clusters with `'\n'`,
+/// which adds `cluster_count - 1` bytes *after* `fill_copies` has
+/// applied the byte ceiling. Charging it as part of the per-row
+/// cost is what keeps [`MAX_BORDER_SIDE_BYTES`] a bound on the
+/// string the rail actually emits rather than on the string before
+/// it is joined — at the 100,000-row grapheme ceiling the
+/// separators alone are ~100 KB.
+const VERTICAL_ROW_SEPARATOR_BYTES: usize = 1;

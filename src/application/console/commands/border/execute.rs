@@ -380,6 +380,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
     ) && !edits_has_glyph_field(&edits);
     let mut changed = 0usize;
     let mut auto_promoted: Option<String> = None;
+    let mut rejected: Vec<String> = Vec::new();
     for id in &ids {
         let outcome: BorderEditOutcome = eff.document.set_node_border_config(id, edits.clone());
         if outcome.changed {
@@ -388,6 +389,16 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
         if outcome.preset_auto_promoted && auto_promoted.is_none() {
             auto_promoted = outcome.requested_preset.clone();
         }
+        if rejected.is_empty() {
+            rejected = outcome.rejected;
+        }
+    }
+    // A refused glyph is an error, not a "no change": the setter
+    // declined it because the loader would reject the saved file,
+    // and reporting success here is exactly how the user ends up
+    // with a map they cannot reopen.
+    if !rejected.is_empty() {
+        return ExecResult::Err(format!("border: {}", rejected.join("; ")));
     }
     let mut lines: Vec<String> = Vec::new();
     if changed == 0 {

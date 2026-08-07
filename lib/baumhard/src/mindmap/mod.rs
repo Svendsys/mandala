@@ -39,6 +39,9 @@ pub mod scene_cache;
 /// `MindMap` → `Tree<GfxElement, GfxMutator>` builder with
 /// per-canvas-role sub-builders.
 pub mod tree_builder;
+/// Keys the model has no field for — captured at load, warned about
+/// once, and written back untouched at save.
+pub mod unknown_keys;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;

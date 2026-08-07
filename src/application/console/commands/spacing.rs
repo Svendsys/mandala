@@ -50,10 +50,41 @@ fn execute_spacing(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
     // Route through the mutation core — same setter, single
     // source of truth with the parametric `Action::SetSpacing` arm.
-    if apply_spacing_to_selection(eff.document, v) {
-        ExecResult::ok_msg(format!("spacing set to {}", v))
+    let changed = apply_spacing_to_selection(eff.document, v);
+
+    // Report what was *stored*, not what was typed. `set_edge_spacing`
+    // clamps to the loader's bound, so echoing the request told the
+    // user `spacing set to 1e30` for a value stored as 1000000 — and
+    // then `spacing already 1e30` on a repeat, because the setter
+    // correctly reported no change. Two lies from one missing
+    // read-back.
+    let stored = stored_spacing(eff.document);
+    match (changed, stored) {
+        (_, None) => ExecResult::ok_msg(format!("spacing set to {}", v)),
+        (true, Some(stored)) => ExecResult::ok_msg(spacing_msg("spacing set to", v, stored)),
+        (false, Some(stored)) => ExecResult::ok_msg(spacing_msg("spacing already", v, stored)),
+    }
+}
+
+/// The spacing currently stored on the selected edge, if there is one.
+fn stored_spacing(doc: &MindMapDocument) -> Option<f32> {
+    let er = doc.selection.selected_edge_or_portal_edge()?;
+    let idx = doc.edge_index(&er)?;
+    doc.mindmap.edges[idx]
+        .glyph_connection
+        .as_ref()
+        .map(|c| c.spacing)
+}
+
+/// Phrase the result, naming the clamp only when it actually moved
+/// the value — an ordinary edit should not be cluttered with it.
+fn spacing_msg(lead: &str, requested: &str, stored: f32) -> String {
+    let asked = resolve_spacing_value(requested);
+    let was_clamped = asked.is_some_and(|a| (a - stored).abs() > f32::EPSILON);
+    if was_clamped {
+        format!("{lead} {stored} (clamped from {requested} to the bound the loader accepts)")
     } else {
-        ExecResult::ok_msg(format!("spacing already {}", v))
+        format!("{lead} {requested}")
     }
 }
 

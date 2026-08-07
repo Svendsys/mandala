@@ -11,7 +11,7 @@
 //!     │                   per-component mutations)
 //!     ├── GlyphArea (section 1)
 //!     │   └── GlyphModel (section 1 model)
-//!     └── GlyphArea (child mind-node, recursive)
+//!     └── GlyphArea (child mind-node, nested the same way)
 //!         └── …
 //! ```
 //!
@@ -98,11 +98,20 @@ pub(super) fn mindnode_container_area(
         bounds,
     );
 
+    // Parsed once and read twice below. The two reads used to parse
+    // separately, which on an unrecognized spelling meant the same
+    // node reported the same typo twice from inside one function.
+    // The motive is the duplicate log line, not cost: the surviving
+    // call is `ShapeSpelling::classify`, which walks more spellings
+    // than the chain it replaced, and no claim either way is made or
+    // measurable here (CLAUDE.md §7).
+    let shape = NodeShape::from_style_string(&node.style.shape);
+
     // `background_padding` math — see `mindmap/border.rs` for the
     // derivation. Same shape as pre-section nodes; the container
     // is the natural carrier because a section sits *inside* the
     // node AABB and never touches the surrounding border.
-    if node.style.show_frame && NodeShape::from_style_string(&node.style.shape) == NodeShape::Rectangle {
+    if node.style.show_frame && shape == NodeShape::Rectangle {
         let frame_color_resolved = color::resolve_var(&node.style.frame_color, vars);
         let border_style = resolve_border_style(
             node.style.border.as_ref(),
@@ -139,7 +148,7 @@ pub(super) fn mindnode_container_area(
         }
     };
 
-    area.shape = NodeShape::from_style_string(&node.style.shape);
+    area.shape = shape;
     area.zoom_visibility = node.zoom_window();
     area
 }
@@ -335,8 +344,7 @@ pub(super) fn append_node_sections(
         section_element.set_flag(Flag::SectionRoot);
         *id_counter += 1;
 
-        let section_id = tree.arena.new_node(section_element);
-        parent_node_id.append(section_id, &mut tree.arena);
+        let section_id = parent_node_id.append_value(section_element, &mut tree.arena);
         section_map.insert((node.id.clone(), section_idx), section_id);
 
         let mut model_element =
@@ -347,31 +355,53 @@ pub(super) fn append_node_sections(
         // arena edge.
         model_element.set_flag(Flag::SectionRoot);
         *id_counter += 1;
-        let model_node_id = tree.arena.new_node(model_element);
-        section_id.append(model_node_id, &mut tree.arena);
+        section_id.append_value(model_element, &mut tree.arena);
     }
 }
 
-/// Recursive child walker — for each non-folded child mind-node
-/// of `parent_mind_id`, append the container area, then its
-/// section subtree, then recurse into its own children. Keeps the
-/// container, sections, and child mind-nodes as a flat sibling
-/// list under the parent container — same shape as the
-/// pre-section tree, just with extra section siblings.
+/// Descendant walker — for every visible mind-node under
+/// `parent_mind_id`, append the container area then its section
+/// subtree. Keeps the container, sections, and child mind-nodes as
+/// a flat sibling list under the parent container — same shape as
+/// the pre-section tree, just with extra section siblings.
 ///
 /// `parent_folded` is `true` when an ancestor (including the
-/// immediate parent) is folded. Children of a folded node are
-/// hidden by construction, so the recursive fold check from the
-/// old `is_hidden_by_fold` path is redundant here.
-// `clippy::too_many_arguments`: a recursive arena walk threading
-// four out-parameters (`tree`, `node_map`, `section_map`,
-// `id_counter`) plus the read-only `(map, index, parent)` triple.
-// Bundling the out-params into a struct would just add a borrow
-// indirection on every recursion step.
+/// immediate parent) is folded. A folded node's subtree is hidden
+/// by construction, so it is never descended into — which is also
+/// why the fold check from the old `is_hidden_by_fold` path is
+/// redundant here.
+///
+/// **The descent is iterative, and that is load-bearing.** This
+/// walker's depth is `parent_id` nesting depth, authored in a
+/// `.mindmap.json` — untrusted input, where a linear chain of N
+/// nodes is a legal acyclic tree the loader's cycle check accepts.
+/// The recursive form overflowed the thread stack on such a map
+/// and took the process down with `SIGABRT`: not a panic, so there
+/// was no frame to degrade and nothing to log
+/// (CODE_CONVENTIONS §9). Depth now costs heap. The scene rebuild
+/// runs this on every structural change, so a hostile map that
+/// merely *opens* reached it.
+///
+/// Nodes are visited in the same pre-order the recursive form
+/// produced — children are pushed in reverse so the lowest-sorted
+/// sibling pops first. That order is not cosmetic: it fixes arena
+/// sibling order and the `unique_id` values handed out from
+/// `id_counter`, both of which the renderer and the scene cache
+/// key on.
+///
+/// Cost: O(visible descendants). One heap vector holding the
+/// frontier — the sum of the unprocessed sibling rows along the
+/// current path — **one element for a linear chain**, since each
+/// node's only child replaces it, O(n) for a shallow wide tree, and
+/// O(depth x branching) in general.
+// `clippy::too_many_arguments`: an arena walk threading four
+// out-parameters (`tree`, `node_map`, `section_map`, `id_counter`)
+// plus the read-only `(map, index, parent)` triple. Bundling the
+// out-params into a struct would just add a borrow indirection.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn build_children_recursive(
+pub(super) fn build_descendants<'a>(
     map: &MindMap,
-    index: &ChildIndex<'_>,
+    index: &ChildIndex<'a>,
     parent_mind_id: &str,
     parent_folded: bool,
     parent_node_id: NodeId,
@@ -380,33 +410,33 @@ pub(super) fn build_children_recursive(
     section_map: &mut HashMap<(String, usize), NodeId>,
     id_counter: &mut usize,
 ) {
+    if parent_folded {
+        return;
+    }
     let vars = &map.canvas.theme_variables;
     let canvas_default_border = map.canvas.default_border.as_ref();
-    let children = index.children_of(parent_mind_id);
-    for child in children {
-        if parent_folded {
-            continue;
-        }
+
+    let mut pending: Vec<(&'a MindNode, NodeId)> = index
+        .children_of(parent_mind_id)
+        .iter()
+        .rev()
+        .map(|child| (*child, parent_node_id))
+        .collect();
+
+    while let Some((child, arena_parent)) = pending.pop() {
         let area = mindnode_container_area(child, vars, canvas_default_border);
         let element = GfxElement::new_area_non_indexed_with_id(area, child.channel, *id_counter);
         *id_counter += 1;
 
-        let child_node_id = tree.arena.new_node(element);
-        parent_node_id.append(child_node_id, &mut tree.arena);
+        let child_node_id = arena_parent.append_value(element, &mut tree.arena);
         node_map.insert(child.id.clone(), child_node_id);
 
         append_node_sections(child, child_node_id, vars, tree, section_map, id_counter);
 
-        build_children_recursive(
-            map,
-            index,
-            &child.id,
-            child.folded,
-            child_node_id,
-            tree,
-            node_map,
-            section_map,
-            id_counter,
-        );
+        if !child.folded {
+            for grandchild in index.children_of(&child.id).iter().rev() {
+                pending.push((grandchild, child_node_id));
+            }
+        }
     }
 }

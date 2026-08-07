@@ -22,7 +22,6 @@ use super::Canvas;
 /// O(1). Edges have no stable id; callers identify them by the
 /// `(from_id, to_id, edge_type)` triple.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MindEdge {
     /// Id of the source node.
     pub from_id: String,
@@ -266,7 +265,6 @@ impl MindEdge {
 /// direction of the partner endpoint, so the label always faces
 /// its counterpart until the user drags it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PortalEndpointState {
     /// Icon color override as `#RRGGBB` or `var(--name)`. `None` =
     /// inherit from the edge color cascade. Cleared by "cut" on
@@ -408,7 +406,6 @@ pub const PORTAL_GLYPH_PRESETS: &[&str] = &[
 /// Connections are composed of repeating body glyphs and optional end caps,
 /// laid out along the path from source to target.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct GlyphConnectionConfig {
     /// The glyph(s) used for the body/middle of the connection, repeated to fill length.
     #[serde(default = "default_connection_body")]
@@ -501,7 +498,11 @@ impl GlyphConnectionConfig {
     /// failure mode at extreme zoom levels.
     pub fn effective_font_size_pt(&self, camera_zoom: f32) -> f32 {
         let z = camera_zoom.max(f32::EPSILON);
-        let target_screen = (self.font_size_pt * z).clamp(self.min_font_size_pt, self.max_font_size_pt);
+        let target_screen = crate::font::fonts::clamp_to_font_window(
+            self.font_size_pt * z,
+            self.min_font_size_pt,
+            self.max_font_size_pt,
+        );
         target_screen / z
     }
 
@@ -541,7 +542,6 @@ impl GlyphConnectionConfig {
 /// the two concepts share shape but not identity (line-mode has one
 /// label per edge; portal mode has one per endpoint).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EdgeLabelConfig {
     /// Tangential position on the connection path, `[0.0, 1.0]`.
     /// `0.0` is the from-anchor, `1.0` the to-anchor, `0.5` (or
@@ -647,7 +647,7 @@ impl EdgeLabelConfig {
             .and_then(|c| c.max_font_size_pt)
             .unwrap_or(body.max_font_size_pt);
         let z = camera_zoom.max(f32::EPSILON);
-        let target_screen = (base * z).clamp(min, max);
+        let target_screen = crate::font::fonts::clamp_to_font_window(base * z, min, max);
         target_screen / z
     }
 }
@@ -658,7 +658,6 @@ impl EdgeLabelConfig {
 /// `f64` fields keep parity with the JSON precision of the source
 /// format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ControlPoint {
     /// Canvas-space x coordinate.
     pub x: f64,

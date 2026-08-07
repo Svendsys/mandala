@@ -264,6 +264,127 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     clamp_node_size_to_ceiling(node);
 }
 
+/// How many lines of one section are actually laid out when
+/// measuring its text floor.
+///
+/// The largest section in the canonical fixture is 33 lines, so this
+/// is orders of magnitude above real authored content and never
+/// binds on a map anyone wrote. It binds on a map written to be
+/// expensive — see [`measured_prefix`].
+pub(super) const MEASURED_LINE_BUDGET: usize = 512;
+
+/// The prefix of `text` covering at most `max_lines` lines, together
+/// with the total line count of the whole string.
+///
+/// The count is a byte scan; the prefix is what gets shaped. Cost:
+/// O(text) with no allocation and no layout — which is the entire
+/// point, since laying the same text out costs a cosmic-text
+/// `BufferLine` per line.
+pub(super) fn measured_prefix(text: &str, max_lines: usize) -> (&str, usize) {
+    let total = text.lines().count();
+    if total <= max_lines {
+        return (text, total);
+    }
+    let mut end = text.len();
+    let mut seen = 0usize;
+    for (idx, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            seen += 1;
+            if seen == max_lines {
+                end = idx;
+                break;
+            }
+        }
+    }
+    (&text[..end], total)
+}
+
+/// The `max_lines` widest lines of `text`, in their original order,
+/// joined by `'\n'`.
+///
+/// With an unbounded measuring width nothing wraps, so a text
+/// block's width is simply its widest line's width. Laying out the
+/// *first* `max_lines` therefore measures the right width only when
+/// the widest line happens to be among them — 512 short lines
+/// followed by one long line measured as though the long one were
+/// not there, and the node was sized to clip it. Selecting by width
+/// instead of by position measures the lines that can actually
+/// decide the answer.
+///
+/// **This sample is a candidate set, not an answer.** Ranking uses
+/// `grapheme_display_width` — a column count — while cosmic-text
+/// shapes real advances against a face that is not monospace, so
+/// the proxy can and does rank backwards: at the default face
+/// `"W".repeat(20)` shapes wider than `"i".repeat(30)` while losing
+/// the ranking 20 columns to 30, and a tab counts as one column
+/// while shaping to a tab stop. A sample picked this way can
+/// therefore be *narrower* than the first `max_lines` lines.
+///
+/// That is why the caller measures this sample **and** the
+/// positional prefix and takes the wider of the two, rather than
+/// substituting one for the other — see `compute_one_node_text_floor`.
+/// Neither sample is guaranteed to contain the true widest line,
+/// because finding it means shaping every line and the budget
+/// exists precisely to avoid that; taking the maximum is what makes
+/// the result never worse than either alone.
+///
+/// Cost: O(lines) calls to `grapheme_display_width`, each linear in
+/// its line — so O(text) overall, which dominates the O(lines ·
+/// log max_lines) heap work. O(max_lines) memory for the heap,
+/// which holds `(width, index)` pairs rather than the text, plus a
+/// `Vec` of the chosen indices. The joined result is built by
+/// repeated `push_str` into a `String` with no reserved capacity,
+/// so it reallocates as it grows rather than allocating once — it
+/// is bounded by the selected lines' total length, which is bounded
+/// by the text. Two passes over `text`, no layout.
+pub(super) fn widest_lines(text: &str, max_lines: usize) -> String {
+    use baumhard::util::grapheme_chad::grapheme_display_width;
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    if max_lines == 0 {
+        return String::new();
+    }
+
+    // `BinaryHeap` is a max-heap, so `Reverse` makes this a min-heap
+    // on `(width, index)` and `pop()` evicts the current worst. The
+    // index rides along to keep the eviction total and deterministic;
+    // because it is compared after the width, a tie evicts the
+    // *lowest* index, which means equal-width lines keep the ones
+    // latest in the text. That is arbitrary but fixed — what matters
+    // is that the same input always yields the same sample.
+    let mut best: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::with_capacity(max_lines + 1);
+    for (idx, line) in text.lines().enumerate() {
+        best.push(Reverse((grapheme_display_width(line), idx)));
+        if best.len() > max_lines {
+            best.pop();
+        }
+    }
+
+    let mut chosen: Vec<usize> = best.into_iter().map(|Reverse((_, idx))| idx).collect();
+    chosen.sort_unstable();
+
+    // Separator driven by a count rather than by `out.is_empty()`:
+    // a selected *blank* line leaves `out` empty, so the emptiness
+    // test would skip the newline before the next line and silently
+    // splice two selected lines into one — losing a line from a
+    // sample whose whole contract is `max_lines` of them.
+    let mut out = String::new();
+    let mut emitted = 0usize;
+    let mut wanted = chosen.iter().peekable();
+    for (idx, line) in text.lines().enumerate() {
+        if wanted.peek() == Some(&&idx) {
+            wanted.next();
+            if emitted > 0 {
+                out.push('\n');
+            }
+            out.push_str(line);
+            emitted += 1;
+        }
+    }
+    out
+}
+
 /// Pure floor-compute extracted from [`grow_one_node_to_fit_text`]
 /// so the explicit-shrink path
 /// [`MindMapDocument::fit_node_to_content`] can read the floor
@@ -311,10 +432,73 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
                 }
             });
 
-        let block = {
+        // Shaping is linear in line count and this runs at load, on
+        // text that came out of an untrusted file. A section
+        // carrying millions of newlines would shape millions of
+        // cosmic-text lines here — each one an owned `String`, an
+        // `AttrsList`, and two layout caches — before a single frame
+        // is drawn. So only a bounded prefix is laid out.
+        //
+        // The height loses nothing by it: `TextBlockSize::height` is
+        // `line_count * line_height`, and with an unbounded measuring
+        // width no line wraps, so counting newlines is the same
+        // number for a byte scan instead of a layout pass.
+        //
+        // The width would lose something, and past the budget it
+        // takes **two** samples to lose as little as possible.
+        //
+        // With no wrapping the block's width is its widest line, so
+        // the first `MEASURED_LINE_BUDGET` lines answer the wrong
+        // question: 512 short lines followed by one long line sized
+        // the node as though the long one did not exist and clipped
+        // it. Picking the widest lines instead — [`widest_lines`] —
+        // answers the right question with the wrong ruler: its
+        // ranking is a column count, and cosmic-text shapes real
+        // advances against a proportional face, so the proxy can
+        // rank backwards and produce a sample *narrower* than the
+        // prefix it replaced.
+        //
+        // So both are measured and the wider wins. That costs one
+        // extra bounded shaping pass on sections past the budget,
+        // and it is the only version of this that is never worse
+        // than the alternative it replaced. Neither sample is
+        // guaranteed to hold the true widest line — that needs a
+        // shaping pass per line, which is the cost the budget exists
+        // to refuse — so this is a floor that improves, not a proof.
+        //
+        // Worth stating plainly because an earlier comment here got
+        // it wrong: a node past the budget is *not* saved by the
+        // `MAX_NODE_AXIS` clamp. At the default 14 pt, 513 lines is
+        // 8,618 pt against a 1,000,000 ceiling, and the clamp only
+        // starts covering above roughly 1,624 pt. Nor is this only
+        // the load path — `grow_one_node_to_fit_text` is the
+        // per-edit setter too.
+        let (measured, total_lines) = measured_prefix(&section.text, MEASURED_LINE_BUDGET);
+        let truncated = measured.len() < section.text.len();
+        let mut block = {
             let mut fs = acquire_font_system_write("compute_one_node_text_floor");
-            measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)
+            measure_text_block_unbounded(&mut fs, measured, scale, line_height, measure_font)
         };
+        if truncated {
+            // The second sample: the widest lines by column proxy.
+            // Only its *width* is taken — its lines are not
+            // contiguous, so its height means nothing.
+            let widest = widest_lines(&section.text, MEASURED_LINE_BUDGET);
+            let wide_block = {
+                let mut fs = acquire_font_system_write("compute_one_node_text_floor");
+                measure_text_block_unbounded(&mut fs, &widest, scale, line_height, measure_font)
+            };
+            block.width = block.width.max(wide_block.width);
+
+            // Under budget the shaper's own line count is
+            // authoritative and a byte scan must not second-guess
+            // it: `str::lines()` and cosmic-text disagree by exactly
+            // one on text ending in a newline, and that would
+            // shorten every such node by a line. Past it, neither
+            // shaped block spans the whole text, so the counted
+            // total is the only correct source.
+            block.height = total_lines as f32 * line_height;
+        }
 
         // Section dimension contribution: text needs `block + pad`
         // at minimum, but a `Some`-size section also pins a user-

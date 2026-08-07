@@ -416,9 +416,22 @@ impl MindMapDocument {
     /// Set the connection's glyph `spacing` (canvas units between
     /// adjacent body glyphs). Returns `true` if the value actually
     /// changed.
+    ///
+    /// The magnitude is clamped to `MAX_NODE_AXIS`, the bound the
+    /// loader enforces on `glyph_connection.spacing`. The console's
+    /// `spacing` verb filters only for finiteness, so `spacing 1e30`
+    /// used to report success and write a map that would not reopen.
+    /// A *negative* spacing is deliberately preserved — it tightens
+    /// the rail into overlapping glyphs, which is a real authoring
+    /// choice the loader accepts too.
     pub fn set_edge_spacing(&mut self, edge_ref: &EdgeRef, spacing: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
+            let spacing = baumhard::mindmap::model::validate::clamp_to_bound(
+                spacing,
+                baumhard::mindmap::model::MAX_NODE_AXIS,
+                cfg.spacing,
+            );
             if almost_equal(cfg.spacing, spacing) {
                 return false;
             }

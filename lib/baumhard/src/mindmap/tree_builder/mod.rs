@@ -87,7 +87,7 @@ pub use section_resize_handle::{
 };
 
 use crate::mindmap::model::ChildIndex;
-use node::{append_node_sections, build_children_recursive, mindnode_container_area};
+use node::{append_node_sections, build_descendants, mindnode_container_area};
 
 /// Result of building a Baumhard tree from a MindMap. The tree
 /// mirrors the MindMap's parent-child hierarchy. Each MindNode
@@ -180,13 +180,12 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
         let element = GfxElement::new_area_non_indexed_with_id(area, root.channel, id_counter);
         id_counter += 1;
 
-        let node_id = tree.arena.new_node(element);
-        tree.root.append(node_id, &mut tree.arena);
+        let node_id = tree.root.append_value(element, &mut tree.arena);
         node_map.insert(root.id.clone(), node_id);
 
         append_node_sections(root, node_id, vars, &mut tree, &mut section_map, &mut id_counter);
 
-        build_children_recursive(
+        build_descendants(
             map,
             &index,
             &root.id,
@@ -334,5 +333,50 @@ impl MindMapTree {
             }
             node_id = self.tree.arena.get(node_id)?.parent()?;
         }
+    }
+}
+
+#[cfg(test)]
+mod append_cost_tests {
+    /// **The scene build must stay linear in the node count.**
+    ///
+    /// `indextree::NodeId::append` calls `checked_append`, which walks
+    /// `self.ancestors(arena)` looking for a cycle before every append.
+    /// A `.mindmap.json` may declare a linear `parent_id` chain — a
+    /// legal acyclic tree the loader accepts, with no depth bound
+    /// anywhere on the load path — so depth equals the node count and
+    /// the walk makes `build_mindmap_tree` O(N²).
+    ///
+    /// That is reachable from a file alone, and it is worse than a
+    /// slow load: `FreezeWatchdog` calls `std::process::abort()` when
+    /// the main thread is silent past ten seconds, so a rebuild
+    /// triggered by an ordinary click on a large chain map kills the
+    /// process with unsaved work — the SIGABRT-with-nothing-to-degrade
+    /// outcome the recursion-to-iteration conversion was supposed to
+    /// have removed. Converting the walker to iteration fixed the
+    /// stack, and left the quadratic in place.
+    ///
+    /// Every append here is of a node `arena.new_node` produced on the
+    /// line above: detached by construction, so the ancestor check can
+    /// never fire and `append_value` — indextree's documented O(1)
+    /// fast path — is exactly equivalent. This pins the source rather
+    /// than a duration, because a timing assertion on a shared runner
+    /// is a flake, and because the property that matters is structural.
+    #[test]
+    fn test_the_tree_builder_never_pays_for_a_cycle_check() {
+        let found = crate::util::source_scan::tree_builder_checked_appends();
+        assert!(
+            found.is_empty(),
+            "these appends re-check for a cycle on every call, which makes the scene build \
+             O(N²) on a linear parent_id chain a hostile file can declare:\n{}\n\n\
+             Use `parent.append_value(element, &mut arena)`, which returns the new NodeId \
+             and skips the ancestor walk. It is sound here because the node being appended \
+             was just created and is detached.",
+            found
+                .iter()
+                .map(|(f, n, line)| format!("  {f}:{n}   {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 }

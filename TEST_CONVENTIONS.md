@@ -93,7 +93,18 @@ declared explicitly with `harness = false` to exist at all.
 
 - **Test functions:** `test_<topic>_<specific_case>`. Lowercase
   snake_case. Examples: `test_hit_test_direct_hit`,
-  `test_portal_label_gap_reuse`.
+  `test_portal_endpoint_color_channels_are_independent`.
+
+  **Every test named in this document, and in any comment or spec in
+  the repository, is a real one.** `baumhard`'s
+  `test_no_doc_cites_a_test_that_does_not_exist` scans every Markdown
+  file and every `//` comment in the workspace for `test_*`
+  identifiers and holds each against the set the sources declare, so a
+  renamed test cannot leave a citation pointing at nothing. Two
+  citations had already rotted that way before the scan existed. Write
+  a *shape* rather than a name when you mean a shape — the
+  `test_<topic>_<case>` spelling above, or a trailing `*` for a family
+  (`test_delete_node_*prefix*`) — and the scan reads it as one.
 
   **Where the case is a claim, name the claim.** A test whose subject
   is a property of the repository rather than a code path is allowed
@@ -102,10 +113,10 @@ declared explicitly with `harness = false` to exist at all.
   `test_the_workspace_keeps_warn_and_error_in_release`. Still
   `test_`-prefixed, still snake_case; the `<topic>_<case>` shape is
   what relaxes. The reason to allow it: the whole value of these tests
-  is the sentence in the failure output, and `test_manifests_split`
-  names nothing a reader can act on. This is a narrow license — for a
-  test over ordinary code, `<topic>_<case>` still wins, because the
-  topic is how you find its neighbours.
+  is the sentence in the failure output, and a two-word name for
+  either of them would tell a reader nothing they can act on. This is
+  a narrow license — for a test over ordinary code, `<topic>_<case>`
+  still wins, because the topic is how you find its neighbors.
 
 - **Benchmark-reusable bodies:** `pub fn do_<topic>_<case>()`, with a
   one-line `#[test] fn test_<topic>_<case>()` wrapper that calls it.

@@ -472,10 +472,10 @@ where
 /// section beneath a moving container would visibly detach from its
 /// node).
 pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32, include_descendants: bool) {
-    // The recursive walkers take `Option<&mut Vec>`; passing `None`
-    // skips the per-frame allocation that would otherwise leak
-    // through the patch-collecting variant. Same primitive, two
-    // callers, zero overhead for the no-patch path.
+    // The walkers take `Option<&mut Vec>`; passing `None` skips the
+    // per-frame patch allocation that would otherwise leak through
+    // the patch-collecting variant. Same primitive, two callers, no
+    // patch buffer for the no-patch path.
     apply_drag_delta_inner(tree, node_id, dx, dy, include_descendants, None);
 }
 
@@ -483,9 +483,15 @@ pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32,
 /// every node that was moved. The renderer uses these patches to
 /// update buffer positions in-place without reshaping text.
 ///
-/// O(moved_nodes) — no text shaping, no font-system lock. Uses
-/// `first_child` / `next_sibling` iteration instead of collecting
-/// descendants into a `Vec` (§B7).
+/// O(moved_nodes) — no text shaping, no font-system lock. Walks via
+/// `first_child` / `next_sibling` rather than collecting the whole
+/// descendant set into a `Vec` (§B7); the buffers it carries are
+/// `walk_drag_subtree`'s frontiers, each holding the unprocessed
+/// sibling rows along its current path. Plural because
+/// `include_descendants == false` routes through
+/// `walk_drag_node_and_sections`, which calls `walk_drag_subtree`
+/// once per `Flag::SectionRoot` child — one frontier per section,
+/// per drag tick.
 pub fn apply_drag_delta_and_collect_patches(
     tree: &mut MindMapTree,
     node_id: &str,
@@ -766,13 +772,38 @@ fn walk_drag_node_and_sections(
     }
 }
 
-/// Recursively apply a drag delta via `first_child` / `next_sibling`
-/// — zero allocations (§B7). When `patches` is `Some`, push one
-/// `(unique_id, new_pos)` per element that owns a renderer buffer
-/// entry (i.e. `GlyphArea`-bearing variants). Section-model
-/// `GlyphModel` siblings have no buffer key, so emitting their
-/// `unique_id` would drive a hash miss in `patch_drag_positions`
-/// per drag tick — they're skipped.
+/// Apply a drag delta to a subtree, carrying the frontier on the
+/// heap. When `patches` is `Some`, push one `(unique_id, new_pos)`
+/// per element that owns a renderer buffer entry (i.e.
+/// `GlyphArea`-bearing variants). Section-model `GlyphModel`
+/// siblings have no buffer key, so emitting their `unique_id` would
+/// drive a hash miss in `patch_drag_positions` per drag tick —
+/// they're skipped.
+///
+/// Iterative rather than recursive, and for the same reason as the
+/// walkers in `baumhard`: a `.mindmap.json` may carry an arbitrarily
+/// long `parent_id` chain, which is legal and acyclic, so the loader
+/// accepts it and the scene tree inherits its depth. The recursive
+/// form died here on a `SIGABRT` — not a panic, so nothing could
+/// catch or log it — on the first *drag* over such a map, after both
+/// the load and the scene build had survived.
+///
+/// Children are pushed in reverse so `pop()` yields them
+/// left-to-right, which preserves the pre-order the recursion
+/// produced. Not for the renderer's sake — `patch_drag_positions`
+/// looks each patch up by `unique_id`, so it is keyed and
+/// order-independent — but so this rewrite stays exactly
+/// comparable to the recursion it replaced, which is what
+/// `test_iterative_drag_matches_the_recursive_order` checks.
+///
+/// Costs: O(n) in the subtree size, plus one heap vector holding
+/// the frontier — the sum of the unprocessed sibling rows along the
+/// current path — **one element for a linear chain**, since each
+/// node's only child replaces it, O(n) for a shallow wide tree, and
+/// O(depth x branching) in general. §B7 — the previous doc claimed zero allocations,
+/// which the recursive form bought at the price of the stack, and
+/// then claimed a branching width, which is what a *breadth*-first
+/// frontier would hold rather than this one.
 fn walk_drag_subtree(
     arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
     node_id: indextree::NodeId,
@@ -780,19 +811,24 @@ fn walk_drag_subtree(
     dy: f32,
     mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
 ) {
-    if let Some(node) = arena.get_mut(node_id) {
-        let elem = node.get_mut();
-        if let Some(area) = elem.glyph_area_mut() {
-            area.move_position(dx, dy);
-            if let Some(p) = patches.as_deref_mut() {
-                let pos = elem.position();
-                p.push((elem.unique_id(), (pos.x, pos.y)));
+    let mut frontier = vec![node_id];
+    while let Some(id) = frontier.pop() {
+        if let Some(node) = arena.get_mut(id) {
+            let elem = node.get_mut();
+            if let Some(area) = elem.glyph_area_mut() {
+                area.move_position(dx, dy);
+                if let Some(p) = patches.as_deref_mut() {
+                    let pos = elem.position();
+                    p.push((elem.unique_id(), (pos.x, pos.y)));
+                }
             }
         }
-    }
-    let mut child = arena.get(node_id).and_then(|n| n.first_child());
-    while let Some(cid) = child {
-        child = arena.get(cid).and_then(|n| n.next_sibling());
-        walk_drag_subtree(arena, cid, dx, dy, patches.as_deref_mut());
+        let mark = frontier.len();
+        let mut child = arena.get(id).and_then(|n| n.first_child());
+        while let Some(cid) = child {
+            frontier.push(cid);
+            child = arena.get(cid).and_then(|n| n.next_sibling());
+        }
+        frontier[mark..].reverse();
     }
 }

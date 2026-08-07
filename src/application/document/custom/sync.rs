@@ -16,6 +16,7 @@
 
 use baumhard::core::primitives::ColorFontRegion;
 use baumhard::font::fonts::{app_font_by_family, family_name_of};
+use baumhard::mindmap::model::validate;
 use baumhard::mindmap::model::TextRun;
 use baumhard::mindmap::tree_builder::MindMapTree;
 use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
@@ -67,7 +68,38 @@ pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = {
 /// `u32`, so a naive cast of a negative scale would saturate to 0
 /// and render invisible, un-regrowable text. Clamp to 1pt so a
 /// shrunk run stays legible and can be grown back.
-pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
+pub(in crate::application::document) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
+
+/// Clamp a `size_pt` into the domain the loader would accept on the
+/// way back in.
+///
+/// **Every writer that takes a caller-supplied size goes through
+/// here.** (`section_structure` writes a hardcoded `12` when it
+/// synthesizes a run; that is a constant inside the domain, not an
+/// input.) The
+/// loader rejects a run whose `size_pt` is zero or past
+/// [`validate::MAX_FONT_SIZE_PT`], so any writer that can leave that
+/// range produces a model the editor itself would refuse to
+/// reopen. The reverse converter gets there in one click, since a
+/// `grow-font` mutation adds an unbounded delta and the `as u32`
+/// cast saturates rather than wrapping; the console gets there in
+/// one line, since `parse_finite_pt` accepts any positive finite
+/// `f32` and `font size=5000` is an ordinary thing to type.
+///
+/// The floor and the ceiling are the same clamp. The floor is the
+/// older half — a shrunk run must stay legible and re-growable
+/// rather than casting to an invisible 0 — and the ceiling is what
+/// keeps the file reopenable.
+///
+/// Callers that round do so **before** calling: this truncates, so
+/// rounding afterwards would silently change every ordinary edit by
+/// up to a point.
+pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> u32 {
+    if size_pt.is_nan() {
+        return MIN_TEXT_RUN_SIZE_PT;
+    }
+    size_pt.clamp(MIN_TEXT_RUN_SIZE_PT as f32, validate::MAX_FONT_SIZE_PT) as u32
+}
 
 /// Push the tree-side font `scale` back onto a section's model
 /// runs — the reverse of the forward path's
@@ -142,7 +174,7 @@ fn sync_section_font_size(
             // would be dropped by `clamp_runs_to_text` anyway.
             return false;
         }
-        let size_pt = tree_scale.round().max(MIN_TEXT_RUN_SIZE_PT as f32) as u32;
+        let size_pt = clamp_run_size_pt(tree_scale.round());
         let color = if default_color.is_empty() {
             DEFAULT_TEXT_RUN_COLOR.to_string()
         } else {
@@ -164,9 +196,7 @@ fn sync_section_font_size(
 
     let mut changed = false;
     for run in section.text_runs.iter_mut() {
-        let new_size = (run.size_pt as f32 + delta)
-            .round()
-            .max(MIN_TEXT_RUN_SIZE_PT as f32) as u32;
+        let new_size = clamp_run_size_pt((run.size_pt as f32 + delta).round());
         if new_size != run.size_pt {
             run.size_pt = new_size;
             changed = true;
@@ -385,8 +415,7 @@ impl MindMapDocument {
         let tree_px = new_pos.0 as f32;
         let tree_py = new_pos.1 as f32;
         if model_node.position.x as f32 != tree_px || model_node.position.y as f32 != tree_py {
-            model_node.position.x = new_pos.0;
-            model_node.position.y = new_pos.1;
+            model_node.set_position_clamped(new_pos.0, new_pos.1);
             changed = true;
         }
         let node_pos_x = tree_px;

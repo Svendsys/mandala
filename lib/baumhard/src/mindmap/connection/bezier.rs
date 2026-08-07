@@ -80,6 +80,7 @@ pub(super) fn sample_cubic_bezier(
     control2: Vec2,
     end: Vec2,
     spacing: f32,
+    cap: usize,
 ) -> Vec<SampledPoint> {
     let arc_lengths = build_arc_length_table(start, control1, control2, end);
     let total_length = *arc_lengths.last().unwrap();
@@ -88,7 +89,7 @@ pub(super) fn sample_cubic_bezier(
     }
 
     let n = ARC_LENGTH_SUBDIVISIONS;
-    let count = (total_length / spacing).floor() as usize + 1;
+    let count = super::sample_count(total_length, spacing, cap);
     let mut points = Vec::with_capacity(count);
     for i in 0..count {
         let target_len = (i as f32 * spacing).min(total_length);

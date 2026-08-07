@@ -272,6 +272,65 @@ pub fn find_byte_index_of_grapheme(s: &str, index: usize) -> Option<usize> {
     None
 }
 
+/// Resolve a whole *table* of grapheme-cluster indices to byte
+/// offsets in one left-to-right walk.
+///
+/// Each entry of the result answers the same question
+/// [`find_byte_index_of_grapheme`] does for a single index:
+/// `Some(byte_offset)` when a cluster exists at that index, `None`
+/// when the index is at or past the end of `s`.
+///
+/// **Why this exists.** Converting a run table — text runs, color /
+/// font regions — one boundary at a time restarts the grapheme walk
+/// per boundary, so the conversion costs O(len × boundaries). That
+/// is quadratic whenever the run table scales with the text, which
+/// a `.mindmap.json` is free to make it do: a section carrying N
+/// clusters may legally carry N non-overlapping runs over them.
+/// This pays for the walk once instead.
+///
+/// `ascending` is expected sorted non-decreasing, which is what the
+/// format's run ordering already guarantees
+/// (`format/text-runs.md`, enforced at load by
+/// `mindmap::model::validate`). An out-of-order index is still
+/// answered correctly — it falls back to an independent walk for
+/// that entry — so a caller that breaks the expectation gets a slow
+/// answer rather than a wrong one.
+///
+/// Cost: O(len(s) + ascending.len()) for sorted input, plus one
+/// `Vec` of the returned offsets. An out-of-order entry adds one
+/// O(len(s)) walk for itself.
+pub fn byte_indices_of_graphemes(s: &str, ascending: &[usize]) -> Vec<Option<usize>> {
+    let mut out = Vec::with_capacity(ascending.len());
+    let mut clusters = s.graphemes(true).peekable();
+    let mut index = 0usize;
+    let mut byte_index = 0usize;
+
+    for &target in ascending {
+        if target < index {
+            out.push(find_byte_index_of_grapheme(s, target));
+            continue;
+        }
+        while index < target {
+            match clusters.next() {
+                Some(cluster) => {
+                    byte_index += cluster.len();
+                    index += 1;
+                }
+                None => break,
+            }
+        }
+        // `peek` rather than position alone: an index exactly at the
+        // cluster count has a byte offset but no cluster living
+        // there, and the single-index helper reports that as `None`.
+        if index == target && clusters.peek().is_some() {
+            out.push(Some(byte_index));
+        } else {
+            out.push(None);
+        }
+    }
+    out
+}
+
 fn replace_substring(s: &mut String, i: usize, n: usize, source: &str) {
     let mut bytes = s.as_bytes().to_vec();
     let source_bytes = source.as_bytes();

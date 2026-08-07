@@ -658,3 +658,59 @@ fn test_help_unknown_command_reports_error() {
     let result = run("help nope", &mut doc);
     assert!(matches!(result, ExecResult::Err(_)));
 }
+
+/// **The verb must report what it stored, not what it was handed.**
+///
+/// `set_edge_spacing` clamps to the loader's bound, and the verb
+/// echoed the raw token — so `spacing value=1e30` said "spacing set
+/// to 1e30" for a value stored as 1000000, and then "spacing already
+/// 1e30" on a repeat, because the setter correctly reported no
+/// change. The second message is the worse one: it tells the user
+/// their out-of-domain value is the current state.
+#[test]
+fn test_spacing_reports_the_clamped_value_not_the_request() {
+    let mut doc = load_test_doc();
+    let er = select_first_edge(&mut doc);
+
+    let first = run("spacing value=1e30", &mut doc);
+    let stored = doc
+        .mindmap
+        .edges
+        .iter()
+        .find(|e| er.matches(e))
+        .and_then(|e| e.glyph_connection.as_ref())
+        .map(|c| c.spacing)
+        .expect("the setter authored an inline connection");
+    assert!(
+        stored.abs() <= baumhard::mindmap::model::MAX_NODE_AXIS as f32,
+        "the setter must clamp, or this tests the wrong thing"
+    );
+
+    // Naming the request is fine — informative, even — as long as
+    // the *stored* value is what the message reports as current.
+    let first_text = format!("{first:?}");
+    assert!(
+        first_text.contains(&format!("{stored}")),
+        "must report the value actually stored: {first_text}"
+    );
+    assert!(
+        first_text.contains("clamped"),
+        "must say the value was clamped: {first_text}"
+    );
+
+    // The repeat is where the old phrasing lied hardest.
+    let second = run("spacing value=1e30", &mut doc);
+    let second_text = format!("{second:?}");
+    assert!(
+        !second_text.contains("already 1e30"),
+        "must not report the clamped-away request as the current state: {second_text}"
+    );
+
+    // An ordinary value is reported plainly, with no clamp noise.
+    let ordinary = run("spacing value=wide", &mut doc);
+    let ordinary_text = format!("{ordinary:?}");
+    assert!(
+        !ordinary_text.contains("clamped"),
+        "an in-domain edit must not mention clamping: {ordinary_text}"
+    );
+}

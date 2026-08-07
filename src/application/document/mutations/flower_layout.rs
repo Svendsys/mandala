@@ -76,8 +76,14 @@ pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
         }
         // Position is the top-left corner; centre the child on the
         // computed point.
-        child.position.x = cx + radius * theta.cos() - child.size.width / 2.0;
-        child.position.y = cy + radius * theta.sin() - child.size.height / 2.0;
+        // Clamped for the same reason as the cascade: the result is
+        // computed from a parent position plus a radius, so it can
+        // leave the domain the loader accepts even when every input
+        // is inside it.
+        child.set_position_clamped(
+            cx + radius * theta.cos() - child.size.width / 2.0,
+            cy + radius * theta.sin() - child.size.height / 2.0,
+        );
     }
 }
 

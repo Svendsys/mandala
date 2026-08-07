@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use baumhard::mindmap::loader::{load_from_file, save_to_file};
+use baumhard::mindmap::loader::{load_from_file, parse_file_for_inspection, save_to_file};
 use baumhard::mindmap::model::MindMap;
 use regex::{Regex, RegexBuilder};
 use std::fs;
@@ -252,7 +252,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
             let map_path = args
                 .get(1)
                 .ok_or_else(|| CliError::Usage("verify: missing <map.json>".into()))?;
-            let map = load_map(map_path)?;
+            let map = load_map_for_inspection(map_path)?;
             let violations = verify::verify(&map);
             if violations.is_empty() {
                 println!("{}: valid", map_path);
@@ -295,6 +295,24 @@ fn run(args: &[String]) -> Result<(), CliError> {
 
 fn load_map(path: &str) -> Result<MindMap, CliError> {
     load_from_file(Path::new(path)).map_err(CliError::Io)
+}
+
+/// Load a map the way `verify` needs it: shape-checked, but without
+/// the loader's render-safety invariants.
+///
+/// `verify`'s entire job is to say *what is wrong with this file*,
+/// and the files most worth asking about are the ones the editor
+/// will not open — a parent cycle, a `nodes` key that disagrees with
+/// its node's `id`, geometry the scene build would choke on. Loading
+/// those through the strict door would replace a precise list of
+/// violations with a single "cannot load", which is the one answer
+/// the user already has.
+///
+/// Every other verb keeps [`load_map`]: `show`, `grep`, `apply` and
+/// `export` all consume the model as truth, so they want the same
+/// gate the editor has.
+fn load_map_for_inspection(path: &str) -> Result<MindMap, CliError> {
+    parse_file_for_inspection(Path::new(path)).map_err(CliError::Io)
 }
 
 /// Parsed positional args for `grep`.
@@ -926,10 +944,29 @@ mod tests {
         );
     }
 
+    /// **`verify` must diagnose exactly the maps the editor
+    /// refuses.** The fixture carries three violations, and one of
+    /// them — a `nodes` key that disagrees with its node's `id` — is
+    /// a load-blocking invariant, because the two spellings address
+    /// different graphs and the mismatch lets a self-loop past the
+    /// parent-cycle check.
+    ///
+    /// That makes the two halves of this test a pair: the strict
+    /// door rejects the file, and `verify` still enumerates what is
+    /// wrong with it. Routing `verify` through the strict loader
+    /// would trade a precise list of violations for a single "cannot
+    /// load" — the one answer the user already had.
     #[test]
     fn run_verify_flags_invalid_fixture() {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         p.push("tests/fixtures/invalid_sampler.mindmap.json");
+
+        assert!(
+            load_from_file(&p).is_err(),
+            "the fixture must be one the editor's loader refuses, or this test \
+             stops covering the inspection path"
+        );
+
         let args = as_strings(&["verify", p.to_str().unwrap()]);
         match run(&args) {
             Err(CliError::NotFound(msg)) => {

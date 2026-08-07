@@ -201,7 +201,7 @@ impl KeyBind {
     /// Render the binding back to a `Ctrl+Shift+Alt+Key` string form.
     /// Inverse of `parse` up to modifier-order normalisation — parsing
     /// this output must produce an equal `KeyBind`, which is locked in
-    /// by `test_keybind_string_round_trip`.
+    /// by `test_keybind_string_round_trip_through_parse`.
     pub fn to_binding_string(&self) -> String {
         let mut parts: Vec<&str> = Vec::with_capacity(4);
         if self.ctrl {

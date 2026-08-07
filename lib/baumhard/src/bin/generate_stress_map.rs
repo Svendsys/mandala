@@ -52,6 +52,7 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
+use baumhard::mindmap::loader::to_json_value;
 use baumhard::mindmap::model::{
     Canvas, MindEdge, MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun,
 };
@@ -513,6 +514,8 @@ fn assemble_mindmap(name: &str, nodes: Vec<MindNode>, edges: Vec<MindEdge>) -> M
         edges,
         custom_mutations: Vec::new(),
         macros: Vec::new(),
+        unknown_keys: Default::default(),
+        skipped_constructs: Default::default(),
     }
 }
 
@@ -539,7 +542,15 @@ fn run(cfg: Config) -> Result<(), String> {
     let node_count = nodes.len();
     let edge_count = edges.len();
     let map = assemble_mindmap(&name, nodes, edges);
-    let json = serde_json::to_string_pretty(&map).map_err(|e| format!("serialise mindmap: {}", e))?;
+    // Through the contract, not around it. `loader::to_json_value` is
+    // the map's on-disk form — `serde_json::to_value` alone drops the
+    // keys a load preserved — and a generator that writes a
+    // `.mindmap.json` any other way is a second answer to what the
+    // format is, whether or not this particular map has keys to lose.
+    // `loader::tests::test_every_mindmap_write_goes_through_the_contract`
+    // is what keeps the next one from appearing.
+    let value = to_json_value(&map)?;
+    let json = serde_json::to_string_pretty(&value).map_err(|e| format!("serialize mindmap: {}", e))?;
     fs::write(&cfg.output, json).map_err(|e| format!("write {}: {}", cfg.output, e))?;
     println!(
         "wrote {} ({} nodes, {} edges, seed 0x{:X})",
@@ -656,10 +667,10 @@ mod tests {
     }
 
     #[test]
-    fn test_generated_map_serialises_and_parses_back() {
+    fn test_generated_map_serializes_and_parses_back() {
         let (nodes, edges) = gen_balanced(3, 3);
         let map = assemble_mindmap("test", nodes, edges);
-        let json = serde_json::to_string(&map).unwrap();
+        let json = serde_json::to_string(&to_json_value(&map).unwrap()).unwrap();
         let parsed: MindMap = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.nodes.len(), 40);
         assert_eq!(parsed.edges.len(), 39);

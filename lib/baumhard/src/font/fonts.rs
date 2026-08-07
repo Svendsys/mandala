@@ -88,6 +88,77 @@ pub fn init() {
     ensure_warm();
 }
 
+/// Floor for any font metric handed to the text shaper, in points.
+///
+/// Zero is the value that kills the process: cosmic-text's
+/// `Buffer::new` asserts `line_height != 0.0`, and an assert inside
+/// the scene build is an abort, not a frame to degrade. A merely
+/// *tiny* metric is its own denial of service — the border fill
+/// fitter divides a node's width by the glyph advance, so a
+/// sub-point size asks for hundreds of millions of glyphs in one
+/// string. Half a point is already invisible at any zoom the camera
+/// reaches, so nothing authorable lives below it.
+///
+/// Lives here, beside the shaper that enforces it, because both the
+/// document trust boundary (`mindmap::model::validate`, which
+/// re-exports this) and the mutation path (`GlyphArea`'s scale
+/// setters) have to agree on one number.
+pub const MIN_FONT_SIZE_PT: f32 = 0.5;
+
+/// Ceiling for any font metric handed to the text shaper, in points.
+/// Generous enough for a glyph used as a full-screen design element
+/// (the canonical fixture's largest run is 74pt) and small enough
+/// that one rasterized glyph cannot exhaust the atlas.
+pub const MAX_FONT_SIZE_PT: f32 = 4096.0;
+
+/// Force an authored font metric into
+/// [`MIN_FONT_SIZE_PT`]..=[`MAX_FONT_SIZE_PT`].
+///
+/// The two non-finite cases are deliberately *not* treated alike.
+/// An infinity carries an intent the bounds can honor — "as large
+/// as possible" clamps to the ceiling, and `f32::clamp` already
+/// does that correctly. `NaN` carries none, and `f32::clamp`
+/// propagates it rather than rejecting it, so it would reach the
+/// shaper as a metric that makes every downstream comparison false.
+/// That is the one case that falls back to `fallback`, which
+/// callers pass as the metric already in place.
+///
+/// Cost: O(1).
+pub fn clamp_font_metric(value: f32, fallback: f32) -> f32 {
+    if value.is_nan() {
+        return fallback;
+    }
+    value.clamp(MIN_FONT_SIZE_PT, MAX_FONT_SIZE_PT)
+}
+
+/// Clamp a screen-space font size into the window `[min, max]`,
+/// tolerating a window the document got backwards.
+///
+/// **`f32::clamp` panics when its bounds cross**, and the size
+/// cascades hand it a `min` and a `max` that need not come from the
+/// same place: a label may set only `min_font_size_pt` and inherit
+/// `max` from its edge, a portal endpoint from its config. Checking
+/// each struct's own pair at load therefore cannot see every window
+/// the cascade can build — the two halves are individually valid and
+/// jointly inverted.
+///
+/// So the ordering is enforced where the window is actually used.
+/// An inverted pair is read as the window the author described
+/// rather than a crash, both bounds are pulled into the shaper's
+/// domain first, and a `NaN` size takes the floor instead of
+/// propagating.
+///
+/// Cost: O(1).
+pub fn clamp_to_font_window(value: f32, min: f32, max: f32) -> f32 {
+    let min = clamp_font_metric(min, MIN_FONT_SIZE_PT);
+    let max = clamp_font_metric(max, MAX_FONT_SIZE_PT);
+    let (low, high) = if min <= max { (min, max) } else { (max, min) };
+    if value.is_nan() {
+        return low;
+    }
+    value.clamp(low, high)
+}
+
 /// Force the font lazy-statics a `FONT_SYSTEM` write acquire depends
 /// on to build **now** — `COMPILED_FONT_ID_MAP` (via `load_fonts`,
 /// which itself takes the write guard) and `FAMILY_INDEX` (via

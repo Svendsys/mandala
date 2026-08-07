@@ -141,7 +141,11 @@ pub fn resolve_portal_endpoint_style(
     // inlined so we can substitute the portal default when there's
     // no per-edge glyph_connection config.
     let z = camera_zoom.max(f32::EPSILON);
-    let target_screen = (base_font_size * z).clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
+    let target_screen = crate::font::fonts::clamp_to_font_window(
+        base_font_size * z,
+        cfg.min_font_size_pt,
+        cfg.max_font_size_pt,
+    );
     let font_size_pt = target_screen / z;
 
     // Glyph fallback. The line-body default (middle dot) renders
@@ -226,7 +230,7 @@ pub fn resolve_portal_endpoint_text_style(
         .and_then(|s| s.text_max_font_size_pt)
         .unwrap_or(cfg.max_font_size_pt);
     let z = camera_zoom.max(f32::EPSILON);
-    let target_screen = (base_font_size * z).clamp(min, max);
+    let target_screen = crate::font::fonts::clamp_to_font_window(base_font_size * z, min, max);
     let font_size_pt = target_screen / z;
 
     // Text color: transient overrides first, then the per-endpoint
