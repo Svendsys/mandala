@@ -857,9 +857,12 @@ mod tests {
 
         let over = format!("{}c", "b".repeat(kept));
         let text = load_failure_text("s", &over);
+        // On its own line, not folded into the loader's words on
+        // either side of it — the notice is this module's voice and
+        // has to read as an interruption rather than as content.
         assert!(
-            text.contains(&elision_notice(1)),
-            "one cluster past the budget must report exactly one elided:\n{}",
+            text.lines().any(|line| line == elision_notice(1)),
+            "one cluster past the budget must report exactly one elided, on its own line:\n{}",
             text.lines().take(4).collect::<Vec<_>>().join("\n")
         );
         assert!(
