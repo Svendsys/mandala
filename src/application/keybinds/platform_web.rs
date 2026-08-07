@@ -19,7 +19,7 @@ impl KeybindConfig {
     /// logged and skipped without invoking serde.
     ///
     /// **No `?keybinds=` layer**, for the reason given on
-    /// [`load_web_storage_only`](crate::application::user_config::web_storage::load_web_storage_only):
+    /// [`load_web_storage_only`]:
     /// a query param is owned by whoever composed the link, not by the
     /// user, so it must not reach `SourceTier::User`. A keybind config
     /// binds keys directly to `Action`s — including the
