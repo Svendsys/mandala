@@ -386,9 +386,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         "shape_from_style_string_empty_and_unknown_fall_back_to_rectangle",
         |b| b.iter(do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle),
     );
-    // Written as `b.iter(do_*)` rather than `b.iter(|| do_*())`.
-    // Both spellings are already in this file; only this one is
-    // clippy-clean (`redundant_closure`), so new entries use it.
+    // Written as `b.iter(do_*)` rather than `b.iter(|| do_*())`: the
+    // closure form around a bare zero-argument call is
+    // `clippy::redundant_closure`, and the sweep that cleared those
+    // left none of them in this file. The `b.iter(|| …)` entries
+    // further down are not the other spelling of this — each passes
+    // an argument or builds per-iteration state, which a function
+    // reference cannot express.
     c.bench_function("shape_every_known_spelling_is_non_warning", |b| {
         b.iter(do_shape_every_known_spelling_is_non_warning)
     });

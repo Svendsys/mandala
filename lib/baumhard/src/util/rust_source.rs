@@ -484,8 +484,13 @@ fn opens_an_inline_module(after: &str) -> bool {
 /// `rest` past a leading `word` and the whitespace after it, or
 /// `None` when `rest` does not begin with that whole word.
 ///
-/// The whole word: `pubfn` and `models` each start with one of the
+/// The whole word: `pubmod` and `modules` each start with one of the
 /// two keywords this is asked about, and neither is that keyword.
+/// Neither is valid Rust either, which is the point rather than an
+/// objection — a recognizer that accepts more than the grammar does
+/// cuts where the compiler sees no module, and everything below the
+/// cut stops being production code as far as every pin is concerned.
+/// [`opens_an_inline_module`]'s tests carry both spellings.
 fn strip_word<'a>(rest: &'a str, word: &str) -> Option<&'a str> {
     let tail = rest.strip_prefix(word)?;
     let boundary = tail

@@ -258,6 +258,32 @@ pub fn do_above_test_modules_cuts_at_the_module_only() {
         "an external test-module declaration holds no text in this file and must not truncate it"
     );
 
+    // `mod` and `pub` are matched as whole words. Neither shape below
+    // is valid Rust — `modules { … }` is not an item, `pubmod` is not
+    // a visibility — and that is exactly why they have to be
+    // rejected: over-acceptance is the dangerous direction here,
+    // because a recognizer looser than the grammar cuts where the
+    // compiler sees no module and hides production code from every
+    // pin built on it. `strip_word`'s boundary check is the whole of
+    // what holds that line, and until this ran it was untested — a
+    // mutant that assumed the boundary left the suite green.
+    //
+    // `pubmod` rather than the `pubfn` the helper's doc names,
+    // because only a near-miss that still reaches a `mod` can change
+    // the answer: `pubfn tests {` is rejected one token later by the
+    // real `mod` that is not there.
+    for near_miss in [
+        "modules { fn hidden() { needle(); } }",
+        "pubmod tests { fn hidden() { needle(); } }",
+    ] {
+        let src = format!("fn ships() {{ keep(); }}\n{attribute}\n{near_miss}\n");
+        assert!(
+            above_test_modules(&src).contains("needle()"),
+            "{near_miss}: a keyword was matched as a prefix rather than as a whole word, so \
+             text that is not a test module truncated the file"
+        );
+    }
+
     for module in [
         "mod tests {",
         "pub mod tests {",

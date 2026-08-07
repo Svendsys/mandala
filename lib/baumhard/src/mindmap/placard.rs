@@ -360,9 +360,20 @@ pub fn message_names_source(source: &str, message: &str) -> bool {
         if !before.is_some_and(continues_a_path) && !after.is_some_and(continues_a_path) {
             return true;
         }
-        // Past the first character of this occurrence, so an
-        // overlapping one is still reached.
-        from = at + message[at..].chars().next().map_or(1, char::len_utf8);
+        // Past the whole occurrence, so an *overlapping* one is
+        // deliberately not reached. It used to advance one character
+        // instead, "so an overlapping one is still reached" — an
+        // untested claim, and on inspection the wrong one. An
+        // overlapping occurrence starts inside the previous one, so
+        // the character before it is a character of `source` itself;
+        // reaching it can only turn a rejection into a match, never
+        // the reverse. But the loader interpolates the path once, and
+        // its prose does not end in a prefix of the path, so no
+        // *correct* match is reachable that way — only false ones,
+        // which the residual below names as the expensive direction:
+        // a false "named" drops the filename off the placard
+        // entirely.
+        from = at + source.len();
     }
     false
 }
@@ -544,6 +555,15 @@ mod tests {
                 false,
                 "`maps/map.mindmap.json` is a different file from `map`",
             ),
+            // The same, with the separator as the *only* thing
+            // saying so: drop `/` from the bounding set and every
+            // other row here stays green while this one flips.
+            (
+                "map",
+                "Failed to read file maps/map: No such file or directory (os error 2)",
+                false,
+                "`maps/map` is a different file from `map`, and only the `/` says so",
+            ),
             // `.` continues a path, so a prefix of a longer filename
             // is not the filename.
             (
@@ -578,6 +598,20 @@ mod tests {
                 r"Failed to read file C:\maps\x.mindmap.json: No such file or directory",
                 true,
                 "a Windows path is bounded by the space and the colon after it",
+            ),
+            // An occurrence overlapping a rejected one is not
+            // reached, and must not be: the character before it is a
+            // character of the source itself, so it can only ever
+            // manufacture a match. Synthetic, because only a source
+            // that overlaps itself can produce one — but the scan
+            // advances by a whole occurrence for this reason, and a
+            // scan that advanced by one character would answer
+            // `true` here and drop the filename.
+            (
+                "a a",
+                "za a a",
+                false,
+                "an overlapping occurrence is not a second mention, it is the same one",
             ),
             // A blank source has nothing to be named by.
             ("", PARSE_MESSAGE, false, "an empty source is never named"),
