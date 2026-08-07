@@ -18,7 +18,7 @@ use crate::application::user_config::web_storage::load_web_storage_only;
 /// invalid source is logged and the default is used.
 ///
 /// **No `?mutations=` layer**, for the reason given on
-/// [`load_web_storage_only`](crate::application::user_config::web_storage::load_web_storage_only):
+/// [`load_web_storage_only`]:
 /// a query param is owned by whoever composed the link, so it must not
 /// reach `SourceTier::User`. A user-tier custom mutation outranks the
 /// map's own by precedence and is not screened by the macro-step
