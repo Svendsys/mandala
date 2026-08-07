@@ -21,18 +21,55 @@
 //! property lives at the application boundary — this module only
 //! promises that the placard is a valid, self-contained map.
 //!
-//! The message is reproduced **in full**. Truncating it would defeat
-//! the point: the loader's messages name the offending node id, the
-//! offending key, and the migration verb, and the tail is where the
-//! actionable part usually is. Loader messages are bounded in
-//! practice — the longest shape serde produces is an
-//! ``unknown field `x`, expected one of ...`` field enumeration — so
-//! there is no runaway to guard against, and the node's axis clamp
-//! ([`MAX_NODE_AXIS`](crate::mindmap::model::MAX_NODE_AXIS)) is the
-//! backstop if that ever stops being true.
+//! ## The message is reproduced whole, and where it stops being whole
+//!
+//! Truncating a loader message defeats the point: the messages name
+//! the offending node id, the offending key and the migration verb,
+//! and the tail is where the actionable part usually is — serde puts
+//! `at line L column C` last of all. So every message the loader
+//! realistically emits reaches the canvas verbatim. The longest of
+//! them is the parent-cycle report, which spells the whole chain out:
+//! a 400-node cycle is ~3 150 clusters and 56 wrapped lines, well
+//! inside the budget below.
+//!
+//! **A loader message is not bounded, though, and the unbounded part
+//! is supplied by the file.** serde's ``invalid type: string
+//! "<value>", expected f64`` quotes the offending JSON string back at
+//! whatever length it was given: a 4 MB string value in a
+//! `.mindmap.json` — or in a `?map=` URL a browser was handed —
+//! produces a 4 MB message. Reproduced in full that is 62 508 wrapped
+//! lines and a node 1 950 250 canvas units tall, and every part of
+//! that is bad. The map stops round-tripping, because
+//! [`MAX_NODE_AXIS`](crate::mindmap::model::MAX_NODE_AXIS) is
+//! 1 000 000 and `load_from_str` refuses a node above it; the
+//! application's grow-to-fit clamp pins the *box* to that ceiling and
+//! leaves the *text* at 62 508 lines, so the message this module
+//! exists to show is clipped by the box meant to hold it; and nobody
+//! reads 62 508 lines regardless. The breach starts at 32 052 wrapped
+//! lines, which is ~2 051 300 message bytes at
+//! [`PLACARD_COLUMNS`].
+//!
+//! `MAX_NODE_AXIS` is therefore **not** the backstop this module used
+//! to name. It sits downstream of the placard and clamps the wrong
+//! quantity. The backstop is here: [`load_failure_text`] elides the
+//! *middle* of anything longer than [`PLACARD_HEAD_CLUSTERS`] +
+//! [`PLACARD_TAIL_CLUSTERS`], keeping both ends because both carry
+//! signal, and those budgets are chosen so the tallest placard they
+//! can produce stays under the ceiling by construction rather than by
+//! luck.
+//!
+//! The worst case this module used to name — ``unknown field `x`,
+//! expected one of …`` — is not merely no longer the longest, it can
+//! no longer occur: #117 removed every `deny_unknown_fields` from the
+//! model, so an unknown field is a `warn!` and not a load failure at
+//! all.
 
 use crate::mindmap::model::{MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun};
-use crate::util::grapheme_chad::{count_grapheme_clusters, grapheme_display_width, wrap_to_display_width};
+use crate::util::grapheme_chad::{
+    count_grapheme_clusters, find_byte_index_of_grapheme, grapheme_display_width, take_graphemes,
+    wrap_to_display_width,
+};
+use std::borrow::Cow;
 
 /// `MindMap::name` every placard carries. Distinct from any name a
 /// real map is likely to hold, so a placard is recognizable in a log
@@ -48,6 +85,35 @@ pub const PLACARD_NODE_ID: &str = "0";
 /// column of fragments, narrow enough that a long one does not
 /// become a single unreadable strip.
 pub const PLACARD_COLUMNS: usize = 64;
+
+/// Grapheme clusters kept from the **front** of each text the placard
+/// reproduces — the source and the loader's message alike.
+///
+/// Spelled as full lines' worth of [`PLACARD_COLUMNS`] because that
+/// is the unit the reader experiences. 96 lines is far past any
+/// message the loader realistically emits (the longest, a 400-node
+/// parent cycle, is 56) and far short of what stops being readable.
+///
+/// Together with [`PLACARD_TAIL_CLUSTERS`] this is what makes
+/// [`load_failure`]'s round-trip promise unconditional. A text of
+/// `head + tail` clusters wraps to at most `head + tail` lines — the
+/// pathological input is one cluster per line — so the tallest
+/// placard reachable is `2 × (6144 + 2048 + 1) + 5 = 16 391` lines,
+/// or 511 399 canvas units at the placard's 24 pt line advance. That
+/// is under
+/// [`MAX_NODE_AXIS`](crate::mindmap::model::MAX_NODE_AXIS) with the
+/// factor of two to spare that a budget nobody re-derives needs.
+pub const PLACARD_HEAD_CLUSTERS: usize = 96 * PLACARD_COLUMNS;
+
+/// Grapheme clusters kept from the **back** of each text the placard
+/// reproduces. See [`PLACARD_HEAD_CLUSTERS`] for the pair's reason.
+///
+/// Smaller than the head because the head is where the diagnosis is,
+/// but non-zero because the tail is where the *position* is: serde
+/// closes with `expected f64` and `at line L column C`, and a placard
+/// that dropped those would be answering "what is wrong" without
+/// "where".
+pub const PLACARD_TAIL_CLUSTERS: usize = 32 * PLACARD_COLUMNS;
 
 /// First line of every placard. States the outcome before the
 /// diagnosis, because that is the order the reader needs it in.
@@ -113,10 +179,20 @@ const PLACARD_LINE_HEIGHT_FRAC: f64 = 1.3;
 /// lets the shell treat it as an ordinary document instead of a
 /// special case.
 ///
-/// Cost: one wrap pass over `source` + `message`
-/// ([`wrap_to_display_width`]), one `String` for the joined body,
-/// and the map's own allocations. Cold — reached once, on a load
-/// that already failed.
+/// **That holds for every `source` and every `message`, including
+/// ones the file controls the length of**, and it holds because
+/// [`load_failure_text`] elides past [`PLACARD_HEAD_CLUSTERS`] +
+/// [`PLACARD_TAIL_CLUSTERS`]; without that budget a multi-megabyte
+/// serde message produces a node taller than
+/// [`MAX_NODE_AXIS`](crate::mindmap::model::MAX_NODE_AXIS) and the
+/// sentence above is false. See the module docs for the shape that
+/// gets there.
+///
+/// Cost: two grapheme walks of each of `source` and `message` to
+/// place the elision, then one wrap pass
+/// ([`wrap_to_display_width`]) over the bounded result, one `String`
+/// for the joined body, and the map's own allocations. Cold —
+/// reached once, on a load that already failed.
 pub fn load_failure(source: &str, message: &str) -> MindMap {
     let text = load_failure_text(source, message);
     let mut map = MindMap::new_blank(PLACARD_MAP_NAME);
@@ -141,18 +217,84 @@ pub fn load_failure(source: &str, message: &str) -> MindMap {
 /// line that goes, because the message is the loader's own words and
 /// the line is this module's framing of them.
 ///
-/// Cost: one [`wrap_to_display_width`] pass over each of `source`
-/// and `message`, plus the joined result.
+/// **Both texts are elided in the middle past
+/// [`PLACARD_HEAD_CLUSTERS`] + [`PLACARD_TAIL_CLUSTERS`]**, which is
+/// what keeps [`load_failure`]'s round-trip promise true against a
+/// message whose length the file supplies (module docs). Nothing the
+/// loader realistically emits reaches the budget, so in practice this
+/// is a bound rather than an edit. [`message_names_source`] is asked
+/// about the *original* texts, before either is elided: whether the
+/// loader named the file is a fact about what it wrote, not about
+/// what fits.
+///
+/// Cost: two grapheme walks per text to place the elision, then one
+/// [`wrap_to_display_width`] pass over each bounded result, plus the
+/// joined result.
 pub fn load_failure_text(source: &str, message: &str) -> String {
+    let names_source = message_names_source(source, message);
     let mut lines: Vec<String> = vec![PLACARD_HEADLINE.to_string(), String::new()];
-    if !message_names_source(source, message) {
-        lines.extend(wrap_to_display_width(source, PLACARD_COLUMNS));
+    if !names_source {
+        let source = elide_middle(source);
+        lines.extend(wrap_to_display_width(&source, PLACARD_COLUMNS));
         lines.push(String::new());
     }
-    lines.extend(wrap_to_display_width(message, PLACARD_COLUMNS));
+    let message = elide_middle(message);
+    lines.extend(wrap_to_display_width(&message, PLACARD_COLUMNS));
     lines.push(String::new());
     lines.push(PLACARD_FOOTER.to_string());
     lines.join("\n")
+}
+
+/// `text` with its middle replaced by [`elision_notice`] when it
+/// holds more than [`PLACARD_HEAD_CLUSTERS`] +
+/// [`PLACARD_TAIL_CLUSTERS`] grapheme clusters, and `text` itself
+/// when it does not.
+///
+/// The middle rather than the tail, because both ends carry signal
+/// and neither one alone is a diagnosis: serde opens with the kind of
+/// mismatch and closes with the position of it, and the parent-cycle
+/// report opens with the node it started from and closes with the
+/// remedy. Cutting the middle is also the only cut that cannot be
+/// mistaken for the loader having stopped talking — the notice is on
+/// its own line, in this module's voice, between two runs of the
+/// loader's.
+///
+/// The notice sits on its own line because [`wrap_to_display_width`]
+/// splits on hard newlines first, so it can never be folded into the
+/// text on either side of it.
+///
+/// Cost: two O(n) grapheme walks of `text` — one to count clusters,
+/// one to find the byte offset the tail starts at — and, only when it
+/// elides, one `String` sized to the budget. No allocation on the
+/// path every real loader message takes.
+fn elide_middle(text: &str) -> Cow<'_, str> {
+    let total = count_grapheme_clusters(text);
+    let kept = PLACARD_HEAD_CLUSTERS + PLACARD_TAIL_CLUSTERS;
+    if total <= kept {
+        return Cow::Borrowed(text);
+    }
+    let (head, _) = take_graphemes(text, PLACARD_HEAD_CLUSTERS);
+    let tail_at = find_byte_index_of_grapheme(text, total - PLACARD_TAIL_CLUSTERS).unwrap_or(text.len());
+    Cow::Owned(format!(
+        "{head}\n{}\n{}",
+        elision_notice(total - kept),
+        &text[tail_at..]
+    ))
+}
+
+/// The line [`elide_middle`] puts where the part it dropped was.
+///
+/// Short on purpose: it has to fit [`PLACARD_COLUMNS`] on its own
+/// line for any `count` a `usize` can hold, or the placard would
+/// break the width invariant precisely on the inputs the budget
+/// exists to handle. At 20 digits it is 43 columns.
+///
+/// "Characters" rather than "grapheme clusters" because the reader is
+/// someone whose map did not open, and clusters are what they would
+/// mean by characters anyway.
+fn elision_notice(count: usize) -> String {
+    let unit = if count == 1 { "character" } else { "characters" };
+    format!("… {count} {unit} elided …")
 }
 
 /// Whether `message` already names `source`, so a caller about to put
@@ -593,6 +735,181 @@ mod tests {
              per render and a monospace fallback, and it differs between native and the \
              browser. Compiled-in families: {compiled_in:?}",
             run.font
+        );
+    }
+
+    /// Everything of `text` with the whitespace taken out — the wrap
+    /// is free to break a long unbroken run anywhere, so a run that
+    /// survived it is only recoverable this way.
+    fn without_whitespace(text: &str) -> String {
+        text.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// **[`load_failure`]'s round-trip promise, against the input
+    /// that used to falsify it.**
+    ///
+    /// serde reproduces the offending JSON value verbatim when it
+    /// wanted a number and got a string, so the message is exactly as
+    /// long as the file made it. At 4 MB the unbounded placard was
+    /// 62 508 lines and 1 950 250 canvas units tall — over
+    /// `MAX_NODE_AXIS`, so `load_from_str` refused the very map that
+    /// exists to report a refusal, and the application's box clamp
+    /// then cropped the message rather than the box.
+    ///
+    /// Both ends have to survive: the head carries what went wrong,
+    /// the tail carries where.
+    #[test]
+    fn test_placard_bounds_a_message_whose_length_the_file_supplies() {
+        use crate::mindmap::model::MAX_NODE_AXIS;
+
+        let quoted = "A".repeat(4_000_000);
+        let message = format!("node \"0\": invalid type: string \"{quoted}\", expected f64");
+        let text = load_failure_text(SOURCE, &message);
+
+        assert!(
+            text.contains("invalid type: string"),
+            "the head of the message — what went wrong — did not survive:\n{}",
+            &text[..200.min(text.len())]
+        );
+        assert!(
+            text.contains("expected f64"),
+            "the tail of the message — where it went wrong — did not survive"
+        );
+        assert!(
+            text.contains("characters elided"),
+            "the placard elided silently; a reader has to be told the message is not whole"
+        );
+        for line in text.lines() {
+            assert!(
+                grapheme_display_width(line) <= PLACARD_COLUMNS || count_grapheme_clusters(line) == 1,
+                "line {line:?} exceeds {PLACARD_COLUMNS} columns"
+            );
+        }
+
+        let map = load_failure(SOURCE, &message);
+        let node = &map.nodes[PLACARD_NODE_ID];
+        assert!(
+            node.size.height <= MAX_NODE_AXIS && node.size.width <= MAX_NODE_AXIS,
+            "the placard is {} x {}, past the {MAX_NODE_AXIS} ceiling",
+            node.size.width,
+            node.size.height
+        );
+        let json = serde_json::to_string(&map).expect("placard serializes");
+        loader::load_from_str(&json).unwrap_or_else(|e| {
+            panic!("a 4 MB loader message must still produce a loadable placard: {e}");
+        });
+    }
+
+    /// The budget is a bound, not an edit: one cluster under it and
+    /// the message is whole, one cluster over it and exactly one
+    /// cluster is gone.
+    ///
+    /// The second half is what keeps the first honest — a budget that
+    /// never fired would pass the whole-message assertion vacuously.
+    #[test]
+    fn test_the_message_is_whole_up_to_the_budget_and_elided_one_past_it() {
+        let kept = PLACARD_HEAD_CLUSTERS + PLACARD_TAIL_CLUSTERS;
+
+        let exact = "b".repeat(kept);
+        let text = load_failure_text("s", &exact);
+        assert!(
+            without_whitespace(&text).contains(&exact),
+            "a message exactly at the budget lost something"
+        );
+        assert!(
+            !text.contains("elided"),
+            "a message exactly at the budget was announced as elided"
+        );
+
+        let over = format!("{}c", "b".repeat(kept));
+        let text = load_failure_text("s", &over);
+        assert!(
+            text.contains(&elision_notice(1)),
+            "one cluster past the budget must report exactly one elided:\n{}",
+            text.lines().take(4).collect::<Vec<_>>().join("\n")
+        );
+        assert!(
+            without_whitespace(&text).ends_with(&format!("c{}", without_whitespace(PLACARD_FOOTER))),
+            "the last cluster of an elided message is the one that must not be dropped"
+        );
+    }
+
+    /// **The budget's whole job, stated as the arithmetic it rests
+    /// on.** The tallest placard the budget can produce must stay
+    /// under `MAX_NODE_AXIS`, or [`load_failure`]'s promise is
+    /// conditional again.
+    ///
+    /// One cluster per line is the pathological wrap — the only input
+    /// whose line count equals its cluster count — so a text of bare
+    /// newlines at the budget is the worst case, on both the source
+    /// and the message at once.
+    ///
+    /// The second assertion pins the breach point the module docs
+    /// name. It is derived from the point size and the line advance,
+    /// so changing either without revisiting the prose fails here
+    /// rather than silently making the docs wrong.
+    #[test]
+    fn test_the_tallest_placard_the_budget_allows_stays_under_the_axis_ceiling() {
+        use crate::mindmap::model::MAX_NODE_AXIS;
+
+        let line_advance = f64::from(PLACARD_FONT_SIZE_PT) * PLACARD_LINE_HEIGHT_FRAC;
+        let breach_at = (MAX_NODE_AXIS / line_advance).floor() as usize + 1;
+        assert_eq!(
+            breach_at, 32_052,
+            "the module docs name 32 052 as the first line count that breaches the ceiling"
+        );
+        // And it is the real threshold rather than only the
+        // arithmetic: the box a placard of that many lines asks for
+        // is over the ceiling, and one line fewer is not.
+        let at_breach = "z\n".repeat(breach_at - 1) + "z";
+        assert!(estimated_size(&at_breach).1 > MAX_NODE_AXIS);
+        let below_breach = "z\n".repeat(breach_at - 2) + "z";
+        assert!(estimated_size(&below_breach).1 <= MAX_NODE_AXIS);
+
+        let kept = PLACARD_HEAD_CLUSTERS + PLACARD_TAIL_CLUSTERS;
+        // Distinct, so the message does not name the source and both
+        // texts land on the placard together.
+        let source = "\n".repeat(kept + 1);
+        let message = format!("x{}", "\n".repeat(kept));
+        let text = load_failure_text(&source, &message);
+        assert!(
+            text.lines().count() < breach_at,
+            "the worst case the budget allows is {} lines, past the {breach_at} the ceiling \
+             permits",
+            text.lines().count()
+        );
+
+        let map = load_failure(&source, &message);
+        let node = &map.nodes[PLACARD_NODE_ID];
+        assert!(
+            node.size.height <= MAX_NODE_AXIS,
+            "the worst case is {} units tall, past the {MAX_NODE_AXIS} ceiling",
+            node.size.height
+        );
+        let json = serde_json::to_string(&map).expect("placard serializes");
+        loader::load_from_str(&json).unwrap_or_else(|e| {
+            panic!("the worst case the budget allows must still be a loadable map: {e}");
+        });
+    }
+
+    /// The notice is pushed onto the placard as a whole line rather
+    /// than wrapped, so it has to fit the column on its own — and for
+    /// every count, not just the plausible ones, since the counts
+    /// that reach it are the ones a file chose.
+    #[test]
+    fn test_the_elision_notice_fits_the_placard_column() {
+        for count in [0usize, 1, 4_000_000, usize::MAX] {
+            let notice = elision_notice(count);
+            assert!(
+                grapheme_display_width(&notice) <= PLACARD_COLUMNS,
+                "the elision notice for {count} is {} columns wide, past {PLACARD_COLUMNS}: \
+                 {notice:?}",
+                grapheme_display_width(&notice)
+            );
+        }
+        assert!(
+            elision_notice(1).contains(" 1 character "),
+            "a one-cluster elision reads as one character, not one characters"
         );
     }
 

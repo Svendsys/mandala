@@ -1976,6 +1976,16 @@ renderer pass, and nothing that needs a GPU to test. The message is
 wrapped with `grapheme_chad::wrap_to_display_width`, so a path
 containing an emoji folds without shattering.
 
+"In full" has one bound, and it is not stylistic: a loader message
+is as long as the file makes it, because serde quotes an offending
+JSON string back verbatim. So the source and the message are each
+elided in the *middle* — both ends kept, a one-line notice between
+— past `PLACARD_HEAD_CLUSTERS + PLACARD_TAIL_CLUSTERS`. Nothing the
+loader realistically emits comes near that (the longest, a 400-node
+parent-cycle report, is 56 wrapped lines), and the budget is what
+keeps the placard a map the loader itself accepts: unbounded, a
+4 MB message asks for a node twice as tall as `MAX_NODE_AXIS`.
+
 `src/application/app/startup_load.rs` is the decision. Both init
 paths call `startup_load::adopt(startup_load::startup_surface(...))`
 and nothing else: `StartupSurface` has one arm per outcome, `adopt`
