@@ -19,12 +19,74 @@ use crate::mindmap::custom_mutation::{CustomMutation, TriggerBinding};
 /// extra zero or two as the canonical typo.
 pub const MAX_NODE_AXIS: f64 = 1_000_000.0;
 
-/// Hard cap on `MindNode.sections.len()`. Defends against hostile
-/// mindmaps with `"sections": [{},{},…10M…]` that would OOM on load.
-/// The number is generous (no real authoring use case approaches 1024
-/// sections per node) and bounded enough to make exhaustion-style
-/// attacks visible. Shared with `maptool verify`.
+/// Hard cap on `MindNode.sections.len()`, enforced **while
+/// deserializing** so the refusal costs nothing.
+///
+/// It is a bound on one node's content strata, not on map size: a
+/// large map has many nodes, not one node with millions of sections,
+/// so this does not stand between the reader and a big document.
+///
+/// **The enforcement point is the whole of it.** This constant existed
+/// with a doc claiming it "defends against hostile mindmaps with
+/// `sections: [{},{},…10M…]` that would OOM on load", and it did not:
+/// the check lived in the loader's invariant sweep, which runs after
+/// serde has built the whole `Vec`. A 12 MB file declaring 4 000 000
+/// sections reached **1 723 MiB resident** and was then refused — the
+/// message arriving after the cost it was written to avoid, and a file
+/// ten times larger would have died before the check ran at all.
+///
+/// [`deserialize_sections_capped`] stops at the first element past the
+/// cap, so the same file now costs the bytes read and nothing more.
+/// `detect_section_count_cap` stays as the invariant for maps built in
+/// memory rather than parsed, and `maptool verify` still reports it.
 pub const MAX_SECTIONS_PER_NODE: usize = 1024;
+
+/// Deserialize `sections`, refusing at the first element past
+/// [`MAX_SECTIONS_PER_NODE`] rather than after the allocation.
+///
+/// Counts as it goes instead of trusting `size_hint`, which a hostile
+/// document controls and which serde documents as a hint rather than a
+/// guarantee.
+fn deserialize_sections_capped<'de, D>(deserializer: D) -> Result<Vec<MindSection>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{Error, SeqAccess, Visitor};
+    use std::fmt;
+
+    struct Capped;
+
+    impl<'de> Visitor<'de> for Capped {
+        type Value = Vec<MindSection>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "at most {MAX_SECTIONS_PER_NODE} sections")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            // Not `with_capacity(size_hint)` — the hint comes from the
+            // document, so honoring it would hand the allocation back
+            // to the attacker this exists to stop.
+            let mut out: Vec<MindSection> = Vec::new();
+            while let Some(section) = seq.next_element::<MindSection>()? {
+                if out.len() >= MAX_SECTIONS_PER_NODE {
+                    return Err(A::Error::custom(format!(
+                        "node.sections.len() exceeds cap {MAX_SECTIONS_PER_NODE} — every \
+                         renderable node needs at least one section and no authoring case \
+                         approaches this many"
+                    )));
+                }
+                out.push(section);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_seq(Capped)
+}
 
 /// A single node in the mindmap: a styled rectangle that hosts one
 /// or more [`MindSection`]s carrying the text content. The node
@@ -72,7 +134,7 @@ pub struct MindNode {
     /// that synthesize `MindNode` from raw JSON skipping
     /// section authoring still parse — the *loader* is the layer
     /// that rejects zero-section maps with a migration pointer.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_sections_capped")]
     pub sections: Vec<MindSection>,
     /// Background / frame / text colors, border, shape, and the
     /// visible-frame toggle. The text color here acts as the
@@ -808,5 +870,54 @@ mod position_clamp_tests {
         // Negative control: an ordinary move is untouched.
         node.set_position_clamped(120.0, -40.5);
         assert_eq!((node.position.x, node.position.y), (120.0, -40.5));
+    }
+}
+
+#[cfg(test)]
+mod section_cap_tests {
+    use super::{MindNode, MAX_SECTIONS_PER_NODE};
+
+    /// **The cap must refuse during the parse, not after it.**
+    ///
+    /// It lived in the loader's invariant sweep, which runs once serde
+    /// has built the whole `Vec` — so a 12 MB file declaring 4 000 000
+    /// sections reached 1 723 MiB resident and was *then* refused, and
+    /// a file ten times larger would have died before the check ran.
+    /// The constant's own doc claimed it defended against exactly that.
+    ///
+    /// Driven through `serde_json::from_str` rather than the loader,
+    /// because that is the distinction: the loader would refuse either
+    /// way, and only the typed parse failing proves nothing was built
+    /// first.
+    #[test]
+    fn test_the_section_cap_refuses_before_building_the_vec() {
+        let sections = "{},".repeat(MAX_SECTIONS_PER_NODE + 8);
+        let json = format!(
+            r##"{{"id":"0","parent_id":null,"position":{{"x":0,"y":0}},
+                 "size":{{"width":10,"height":10}},
+                 "style":{{"background_color":"#000","frame_color":"#000","text_color":"#fff",
+                           "shape":"rectangle","corner_radius_percent":0,"frame_thickness":0,
+                           "show_frame":false,"show_shadow":false}},
+                 "layout":{{"type":"map","direction":"auto","spacing":0}},
+                 "folded":false,"notes":"","sections":[{}]}}"##,
+            sections.trim_end_matches(',')
+        );
+        let err = serde_json::from_str::<MindNode>(&json)
+            .expect_err("the typed parse itself must refuse past the cap");
+        assert!(
+            err.to_string().contains(&MAX_SECTIONS_PER_NODE.to_string()),
+            "the refusal must name the cap so the author can act on it: {err}"
+        );
+
+        // The negative control: exactly at the cap still parses, so the
+        // guard cannot be passing by refusing everything.
+        let ok_sections = "{},".repeat(MAX_SECTIONS_PER_NODE);
+        let json = json.replace(
+            sections.trim_end_matches(','),
+            ok_sections.trim_end_matches(','),
+        );
+        let node = serde_json::from_str::<MindNode>(&json)
+            .expect("a node exactly at the cap must still parse");
+        assert_eq!(node.sections.len(), MAX_SECTIONS_PER_NODE);
     }
 }

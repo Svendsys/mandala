@@ -1424,9 +1424,20 @@ mod tests {
         }}"##
         );
         let err = load_from_str(&raw).expect_err("over-cap sections must be rejected");
+        // The refusal now comes from `deserialize_sections_capped`
+        // during the parse rather than from `detect_section_count_cap`
+        // afterwards, which is the point: the sweep produced its
+        // message only once the whole `Vec` existed, so a 12 MB file
+        // declaring four million sections reached 1 723 MiB before
+        // being told no. The cap is still named, and the node still
+        // identified, so an author can act on it.
         assert!(
-            err.contains("node.sections.len()=1025 exceeds cap 1024"),
-            "error must use the shared cap message: {err}"
+            err.contains("node.sections.len()") && err.contains("1024"),
+            "the refusal must name the field and the cap: {err}"
+        );
+        assert!(
+            err.contains("node \"0\""),
+            "and must identify the node that carries them: {err}"
         );
     }
 
