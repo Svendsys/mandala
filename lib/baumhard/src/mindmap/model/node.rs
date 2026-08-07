@@ -35,8 +35,11 @@ pub const MAX_NODE_AXIS: f64 = 1_000_000.0;
 /// message arriving after the cost it was written to avoid, and a file
 /// ten times larger would have died before the check ran at all.
 ///
-/// [`deserialize_sections_capped`] stops at the first element past the
+/// `deserialize_sections_capped` stops at the first element past the
 /// cap, so the same file now costs the bytes read and nothing more.
+/// (Code span rather than a link: it is a private `fn` and this is a
+/// `pub const`, so rustdoc refuses the link under `-D warnings`. Its
+/// sibling `detect_section_count_cap` below is spelled the same way.)
 /// `detect_section_count_cap` stays as the invariant for maps built in
 /// memory rather than parsed, and `maptool verify` still reports it.
 pub const MAX_SECTIONS_PER_NODE: usize = 1024;
@@ -231,7 +234,10 @@ impl MindNode {
     /// **rejected** at the loader and at `set_node_aabb`, which is what
     /// `validate_node_position` is for.
     ///
-    /// Non-finite in becomes `0.0`, per [`validate::clamp_canvas_coord`].
+    /// Non-finite in becomes `0.0`, per
+    /// [`clamp_canvas_coord`](crate::mindmap::model::validate::clamp_canvas_coord)
+    /// — fully qualified because `validate` is not in scope here, which
+    /// is the same path the body below calls.
     pub fn set_position_clamped(&mut self, x: f64, y: f64) {
         self.position.x = crate::mindmap::model::validate::clamp_canvas_coord(x);
         self.position.y = crate::mindmap::model::validate::clamp_canvas_coord(y);
