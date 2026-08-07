@@ -1507,6 +1507,12 @@ mod tests {
         // start with the same multi-run section[1]. `MindMapDocument`
         // doesn't impl Clone, so we set up each side identically
         // rather than clone.
+        //
+        // `font` is the empty string — `format/fonts.md`'s "clears
+        // the pin". These fixtures used to say `"Sans"`, which is
+        // not a family anything resolves, so they were pinning a
+        // font that did not exist and the reverse projection
+        // rewrote it to `""` anyway.
         let seed_runs = vec![
             TextRun {
                 start: 0,
@@ -1514,7 +1520,7 @@ mod tests {
                 bold: true,
                 italic: false,
                 underline: false,
-                font: "Sans".into(),
+                font: String::new(),
                 size_pt: 12,
                 color: "#ff0000".into(),
                 hyperlink: None,
@@ -1525,7 +1531,7 @@ mod tests {
                 bold: false,
                 italic: true,
                 underline: false,
-                font: "Sans".into(),
+                font: String::new(),
                 size_pt: 12,
                 color: "#00ff00".into(),
                 hyperlink: None,
@@ -1590,7 +1596,7 @@ mod tests {
                 bold: true,
                 italic: false,
                 underline: false,
-                font: "Sans".into(),
+                font: String::new(),
                 size_pt: 12,
                 color: "#ff0000".into(),
                 hyperlink: None,

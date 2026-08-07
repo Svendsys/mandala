@@ -26,6 +26,9 @@ pub mod loader;
 /// Mindmap data model — `MindMap`, `MindNode`, `MindEdge`, palettes,
 /// canvas.
 pub mod model;
+/// The one-node `MindMap` a rejected load is rendered as, so a
+/// loader message reaches the canvas instead of only `stderr`.
+pub mod placard;
 /// Portal-label geometry: point ↔ `border_t` on a node's rectangular
 /// border, plus the directional default orientation.
 pub mod portal_geometry;

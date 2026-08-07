@@ -44,6 +44,79 @@ fn execute_open(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(doc));
             ExecResult::ok_msg(format!("opened {}", path))
         }
-        Err(e) => ExecResult::err(e),
+        // The loader's message verbatim, prefixed with the path it
+        // was asked for. `MindMapDocument::load` reports nothing on
+        // its own — every caller is a different surface, and this
+        // one is the console overlay.
+        Err(e) => ExecResult::err(format!("open {}: {}", path, e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::console::parser::Args;
+    use crate::application::console::tests::fixtures::assert_exec_err_contains;
+    use crate::application::console::ConsoleSideEffect;
+    use crate::application::document::tests_common::{load_test_doc, test_map_path};
+    use baumhard::util::test_temp::TempDir;
+
+    /// Run `open <path>` against `doc`, returning the result and any
+    /// side effect. The effect has to be lifted out before the
+    /// `ConsoleEffects` borrow of `doc` ends.
+    fn run_open(path: &str, doc: &mut MindMapDocument) -> (ExecResult, Option<ConsoleSideEffect>) {
+        let tokens = vec![path.to_string()];
+        let mut eff = ConsoleEffects::new(doc);
+        let result = execute_open(&Args::new(&tokens), &mut eff);
+        let side = eff.side_effect.take();
+        (result, side)
+    }
+
+    /// A rejected `open` puts the loader's own message in the console
+    /// overlay and leaves the current document alone.
+    ///
+    /// This surface was already correct before the startup placard
+    /// landed — #107 named it as the thing startup should have been
+    /// doing. It was also unpinned, and reporting has since moved out
+    /// of `MindMapDocument::load` and into the callers, so it is
+    /// pinned here: a caller that forgot to report would now be
+    /// silent rather than double-reporting.
+    #[test]
+    fn test_open_of_a_rejected_map_reports_the_loader_message() {
+        let dir = TempDir::new("console-open-rejected");
+        let path = dir.join("broken.mindmap.json");
+        std::fs::write(&path, "{ this is not json").expect("seed the broken map");
+        let path_str = path.to_string_lossy().to_string();
+
+        let mut doc = load_test_doc();
+        let name_before = doc.mindmap.name.clone();
+        let (result, side) = run_open(&path_str, &mut doc);
+
+        // The path the user typed, and the loader's own words.
+        assert_exec_err_contains(result, "Failed to parse mindmap JSON");
+        let (result, _) = run_open(&path_str, &mut doc);
+        assert_exec_err_contains(result, &path_str);
+
+        assert!(side.is_none(), "a rejected open must not replace the document");
+        assert_eq!(doc.mindmap.name, name_before);
+    }
+
+    /// The happy path still swaps the document in. Pairs with the
+    /// rejection test so "reports the error" cannot be satisfied by
+    /// a verb that never succeeds.
+    #[test]
+    fn test_open_of_a_valid_map_replaces_the_document() {
+        let path = test_map_path().to_string_lossy().to_string();
+        let mut doc = MindMapDocument::new_blank(None);
+        let (result, side) = run_open(&path, &mut doc);
+
+        assert!(
+            matches!(result, ExecResult::Ok(_)),
+            "the testament map must open: {result:?}"
+        );
+        assert!(
+            matches!(side, Some(ConsoleSideEffect::ReplaceDocument(_))),
+            "a successful open must hand the dispatcher a replacement document"
+        );
     }
 }

@@ -41,6 +41,13 @@ pub mod palettes;
 /// Lazy Sieve of Eratosthenes — the prime table the region-params
 /// grid chooser consults to avoid prime dimension factors.
 pub mod primes;
+/// Comment-free, test-module-free reads of this workspace's Rust
+/// source, for the pins no runtime assertion can make — a log
+/// statement whose sink the suite does not install, a `wasm32`-only
+/// branch `cargo test` never links. Native-only in effect; not
+/// `cfg(test)`-gated because its callers live in `mandala`.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod rust_source;
 /// Reachability walk over baumhard's own source, so a test can
 /// enumerate the types a deserializer may be handed instead of
 /// restating them in a list that drifts. Test-only: `syn` is a

@@ -806,7 +806,19 @@ fn detect_parent_cycle(map: &MindMap) -> Option<String> {
                 break;
             }
             if on_chain.contains(current_id) {
-                let cycle_start = chain.iter().position(|&id| id == current_id).unwrap();
+                // `chain` and `on_chain` gain the same id on the same
+                // two lines below and neither is ever popped, so the
+                // position is always found. It is spelled as a
+                // fallback rather than an `unwrap()` because this
+                // runs on the initial load and on the console `open`
+                // verb: CODE_CONVENTIONS §9 makes a bare `unwrap()`
+                // outside tests a bug on the first and a panic on the
+                // second unacceptable outright. Reporting from the
+                // head of the chain instead of from the join point
+                // still names a node that is on the cycle's walk and
+                // still refuses the map, which is the whole decision
+                // here; a panic would refuse the *application*.
+                let cycle_start = chain.iter().position(|&id| id == current_id).unwrap_or(0);
                 let path = chain[cycle_start..]
                     .iter()
                     .chain(std::iter::once(&current_id))
@@ -815,7 +827,8 @@ fn detect_parent_cycle(map: &MindMap) -> Option<String> {
                     .join(" → ");
                 return Some(format!(
                     "node {:?}: parent chain contains a cycle ({}); fix parent_id",
-                    chain[cycle_start], path
+                    chain.get(cycle_start).copied().unwrap_or(current_id),
+                    path
                 ));
             }
             chain.push(current_id);

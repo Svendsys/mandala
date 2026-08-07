@@ -906,9 +906,11 @@ own take:
   `find_byte_index_of_grapheme`,
   `replace_graphemes_until_newline`, `split_off_graphemes`,
   `delete_back_unicode`, `delete_front_unicode`,
-  `find_nth_line_grapheme_range`, `count_number_lines`. Byte
-  slicing from user-facing counts lands mid-cluster on the
-  first emoji; always reach for these. See
+  `find_nth_line_grapheme_range`, `count_number_lines`, and the
+  display-width pair `truncate_to_display_width` (clip the
+  overflow) / `wrap_to_display_width` (fold it onto the next
+  line). Byte slicing from user-facing counts lands mid-cluster
+  on the first emoji; always reach for these. See
   [`CODE_CONVENTIONS.md §1`](./CODE_CONVENTIONS.md) and
   [`lib/baumhard/CONVENTIONS.md §B3`](./lib/baumhard/CONVENTIONS.md).
 - **`color`** — `FloatRgba = [f32; 4]` and `Rgba = [u8; 4]`
@@ -1938,14 +1940,73 @@ to `InitState` and stay there for the lifetime of the run.
 everything substantive lives on `InitState`.
 
 `src/application/app/run_native.rs:48-130`.
-`InitState` carries `window: Arc<Window>`, an optional
-`document: Option<MindMapDocument>` (`None` before first file
-load), `drag_state`, `app_mode`, modal UI state (console, node
-text editor, single-line editor, color picker), `picker_hover`,
-and the resolved keybind table. The `input_context()` method at
-line 137 produces a borrowed view of these fields per-event so
-handlers can borrow disjoint subsets without lifetime
-contortions.
+`InitState` carries `window: Arc<Window>`, a
+`document: Option<MindMapDocument>`, `drag_state`, `app_mode`,
+modal UI state (console, node text editor, single-line editor,
+color picker), `picker_hover`, and the resolved keybind table. The
+`input_context()` method at line 137 produces a borrowed view of
+these fields per-event so handlers can borrow disjoint subsets
+without lifetime contortions.
+
+The `Option` on `document` is the interactive shell's shape, not
+startup's: init always produces a document, because a load that
+fails produces the [load-failure placard](#load-failure-placard)
+instead of nothing.
+
+### Load-failure placard
+
+The document a rejected map load is rendered as, so the loader's
+message reaches the canvas instead of only `stderr`.
+
+Startup is the surface most likely to be a user's first contact
+with the format, and it used to be the only one that swallowed a
+loader error — the console `open` verb puts the message in the
+overlay, `maptool` puts it on `stderr` and exits nonzero, and
+startup logged it and drew an empty canvas. Behind a double-click
+there is no terminal, so that log line did not exist for the person
+holding the file (#107).
+
+A placard is an ordinary one-node `MindMap`
+(`lib/baumhard/src/mindmap/placard.rs`) whose text is the headline,
+the path or URL that was asked for, the loader's message in full,
+and a line confirming nothing was written. Because it is a map, it
+reaches the screen through the same tree projection as any other
+document (§1 "Everything is glyphs") — no second pipeline, no
+renderer pass, and nothing that needs a GPU to test. The message is
+wrapped with `grapheme_chad::wrap_to_display_width`, so a path
+containing an emoji folds without shattering.
+
+"In full" has one bound, and it is not stylistic: a loader message
+is as long as the file makes it, because serde quotes an offending
+JSON string back verbatim. So the source and the message are each
+elided in the *middle* — both ends kept, a one-line notice between
+— past `PLACARD_HEAD_CLUSTERS + PLACARD_TAIL_CLUSTERS`. Nothing the
+loader realistically emits comes near that (the longest, a 400-node
+parent-cycle report, is 56 wrapped lines), and the budget is what
+keeps the placard a map the loader itself accepts: unbounded, a
+4 MB message asks for a node twice as tall as `MAX_NODE_AXIS`.
+
+`src/application/app/startup_load.rs` is the decision. Both init
+paths call `startup_load::adopt(startup_load::startup_surface(...))`
+and nothing else: `StartupSurface` has one arm per outcome, `adopt`
+is the only place the rejected arm is matched, and it is where the
+message reaches the log. That is what keeps the browser build and
+the desktop build reporting a bad map identically (§1
+"Cross-platform as first-class"); the browser build's earlier DOM
+overlay is gone, replaced by this. Adding a third outcome is a
+compile error in `adopt` rather than a silent return to the empty
+window.
+
+The placard is bound to no file path, which is load-bearing rather
+than incidental: `save` and `Ctrl+S` both refuse a document without
+one, so a reflexive save cannot write the placard over the file
+that failed to parse — a file that, being unparseable, is likely
+the only copy of what its author was hand-editing.
+
+The convention behind the choice is
+[`CODE_CONVENTIONS.md`](./CODE_CONVENTIONS.md) §9: `expect` is for a
+broken program precondition, and a user's malformed input is not
+one.
 
 ### Event loop and `drain_frame`
 

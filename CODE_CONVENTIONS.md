@@ -357,8 +357,69 @@ industrial cost/benefit reasoning. This is not license for speculation.
   internal invariants".
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
-  `Renderer::new`, `fonts::init`, the initial `loader::load_from_file`,
-  the `?map=` parser on WASM. Bare `unwrap()` outside tests is a bug.
+  the winit event loop and its window, the renderer bootstrap,
+  `fonts::init`, and — in the browser — hanging a canvas off the page
+  and reading `?map=` from its URL. What can fail says so where it
+  happens, in four groups. **The window:** `EventLoop::new`,
+  `create_window`, and `run_app`, whose `Err` is the loop itself
+  giving out — the first two on both targets, since `Application::new`
+  creates them for the browser rather than its run module doing so.
+  **The renderer bootstrap:** `create_surface`, then
+  `request_adapter` and `request_device` — no GPU, no program —
+  reached from both `Renderer::bootstrap_native` and
+  `Renderer::bootstrap_wasm`. **The page, in the browser:**
+  `web_sys::window`, the `document`, `body` and `canvas` hung off it,
+  the `append_child` that attaches one to the other, and the
+  `inner_width` / `inner_height` the first surface is sized from —
+  any one of them missing means there is no page to draw on. **The
+  font system, behind `fonts::init`:** the `FONT_SYSTEM.read` the
+  family index is built under, and the `panic!` that a poisoned or
+  unavailable write guard raises — a message rather than an
+  `expect` only because there is no `Result` left to `expect` on by
+  the time a `TryLockError` has been matched. Two
+  things in the phase list cannot fail, and are inside the boundary
+  rather than exceptions to it: `fonts::init` itself returns `()`, and
+  the query-string extractor is infallible by construction —
+  `search().unwrap_or_default()` then `strip_prefix`, with no
+  failure to report. What that extractor *feeds* is fallible, and is
+  the next bullet — which is also why the map fetch asks
+  `web_sys::window` a second time and *degrades* rather than
+  aborting: by then there is a shell to put the message in. Bare
+  `unwrap()` outside tests is a bug. **This list is checked against
+  the code in all three directions, not trusted:** the tests of the
+  module the next bullet names fail when it holds a name that has
+  moved, when it holds a name that cannot fail, and when a file on
+  the startup path grows a panicking call this list does not name.
+  It held one of each of the first two — a renamed renderer
+  constructor, and a font initializer that returns nothing — for as
+  long as nothing looked; and the third direction did not exist at
+  all, which is how `request_adapter` and `request_device` came to
+  `expect` on every launch of both targets while going unmentioned.
+- **The initial map load is the one startup path that does not
+  `expect`, and the reason names the boundary.** `expect` is for a
+  *program precondition* that did not hold — no adapter, no fonts,
+  nonsense on the command line. There is no window yet and nothing
+  sensible to draw into it, so a loud abort is the honest outcome. A
+  `.mindmap.json` the loader rejects is not that: it is a user
+  *input* the program is supposed to have an opinion about, and
+  `expect` turns having an opinion into a crash. On a desktop launch
+  — double-click, `.desktop` entry, file association — that crash is
+  a process that vanishes leaving no window at all, which tells the
+  person holding the file strictly less than the empty window it
+  would replace. So the initial `loader::load_from_file` on native
+  and the `?map=` fetch + parse in the browser **put the loader's
+  message in front of the user and keep the shell alive**: both
+  resolve through `app::startup_load`, which logs the message —
+  behind the path or URL that was asked for, because most of the
+  loader's messages do not name it — and hands the shell
+  `baumhard::mindmap::placard`'s one-node map carrying the same
+  words, installed by the same code that installs a real document.
+  Each target makes exactly one call into that module and is handed a
+  document, never a `Result`: a startup-error surface that exists on
+  only one of them is not a fix (§4), and a `Result` in an init site's
+  hands is where the two start to differ. This paragraph is the
+  recorded decision #107 asked for: the code and the convention were
+  in conflict, and they are reconciled here rather than at `expect`.
 - **`warn!` and `error!` survive into release; `info!`, `debug!` and
   `trace!` do not.** Both crates build `log` with
   `release_max_level_warn`, so the degrade half of "degrade the frame,

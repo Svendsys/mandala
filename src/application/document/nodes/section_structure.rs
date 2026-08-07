@@ -482,6 +482,10 @@ mod tests {
         // 5 multi-byte graphemes (Greek lowercase): each is 2 bytes.
         doc.set_section_text(&id, 0, "αβγδε".to_string());
         // Style the first two graphemes (αβ) as a single run.
+        //
+        // `font` is the empty string — `format/fonts.md`'s "clears
+        // the pin". These fixtures used to say `"Sans"`, which no
+        // family resolves, so they pinned a font that did not exist.
         {
             let node = doc.mindmap.nodes.get_mut(&id).unwrap();
             node.sections[0].text_runs = vec![TextRun {
@@ -490,7 +494,7 @@ mod tests {
                 bold: true,
                 italic: false,
                 underline: false,
-                font: "Sans".into(),
+                font: String::new(),
                 size_pt: 12,
                 color: "#ff0000".into(),
                 hyperlink: None,
@@ -526,7 +530,7 @@ mod tests {
                 bold: false,
                 italic: true,
                 underline: false,
-                font: "Sans".into(),
+                font: String::new(),
                 size_pt: 12,
                 color: "#00ff00".into(),
                 hyperlink: None,
@@ -691,7 +695,7 @@ mod tests {
                 bold: true,
                 italic: false,
                 underline: false,
-                font: "Sans".into(),
+                font: String::new(),
                 size_pt: 12,
                 color: "#0000ff".into(),
                 hyperlink: None,

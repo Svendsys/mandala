@@ -23,6 +23,7 @@ use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
 use baumhard::util::tests::grapheme_chad_tests::*;
 use baumhard::util::tests::primes_test::do_primes;
+use baumhard::util::tests::rust_source_tests::*;
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use std::collections::HashMap;
@@ -167,21 +168,21 @@ fn do_subtree_drag_slow_path(
 
 fn criterion_benchmark(c: &mut Criterion) {
     // glyph_model //
-    c.bench_function("matrix_place_in_1", |b| b.iter(|| matrix_place_in_1()));
-    c.bench_function("matrix_place_in_2", |b| b.iter(|| matrix_place_in_2()));
-    c.bench_function("matrix_place_in_3", |b| b.iter(|| matrix_place_in_3()));
+    c.bench_function("matrix_place_in_1", |b| b.iter(matrix_place_in_1));
+    c.bench_function("matrix_place_in_2", |b| b.iter(matrix_place_in_2));
+    c.bench_function("matrix_place_in_3", |b| b.iter(matrix_place_in_3));
     c.bench_function("matrix_place_in_multiline_component", |b| {
         b.iter(matrix_place_in_multiline_component)
     });
     c.bench_function("matrix_place_in_fusing_component", |b| {
         b.iter(matrix_place_in_fusing_component)
     });
-    c.bench_function("matrix_add_assign_1", |b| b.iter(|| matrix_add_assign_1()));
-    c.bench_function("matrix_add_assign_2", |b| b.iter(|| matrix_add_assign_2()));
-    c.bench_function("line_add_assign_1", |b| b.iter(|| line_add_assign_1()));
-    c.bench_function("line_add_assign_2", |b| b.iter(|| line_add_assign_2()));
-    c.bench_function("line_add_assign_3", |b| b.iter(|| line_add_assign_3()));
-    c.bench_function("line_add_assign_4", |b| b.iter(|| line_add_assign_4()));
+    c.bench_function("matrix_add_assign_1", |b| b.iter(matrix_add_assign_1));
+    c.bench_function("matrix_add_assign_2", |b| b.iter(matrix_add_assign_2));
+    c.bench_function("line_add_assign_1", |b| b.iter(line_add_assign_1));
+    c.bench_function("line_add_assign_2", |b| b.iter(line_add_assign_2));
+    c.bench_function("line_add_assign_3", |b| b.iter(line_add_assign_3));
+    c.bench_function("line_add_assign_4", |b| b.iter(line_add_assign_4));
     c.bench_function("line_ignore_initial_space_multibyte_indent", |b| {
         b.iter(do_line_ignore_initial_space_multibyte_indent)
     });
@@ -220,122 +221,116 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("overriding_insert_is_partition_independent", |b| {
         b.iter(do_overriding_insert_is_partition_independent)
     });
-    c.bench_function("component_of_index", |b| b.iter(|| component_of_index()));
-    c.bench_function("index_of_component", |b| b.iter(|| index_of_component()));
-    c.bench_function("expanding_insert_1", |b| b.iter(|| expanding_insert_1()));
-    c.bench_function("expanding_insert_2", |b| b.iter(|| expanding_insert_2()));
-    c.bench_function("expanding_insert_3", |b| b.iter(|| expanding_insert_3()));
-    c.bench_function("expanding_insert_4", |b| b.iter(|| expanding_insert_4()));
-    c.bench_function("expanding_insert_5", |b| b.iter(|| expanding_insert_5()));
-    c.bench_function("expanding_insert_6", |b| b.iter(|| expanding_insert_6()));
-    c.bench_function("expanding_insert_7", |b| b.iter(|| expanding_insert_7()));
-    c.bench_function("overriding_insert_1", |b| b.iter(|| overriding_insert_1()));
-    c.bench_function("overriding_insert_2", |b| b.iter(|| overriding_insert_2()));
-    c.bench_function("overriding_insert_3", |b| b.iter(|| overriding_insert_3()));
-    c.bench_function("overriding_insert_4", |b| b.iter(|| overriding_insert_4()));
-    c.bench_function("overriding_insert_5", |b| b.iter(|| overriding_insert_5()));
-    c.bench_function("overriding_insert_6", |b| b.iter(|| overriding_insert_6()));
-    c.bench_function("overriding_insert_7", |b| b.iter(|| overriding_insert_7()));
-    c.bench_function("overriding_insert_8", |b| b.iter(|| overriding_insert_8()));
-    c.bench_function("overriding_insert_9", |b| b.iter(|| overriding_insert_9()));
-    c.bench_function("overriding_insert_10", |b| b.iter(|| overriding_insert_10()));
-    c.bench_function("overriding_insert_11", |b| b.iter(|| overriding_insert_11()));
-    c.bench_function("overriding_insert_12", |b| b.iter(|| overriding_insert_12()));
-    c.bench_function("overriding_insert_13", |b| b.iter(|| overriding_insert_13()));
+    c.bench_function("component_of_index", |b| b.iter(component_of_index));
+    c.bench_function("index_of_component", |b| b.iter(index_of_component));
+    c.bench_function("expanding_insert_1", |b| b.iter(expanding_insert_1));
+    c.bench_function("expanding_insert_2", |b| b.iter(expanding_insert_2));
+    c.bench_function("expanding_insert_3", |b| b.iter(expanding_insert_3));
+    c.bench_function("expanding_insert_4", |b| b.iter(expanding_insert_4));
+    c.bench_function("expanding_insert_5", |b| b.iter(expanding_insert_5));
+    c.bench_function("expanding_insert_6", |b| b.iter(expanding_insert_6));
+    c.bench_function("expanding_insert_7", |b| b.iter(expanding_insert_7));
+    c.bench_function("overriding_insert_1", |b| b.iter(overriding_insert_1));
+    c.bench_function("overriding_insert_2", |b| b.iter(overriding_insert_2));
+    c.bench_function("overriding_insert_3", |b| b.iter(overriding_insert_3));
+    c.bench_function("overriding_insert_4", |b| b.iter(overriding_insert_4));
+    c.bench_function("overriding_insert_5", |b| b.iter(overriding_insert_5));
+    c.bench_function("overriding_insert_6", |b| b.iter(overriding_insert_6));
+    c.bench_function("overriding_insert_7", |b| b.iter(overriding_insert_7));
+    c.bench_function("overriding_insert_8", |b| b.iter(overriding_insert_8));
+    c.bench_function("overriding_insert_9", |b| b.iter(overriding_insert_9));
+    c.bench_function("overriding_insert_10", |b| b.iter(overriding_insert_10));
+    c.bench_function("overriding_insert_11", |b| b.iter(overriding_insert_11));
+    c.bench_function("overriding_insert_12", |b| b.iter(overriding_insert_12));
+    c.bench_function("overriding_insert_13", |b| b.iter(overriding_insert_13));
     c.bench_function("delta_glyph_line_assign_applies_through_apply_to", |b| {
-        b.iter(|| do_delta_glyph_line_assign_applies_through_apply_to())
+        b.iter(do_delta_glyph_line_assign_applies_through_apply_to)
     });
     c.bench_function("delta_glyph_lines_assign_applies_through_apply_to", |b| {
-        b.iter(|| do_delta_glyph_lines_assign_applies_through_apply_to())
+        b.iter(do_delta_glyph_lines_assign_applies_through_apply_to)
     });
     c.bench_function("delta_glyph_line_delete_clears_line", |b| {
-        b.iter(|| do_delta_glyph_line_delete_clears_line())
+        b.iter(do_delta_glyph_line_delete_clears_line)
     });
     c.bench_function("model_layer_subtract_saturates_at_zero", |b| {
-        b.iter(|| do_model_layer_subtract_saturates_at_zero())
+        b.iter(do_model_layer_subtract_saturates_at_zero)
     });
     c.bench_function("delta_glyph_matrix_noop_and_delete_ignore_payload", |b| {
-        b.iter(|| do_delta_glyph_matrix_noop_and_delete_ignore_payload())
+        b.iter(do_delta_glyph_matrix_noop_and_delete_ignore_payload)
     });
     c.bench_function("delta_glyph_matrix_applies_repeatedly", |b| {
-        b.iter(|| do_delta_glyph_matrix_applies_repeatedly())
+        b.iter(do_delta_glyph_matrix_applies_repeatedly)
     });
     c.bench_function("matrix_add_assign_absorbs_taller_rhs", |b| {
-        b.iter(|| do_matrix_add_assign_absorbs_taller_rhs())
+        b.iter(do_matrix_add_assign_absorbs_taller_rhs)
     });
     c.bench_function("matrix_destructive_assigns_drop_surplus_rhs_rows", |b| {
-        b.iter(|| do_matrix_destructive_assigns_drop_surplus_rhs_rows())
+        b.iter(do_matrix_destructive_assigns_drop_surplus_rhs_rows)
     });
     c.bench_function("component_add_assign_appends_text", |b| {
-        b.iter(|| do_component_add_assign_appends_text())
+        b.iter(do_component_add_assign_appends_text)
     });
     c.bench_function("model_rotate_moves_position_around_pivot", |b| {
-        b.iter(|| do_model_rotate_moves_position_around_pivot())
+        b.iter(do_model_rotate_moves_position_around_pivot)
     });
     // shared delta plumbing //
     c.bench_function("area_field_tags_cover_every_field", |b| {
-        b.iter(|| do_area_field_tags_cover_every_field())
+        b.iter(do_area_field_tags_cover_every_field)
     });
     c.bench_function("model_field_tags_cover_every_field", |b| {
-        b.iter(|| do_model_field_tags_cover_every_field())
+        b.iter(do_model_field_tags_cover_every_field)
     });
     c.bench_function("same_type_ignores_payload", |b| {
-        b.iter(|| do_same_type_ignores_payload())
+        b.iter(do_same_type_ignores_payload)
     });
     c.bench_function("pipeline_tags_are_derived", |b| {
-        b.iter(|| do_pipeline_tags_are_derived())
+        b.iter(do_pipeline_tags_are_derived)
     });
     c.bench_function("delta_new_collapses_duplicates_and_defaults_to_noop", |b| {
-        b.iter(|| do_delta_new_collapses_duplicates_and_defaults_to_noop())
+        b.iter(do_delta_new_collapses_duplicates_and_defaults_to_noop)
     });
     c.bench_function("delta_add_merges_both_sides", |b| {
-        b.iter(|| do_delta_add_merges_both_sides())
+        b.iter(do_delta_add_merges_both_sides)
     });
     c.bench_function("operation_key_matches_control_variant", |b| {
-        b.iter(|| do_operation_key_matches_control_variant())
+        b.iter(do_operation_key_matches_control_variant)
     });
-    c.bench_function("apply_ref_matches_apply", |b| {
-        b.iter(|| do_apply_ref_matches_apply())
-    });
+    c.bench_function("apply_ref_matches_apply", |b| b.iter(do_apply_ref_matches_apply));
     c.bench_function("apply_reaches_every_area_field", |b| {
-        b.iter(|| do_apply_reaches_every_area_field())
+        b.iter(do_apply_reaches_every_area_field)
     });
     c.bench_function("apply_reaches_every_model_field", |b| {
-        b.iter(|| do_apply_reaches_every_model_field())
+        b.iter(do_apply_reaches_every_model_field)
     });
     // glyph_area //
     c.bench_function("outline_assign_round_trip", |b| {
-        b.iter(|| do_outline_assign_round_trip())
+        b.iter(do_outline_assign_round_trip)
     });
-    c.bench_function("outline_subtract_clears", |b| {
-        b.iter(|| do_outline_subtract_clears())
-    });
-    c.bench_function("outline_changes_hash", |b| b.iter(|| do_outline_changes_hash()));
+    c.bench_function("outline_subtract_clears", |b| b.iter(do_outline_subtract_clears));
+    c.bench_function("outline_changes_hash", |b| b.iter(do_outline_changes_hash));
     c.bench_function("outline_field_add_picks_rhs", |b| {
-        b.iter(|| do_outline_field_add_picks_rhs())
+        b.iter(do_outline_field_add_picks_rhs)
     });
     c.bench_function("shape_default_is_rectangle", |b| {
-        b.iter(|| do_shape_default_is_rectangle())
+        b.iter(do_shape_default_is_rectangle)
     });
-    c.bench_function("shape_assign_round_trip", |b| {
-        b.iter(|| do_shape_assign_round_trip())
-    });
+    c.bench_function("shape_assign_round_trip", |b| b.iter(do_shape_assign_round_trip));
     c.bench_function("shape_subtract_resets_to_rectangle", |b| {
-        b.iter(|| do_shape_subtract_resets_to_rectangle())
+        b.iter(do_shape_subtract_resets_to_rectangle)
     });
-    c.bench_function("shape_changes_hash", |b| b.iter(|| do_shape_changes_hash()));
+    c.bench_function("shape_changes_hash", |b| b.iter(do_shape_changes_hash));
     c.bench_function("shape_field_add_picks_rhs", |b| {
-        b.iter(|| do_shape_field_add_picks_rhs())
+        b.iter(do_shape_field_add_picks_rhs)
     });
     c.bench_function(
         "change_region_range_missing_region_warns_and_leaves_area_intact",
-        |b| b.iter(|| do_change_region_range_missing_region_warns_and_leaves_area_intact()),
+        |b| b.iter(do_change_region_range_missing_region_warns_and_leaves_area_intact),
     );
     c.bench_function("delta_text_delete_clears_text", |b| {
-        b.iter(|| do_delta_text_delete_clears_text())
+        b.iter(do_delta_text_delete_clears_text)
     });
     c.bench_function("delta_regions_delete_clears_regions", |b| {
-        b.iter(|| do_delta_regions_delete_clears_regions())
+        b.iter(do_delta_regions_delete_clears_regions)
     });
     c.bench_function("area_rotate_moves_position_around_pivot", |b| {
         b.iter(do_area_rotate_moves_position_around_pivot)
@@ -354,46 +349,50 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     // zoom_visibility //
     c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {
-        b.iter(|| do_unbounded_contains_full_camera_range())
+        b.iter(do_unbounded_contains_full_camera_range)
     });
     c.bench_function("zoom_visibility_inclusive_band_on_every_authored_shape", |b| {
-        b.iter(|| do_inclusive_band_on_every_authored_shape())
+        b.iter(do_inclusive_band_on_every_authored_shape)
     });
     c.bench_function("zoom_visibility_inverted_band_never_contains", |b| {
-        b.iter(|| do_inverted_band_never_contains())
+        b.iter(do_inverted_band_never_contains)
     });
     c.bench_function("zoom_visibility_nan_zoom_never_contains", |b| {
-        b.iter(|| do_nan_zoom_never_contains())
+        b.iter(do_nan_zoom_never_contains)
     });
     c.bench_function("zoom_visibility_try_new_enforces_invariants", |b| {
-        b.iter(|| do_try_new_enforces_invariants())
+        b.iter(do_try_new_enforces_invariants)
     });
     c.bench_function("zoom_visibility_assign_round_trip", |b| {
-        b.iter(|| do_zoom_visibility_assign_round_trip())
+        b.iter(do_zoom_visibility_assign_round_trip)
     });
     c.bench_function("zoom_visibility_subtract_resets_to_unbounded", |b| {
-        b.iter(|| do_zoom_visibility_subtract_resets_to_unbounded())
+        b.iter(do_zoom_visibility_subtract_resets_to_unbounded)
     });
     c.bench_function("zoom_visibility_field_add_picks_rhs", |b| {
-        b.iter(|| do_zoom_visibility_field_add_picks_rhs())
+        b.iter(do_zoom_visibility_field_add_picks_rhs)
     });
     c.bench_function("zoom_visibility_changes_hash", |b| {
-        b.iter(|| do_zoom_visibility_changes_hash())
+        b.iter(do_zoom_visibility_changes_hash)
     });
     c.bench_function("zoom_visibility_default_is_skipped_in_json", |b| {
-        b.iter(|| do_zoom_visibility_default_is_skipped_in_json())
+        b.iter(do_zoom_visibility_default_is_skipped_in_json)
     });
     // shape math (point-in-shape / shape-vs-AABB) //
     c.bench_function("shape_from_style_string_known_names", |b| {
-        b.iter(|| do_shape_from_style_string_known_names())
+        b.iter(do_shape_from_style_string_known_names)
     });
     c.bench_function(
         "shape_from_style_string_empty_and_unknown_fall_back_to_rectangle",
-        |b| b.iter(|| do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle()),
+        |b| b.iter(do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle),
     );
-    // Written as `b.iter(do_*)` rather than `b.iter(|| do_*())`.
-    // Both spellings are already in this file; only this one is
-    // clippy-clean (`redundant_closure`), so new entries use it.
+    // Written as `b.iter(do_*)` rather than `b.iter(|| do_*())`: the
+    // closure form around a bare zero-argument call is
+    // `clippy::redundant_closure`, and the sweep that cleared those
+    // left none of them in this file. The `b.iter(|| …)` entries
+    // further down are not the other spelling of this — each passes
+    // an argument or builds per-iteration state, which a function
+    // reference cannot express.
     c.bench_function("shape_every_known_spelling_is_non_warning", |b| {
         b.iter(do_shape_every_known_spelling_is_non_warning)
     });
@@ -440,92 +439,88 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_shape_testament_map_has_no_unknown_shapes)
     });
     c.bench_function("shape_rectangle_contains_local", |b| {
-        b.iter(|| do_shape_rectangle_contains_local())
+        b.iter(do_shape_rectangle_contains_local)
     });
     c.bench_function("shape_ellipse_contains_center_and_rim", |b| {
-        b.iter(|| do_shape_ellipse_contains_center_and_rim())
+        b.iter(do_shape_ellipse_contains_center_and_rim)
     });
     c.bench_function("shape_ellipse_rejects_aabb_corners", |b| {
-        b.iter(|| do_shape_ellipse_rejects_aabb_corners())
+        b.iter(do_shape_ellipse_rejects_aabb_corners)
     });
     c.bench_function("shape_ellipse_handles_stretched_conic", |b| {
-        b.iter(|| do_shape_ellipse_handles_stretched_conic())
+        b.iter(do_shape_ellipse_handles_stretched_conic)
     });
     c.bench_function("shape_degenerate_bounds_never_hit", |b| {
-        b.iter(|| do_shape_degenerate_bounds_never_hit())
+        b.iter(do_shape_degenerate_bounds_never_hit)
     });
     c.bench_function("shape_ellipse_intersects_aabb_fully_inside", |b| {
-        b.iter(|| do_shape_ellipse_intersects_aabb_fully_inside())
+        b.iter(do_shape_ellipse_intersects_aabb_fully_inside)
     });
     c.bench_function("shape_ellipse_intersects_aabb_corner_only", |b| {
-        b.iter(|| do_shape_ellipse_intersects_aabb_corner_only())
+        b.iter(do_shape_ellipse_intersects_aabb_corner_only)
     });
     c.bench_function("shape_ellipse_intersects_aabb_straddling_rim", |b| {
-        b.iter(|| do_shape_ellipse_intersects_aabb_straddling_rim())
+        b.iter(do_shape_ellipse_intersects_aabb_straddling_rim)
     });
     c.bench_function("shape_ellipse_intersects_aabb_fully_outside", |b| {
-        b.iter(|| do_shape_ellipse_intersects_aabb_fully_outside())
+        b.iter(do_shape_ellipse_intersects_aabb_fully_outside)
     });
     c.bench_function("shape_shader_ids_are_stable", |b| {
-        b.iter(|| do_shape_shader_ids_are_stable())
+        b.iter(do_shape_shader_ids_are_stable)
     });
     // glyph_tree //
-    c.bench_function("basics_solo_mutation", |b| b.iter(|| basics_solo_mutation()));
-    c.bench_function("model_block_commands", |b| b.iter(|| model_block_commands()));
-    c.bench_function("area_block_commands", |b| b.iter(|| area_block_commands()));
-    c.bench_function("complex_tree_mutation", |b| b.iter(|| complex_tree_mutation()));
-    c.bench_function("simple_tree_mutation", |b| b.iter(|| simple_tree_mutation()));
-    c.bench_function("repeat_while_skip_while", |b| {
-        b.iter(|| repeat_while_skip_while())
-    });
+    c.bench_function("basics_solo_mutation", |b| b.iter(basics_solo_mutation));
+    c.bench_function("model_block_commands", |b| b.iter(model_block_commands));
+    c.bench_function("area_block_commands", |b| b.iter(area_block_commands));
+    c.bench_function("complex_tree_mutation", |b| b.iter(complex_tree_mutation));
+    c.bench_function("simple_tree_mutation", |b| b.iter(simple_tree_mutation));
+    c.bench_function("repeat_while_skip_while", |b| b.iter(repeat_while_skip_while));
     c.bench_function("repeat_while_without_children_is_noop", |b| {
-        b.iter(|| repeat_while_without_children_is_noop())
+        b.iter(repeat_while_without_children_is_noop)
     });
     c.bench_function("event_propagation_complex", |b| {
-        b.iter(|| event_propagation_complex_symmetric())
+        b.iter(event_propagation_complex_symmetric)
     });
-    c.bench_function("event_propagation_simple", |b| {
-        b.iter(|| event_propagation_simple())
-    });
+    c.bench_function("event_propagation_simple", |b| b.iter(event_propagation_simple));
     c.bench_function("mutator_macro_applies_all_mutations_in_order", |b| {
-        b.iter(|| do_mutator_macro_applies_all_mutations_in_order())
+        b.iter(do_mutator_macro_applies_all_mutations_in_order)
     });
     c.bench_function("mutator_macro_empty_is_noop", |b| {
-        b.iter(|| do_mutator_macro_empty_is_noop())
+        b.iter(do_mutator_macro_empty_is_noop)
     });
     c.bench_function("mutator_void_is_noop_when_applied_directly", |b| {
-        b.iter(|| do_mutator_void_is_noop_when_applied_directly())
+        b.iter(do_mutator_void_is_noop_when_applied_directly)
     });
     c.bench_function("mutator_void_preserves_channel_alignment_in_tree_walk", |b| {
-        b.iter(|| do_mutator_void_preserves_channel_alignment_in_tree_walk())
+        b.iter(do_mutator_void_preserves_channel_alignment_in_tree_walk)
     });
     // regions //
     c.bench_function("region_params_new_sunny_day", |b| {
-        b.iter(|| do_region_params_new_sunny_day())
+        b.iter(do_region_params_new_sunny_day)
     });
     c.bench_function("region_indexer_initialize", |b| {
-        b.iter(|| do_region_indexer_initialize())
+        b.iter(do_region_indexer_initialize)
     });
     c.bench_function("region_indexer_insert_and_remove", |b| {
-        b.iter(|| do_region_indexer_insert_and_remove())
+        b.iter(do_region_indexer_insert_and_remove)
     });
     c.bench_function("region_params_non_divisor_target", |b| {
-        b.iter(|| do_region_params_non_divisor_target())
+        b.iter(do_region_params_non_divisor_target)
     });
     c.bench_function("region_params_pixel_to_region", |b| {
-        b.iter(|| do_region_params_pixel_to_region())
+        b.iter(do_region_params_pixel_to_region)
     });
     c.bench_function("region_params_region_to_pixel", |b| {
-        b.iter(|| do_region_params_region_to_pixel())
+        b.iter(do_region_params_region_to_pixel)
     });
     c.bench_function("region_rect_exhaustive_4x4_grid", |b| {
-        b.iter(|| do_rect_exhaustive_4x4_grid())
+        b.iter(do_rect_exhaustive_4x4_grid)
     });
     // grapheme_chad //
-    c.bench_function("slice_to_newline", |b| b.iter(|| do_slice_to_newline()));
-    c.bench_function("split_graphemes", |b| b.iter(|| do_split_graphemes()));
+    c.bench_function("slice_to_newline", |b| b.iter(do_slice_to_newline));
+    c.bench_function("split_graphemes", |b| b.iter(do_split_graphemes));
     c.bench_function("find_byte_index_of_grapheme", |b| {
-        b.iter(|| do_find_byte_index_of_grapheme())
+        b.iter(do_find_byte_index_of_grapheme)
     });
     c.bench_function("byte_indices_of_graphemes", |b| {
         b.iter(do_byte_indices_of_graphemes)
@@ -537,37 +532,32 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_font_metric_setters_clamp_to_the_shaper_domain)
     });
     c.bench_function("replace_graphemes_until_newline", |b| {
-        b.iter(|| do_replace_graphemes_until_newline())
+        b.iter(do_replace_graphemes_until_newline)
     });
-    c.bench_function("count_grapheme_clusters", |b| {
-        b.iter(|| do_count_grapheme_clusters())
-    });
+    c.bench_function("count_grapheme_clusters", |b| b.iter(do_count_grapheme_clusters));
     c.bench_function("first_non_whitespace_grapheme", |b| {
         b.iter(do_first_non_whitespace_grapheme)
     });
     c.bench_function("find_nth_line_grapheme_indices", |b| {
-        b.iter(|| do_find_nth_line_grapheme_indices())
+        b.iter(do_find_nth_line_grapheme_indices)
     });
-    c.bench_function("remove_prefix_unicode", |b| b.iter(|| do_remove_prefix_unicode()));
-    c.bench_function("insert_new_lines", |b| b.iter(|| do_insert_new_lines()));
-    c.bench_function("push_spaces", |b| b.iter(|| do_push_spaces()));
-    c.bench_function("count_number_of_lines", |b| b.iter(|| do_count_number_of_lines()));
-    c.bench_function("truncate_unicode", |b| b.iter(|| do_truncate_unicode()));
-    c.bench_function("insert_str_at_grapheme", |b| {
-        b.iter(|| do_insert_str_at_grapheme())
-    });
+    c.bench_function("remove_prefix_unicode", |b| b.iter(do_remove_prefix_unicode));
+    c.bench_function("insert_new_lines", |b| b.iter(do_insert_new_lines));
+    c.bench_function("push_spaces", |b| b.iter(do_push_spaces));
+    c.bench_function("count_number_of_lines", |b| b.iter(do_count_number_of_lines));
+    c.bench_function("truncate_unicode", |b| b.iter(do_truncate_unicode));
+    c.bench_function("insert_str_at_grapheme", |b| b.iter(do_insert_str_at_grapheme));
     c.bench_function("insert_str_at_grapheme_counted", |b| {
-        b.iter(|| do_insert_str_at_grapheme_counted())
+        b.iter(do_insert_str_at_grapheme_counted)
     });
-    c.bench_function("delete_grapheme_at", |b| b.iter(|| do_delete_grapheme_at()));
-    c.bench_function("grapheme_display_width", |b| {
-        b.iter(|| do_grapheme_display_width())
-    });
+    c.bench_function("delete_grapheme_at", |b| b.iter(do_delete_grapheme_at));
+    c.bench_function("grapheme_display_width", |b| b.iter(do_grapheme_display_width));
     c.bench_function("truncate_to_display_width", |b| {
-        b.iter(|| do_truncate_to_display_width())
+        b.iter(do_truncate_to_display_width)
     });
-    c.bench_function("word_left", |b| b.iter(|| do_word_left()));
-    c.bench_function("word_right", |b| b.iter(|| do_word_right()));
+    c.bench_function("wrap_to_display_width", |b| b.iter(do_wrap_to_display_width));
+    c.bench_function("word_left", |b| b.iter(do_word_left));
+    c.bench_function("word_right", |b| b.iter(do_word_right));
     c.bench_function("prev_word_boundary_ws", |b| b.iter(do_prev_word_boundary_ws));
     c.bench_function("token_start_ws", |b| b.iter(do_token_start_ws));
     c.bench_function("take_graphemes", |b| b.iter(do_take_graphemes));
@@ -575,23 +565,39 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("insert_spaces", |b| b.iter(do_insert_spaces));
     c.bench_function("split_graphemes_owned", |b| b.iter(do_split_graphemes_owned));
     c.bench_function("join_graphemes", |b| b.iter(do_join_graphemes));
-    // geometry //
-    c.bench_function("90_deg_rotation", |b| b.iter(|| do_90_deg_rotation()));
-    c.bench_function("180_deg_rotation", |b| b.iter(|| do_180_deg_rotation()));
-    c.bench_function("non_origin_pivot_rotation", |b| {
-        b.iter(|| do_non_origin_pivot_rotation())
+    // rust_source // (the five pure scanners; `production_code` and
+    // the tree-wide sweep have no entry because they are file reads
+    // — see the module docs)
+    c.bench_function("strip_comments", |b| {
+        b.iter(do_strip_comments_removes_only_comments)
     });
-    c.bench_function("0_deg_rotation", |b| b.iter(|| do_0_deg_rotation()));
-    c.bench_function("pixel_functions", |b| b.iter(|| do_pixel_functions()));
-    c.bench_function("almost_equal", |b| b.iter(|| do_almost_equal()));
-    c.bench_function("almost_equal_vec2", |b| b.iter(|| do_almost_equal_vec2()));
-    c.bench_function("is_positive_finite", |b| b.iter(|| do_is_positive_finite()));
+    c.bench_function("above_test_modules", |b| {
+        b.iter(do_above_test_modules_cuts_at_the_module_only)
+    });
+    c.bench_function("braced_block_after", |b| {
+        b.iter(do_braced_block_after_matches_one_item)
+    });
+    c.bench_function("string_literals", |b| {
+        b.iter(do_string_literals_returns_every_literal)
+    });
+    c.bench_function("statements", |b| b.iter(do_statements_split_at_the_right_places));
+    // geometry //
+    c.bench_function("90_deg_rotation", |b| b.iter(do_90_deg_rotation));
+    c.bench_function("180_deg_rotation", |b| b.iter(do_180_deg_rotation));
+    c.bench_function("non_origin_pivot_rotation", |b| {
+        b.iter(do_non_origin_pivot_rotation)
+    });
+    c.bench_function("0_deg_rotation", |b| b.iter(do_0_deg_rotation));
+    c.bench_function("pixel_functions", |b| b.iter(do_pixel_functions));
+    c.bench_function("almost_equal", |b| b.iter(do_almost_equal));
+    c.bench_function("almost_equal_vec2", |b| b.iter(do_almost_equal_vec2));
+    c.bench_function("is_positive_finite", |b| b.iter(do_is_positive_finite));
     c.bench_function("is_non_negative_finite_f64", |b| {
-        b.iter(|| do_is_non_negative_finite_f64())
+        b.iter(do_is_non_negative_finite_f64)
     });
     // font / metrics //
     c.bench_function("monospace_advance_scales_linearly", |b| {
-        b.iter(|| do_monospace_advance_scales_linearly())
+        b.iter(do_monospace_advance_scales_linearly)
     });
     // font / name rules //
     c.bench_function("decode_name_record_utf16_be_ascii", |b| {
@@ -678,35 +684,29 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_generated_app_font_table_is_ordered_and_unique)
     });
     // color //
-    c.bench_function("from_hex", |b| b.iter(|| do_from_hex()));
-    c.bench_function("from_hex_lazy_static", |b| b.iter(|| do_from_hex_lazy_static()));
+    c.bench_function("from_hex", |b| b.iter(do_from_hex));
+    c.bench_function("from_hex_lazy_static", |b| b.iter(do_from_hex_lazy_static));
     c.bench_function("from_hex_garbage_falls_back_to_black", |b| {
-        b.iter(|| do_from_hex_garbage_falls_back_to_black())
+        b.iter(do_from_hex_garbage_falls_back_to_black)
     });
-    c.bench_function("rgba_hex_macros", |b| b.iter(|| do_rgba_hex_macros()));
-    c.bench_function("hex_to_rgba_three_digit", |b| {
-        b.iter(|| do_hex_to_rgba_three_digit())
-    });
-    c.bench_function("hex_to_rgba_four_digit", |b| {
-        b.iter(|| do_hex_to_rgba_four_digit())
-    });
-    c.bench_function("hex_to_rgba_six_digit", |b| b.iter(|| do_hex_to_rgba_six_digit()));
-    c.bench_function("hex_to_rgba_eight_digit", |b| {
-        b.iter(|| do_hex_to_rgba_eight_digit())
-    });
+    c.bench_function("rgba_hex_macros", |b| b.iter(do_rgba_hex_macros));
+    c.bench_function("hex_to_rgba_three_digit", |b| b.iter(do_hex_to_rgba_three_digit));
+    c.bench_function("hex_to_rgba_four_digit", |b| b.iter(do_hex_to_rgba_four_digit));
+    c.bench_function("hex_to_rgba_six_digit", |b| b.iter(do_hex_to_rgba_six_digit));
+    c.bench_function("hex_to_rgba_eight_digit", |b| b.iter(do_hex_to_rgba_eight_digit));
     c.bench_function("hex_to_rgba_rejects_invalid_length", |b| {
-        b.iter(|| do_hex_to_rgba_rejects_invalid_length())
+        b.iter(do_hex_to_rgba_rejects_invalid_length)
     });
     c.bench_function("hex_to_rgba_rejects_non_hex_char", |b| {
-        b.iter(|| do_hex_to_rgba_rejects_non_hex_char())
+        b.iter(do_hex_to_rgba_rejects_non_hex_char)
     });
     c.bench_function("hex_to_cosmic_color_round_trip", |b| {
-        b.iter(|| do_hex_to_cosmic_color_round_trip())
+        b.iter(do_hex_to_cosmic_color_round_trip)
     });
     // primitives //
-    c.bench_function("overlaps", |b| b.iter(|| do_overlaps()));
-    c.bench_function("split_and_separate_1", |b| b.iter(|| do_split_and_separate_1()));
-    c.bench_function("split_and_separate_2", |b| b.iter(|| do_split_and_separate_2()));
+    c.bench_function("overlaps", |b| b.iter(do_overlaps));
+    c.bench_function("split_and_separate_1", |b| b.iter(do_split_and_separate_1));
+    c.bench_function("split_and_separate_2", |b| b.iter(do_split_and_separate_2));
     c.bench_function("split_and_separate_truth_table", |b| {
         b.iter(do_split_and_separate_truth_table)
     });
@@ -732,174 +732,172 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_insertion_primitives_differ_only_at_the_three_seams)
     });
     c.bench_function("submit_region_drops_inverted_range", |b| {
-        b.iter(|| do_submit_region_drops_inverted_range())
+        b.iter(do_submit_region_drops_inverted_range)
     });
     c.bench_function("single_span_empty_is_empty", |b| {
-        b.iter(|| do_single_span_empty_is_empty())
+        b.iter(do_single_span_empty_is_empty)
     });
     c.bench_function("single_span_non_empty_covers_range", |b| {
-        b.iter(|| do_single_span_non_empty_covers_range())
+        b.iter(do_single_span_non_empty_covers_range)
     });
     c.bench_function("single_span_none_color_none_font", |b| {
-        b.iter(|| do_single_span_none_color_none_font())
+        b.iter(do_single_span_none_color_none_font)
     });
     c.bench_function("region_shift_and_shrink_disagree_at_the_seam", |b| {
         b.iter(do_region_shift_and_shrink_disagree_at_the_seam)
     });
     c.bench_function("shrink_regions_after_fully_right_shifts_left", |b| {
-        b.iter(|| do_shrink_regions_after_fully_right_shifts_left())
+        b.iter(do_shrink_regions_after_fully_right_shifts_left)
     });
     c.bench_function("shrink_regions_after_spanning_region_absorbs", |b| {
-        b.iter(|| do_shrink_regions_after_spanning_region_absorbs())
+        b.iter(do_shrink_regions_after_spanning_region_absorbs)
     });
     c.bench_function("shrink_regions_after_fully_inside_collapses", |b| {
-        b.iter(|| do_shrink_regions_after_fully_inside_collapses())
+        b.iter(do_shrink_regions_after_fully_inside_collapses)
     });
     c.bench_function("shrink_regions_after_left_partial_clamps", |b| {
-        b.iter(|| do_shrink_regions_after_left_partial_clamps())
+        b.iter(do_shrink_regions_after_left_partial_clamps)
     });
     c.bench_function("shrink_regions_after_right_partial_clamps", |b| {
-        b.iter(|| do_shrink_regions_after_right_partial_clamps())
+        b.iter(do_shrink_regions_after_right_partial_clamps)
     });
     c.bench_function("shrink_regions_after_zero_magnitude_is_noop", |b| {
-        b.iter(|| do_shrink_regions_after_zero_magnitude_is_noop())
+        b.iter(do_shrink_regions_after_zero_magnitude_is_noop)
     });
     c.bench_function("insert_regions_at_straddling_region_absorbs", |b| {
-        b.iter(|| do_insert_regions_at_straddling_region_absorbs())
+        b.iter(do_insert_regions_at_straddling_region_absorbs)
     });
     c.bench_function("insert_regions_at_left_adjacent_region_absorbs", |b| {
-        b.iter(|| do_insert_regions_at_left_adjacent_region_absorbs())
+        b.iter(do_insert_regions_at_left_adjacent_region_absorbs)
     });
     c.bench_function("insert_regions_at_shifts_right_regions", |b| {
-        b.iter(|| do_insert_regions_at_shifts_right_regions())
+        b.iter(do_insert_regions_at_shifts_right_regions)
     });
     c.bench_function("insert_regions_at_zero_position_shifts_all", |b| {
-        b.iter(|| do_insert_regions_at_zero_position_shifts_all())
+        b.iter(do_insert_regions_at_zero_position_shifts_all)
     });
     c.bench_function("insert_regions_at_empty_returns_false", |b| {
-        b.iter(|| do_insert_regions_at_empty_returns_false())
+        b.iter(do_insert_regions_at_empty_returns_false)
     });
     // font / ink-bounds //
     c.bench_function("measure_glyph_ink_bounds_latin_has_positive_advance", |b| {
-        b.iter(|| do_measure_glyph_ink_bounds_latin_has_positive_advance())
+        b.iter(do_measure_glyph_ink_bounds_latin_has_positive_advance)
     });
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
-        b.iter(|| do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing())
+        b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
     });
     c.bench_function("measure_glyph_ink_bounds_empty_string_is_zero", |b| {
-        b.iter(|| do_measure_glyph_ink_bounds_empty_string_is_zero())
+        b.iter(do_measure_glyph_ink_bounds_empty_string_is_zero)
     });
     c.bench_function("measure_glyph_ink_bounds_x_offset_from_advance_center", |b| {
-        b.iter(|| do_measure_glyph_ink_bounds_x_offset_from_advance_center())
+        b.iter(do_measure_glyph_ink_bounds_x_offset_from_advance_center)
     });
     c.bench_function("measure_glyph_ink_bounds_reports_baseline_line_y", |b| {
-        b.iter(|| do_measure_glyph_ink_bounds_reports_baseline_line_y())
+        b.iter(do_measure_glyph_ink_bounds_reports_baseline_line_y)
     });
     c.bench_function("measure_glyph_ink_bounds_y_offset_from_box_center", |b| {
-        b.iter(|| do_measure_glyph_ink_bounds_y_offset_from_box_center())
+        b.iter(do_measure_glyph_ink_bounds_y_offset_from_box_center)
     });
     c.bench_function("measure_text_block_unbounded_empty_is_zero", |b| {
-        b.iter(|| do_measure_text_block_unbounded_empty_is_zero())
+        b.iter(do_measure_text_block_unbounded_empty_is_zero)
     });
     c.bench_function("measure_text_block_unbounded_single_line_nonzero", |b| {
-        b.iter(|| do_measure_text_block_unbounded_single_line_nonzero())
+        b.iter(do_measure_text_block_unbounded_single_line_nonzero)
     });
     c.bench_function(
         "measure_text_block_unbounded_multiline_width_is_widest_line",
-        |b| b.iter(|| do_measure_text_block_unbounded_multiline_width_is_widest_line()),
+        |b| b.iter(do_measure_text_block_unbounded_multiline_width_is_widest_line),
     );
     c.bench_function("measure_text_block_unbounded_width_scales_with_font_size", |b| {
-        b.iter(|| do_measure_text_block_unbounded_width_scales_with_font_size())
+        b.iter(do_measure_text_block_unbounded_width_scales_with_font_size)
     });
     // font / region-attrs bridges //
     c.bench_function("attrs_list_from_empty_regions_yields_no_spans", |b| {
-        b.iter(|| do_attrs_list_from_empty_regions_yields_no_spans())
+        b.iter(do_attrs_list_from_empty_regions_yields_no_spans)
     });
     c.bench_function("attrs_list_from_single_color_region_emits_one_span", |b| {
-        b.iter(|| do_attrs_list_from_single_color_region_emits_one_span())
+        b.iter(do_attrs_list_from_single_color_region_emits_one_span)
     });
     c.bench_function("attrs_list_from_two_regions_emits_two_spans", |b| {
-        b.iter(|| do_attrs_list_from_two_regions_emits_two_spans())
+        b.iter(do_attrs_list_from_two_regions_emits_two_spans)
     });
     c.bench_function("attrs_list_pins_family_name_when_region_carries_app_font", |b| {
-        b.iter(|| do_attrs_list_pins_family_name_when_region_carries_app_font())
+        b.iter(do_attrs_list_pins_family_name_when_region_carries_app_font)
     });
     c.bench_function(
         "attrs_list_falls_back_to_monospace_when_region_has_no_font",
-        |b| b.iter(|| do_attrs_list_falls_back_to_monospace_when_region_has_no_font()),
+        |b| b.iter(do_attrs_list_falls_back_to_monospace_when_region_has_no_font),
     );
     c.bench_function(
         "rich_text_spans_empty_regions_yield_single_whole_text_span",
-        |b| b.iter(|| do_rich_text_spans_empty_regions_yield_single_whole_text_span()),
+        |b| b.iter(do_rich_text_spans_empty_regions_yield_single_whole_text_span),
     );
     c.bench_function("rich_text_spans_two_regions_slice_text_per_range", |b| {
-        b.iter(|| do_rich_text_spans_two_regions_slice_text_per_range())
+        b.iter(do_rich_text_spans_two_regions_slice_text_per_range)
     });
     c.bench_function("rich_text_spans_drop_zero_width_regions", |b| {
-        b.iter(|| do_rich_text_spans_drop_zero_width_regions())
+        b.iter(do_rich_text_spans_drop_zero_width_regions)
     });
     c.bench_function("rich_text_spans_color_override_recolors_every_span", |b| {
-        b.iter(|| do_rich_text_spans_color_override_recolors_every_span())
+        b.iter(do_rich_text_spans_color_override_recolors_every_span)
     });
     c.bench_function(
         "rich_text_spans_color_override_applies_to_uncolored_region",
-        |b| b.iter(|| do_rich_text_spans_color_override_applies_to_uncolored_region()),
+        |b| b.iter(do_rich_text_spans_color_override_applies_to_uncolored_region),
     );
     c.bench_function("rich_text_spans_color_override_drops_zero_width_regions", |b| {
-        b.iter(|| do_rich_text_spans_color_override_drops_zero_width_regions())
+        b.iter(do_rich_text_spans_color_override_drops_zero_width_regions)
     });
     c.bench_function("rich_text_spans_pin_family_name_when_region_has_app_font", |b| {
-        b.iter(|| do_rich_text_spans_pin_family_name_when_region_has_app_font())
+        b.iter(do_rich_text_spans_pin_family_name_when_region_has_app_font)
     });
     c.bench_function("rich_text_spans_no_family_pin_when_region_has_no_font", |b| {
-        b.iter(|| do_rich_text_spans_no_family_pin_when_region_has_no_font())
+        b.iter(do_rich_text_spans_no_family_pin_when_region_has_no_font)
     });
     c.bench_function("rich_text_spans_clamps_out_of_range_region_end", |b| {
-        b.iter(|| do_rich_text_spans_clamps_out_of_range_region_end())
+        b.iter(do_rich_text_spans_clamps_out_of_range_region_end)
     });
     c.bench_function("rich_text_spans_clamps_fully_out_of_range_region", |b| {
-        b.iter(|| do_rich_text_spans_clamps_fully_out_of_range_region())
+        b.iter(do_rich_text_spans_clamps_fully_out_of_range_region)
     });
     c.bench_function("rich_text_spans_empty_text_with_region_yields_no_spans", |b| {
-        b.iter(|| do_rich_text_spans_empty_text_with_region_yields_no_spans())
+        b.iter(do_rich_text_spans_empty_text_with_region_yields_no_spans)
     });
     // font family enumeration / lookup //
     c.bench_function("list_loaded_families_is_nonempty_sorted_unique", |b| {
-        b.iter(|| do_list_loaded_families_is_nonempty_sorted_unique())
+        b.iter(do_list_loaded_families_is_nonempty_sorted_unique)
     });
     c.bench_function("app_font_by_family_round_trips", |b| {
-        b.iter(|| do_app_font_by_family_round_trips())
+        b.iter(do_app_font_by_family_round_trips)
     });
     c.bench_function("app_font_by_family_unknown_returns_none", |b| {
-        b.iter(|| do_app_font_by_family_unknown_returns_none())
+        b.iter(do_app_font_by_family_unknown_returns_none)
     });
     c.bench_function("loaded_families_iter_matches_owned_list", |b| {
-        b.iter(|| do_loaded_families_iter_matches_owned_list())
+        b.iter(do_loaded_families_iter_matches_owned_list)
     });
     // scene + hit-test //
     c.bench_function("descendant_at_hits_single_area", |b| {
-        b.iter(|| do_descendant_at_hits_single_area())
+        b.iter(do_descendant_at_hits_single_area)
     });
     c.bench_function("descendant_at_prefers_smallest", |b| {
-        b.iter(|| do_descendant_at_prefers_smallest())
+        b.iter(do_descendant_at_prefers_smallest)
     });
     c.bench_function("descendant_near_grants_slack", |b| {
-        b.iter(|| do_descendant_near_grants_slack())
+        b.iter(do_descendant_near_grants_slack)
     });
     c.bench_function("descendants_aabb", |b| {
-        b.iter(|| do_descendants_aabb_covers_all_areas())
+        b.iter(do_descendants_aabb_covers_all_areas)
     });
     c.bench_function("descendants_aabb_invalidated_by_mutator", |b| {
-        b.iter(|| do_descendants_aabb_cache_invalidated_by_mutator())
+        b.iter(do_descendants_aabb_cache_invalidated_by_mutator)
     });
-    c.bench_function("scene_component_at", |b| {
-        b.iter(|| do_scene_insert_and_component_at())
-    });
+    c.bench_function("scene_component_at", |b| b.iter(do_scene_insert_and_component_at));
     c.bench_function("scene_layer_order_hit_priority", |b| {
-        b.iter(|| do_scene_layer_order_controls_hit_priority())
+        b.iter(do_scene_layer_order_controls_hit_priority)
     });
     c.bench_function("scene_offset_hit_test", |b| {
-        b.iter(|| do_scene_offset_is_applied_to_hit_test())
+        b.iter(do_scene_offset_is_applied_to_hit_test)
     });
     // Passed by path rather than wrapped in `|| f()` — the
     // surrounding file predates `clippy::redundant_closure` being
@@ -915,9 +913,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_scene_component_in_resolves_overlap_by_smallest_area)
     });
     // arena_utils //
-    c.bench_function("arena_utils_clone", |b| b.iter(|| do_clone()));
+    c.bench_function("arena_utils_clone", |b| b.iter(do_clone));
     // primes //
-    c.bench_function("primes", |b| b.iter(|| do_primes()));
+    c.bench_function("primes", |b| b.iter(do_primes));
 
     // subtree-drag drain at zoom 1 and 30. Caches are warmed outside
     // `iter()` so the first-frame cold miss doesn't dominate the sample.

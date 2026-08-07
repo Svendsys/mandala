@@ -16,7 +16,6 @@ use cosmic_text::FontSystem;
 use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, SwashCache};
 use lazy_static::lazy_static;
 use log::debug;
-use rand::seq::IteratorRandom;
 use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
 
@@ -199,10 +198,14 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 ///
 /// The reverse lookup (`app_font_by_family`) maps each unique
 /// family name to the first `AppFont` whose face advertises that
-/// name. Faces fontdb knows about but that aren't compiled in (none
-/// today; we own the database) map to `Any` so the cosmic-text
-/// fallback picks them up. Sorting is alphabetical so a UI list is
-/// stable.
+/// name. Faces fontdb knows about but that aren't compiled in map to
+/// `Any` so the cosmic-text fallback picks them up. **On native that
+/// set is not empty:** `FONT_SYSTEM` is `FontSystem::new()`, which
+/// indexes the host's fontconfig, so every family the machine has
+/// installed lands in this index too. The browser build has no
+/// fontconfig and sees only the compiled-in faces, which is the
+/// native-only divergence `format/fonts.md` opens by describing.
+/// Sorting is alphabetical so a UI list is stable.
 fn build_family_index() -> Vec<(String, AppFont)> {
     // Force `COMPILED_FONT_ID_MAP`'s lazy-static init **before** we
     // grab the `FONT_SYSTEM` read lock. `load_fonts()` (the lazy
@@ -488,18 +491,14 @@ where
     }
 }
 
-/// Clone out the `fontdb::Source` for a named compiled-in font.
-/// Panics if `name` is not in [`FONT_SOURCES`].
-pub fn get_font_source(name: &AppFont) -> Source {
-    return FONT_SOURCES.get(name).unwrap().clone();
-}
-
-/// Pick a random compiled-in font source. **Test-only helper** —
-/// production paths should pick fonts deterministically.
-pub fn get_some_font() -> Source {
-    let mut rng = rand::rng();
-    return FONT_SOURCES.values().choose(&mut rng).unwrap().clone();
-}
+// `get_font_source` and `get_some_font` stood here: two `pub`
+// helpers, each a bare `unwrap()` on the way to a `Source`, and
+// neither called from anywhere in the workspace — not the app, not
+// maptool, not the benches, not a test. CODE_CONVENTIONS §9 makes a
+// bare `unwrap()` outside tests a bug, and §10 says to delete rather
+// than to deprecate; dressing two dead functions in `expect` messages
+// nobody will ever read is the other thing. `do_for_all_sources`
+// above is the live way to reach [`FONT_SOURCES`].
 
 /// Opaque black. The default foreground color for newly-built
 /// `AttrsList`s.

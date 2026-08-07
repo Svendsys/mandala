@@ -254,6 +254,9 @@ fn style_eq(a: &TextRun, b: &TextRun) -> bool {
 mod tests {
     use super::*;
 
+    /// `font` is the empty string — `format/fonts.md`'s "clears the
+    /// pin". This fixture used to say `"Sans"`, which no family
+    /// resolves, so it pinned a font that did not exist.
     fn run(start: usize, end: usize, color: &str) -> TextRun {
         TextRun {
             start,
@@ -261,7 +264,7 @@ mod tests {
             bold: false,
             italic: false,
             underline: false,
-            font: "Sans".into(),
+            font: String::new(),
             size_pt: 12,
             color: color.into(),
             hyperlink: None,
@@ -761,7 +764,7 @@ mod tests {
             bold: false,
             italic: false,
             underline: false,
-            font: "Sans".into(),
+            font: String::new(),
             size_pt: 12,
             color: "blue".into(),
             hyperlink: None,
