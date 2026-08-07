@@ -47,13 +47,17 @@
 //! exists to show is clipped by the box meant to hold it; and nobody
 //! reads 62 508 lines regardless. The breach starts at 32 052 wrapped
 //! lines, which is ~2 051 300 message bytes at
-//! [`PLACARD_COLUMNS`].
+//! [`PLACARD_COLUMNS`](crate::mindmap::placard::PLACARD_COLUMNS).
 //!
 //! `MAX_NODE_AXIS` is therefore **not** the backstop this module used
 //! to name. It sits downstream of the placard and clamps the wrong
-//! quantity. The backstop is here: [`load_failure_text`] elides the
-//! *middle* of anything longer than [`PLACARD_HEAD_CLUSTERS`] +
-//! [`PLACARD_TAIL_CLUSTERS`], keeping both ends because both carry
+//! quantity. The backstop is here:
+//! [`load_failure_text`](crate::mindmap::placard::load_failure_text)
+//! elides the *middle* of anything longer than
+//! [`PLACARD_HEAD_CLUSTERS`](crate::mindmap::placard::PLACARD_HEAD_CLUSTERS)
+//! +
+//! [`PLACARD_TAIL_CLUSTERS`](crate::mindmap::placard::PLACARD_TAIL_CLUSTERS),
+//! keeping both ends because both carry
 //! signal, and those budgets are chosen so the tallest placard they
 //! can produce stays under the ceiling by construction rather than by
 //! luck.
