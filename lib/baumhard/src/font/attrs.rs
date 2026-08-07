@@ -60,25 +60,35 @@ use crate::util::grapheme_chad;
 /// `text` is required because `AttrsList::add_span` expects byte
 /// ranges into the text it styles, while `Range` on the data layer
 /// carries grapheme-cluster indices (the unit baumhard's text
-/// primitives speak in — see `lib/baumhard/CONVENTIONS.md §B1` and
+/// primitives speak in — see `lib/baumhard/CONVENTIONS.md §B3` and
 /// `CONCEPTS.md`'s `Range` entry). The conversion goes through
-/// [`grapheme_chad::find_byte_index_of_grapheme`] so a region whose
-/// end lands on a ZWJ-emoji or combining-mark cluster boundary
-/// produces a UTF-8-valid byte range that matches the visual
-/// glyph.
+/// `region_byte_bounds` so a region whose end lands on a
+/// ZWJ-emoji or combining-mark cluster boundary produces a
+/// UTF-8-valid byte range that matches the visual glyph.
 ///
-/// Cost: O(n_regions) iteration plus one `font_system.db().face()`
-/// lookup per region with a font id, plus an O(n_text) walk per
-/// region for grapheme-to-byte conversion. The caller is expected
-/// to hold the `FONT_SYSTEM` write lock for the same scope it uses
-/// the returned list — that's how the renderer wires it today.
+/// Cost: O(n_text + n_regions) **when the regions are sorted**,
+/// which the format guarantees and the loader enforces; the whole
+/// run table is then converted in a single grapheme walk rather than
+/// one walk per boundary. An out-of-order region falls back to its
+/// own walk and costs O(n_text) for itself — correct, just not
+/// linear. Plus one `font_system.db().face()` lookup per region
+/// carrying a font id, and the three `Vec`s `region_byte_bounds`
+/// builds — the flattened boundary list and the resolved indices,
+/// each twice the region count, plus the returned pairs at the
+/// region count.
+///
+/// The caller is expected to hold the `FONT_SYSTEM` write lock for
+/// the same scope it uses the returned list — that's how the
+/// renderer wires it today.
 pub fn attrs_list_from_regions(
     text: &str,
     source: &ColorFontRegions,
     font_system: &mut FontSystem,
 ) -> AttrsList {
     let mut attr_list = AttrsList::new(&Attrs::new());
-    for region in &source.regions {
+    // One walk for the whole table — see `region_byte_bounds`.
+    let bounds = region_byte_bounds(text, source.regions.iter().map(|r| &r.range));
+    for (region, (start, end)) in source.regions.iter().zip(bounds) {
         let mut attrs = Attrs::new().style(Style::Normal);
 
         if let Some(color) = region.color {
@@ -94,15 +104,48 @@ pub fn attrs_list_from_regions(
             Some(ref name) => attrs.family(Family::Name(name.as_str())),
             None => attrs.family(Family::Monospace),
         };
-        let start =
-            grapheme_chad::find_byte_index_of_grapheme(text, region.range.start).unwrap_or(text.len());
-        let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end).unwrap_or(text.len());
         if start >= end {
             continue;
         }
         attr_list.add_span(start..end, &attrs);
     }
     attr_list
+}
+
+/// Byte `(start, end)` for every region range, resolved in a single
+/// grapheme walk over `text`.
+///
+/// Grapheme-correct slicing is the contract: a `Range` carries
+/// grapheme-cluster indices (CONCEPTS.md, §B3 in
+/// `lib/baumhard/CONVENTIONS.md`, `format/text-runs.md`), so the
+/// conversion has to count clusters rather than bytes. Doing that
+/// per boundary restarts the walk each time, which is O(text ×
+/// regions) — quadratic on a section whose run table scales with
+/// its text, and reachable from any `.mindmap.json`. Both cosmic-text
+/// bridges route through here so neither can regress to the
+/// per-boundary form.
+///
+/// An index past the end resolves to `text.len()`, which the
+/// callers' `start >= end` guard then drops.
+///
+/// Cost: O(text + regions) and three `Vec`s — the flattened
+/// boundary list and the resolved indices, both `2 × regions`, plus
+/// the returned pairs at `regions`.
+fn region_byte_bounds<'r>(
+    text: &str,
+    ranges: impl Iterator<Item = &'r crate::core::primitives::Range>,
+) -> Vec<(usize, usize)> {
+    let flat: Vec<usize> = ranges.flat_map(|r| [r.start, r.end]).collect();
+    let resolved = grapheme_chad::byte_indices_of_graphemes(text, &flat);
+    resolved
+        .chunks(2)
+        .map(|pair| {
+            (
+                pair[0].unwrap_or(text.len()),
+                pair.get(1).copied().flatten().unwrap_or(text.len()),
+            )
+        })
+        .collect()
 }
 
 /// Look up the font-family name for a compiled font id. Returns
@@ -236,23 +279,14 @@ pub fn rich_text_spans_from_regions<'a>(
         }
         return vec![(text, attrs)];
     }
+    // One walk for the whole table — see `region_byte_bounds`.
+    let bounds = region_byte_bounds(text, families.regions.iter().map(|r| &r.range));
     families
         .regions
         .iter()
         .zip(families.names.iter())
-        .filter_map(|(region, family_name)| {
-            // Grapheme-correct slicing: `Range` carries grapheme-cluster
-            // indices per the data-layer contract (CONCEPTS.md, §B1
-            // in `lib/baumhard/CONVENTIONS.md`, and `format/text-runs.md`),
-            // so converting via `find_byte_index_of_grapheme` is the
-            // unit-correct path. A region that ends mid-grapheme would
-            // be a malformed input — by construction this never
-            // happens, since every fresh producer counts via
-            // `count_grapheme_clusters`.
-            let start =
-                grapheme_chad::find_byte_index_of_grapheme(text, region.range.start).unwrap_or(text.len());
-            let end =
-                grapheme_chad::find_byte_index_of_grapheme(text, region.range.end).unwrap_or(text.len());
+        .zip(bounds)
+        .filter_map(|((region, family_name), (start, end))| {
             if start >= end {
                 return None;
             }

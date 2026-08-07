@@ -41,9 +41,8 @@ impl<T: Clone> OptionEdit<T> {
     /// implementation of the Keep/Clear/Set semantics — every
     /// consumer (`zoom_bounds` setters today, future
     /// border-config writes when the bespoke
-    /// `apply_option_edit` / `apply_value_set` helpers fold in)
-    /// goes through this method instead of re-matching the
-    /// three variants.
+    /// `apply_option_edit` helper folds in) goes through this
+    /// method instead of re-matching the three variants.
     pub fn apply(self, current: Option<T>) -> Option<T> {
         match self {
             OptionEdit::Keep => current,
@@ -85,23 +84,6 @@ where
             }
         }
         OptionEdit::Keep => {}
-    }
-    false
-}
-
-/// Apply a `OptionEdit<T>` to a non-optional `T` slot — the
-/// `Set`-only path used for `font_size_pt` and `padding` (their
-/// underlying type stores a hardcoded default rather than `Option`,
-/// so `Clear` is a no-op for them).
-pub(super) fn apply_value_set<T>(edit: &OptionEdit<T>, slot: &mut T) -> bool
-where
-    T: PartialEq + Clone,
-{
-    if let OptionEdit::Set(v) = edit {
-        if slot != v {
-            *slot = v.clone();
-            return true;
-        }
     }
     false
 }

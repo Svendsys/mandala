@@ -43,6 +43,45 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
+/// Ceiling on the on-disk size of a `.mindmap.json`, in bytes, or
+/// `None` where the platform imposes none.
+///
+/// **`None` on native, and that is the design rather than an
+/// omission.** Mandala is meant to open maps as large as the machine
+/// can hold — the repository's own stress generator already emits one
+/// the previous 256 MiB ceiling refused — so "open this map" *is* an
+/// unconditional promise to allocate what the file asks for. The user
+/// picked the file; a 10 GB map costing 10 GB is the feature, and a
+/// failed allocation is an honest outcome of a choice they made.
+///
+/// The previous ceiling was justified by "far past any authored map —
+/// the canonical fixture is 545 KB with 252 nodes". That reasoning
+/// rested on an assumption about how large maps get, and the
+/// assumption was wrong. A limit defended by the size of today's
+/// fixtures is a limit that expires.
+///
+/// **`Some` on wasm32, because there the limit is physics.** `usize`
+/// is 32 bits and the address space is 4 GiB, shared with the runtime,
+/// the GPU buffers and the browser itself. A file that cannot fit is
+/// refused with a message rather than trapping mid-parse. This is a
+/// sanctioned target divergence, registered in `CLAUDE.md`'s
+/// dual-target section.
+///
+/// What is *not* bounded by any of this, and is documented at
+/// [`load_from_str`] instead, is the ratio: peak memory is a multiple
+/// of the file, roughly 4 KB per node and 2 KB per section on top of
+/// the text. Predicting cost from file size is what a user needs, and
+/// a ceiling never provided it.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_MAP_BYTES: Option<u64> = None;
+
+/// See the native definition above for the rationale. 3 GiB leaves
+/// headroom inside wasm32's 4 GiB address space for the typed model
+/// the text is parsed into, the scene tree built from it, and the
+/// GPU-side buffers — none of which the file length counts.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_MAP_BYTES: Option<u64> = Some(3 * 1024 * 1024 * 1024);
+
 /// Load a `MindMap` from a file path. Reads the entire file into
 /// memory via `std::fs::read_to_string`, then delegates to
 /// [`load_from_str`]. Native-only (synchronous I/O). Returns a
@@ -52,9 +91,36 @@ use std::path::Path;
 /// sized to the file's UTF-8 length) followed by [`load_from_str`]'s
 /// JSON parse — O(file_size) overall. Felt every map load.
 pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
-    let content =
-        fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
-    load_from_str(&content)
+    load_from_str(&read_capped(path)?)
+}
+
+/// Read `path` to a `String`, refusing anything over
+/// [`MAX_MAP_BYTES`].
+///
+/// **Stat before read.** `read_to_string` sizes its buffer from the
+/// file's length, so an oversized map is an allocation the process
+/// has already committed to by the time any parser gets a say — and
+/// the typed model built on top costs several times the text again.
+/// Checking first turns an OOM kill into a sentence, which is the
+/// whole difference between "this file is broken" and "the editor
+/// died".
+///
+/// A file whose metadata cannot be read falls through to the read
+/// rather than failing here: the read reports the real error
+/// (missing, unreadable) far better than a guess would.
+fn read_capped(path: &Path) -> Result<String, String> {
+    if let Ok(meta) = fs::metadata(path) {
+        if let Some(cap) = MAX_MAP_BYTES.filter(|cap| meta.len() > *cap) {
+            return Err(format!(
+                "{} is {} bytes, over the {} byte map limit — refusing to read it. \
+                 A map this size is either damaged or hostile.",
+                path.display(),
+                meta.len(),
+                cap
+            ));
+        }
+    }
+    fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))
 }
 
 /// Parse a `MindMap` from a JSON string.
@@ -89,20 +155,105 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// second time. The trade is deliberate: the load is not going to
 /// complete, and a node id beats a byte offset into a 545 KB file.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
-    let (mut map, routes): (MindMap, Vec<Vec<Step>>) = match unknown_keys::deserialize_capturing(json) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            // A construct from a newer build must not take the whole
-            // document down with it — see
-            // `load_skipping_unreadable_constructs`.
-            return load_skipping_unreadable_constructs(json)
-                .unwrap_or_else(|| Err(diagnose_rejected_json(json, &e)));
-        }
-    };
+    // `json` deliberately ends at the parse. `check_invariants` is
+    // not given it, so no future invariant can quietly reintroduce a
+    // second pass over the document text.
+    check_invariants(parse_for_inspection(json)?)
+}
+
+/// [`MAX_MAP_BYTES`], enforced against text already in memory.
+///
+/// The file-path loader stats before it reads, which is the cheaper
+/// and better check — but it is not the only door. **The browser
+/// never touches it**: the WASM build receives its map as a string
+/// (`?map=`) and goes straight to [`load_from_str`], so a ceiling
+/// that lived only on the filesystem path left the target with the
+/// smaller memory budget entirely unguarded. The same is true of
+/// any future transport — a paste, a socket, a fetch.
+///
+/// The text is already allocated by the time this runs, so this
+/// bounds the *typed model* built on top of it rather than the read
+/// itself. That is still the larger of the two costs.
+fn check_text_cap(json: &str) -> Result<(), String> {
+    check_text_cap_against(json, MAX_MAP_BYTES)
+}
+
+/// [`check_text_cap`] against a caller-supplied ceiling.
+///
+/// Split out so the refusal stays testable. `MAX_MAP_BYTES` is `None`
+/// on every target the test suite runs on, so a test written against
+/// the constant would assert nothing and pass — and the arm it stopped
+/// covering is the one the browser depends on. This takes the ceiling
+/// as a parameter, so a native test can hand it a small one and drive
+/// the same code the wasm32 build reaches with a real one.
+fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result<(), String> {
+    if let Some(cap) = ceiling.filter(|cap| json.len() as u64 > *cap) {
+        return Err(format!(
+            "map is {} bytes, over the {} byte limit — refusing to load it. \
+             A map this size is either damaged or hostile.",
+            json.len(),
+            cap
+        ));
+    }
+    Ok(())
+}
+
+/// Parse a `MindMap` with the *shape* checks but **without** the
+/// load-time invariants, for tooling that has to inspect a map the
+/// editor refuses to open.
+///
+/// [`load_from_str`] is the editor's front door and is deliberately
+/// strict: a parent cycle, a `nodes` key that disagrees with its
+/// node's `id`, a font size the text shaper asserts on — none of
+/// those open, because rendering them takes the process down. A
+/// *diagnostic* tool has the opposite need. The maps worth
+/// inspecting are exactly the broken ones, and a verifier that
+/// could only read files already passing the gate would fall silent
+/// precisely when it is wanted — reporting "cannot load" where the
+/// user asked *what is wrong with it*.
+///
+/// So this keeps everything that decides what the document *is* —
+/// serde's typed parse, the closed-object rejection, the
+/// legacy-shape migration pointers — and drops only the checks
+/// about whether it is safe to render. The returned model may
+/// therefore hold a cycle, non-finite geometry, or a zero font
+/// size: **do not build a scene from it.** `maptool verify` is the
+/// intended caller.
+///
+/// Cost: identical to a successful [`load_from_str`] minus the
+/// invariant sweep — one parse of `json`.
+pub fn parse_for_inspection(json: &str) -> Result<MindMap, String> {
+    check_text_cap(json)?;
+    let (mut map, routes): (MindMap, Vec<Vec<Step>>) =
+        match unknown_keys::deserialize_capturing(json) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                // A construct from a newer build must not take the
+                // whole document down with it — see
+                // `load_skipping_unreadable_constructs`.
+                return load_skipping_unreadable_constructs(json)
+                    .unwrap_or_else(|| Err(diagnose_rejected_json(json, &e)));
+            }
+        };
+    // Refused *before* `adopt_unknown_keys`, which is where the two
+    // full `Value` trees are built — a count check made after them
+    // would be made after the memory was already spent.
+    if let Some(err) = unknown_keys::unknown_key_count_violation(&routes) {
+        return Err(err);
+    }
     if !routes.is_empty() {
         map.unknown_keys = adopt_unknown_keys(json, &map, routes)?;
     }
-    check_invariants(map)
+    Ok(map)
+}
+
+/// [`parse_for_inspection`] from a file path, with the same
+/// [`MAX_MAP_BYTES`] ceiling [`load_from_file`] applies — an
+/// inspection tool still has to read the bytes, so it inherits the
+/// same commitment.
+pub fn parse_file_for_inspection(path: &Path) -> Result<MindMap, String> {
+    let content = read_capped(path)?;
+    parse_for_inspection(&content)
 }
 
 /// Turn the routes a capturing parse collected into the
@@ -222,6 +373,15 @@ fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, Str
     // the caller's ordinary diagnosis is the better answer.
     let (mut map, routes): (MindMap, Vec<Vec<Step>>) =
         unknown_keys::deserialize_value_capturing(&raw).ok()?;
+    if let Some(err) = unknown_keys::unknown_key_count_violation(&routes) {
+        // Same ceiling as the strict door, and reported as itself.
+        // `None` here would hand the caller back to
+        // `diagnose_rejected_json`, which would name the unreadable
+        // construct that sent the load down this path — true, but not
+        // the reason the document was refused, and not the one the
+        // author can act on.
+        return Some(Err(err));
+    }
     for entry in skipped.iter() {
         log::warn!("{}", entry.warning());
     }
@@ -234,7 +394,7 @@ fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, Str
         }
         map.unknown_keys = captured;
     }
-    Some(check_invariants(map))
+    Some(Ok(map))
 }
 
 /// Lift every custom mutation and trigger binding the typed model
@@ -359,16 +519,45 @@ fn value_at_mut<'v>(root: &'v mut Value, route: &[Step]) -> Option<&'v mut Value
 /// the JSON: they are checked against `MindMap` values, never against
 /// the source text.
 ///
-/// Cost: O(nodes + edges) — one sorted pass for the zero-section and
-/// section-cap checks, one memoized parent walk, one edge-tuple scan.
+/// Two kinds of invariant live here, and the order they run in is
+/// the order a reader wants them. **Structure** comes first — a
+/// node with no sections, a parent cycle, too many sections — because
+/// those describe a map that is malformed as a *document*.
+/// **Numeric domain** comes last, and is the one that keeps the
+/// editor alive: a `.mindmap.json` is untrusted input, and its
+/// numbers reach `assert!`s inside the text shaper, an inverted
+/// `f32::clamp`, and allocations sized from authored geometry. A map
+/// that would abort the process on its first frame does not open;
+/// see `mindmap::model::validate` for why that is a rejection rather
+/// than a repair.
+///
+/// Cost: O(n log n) in the node count, plus O(edges + sections +
+/// runs). The log factor is five separate sorts, not one: each of
+/// the four `detect_*` checks sorts the nodes itself, and
+/// `map_numeric_domain` sorts them again. Every one of them
+/// allocates its own `Vec` of borrows to do it.
+///
+/// That is deliberate rather than overlooked. Each check reports the
+/// *first* offending node, and "first" has to mean the same node on
+/// every run or the error message depends on `HashMap` iteration
+/// order. Sharing one sorted list across all five would need the
+/// order threaded through checks that are otherwise independent and
+/// individually testable. This runs once per file open, against a
+/// parse that already cost several times more.
 fn check_invariants(map: MindMap) -> Result<MindMap, String> {
     if let Some(err) = detect_zero_section_node(&map) {
+        return Err(err);
+    }
+    if let Some(err) = detect_id_key_mismatch(&map) {
         return Err(err);
     }
     if let Some(err) = detect_parent_cycle(&map) {
         return Err(err);
     }
     if let Some(err) = detect_section_count_cap(&map) {
+        return Err(err);
+    }
+    if let Some(err) = validate::map_numeric_domain(&map) {
         return Err(err);
     }
     warn_on_duplicate_edges(&map);
@@ -384,12 +573,41 @@ fn check_invariants(map: MindMap) -> Result<MindMap, String> {
 fn detect_zero_section_node(map: &MindMap) -> Option<String> {
     let mut ids: Vec<&String> = map.nodes.keys().collect();
     ids.sort();
-    let id = ids.into_iter().find(|id| map.nodes[*id].sections.is_empty())?;
+    // The rule itself is `validate::zero_section_node`, shared with
+    // `maptool verify` so the two ends cannot drift — they did, and
+    // `verify` called a map the editor refuses "valid".
+    ids.into_iter()
+        .find_map(|id| validate::zero_section_node(&map.nodes[id]))
+}
+
+/// Reject a map where a node's key in `nodes` differs from the
+/// node's own `id`.
+///
+/// **This is what makes the cycle rejection below sound.** The two
+/// spellings of a node's identity address *different graphs*:
+/// [`detect_parent_cycle`] walks `nodes` by key, while
+/// [`ChildIndex`](crate::mindmap::model::ChildIndex) — which every
+/// scene build and fold walk uses — keys children by `parent_id` and
+/// looks them up by `node.id`. Let the two disagree and a file can
+/// describe a chain that is acyclic in the key graph and a loop in
+/// the id graph: `{"k": {"id": "a", "parent_id": "a"}}` is its own
+/// child under `ChildIndex` and a dangling-parent root under the
+/// cycle check. The scene builder then descends that self-edge
+/// forever, appending to the arena until the allocator gives up.
+///
+/// `maptool verify` has always called this an error
+/// (`verify/ids.rs`); the loader accepting it is what left the gap.
+/// Nodes are visited in sorted-key order so the reported node is
+/// deterministic across `HashMap` iteration order.
+fn detect_id_key_mismatch(map: &MindMap) -> Option<String> {
+    let mut keys: Vec<&String> = map.nodes.keys().collect();
+    keys.sort();
+    let key = keys.into_iter().find(|key| &map.nodes[*key].id != *key)?;
     Some(format!(
-        "node {:?} ships zero sections — every renderable node \
-         needs at least one. Run `maptool convert --sections <file>` \
-         to migrate, or add an explicit `sections` array.",
-        id
+        "node {:?}: `id` is {:?} but the key in `nodes` is {:?} — they address the same node \
+         and must match. A mismatch makes the parent-cycle check and the scene builder walk \
+         different graphs; see format/ids.md.",
+        key, map.nodes[key].id, key
     ))
 }
 
@@ -1206,9 +1424,20 @@ mod tests {
         }}"##
         );
         let err = load_from_str(&raw).expect_err("over-cap sections must be rejected");
+        // The refusal now comes from `deserialize_sections_capped`
+        // during the parse rather than from `detect_section_count_cap`
+        // afterwards, which is the point: the sweep produced its
+        // message only once the whole `Vec` existed, so a 12 MB file
+        // declaring four million sections reached 1 723 MiB before
+        // being told no. The cap is still named, and the node still
+        // identified, so an author can act on it.
         assert!(
-            err.contains("node.sections.len()=1025 exceeds cap 1024"),
-            "error must use the shared cap message: {err}"
+            err.contains("node.sections.len()") && err.contains("1024"),
+            "the refusal must name the field and the cap: {err}"
+        );
+        assert!(
+            err.contains("node \"0\""),
+            "and must identify the node that carries them: {err}"
         );
     }
 
@@ -1306,7 +1535,7 @@ mod tests {
             }
 
             // Verify sampling produces non-empty result
-            let samples = connection::sample_path(&conn_path, 7.2);
+            let samples = connection::sample_path(&conn_path, 7.2, crate::mindmap::connection::MAX_PATH_SAMPLES);
             assert!(
                 !samples.is_empty(),
                 "Edge {}→{} produced no samples",
@@ -2981,6 +3210,72 @@ mod tests {
         assert_eq!(reloaded.skipped_constructs.len(), 1, "and still carries it");
     }
 
+    /// **The tolerant door carries the ceiling too, and nothing used
+    /// to check that.**
+    ///
+    /// `load_from_str` has two ways in. The strict one refuses over
+    /// `MAX_UNKNOWN_KEYS` before `adopt_unknown_keys`; the tolerant one
+    /// — reached when the typed parse fails on a construct this build
+    /// cannot name — collects its own routes in
+    /// `deserialize_value_capturing` and has its own refusal. The
+    /// sibling test above drives `load_from_str` and
+    /// `parse_for_inspection`, which is the *same* door twice, so
+    /// deleting the tolerant guard left the whole workspace green. A
+    /// review round found it by deleting it.
+    ///
+    /// Reaching this door needs a fixture that satisfies four things at
+    /// once: the typed parse must fail, the document must not be a
+    /// legacy shape, at least one construct must be excisable, and the
+    /// remainder must carry more than the ceiling in unknown keys.
+    #[test]
+    fn test_the_tolerant_door_carries_the_unknown_key_ceiling() {
+        // The ceiling is `None` on every target this suite runs on, so
+        // the test supplies one and drives the real door with it.
+        const CAP: usize = 64;
+
+        // An unreadable mutator variant is what sends the load down the
+        // tolerant path at all.
+        let unreadable =
+            r#"{"id": "mid", "name": "mid", "target_scope": "SelfOnly", "mutator": {"zzOrderGlow": {}}}"#;
+        let mut extra = String::new();
+        for i in 0..CAP + 8 {
+            extra.push_str(&format!(r#", "k{i}": 0"#));
+        }
+        let json = shape_map(
+            "",
+            &node_json_with("0", "null", &extra),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}]"#),
+        );
+
+        let err = crate::mindmap::unknown_keys::with_key_ceiling(Some(CAP), || load_from_str(&json))
+            .expect_err("the tolerant door must refuse past the ceiling, not load partially");
+        assert!(
+            err.contains("unrecognized keys") && !err.contains("zzOrderGlow"),
+            "must refuse on the ceiling and say so, not fall through to the construct \
+             diagnosis that merely sent it down this path: {err}"
+        );
+
+        // The control that makes the fixture honest: the SAME document
+        // with a handful of unknown keys instead of too many really does
+        // take the tolerant path and load. Without this, the assertion
+        // above would pass on a fixture that never reached this door.
+        let mut few = String::new();
+        for i in 0..8 {
+            few.push_str(&format!(r#", "k{i}": 0"#));
+        }
+        let json = shape_map(
+            "",
+            &node_json_with("0", "null", &few),
+            "",
+            &format!(r#", "custom_mutations": [{unreadable}]"#),
+        );
+        let map = crate::mindmap::unknown_keys::with_key_ceiling(Some(CAP), || load_from_str(&json))
+            .expect("the tolerant path loads around the construct");
+        assert_eq!(map.skipped_constructs.len(), 1, "and it really was the tolerant path");
+        assert_eq!(map.unknown_keys.len(), 8, "with the keys captured");
+    }
+
     /// A skipped construct goes back at the index it was authored at,
     /// between the entries the model does write, rather than at
     /// whatever position the shortened list left behind.
@@ -3550,6 +3845,578 @@ mod tests {
         let err = load_from_str(&json).expect_err("self-parent cycle must be rejected");
         assert!(err.contains("cycle"), "error must mention cycle: {err}");
         assert!(err.contains('a'), "error must name node 'a': {err}");
+    }
+
+    /// A `nodes` key that disagrees with the node's own `id` is
+    /// rejected.
+    ///
+    /// Not a tidiness rule — it is what makes the cycle check below
+    /// sound. The two spellings address different graphs, so a
+    /// mismatch lets a file be acyclic to `detect_parent_cycle`
+    /// (which walks keys) and a self-loop to `ChildIndex` (which
+    /// walks `node.id`), which is what every scene build and fold
+    /// walk actually traverses.
+    #[test]
+    fn test_node_key_must_match_node_id() {
+        let json =
+            map_json_with_nodes(&node_json("0", "null").replace(r#""id": "0""#, r#""id": "elsewhere""#));
+        let err = load_from_str(&json).expect_err("a key / id mismatch must be rejected");
+        assert!(err.contains("elsewhere"), "must name the node's id: {err}");
+        assert!(err.contains("must match"), "must state the rule: {err}");
+    }
+
+    /// **The self-loop the key / id mismatch used to smuggle past
+    /// the cycle check.** `detect_parent_cycle` sees key `"k"` whose
+    /// parent `"a"` is absent — a dangling root, no cycle. But the
+    /// node's `id` *is* `"a"`, so `ChildIndex` files it as its own
+    /// child, and the scene builder descending that edge never
+    /// terminates.
+    #[test]
+    fn test_id_graph_self_loop_is_rejected() {
+        let node = node_json("k", "\"a\"").replace(r#""id": "k""#, r#""id": "a""#);
+        let err = load_from_str(&map_json_with_nodes(&node))
+            .expect_err("a node that is its own child in the id graph must be rejected");
+        assert!(
+            err.contains("must match"),
+            "the key / id rule is what catches this: {err}"
+        );
+    }
+
+    /// **The stack-overflow regression, on a deliberately small
+    /// stack.**
+    ///
+    /// A linear `parent_id` chain is a legal acyclic tree, so the
+    /// loader accepts it and every walker downstream inherits its
+    /// depth. While those walkers recursed, a chain like this
+    /// exhausted the thread stack and killed the process with
+    /// `SIGABRT` — not a panic, so nothing could catch, log, or
+    /// degrade it, and the user's unsaved work went with it.
+    ///
+    /// The walks run on a 256 KiB stack rather than a test
+    /// thread's default couple of megabytes. That is what keeps the
+    /// test both fast and honest: a few thousand nodes is cheap to
+    /// build, and any reintroduced recursion blows a stack that
+    /// small long before the chain ends, while the iterative form
+    /// is indifferent to it because its frontier lives on the heap.
+    ///
+    /// A failure here aborts the test binary instead of failing the
+    /// assertion — that is what a stack overflow does, and it is
+    /// precisely the outcome under test.
+    #[test]
+    fn test_deep_parent_chain_does_not_exhaust_the_stack() {
+        const DEPTH: usize = 6_000;
+        const SMALL_STACK: usize = 256 * 1024;
+
+        let nodes = (0..DEPTH)
+            .map(|i| {
+                let parent = if i == 0 {
+                    "null".to_string()
+                } else {
+                    format!("\"n{}\"", i - 1)
+                };
+                node_json(&format!("n{i}"), &parent)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let map = load_from_str(&map_json_with_nodes(&nodes)).expect("a deep chain is acyclic and loads");
+
+        let walked = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(move || {
+                let hidden = map.fold_hidden_set().len();
+                let descendants = map.all_descendants("n0").len();
+                let mut tree = crate::mindmap::tree_builder::build_mindmap_tree(&map);
+                let arena_nodes = tree.tree.arena.count();
+                // The scene build alone does not reach the two
+                // walkers that made this crash land on a *mouse
+                // move*: `compute_subtree_aabbs` is gated behind the
+                // dirty flag and `bvh_find` only runs on a hit test.
+                // `descendant_at` is what drives both, so the probe
+                // has to ask for a hit or the highest-impact half of
+                // the conversion goes untested.
+                let _hit = tree.tree.descendant_at(glam::Vec2::new(10.0, 10.0));
+                (hidden, descendants, arena_nodes)
+            })
+            .expect("spawn the small-stack walker")
+            .join()
+            .expect("the walkers must not exhaust a 256 KiB stack");
+
+        let (hidden, descendants, arena_nodes) = walked;
+        assert_eq!(hidden, 0, "nothing is folded, so nothing is hidden");
+        assert_eq!(
+            descendants,
+            DEPTH - 1,
+            "every node below the root is a descendant"
+        );
+        assert!(
+            arena_nodes >= DEPTH,
+            "the scene tree must carry every node: {arena_nodes} < {DEPTH}"
+        );
+    }
+
+    /// **The zero that aborted the process.** A border font size of
+    /// zero reaches cosmic-text's `Buffer::new`, whose
+    /// `assert_ne!(line_height, 0.0)` fires on the scene-build path
+    /// — outside any `catch_unwind`, so the editor dies on the frame
+    /// after the map opens.
+    #[test]
+    fn test_zero_border_font_size_is_rejected() {
+        let node = node_json("0", "null").replace(
+            r#""show_shadow":false"#,
+            r#""show_shadow":false,"border":{"font_size_pt":0.0}"#,
+        );
+        let err = load_from_str(&map_json_with_nodes(&node)).expect_err("a zero font size must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(err.contains("font_size_pt"), "must name the field: {err}");
+    }
+
+    /// JSON has no `Infinity` literal, but `1e39` does not fit an
+    /// `f32` and arrives as one — so the finiteness screens are
+    /// reachable from an ordinary-looking number rather than an
+    /// exotic token.
+    #[test]
+    fn test_f32_overflow_to_infinity_is_rejected() {
+        let node = node_json("0", "null").replace(
+            r#""show_shadow":false"#,
+            r#""show_shadow":false,"border":{"font_size_pt":1e39}"#,
+        );
+        let err = load_from_str(&map_json_with_nodes(&node))
+            .expect_err("a font size that overflows f32 must be rejected");
+        assert!(
+            err.contains("not finite") || err.contains("ceiling"),
+            "must reject the overflowed size: {err}"
+        );
+    }
+
+    /// **The inverted clamp.** `f32::clamp` panics when its bounds
+    /// cross, and every size cascade resolves a `min` / `max` pair
+    /// straight out of the document into one.
+    #[test]
+    fn test_inverted_font_size_clamp_is_rejected() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        let edge =
+            edge_json_with(r#", "glyph_connection": {"min_font_size_pt": 40.0, "max_font_size_pt": 8.0}"#);
+        let err = load_from_str(&map_json(&nodes, &edge)).expect_err("an inverted clamp must be rejected");
+        assert!(err.contains("edge[0]"), "must name the edge: {err}");
+        assert!(err.contains("above max"), "must explain the inversion: {err}");
+    }
+
+    /// A canvas default is the fallback for every element that does
+    /// not override it, so one hostile number there poisons the
+    /// whole document rather than a single node.
+    #[test]
+    fn test_canvas_default_border_is_screened_too() {
+        let json = map_json_with_nodes(&node_json("0", "null")).replace(
+            r##""canvas": {"background_color": "#000"}"##,
+            r##""canvas": {"background_color": "#000", "default_border": {"font_size_pt": 0.0}}"##,
+        );
+        let err = load_from_str(&json).expect_err("a hostile canvas default must be rejected");
+        assert!(err.contains("canvas:"), "must name the canvas: {err}");
+    }
+
+    /// Node geometry that would explode a downstream allocation is
+    /// refused at the boundary. `validate::node_size` had always
+    /// known this shape; nothing called it on the load path.
+    #[test]
+    fn test_absurd_node_size_is_rejected_at_load() {
+        let node = node_json("0", "null").replace(
+            r#""size": {"width": 100, "height": 50}"#,
+            r#""size": {"width": 1e12, "height": 50}"#,
+        );
+        let err =
+            load_from_str(&map_json_with_nodes(&node)).expect_err("an absurd node size must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(err.contains("ceiling"), "must cite the ceiling: {err}");
+    }
+
+    /// Text runs must be sorted, non-overlapping, non-empty, and
+    /// inside the section's text — the invariants `text_run_ops`
+    /// and the styled-span bridge already assumed, and the same
+    /// four `maptool verify` reports. Each is checked with the
+    /// wording the tool uses so the two agree about what a valid
+    /// map is.
+    #[test]
+    fn test_malformed_text_runs_are_rejected() {
+        let run = |start: usize, end: usize| {
+            format!(
+                r##"{{"start":{start},"end":{end},"bold":false,"italic":false,"underline":false,
+                     "font":"LiberationSans","size_pt":14,"color":"#fff","hyperlink":null}}"##
+            )
+        };
+        let with_runs = |runs: String| {
+            let styled = node_json("0", "null").replace(
+                r#""sections": [{"text": "n"}]"#,
+                &format!(r#""sections": [{{"text": "abcdef", "text_runs": [{runs}]}}]"#),
+            );
+            map_json_with_nodes(&styled)
+        };
+
+        for (runs, expected) in [
+            (run(3, 3), "not less than end"),
+            (run(4, 2), "not less than end"),
+            (format!("{},{}", run(0, 4), run(2, 6)), "overlaps previous run"),
+            (run(0, 99), "exceeds text length"),
+        ] {
+            let err = load_from_str(&with_runs(runs)).expect_err("a malformed run table must be rejected");
+            assert!(
+                err.contains(expected),
+                "expected {expected:?} in the rejection, got: {err}"
+            );
+        }
+
+        // The well-formed table the four above are deviations from.
+        let map = load_from_str(&with_runs(format!("{},{}", run(0, 2), run(2, 6))))
+            .expect("sorted, non-overlapping, in-bounds runs load");
+        assert_eq!(map.nodes["0"].sections[0].text_runs.len(), 2);
+    }
+
+    /// **The envelope that pins the event loop.** While an
+    /// animation is live the loop holds `ControlFlow::Poll`, so a
+    /// `u32` millisecond field is also how long a map can keep the
+    /// process off its idle path — about 49 days per field. A maxed
+    /// *delay* draws nothing at all, so the app looks idle while
+    /// spinning a core.
+    #[test]
+    fn test_absurd_animation_envelope_is_rejected() {
+        let mutation = |timing: &str| {
+            format!(
+                r#"{{"id":"spin","name":"spin","description":"","contexts":["map.node"],
+                     "target_scope":"SelfOnly","timing":{timing}}}"#
+            )
+        };
+        let map_with = |body: String| {
+            map_json_with_nodes(&node_json("0", "null")).replace(
+                r#""edges": []"#,
+                &format!(r#""edges": [], "custom_mutations": [{body}]"#),
+            )
+        };
+
+        let err = load_from_str(&map_with(mutation(r#"{"duration_ms": 4000000000}"#)))
+            .expect_err("an absurd animation duration must be rejected");
+        assert!(
+            err.contains("custom_mutations[0]"),
+            "must name the mutation: {err}"
+        );
+        assert!(err.contains("duration_ms"), "must name the field: {err}");
+
+        let err = load_from_str(&map_with(mutation(
+            r#"{"duration_ms": 200, "delay_ms": 4000000000}"#,
+        )))
+        .expect_err("an absurd animation delay must be rejected");
+        assert!(err.contains("delay_ms"), "the delay is the invisible half: {err}");
+
+        // An ordinary transition is untouched.
+        load_from_str(&map_with(mutation(r#"{"duration_ms": 250}"#)))
+            .expect("a quarter-second transition is ordinary and must load");
+    }
+
+    /// **The trust boundary reaches the mutation payloads too.** A
+    /// map's own `custom_mutations` and a node's `inline_mutations`
+    /// enter the model alongside its geometry but take effect later,
+    /// on a click — so a payload the sweep skipped would be a number
+    /// arriving at the same shaper one interaction after the load
+    /// the checks were supposed to gate.
+    #[test]
+    fn test_inline_mutation_payloads_are_screened_too() {
+        let node = node_json_with(
+            "0",
+            "null",
+            r#", "inline_mutations": [{"id":"n.spin","name":"","description":"",
+                 "contexts":["map.node"],"target_scope":"SelfOnly",
+                 "timing":{"duration_ms": 4000000000}}]"#,
+        );
+        let err = load_from_str(&map_json_with_nodes(&node))
+            .expect_err("a hostile inline mutation payload must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(
+            err.contains("inline_mutations[0]"),
+            "must name the mutation: {err}"
+        );
+    }
+
+    /// **The multiplier behind a bounded sample count.** The body
+    /// glyph is emitted once per sampled point along a path, so its
+    /// length multiplies that count: capping the samples alone still
+    /// leaves `samples × |body|` unbounded, and each repeat is a
+    /// clone, a grapheme walk, a `GlyphArea`, and a shaped buffer.
+    #[test]
+    fn test_overlong_connection_glyph_is_rejected() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        let long = "\u{25c8}".repeat(64);
+        let edge = edge_json_with(&format!(r#", "glyph_connection": {{"body": "{long}"}}"#));
+        let err =
+            load_from_str(&map_json(&nodes, &edge)).expect_err("an overlong body glyph must be rejected");
+        assert!(err.contains("edge[0]"), "must name the edge: {err}");
+        assert!(err.contains("body"), "must name the field: {err}");
+        assert!(
+            err.contains("once per sampled point"),
+            "must say why length matters here: {err}"
+        );
+
+        // A real multi-grapheme motif still loads — the cap is on
+        // absurdity, not on decorative connections.
+        let motif = edge_json_with(r#", "glyph_connection": {"body": "◈··"}"#);
+        let map = load_from_str(&map_json(&nodes, &motif)).expect("a short motif is ordinary");
+        assert_eq!(map.edges.len(), 1);
+    }
+
+    /// **The cluster ceiling does not bound the allocation; the byte
+    /// ceiling does.** A UAX #29 extended grapheme cluster has no
+    /// length bound — a base character plus any number of combining
+    /// marks is exactly *one* cluster — so a body glyph can be
+    /// arbitrarily large and still satisfy
+    /// `MAX_CONNECTION_GLYPH_GRAPHEMES`. Since the body is cloned
+    /// once per sampled point, that turned a bounded sample count
+    /// back into an unbounded allocation: at `MAX_PATH_SAMPLES` a
+    /// one-megabyte cluster asks for gigabytes during the first
+    /// scene build after open.
+    ///
+    /// The cluster count is deliberately kept alongside it rather
+    /// than replaced. They bound different things — clusters make
+    /// the field a motif rather than a paragraph, bytes make the
+    /// product finite — so this asserts the byte rejection on a
+    /// glyph the cluster check *passes*.
+    #[test]
+    fn test_single_cluster_overlong_connection_glyph_is_rejected() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        // One base character plus 4,000 combining acute accents:
+        // 1 grapheme cluster, 8,001 bytes.
+        let fat_cluster = format!("a{}", "\u{0301}".repeat(4_000));
+        assert_eq!(
+            crate::util::grapheme_chad::count_grapheme_clusters(&fat_cluster),
+            1,
+            "the fixture must pass the cluster ceiling, or it tests the wrong guard"
+        );
+        assert!(
+            fat_cluster.len() > validate::MAX_CONNECTION_GLYPH_BYTES,
+            "the fixture must exceed the byte ceiling"
+        );
+
+        let edge = edge_json_with(&format!(r#", "glyph_connection": {{"body": "{fat_cluster}"}}"#));
+        let err = load_from_str(&map_json(&nodes, &edge))
+            .expect_err("a single-cluster megabyte body must be rejected");
+        assert!(err.contains("edge[0]"), "must name the edge: {err}");
+        assert!(err.contains("body"), "must name the field: {err}");
+        assert!(
+            err.contains("bytes"),
+            "must reject on the byte ceiling, not the cluster one: {err}"
+        );
+        assert!(
+            err.contains("combining"),
+            "must say why a cluster count did not catch this: {err}"
+        );
+
+        // The same shape on a cap glyph, so the loop covers every
+        // field rather than only the one the exploit used.
+        let cap = edge_json_with(&format!(
+            r#", "glyph_connection": {{"cap_end": "{fat_cluster}"}}"#
+        ));
+        let err = load_from_str(&map_json(&nodes, &cap)).expect_err("cap glyphs carry the same ceiling");
+        assert!(err.contains("cap_end"), "must name the field: {err}");
+
+        // A single emoji ZWJ sequence is one cluster and many bytes,
+        // and must still load — the ceiling is on absurdity, not on
+        // legitimate multi-byte glyphs.
+        let family = edge_json_with(r#", "glyph_connection": {"body": "👨‍👩‍👧‍👦"}"#);
+        let map = load_from_str(&map_json(&nodes, &family)).expect("an emoji ZWJ motif is ordinary");
+        assert_eq!(map.edges.len(), 1);
+    }
+
+    /// **The corners were bounded in no unit at all.** The two side
+    /// patterns each got a ceiling on what they *emit*, but the four
+    /// corner glyphs are copied verbatim out of the file into their
+    /// run specs and handed to `glyph_ink_with` four times per node
+    /// per frame, over a string the map chose. The shaping itself is
+    /// memoized, so the recurring cost is the cache *key* — an owned
+    /// copy of the glyph, built before the cache is read — which
+    /// makes a multi-megabyte corner a multi-megabyte clone on every
+    /// frame, and a permanent cache entry besides. Same "opening a
+    /// map cannot kill the editor" property the rest of this module
+    /// exists to hold.
+    ///
+    /// All eight authored glyph fields carry both ceilings, because
+    /// the sides are an authored string too and the emitted-side cap
+    /// bounds the repetition rather than its source.
+    #[test]
+    fn test_overlong_border_glyphs_are_rejected() {
+        let many = "\u{25c8}".repeat(validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+        // One cluster, past the byte ceiling: the case a cluster
+        // count cannot see.
+        let fat = format!("a{}", "\u{0301}".repeat(validate::MAX_BORDER_GLYPH_BYTES));
+
+        for glyph_field in [
+            "top",
+            "bottom",
+            "left",
+            "right",
+            "top_left",
+            "top_right",
+            "bottom_left",
+            "bottom_right",
+        ] {
+            let node = node_json("0", "null").replace(
+                r#""show_shadow":false"#,
+                &format!(r#""show_shadow":false,"border":{{"glyphs":{{"{glyph_field}":"{many}"}}}}"#),
+            );
+            let err = load_from_str(&map_json_with_nodes(&node))
+                .expect_err("an overlong border glyph must be rejected");
+            assert!(err.contains(glyph_field), "must name the field: {err}");
+            assert!(
+                err.contains("grapheme clusters"),
+                "must reject on the cluster ceiling: {err}"
+            );
+
+            let node = node_json("0", "null").replace(
+                r#""show_shadow":false"#,
+                &format!(r#""show_shadow":false,"border":{{"glyphs":{{"{glyph_field}":"{fat}"}}}}"#),
+            );
+            let err = load_from_str(&map_json_with_nodes(&node))
+                .expect_err("a single-cluster overlong border glyph must be rejected");
+            assert!(err.contains(glyph_field), "must name the field: {err}");
+            assert!(
+                err.contains("bytes"),
+                "must reject on the byte ceiling, not the cluster one: {err}"
+            );
+        }
+
+        // The longest glyph authored anywhere in this repository is
+        // six clusters, so an ordinary decorative border is nowhere
+        // near either ceiling and must still load.
+        let ordinary = node_json("0", "null").replace(
+            r#""show_shadow":false"#,
+            r#""show_shadow":false,"border":{"glyphs":{"top":"◆·","top_left":"◆"}}"#,
+        );
+        load_from_str(&map_json_with_nodes(&ordinary)).expect("an ordinary authored border still loads");
+    }
+
+    /// **The byte ceiling stopped being a memory bound when unknown
+    /// keys began to be kept, and this is what restores it.**
+    ///
+    /// Every captured key costs a heap-allocated route whose steps own
+    /// their strings, and the file that buys one is about twelve bytes
+    /// (`"k1":0,`). Measured on this build with `maptool grep` driving
+    /// this door: 3 MiB / 200 000 keys reached 113 MiB peak RSS,
+    /// 10 MiB / 800 000 keys reached 438 MiB — linear, at roughly 575
+    /// bytes of peak per key. Extrapolated to a document at
+    /// `MAX_MAP_BYTES`, that is on the order of 11 GB, from a file the
+    /// size limit was written to permit. With the cap the same three
+    /// fixtures peak at 29, 35 and 45 MiB: the cost follows the file
+    /// again, not the key count.
+    ///
+    /// Both doors, because the tolerant path collects its own routes
+    /// and would otherwise be the way around the ceiling.
+    #[test]
+    fn test_a_document_over_the_unknown_key_ceiling_is_refused_at_both_doors() {
+        use crate::mindmap::unknown_keys::{with_key_ceiling, MAX_UNKNOWN_KEYS};
+        const CAP: usize = 64;
+        assert!(
+            MAX_UNKNOWN_KEYS.is_none(),
+            "native must not cap preserved keys — the cost of keeping them is linear in the \
+             document that carries them, and a large map is a supported map"
+        );
+
+        // Comfortably past the ceiling rather than one over it. An
+        // exactly-one-over fixture cannot tell a working cap from a
+        // missing one: both leave `MAX_UNKNOWN_KEYS + 1` routes, so
+        // the length assertion below passes either way. The boundary
+        // itself is covered by the under-ceiling control at the end.
+        let mut extra = String::new();
+        for i in 0..CAP + 8 {
+            extra.push_str(&format!(r#", "k{i}": 0"#));
+        }
+        let json = map_json_with_nodes(&node_json_with("0", "null", &extra));
+
+        // **The allocation is what is bounded, so that is what is
+        // asserted.** Refusing after the walk would refuse just as
+        // loudly while the route vector had already grown to whatever
+        // the document asked for — which is the cost, not the
+        // symptom. `deserialize_capturing` stops pushing at the
+        // ceiling and keeps exactly one route past it as the signal,
+        // so the vector can never exceed `MAX_UNKNOWN_KEYS + 1` no
+        // matter how many keys the file carries.
+        let (_, routes): (MindMap, Vec<Vec<crate::mindmap::unknown_keys::Step>>) =
+            with_key_ceiling(Some(CAP), || unknown_keys::deserialize_capturing(&json))
+                .expect("the document parses");
+        assert_eq!(
+            routes.len(),
+            CAP + 1,
+            "the capture must stop one past the ceiling rather than collecting every key"
+        );
+
+        let err = with_key_ceiling(Some(CAP), || load_from_str(&json))
+            .expect_err("over the ceiling must be refused");
+        assert!(
+            err.contains("unrecognized keys") && err.contains(&CAP.to_string()),
+            "must name the ceiling it refused on: {err}"
+        );
+        let err = with_key_ceiling(Some(CAP), || parse_for_inspection(&json))
+            .expect_err("the inspection door carries it too");
+        assert!(
+            err.contains("unrecognized keys"),
+            "the inspection door must refuse on the same ceiling: {err}"
+        );
+
+        // The negative control, and the half that matters most: a
+        // document *inside* the ceiling still loads and still keeps
+        // every key. A cap that refused the ordinary forward-compat
+        // case would break the promise the capture exists to keep.
+        let mut few = String::new();
+        for i in 0..8 {
+            few.push_str(&format!(r#", "k{i}": {i}"#));
+        }
+        let map = load_from_str(&map_json_with_nodes(&node_json_with("0", "null", &few)))
+            .expect("a handful of unknown keys must still load");
+        assert_eq!(
+            map.unknown_keys.len(),
+            8,
+            "every key inside the ceiling must still be captured"
+        );
+    }
+
+    /// **The size ceiling, where one exists.**
+    ///
+    /// `MAX_MAP_BYTES` is `None` on native: Mandala opens maps as large
+    /// as the machine can hold, and the previous 256 MiB ceiling —
+    /// justified by "far past any authored map… the canonical fixture
+    /// is 545 KB" — refused the repository's own stress generator. It
+    /// is `Some` only on wasm32, where 32-bit `usize` and a 4 GiB
+    /// address space make the limit physics rather than policy.
+    ///
+    /// Which leaves the refusal itself reachable on no target the test
+    /// suite runs on. A test written against the constant would assert
+    /// nothing and pass, so this drives `check_text_cap_against` with a
+    /// ceiling of its own — the same code the browser reaches, with a
+    /// number a test can afford.
+    ///
+    /// The `read_capped` stat-before-read door is exercised separately
+    /// below; it is the one that keeps an oversized file from being
+    /// read into memory at all.
+    #[test]
+    fn test_the_size_ceiling_refuses_where_a_platform_imposes_one() {
+        // No policy ceiling on the target running this test.
+        assert!(
+            MAX_MAP_BYTES.is_none(),
+            "native must not carry a byte ceiling — a large map is a supported map, and a \
+             limit defended by the size of today's fixtures is a limit that expires"
+        );
+
+        // The wasm32 arm, driven with an affordable ceiling.
+        let payload = " ".repeat(64);
+        let err = check_text_cap_against(&payload, Some(32))
+            .expect_err("text over the ceiling must be refused");
+        assert!(err.contains("over the"), "must name the limit: {err}");
+        assert!(
+            !err.contains("expected value"),
+            "must refuse before parsing, not report a parse error: {err}"
+        );
+        assert!(
+            check_text_cap_against(&payload, Some(64)).is_ok(),
+            "text exactly at the ceiling is inside it"
+        );
+        assert!(
+            check_text_cap_against(&payload, None).is_ok(),
+            "no ceiling means no refusal — the native posture"
+        );
     }
 
     /// A valid 3-generation chain (no cycle) must load without error

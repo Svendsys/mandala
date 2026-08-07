@@ -148,7 +148,9 @@ fn process_instruction_node(
             // mutation application. The caller treats a no-op as
             // success.
             if mutator.first_child().is_none() {
-                warn!("RepeatWhile instruction node has no children, skipping branch");
+                warn!(
+                    "gfx_structs::tree_walker: RepeatWhile instruction node has no children, skipping branch"
+                );
                 return;
             }
             if target.first_child().is_none() {
@@ -166,7 +168,7 @@ fn process_instruction_node(
             // mutation chain executing — a malformed reserved
             // instruction shouldn't abort the whole walk.
             warn!(
-                "RotateWhile instruction not implemented in walker; \
+                "gfx_structs::tree_walker: RotateWhile instruction not implemented; \
                  this branch becomes a no-op (see format/mutators.md)"
             );
         }
@@ -564,8 +566,8 @@ fn apply_repeat_while_to_children(
 /// # Algorithm
 ///
 /// 1. Ensure subtree AABBs are fresh.
-/// 2. Recursively descend from `target_id`: for each child, prune
-///    if its `subtree_aabb` does not contain the point.
+/// 2. Descend from `target_id` over an explicit stack: for each
+///    child, prune if its `subtree_aabb` does not contain the point.
 /// 3. Among all candidate nodes whose own AABB contains the point,
 ///    pick the smallest by area (innermost-first convention).
 /// 4. Apply the instruction's attached mutation to that node.
@@ -585,7 +587,7 @@ fn spatial_descend(
 
     // BVH descent to find the hit node.
     let mut best: Option<(NodeId, f32)> = None;
-    spatial_descend_recurse(&gfx_tree.arena, target_id, point_vec, &mut best);
+    spatial_descend_best(&gfx_tree.arena, target_id, point_vec, &mut best);
 
     // Apply the instruction's mutation to the hit node.
     let Some((hit_id, _)) = best else {
@@ -609,12 +611,12 @@ fn spatial_descend(
     }
 }
 
-/// Recursive BVH descent helper for [`spatial_descend`]. Read-only
-/// arena traversal that collects the best (smallest-area) hit.
+/// BVH descent helper for [`spatial_descend`]. Read-only arena
+/// traversal that collects the best (smallest-area) hit, with no
+/// slack and no shape refinement — the exact-hit case.
 ///
-/// Uses `first_child` / `next_sibling` iteration to avoid
-/// allocating a `Vec` on every recursive call (§B7).
-fn spatial_descend_recurse(
+/// Cost: [`bvh_find`]'s, which it forwards to unchanged.
+fn spatial_descend_best(
     arena: &Arena<GfxElement>,
     node_id: NodeId,
     point: Vec2,
@@ -635,11 +637,22 @@ fn spatial_descend_recurse(
 ///    hit, optionally refine via `area.shape.contains_local` so an
 ///    ellipse hit-tests against its actual shape rather than its
 ///    bounding rectangle.
-/// 3. Recurse into the child's children.
+/// 3. Descend into the child's children.
 ///
 /// Smallest-area wins on tie (so a smaller element stacked over a
-/// bigger one is the hit). Uses `first_child` / `next_sibling`
-/// iteration to avoid per-call `Vec` allocation (§B7).
+/// bigger one is the hit), and the *first* candidate of an equal
+/// area keeps the slot — which is why the descent order below is
+/// preserved exactly rather than merely being some depth-first
+/// order.
+///
+/// Cost: O(visited), plus one heap `Vec` holding the pending
+/// frontier — the sum of the unprocessed sibling rows along the
+/// current path — **one element for a linear chain**, since each
+/// node's only child replaces it, O(n) for a shallow wide tree, and
+/// O(depth x branching) in general. That allocation is a deliberate trade against §B7:
+/// the previous shape did not avoid the storage, it kept the same
+/// data on the call stack, where a `.mindmap.json` deep enough to
+/// exhaust it aborted the process instead of merely costing memory.
 pub(crate) fn bvh_find(
     arena: &Arena<GfxElement>,
     node_id: NodeId,
@@ -648,11 +661,22 @@ pub(crate) fn bvh_find(
     refine_with_shape: bool,
     best: &mut Option<(NodeId, f32)>,
 ) {
-    let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
+    // Pre-order DFS over an explicit stack rather than the call
+    // stack. This arena is the projection of a `.mindmap.json`,
+    // whose `parent_id` depth is untrusted and unbounded — a linear
+    // chain of N nodes is a legal acyclic tree — and every hit test
+    // in the app funnels through here, so recursing over that depth
+    // meant a hostile map aborted the process on a mouse move.
+    //
+    // Children are pushed reversed so the first sibling pops first
+    // and a node's own subtree is exhausted before the next
+    // sibling: the same order the recursive form visited in, which
+    // the tie-break below depends on (equal-area candidates keep
+    // the one found first).
+    let mut pending: Vec<NodeId> = Vec::new();
+    push_children_reversed(arena, node_id, &mut pending);
 
-    while let Some(child_id) = child_opt {
-        child_opt = arena.get(child_id).and_then(|n| n.next_sibling());
-
+    while let Some(child_id) = pending.pop() {
         let Some(node) = arena.get(child_id) else {
             continue;
         };
@@ -732,8 +756,25 @@ pub(crate) fn bvh_find(
             }
         }
 
-        // 3. Recurse (the subtree-AABB test above proved at least
+        // 3. Descend (the subtree-AABB test above proved at least
         //    one descendant may contain the point).
-        bvh_find(arena, child_id, point, slack, refine_with_shape, best);
+        push_children_reversed(arena, child_id, &mut pending);
     }
+}
+
+/// Append every child of `parent` to `pending` in reverse document
+/// order, so a LIFO pop yields them first-to-last.
+///
+/// Reversing in place over the slice just appended keeps this free
+/// of any allocation beyond `pending`'s own growth — the children
+/// are pushed once and flipped, never collected into a scratch
+/// vector (§B7).
+fn push_children_reversed(arena: &Arena<GfxElement>, parent: NodeId, pending: &mut Vec<NodeId>) {
+    let start = pending.len();
+    let mut child_opt = arena.get(parent).and_then(|n| n.first_child());
+    while let Some(child_id) = child_opt {
+        child_opt = arena.get(child_id).and_then(|n| n.next_sibling());
+        pending.push(child_id);
+    }
+    pending[start..].reverse();
 }

@@ -180,4 +180,43 @@ mod tests {
     fn test_a_fully_readable_map_reports_no_skipped_construct() {
         assert!(check_skipped_constructs(&MindMap::new_blank("t")).is_empty());
     }
+
+    /// **The door `verify` actually walks through.** Every test above
+    /// hands `check` a map built by `loader::load_from_str` — the
+    /// editor's strict door. `maptool verify` does not use it: it
+    /// loads through `loader::parse_file_for_inspection`, precisely
+    /// so it can still open the files the editor refuses.
+    ///
+    /// Those are two different parses, and only one of them was
+    /// capturing. When the inspection path was a plain
+    /// `serde_json::from_str`, an unrecognized key was dropped on the
+    /// floor before `check` ever saw the map: `verify` reported
+    /// **zero** violations and exited **0** on the map below, while
+    /// every test above stayed green. A check is only as reachable as
+    /// the load that feeds it, so this one goes end to end — real
+    /// file, real `parse_file_for_inspection`, real `verify`.
+    #[test]
+    fn test_verify_reports_an_unknown_key_through_the_inspection_door() {
+        let dir = baumhard::util::test_temp::TempDir::new("verify-inspection-door");
+        let path = dir.join("probe.mindmap.json");
+        let mut map = MindMap::new_blank("t");
+        map.nodes.insert("0".into(), super::super::test_helpers::node("0", None));
+        let mut raw = serde_json::to_value(&map).expect("serialize the map");
+        raw["nodes"]["0"]["a_key_from_a_newer_build"] = serde_json::json!(42);
+        std::fs::write(&path, serde_json::to_string_pretty(&raw).expect("render"))
+            .expect("write the probe map");
+
+        let loaded = baumhard::mindmap::loader::parse_file_for_inspection(&path)
+            .expect("an unknown key must not stop the inspection load");
+        let reported = crate::verify::verify(&loaded);
+        assert!(
+            reported.iter().any(|v| {
+                v.category == "unknown_keys" && v.message.contains("a_key_from_a_newer_build")
+            }),
+            "`verify` must report the key through its own load path: {reported:?}"
+        );
+        // The blank map is otherwise clean, so nothing else can be
+        // supplying the nonzero exit this check is responsible for.
+        let _ = &map;
+    }
 }

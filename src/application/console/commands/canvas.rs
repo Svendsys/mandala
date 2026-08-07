@@ -418,6 +418,14 @@ fn apply_canvas_edits(
 }
 
 fn finish(outcome: BorderEditOutcome, label: &str, bare_custom: bool) -> ExecResult {
+    // A refused glyph is an error, not a "no change": the setter
+    // declined it because the loader would reject the saved file,
+    // and reporting success here is exactly how the user ends up
+    // with a map they cannot reopen. Same posture as the per-node
+    // `border` verb's `apply_edits`.
+    if !outcome.rejected.is_empty() {
+        return ExecResult::Err(format!("{}: {}", label, outcome.rejected.join("; ")));
+    }
     if !outcome.changed {
         if bare_custom {
             return ExecResult::lines(vec![

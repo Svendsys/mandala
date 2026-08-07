@@ -254,6 +254,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
 
     let mut changed = 0usize;
     let mut auto_promoted: Option<String> = None;
+    let mut rejected: Vec<String> = Vec::new();
     for (node_id, section_idx) in &targets {
         let outcome: BorderEditOutcome =
             eff.document
@@ -264,6 +265,15 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
         if outcome.preset_auto_promoted && auto_promoted.is_none() {
             auto_promoted = outcome.requested_preset.clone();
         }
+        if rejected.is_empty() {
+            rejected = outcome.rejected;
+        }
+    }
+    // A refused glyph is an error, not a "no change": the setter
+    // declined it because the loader would reject the saved file.
+    // Same posture as the per-node `border` verb's `apply_edits`.
+    if !rejected.is_empty() {
+        return ExecResult::Err(format!("section frame: {}", rejected.join("; ")));
     }
 
     let mut lines: Vec<String> = Vec::new();

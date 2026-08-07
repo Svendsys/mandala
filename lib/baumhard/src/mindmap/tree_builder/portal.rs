@@ -483,35 +483,31 @@ pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
     let mut unique_id: usize = 1;
 
     for pair in pairs {
-        let pair_root = tree
-            .arena
-            .new_node(GfxElement::new_void_with_id(pair.pair_channel, unique_id));
+        let pair_root = tree.root.append_value(
+            GfxElement::new_void_with_id(pair.pair_channel, unique_id),
+            &mut tree.arena,
+        );
         unique_id += 1;
-        tree.root.append(pair_root, &mut tree.arena);
 
         for (endpoint_idx, ep) in pair.endpoints.iter().enumerate() {
             let endpoint_channel = endpoint_idx + 1;
-            let endpoint_void = tree
-                .arena
-                .new_node(GfxElement::new_void_with_id(endpoint_channel, unique_id));
+            let endpoint_void = pair_root.append_value(
+                GfxElement::new_void_with_id(endpoint_channel, unique_id),
+                &mut tree.arena,
+            );
             unique_id += 1;
-            pair_root.append(endpoint_void, &mut tree.arena);
 
-            let icon_leaf = tree.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-                ep.icon.clone(),
-                ICON_SLOT,
-                unique_id,
-            ));
+            endpoint_void.append_value(
+                GfxElement::new_area_non_indexed_with_id( ep.icon.clone(), ICON_SLOT, unique_id, ),
+                &mut tree.arena,
+            );
             unique_id += 1;
-            endpoint_void.append(icon_leaf, &mut tree.arena);
 
-            let text_leaf = tree.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-                ep.text.clone(),
-                TEXT_SLOT,
-                unique_id,
-            ));
+            endpoint_void.append_value(
+                GfxElement::new_area_non_indexed_with_id( ep.text.clone(), TEXT_SLOT, unique_id, ),
+                &mut tree.arena,
+            );
             unique_id += 1;
-            endpoint_void.append(text_leaf, &mut tree.arena);
         }
     }
 
@@ -567,20 +563,24 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
 
     for pair in pairs {
-        let pair_node = mt.arena.new_node(GfxMutator::new_void(pair.pair_channel));
-        mt.root.append(pair_node, &mut mt.arena);
+        let pair_node = mt.root.append_value(
+            GfxMutator::new_void(pair.pair_channel),
+            &mut mt.arena,
+        );
 
         for (endpoint_idx, ep) in pair.endpoints.iter().enumerate() {
             let endpoint_channel = endpoint_idx + 1;
-            let endpoint_void = mt.arena.new_node(GfxMutator::new_void(endpoint_channel));
-            pair_node.append(endpoint_void, &mut mt.arena);
+            let endpoint_void = pair_node.append_value(
+                GfxMutator::new_void(endpoint_channel),
+                &mut mt.arena,
+            );
 
             for (slot, area) in [(ICON_SLOT, &ep.icon), (TEXT_SLOT, &ep.text)] {
                 let delta = DeltaGlyphArea::full_assign_from(area);
-                let leaf = mt
-                    .arena
-                    .new_node(GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), slot));
-                endpoint_void.append(leaf, &mut mt.arena);
+                endpoint_void.append_value(
+                    GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), slot),
+                    &mut mt.arena,
+                );
             }
         }
     }

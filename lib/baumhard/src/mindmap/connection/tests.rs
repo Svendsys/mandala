@@ -130,7 +130,7 @@ fn test_straight_sampling() {
         start: Vec2::new(0.0, 0.0),
         end: Vec2::new(100.0, 0.0),
     };
-    let points = sample_path(&path, 10.0);
+    let points = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
     assert_eq!(points.len(), 11); // 0, 10, 20, ..., 100
                                   // First point at start
     assert!((points[0].position.x - 0.0).abs() < 0.01);
@@ -148,7 +148,7 @@ fn test_straight_sampling_diagonal() {
         start: Vec2::new(0.0, 0.0),
         end: Vec2::new(30.0, 40.0), // length = 50
     };
-    let points = sample_path(&path, 10.0);
+    let points = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
     assert_eq!(points.len(), 6); // 0, 10, 20, 30, 40, 50
 }
 
@@ -192,7 +192,7 @@ fn test_curved_bezier_sampling() {
         control2: Vec2::new(67.0, -100.0),
         end: Vec2::new(100.0, 0.0),
     };
-    let points = sample_path(&path, 10.0);
+    let points = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
     // Curved path is longer than 100, so should have more than 11 points
     assert!(points.len() > 11, "Expected >11 points, got {}", points.len());
     // First point near start
@@ -205,7 +205,7 @@ fn test_sample_path_zero_spacing() {
         start: Vec2::new(0.0, 0.0),
         end: Vec2::new(100.0, 0.0),
     };
-    let points = sample_path(&path, 0.0);
+    let points = sample_path(&path, 0.0, super::MAX_PATH_SAMPLES);
     assert!(points.is_empty());
 }
 
@@ -216,7 +216,7 @@ fn test_sample_path_degenerate() {
         start: Vec2::new(50.0, 50.0),
         end: Vec2::new(50.0, 50.0),
     };
-    let points = sample_path(&path, 10.0);
+    let points = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
     assert_eq!(points.len(), 1);
 }
 
@@ -346,7 +346,7 @@ fn test_sample_long_straight_scales_linearly_with_length() {
         start: Vec2::new(0.0, 0.0),
         end: Vec2::new(20_000.0, 0.0),
     };
-    let points = sample_path(&path, 15.0);
+    let points = sample_path(&path, 15.0, super::MAX_PATH_SAMPLES);
     // Expected: floor(20000/15) + 1 = 1334.
     assert_eq!(points.len(), 1334);
     // Way above the 256-subdivision table size — proves no clamp.
@@ -373,7 +373,7 @@ fn test_sample_long_bezier_count_bounded_by_length() {
     };
     let length = path_length(&path);
     let spacing = 15.0;
-    let points = sample_path(&path, spacing);
+    let points = sample_path(&path, spacing, super::MAX_PATH_SAMPLES);
     let expected_floor = (length / spacing) as usize;
     // Sampler emits `floor(length/spacing) + 1` points. Allow a window
     // of ±2 to tolerate FP drift at the endpoint.
@@ -403,7 +403,7 @@ fn test_sample_path_monotonic_along_straight() {
         start: Vec2::new(0.0, 0.0),
         end: Vec2::new(1000.0, 0.0),
     };
-    let points = sample_path(&path, 10.0);
+    let points = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
     assert!(points.len() > 2);
     for pair in points.windows(2) {
         assert!(
@@ -426,7 +426,7 @@ fn test_sample_path_even_spacing_within_tolerance() {
         end: Vec2::new(500.0, 0.0),
     };
     let spacing = 10.0;
-    let points = sample_path(&path, spacing);
+    let points = sample_path(&path, spacing, super::MAX_PATH_SAMPLES);
     // All pairs except possibly the last must be within tolerance of
     // the requested spacing. The last pair can be shorter because the
     // tail is clamped to t=1.
@@ -453,7 +453,7 @@ fn test_sample_path_rejects_negative_spacing() {
         start: Vec2::new(0.0, 0.0),
         end: Vec2::new(100.0, 0.0),
     };
-    let points = sample_path(&path, -1.0);
+    let points = sample_path(&path, -1.0, super::MAX_PATH_SAMPLES);
     assert!(
         points.is_empty(),
         "negative spacing must return empty, got {} points",
@@ -473,7 +473,7 @@ fn test_sample_path_rejects_nan_spacing() {
     // Must not panic — we do not care about the exact return value,
     // only that we get back to this line without an abort. A non-panic
     // outcome is the WASM-reliability invariant.
-    let _ = sample_path(&path, f32::NAN);
+    let _ = sample_path(&path, f32::NAN, super::MAX_PATH_SAMPLES);
 }
 
 /// Spacing larger than the path length should return exactly one
@@ -484,7 +484,7 @@ fn test_sample_path_huge_spacing_returns_start_only() {
         start: Vec2::new(0.0, 0.0),
         end: Vec2::new(100.0, 0.0),
     };
-    let points = sample_path(&path, 10_000.0);
+    let points = sample_path(&path, 10_000.0, super::MAX_PATH_SAMPLES);
     assert_eq!(points.len(), 1);
     assert_eq!(points[0].position, Vec2::new(0.0, 0.0));
 }
@@ -501,8 +501,8 @@ fn test_sample_path_deterministic_across_calls() {
         control2: Vec2::new(300.0, -200.0),
         end: Vec2::new(400.0, 0.0),
     };
-    let a = sample_path(&path, 5.0);
-    let b = sample_path(&path, 5.0);
+    let a = sample_path(&path, 5.0, super::MAX_PATH_SAMPLES);
+    let b = sample_path(&path, 5.0, super::MAX_PATH_SAMPLES);
     assert_eq!(a.len(), b.len());
     for (pa, pb) in a.iter().zip(b.iter()) {
         assert_eq!(pa.position, pb.position);
@@ -635,7 +635,7 @@ fn test_bezier_sample_produces_points() {
     let p3 = Vec2::new(100.0, 0.0);
     let spacing = 10.0;
 
-    let samples = sample_cubic_bezier(p0, p1, p2, p3, spacing);
+    let samples = sample_cubic_bezier(p0, p1, p2, p3, spacing, super::MAX_PATH_SAMPLES);
     assert!(
         samples.len() > 5,
         "a 100-unit curve at spacing 10 should produce >5 samples; got {}",
@@ -651,7 +651,7 @@ fn test_bezier_sample_produces_points() {
 fn test_bezier_sample_degenerate_returns_single_point() {
     // A zero-length curve (all points identical)
     let pt = Vec2::new(42.0, 42.0);
-    let samples = sample_cubic_bezier(pt, pt, pt, pt, 10.0);
+    let samples = sample_cubic_bezier(pt, pt, pt, pt, 10.0, super::MAX_PATH_SAMPLES);
     assert_eq!(samples.len(), 1, "degenerate curve should produce single sample");
     assert!(almost_equal(samples[0].position.x, 42.0));
 }
@@ -964,4 +964,193 @@ fn closest_point_on_path_cubic_near_inflection_never_worse_than_seed() {
             cursor
         );
     }
+}
+
+/// **The allocation the sampler used to commit to unconditionally.**
+///
+/// The sample count is `path length / spacing`, and both terms come
+/// out of the document — endpoints are node positions, spacing
+/// derives from an authored font size. Uncapped, a long path at a
+/// fine spacing asked `Vec::with_capacity` for billions of points,
+/// which fails as an allocator abort rather than a catchable panic.
+///
+/// The loader now rejects the coordinates that get here in the first
+/// place; this pins the second wall, so a path reaching the sampler
+/// by some other route still cannot ask for terabytes.
+#[test]
+fn test_sample_path_caps_hostile_geometry() {
+    let far = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(1.0e9, 0.0),
+    };
+    // Equality, not `<=`: the cap must *bind* here. A sampler that
+    // bailed to a single point on any large quotient — an easy
+    // mistake, since `sample_count` already returns 1 on four guard
+    // paths — would satisfy `<=` while silently drawing nothing.
+    let samples = sample_path(&far, 0.001, super::MAX_PATH_SAMPLES);
+    assert_eq!(
+        samples.len(),
+        MAX_PATH_SAMPLES,
+        "a long path at fine spacing must saturate the cap, not fall through it"
+    );
+
+    let curved = ConnectionPath::CubicBezier {
+        start: Vec2::ZERO,
+        control1: Vec2::new(1.0e8, 1.0e8),
+        control2: Vec2::new(2.0e8, -1.0e8),
+        end: Vec2::new(1.0e9, 0.0),
+    };
+    assert_eq!(sample_path(&curved, 0.001, super::MAX_PATH_SAMPLES).len(), MAX_PATH_SAMPLES);
+}
+
+/// A non-finite length or spacing must not reach the allocation
+/// either. Float-to-integer casts saturate, so an infinite quotient
+/// would land on `usize::MAX` and overflow the `+ 1`; a `NaN` casts
+/// to zero. Both resolve to a single point instead.
+#[test]
+fn test_sample_path_survives_non_finite_geometry() {
+    let infinite = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(f32::INFINITY, 0.0),
+    };
+    // Asserted as an exact count, not `<= MAX_PATH_SAMPLES`. The
+    // bound is satisfied by *any* result including an empty one, so
+    // it holds whether or not `sample_count`'s guards exist and
+    // certifies nothing. One point is the documented outcome.
+    assert_eq!(
+        sample_path(&infinite, 1.0, super::MAX_PATH_SAMPLES).len(),
+        1,
+        "an infinite length must resolve to a single point"
+    );
+
+    let nan = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(f32::NAN, 0.0),
+    };
+    assert_eq!(
+        sample_path(&nan, 1.0, super::MAX_PATH_SAMPLES).len(),
+        1,
+        "a NaN length must resolve to a single point"
+    );
+
+    // A non-finite spacing is the same hazard from the other side.
+    let ordinary = ConnectionPath::Straight {
+        start: Vec2::ZERO,
+        end: Vec2::new(100.0, 0.0),
+    };
+    assert_eq!(
+        sample_path(&ordinary, f32::NAN, super::MAX_PATH_SAMPLES).len(),
+        1,
+        "a NaN spacing must resolve to a single point"
+    );
+    assert_eq!(
+        sample_path(&ordinary, f32::INFINITY, super::MAX_PATH_SAMPLES).len(),
+        1,
+        "an infinite spacing must resolve to a single point"
+    );
+    // A non-positive spacing is refused by `sample_path` itself,
+    // before `sample_count` is consulted — so the answer is no
+    // samples at all rather than the single point the non-finite
+    // cases resolve to. Asserted because the two guards are easy to
+    // conflate: `sample_count`'s own `spacing <= 0.0` arm is
+    // unreachable through this entry point.
+    assert!(
+        sample_path(&ordinary, 0.0, super::MAX_PATH_SAMPLES).is_empty(),
+        "a zero spacing yields no samples, not one"
+    );
+    assert!(
+        sample_path(&ordinary, -5.0, super::MAX_PATH_SAMPLES).is_empty(),
+        "a negative spacing yields no samples, not one"
+    );
+
+    // The ordinary case still samples the way it always did.
+    assert_eq!(sample_path(&ordinary, 10.0, super::MAX_PATH_SAMPLES).len(), 11);
+}
+
+/// **The clamp that must not panic on a window the cascade built
+/// backwards.**
+///
+/// `f32::clamp` panics when its bounds cross, and a size window is
+/// not assembled from one place: a label may set only
+/// `min_font_size_pt` and inherit `max` from its edge. Validating
+/// each struct's own pair at load therefore cannot see every window
+/// the cascade can produce — the halves are individually valid and
+/// jointly inverted — so the ordering is enforced where the window
+/// is used.
+#[test]
+fn test_font_window_tolerates_an_inverted_cascade() {
+    use crate::font::fonts::{clamp_to_font_window, MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT};
+
+    // Inverted: read as the window the author described.
+    assert_eq!(clamp_to_font_window(50.0, 40.0, 8.0), 40.0);
+    assert_eq!(clamp_to_font_window(4.0, 40.0, 8.0), 8.0);
+    assert_eq!(clamp_to_font_window(20.0, 40.0, 8.0), 20.0);
+
+    // Ordinary window is untouched.
+    assert_eq!(clamp_to_font_window(20.0, 8.0, 40.0), 20.0);
+    assert_eq!(clamp_to_font_window(100.0, 8.0, 40.0), 40.0);
+
+    // Non-finite bounds are pulled into the shaper's domain first,
+    // so neither the clamp nor the shaper ever sees one. A window
+    // with nothing usable in it widens to the whole domain rather
+    // than collapsing, so an ordinary size passes through.
+    assert_eq!(clamp_to_font_window(20.0, f32::NAN, f32::NAN), 20.0);
+    assert_eq!(clamp_to_font_window(0.0, f32::NAN, f32::NAN), MIN_FONT_SIZE_PT);
+    assert_eq!(clamp_to_font_window(1.0e9, f32::NAN, f32::NAN), MAX_FONT_SIZE_PT);
+    assert!(clamp_to_font_window(1.0e9, 8.0, f32::INFINITY) <= MAX_FONT_SIZE_PT);
+
+    // A NaN size takes the floor rather than propagating.
+    assert_eq!(clamp_to_font_window(f32::NAN, 8.0, 40.0), 8.0);
+}
+
+/// **The per-path cap bounded a path and bounded nothing.**
+///
+/// Each sample becomes a glyph area in the scene arena, and an edge
+/// costs about 120 bytes in the file. A 73 KB document with 200 edges
+/// reached 2 000 000 samples, a 2 000 201-node arena and 1 642 MiB
+/// resident; with the budget it reaches 500 000 and 416 MiB, and no
+/// document can exceed that however many edges it declares. The
+/// per-path constant's own doc had said the aggregate was not bounded.
+///
+/// The share is equal per edge rather than first-come, so the outcome
+/// cannot depend on iteration order and no edge renders while a later
+/// one vanishes.
+#[test]
+fn test_the_scene_wide_glyph_budget_is_shared_equally_and_never_zero() {
+    use super::{per_path_sample_budget, MAX_PATH_SAMPLES, MAX_TOTAL_PATH_SAMPLES};
+
+    // Few edges: the per-path cap still governs, unchanged behavior.
+    assert_eq!(per_path_sample_budget(1), MAX_PATH_SAMPLES);
+    assert_eq!(per_path_sample_budget(0), MAX_PATH_SAMPLES, "no edges must not divide by zero");
+    assert_eq!(
+        per_path_sample_budget(MAX_TOTAL_PATH_SAMPLES / MAX_PATH_SAMPLES),
+        MAX_PATH_SAMPLES,
+        "at the crossover the two ceilings agree"
+    );
+
+    // Many edges: the aggregate governs, and the product stays inside
+    // the budget — which is the whole property.
+    for edges in [200usize, 1_000, 50_000, 5_000_000] {
+        let each = per_path_sample_budget(edges);
+        assert!(each >= 1, "{edges} edges: an edge that renders nothing looks like a missing edge");
+        assert!(
+            each <= MAX_PATH_SAMPLES,
+            "{edges} edges: the per-path cap must still apply"
+        );
+        // `each * edges` can exceed the budget only through the
+        // never-zero floor, which is the deliberate trade.
+        if each > 1 {
+            assert!(
+                each.saturating_mul(edges) <= MAX_TOTAL_PATH_SAMPLES,
+                "{edges} edges x {each} samples exceeds the scene budget"
+            );
+        }
+    }
+
+    // Real maps must be untouched by this: the repository's heaviest is
+    // `stress_long_edges` at 46 290 samples over 124 edges.
+    assert!(
+        per_path_sample_budget(124) >= 46_290 / 124 + 1,
+        "the budget must not thin the repository's own worst-case map"
+    );
 }

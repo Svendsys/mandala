@@ -527,6 +527,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("find_byte_index_of_grapheme", |b| {
         b.iter(|| do_find_byte_index_of_grapheme())
     });
+    c.bench_function("byte_indices_of_graphemes", |b| {
+        b.iter(do_byte_indices_of_graphemes)
+    });
+    c.bench_function("apply_operation_metric_clamp", |b| {
+        b.iter(do_apply_operation_clamps_the_shaper_metrics)
+    });
+    c.bench_function("font_metric_setters_clamp", |b| {
+        b.iter(do_font_metric_setters_clamp_to_the_shaper_domain)
+    });
     c.bench_function("replace_graphemes_until_newline", |b| {
         b.iter(|| do_replace_graphemes_until_newline())
     });

@@ -52,10 +52,15 @@ label:       { min: 1.5,  max: null }     // replace, not intersect
 
 ## Validation
 
-`maptool verify` rejects `min > max` (when both are `Some`) under the
-`zoom_bounds` category. The runtime `ZoomVisibility::contains` check
-still returns cleanly for an inverted window — it just always reports
-"not visible" — but the authoring intent is almost always a typo.
+An inverted window (`min > max`, both `Some`) is **load-blocking**:
+the loader refuses the map, and `maptool verify` reports it under the
+`numeric` category. Nothing crashes on an inverted window — the
+runtime `ZoomVisibility::contains` check is two independent
+comparisons and returns cleanly — but no zoom satisfies both bounds,
+so the element is invisible at every zoom level, which is almost
+always a typo rather than an intent. A non-finite or negative bound
+is refused the same way. See
+[validation.md](./validation.md#numeric-domain).
 
 ## Mutator target
 

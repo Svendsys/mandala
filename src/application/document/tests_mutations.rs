@@ -2243,6 +2243,60 @@ fn test_shrink_font_clamps_to_minimum() {
     );
 }
 
+/// The other end of the same clamp, **end to end**: a `grow-font`
+/// delta large enough to leave the shaper's domain still produces a
+/// run the loader accepts, and the saved map reopens.
+///
+/// What this does *not* cover is `clamp_run_size_pt`'s own ceiling.
+/// The mutation path clamps at `GlyphArea`'s scale setters first, so
+/// the tree scale handed to the reverse converter is already inside
+/// the domain and the converter's ceiling never binds here — this
+/// test passes with that ceiling deleted. That guard is pinned
+/// directly by `test_clamp_run_size_pt_bounds_both_ends` instead.
+/// An earlier version of this docstring claimed the coverage it
+/// does not have.
+#[test]
+fn test_grow_font_clamps_to_maximum() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections[0].text = "big".into();
+        node.sections[0].text_runs = vec![TextRun {
+            start: 0,
+            end: 3,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 12,
+            color: "#ffffff".into(),
+            hyperlink: None,
+        }];
+    }
+    // Grow by far more than the ceiling allows.
+    let cm = make_font_scale_mutation("grow-font-test", GlyphAreaCommand::GrowFont(1.0e6), TS::SelfOnly);
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let grown = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].size_pt;
+    assert_eq!(
+        grown,
+        baumhard::font::fonts::MAX_FONT_SIZE_PT as u32,
+        "grow past the ceiling clamps to the shaper's maximum, got {grown}"
+    );
+
+    // And the clamped value is one the loader accepts — the point
+    // of the clamp, not a side effect of it.
+    let dir = baumhard::util::test_temp::TempDir::new("grow-font-ceiling");
+    let path = dir.join("grown.mindmap.json");
+    baumhard::mindmap::loader::save_to_file(&path, &doc.mindmap).expect("save must succeed");
+    baumhard::mindmap::loader::load_from_file(&path)
+        .expect("a grown run must still reload — otherwise the clamp did not do its job");
+}
+
 /// A `grow-font` mutation on a **runless** section synthesizes a
 /// single run to carry the new size — the change would otherwise
 /// have nowhere to live and evaporate on the next rebuild. The
@@ -2669,4 +2723,36 @@ fn test_active_toggles_replay_in_activation_order() {
         (x - 222.0).abs() < 1e-3,
         "ordered replay must apply move-a then move-b, leaving x at 222 (got {x})"
     );
+}
+
+/// **`clamp_run_size_pt`'s ceiling, pinned where it can actually
+/// bind.** The reverse converter is reachable with an out-of-domain
+/// scale in principle — a `grow-font` delta is unbounded and the
+/// `as u32` cast saturates rather than wrapping — but every path
+/// that reaches it today clamps at `GlyphArea`'s setters first, so
+/// no end-to-end test exercises the ceiling. Testing the function
+/// directly is what keeps the guard honest rather than incidental.
+#[test]
+fn test_clamp_run_size_pt_bounds_both_ends() {
+    use crate::application::document::custom::sync::{clamp_run_size_pt, MIN_TEXT_RUN_SIZE_PT};
+
+    let max = baumhard::font::fonts::MAX_FONT_SIZE_PT as u32;
+
+    // Ordinary sizes pass through, truncating rather than rounding —
+    // callers that want rounding do it before calling.
+    assert_eq!(clamp_run_size_pt(12.0), 12);
+    assert_eq!(clamp_run_size_pt(12.9), 12);
+
+    // The ceiling: the loader rejects anything above it.
+    assert_eq!(clamp_run_size_pt(1.0e6), max);
+    assert_eq!(clamp_run_size_pt(f32::INFINITY), max);
+
+    // The floor: a shrunk run must stay legible and re-growable
+    // rather than casting to an invisible 0.
+    assert_eq!(clamp_run_size_pt(0.0), MIN_TEXT_RUN_SIZE_PT);
+    assert_eq!(clamp_run_size_pt(-1.0e6), MIN_TEXT_RUN_SIZE_PT);
+    assert_eq!(clamp_run_size_pt(f32::NEG_INFINITY), MIN_TEXT_RUN_SIZE_PT);
+
+    // NaN has no nearest edge; the floor is the safe answer.
+    assert_eq!(clamp_run_size_pt(f32::NAN), MIN_TEXT_RUN_SIZE_PT);
 }

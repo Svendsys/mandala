@@ -65,3 +65,94 @@ pub fn do_clone() {
     assert_ne!(a, c);
     assert_eq!(a_root.descendants(&a).count() - 1, 9 * 6);
 }
+
+/// The copy visits depth-first, children left-to-right — the order
+/// the recursive form produced. This is not cosmetic: it fixes the
+/// order slots are allocated in the destination, and therefore the
+/// `NodeId`s the caller gets back. Reading the destination in slot
+/// order must yield the source's pre-order.
+///
+/// No `do_*()` split: §T2.2 ties that split to benchmark reuse, and
+/// this is a correctness assertion on a seven-node fixture, not a
+/// benchmark candidate. `clone_subtree`'s cost is already covered by
+/// `arena_utils_clone`.
+#[test]
+fn test_clone_preserves_depth_first_pre_order() {
+    // root
+    //  +- 1 -- 11 -- 111
+    //  |   +-- 12
+    //  +- 2
+    //  +- 3 -- 31
+    let mut src: Arena<usize> = Arena::default();
+    let root = src.new_node(0);
+    let n1 = root.append_value(1, &mut src);
+    let n11 = n1.append_value(11, &mut src);
+    let _n111 = n11.append_value(111, &mut src);
+    let _n12 = n1.append_value(12, &mut src);
+    let _n2 = root.append_value(2, &mut src);
+    let n3 = root.append_value(3, &mut src);
+    let _n31 = n3.append_value(31, &mut src);
+
+    let mut dst: Arena<usize> = Arena::default();
+    let dst_root = dst.new_node(0);
+    clone_subtree(&src, root, &mut dst, dst_root);
+
+    let expected: Vec<usize> = root.descendants(&src).skip(1).map(|id| *src[id].get()).collect();
+    assert_eq!(
+        expected,
+        vec![1, 11, 111, 12, 2, 3, 31],
+        "the fixture itself must be in pre-order"
+    );
+
+    // Slot order, not traversal order — this is what the recursion
+    // fixed and what a breadth-first rewrite would silently change.
+    let by_slot: Vec<usize> = dst.iter().skip(1).map(|n| *n.get()).collect();
+    assert_eq!(
+        by_slot, expected,
+        "destination slots must be allocated in the source's pre-order"
+    );
+
+    let by_walk: Vec<usize> = dst_root
+        .descendants(&dst)
+        .skip(1)
+        .map(|id| *dst[id].get())
+        .collect();
+    assert_eq!(by_walk, expected, "and the cloned structure must match");
+}
+
+/// A scene tree's depth is set by the `.mindmap.json` it came from,
+/// and a long `parent_id` chain is legal, so this walk inherits
+/// whatever depth the caller hands it. The recursive form exhausted
+/// the stack and killed the process with `SIGABRT` — not a panic, so
+/// nothing could catch or log it.
+///
+/// Runs on a 256 KiB stack for the same reason the loader's
+/// deep-chain test does: any reintroduced recursion blows a stack
+/// that small long before the chain ends, while the iterative form
+/// is indifferent to it.
+#[test]
+fn test_clone_deep_chain_does_not_exhaust_the_stack() {
+    const DEPTH: usize = 50_000;
+    const SMALL_STACK: usize = 256 * 1024;
+
+    let cloned = std::thread::Builder::new()
+        .stack_size(SMALL_STACK)
+        .spawn(|| {
+            let mut src: Arena<usize> = Arena::default();
+            let root = src.new_node(0);
+            let mut cur = root;
+            for i in 1..=DEPTH {
+                cur = cur.append_value(i, &mut src);
+            }
+
+            let mut dst: Arena<usize> = Arena::default();
+            let dst_root = dst.new_node(0);
+            clone_subtree(&src, root, &mut dst, dst_root);
+            dst_root.descendants(&dst).count() - 1
+        })
+        .expect("spawn the small-stack clone")
+        .join()
+        .expect("the clone must not exhaust a 256 KiB stack");
+
+    assert_eq!(cloned, DEPTH, "every node in the chain must be copied");
+}

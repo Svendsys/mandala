@@ -71,14 +71,16 @@
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// One step of the route from the document root to a captured key.
 ///
 /// A route is what a JSON pointer would be, kept structured rather
 /// than joined: a Dewey-decimal node id contains `.` and `/`-joining
 /// it would make the route ambiguous to read back.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Step {
     /// An object member, named by its key.
     Key(String),
@@ -117,7 +119,20 @@ struct IndexAnchor {
     step: usize,
     /// [`fingerprint`] of every element of the array as the model
     /// serialized it at load time, in order.
-    siblings: Vec<u64>,
+    ///
+    /// **Shared, not copied.** Every key captured under the same array
+    /// needs the same vector, and building one per key made the capture
+    /// quadratic: `K` keys inside an `N`-element array cost `K × N`
+    /// fingerprints to compute and `K × N` `u64`s to retain, each
+    /// fingerprint rendering its element with `to_string()` first. At
+    /// a hundred thousand keys that is 10^10 fingerprints. The ceiling
+    /// then in force bounded the route vector while the anchors behind
+    /// it stayed unbounded, which is why bounding the input was the
+    /// wrong instrument and the cost itself had to be fixed. Measured before the fix, one unknown key per
+    /// element: 2 000 keys / 404 KB reached 46 MiB, 6 000 keys /
+    /// 1.2 MB reached 311 MiB, and 12 000 keys / 2.4 MB did not finish
+    /// in two minutes. `Arc` makes it `O(N)` per array instead.
+    siblings: Arc<Vec<u64>>,
 }
 
 /// A container the saver leaves out, and the value that puts it back.
@@ -681,10 +696,25 @@ fn resolve_index(items: &[Value], index: usize, anchor: Option<&IndexAnchor>) ->
         return (index < items.len()).then_some(index);
     };
     let want = *anchor.siblings.get(index)?;
-    let now: Vec<u64> = items.iter().map(fingerprint).collect();
-    if now.get(index) == Some(&want) {
+    // **The common answer costs one fingerprint, not `items.len()`.**
+    // Nothing moved is the overwhelmingly likely case — the array is
+    // the one the load saw and the element is still at its index — and
+    // deciding it needs only that element. Rendering every sibling
+    // first made `splice_into` O(keys x array length).
+    //
+    // The load side had the identical defect and was fixed by sharing
+    // one fingerprint vector per array. That cannot work here:
+    // `splice_into` writes keys back as it goes, so a cached
+    // fingerprint is stale the moment an element is spliced. Asking a
+    // cheaper question first is what works on this side.
+    //
+    // The full pass below still happens when the fast check fails,
+    // which is what the two fallbacks need. That is bounded by how many
+    // elements actually moved, not by how many keys the document has.
+    if items.get(index).map(fingerprint) == Some(want) {
         return Some(index);
     }
+    let now: Vec<u64> = items.iter().map(fingerprint).collect();
     let mut matches = now.iter().enumerate().filter(|(_, seen)| **seen == want);
     if let (Some((only, _)), None) = (matches.next(), matches.next()) {
         return Some(only);
@@ -692,7 +722,7 @@ fn resolve_index(items: &[Value], index: usize, anchor: Option<&IndexAnchor>) ->
     let only_this_one_changed = now.len() == anchor.siblings.len()
         && now
             .iter()
-            .zip(&anchor.siblings)
+            .zip(anchor.siblings.iter())
             .enumerate()
             .all(|(position, (seen, was))| position == index || seen == was);
     only_this_one_changed.then_some(index)
@@ -711,19 +741,147 @@ fn resolve_index(items: &[Value], index: usize, anchor: Option<&IndexAnchor>) ->
 /// diagnose them.
 ///
 /// Cost: one parse of `json`, plus one `Vec<Step>` per unrecognized
-/// key.
+/// key — bounded by [`MAX_UNKNOWN_KEYS`], which is what keeps that
+/// second term from being chosen by the document.
 pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
     json: &'de str,
 ) -> Result<(T, Vec<Vec<Step>>), serde_json::Error> {
     let mut routes: Vec<Vec<Step>> = Vec::new();
     let mut deserializer = serde_json::Deserializer::from_str(json);
-    let value: T = serde_ignored::deserialize(&mut deserializer, |path| routes.push(route_of(&path)))?;
+    let value: T = serde_ignored::deserialize(&mut deserializer, |path| {
+        push_route_capped(&mut routes, &path)
+    })?;
     // `serde_json::from_str` does this for us; a hand-driven
     // `Deserializer` has to, or trailing garbage after the closing
     // brace parses clean. `loader::tests::test_trailing_content_after_the_document_is_rejected`
     // is what notices when it goes away.
     deserializer.end()?;
     Ok((value, routes))
+}
+
+/// Ceiling on how many unrecognized keys one document may carry, or
+/// `None` where the platform imposes none.
+///
+/// **`None` on native, because the cost is now proportional.** This
+/// began at 100 000 with a memory argument: every captured key cost a
+/// heap-allocated route, and reaching one committed the load to two
+/// full `serde_json::Value` trees — but the real problem was that both
+/// the capture and the write-back were *superlinear*. `plan_write_back`
+/// built one fingerprint vector per key rather than per array, and
+/// `resolve_index` rendered every sibling before asking whether the
+/// element had moved. At 6 000 keys the save alone took 67 seconds.
+/// A ceiling was the wrong instrument for that; it bounded the input
+/// instead of fixing the cost, and it did so at a number chosen against
+/// a 252-node fixture.
+///
+/// Both halves are linear now, so the cost of preserving keys tracks
+/// the document that carries them — which is the property a user can
+/// reason about, and the one a ceiling never provided. A map with ten
+/// million unrecognized keys is a large map, and Mandala opens large
+/// maps.
+///
+/// **`Some` on wasm32**, for the same reason [`MAX_MAP_BYTES`] is: a
+/// 32-bit address space is physics. The number is deliberately
+/// generous — it is a backstop against exhausting the browser's 4 GiB,
+/// not a judgment about how many keys a document should have.
+///
+/// [`MAX_MAP_BYTES`]: crate::mindmap::loader::MAX_MAP_BYTES
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_UNKNOWN_KEYS: Option<usize> = None;
+
+/// See the native definition above. Sized so the capture cannot by
+/// itself exhaust wasm32's 4 GiB address space before the loader can
+/// report anything.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_UNKNOWN_KEYS: Option<usize> = Some(2_000_000);
+
+/// The ceiling in force for this call.
+///
+/// Reads [`MAX_UNKNOWN_KEYS`] in a shipped build. In a test build it
+/// reads a thread-local that defaults to the same value, so a test can
+/// drive the **real doors** — `load_from_str`, `parse_for_inspection`
+/// and the tolerant path — against a ceiling it can afford.
+///
+/// The seam exists because the alternative was worse. `MAX_UNKNOWN_KEYS`
+/// is `None` on every target the suite runs on, so a test written
+/// against the constant asserts nothing and passes, and the arm it
+/// stops covering is the browser's. Testing the predicate alone would
+/// keep that honest but would no longer catch a door that forgot to
+/// call it — which is exactly the defect a review round found on the
+/// tolerant path.
+fn active_key_ceiling() -> Option<usize> {
+    #[cfg(test)]
+    {
+        TEST_KEY_CEILING.with(|c| c.get())
+    }
+    #[cfg(not(test))]
+    {
+        MAX_UNKNOWN_KEYS
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_KEY_CEILING: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(MAX_UNKNOWN_KEYS) };
+}
+
+/// Run `body` with the unknown-key ceiling set to `ceiling`, restoring
+/// the previous value afterwards even if `body` panics.
+#[cfg(test)]
+pub fn with_key_ceiling<T>(ceiling: Option<usize>, body: impl FnOnce() -> T) -> T {
+    struct Restore(Option<usize>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_KEY_CEILING.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(TEST_KEY_CEILING.with(|c| c.get()));
+    TEST_KEY_CEILING.with(|c| c.set(ceiling));
+    body()
+}
+
+/// Push one route unless the active ceiling is already reached.
+///
+/// Stopping *here* rather than after the walk is the point: the
+/// allocation this bounds is `routes` itself, so a check applied to the
+/// finished vector would be a check applied after the memory was
+/// already spent. One route past the ceiling is kept, and it is what
+/// tells the caller the document overflowed —
+/// `unknown_key_count_violation` reads `routes.len() > MAX_UNKNOWN_KEYS`
+/// and the loader refuses.
+fn push_route_capped(routes: &mut Vec<Vec<Step>>, path: &serde_ignored::Path<'_>) {
+    if active_key_ceiling().is_none_or(|cap| routes.len() <= cap) {
+        routes.push(route_of(path));
+    }
+}
+
+/// The refusal message for a document over [`MAX_UNKNOWN_KEYS`], or
+/// `None` when it is inside the ceiling.
+///
+/// The count is reported as "more than" rather than exactly, because
+/// the capture stops counting at the ceiling — deliberately, since
+/// counting them all is the cost being avoided.
+pub fn unknown_key_count_violation(routes: &[Vec<Step>]) -> Option<String> {
+    count_violation_against(routes.len(), active_key_ceiling())
+}
+
+/// [`unknown_key_count_violation`] against a caller-supplied ceiling.
+///
+/// Split out for the reason `loader::check_text_cap_against` is:
+/// `MAX_UNKNOWN_KEYS` is `None` on every target the suite runs on, so a
+/// test written against the constant asserts nothing and passes, and
+/// the arm it stops covering is the browser's.
+pub fn count_violation_against(found: usize, ceiling: Option<usize>) -> Option<String> {
+    let cap = ceiling.filter(|cap| found > *cap)?;
+    Some({
+        format!(
+            "map carries more than {cap} unrecognized keys — refusing to load \
+             it. Keys this build has no field for are normally kept and saved back \
+             untouched, but capturing them costs memory per key, and a document with this \
+             many cannot be held in this target's address space."
+        )
+    })
 }
 
 /// Deserialize `T` out of an already-parsed document, collecting the
@@ -738,12 +896,16 @@ pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
 /// for a key to go missing.
 ///
 /// Cost: one walk of `document`, plus one `Vec<Step>` per
-/// unrecognized key.
+/// unrecognized key, under the same [`MAX_UNKNOWN_KEYS`] ceiling
+/// [`deserialize_capturing`] applies. Both doors, or the tolerant path
+/// would be the way around the bound.
 pub fn deserialize_value_capturing<T: serde::de::DeserializeOwned>(
     document: &Value,
 ) -> Result<(T, Vec<Vec<Step>>), serde_json::Error> {
     let mut routes: Vec<Vec<Step>> = Vec::new();
-    let value: T = serde_ignored::deserialize(document, |path| routes.push(route_of(&path)))?;
+    let value: T = serde_ignored::deserialize(document, |path| {
+        push_route_capped(&mut routes, &path)
+    })?;
     Ok((value, routes))
 }
 
@@ -790,10 +952,13 @@ pub fn take_from(document: &mut Value, probe: Option<&Value>, routes: Vec<Vec<St
         };
         taken.push((route, value));
     }
+    // One cache for the whole pass — the point of it is sharing
+    // *across* routes, so it cannot live inside `plan_write_back`.
+    let mut arrays: HashMap<Vec<Step>, Arc<Vec<u64>>> = HashMap::new();
     let entries = taken
         .into_iter()
         .map(|(route, value)| {
-            let plan = plan_write_back(document, probe, &route);
+            let plan = plan_write_back(document, probe, &route, &mut arrays);
             UnknownKey {
                 route,
                 value,
@@ -823,9 +988,18 @@ struct WriteBackPlan {
 /// back. Recording only the first is enough: re-inserting the authored
 /// container restores everything below it in one move.
 ///
-/// Cost: O(route length), plus one fingerprint pass over each array on
-/// the way.
-fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> WriteBackPlan {
+/// Cost: O(route length). The fingerprint pass over each array on the
+/// way is paid **once per array**, not once per key: `siblings` is
+/// memoized in `arrays`, keyed by the route prefix that reaches it.
+/// Every key under one array produces the identical vector, so before
+/// the cache a document with `K` keys inside an `N`-element array paid
+/// `K × N` fingerprints — see [`IndexAnchor::siblings`].
+fn plan_write_back(
+    document: &Value,
+    probe: Option<&Value>,
+    route: &[Step],
+    arrays: &mut HashMap<Vec<Step>, Arc<Vec<u64>>>,
+) -> WriteBackPlan {
     let unanchored = WriteBackPlan {
         anchors: Vec::new(),
         scaffold: None,
@@ -839,9 +1013,22 @@ fn plan_write_back(document: &Value, probe: Option<&Value>, route: &[Step]) -> W
         let next = match (current, step) {
             (Value::Object(members), Step::Key(key)) => members.get(key),
             (Value::Array(items), Step::Index(index)) => {
+                // Keyed by the prefix that reaches this array, which is
+                // what makes two keys under the same array share one
+                // vector. The prefix is walked from `probe`, which is
+                // immutable for the whole of `take_from`, so the same
+                // prefix always names the same array.
+                let siblings = match arrays.get(&parent[..position]) {
+                    Some(cached) => Arc::clone(cached),
+                    None => {
+                        let built: Arc<Vec<u64>> = Arc::new(items.iter().map(fingerprint).collect());
+                        arrays.insert(parent[..position].to_vec(), Arc::clone(&built));
+                        built
+                    }
+                };
                 anchors.push(IndexAnchor {
                     step: position,
-                    siblings: items.iter().map(fingerprint).collect(),
+                    siblings,
                 });
                 items.get(*index)
             }
@@ -1735,6 +1922,119 @@ mod tests {
              The block is one name per line, sorted. An array whose elements cannot hold \
              an unrecognized key — `Vec<Value>`, `Vec<String>` — is correctly absent; if \
              one of those is what showed up here, the derivation is what to look at."
+        );
+    }
+
+    /// **The anchor vector is shared, and that is a memory bound, not
+    /// a tidiness preference.**
+    ///
+    /// `plan_write_back` records an `IndexAnchor` per array on a
+    /// captured key's route, and its `siblings` fingerprints *every*
+    /// element of that array. Built per key, `K` keys inside an
+    /// `N`-element array cost `K x N` fingerprints to compute and
+    /// `K x N` `u64`s to keep — and `fingerprint` renders each element
+    /// with `to_string()` first, so the CPU cost is quadratic too.
+    /// `MAX_UNKNOWN_KEYS` bounds `K` and does nothing about the
+    /// product, which is why the ceiling alone was not the bound its
+    /// commit claimed. Measured through `maptool grep` with one unknown
+    /// key per element, before the fix: 2 000 keys / 404 KB reached
+    /// 46 MiB, 6 000 / 1.2 MB reached 311 MiB, 12 000 / 2.4 MB did not
+    /// finish in two minutes. After: 15, 36 and 68 MiB.
+    ///
+    /// Asserting on `Arc::ptr_eq` rather than on equal contents is the
+    /// point — the contents were always equal; it is the *allocation*
+    /// that used to be per key.
+    #[test]
+    fn test_one_fingerprint_vector_is_shared_by_every_key_under_an_array() {
+        const ELEMENTS: usize = 12;
+        let items: Vec<Value> = (0..ELEMENTS)
+            .map(|i| serde_json::json!({ "known": i, format!("u{i}"): i }))
+            .collect();
+        let mut document = serde_json::json!({ "list": items });
+        // The probe is what the walk reads: same shape, minus the keys
+        // the model had no field for.
+        let probe = serde_json::json!({
+            "list": (0..ELEMENTS).map(|i| serde_json::json!({ "known": i })).collect::<Vec<_>>()
+        });
+        let routes: Vec<Vec<Step>> = (0..ELEMENTS)
+            .map(|i| vec![Step::Key("list".into()), Step::Index(i), Step::Key(format!("u{i}"))])
+            .collect();
+
+        let captured = take_from(&mut document, Some(&probe), routes);
+        assert_eq!(captured.entries.len(), ELEMENTS, "every key must be captured");
+
+        let first = captured.entries[0]
+            .anchors
+            .first()
+            .expect("a key inside an array carries an anchor")
+            .siblings
+            .clone();
+        assert_eq!(first.len(), ELEMENTS, "the anchor fingerprints every sibling");
+        for (i, entry) in captured.entries.iter().enumerate() {
+            let anchor = entry.anchors.first().expect("each key sits under the same array");
+            assert!(
+                Arc::ptr_eq(&anchor.siblings, &first),
+                "entry {i} built its own fingerprint vector — the capture is quadratic again"
+            );
+        }
+        // Guards the assertion above against passing on a single entry.
+        assert!(ELEMENTS > 1);
+    }
+
+    /// **Saving must stay linear in the number of preserved keys.**
+    ///
+    /// `resolve_index` answers "which element does this route mean
+    /// now?", and its first question — is the element still where it
+    /// was — needs one fingerprint. Rendering every sibling before
+    /// asking made `splice_into` O(keys x array length). Measured
+    /// through `to_json_value` on a map with one unknown key per array
+    /// element: 2 000 keys took 5.39 s, 6 000 took 67.4 s, and 12 000
+    /// did not finish in two minutes. After: 6.4 ms, 28.2 ms, 62.2 ms.
+    ///
+    /// The load side had the identical defect and was fixed by sharing
+    /// one fingerprint vector per array. That cannot work here:
+    /// `splice_into` writes keys back as it goes, so a cached
+    /// fingerprint is stale the moment an element is spliced. Asking a
+    /// cheaper question first is what works on this side.
+    ///
+    /// This asserts a duration, which every other pin on this branch
+    /// deliberately avoids. It is justified by the margin rather than
+    /// by the number: the linear form is ~25 ms and the quadratic one
+    /// ~20 s, so the bound below sits two orders of magnitude above the
+    /// good case and two below the bad. A source pin would be steadier
+    /// but would only say "the fast check is present", not "the cost is
+    /// linear", and the cost is the property.
+    #[test]
+    fn test_splicing_keys_back_is_linear_in_their_count() {
+        const N: usize = 4000;
+        let items: Vec<Value> = (0..N)
+            .map(|i| serde_json::json!({ "known": i, format!("u{i}"): i }))
+            .collect();
+        let mut document = serde_json::json!({ "list": items });
+        let probe = serde_json::json!({
+            "list": (0..N).map(|i| serde_json::json!({ "known": i })).collect::<Vec<_>>()
+        });
+        let routes: Vec<Vec<Step>> = (0..N)
+            .map(|i| vec![Step::Key("list".into()), Step::Index(i), Step::Key(format!("u{i}"))])
+            .collect();
+        let captured = take_from(&mut document, Some(&probe), routes);
+        assert_eq!(captured.entries.len(), N, "every key must be captured");
+
+        let started = std::time::Instant::now();
+        captured.splice_into(&mut document);
+        let elapsed = started.elapsed();
+
+        // Every key really went back — otherwise this times an early exit.
+        for i in 0..N {
+            assert!(
+                document["list"][i].get(&format!("u{i}")).is_some(),
+                "key u{i} was not spliced back"
+            );
+        }
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "splicing {N} keys took {elapsed:?}; linear is tens of milliseconds and the \
+             quadratic form this guards against is tens of seconds"
         );
     }
 }

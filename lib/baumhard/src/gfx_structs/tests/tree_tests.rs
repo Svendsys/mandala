@@ -509,14 +509,36 @@ pub fn area_block_commands() {
                                 assert_eq!(my_text, reference_text.to_owned() + text.as_str())
                             }
                             GlyphAreaField::Scale(scale) => {
+                                // Additive composition still holds, but
+                                // inside a domain: the scale is a
+                                // `cosmic_text::Metrics` term, so the
+                                // setter forces it into the shaper's
+                                // usable range rather than letting a
+                                // delta drive it to zero (an abort) or
+                                // negative (nonsense). The delta is
+                                // still applied — it is the *result*
+                                // that is bounded.
+                                let reference = reference_block.glyph_area().unwrap().scale;
+                                let expected = crate::font::fonts::clamp_font_metric(
+                                    (scale + reference).into_inner(),
+                                    reference.into_inner(),
+                                );
                                 assert_eq!(
-                                    scale + reference_block.glyph_area().unwrap().scale,
+                                    ordered_float::OrderedFloat::from(expected),
                                     my_block.glyph_area().unwrap().scale
                                 )
                             }
                             GlyphAreaField::LineHeight(line_height) => {
+                                // Same domain as `Scale` above — the
+                                // other half of `Metrics::new`, and the
+                                // half the zero-line-height assert names.
+                                let reference = reference_block.glyph_area().unwrap().line_height;
+                                let expected = crate::font::fonts::clamp_font_metric(
+                                    (line_height + reference).into_inner(),
+                                    reference.into_inner(),
+                                );
                                 assert_eq!(
-                                    line_height + reference_block.glyph_area().unwrap().line_height,
+                                    ordered_float::OrderedFloat::from(expected),
                                     my_block.glyph_area().unwrap().line_height
                                 )
                             }
@@ -2141,4 +2163,119 @@ fn assert_element_delta(element: &GfxElement, fields: Vec<GlyphAreaField>) {
             GlyphAreaField::Operation(_) => {}
         }
     }
+}
+
+#[test]
+fn test_font_metric_setters_clamp_to_the_shaper_domain() {
+    do_font_metric_setters_clamp_to_the_shaper_domain();
+}
+
+/// **The clamp that survives a writer the loader never sees.**
+///
+/// The document trust boundary screens authored geometry, but the
+/// scale and line height are also written at runtime — by a
+/// map-carried `CustomMutation` firing on a click, by a console
+/// verb, by a macro, by IPC. All of those land on these setters, and
+/// the value becomes a `cosmic_text::Metrics` term where zero trips
+/// an `assert!` that aborts the process outright.
+///
+/// So the invariant lives on the field, not on the callers: whatever
+/// arrives, what is stored is a metric the shaper can survive.
+pub fn do_font_metric_setters_clamp_to_the_shaper_domain() {
+    use crate::font::fonts::{MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT};
+    use crate::gfx_structs::area::GlyphArea;
+    use glam::Vec2;
+
+    let fresh = || GlyphArea::new(14.0, 16.8, Vec2::ZERO, Vec2::new(100.0, 40.0));
+
+    // Zero is the value that aborts the process.
+    let mut area = fresh();
+    area.set_font_size(&0.0);
+    assert_eq!(area.scale.into_inner(), MIN_FONT_SIZE_PT);
+    area.set_line_height(&0.0);
+    assert_eq!(area.line_height.into_inner(), MIN_FONT_SIZE_PT);
+
+    // A delta must not be able to walk the metric out of the domain.
+    let mut area = fresh();
+    area.shrink_font(&1.0e9);
+    assert_eq!(area.scale.into_inner(), MIN_FONT_SIZE_PT);
+    area.grow_font(&1.0e9);
+    assert_eq!(area.scale.into_inner(), MAX_FONT_SIZE_PT);
+
+    let mut area = fresh();
+    area.shrink_line_height(&1.0e9);
+    assert_eq!(area.line_height.into_inner(), MIN_FONT_SIZE_PT);
+    area.grow_line_height(&1.0e9);
+    assert_eq!(area.line_height.into_inner(), MAX_FONT_SIZE_PT);
+
+    // A non-finite write keeps the previous metric rather than
+    // poisoning every downstream comparison with NaN — `f32::clamp`
+    // propagates NaN, so this needs its own screen.
+    let mut area = fresh();
+    area.set_font_size(&f32::NAN);
+    assert_eq!(area.scale.into_inner(), 14.0);
+    area.set_font_size(&f32::INFINITY);
+    assert_eq!(area.scale.into_inner(), MAX_FONT_SIZE_PT);
+    area.set_line_height(&f32::NAN);
+    assert_eq!(area.line_height.into_inner(), 16.8);
+
+    // An ordinary edit is untouched.
+    let mut area = fresh();
+    area.set_font_size(&24.0);
+    assert_eq!(area.scale.into_inner(), 24.0);
+    area.grow_font(&6.0);
+    assert_eq!(area.scale.into_inner(), 30.0);
+}
+
+/// The same invariant on the **delta** path, which is a different
+/// door into the same two fields.
+///
+/// `apply_operation` is what a map-carried `CustomMutation` reaches
+/// — a `GlyphAreaField::Scale` under `ApplyOperation::Add` — and it
+/// composes into a local before storing, so `Add` still adds while
+/// the *result* is what gets bounded. `area_block_commands` drives
+/// this path but only with in-domain values, where the clamp is the
+/// identity function; this is the case that makes it bind.
+#[test]
+fn test_apply_operation_clamps_the_shaper_metrics() {
+    do_apply_operation_clamps_the_shaper_metrics();
+}
+
+pub fn do_apply_operation_clamps_the_shaper_metrics() {
+    use crate::core::primitives::ApplyOperation;
+    use crate::font::fonts::{MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT};
+    use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea};
+    use glam::Vec2;
+
+    let fresh = || GlyphArea::new(14.0, 16.8, Vec2::ZERO, Vec2::new(100.0, 40.0));
+
+    // An additive delta far past the ceiling.
+    let mut area = fresh();
+    area.apply_operation(&DeltaGlyphArea::new(vec![
+        GlyphAreaField::Operation(ApplyOperation::Add),
+        GlyphAreaField::Scale(ordered_float::OrderedFloat::from(1.0e9)),
+        GlyphAreaField::LineHeight(ordered_float::OrderedFloat::from(1.0e9)),
+    ]));
+    assert_eq!(area.scale.into_inner(), MAX_FONT_SIZE_PT);
+    assert_eq!(area.line_height.into_inner(), MAX_FONT_SIZE_PT);
+
+    // And past the floor, which is the value that aborts the
+    // process inside cosmic-text rather than merely looking wrong.
+    let mut area = fresh();
+    area.apply_operation(&DeltaGlyphArea::new(vec![
+        GlyphAreaField::Operation(ApplyOperation::Add),
+        GlyphAreaField::Scale(ordered_float::OrderedFloat::from(-1.0e9)),
+        GlyphAreaField::LineHeight(ordered_float::OrderedFloat::from(-1.0e9)),
+    ]));
+    assert_eq!(area.scale.into_inner(), MIN_FONT_SIZE_PT);
+    assert_eq!(area.line_height.into_inner(), MIN_FONT_SIZE_PT);
+
+    // An in-domain delta still composes additively — the clamp
+    // bounds the result, it does not replace the operation.
+    let mut area = fresh();
+    area.apply_operation(&DeltaGlyphArea::new(vec![
+        GlyphAreaField::Operation(ApplyOperation::Add),
+        GlyphAreaField::Scale(ordered_float::OrderedFloat::from(6.0)),
+    ]));
+    assert_eq!(area.scale.into_inner(), 20.0);
 }

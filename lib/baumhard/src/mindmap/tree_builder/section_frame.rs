@@ -412,10 +412,10 @@ pub fn build_section_frame_tree(elements: &[SectionFrameElement]) -> Tree<GfxEle
     let mut unique_id: usize = 1;
     for (idx, frame) in elements.iter().enumerate() {
         let parent_channel = idx + 1;
-        let parent_id = tree
-            .arena
-            .new_node(GfxElement::new_void_with_id(parent_channel, unique_id));
-        tree.root.append(parent_id, &mut tree.arena);
+        let parent_id = tree.root.append_value(
+            GfxElement::new_void_with_id(parent_channel, unique_id),
+            &mut tree.arena,
+        );
         unique_id += 1;
 
         append_frame_runs(&mut tree, parent_id, frame, &mut unique_id);

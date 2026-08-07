@@ -208,7 +208,7 @@ impl MindMap {
         while let Some(pid) = current_id {
             if steps > self.nodes.len() {
                 log::error!(
-                    "is_hidden_by_fold: parent_id cycle detected walking up from node {:?}; treating as visible",
+                    "mindmap: fold-visibility walk hit a parent_id cycle above node {:?}; treating as visible",
                     node.id
                 );
                 return false;
@@ -227,7 +227,9 @@ impl MindMap {
         false
     }
 
-    /// Collect all descendant IDs of a node (recursive), not including the node itself.
+    /// Collect all descendant IDs of a node, not including the node
+    /// itself. The walk is iterative — see
+    /// [`ChildIndex::all_descendant_ids`], which it delegates to.
     ///
     /// Cost: builds a [`ChildIndex`] once (O(N)) then walks the subtree
     /// in O(descendants). Prefer [`ChildIndex::all_descendant_ids`] when
@@ -244,9 +246,10 @@ impl MindMap {
     pub fn fold_hidden_set(&self) -> HashSet<&str> {
         let index = ChildIndex::build(self);
         let mut hidden = HashSet::new();
+        let budget = self.nodes.len();
         // True roots first...
         for root in index.roots() {
-            Self::mark_hidden_with_index(&index, root, false, &mut hidden);
+            Self::mark_hidden_with_index(&index, root, &mut hidden, budget);
         }
         // ...then any node whose parent_id is missing from the map.
         // The loader treats these as root-like, and their children must
@@ -255,24 +258,68 @@ impl MindMap {
         for node in self.nodes.values() {
             if let Some(pid) = &node.parent_id {
                 if !self.nodes.contains_key(pid) {
-                    Self::mark_hidden_with_index(&index, node, false, &mut hidden);
+                    Self::mark_hidden_with_index(&index, node, &mut hidden, budget);
                 }
             }
         }
         hidden
     }
 
-    fn mark_hidden_with_index<'a, 'b>(
-        index: &'b ChildIndex<'a>,
-        node: &'a MindNode,
-        ancestors_folded: bool,
+    /// Mark every node beneath `root` whose ancestor chain contains a
+    /// folded node.
+    ///
+    /// **The descent carries its stack on the heap, and that is the
+    /// point.** `parent_id` nesting is authored in a
+    /// `.mindmap.json`, which is untrusted input, and a linear chain
+    /// of N nodes is a perfectly legal acyclic tree that the loader's
+    /// cycle check accepts. The recursive form of this walk overflowed
+    /// the real thread stack on such a map and aborted the process —
+    /// a `SIGABRT`, not a panic, so there is no frame to degrade and
+    /// no `warn!` to log (CODE_CONVENTIONS §9). Depth now costs heap,
+    /// which is bounded, rather than stack, which is not.
+    ///
+    /// `budget` caps how many nodes are visited, as defense in depth
+    /// against a `parent_id` cycle reaching this walker despite the
+    /// loader's load-time rejection — the same posture
+    /// [`MindMap::is_hidden_by_fold`] and
+    /// [`ChildIndex::all_descendant_ids`] take. A valid tree never
+    /// reaches it.
+    ///
+    /// Cost: O(subtree) time; the pending vector holds the frontier,
+    /// never the whole subtree.
+    fn mark_hidden_with_index<'a>(
+        index: &ChildIndex<'a>,
+        root: &'a MindNode,
         hidden: &mut HashSet<&'a str>,
+        budget: usize,
     ) {
-        if ancestors_folded {
-            hidden.insert(&node.id);
-        }
-        for child in index.children_of(&node.id) {
-            Self::mark_hidden_with_index(index, child, ancestors_folded || node.folded, hidden);
+        let mut pending: Vec<(&'a MindNode, bool)> = vec![(root, false)];
+        // Bounding the *frontier*, not just the visit count, is what
+        // keeps the budget meaningful. A cycle reaching this walker
+        // would let each of `budget` pops enqueue a fresh fan-out
+        // before the visit counter tripped, so the vector could
+        // reach `budget × width` — trading an unbounded stack for an
+        // unbounded heap and fixing nothing. In a valid tree every
+        // node is enqueued exactly once, so this never binds.
+        let mut enqueued = 1usize;
+        while let Some((node, ancestors_folded)) = pending.pop() {
+            if ancestors_folded {
+                hidden.insert(&node.id);
+            }
+            let subtree_folded = ancestors_folded || node.folded;
+            for child in index.children_of(&node.id) {
+                if enqueued > budget {
+                    log::error!(
+                        "mindmap: fold walk from node {:?} enqueued more than its {} node \
+                         budget; parent_id cycle suspected, truncating",
+                        root.id,
+                        budget
+                    );
+                    return;
+                }
+                enqueued += 1;
+                pending.push((child, subtree_folded));
+            }
         }
     }
 
@@ -297,7 +344,7 @@ impl MindMap {
             }
             if steps > self.nodes.len() {
                 log::error!(
-                    "is_ancestor_or_self: parent_id cycle detected walking up from node {:?}; treating {:?} as not an ancestor",
+                    "mindmap: ancestry walk hit a parent_id cycle above node {:?}; treating {:?} as not an ancestor",
                     node_id, candidate_ancestor
                 );
                 return false;
@@ -373,8 +420,9 @@ impl<'a> ChildIndex<'a> {
         self.by_parent.get(parent_id).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// Collect all descendant IDs of `node_id` (recursive), not
-    /// including `node_id` itself.
+    /// Collect all descendant IDs of `node_id`, not including
+    /// `node_id` itself. Iterative, carrying its frontier on the
+    /// heap — see the note on the walk below.
     ///
     /// `budget` bounds the walk as defense in depth against a
     /// `parent_id` cycle; a valid tree never reaches the budget.
@@ -384,17 +432,47 @@ impl<'a> ChildIndex<'a> {
         result
     }
 
+    /// Iterative pre-order descent, for the reason spelled out on
+    /// [`MindMap::mark_hidden_with_index`]: `parent_id` depth is
+    /// attacker-controlled, and a recursive walk over it overflows
+    /// the stack and aborts the process rather than degrading.
+    ///
+    /// `budget` bounds the result *and* the frontier — both, for the
+    /// reason [`MindMap::mark_hidden_with_index`] spells out: capping
+    /// only the visited count would let each of `budget` pops enqueue
+    /// a fresh fan-out first, so the pending vector could still reach
+    /// `budget × width`. In a valid tree every node is enqueued
+    /// exactly once and neither bound binds.
     fn collect_descendants(&self, node_id: &str, result: &mut Vec<String>, budget: usize) {
-        for child in self.children_of(node_id) {
+        // Children are pushed in reverse so the lowest-sorted one
+        // pops first, preserving the order the recursive walk
+        // produced — callers index into this vector.
+        let mut pending: Vec<&'a MindNode> = self.children_of(node_id).iter().rev().copied().collect();
+        let mut enqueued = pending.len();
+        while let Some(node) = pending.pop() {
             if result.len() >= budget {
                 log::error!(
-                    "collect_descendants: parent_id cycle detected walking down from node {:?}; truncating",
-                    node_id
+                    "mindmap: descendant walk from node {:?} exceeded its {} node budget; \
+                     parent_id cycle suspected, truncating",
+                    node_id,
+                    budget
                 );
                 return;
             }
-            result.push(child.id.clone());
-            self.collect_descendants(&child.id, result, budget);
+            result.push(node.id.clone());
+            for child in self.children_of(&node.id).iter().rev() {
+                if enqueued > budget {
+                    log::error!(
+                        "mindmap: descendant walk from node {:?} enqueued more than its {} \
+                         node budget; parent_id cycle suspected, truncating",
+                        node_id,
+                        budget
+                    );
+                    return;
+                }
+                enqueued += 1;
+                pending.push(child);
+            }
         }
     }
 }

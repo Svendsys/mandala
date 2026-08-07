@@ -414,7 +414,8 @@ fn test_set_node_size_below_text_floor_lands_at_floor() {
     assert!(
         after.width > 5.0 && after.height > 5.0,
         "floor-respect must grow both axes above the tiny target ({}x{})",
-        after.width, after.height
+        after.width,
+        after.height
     );
 }
 
@@ -560,7 +561,9 @@ fn test_set_node_size_rejects_astronomical_typo() {
         width: 2_000_000.0,
         height: 10.0,
     };
-    assert!(doc.set_node_size(&id, huge).is_err_and(|m| m.contains("exceeds the")));
+    assert!(doc
+        .set_node_size(&id, huge)
+        .is_err_and(|m| m.contains("exceeds the")));
 }
 
 /// `set_node_aabb` writes both fields atomically and pushes one
@@ -667,6 +670,117 @@ fn test_compute_one_node_text_floor_pinned_size_acts_as_floor() {
     assert!(h >= 210.0, "pinned height must propagate, got {}", h);
 }
 
+/// **Past the budget, the floor must beat both samples.**
+///
+/// The width sample was once the first `MEASURED_LINE_BUDGET`
+/// lines, which sized a node from a prefix and clipped a long line
+/// past it. Replacing that with the widest-by-column-proxy lines
+/// fixed that case and broke another: the proxy counts columns
+/// while cosmic-text shapes advances against a proportional face,
+/// so `"i".repeat(30)` outranks `"W".repeat(20)` and shapes far
+/// narrower. On this input the *replacement* measured ~46% of what
+/// the node needed — worse than the prefix it replaced.
+///
+/// So both samples are measured and the wider wins, and this is the
+/// input that distinguishes that from either one alone: the widest
+/// line lives in the first 512 (so the proxy sample misses it) and
+/// the proxy's picks are narrower (so taking the proxy alone
+/// regresses). Asserted as a strict inequality against the narrow
+/// sample, because "not worse" is the whole property.
+#[test]
+fn test_text_floor_past_budget_beats_both_samples() {
+    use super::{compute_one_node_text_floor, MEASURED_LINE_BUDGET};
+
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+
+    // 512 wide-shaping lines, then 600 that win the column ranking
+    // while shaping narrower.
+    let wide = "W".repeat(20);
+    let narrow = "i".repeat(30);
+    let mut text = String::new();
+    for _ in 0..MEASURED_LINE_BUDGET {
+        text.push_str(&wide);
+        text.push('\n');
+    }
+    for i in 0..600 {
+        text.push_str(&narrow);
+        if i < 599 {
+            text.push('\n');
+        }
+    }
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        n.sections.truncate(1);
+        n.sections[0].text = text.clone();
+        n.sections[0].text_runs.clear();
+        n.sections[0].size = None;
+        n.sections[0].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+    }
+    let (floor_w, _) = compute_one_node_text_floor(&doc.mindmap.nodes[&id]);
+
+    // What the node would measure if only the narrow (proxy-picked)
+    // lines were sampled — the regression this guards.
+    let mut narrow_only = doc.mindmap.nodes[&id].clone();
+    narrow_only.sections[0].text = narrow.clone();
+    let (narrow_w, _) = compute_one_node_text_floor(&narrow_only);
+
+    // And what the widest line actually needs.
+    let mut wide_only = doc.mindmap.nodes[&id].clone();
+    wide_only.sections[0].text = wide.clone();
+    let (wide_w, _) = compute_one_node_text_floor(&wide_only);
+
+    assert!(
+        wide_w > narrow_w,
+        "fixture is wrong: the wide line must shape wider than the narrow one ({wide_w} vs {narrow_w})"
+    );
+    assert!(
+        floor_w >= wide_w,
+        "the floor must cover the widest line, got {floor_w} < {wide_w}"
+    );
+    assert!(
+        floor_w > narrow_w,
+        "the floor must beat the proxy-only sample, got {floor_w} <= {narrow_w}"
+    );
+
+    // The other direction, and the one the first version of this
+    // test missed. Above, every wide-shaping line sits inside the
+    // first MEASURED_LINE_BUDGET, so the positional prefix alone
+    // already measures them — deleting the widest sample left the
+    // whole suite green. Here the widest line sits PAST the budget
+    // and the proxy ranks it top, so the prefix cannot see it and
+    // only the widest sample can. Between the two cases, deleting
+    // either sample fails.
+    let long = "W".repeat(300);
+    let mut past = String::new();
+    for _ in 0..MEASURED_LINE_BUDGET {
+        past.push_str("x\n");
+    }
+    past.push_str(&long);
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        n.sections[0].text = past;
+    }
+    let (past_floor_w, _) = compute_one_node_text_floor(&doc.mindmap.nodes[&id]);
+
+    let mut long_only = doc.mindmap.nodes[&id].clone();
+    long_only.sections[0].text = long.clone();
+    let (long_w, _) = compute_one_node_text_floor(&long_only);
+
+    let mut short_only = doc.mindmap.nodes[&id].clone();
+    short_only.sections[0].text = "x".to_string();
+    let (short_w, _) = compute_one_node_text_floor(&short_only);
+
+    assert!(
+        long_w > short_w,
+        "fixture is wrong: the long line must shape wider ({long_w} vs {short_w})"
+    );
+    assert!(
+        past_floor_w >= long_w,
+        "the floor must cover a widest line that sits past the budget, got {past_floor_w} < {long_w}"
+    );
+}
+
 /// A non-finite section offset is skipped — the verifier flags
 /// it elsewhere, and a NaN propagating into the floor would
 /// corrupt every downstream `node.size` reader.
@@ -677,10 +791,7 @@ fn test_compute_one_node_text_floor_skips_non_finite_offset() {
     let id = first_testament_node_id(&doc);
     {
         let n = doc.mindmap.nodes.get_mut(&id).unwrap();
-        n.sections[0].offset = baumhard::mindmap::model::Position {
-            x: f64::NAN,
-            y: 0.0,
-        };
+        n.sections[0].offset = baumhard::mindmap::model::Position { x: f64::NAN, y: 0.0 };
     }
     let (w, h) = compute_one_node_text_floor(&doc.mindmap.nodes[&id]);
     assert!(w.is_finite());
@@ -815,14 +926,12 @@ fn test_fit_node_to_content_rejects_unmeasurable_floor() {
     {
         let n = doc.mindmap.nodes.get_mut(&id).unwrap();
         n.sections.clear();
-        n.sections.push(baumhard::mindmap::model::MindSection::new_default(
-            "x".into(),
-            Vec::new(),
-        ));
-        n.sections[0].offset = baumhard::mindmap::model::Position {
-            x: f64::NAN,
-            y: 0.0,
-        };
+        n.sections
+            .push(baumhard::mindmap::model::MindSection::new_default(
+                "x".into(),
+                Vec::new(),
+            ));
+        n.sections[0].offset = baumhard::mindmap::model::Position { x: f64::NAN, y: 0.0 };
     }
     let result = doc.fit_node_to_content(&id);
     assert!(
@@ -1650,7 +1759,7 @@ fn test_set_node_font_family_wide_face_grows_more_than_narrow() {
     let measure_floor = |fam: &str| -> f64 {
         let mut doc = load_test_doc();
         let nid = first_testament_node_id(&doc);
-    doc.selection = SelectionState::Single(nid.clone());
+        doc.selection = SelectionState::Single(nid.clone());
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.size.width = 1.0;
         node.size.height = 1.0;
@@ -1908,9 +2017,7 @@ fn test_set_section_text_color_range_undo_round_trip() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
     set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
-    let pre = doc.mindmap.nodes.get(&id).unwrap().sections[0]
-        .text_runs
-        .clone();
+    let pre = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs.clone();
     assert!(doc.set_section_text_color_range(&id, 0, 1, 9, "#abcdef".into()));
     assert!(doc.undo());
     let post = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
@@ -1980,15 +2087,10 @@ fn test_set_section_text_color_range_fills_gap() {
         // Shrink the run to [0, 3) so [3, 10) is a gap.
         s.text_runs[0].end = 3;
     }
-    let runs_before = doc.mindmap.nodes.get(&id).unwrap().sections[0]
-        .text_runs
-        .len();
+    let runs_before = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs.len();
     assert!(doc.set_section_text_color_range(&id, 0, 5, 8, "#123456".into()));
     let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
-    assert!(
-        runs.len() > runs_before,
-        "gap-fill must add at least one run"
-    );
+    assert!(runs.len() > runs_before, "gap-fill must add at least one run");
     let new_run = runs.iter().find(|r| r.start == 5 && r.end == 8);
     assert!(new_run.is_some(), "expected a new run covering [5, 8)");
     assert_eq!(new_run.unwrap().color, "#123456");
@@ -2000,12 +2102,7 @@ fn test_set_section_text_color_range_fills_gap() {
 /// deterministic grapheme count — `first_testament_node_id` runs
 /// over `HashMap` iteration order, which isn't stable across
 /// test orderings, so the fixture's text length varies.
-fn set_section_zero_text_and_single_run(
-    doc: &mut MindMapDocument,
-    node_id: &str,
-    text: &str,
-    font: &str,
-) {
+fn set_section_zero_text_and_single_run(doc: &mut MindMapDocument, node_id: &str, text: &str, font: &str) {
     let total = count_grapheme_clusters(text);
     let n = doc.mindmap.nodes.get_mut(node_id).expect("node exists");
     let s = &mut n.sections[0];
@@ -2044,9 +2141,7 @@ fn set_section_zero_text_and_single_run(
 /// is a transient runtime substitution, not a model edit.
 #[test]
 fn test_border_preview_does_not_push_undo_or_dirty() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2061,7 +2156,14 @@ fn test_border_preview_does_not_push_undo_or_dirty() {
     assert_eq!(doc.undo_stack.len(), undo_depth);
     assert!(!doc.dirty);
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().map(|c| c.preset.clone()),
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .map(|c| c.preset.clone()),
         before_node.style.border.as_ref().map(|c| c.preset.clone()),
         "model border slot must be byte-identical to pre-preview state"
     );
@@ -2073,9 +2175,7 @@ fn test_border_preview_does_not_push_undo_or_dirty() {
 /// `test_color_picker_preview_cleared_returns_to_committed`.
 #[test]
 fn test_border_preview_cleared_returns_to_committed() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2093,7 +2193,14 @@ fn test_border_preview_cleared_returns_to_committed() {
     assert!(!doc.dirty);
     assert_eq!(doc.undo_stack.len(), undo_depth);
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().map(|c| c.preset.clone()),
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .map(|c| c.preset.clone()),
         before_node.style.border.as_ref().map(|c| c.preset.clone()),
         "model unchanged after preview-then-cancel"
     );
@@ -2104,9 +2211,7 @@ fn test_border_preview_cleared_returns_to_committed() {
 /// slot is cleared.
 #[test]
 fn test_border_preview_commit_pushes_undo_and_dirty() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2120,7 +2225,10 @@ fn test_border_preview_commit_pushes_undo_and_dirty() {
 
     assert!(outcome.changed);
     assert!(doc.dirty);
-    assert!(doc.undo_stack.len() > undo_depth, "commit pushes at least one undo entry");
+    assert!(
+        doc.undo_stack.len() > undo_depth,
+        "commit pushes at least one undo entry"
+    );
     let cfg = doc
         .mindmap
         .nodes
@@ -2137,9 +2245,7 @@ fn test_border_preview_commit_pushes_undo_and_dirty() {
 /// returns `None` because no preview is active.
 #[test]
 fn test_border_preview_commit_clears_preview_slot() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2158,9 +2264,7 @@ fn test_border_preview_commit_clears_preview_slot() {
 /// atomically. The new preview's edits are what commit will apply.
 #[test]
 fn test_border_preview_replaces_prior_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2195,9 +2299,7 @@ fn test_border_preview_replaces_prior_preview() {
 /// arm uses to decide whether the keystroke should fall through.
 #[test]
 fn test_border_preview_cancel_returns_true_when_active_and_false_when_inactive() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2226,9 +2328,7 @@ fn test_border_preview_cancel_returns_true_when_active_and_false_when_inactive()
 /// committing `border preset=heavy top=…`.
 #[test]
 fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2256,9 +2356,7 @@ fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
 /// next `set_*` / `cancel_*` / `commit_*` call (defer-clear).
 #[test]
 fn test_border_preview_drift_clears_on_selection_change() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState};
     let mut doc = load_test_doc();
     let nid_a = first_testament_node_id(&doc);
     // Pick any other node id distinct from `nid_a`.
@@ -2305,9 +2403,7 @@ fn test_border_preview_drift_clears_on_selection_change() {
 /// `set_canvas_default_section_frame_border_config`.
 #[test]
 fn test_committing_set_node_border_config_clears_active_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2332,7 +2428,15 @@ fn test_committing_set_node_border_config_clears_active_preview() {
         "committing edit must clear an active preview"
     );
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().unwrap().preset,
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .unwrap()
+            .preset,
         "double",
         "the direct edit's value lands, not the preview's"
     );
@@ -2354,9 +2458,7 @@ fn test_committing_set_node_border_config_clears_active_preview() {
 /// turns `BorderConfigEdits` into `BorderConfigEditsView`.
 #[test]
 fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit};
     // The application-side slot helper lives in
     // `document/nodes/border.rs` as `pub(crate)`. The module is
     // private; re-export through `document/mod.rs` would be
@@ -2454,12 +2556,26 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
         if let (Some(c), Some(p)) = (commit_slot.as_ref(), preview_slot.as_ref()) {
             assert_eq!(c.preset, p.preset, "[{}] preset", label);
             assert_eq!(c.font, p.font, "[{}] font", label);
-            assert_eq!(c.font_size_pt.to_bits(), p.font_size_pt.to_bits(), "[{}] font_size_pt", label);
+            assert_eq!(
+                c.font_size_pt.to_bits(),
+                p.font_size_pt.to_bits(),
+                "[{}] font_size_pt",
+                label
+            );
             assert_eq!(c.color, p.color, "[{}] color", label);
             assert_eq!(c.padding.to_bits(), p.padding.to_bits(), "[{}] padding", label);
             assert_eq!(c.color_palette, p.color_palette, "[{}] color_palette", label);
-            assert_eq!(c.color_palette_field, p.color_palette_field, "[{}] color_palette_field", label);
-            assert_eq!(c.glyphs.is_some(), p.glyphs.is_some(), "[{}] glyphs Option shape", label);
+            assert_eq!(
+                c.color_palette_field, p.color_palette_field,
+                "[{}] color_palette_field",
+                label
+            );
+            assert_eq!(
+                c.glyphs.is_some(),
+                p.glyphs.is_some(),
+                "[{}] glyphs Option shape",
+                label
+            );
             if let (Some(cg), Some(pg)) = (c.glyphs.as_ref(), p.glyphs.as_ref()) {
                 assert_eq!(cg.top, pg.top, "[{}] glyphs.top", label);
                 assert_eq!(cg.bottom, pg.bottom, "[{}] glyphs.bottom", label);
@@ -2468,7 +2584,11 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
                 assert_eq!(cg.top_left, pg.top_left, "[{}] glyphs.top_left", label);
                 assert_eq!(cg.top_right, pg.top_right, "[{}] glyphs.top_right", label);
                 assert_eq!(cg.bottom_left, pg.bottom_left, "[{}] glyphs.bottom_left", label);
-                assert_eq!(cg.bottom_right, pg.bottom_right, "[{}] glyphs.bottom_right", label);
+                assert_eq!(
+                    cg.bottom_right, pg.bottom_right,
+                    "[{}] glyphs.bottom_right",
+                    label
+                );
             }
         }
     }
@@ -2501,7 +2621,15 @@ fn test_border_preview_commit_force_shows_frame_on_hidden_node() {
          (otherwise the user sees the preview render then commit hides it)"
     );
     assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().unwrap().preset,
+        doc.mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .unwrap()
+            .preset,
         "heavy",
         "the preset still committed"
     );
@@ -2534,9 +2662,7 @@ fn test_border_preview_commit_explicit_visibility_overrides_auto_flip() {
 /// by the underlying setter at commit time.
 #[test]
 fn test_border_preview_undo_after_commit_restores_pre_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -2581,9 +2707,7 @@ fn test_border_preview_undo_after_commit_restores_pre_preview() {
 /// documented on `commit_border_preview`).
 #[test]
 fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let ids = first_n_testament_node_ids(&doc, 3);
     // Clear baseline border slots so the post-commit assertion
@@ -2605,7 +2729,15 @@ fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
     // Every node should now carry the staged preset.
     for id in &ids {
         assert_eq!(
-            doc.mindmap.nodes.get(id).unwrap().style.border.as_ref().unwrap().preset,
+            doc.mindmap
+                .nodes
+                .get(id)
+                .unwrap()
+                .style
+                .border
+                .as_ref()
+                .unwrap()
+                .preset,
             "heavy",
             "commit must fan out to every node in Multi(ids); missed {}",
             id
@@ -2625,10 +2757,7 @@ fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
     // Outcome's `changed` reflects the fan-out total — pinned
     // so a future "merge into one undo entry" change doesn't
     // silently regress the user-visible commit count.
-    assert!(
-        outcome.changed,
-        "outcome.changed must be true after Multi commit"
-    );
+    assert!(outcome.changed, "outcome.changed must be true after Multi commit");
 }
 
 /// **C20 regression** — commit on a `SectionRange` selection
@@ -2637,9 +2766,7 @@ fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
 /// section_idx) pair; each pushes its own undo entry.
 #[test]
 fn test_border_preview_commit_fans_out_to_section_range() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SectionSel,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit, SectionSel};
     let mut doc = load_test_doc();
     // Pick a node with at least 2 sections — testament's node 3.7
     // has multiple by construction; fall back to any node with
@@ -2654,7 +2781,7 @@ fn test_border_preview_commit_fans_out_to_section_range() {
         .expect("testament map has a multi-section node");
     let n_sections = doc.mindmap.nodes.get(&node_id).unwrap().sections.len();
     let last_section_idx = (n_sections - 1).min(2); // up to 3 sections
-    // Clear baseline frame_border slots on the targeted range.
+                                                    // Clear baseline frame_border slots on the targeted range.
     for i in 0..=last_section_idx {
         doc.mindmap.nodes.get_mut(&node_id).unwrap().sections[i].frame_border = None;
     }
@@ -2668,9 +2795,7 @@ fn test_border_preview_commit_fans_out_to_section_range() {
     doc.undo_stack.clear();
     doc.dirty = false;
 
-    let pairs: Vec<(String, usize)> = (0..=last_section_idx)
-        .map(|i| (node_id.clone(), i))
-        .collect();
+    let pairs: Vec<(String, usize)> = (0..=last_section_idx).map(|i| (node_id.clone(), i)).collect();
     let mut edits = BorderConfigEdits::default();
     edits.preset = OptionEdit::Set("heavy".into());
     let _ = doc.set_border_preview(BorderPreviewTarget::Sections(pairs.clone()), edits);
@@ -2712,9 +2837,7 @@ fn test_border_preview_commit_fans_out_to_section_range() {
 /// `BorderPreviewTarget::Nodes` against the live selection.
 #[test]
 fn test_border_preview_target_kind_node_resolves_against_live_selection() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState};
     let mut doc = load_test_doc();
     let ids = first_n_testament_node_ids(&doc, 2);
     doc.selection = SelectionState::Multi(ids.clone());
@@ -2723,11 +2846,9 @@ fn test_border_preview_target_kind_node_resolves_against_live_selection() {
     // `BorderPreviewTargetKind::Node`: ids come from
     // `nodes_in_selection(&doc.selection, ...)` and feed
     // `BorderPreviewTarget::Nodes(...)`.
-    let resolved_ids = crate::application::console::commands::border::nodes_in_selection(
-        &doc.selection,
-        "border preview",
-    )
-    .expect("Multi selection resolves to ids");
+    let resolved_ids =
+        crate::application::console::commands::border::nodes_in_selection(&doc.selection, "border preview")
+            .expect("Multi selection resolves to ids");
     assert_eq!(resolved_ids.len(), ids.len(), "all selected ids carried through");
     for id in &ids {
         assert!(
@@ -2761,9 +2882,7 @@ fn test_border_preview_target_kind_node_resolves_against_live_selection() {
 /// the border they just hid still on screen.
 #[test]
 fn test_border_on_off_clears_active_node_preview() {
-    use crate::application::document::{
-        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
-    };
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
@@ -3350,5 +3469,1083 @@ fn test_delete_section_repairs_stranded_selection_and_undo_restores_it() {
         matches!(&doc.selection, SelectionState::Section(s) if s.section_idx == 1),
         "undo must restore the pre-mutation selection, got {:?}",
         doc.selection
+    );
+}
+
+/// **The load-time text floor must not lay out an unbounded number
+/// of lines.** Section text arrives from an untrusted file, and this
+/// measurement runs on every section at load, before a frame is
+/// drawn — so a map carrying millions of newlines would build
+/// millions of cosmic-text lines here, each an owned `String`, an
+/// `AttrsList`, and two layout caches.
+///
+/// The bound loses nothing real: `TextBlockSize::height` is
+/// `line_count * line_height`, and with an unbounded measuring width
+/// nothing wraps, so counting newlines gives the same number without
+/// a layout pass. This pins that the count stays exact past the
+/// budget while the shaped prefix stops growing.
+#[test]
+fn test_measured_prefix_bounds_layout_but_not_the_line_count() {
+    use crate::application::document::{measured_prefix, MEASURED_LINE_BUDGET};
+
+    // Under budget: the whole string is measured, count is exact.
+    let short = "alpha\nbeta\ngamma";
+    let (measured, total) = measured_prefix(short, MEASURED_LINE_BUDGET);
+    assert_eq!(measured, short, "short text is measured whole");
+    assert_eq!(total, 3);
+
+    // Over budget: the shaped slice is capped, the count is not.
+    let many = "x\n".repeat(MEASURED_LINE_BUDGET * 4);
+    let (measured, total) = measured_prefix(&many, MEASURED_LINE_BUDGET);
+    assert_eq!(
+        total,
+        MEASURED_LINE_BUDGET * 4,
+        "the line count must stay exact past the budget — it is what the height is derived from"
+    );
+    assert_eq!(
+        measured.lines().count(),
+        MEASURED_LINE_BUDGET,
+        "only the budgeted prefix is handed to the shaper"
+    );
+    assert!(measured.len() < many.len(), "the prefix must actually be shorter");
+
+    // Degenerate inputs stay total.
+    assert_eq!(measured_prefix("", MEASURED_LINE_BUDGET), ("", 0));
+    assert_eq!(measured_prefix("solo", MEASURED_LINE_BUDGET), ("solo", 1));
+}
+
+/// **The budget bounds the work; it must not bias the answer.**
+///
+/// With an unbounded measuring width nothing wraps, so a block's
+/// width is its widest line. Measuring the first `MEASURED_LINE_BUDGET`
+/// lines therefore answered a different question than the one asked:
+/// a section of 512 short lines followed by one long line was sized
+/// as though the long line did not exist, and the node clipped it —
+/// the exact failure `grow_node_sizes_to_fit_text` exists to prevent.
+///
+/// It was excused on the grounds that a node past the budget is
+/// clamped at `MAX_NODE_AXIS` anyway. At the default 14 pt, 513
+/// lines is 8,618 pt against a 1,000,000 ceiling — 0.86% of it — so
+/// the clamp does not cover for this until roughly 1,624 pt, and the
+/// whole 513..~59,500-line range shipped an under-measured width.
+#[test]
+fn test_widest_lines_picks_by_width_not_by_position() {
+    use crate::application::document::{widest_lines, MEASURED_LINE_BUDGET};
+
+    // The shape that broke: the widest line sits past the budget.
+    let long = "W".repeat(300);
+    let text = format!("{}{}", "x\n".repeat(MEASURED_LINE_BUDGET), long);
+    let picked = widest_lines(&text, MEASURED_LINE_BUDGET);
+    assert!(
+        picked.lines().any(|l| l == long),
+        "the widest line must be measured even when it falls past the budget"
+    );
+    assert_eq!(
+        picked.lines().count(),
+        MEASURED_LINE_BUDGET,
+        "the sample must still respect the budget"
+    );
+
+    // Selection is by width, and ties keep source order.
+    let ranked = widest_lines("a\nbbbb\ncc\nddd", 2);
+    assert_eq!(ranked, "bbbb\nddd", "the two widest, in source order");
+
+    // Ranking is display width, not byte length — chosen so the two
+    // disagree. "日本語" is 9 bytes but 6 columns; "abcdefgh" is 8
+    // bytes and 8 columns. Byte length would pick the CJK line;
+    // column width picks the ASCII one, and column width is what
+    // decides how wide the node has to be.
+    let by_columns = widest_lines("日本語\nabcdefgh", 1);
+    assert_eq!(by_columns, "abcdefgh", "ranking is display width, not bytes");
+
+    // And the double-width half of that: three CJK glyphs are 6
+    // columns and must beat a 4-column ASCII line despite both being
+    // short.
+    let wide_script = widest_lines("日本語\nabcd", 1);
+    assert_eq!(wide_script, "日本語", "a CJK glyph counts as two columns");
+
+    // Under budget nothing is dropped.
+    assert_eq!(widest_lines("one\ntwo", MEASURED_LINE_BUDGET), "one\ntwo");
+
+    // Degenerate inputs stay total.
+    assert_eq!(widest_lines("", MEASURED_LINE_BUDGET), "");
+    assert_eq!(widest_lines("solo", 0), "");
+}
+
+/// **A file the editor writes must be a file the editor can reopen.**
+///
+/// The loader now rejects rather than repairs, which makes every
+/// writer that can exceed the new domain a lockout candidate: the
+/// user edits, saves, and their own map stops opening. The console
+/// parsers are deliberately permissive (`parse_finite_pt` accepts
+/// `0.001`, the `spacing` verb accepts any finite float), so the
+/// clamps have to live at the document setters — the same posture
+/// the reverse converter takes with `clamp_run_size_pt`.
+///
+/// This drives the setters with values well outside the domain and
+/// then round-trips through the real save and the real strict load.
+#[test]
+fn test_extreme_editor_writes_still_reload() {
+    use crate::application::document::{BorderConfigEdits, OptionEdit};
+    use baumhard::mindmap::loader::{load_from_file, save_to_file};
+
+    let dir = baumhard::util::test_temp::TempDir::new("editor-write-reload");
+
+    // Every case gets its own document and its own round trip. An
+    // earlier version drove several values into *one* document
+    // before saving, which meant each was overwritten by the next
+    // and only the last one was ever tested — the low-end font case
+    // never reached the loader at all.
+    let round_trip = |label: &str, edit: &dyn Fn(&mut crate::application::document::MindMapDocument)| {
+        let mut doc = load_test_doc();
+        edit(&mut doc);
+        let path = dir.join(&format!("{label}.mindmap.json"));
+        save_to_file(&path, &doc.mindmap).expect("save must succeed");
+        load_from_file(&path).unwrap_or_else(|e| {
+            panic!("{label}: the editor wrote a map its own loader refuses — the lockout case: {e}")
+        })
+    };
+
+    let node_id = load_test_doc().mindmap.root_nodes()[0].id.clone();
+    let edge_ref = |doc: &crate::application::document::MindMapDocument| {
+        doc.mindmap
+            .edges
+            .first()
+            .map(|e| crate::application::document::EdgeRef {
+                from_id: e.from_id.clone(),
+                to_id: e.to_id.clone(),
+                edge_type: e.edge_type.clone(),
+            })
+            .expect("fixture has edges")
+    };
+    let border_of = |map: &baumhard::mindmap::model::MindMap, id: &str| {
+        map.nodes[id]
+            .style
+            .border
+            .as_ref()
+            .expect("border override was authored")
+            .clone()
+    };
+    let spacing_of = |map: &baumhard::mindmap::model::MindMap| {
+        map.edges[0]
+            .glyph_connection
+            .as_ref()
+            .map(|c| c.spacing)
+            .expect("spacing override was authored")
+    };
+
+    // A decorative hairline and an absurd ceiling, from the two ends
+    // the console will happily parse — each round-tripped alone.
+    for (label, requested) in [("hairline", 0.001_f32), ("giant", 5000.0)] {
+        let id = node_id.clone();
+        let reloaded = round_trip(label, &move |doc| {
+            doc.set_node_border_config(
+                &id,
+                BorderConfigEdits {
+                    font_size_pt: OptionEdit::Set(requested),
+                    visible: Some(true),
+                    ..Default::default()
+                },
+            );
+        });
+        let border = border_of(&reloaded, &node_id);
+        assert!(
+            border.font_size_pt >= baumhard::font::fonts::MIN_FONT_SIZE_PT
+                && border.font_size_pt <= baumhard::font::fonts::MAX_FONT_SIZE_PT,
+            "{label}: the setter must clamp into the domain the loader accepts, got {}",
+            border.font_size_pt
+        );
+    }
+
+    let max_axis = baumhard::mindmap::model::MAX_NODE_AXIS as f32;
+
+    // The magnitude bounds, which the first pass missed: the loader
+    // caps both `style.border.padding` and
+    // `glyph_connection.spacing` at `MAX_NODE_AXIS`, while
+    // `border padding=` and `spacing` accept any finite float. Both
+    // reported success and wrote a map that would not reopen.
+    let id = node_id.clone();
+    let reloaded = round_trip("padding", &move |doc| {
+        doc.set_node_border_config(
+            &id,
+            BorderConfigEdits {
+                padding: OptionEdit::Set(1.0e30),
+                visible: Some(true),
+                ..Default::default()
+            },
+        );
+    });
+    let padding = border_of(&reloaded, &node_id).padding;
+    assert!(
+        padding.abs() <= max_axis,
+        "padding must be clamped into the loader's bound, got {padding}"
+    );
+
+    let reloaded = round_trip("spacing-huge", &|doc| {
+        let r = edge_ref(doc);
+        doc.set_edge_spacing(&r, 1.0e30);
+    });
+    let spacing = spacing_of(&reloaded);
+    assert!(
+        spacing.abs() <= max_axis,
+        "spacing must be clamped into the loader's bound, got {spacing}"
+    );
+
+    // The text-run font size, on all three setters that write it.
+    // The edge and border font channels were clamped in an earlier
+    // pass and these were missed, which left `font size=5000` — the
+    // plainest thing to type — writing a map that would not reopen.
+    let max_run_pt = baumhard::font::fonts::MAX_FONT_SIZE_PT as u32;
+
+    let id = node_id.clone();
+    let reloaded = round_trip("node-font-size", &move |doc| {
+        doc.set_node_font_size(&id, 5000.0);
+    });
+    for run in reloaded.nodes[&node_id]
+        .sections
+        .iter()
+        .flat_map(|s| s.text_runs.iter())
+    {
+        assert!(
+            run.size_pt <= max_run_pt,
+            "set_node_font_size must clamp into the loader's run domain, got {}",
+            run.size_pt
+        );
+    }
+
+    let id = node_id.clone();
+    let reloaded = round_trip("section-font-size", &move |doc| {
+        doc.set_section_font_size(&id, 0, 5000.0);
+    });
+    for run in reloaded.nodes[&node_id].sections[0].text_runs.iter() {
+        assert!(
+            run.size_pt <= max_run_pt,
+            "set_section_font_size must clamp, got {}",
+            run.size_pt
+        );
+    }
+
+    let id = node_id.clone();
+    let reloaded = round_trip("section-font-size-range", &move |doc| {
+        doc.set_section_font_size_range(&id, 0, 0, 1, 5000.0);
+    });
+    for run in reloaded.nodes[&node_id].sections[0].text_runs.iter() {
+        assert!(
+            run.size_pt <= max_run_pt,
+            "set_section_font_size_range must clamp, got {}",
+            run.size_pt
+        );
+    }
+
+    // An ordinary size still round-trips exactly — the clamp bounds
+    // the extremes, it does not perturb normal edits. Rounding
+    // happens before the clamp, so 12.7 is still 13 rather than 12.
+    let id = node_id.clone();
+    let reloaded = round_trip("node-font-ordinary", &move |doc| {
+        doc.set_node_font_size(&id, 12.7);
+    });
+    assert!(
+        reloaded.nodes[&node_id]
+            .sections
+            .iter()
+            .flat_map(|s| s.text_runs.iter())
+            .all(|r| r.size_pt == 13),
+        "an ordinary size must round to 13 and survive unchanged"
+    );
+
+    // The eight border glyphs. The loader *rejects* these rather
+    // than clamping, so the writer refuses the edit — and the map
+    // that reaches disk is the unmodified one, which reloads.
+    let id = node_id.clone();
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let reloaded = round_trip("border-glyph", &move |doc| {
+        let outcome = doc.set_node_border_config(
+            &id,
+            BorderConfigEdits {
+                side_top: OptionEdit::Set(over.clone()),
+                visible: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(
+            !outcome.rejected.is_empty(),
+            "an over-long border glyph must be refused, not written"
+        );
+        assert!(
+            !outcome.changed,
+            "the refusal must be atomic — nothing on the node changed"
+        );
+    });
+    if let Some(border) = reloaded.nodes[&node_id].style.border.as_ref() {
+        if let Some(glyphs) = border.glyphs.as_ref() {
+            assert!(
+                baumhard::util::grapheme_chad::count_grapheme_clusters(&glyphs.top)
+                    <= baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS,
+                "a refused glyph must not have reached the file"
+            );
+        }
+    }
+
+    // ...on **every** surface that writes a `GlyphBorderConfig`, not
+    // just the per-node one. The loader screens a section's
+    // `frame_border` and all three canvas slots with the same
+    // `border_config_violations`, so each of these authored an
+    // unopenable map for as long as only `set_node_border_config`
+    // screened. That the per-node case above passed is exactly what
+    // made the gap invisible.
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let glyph_edits = |g: &str| BorderConfigEdits {
+        side_top: OptionEdit::Set(g.to_string()),
+        ..Default::default()
+    };
+
+    let id = node_id.clone();
+    let g = over.clone();
+    let reloaded = round_trip("section-frame-glyph", &move |doc| {
+        let outcome = doc.set_section_frame_border_config(&id, 0, glyph_edits(&g));
+        assert!(
+            !outcome.rejected.is_empty() && !outcome.changed,
+            "`section frame top=` must refuse an over-long glyph atomically"
+        );
+    });
+    assert!(
+        reloaded.nodes[&node_id].sections[0]
+            .frame_border
+            .as_ref()
+            .and_then(|b| b.glyphs.as_ref())
+            .is_none_or(|g| baumhard::util::grapheme_chad::count_grapheme_clusters(&g.top)
+                <= baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS),
+        "a refused section-frame glyph must not have reached the file"
+    );
+
+    // The three canvas slots. These matter more than the per-element
+    // ones, not less: a canvas default is the fallback for every
+    // node or section that does not override it.
+    let canvas_cases: [(&str, Option<bool>); 3] = [
+        ("canvas-default-glyph", None),
+        ("canvas-section-frame-glyph", Some(false)),
+        ("canvas-section-frame-focused-glyph", Some(true)),
+    ];
+    for (label, focused) in canvas_cases {
+        let g = over.clone();
+        let reloaded = round_trip(label, &move |doc| {
+            let outcome = match focused {
+                None => doc.set_canvas_default_border(glyph_edits(&g)),
+                Some(f) => doc.set_canvas_default_section_frame_border_config(f, glyph_edits(&g)),
+            };
+            assert!(
+                !outcome.rejected.is_empty() && !outcome.changed,
+                "{label}: an over-long canvas border glyph must be refused atomically"
+            );
+        });
+        let slot = match focused {
+            None => reloaded.canvas.default_border.as_ref(),
+            Some(false) => reloaded.canvas.default_section_frame_border.as_ref(),
+            Some(true) => reloaded.canvas.default_focused_section_frame_border.as_ref(),
+        };
+        assert!(
+            slot.and_then(|b| b.glyphs.as_ref())
+                .is_none_or(|g| baumhard::util::grapheme_chad::count_grapheme_clusters(&g.top)
+                    <= baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS),
+            "{label}: a refused glyph must not have reached the file"
+        );
+    }
+
+    // A negative gap is a legitimate tightening, so it must survive
+    // the round trip unchanged rather than be clamped away.
+    let reloaded = round_trip("spacing-tight", &|doc| {
+        let r = edge_ref(doc);
+        doc.set_edge_spacing(&r, -2.0);
+    });
+    assert_eq!(
+        spacing_of(&reloaded),
+        -2.0,
+        "a negative gap is authorable and must survive unclamped"
+    );
+}
+
+/// **A refused glyph must not commit as a success.**
+///
+/// The four `… preview` verbs stage edits and commit them through the
+/// same four setters the direct verbs use, so the *write* has been
+/// refused since the screen moved to the chokepoint. The **report**
+/// was not: `merge_outcome` folded `changed`, `preset_auto_promoted`
+/// and `requested_preset` across the committed targets and dropped
+/// `rejected` on the floor, so `commit_border_preview` handed back an
+/// outcome that said nothing was refused. The verb then printed
+/// success — or, worse, "no change", which is true of the model and
+/// says nothing about why.
+///
+/// The user-visible consequence is the one this whole branch is about,
+/// one step removed: the editor tells you your border was applied, the
+/// map on disk does not have it, and nothing said so.
+#[test]
+fn test_a_preview_commit_reports_a_refused_glyph_instead_of_success() {
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
+
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
+
+    let edits = BorderConfigEdits {
+        side_top: OptionEdit::Set(over.clone()),
+        ..Default::default()
+    };
+    let staged = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    assert!(
+        !staged.rejected.is_empty(),
+        "the preview itself must refuse — staging a glyph the commit will decline invites          the user to look at a border they cannot keep"
+    );
+    assert!(
+        doc.border_preview.is_none(),
+        "a refused preview must not be recorded, or the scene renders the over-ceiling glyph"
+    );
+
+    // And the commit path, reached by staging a legal preview and then
+    // committing an illegal edit through the same fold.
+    let mut doc = load_test_doc();
+    doc.selection = SelectionState::Single(nid.clone());
+    let outcome = doc.set_node_border_config(
+        &nid,
+        BorderConfigEdits {
+            side_top: OptionEdit::Set(over),
+            ..Default::default()
+        },
+    );
+    let mut merged = crate::application::document::BorderEditOutcome::default();
+    crate::application::document::nodes::merge_outcome(&mut merged, outcome);
+    assert!(
+        !merged.rejected.is_empty(),
+        "merge_outcome must carry the refusal — dropping it is what let a refused commit          report success"
+    );
+}
+
+/// **The backstop screen, observed directly.**
+///
+/// `apply_glyph_border_edits_to_slot` is where the eight glyph fields
+/// are screened, and the four public setters each refuse earlier so a
+/// declined edit does not also discard a live preview. That layering
+/// left the backstop untested: deleting the screen at the chokepoint
+/// left every test in the workspace green, because the early refusals
+/// caught the same fixtures first. A review round found it by deleting
+/// the screen and watching nothing happen.
+///
+/// The reason the backstop matters is precisely that it is *not* the
+/// early refusals: a fifth writer added later reaches the applier
+/// without going through any of them, and the applier is what has to
+/// stop it. So this drives the applier directly, past the setters, and
+/// is the only test that fails when the chokepoint screen is removed
+/// and the early refusals are left in place.
+#[test]
+fn test_the_chokepoint_screen_refuses_without_help_from_any_setter() {
+    use crate::application::document::nodes::apply_glyph_border_edits_to_slot;
+    use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionEdit};
+
+    let over = "=".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS + 1);
+    let mut slot: Option<baumhard::mindmap::model::GlyphBorderConfig> = None;
+    let mut outcome = BorderEditOutcome::default();
+    let changed = apply_glyph_border_edits_to_slot(
+        &mut slot,
+        &BorderConfigEdits {
+            side_top: OptionEdit::Set(over),
+            ..Default::default()
+        },
+        &mut outcome,
+    );
+
+    assert!(
+        !outcome.rejected.is_empty(),
+        "the chokepoint must refuse an over-ceiling glyph on its own, with no setter above it"
+    );
+    assert!(!changed, "a refusal must report no change, so no caller pushes an undo entry");
+    assert!(
+        slot.is_none(),
+        "the refusal must be atomic — the slot must not even be allocated"
+    );
+
+    // The negative control: an ordinary glyph still writes, so the
+    // assertions above cannot be passing because the applier refuses
+    // everything.
+    let mut slot = None;
+    let mut outcome = BorderEditOutcome::default();
+    let changed = apply_glyph_border_edits_to_slot(
+        &mut slot,
+        &BorderConfigEdits {
+            side_top: OptionEdit::Set("◆·".to_string()),
+            ..Default::default()
+        },
+        &mut outcome,
+    );
+    assert!(outcome.rejected.is_empty() && changed, "an ordinary glyph must still be written");
+    assert_eq!(
+        slot.and_then(|c| c.glyphs).map(|g| g.top).as_deref(),
+        Some("◆·"),
+        "and must land in the slot"
+    );
+}
+
+/// **The writer-side invariant, checked mechanically.**
+///
+/// `format/validation.md` states the property this pins: a value the
+/// editor can write must be a value the loader accepts. It is not
+/// enforced by the type system — it holds because each setter
+/// screens or clamps — and it has now been broken four separate
+/// times, each time by adding a bound at the loader and forgetting
+/// the writer. `font size=`, `border padding=`, `spacing`, node
+/// position and the eight border glyphs were each found that way,
+/// by a review round rather than by a test.
+///
+/// The tests that were supposed to catch it enumerate *setters*, so
+/// they only ever cover the ones somebody remembered. This
+/// enumerates the **bounds** instead.
+///
+/// # The bound set is derived, not listed
+///
+/// An earlier version of this test read one file —
+/// `model/validate.rs` — for `pub const`. That was wrong in four
+/// ways at once, and a review round demonstrated each against a
+/// modified tree:
+///
+/// - **Four of its own rows named constants declared elsewhere**
+///   (`fonts.rs`, `model/node.rs`, `loader.rs`), so those rows were
+///   inert prose. The two bounds behind two of the historical
+///   lockouts live in the unscanned files — this test would not have
+///   caught either of the bugs it cites as its motivation.
+/// - **`pub(crate) const` and `pub static` were invisible**, since
+///   only the literal prefix `pub const ` was matched.
+/// - **Membership was a substring test**, so a new constant whose
+///   name is a substring of an existing row was absorbed silently.
+/// - **The writer column was never read**, so a row naming a deleted
+///   function stayed green — and the row for the border glyphs was
+///   false at the moment it was written.
+///
+/// So the set is derived instead. A loader-enforced bound is a
+/// constant the rejection path *consults*: every `const` / `static`
+/// declared anywhere in baumhard, intersected with the identifiers
+/// `model/validate.rs` and `mindmap/loader.rs` reference outside
+/// their own test modules. That reaches bounds in five files today
+/// and follows one that moves to a sixth tomorrow, with nothing to
+/// update here.
+///
+/// # What it still cannot see
+///
+/// Stated so this reads as a decision rather than a claim of
+/// completeness — the *previous* version of this test was described
+/// as closing the class, and a live fourth instance was sitting in
+/// the same delta while it passed:
+///
+/// - **An inlined literal.** A bound written as `1.0e9` at the
+///   comparison site is not a constant and is not derivable here.
+/// - **A rejection path outside those two files.** The scan reads
+///   `validate.rs` and `loader.rs`; a module that grows its own
+///   rejection is invisible until it is added to `REJECTION_PATHS`.
+/// - **Whether the named writer is the *only* writer.** The row for
+///   the border glyphs was true of one writer and false of three
+///   others when it was written. What is checked is that each named
+///   symbol exists; that it is exhaustive is a claim the prose
+///   makes and `test_extreme_editor_writes_still_reload` exercises
+///   per surface.
+///
+/// This is a registry, not a behavior test — the behavior is pinned
+/// by `test_extreme_editor_writes_still_reload`, which drives the
+/// writers. What this catches is the *omission*: a bound added with
+/// no writer at all.
+#[test]
+fn test_every_loader_bound_names_its_writer_side_guard() {
+    // (constant, the symbols that keep the editor inside it, prose)
+    //
+    // The symbol list is read: each name must exist as a function in
+    // the workspace, so a row naming something deleted or renamed
+    // fails rather than sitting green. An empty list means "no
+    // editor writer" and the prose must say why.
+    let registry: &[(&str, &[&str], &str)] = &[
+        (
+            "MIN_FONT_SIZE_PT",
+            &["clamp_font_metric", "clamp_run_size_pt", "resolve_font_triple"],
+            "the same three clamps as MAX_FONT_SIZE_PT — it is the lower half of one window",
+        ),
+        (
+            "MAX_FONT_SIZE_PT",
+            &["clamp_font_metric", "clamp_run_size_pt", "resolve_font_triple"],
+            "GlyphArea::set_*_clamped + apply_operation; clamp_run_size_pt for the three \
+             text-run setters; resolve_font_triple for the edge channels; clamp_font_metric \
+             for the border font size",
+        ),
+        (
+            "MAX_CANVAS_COORD",
+            &[
+                "validate_node_position",
+                "set_position_clamped",
+                "offset_position_clamped",
+            ],
+            "validate_node_position rejects an *authored* position — one a caller \
+             supplied, at the loader and at set_node_aabb. Every *computed* one goes \
+             through MindNode::set_position_clamped or its offset sibling, and \
+             test_every_node_position_write_goes_through_the_clamp fails the build for a \
+             writer that does not. This row named two computed writers and was false when \
+             it was written: the drag, two nudge handlers, the lerp and the \
+             custom-mutation sync-back were all unclamped, and the last is reachable from \
+             a map's own trigger bindings",
+        ),
+        (
+            "MAX_NODE_AXIS",
+            &["clamp_node_size_to_ceiling", "clamp_to_bound"],
+            "clamp_node_size_to_ceiling for node size; clamp_to_bound for border padding \
+             and edge spacing",
+        ),
+        (
+            "MAX_BORDER_GLYPH_CLUSTERS",
+            &["apply_glyph_border_edits_to_slot", "border_glyph_edit_violations"],
+            "screened at apply_glyph_border_edits_to_slot — the chokepoint every border \
+             writer funnels through, so all four surfaces (node style.border, section \
+             frame_border, canvas default_border, canvas section-frame) are covered by \
+             one screen. An earlier row named the per-node setter instead, which is \
+             precisely how the other three stayed unguarded",
+        ),
+        (
+            "MAX_BORDER_GLYPH_BYTES",
+            &["apply_glyph_border_edits_to_slot", "border_glyph_edit_violations"],
+            "same screen as MAX_BORDER_GLYPH_CLUSTERS — border_glyph_violations checks \
+             both ceilings in one call",
+        ),
+        (
+            "MAX_CONNECTION_GLYPH_GRAPHEMES",
+            &[],
+            "no editor writer — the connection body/cap glyphs are authored in the file \
+             only; there is no console verb or setter that writes them",
+        ),
+        (
+            "MAX_CONNECTION_GLYPH_BYTES",
+            &[],
+            "no editor writer — same field as MAX_CONNECTION_GLYPH_GRAPHEMES, second ceiling",
+        ),
+        (
+            "MAX_ANIMATION_MS",
+            &[],
+            "no editor writer — animation timings are authored in the file only",
+        ),
+        (
+            "MAX_UNKNOWN_KEYS",
+            &[],
+            "no editor writer — the count of keys this build has no field for is a property \
+             of the document it read, not a value any setter writes. `None` on native: it \
+             was a resource ceiling standing in for a cost defect, and once the capture and \
+             the write-back were both made linear there was nothing left for it to bound. \
+             `Some` on wasm32, where a 32-bit address space is physics",
+        ),
+        (
+            "MAX_SECTIONS_PER_NODE",
+            &["add_section"],
+            "add_section refuses past the cap",
+        ),
+        (
+            "MAX_MAP_BYTES",
+            &[],
+            "no editor writer — a saved map's size is a consequence, not a set field",
+        ),
+        (
+            "INVERTED_SIZE_WINDOW",
+            &["clamp_node_size_to_ceiling"],
+            "not a magnitude bound but a consistency one: the loader rejects a min/max \
+             window whose ends are crossed. No setter writes both ends of a window in one \
+             call, and clamp_node_size_to_ceiling keeps the size it does write inside \
+             MAX_NODE_AXIS",
+        ),
+        (
+            "INVERTED_ZOOM_WINDOW",
+            &[],
+            "no editor writer — the zoom-visibility window is authored in the file only; \
+             no console verb or setter writes either end",
+        ),
+    ];
+
+    // The files whose contents *are* the rejection. A constant one of
+    // these consults is a bound a hostile or mistaken value is
+    // measured against, which is exactly the set that needs a
+    // writer-side guard.
+    const REJECTION_PATHS: &[&str] = &[
+        "lib/baumhard/src/mindmap/model/validate.rs",
+        "lib/baumhard/src/mindmap/loader.rs",
+        // `MAX_UNKNOWN_KEYS` refuses a load and was invisible to this
+        // registry for two commits, because `loader.rs` calls
+        // `unknown_key_count_violation` and never names the constant.
+        // That is the "a rejection path outside those files" limitation
+        // in the docstring, met in practice within a day of it being
+        // written down — which is the argument for reading this list as
+        // a known-incomplete enumeration rather than a definition.
+        "lib/baumhard/src/mindmap/unknown_keys.rs",
+    ];
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Every `const` / `static` declared anywhere in baumhard, at any
+    // visibility. `pub(crate) const` and `pub static` were both
+    // invisible to the previous scan.
+    let mut declared: std::collections::BTreeMap<String, String> = Default::default();
+    let mut stack = vec![root.join("lib/baumhard/src")];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}"));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("read a baumhard source file");
+            for line in src.lines() {
+                let line = line.trim_start();
+                // Step past any visibility qualifier, then require
+                // `const` or `static` and an ALL-CAPS name.
+                let rest = match line.strip_prefix("pub") {
+                    Some(after) => after.trim_start().strip_prefix('(').map_or(after, |p| {
+                        p.split_once(')').map_or(p, |(_, tail)| tail)
+                    }),
+                    None => line,
+                }
+                .trim_start();
+                let rest = match rest
+                    .strip_prefix("const ")
+                    .or_else(|| rest.strip_prefix("static "))
+                {
+                    Some(r) => r,
+                    None => continue,
+                };
+                let name: String = rest
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
+                    .collect();
+                // Require the declaration to actually be `NAME:` —
+                // otherwise `const fn foo` and friends leak in.
+                if name.len() > 2 && rest.trim_start()[name.len()..].trim_start().starts_with(':') {
+                    declared
+                        .entry(name)
+                        .or_insert_with(|| path.display().to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        declared.len() > 50,
+        "the declaration scan found only {} constants — the parse, not the crate, is what \
+         broke",
+        declared.len()
+    );
+
+    // Comments and string literals are not references. `validate.rs`
+    // *documents* `MAX_BORDER_SIDE_BYTES` and `MAX_PATH_SAMPLES` in
+    // prose while consulting neither, so a raw text scan reports two
+    // bounds that have no rejection behind them — and the registry
+    // grows two rows describing a check that does not exist.
+    //
+    // Over-stripping is the dangerous direction (a swallowed
+    // reference silently shrinks the bound set), so the two controls
+    // below hold this to a known-code and a known-prose mention.
+    fn code_only(src: &str) -> String {
+        let b: Vec<char> = src.chars().collect();
+        let mut out = String::with_capacity(src.len());
+        let mut i = 0;
+        while i < b.len() {
+            // Line comment.
+            if b[i] == '/' && b.get(i + 1) == Some(&'/') {
+                while i < b.len() && b[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            // Block comment, nested per Rust's rules.
+            if b[i] == '/' && b.get(i + 1) == Some(&'*') {
+                let mut depth = 1usize;
+                i += 2;
+                while i < b.len() && depth > 0 {
+                    if b[i] == '/' && b.get(i + 1) == Some(&'*') {
+                        depth += 1;
+                        i += 2;
+                    } else if b[i] == '*' && b.get(i + 1) == Some(&'/') {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push(' ');
+                continue;
+            }
+            // Char literal — checked before the raw-string and string
+            // arms so a `'"'` cannot open a string that eats the code
+            // after it. A lifetime (`'a`) has no closing quote and
+            // falls through to the copy arm.
+            if b[i] == '\'' && (b.get(i + 2) == Some(&'\'') || b.get(i + 1) == Some(&'\\')) {
+                i += 1;
+                if b.get(i) == Some(&'\\') {
+                    i += 1;
+                }
+                while i < b.len() && b[i] != '\'' {
+                    i += 1;
+                }
+                i += 1;
+                out.push(' ');
+                continue;
+            }
+            // Raw string, any hash count.
+            if b[i] == 'r' && matches!(b.get(i + 1), Some('"') | Some('#')) {
+                let mut j = i + 1;
+                let mut hashes = 0usize;
+                while b.get(j) == Some(&'#') {
+                    hashes += 1;
+                    j += 1;
+                }
+                if b.get(j) == Some(&'"') {
+                    j += 1;
+                    while j < b.len() {
+                        if b[j] == '"' {
+                            let mut k = j + 1;
+                            let mut n = 0;
+                            while n < hashes && b.get(k) == Some(&'#') {
+                                k += 1;
+                                n += 1;
+                            }
+                            if n == hashes {
+                                j = k;
+                                break;
+                            }
+                        }
+                        j += 1;
+                    }
+                    out.push(' ');
+                    i = j;
+                    continue;
+                }
+            }
+            // Ordinary string.
+            if b[i] == '"' {
+                i += 1;
+                while i < b.len() {
+                    if b[i] == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if b[i] == '"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                out.push(' ');
+                continue;
+            }
+            out.push(b[i]);
+            i += 1;
+        }
+        out
+    }
+
+    // Which of them the rejection path consults.
+    let mut bounds: Vec<&String> = Vec::new();
+    let mut rejection_src = String::new();
+    for rel in REJECTION_PATHS {
+        let src = std::fs::read_to_string(root.join(rel))
+            .unwrap_or_else(|e| panic!("read the rejection path {rel}: {e}"));
+        // Everything above the file's own test module — a constant a
+        // test mentions is not thereby a loader bound.
+        rejection_src.push_str(&code_only(src.split("#[cfg(test)]").next().unwrap_or(&src)));
+        rejection_src.push('\n');
+    }
+    // The stripper's two controls, against this exact source: a
+    // constant used in code survives, a constant named only in a doc
+    // comment does not. Both were verified by hand against
+    // `validate.rs` — `INVERTED_ZOOM_WINDOW` is passed to
+    // `ordered_pair`, `MAX_BORDER_SIDE_BYTES` appears only inside
+    // `MAX_BORDER_GLYPH_BYTES`'s doc comment.
+    assert!(
+        rejection_src.contains("INVERTED_ZOOM_WINDOW"),
+        "the comment stripper ate a real code reference — every bound below it would go \
+         unlisted and this test would pass by seeing nothing"
+    );
+    assert!(
+        !rejection_src.contains("MAX_BORDER_SIDE_BYTES"),
+        "the comment stripper left a doc-comment mention in place, so prose about a bound \
+         reads as a rejection consulting it"
+    );
+    for name in declared.keys() {
+        // Word-boundary match: `MAX_BORDER_GLYPH_BYTES` must not be
+        // found inside a longer identifier that merely contains it.
+        if rejection_src
+            .match_indices(name.as_str())
+            .any(|(at, _)| {
+                let before = rejection_src[..at].chars().next_back();
+                let after = rejection_src[at + name.len()..].chars().next();
+                let continues = |c: Option<char>| {
+                    c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                };
+                !continues(before) && !continues(after)
+            })
+        {
+            bounds.push(name);
+        }
+    }
+    assert!(
+        bounds.len() >= 13,
+        "the rejection path consults only {} of baumhard's constants — that is fewer than \
+         the bounds this registry already knows about, so the scan is what broke:\n  {:?}",
+        bounds.len(),
+        bounds
+    );
+
+    // Every derived bound needs a row, matched by **name**, not by
+    // substring — a shorter new constant must not be absorbed by an
+    // existing row that happens to contain its name.
+    for name in &bounds {
+        let covered = registry.iter().any(|(constant, _, _)| constant == &name.as_str());
+        assert!(
+            covered,
+            "`{name}` (declared in {}) is consulted by the loader's rejection path and has \
+             no row in this registry.\n\
+             Add one naming the writer that keeps the editor inside it — or, if no writer \
+             can reach the field, say so explicitly and leave the symbol list empty. Four \
+             lockout bugs on this branch were a bound added without a writer; this is the \
+             check that makes that loud.",
+            declared[*name]
+        );
+    }
+
+    // Every row must name a bound that still exists, so a row does
+    // not outlive the constant it describes.
+    for (constant, _, _) in registry {
+        assert!(
+            bounds.iter().any(|b| b.as_str() == *constant),
+            "the registry has a row for `{constant}`, which the loader's rejection path no \
+             longer consults. Delete the row, or fix the rejection that stopped reading it."
+        );
+    }
+
+    // And every named writer must still exist. This is the half that
+    // was missing: the border-glyph row named a real function that
+    // guarded one of four writers, and no amount of re-reading the
+    // constant column could have shown that. Reading the symbol
+    // column at least catches the row that names nothing at all.
+    let mut workspace_src = String::new();
+    let mut stack = vec![
+        root.join("src"),
+        root.join("lib/baumhard/src"),
+        root.join("crates"),
+    ];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                workspace_src.push_str(&std::fs::read_to_string(&path).expect("read a source"));
+                workspace_src.push('\n');
+            }
+        }
+    }
+    for (constant, guards, prose) in registry {
+        for guard in *guards {
+            // `fn {guard}(` rather than `fn {guard}`: the bare form is
+            // satisfied by this registry's own prose, by a doc comment
+            // naming the function, and by a `#[test] fn` — all three
+            // were demonstrated against it. The paren requires a
+            // declaration or a call. What it still cannot tell is
+            // *shipped* code from a test module; `util::source_scan`
+            // answers that, and is `#[cfg(test)]` inside baumhard, so
+            // it is not reachable from here.
+            let declared = workspace_src.contains(&format!("fn {guard}("));
+            assert!(
+                declared,
+                "the row for `{constant}` names `{guard}` as its writer-side guard, and no \
+                 `fn {guard}(` exists in the workspace. A renamed or deleted guard must fail \
+                 here rather than leave the row quietly describing nothing."
+            );
+        }
+        assert!(
+            !guards.is_empty() || prose.starts_with("no editor writer"),
+            "`{constant}` names no guard, so its prose must begin \"no editor writer\" and \
+             say why the field is out of every writer's reach"
+        );
+    }
+}
+
+/// **The magnitude half of the position guard, pinned.**
+///
+/// `validate_node_position` gained a `MAX_CANVAS_COORD` rejection
+/// after a review found `set_node_aabb` accepting `x: 1e30` and
+/// saving a map that would not reopen. Nothing exercised it — the
+/// guard shipped on the strength of the argument for it.
+#[test]
+fn test_set_node_aabb_rejects_out_of_bound_positions() {
+    use baumhard::mindmap::model::validate::MAX_CANVAS_COORD;
+    use baumhard::mindmap::model::{Position, Size};
+
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let size = Size {
+        width: 100.0,
+        height: 50.0,
+    };
+
+    // Inside the bound: accepted.
+    let ok = doc.set_node_aabb(
+        &id,
+        Position {
+            x: MAX_CANVAS_COORD,
+            y: -MAX_CANVAS_COORD,
+        },
+        size,
+    );
+    assert!(ok.is_ok(), "a position at the bound must be accepted: {ok:?}");
+
+    // Past it: refused, and the node is untouched.
+    let before = doc.mindmap.nodes[&id].position;
+    let err = doc.set_node_aabb(&id, Position { x: 1.0e30, y: 0.0 }, size);
+    assert!(err.is_err(), "a position past the bound must be refused");
+    assert_eq!(
+        doc.mindmap.nodes[&id].position, before,
+        "a refused position must leave the node where it was"
+    );
+
+    // Non-finite is still refused, as it was before the magnitude
+    // half existed.
+    assert!(doc
+        .set_node_aabb(&id, Position { x: f64::NAN, y: 0.0 }, size)
+        .is_err());
+}
+
+/// **The blank-line case in `widest_lines`' separator.**
+///
+/// The separator was driven by `out.is_empty()`, so a selected blank
+/// line left `out` empty and suppressed the newline before the next
+/// one — splicing two selected lines into one and losing a line from
+/// a sample whose contract is a fixed count of them. Fixed by
+/// counting emissions instead; this is the case that distinguishes
+/// the two.
+#[test]
+fn test_widest_lines_keeps_blank_lines_separate() {
+    use crate::application::document::widest_lines;
+
+    // A leading blank line is selected (everything is, at this
+    // budget), and must not swallow the line after it.
+    assert_eq!(widest_lines("\nabc\nde", 3), "\nabc\nde");
+
+    // Blank first *and* the widest line after it, with a budget that
+    // forces a choice: the blank still cannot merge with its
+    // neighbour.
+    let picked = widest_lines("\nlonger\nxy", 2);
+    assert_eq!(
+        picked.lines().count(),
+        2,
+        "two lines selected must stay two lines: {picked:?}"
+    );
+    assert!(
+        picked.contains("longer"),
+        "the widest line must be there: {picked:?}"
     );
 }

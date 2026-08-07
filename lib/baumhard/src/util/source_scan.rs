@@ -622,6 +622,108 @@ pub(crate) fn relative_to_repo(path: &Path) -> String {
         .into_owned()
 }
 
+/// Every shipped write to a `MindNode`'s position *component*, as
+/// `(repo-relative file, 1-based line, the line's text)`.
+///
+/// A component write is one that computes a coordinate —
+/// `node.position.x = …`, `node.position.y += …`. Those are the writes
+/// that can leave [`MAX_CANVAS_COORD`](crate::mindmap::model::validate::MAX_CANVAS_COORD),
+/// and every one of them belongs in
+/// [`MindNode::set_position_clamped`](crate::mindmap::model::MindNode::set_position_clamped)
+/// or its offset sibling.
+///
+/// Whole-struct assignment (`node.position = other`) is deliberately
+/// **not** reported. It copies a `Position` that is already in the
+/// domain rather than deriving a new one: the undo writers restore a
+/// snapshot the model held, and `set_node_aabb` takes a caller-supplied
+/// position that `validate_node_position` has already rejected on. A
+/// scan that flagged those would need a whitelist of call sites, which
+/// is the drifting twin surface this exists to avoid.
+///
+/// Reads shipped text only — [`production_source`] for a test module
+/// written inside a file, [`test_gated_module_files`] for a file a
+/// `#[cfg(test)] mod x;` reaches — so a fixture that pokes a
+/// coordinate on purpose is not a finding.
+///
+/// Cost: one read and one `syn` parse of every `.rs` file in the
+/// workspace.
+pub(crate) fn node_position_component_writes() -> Vec<(String, usize, String)> {
+    let mut out = Vec::new();
+    let sources = workspace_rust_sources();
+    // `production_source` blanks a `#[cfg(test)]` item *inside* a file.
+    // A file that a `#[cfg(test)] mod tests;` names is test code in its
+    // entirety and contains no such marker of its own, so it has to be
+    // dropped by the declaration that reaches it — which is what
+    // `test_gated_module_files` resolves. Without this the scan reports
+    // fixtures that poke a coordinate on purpose.
+    let test_only = test_gated_module_files(&sources);
+    for file in sources {
+        if test_only.contains(&file) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        let shipped = production_source(&file, &text);
+        for (number, line) in shipped.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            let Some(at) = code.find(".position.") else { continue };
+            let tail = &code[at + ".position.".len()..];
+            let Some(rest) = tail.strip_prefix('x').or_else(|| tail.strip_prefix('y')) else {
+                continue;
+            };
+            // `= ` or `+= ` / `-= ` / `*= ` / `/= `, but not `==`.
+            let rest = rest.trim_start();
+            let assigns = rest.starts_with("= ")
+                || ["+=", "-=", "*=", "/="].iter().any(|op| rest.starts_with(op));
+            if assigns {
+                out.push((relative_to_repo(&file), number + 1, code.trim().to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// Every shipped `NodeId::append(` call under `mindmap/tree_builder/`,
+/// as `(repo-relative file, 1-based line, the line's text)`.
+///
+/// `indextree`'s `append` is a wrapper over `checked_append`, whose
+/// third act is `self.ancestors(arena).any(|a| new_child == a)` —
+/// an O(depth) walk, on every append. The scene builder appends once
+/// per node and once per section, and a `.mindmap.json` may declare a
+/// linear `parent_id` chain, which is a legal acyclic tree the loader
+/// accepts. Depth then equals the node count and the build is O(N²).
+///
+/// `append_value` is indextree's documented O(1) fast path. Every
+/// append in the tree builder is of a node `arena.new_node` produced
+/// on the line above, so it is detached by construction and the
+/// ancestor walk can never fire — the check is pure cost.
+///
+/// Reads shipped text only, so a test that builds a fixture tree with
+/// `append` is not a finding.
+pub(crate) fn tree_builder_checked_appends() -> Vec<(String, usize, String)> {
+    let mut out = Vec::new();
+    let sources = workspace_rust_sources();
+    let test_only = test_gated_module_files(&sources);
+    for file in sources {
+        if test_only.contains(&file) {
+            continue;
+        }
+        let rel = relative_to_repo(&file);
+        if !rel.contains("mindmap/tree_builder") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        for (number, line) in production_source(&file, &text).lines().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            if code.contains(".append(") {
+                out.push((rel.clone(), number + 1, code.trim().to_string()));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,16 +31,16 @@ fn apply_position_mutations_to_node(mutations: &[Mutation], node: &mut MindNode)
         if let Mutation::AreaCommand(cmd) = mutation {
             match cmd.as_ref() {
                 GlyphAreaCommand::NudgeLeft(dx) => {
-                    node.position.x -= *dx as f64;
+                    node.offset_position_clamped(-(*dx as f64), 0.0);
                 }
                 GlyphAreaCommand::NudgeRight(dx) => {
-                    node.position.x += *dx as f64;
+                    node.offset_position_clamped(*dx as f64, 0.0);
                 }
                 GlyphAreaCommand::NudgeUp(dy) => {
-                    node.position.y -= *dy as f64;
+                    node.offset_position_clamped(0.0, -(*dy as f64));
                 }
                 GlyphAreaCommand::NudgeDown(dy) => {
-                    node.position.y += *dy as f64;
+                    node.offset_position_clamped(0.0, *dy as f64);
                 }
                 // Other commands don't move the node — their
                 // visible effect lands at completion via
@@ -381,8 +381,7 @@ impl MindMapDocument {
                 None => continue,
             };
             let lerped = anim.from_node.pos_vec2().lerp(anim.to_node.pos_vec2(), t);
-            node.position.x = lerped.x as f64;
-            node.position.y = lerped.y as f64;
+            node.set_position_clamped(lerped.x as f64, lerped.y as f64);
             any_advanced = true;
         }
 

@@ -112,7 +112,15 @@ pub(in crate::application::app) fn apply_set_border_preview(
             BorderPreviewTargetKind::CanvasSf => BorderPreviewTarget::CanvasSectionFrame,
             BorderPreviewTargetKind::CanvasSfFocused => BorderPreviewTarget::CanvasSectionFrameFocused,
         };
-        let _ = doc.set_border_preview(target, edits);
+        let outcome = doc.set_border_preview(target, edits);
+        // The keybind path has no message surface, so a refusal that
+        // returned silently here would look like a preview that simply
+        // did not appear. Logged rather than swallowed, same posture as
+        // the other keybind-only stops (CODE_CONVENTIONS §9).
+        if !outcome.rejected.is_empty() {
+            log::warn!("border preview: {}", outcome.rejected.join("; "));
+            return false;
+        }
         true
     });
 }
@@ -121,7 +129,14 @@ pub(in crate::application::app) fn apply_set_border_preview(
 /// committing setter and clear the slot. No-op + no rebuild
 /// when no preview is active.
 pub(in crate::application::app) fn apply_commit_border_preview(rc: &mut RebuildContext<'_>) {
-    apply_with_rebuild(rc, |doc| doc.commit_border_preview().is_some());
+    apply_with_rebuild(rc, |doc| match doc.commit_border_preview() {
+        Some(outcome) if !outcome.rejected.is_empty() => {
+            log::warn!("border preview commit: {}", outcome.rejected.join("; "));
+            false
+        }
+        Some(_) => true,
+        None => false,
+    });
 }
 
 /// Cancel the active border preview without writing the model.

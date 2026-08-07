@@ -30,6 +30,9 @@ pub use border::{BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderPrev
 // it against `apply_view_to_slot`.
 #[cfg(test)]
 pub(in crate::application) use border::apply_glyph_border_edits_to_slot;
+// Test-only: the shipped callers are inside `border` itself.
+#[cfg(test)]
+pub(in crate::application::document) use border::merge_outcome;
 pub use option_edit::OptionEdit;
 pub(in crate::application::document) use section_text::clamp_runs_to_text;
 
@@ -415,13 +418,20 @@ impl MindMapDocument {
     /// size runs would already have been flattened by the text
     /// editor's collapse step in `set_node_text`).
     ///
-    /// `size_pt` is rounded to the nearest positive integer; values
-    /// below 1 clamp to 1.
+    /// `size_pt` is rounded to the nearest integer and then clamped
+    /// into the domain the loader accepts — floor 1, ceiling
+    /// `MAX_FONT_SIZE_PT`. Both ends matter: below the floor a run
+    /// casts to an invisible 0, and above the ceiling the loader
+    /// refuses the saved file. See `custom::sync::clamp_run_size_pt`.
     pub fn set_node_font_size(&mut self, node_id: &str, size_pt: f32) -> bool {
         if !size_pt.is_finite() {
             return false;
         }
-        let size_u = size_pt.round().max(1.0) as u32;
+        // Rounded first, then clamped into the loader's run domain:
+        // the console's `font size=` takes any positive finite f32,
+        // and a value past the ceiling writes a map that will not
+        // reopen. See `custom::sync::clamp_run_size_pt`.
+        let size_u = crate::application::document::custom::sync::clamp_run_size_pt(size_pt.round());
         // `NodeEditTail::Grow`: larger text needs a larger box.
         // Monotonic floor — grow on demand, never shrink.
         self.mutate_node_with_style_undo(node_id, NodeEditTail::Grow, |node| {
@@ -533,16 +543,38 @@ impl MindMapDocument {
     }
 }
 
-/// Validate a candidate `(x, y)` for a node — finite components
-/// only. Nodes float freely on the canvas (no parent AABB), so
-/// negative coordinates are legal — a node can sit at a negative
-/// canvas-x to the left of the origin.
+/// Validate a candidate `(x, y)` for a node: finite components,
+/// each inside `MAX_CANVAS_COORD`. Nodes float freely on the canvas
+/// (no parent AABB), so negative coordinates are legal — a node can
+/// sit at a negative canvas-x to the left of the origin — but the
+/// *magnitude* is bounded, because the loader bounds it too.
 fn validate_node_position(pos: baumhard::mindmap::model::Position) -> Result<(), String> {
+    use baumhard::mindmap::model::validate::MAX_CANVAS_COORD;
     if !pos.x.is_finite() || !pos.y.is_finite() {
         return Err(format!(
             "node.position has non-finite component (x={}, y={})",
             pos.x, pos.y
         ));
+    }
+    // Magnitude too, not just finiteness. The loader bounds
+    // `node.position` at `MAX_CANVAS_COORD`, so a setter that took
+    // any finite `f64` let the editor write a map it would then
+    // refuse to reopen — `set_node_aabb` with `x: 1e30` returned
+    // `Ok(true)` and the saved file would not load.
+    //
+    // Rejected rather than clamped, unlike the font metrics: this
+    // guard already returns `Result` and its callers already refuse
+    // a bad position, so silently relocating a node to the boundary
+    // would be a bigger surprise than declining the write. (It is
+    // also why `validate::clamp_to_bound` is not used here — it
+    // takes `f32` and these coordinates are `f64`.)
+    for (name, value) in [("x", pos.x), ("y", pos.y)] {
+        if value.abs() > MAX_CANVAS_COORD {
+            return Err(format!(
+                "node.position.{name} ({value}) is outside the ±{MAX_CANVAS_COORD} bound the \
+                 loader enforces"
+            ));
+        }
     }
     Ok(())
 }
