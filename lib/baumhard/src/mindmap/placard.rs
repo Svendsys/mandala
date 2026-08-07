@@ -857,13 +857,23 @@ mod tests {
 
         let over = format!("{}c", "b".repeat(kept));
         let text = load_failure_text("s", &over);
+        assert!(
+            text.contains(&elision_notice(1)),
+            "one cluster past the budget must report exactly one elided:\n{}",
+            text.lines().take(4).collect::<Vec<_>>().join("\n")
+        );
         // On its own line, not folded into the loader's words on
         // either side of it — the notice is this module's voice and
         // has to read as an interruption rather than as content.
+        //
+        // Asked of `elide_middle` rather than of the placard,
+        // because the placard's answer is luck: `PLACARD_COLUMNS`
+        // divides the head budget exactly, so a notice spliced
+        // inline with spaces still lands alone on a wrapped line.
+        // The hard newlines are what makes it true for every budget.
         assert!(
-            text.lines().any(|line| line == elision_notice(1)),
-            "one cluster past the budget must report exactly one elided, on its own line:\n{}",
-            text.lines().take(4).collect::<Vec<_>>().join("\n")
+            elide_middle(&over).lines().any(|line| line == elision_notice(1)),
+            "the notice must be its own line before the wrap ever sees it"
         );
         assert!(
             without_whitespace(&text).ends_with(&format!("c{}", without_whitespace(PLACARD_FOOTER))),
