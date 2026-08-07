@@ -80,7 +80,11 @@ const TEST_MODULE_HEADERS: &[(&str, bool)] = &[
 /// lists are separate rather than one. That one is enumerated from
 /// the tree and is kept honest by
 /// [`do_above_test_modules_knows_every_shape_in_this_tree`], which
-/// sweeps all 447 files. A tree-wide sweep can only ever find shapes
+/// sweeps every `.rs` file in the workspace. How many that is stays
+/// out of this sentence on purpose: it was written down twice and
+/// went stale twice, and the sweep asserts a floor rather than a
+/// count, so nothing here was ever going to catch the drift.
+/// A tree-wide sweep can only ever find shapes
 /// that exist — and every hole this recognizer has had since that
 /// sweep went green was reachable only by *writing* a new one. A shim
 /// is written by whoever wants a pin to stop looking; they are not
@@ -97,7 +101,10 @@ const LEGAL_UNWRITTEN_HEADERS: &[&str] = &[
     concat!("#[ cfg(", "test) ]"),
     concat!("#[cfg ", "(test)]"),
     concat!("# [cfg(", "test)]"),
-    concat!("#\n[\ncfg\n(\ntest\n)\n]"),
+    // No `concat!` split needed on this row: with a newline between
+    // every token there is no `#[cfg(test)]` spelling in the file for
+    // the sweep above to find.
+    "#\n[\ncfg\n(\ntest\n)\n]",
     concat!("#[cfg(", "test)]\n# [allow(dead_code)]"),
 ];
 

@@ -35,8 +35,10 @@
 //!
 //!   **A tree-wide sweep is not enough to hold that down, and the
 //!   reason is worth stating once.** The sweep in
-//!   `util::tests::rust_source_tests` reads all 447 files and agrees
-//!   with an independently written recognizer on every cut — and it
+//!   `util::tests::rust_source_tests` reads every `.rs` file in the
+//!   workspace — the count is deliberately not written down here,
+//!   having gone stale twice while looking maintained — and agrees
+//!   with an independently written recognizer on every cut. It
 //!   still cannot see a hole, because a shim author writes a *new*
 //!   shape rather than reusing one the tree already contains. Three
 //!   were found that way after the sweep went green: an attribute run
@@ -263,7 +265,7 @@ pub fn above_test_modules(code: &str) -> &str {
         // The predicate's `(` may be a space away from the word, and
         // `cfg_attr` fails here rather than being special-cased.
         let open = skip_whitespace_forward(code, from);
-        if code[open..].as_bytes().first() != Some(&b'(') {
+        if code.as_bytes().get(open) != Some(&b'(') {
             continue;
         }
         let Some((at, scope)) = attribute_opening_before(code, call) else {
