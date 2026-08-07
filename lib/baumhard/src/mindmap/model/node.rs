@@ -696,7 +696,6 @@ pub struct ColorGroup {
 
 #[cfg(test)]
 mod position_clamp_tests {
-    use super::MindNode;
     use crate::mindmap::model::validate::MAX_CANVAS_COORD;
 
     /// **The clamp is enforced by construction, not by remembering.**
@@ -784,7 +783,7 @@ mod position_clamp_tests {
     /// accumulating one clamps the **sum** rather than the delta.
     #[test]
     fn test_the_position_clamp_bounds_both_entry_points() {
-        let mut node = crate::mindmap::test_helpers::synthetic_node_full("0", None, 0.0, 0.0, 100.0, 50.0, false);
+        let mut node: super::MindNode = crate::mindmap::test_helpers::synthetic_node_full("0", None, 0.0, 0.0, 100.0, 50.0, false);
 
         node.set_position_clamped(1.0e30, -1.0e30);
         assert_eq!(node.position.x, MAX_CANVAS_COORD);

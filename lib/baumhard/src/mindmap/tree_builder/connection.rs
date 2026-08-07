@@ -181,6 +181,10 @@ pub fn build_connection_elements(
     // at 10 000 points — scanning every node for each of those is what
     // made this pass quadratic in the map.
     let node_clip = NodeClipIndex::build(node_aabbs);
+    // Every edge gets the same share of the scene-wide glyph budget, so
+    // the result cannot depend on iteration order and no edge renders
+    // while a later one vanishes. See `MAX_TOTAL_PATH_SAMPLES`.
+    let per_path_samples = connection::per_path_sample_budget(map.edges.len());
     let mut connection_elements = Vec::new();
     // Grab-handles for the currently selected edge. Populated at most
     // once per scene build (selection is single-edge); empty otherwise.
@@ -416,7 +420,7 @@ pub fn build_connection_elements(
             &edge.anchor_to,
             &edge.control_points,
         );
-        let samples = connection::sample_path(&path, effective_spacing);
+        let samples = connection::sample_path(&path, effective_spacing, per_path_samples);
         if samples.is_empty() {
             // Edge produces no samples; make sure any stale cache entry is
             // dropped so we re-try next frame.

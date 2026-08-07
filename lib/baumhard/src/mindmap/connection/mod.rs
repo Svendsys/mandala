@@ -363,19 +363,19 @@ pub fn path_length(path: &ConnectionPath) -> f32 {
 /// Returns evenly-spaced points including the start point. The last point
 /// may be slightly before the path endpoint if the remaining distance is
 /// less than `spacing`.
-pub fn sample_path(path: &ConnectionPath, spacing: f32) -> Vec<SampledPoint> {
+pub fn sample_path(path: &ConnectionPath, spacing: f32, cap: usize) -> Vec<SampledPoint> {
     if spacing <= 0.0 {
         return Vec::new();
     }
 
     match path {
-        ConnectionPath::Straight { start, end } => sample_straight(*start, *end, spacing),
+        ConnectionPath::Straight { start, end } => sample_straight(*start, *end, spacing, cap),
         ConnectionPath::CubicBezier {
             start,
             control1,
             control2,
             end,
-        } => sample_cubic_bezier(*start, *control1, *control2, *end, spacing),
+        } => sample_cubic_bezier(*start, *control1, *control2, *end, spacing, cap),
     }
 }
 
@@ -414,9 +414,50 @@ pub fn sample_path(path: &ConnectionPath, spacing: f32) -> Vec<SampledPoint> {
 /// screen-space budget would need the zoom, which this layer does
 /// not have.
 ///
-/// It bounds one path. The aggregate across every edge in a map is
-/// not bounded — see `format/macros.md` §"What is not yet closed".
+/// It bounds one path. The aggregate across a map is bounded
+/// separately by [`MAX_TOTAL_PATH_SAMPLES`], which is the ceiling that
+/// actually matters: this one alone let a 73 KB file with 200 edges
+/// ask for two million glyph areas.
 pub const MAX_PATH_SAMPLES: usize = 10_000;
+
+/// Ceiling on the connection glyphs one scene may emit, across every
+/// edge.
+///
+/// **[`MAX_PATH_SAMPLES`] bounds a path and bounded nothing.** Each
+/// sample becomes a glyph area in the scene arena, and an edge costs
+/// about 120 bytes in the file — so a 73 KB document with 200 edges
+/// reached 2 000 000 samples, a 2 000 201-node arena and 1 642 MiB
+/// resident, from a file smaller than this source tree's smallest map.
+/// A megabyte of the same shape would ask for tens of gigabytes. The
+/// per-path cap was documented as bounding one path and not the
+/// aggregate; this closes that.
+///
+/// **Spent as an equal share per edge rather than first-come.** The
+/// budget divided by the edge count gives every edge the same
+/// allowance, so the result does not depend on iteration order and no
+/// edge renders while a later one vanishes. Density degrades across
+/// the whole map at once, which is the graceful version of this
+/// failure: fewer glyphs along each connection rather than some
+/// connections missing.
+///
+/// Sized against real maps rather than against a guess.
+/// `maps/testament.mindmap.json` uses 16 259 samples over 258 edges,
+/// and `maps/stress_long_edges.mindmap.json` — the repository's own
+/// worst case — uses 46 290 over 124. This is an order of magnitude
+/// above the heavier of the two, so a map that is merely large is
+/// untouched and only a pathological one is thinned.
+pub const MAX_TOTAL_PATH_SAMPLES: usize = 500_000;
+
+/// The per-path allowance when a scene has `edge_count` edges to draw.
+///
+/// Never more than [`MAX_PATH_SAMPLES`], never more than an equal
+/// share of [`MAX_TOTAL_PATH_SAMPLES`], and never zero — a connection
+/// that renders one glyph is still visible, and a connection that
+/// renders none looks like a missing edge.
+pub fn per_path_sample_budget(edge_count: usize) -> usize {
+    let share = MAX_TOTAL_PATH_SAMPLES / edge_count.max(1);
+    share.clamp(1, MAX_PATH_SAMPLES)
+}
 
 /// How many samples a path of `total_length` yields at `spacing`,
 /// clamped to [`MAX_PATH_SAMPLES`] and total over hostile inputs.
@@ -428,7 +469,7 @@ pub const MAX_PATH_SAMPLES: usize = 10_000;
 /// neither reaches an allocation.
 ///
 /// Cost: a few float ops, no allocation.
-fn sample_count(total_length: f32, spacing: f32) -> usize {
+fn sample_count(total_length: f32, spacing: f32, cap: usize) -> usize {
     if !total_length.is_finite() || !spacing.is_finite() || spacing <= 0.0 {
         return 1;
     }
@@ -436,15 +477,15 @@ fn sample_count(total_length: f32, spacing: f32) -> usize {
     if !count.is_finite() || count <= 0.0 {
         return 1;
     }
-    (count as usize).saturating_add(1).min(MAX_PATH_SAMPLES)
+    (count as usize).saturating_add(1).min(cap.max(1))
 }
 
-fn sample_straight(start: Vec2, end: Vec2, spacing: f32) -> Vec<SampledPoint> {
+fn sample_straight(start: Vec2, end: Vec2, spacing: f32, cap: usize) -> Vec<SampledPoint> {
     let total_length = start.distance(end);
     if total_length < f32::EPSILON {
         return vec![SampledPoint { position: start }];
     }
-    let count = sample_count(total_length, spacing);
+    let count = sample_count(total_length, spacing, cap);
     let mut points = Vec::with_capacity(count);
     for i in 0..count {
         let t = (i as f32 * spacing) / total_length;
@@ -480,7 +521,7 @@ pub fn distance_to_path(point: Vec2, path: &ConnectionPath) -> f32 {
             point_to_segment_distance_squared(point, *start, *end).sqrt()
         }
         ConnectionPath::CubicBezier { .. } => {
-            let samples = sample_path(path, 4.0);
+            let samples = sample_path(path, 4.0, MAX_PATH_SAMPLES);
             if samples.is_empty() {
                 return f32::INFINITY;
             }

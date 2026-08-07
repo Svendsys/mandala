@@ -1524,7 +1524,7 @@ mod tests {
             }
 
             // Verify sampling produces non-empty result
-            let samples = connection::sample_path(&conn_path, 7.2);
+            let samples = connection::sample_path(&conn_path, 7.2, crate::mindmap::connection::MAX_PATH_SAMPLES);
             assert!(
                 !samples.is_empty(),
                 "Edge {}→{} produced no samples",

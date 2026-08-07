@@ -231,11 +231,30 @@ data:
 **What is not yet closed**, so nobody reads the section above as a
 finished job:
 
-- The resource caps are **per element**, and element count is not
-  capped. One border side cannot emit more than 100k glyphs and one
-  edge cannot sample more than 10k points, but a map may carry a
-  great many of each; the aggregate per frame is still unbounded.
-  A frame budget is the real answer and does not exist yet.
+- The resource caps are mostly **per element**, and element count is
+  not capped. One border side cannot emit more than 100k glyphs, and a
+  map may carry a great many sides; the aggregate per frame is still
+  unbounded for everything except connection glyphs.
+  A frame budget is the real answer and exists only for that one axis.
+
+  Connection sampling *is* now bounded in aggregate:
+  `MAX_TOTAL_PATH_SAMPLES` (500k) is divided equally among the map's
+  edges, because the per-path cap alone let a 73 KB file with 200 edges
+  ask for 2 000 000 glyph areas — a 2 000 201-node arena and 1 642 MiB
+  resident, from a file smaller than any map in this repository. The
+  same file now reaches 500 000 samples and 416 MiB, and no document
+  can exceed that however many edges it declares.
+  `maps/testament.mindmap.json` (16 259 samples over 258 edges) and
+  `maps/stress_long_edges.mindmap.json` (46 290 over 124) are
+  unaffected — the budget is an order of magnitude above the heavier
+  of them.
+
+  **The share is equal per edge, not first-come**, so the outcome does
+  not depend on iteration order and no edge renders while a later one
+  vanishes. What degrades under a pathological map is glyph *density*
+  along every connection at once, which is the graceful form of this
+  failure. A map with a hundred thousand edges gets five glyphs each;
+  that is thin, and it is the trade against not opening at all.
 - **Edge hit-testing re-samples curved edges on every click.**
   `hit_test_edge` walks each Bezier from scratch per canvas click
   rather than reusing the samples the scene build already produced,
