@@ -834,6 +834,41 @@ mod tests {
         });
     }
 
+    /// **The same hole on the other text.** The source is not this
+    /// module's own words either: in the browser it is whatever the
+    /// `?map=` of the link said, so a crafted link supplies its
+    /// length exactly as a crafted file supplies the message's.
+    ///
+    /// Separate from the message case rather than folded into it,
+    /// because the two are elided by two calls and a test that
+    /// exercised only one would leave the other free to be deleted.
+    #[test]
+    fn test_placard_bounds_a_source_whose_length_the_url_supplies() {
+        use crate::mindmap::model::MAX_NODE_AXIS;
+
+        let source = format!("https://example.test/{}.mindmap.json", "u".repeat(4_000_000));
+        let text = load_failure_text(&source, PARSE_MESSAGE);
+        assert!(text.contains("https://example.test/"), "the URL's head is gone");
+        assert!(text.contains(".mindmap.json"), "the URL's tail is gone");
+        assert!(text.contains("characters elided"), "the URL was elided silently");
+        assert!(
+            text.contains(PARSE_MESSAGE),
+            "the loader's own message must survive alongside an over-long source"
+        );
+
+        let map = load_failure(&source, PARSE_MESSAGE);
+        let node = &map.nodes[PLACARD_NODE_ID];
+        assert!(
+            node.size.height <= MAX_NODE_AXIS,
+            "the placard is {} units tall, past the {MAX_NODE_AXIS} ceiling",
+            node.size.height
+        );
+        let json = serde_json::to_string(&map).expect("placard serializes");
+        loader::load_from_str(&json).unwrap_or_else(|e| {
+            panic!("a 4 MB `?map=` value must still produce a loadable placard: {e}");
+        });
+    }
+
     /// The budget is a bound, not an edit: one cluster under it and
     /// the message is whole, one cluster over it and exactly one
     /// cluster is gone.
