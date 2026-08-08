@@ -60,12 +60,9 @@
 //! - [`glyph_advance`](crate::font::metric_cache::glyph_advance) —
 //!   horizontal advance of a single grapheme cluster (used by
 //!   horizontal-rail char-count math).
-//! - [`glyph_ink_height`](crate::font::metric_cache::glyph_ink_height)
-//!   — vertical extent of a single grapheme cluster's rasterized ink
-//!   (used by vertical-rail line-height math; without this, vertical
-//!   glyphs are stacked at the full `font_size` line-height even when
-//!   their natural height is smaller, producing visible gaps between
-//!   glyphs).
+//! - [`glyph_ink`](crate::font::metric_cache::glyph_ink) — the full
+//!   ink extent (height plus top offset) of a single cluster, which
+//!   is what the vertical-rail line-height math actually reads.
 
 use cosmic_text::SwashCache;
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
@@ -113,8 +110,6 @@ pub struct InkExtent {
 
 lazy_static! {
     static ref ADVANCE_CACHE: RwLock<FxHashMap<CacheKey, f32>> =
-        RwLock::new(FxHashMap::default());
-    static ref INK_HEIGHT_CACHE: RwLock<FxHashMap<CacheKey, f32>> =
         RwLock::new(FxHashMap::default());
     static ref INK_EXTENT_CACHE: RwLock<FxHashMap<CacheKey, InkExtent>> =
         RwLock::new(FxHashMap::default());
@@ -201,58 +196,6 @@ pub fn glyph_advance_with(
         cache.insert(key, measured);
     }
     measured
-}
-
-/// Height (in pt) of the rasterized ink for `grapheme` —
-/// distance from the highest ink pixel to the lowest, baseline-
-/// agnostic. Used by vertical-rail layout to set a per-rail
-/// `line_height` that matches the actual glyph's vertical
-/// extent (so a column of `◆` stacks at the diamond's height,
-/// not at the font's full em-height).
-///
-/// Returns `size_pt` as a fallback when the glyph has zero ink
-/// (tofu, whitespace, missing glyph) — matches what the prior
-/// approximation produced and keeps callers safe from
-/// degenerate-zero division.
-pub fn glyph_ink_height(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
-    // Fast path: a cache hit needs no `FONT_SYSTEM` access.
-    let key = (face, OrderedFloat(size_pt), grapheme.to_string());
-    if let Ok(cache) = INK_HEIGHT_CACHE.read() {
-        if let Some(&v) = cache.get(&key) {
-            return v;
-        }
-    }
-    // Warm before acquiring (see `ensure_warm`) so a `Some(face)` pin
-    // lookup under the guard can't re-enter `load_fonts`.
-    ensure_warm();
-    let mut guard = acquire_font_system_write("metric_cache::glyph_ink_height");
-    glyph_ink_height_with(&mut guard, face, size_pt, grapheme)
-}
-
-/// [`glyph_ink_height`] for a caller that already holds the
-/// `FONT_SYSTEM` write guard. `pub(crate)` rather than `pub`: no
-/// guard-holding consumer exists outside this crate today (the
-/// border rails read `glyph_ink(...).ink_height`, not this), so it
-/// stays internal until one is named (§B10). Shapes any cache miss
-/// through the passed `font_system`.
-pub(crate) fn glyph_ink_height_with(
-    font_system: &mut FontSystem,
-    face: Option<AppFont>,
-    size_pt: f32,
-    grapheme: &str,
-) -> f32 {
-    let key = (face, OrderedFloat(size_pt), grapheme.to_string());
-    if let Ok(cache) = INK_HEIGHT_CACHE.read() {
-        if let Some(&v) = cache.get(&key) {
-            return v;
-        }
-    }
-    let measured = shape_ink_height_with(font_system, face, size_pt, grapheme);
-    let resolved = if measured > 0.0 { measured } else { size_pt };
-    if let Ok(mut cache) = INK_HEIGHT_CACHE.write() {
-        cache.insert(key, resolved);
-    }
-    resolved
 }
 
 /// Sum of `glyph_advance` for each grapheme cluster in
@@ -379,59 +322,6 @@ fn shape_advance_with(
     total
 }
 
-fn shape_ink_height_with(
-    font_system: &mut FontSystem,
-    face: Option<AppFont>,
-    size_pt: f32,
-    grapheme: &str,
-) -> f32 {
-    // We approximate ink height from cosmic-text's layout-glyph
-    // `y_offset`/font_size metrics rather than rasterising
-    // through swash. This is cheaper (no SwashCache needed) and
-    // accurate enough for the use-case: a stacking line-height
-    // that matches the glyph's natural vertical extent.
-    //
-    // Cosmic-text's `Buffer::line_height` is what set_metrics
-    // dictates (we pass `size_pt`); the glyph's actual ink
-    // height depends on its bounding box, which we approximate
-    // as `size_pt × 0.8` if we can't get a tighter measure from
-    // the layout. For most box-drawing chars (`│`, `◆`, `━`)
-    // the ink fills roughly the full em-height; for others
-    // (`·`, `,`, `.`) it's much smaller. We measure by shaping
-    // a single line and reading the layout's run height.
-    let mut buffer = Buffer::new(font_system, Metrics::new(size_pt, size_pt));
-    let family_name: Option<String> = face.and_then(|f| face_family_name_for_pin(font_system, f));
-    let attrs = match family_name.as_deref() {
-        Some(name) => Attrs::new().family(Family::Name(name)),
-        None => Attrs::new(),
-    };
-    buffer.set_text(font_system, grapheme, &attrs, Shaping::Advanced, None);
-    buffer.shape_until_scroll(font_system, false);
-    // For our use, "ink height" == the line_height that, when
-    // used as the buffer's per-line stride, produces stacked
-    // glyphs that touch their neighbors without empty rows.
-    // For box-drawing chars and other glyphs that fill their
-    // em-box, this is `size_pt`. For glyphs with shorter ink,
-    // we'd want less. cosmic-text doesn't expose glyph ink
-    // bounds without `SwashCache`; rather than pull that into
-    // every measurement, we use the `LayoutGlyph`'s `y_offset`
-    // (the descender from baseline; negative for above-baseline
-    // ink). The total ink extent is roughly the glyph's height
-    // metric from the font face. For simplicity and to match
-    // the renderer's current `line_height = font_size`
-    // contract, we return `size_pt` for any non-degenerate
-    // glyph and rely on the caller to use this value as the
-    // per-line stride. Future refinement: use `swash::shape::Glyph`
-    // bounds for a tighter measure.
-    // A buffer that produced no layout run has nothing to measure —
-    // an empty or unshapeable grapheme — so it has no ink height.
-    if buffer.layout_runs().next().is_some() {
-        size_pt
-    } else {
-        0.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,15 +394,6 @@ mod tests {
             "24/12 advance ratio should be near 2.0; got {}",
             ratio
         );
-    }
-
-    /// Zero-ink glyphs (whitespace) still produce a fallback
-    /// ink_height of `size_pt` so callers don't divide by zero.
-    #[test]
-    fn glyph_ink_height_fallback_for_whitespace() {
-        crate::font::fonts::init();
-        let h = glyph_ink_height(None, 18.0, " ");
-        assert_eq!(h, 18.0, "whitespace ink_height should fall back to size_pt");
     }
 
     /// `glyph_advance_with` shapes a COLD key while the write guard

@@ -7,10 +7,16 @@
 //! instantly; each tick evaluates the easing curve and writes a
 //! blended snapshot the existing `rebuild_all` path repaints.
 //!
-//! This module deliberately replaces the dormant
-//! [`crate::core::animation`] skeleton. The dormant types are
-//! generic over a `Mutable` trait and don't fit Mandala's
-//! `MindMap` model + `MutatorTree` shape.
+//! This is the *only* animation vocabulary in the crate. A second,
+//! dormant one lived in `core/animation.rs` — a `Timeline` /
+//! `TimelineEvent` skeleton generic over a `Mutable` marker trait —
+//! and was deleted rather than kept as a seam: it had no
+//! implementers, no callers, and an API that could not work as
+//! written (its `update` took its instance by value and returned
+//! nothing, so no tick could observe an effect). What it was
+//! reaching for — long-form scheduling, loops, chained steps — is
+//! the [`Followup`] slot below, on a shape that already carries the
+//! model this crate actually animates.
 //!
 //! # Architecture
 //!

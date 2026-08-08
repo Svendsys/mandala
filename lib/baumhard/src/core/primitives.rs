@@ -616,7 +616,6 @@ impl Default for ColorFontRegions {
     }
 }
 
-use crate::util::ordered_vec2::OrderedVec2;
 use strum_macros::{Display, EnumString};
 
 /// Selects the arithmetic used when a [`DeltaGlyphArea`](crate::gfx_structs::area::DeltaGlyphArea)
@@ -1053,17 +1052,3 @@ pub enum AnchorPoint {
     Center(i16),
 }
 
-/// Query a 2D position from an element.
-pub trait Positioned {
-    /// World-space top-left position in canvas pixels. O(1) on
-    /// every existing implementation — must not allocate or walk
-    /// children.
-    fn position(&self) -> OrderedVec2;
-}
-
-/// Query the bounding-box dimensions (width, height) of an element.
-pub trait Bounded {
-    /// Width / height in canvas pixels. O(1) on every existing
-    /// implementation — must not allocate or trigger a re-layout.
-    fn bounds(&self) -> OrderedVec2;
-}

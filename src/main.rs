@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-#![allow(dead_code)]
-
 use crate::application::app::{Application, Options};
 use crate::application::common::{InputMode, WindowMode};
 use crate::application::keybinds::KeybindConfig;

@@ -689,7 +689,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("from_hex_garbage_falls_back_to_black", |b| {
         b.iter(do_from_hex_garbage_falls_back_to_black)
     });
-    c.bench_function("rgba_hex_macros", |b| b.iter(do_rgba_hex_macros));
     c.bench_function("hex_to_rgba_three_digit", |b| b.iter(do_hex_to_rgba_three_digit));
     c.bench_function("hex_to_rgba_four_digit", |b| b.iter(do_hex_to_rgba_four_digit));
     c.bench_function("hex_to_rgba_six_digit", |b| b.iter(do_hex_to_rgba_six_digit));
