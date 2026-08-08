@@ -750,7 +750,10 @@ pub fn do_line_model_is_coherent() {
         for i in 0..count {
             let (start, end) = ranges[i];
             assert!(start <= end, "line {i} of {s:?} is inverted: {start}..{end}");
-            assert!(end <= clusters, "line {i} of {s:?} ends past the buffer: {end} > {clusters}");
+            assert!(
+                end <= clusters,
+                "line {i} of {s:?} ends past the buffer: {end} > {clusters}"
+            );
             if i + 1 < count {
                 assert_eq!(
                     ranges[i + 1].0,
