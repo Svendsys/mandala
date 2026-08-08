@@ -414,9 +414,9 @@ impl Renderer {
         // first-class target under CODE_CONVENTIONS §4. Returning
         // `false` here makes the caller bail before
         // `get_current_texture()` / `present()`, so the skipped frame
-        // takes no vsync backpressure either: under
-        // `RedrawMode::NoLimit` with `ControlFlow::Poll` the loop
-        // spins at CPU rate during a drag or animation and an
+        // takes no vsync backpressure either: the loop is uncapped
+        // and runs under `ControlFlow::Poll`, so it spins at CPU rate
+        // during a drag or animation and an
         // unguarded `warn!` would write a line per spin. The flag
         // clears on the next successful prepare, so a transient fault
         // logs again if it returns.

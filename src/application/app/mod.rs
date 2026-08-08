@@ -106,7 +106,6 @@ mod touch_gesture;
 // fields: the struct in `input_context.rs`, the
 // `InitState::input_context()` builder in `run_native.rs`, and
 // `dispatch_action`'s signature in `dispatch/native.rs`.
-use crate::application::common::{InputMode, WindowMode};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::application::document::EdgeRef;
@@ -774,33 +773,17 @@ pub struct Options {
     /// low-power GPUs over discrete ones. Useful on laptops
     /// where the discrete GPU would burn battery for a render
     /// load Mandala can run on the iGPU.
-    pub launch_gpu_prefer_low_power: bool,
     /// `true` to short-circuit the event loop after the first
-    /// frame — used by smoke-tests / CI captures that just need
-    /// to verify a single render pass succeeds. The interactive
-    /// run never sets this.
+    /// frame, so a caller that only needs one render pass gets one.
+    ///
+    /// Written but never read. Kept as a named seam rather than
+    /// deleted: `work_plans/LLM_IPC.md` reserves it for **IPC-10**
+    /// (headless capture), whose termination condition is exactly
+    /// "settled on rendered, then exit". The consumer is the
+    /// `run_native` / `run_wasm` loop bodies, which will read it
+    /// where they currently read nothing.
+    #[allow(dead_code)]
     pub should_exit: bool,
-    /// Window startup mode (windowed / fullscreen / maximized);
-    /// see [`WindowMode`].
-    pub window_mode: WindowMode,
-    /// User-config UI-scale offset. The renderer scales every
-    /// glyph by `1.0 + ui_scale * UI_SCALE_STEP`; `0` is the
-    /// neutral default. Negative shrinks, positive grows.
-    pub ui_scale: i8,
-    /// Static title bar text. `&'static` because it's set at
-    /// compile time and never user-edited.
-    pub window_title_text: &'static str,
-    /// Input dispatch mode (direct vs. instruction-mapped).
-    /// See [`InputMode`].
-    pub input_mode: InputMode,
-    /// CPU core count detected at startup. Reserved for future
-    /// thread-pool sizing; today the app is single-threaded so
-    /// this is informational only.
-    pub avail_cores: usize,
-    /// `true` when wgpu requires the renderer to live on the
-    /// main thread (the macOS / wasm constraint). Set by
-    /// platform detection in `main.rs`.
-    pub render_must_be_main: bool,
     /// Path to the `.mindmap.json` file to load at startup.
     /// Native: filesystem path; WASM: a fetch-relative URL
     /// resolved against the page origin.

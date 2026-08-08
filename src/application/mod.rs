@@ -34,9 +34,8 @@
 //! - [`user_config`] — XDG / web-storage shared loader
 //!   plumbing for keybinds / mutations / macros.
 //! - [`frame_throttle`] — per-frame cap math.
-//! - [`common`] — small shared types: `RedrawMode`,
-//!   `RenderDecree`, `FpsDisplayMode`, `PollTimer`,
-//!   `StopWatch`.
+//! - [`common`] — small shared types: `RenderDecree`,
+//!   `FpsDisplayMode`, `InputMode`, `WindowMode`.
 //!
 //! The crate's binary entry point (`src/main.rs`) constructs
 //! [`app::Application`] and calls [`app::Application::run`];

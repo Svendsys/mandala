@@ -84,7 +84,7 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::application::common::{FpsDisplayMode, PollTimer, RedrawMode, RenderDecree, StopWatch};
+use crate::application::common::{FpsDisplayMode, RenderDecree};
 use baumhard::font::fonts;
 #[cfg(test)]
 use baumhard::gfx_structs::area::GlyphArea;
@@ -266,9 +266,6 @@ pub struct Renderer {
     swash_cache: SwashCache,
     glyphon_cache: Cache,
     atlas: TextAtlas,
-    timer: PollTimer,
-    target_duration_between_renders: Duration,
-    last_render_time: Duration,
     text_renderer: TextRenderer,
     /// Second glyphon TextRenderer dedicated to the command
     /// palette overlay. Shares `self.atlas` with `text_renderer`
@@ -286,7 +283,6 @@ pub struct Renderer {
     /// frame. A failed prepare skips `present()` too, so the frame
     /// takes no vsync backpressure and the loop can spin at CPU rate.
     prepare_fault_logged: bool,
-    redraw_mode: RedrawMode,
     run: bool,
     should_render: bool,
     fps: Option<usize>,
@@ -325,11 +321,11 @@ pub struct Renderer {
     /// Wall-clock timestamp of the previous rendered frame. The
     /// difference between consecutive values is the actual frame
     /// interval, which is what FPS is derived from. Measuring
-    /// wall-clock here rather than `last_render_time` is load-bearing:
-    /// `render()` can early-return on font-system lock contention
-    /// under heavy interaction, which would otherwise make
-    /// `last_render_time` shrink to near-zero and inflate FPS to a
-    /// false huge value.
+    /// wall-clock here rather than the duration of the `render()`
+    /// call is load-bearing: `render()` can early-return on
+    /// font-system lock contention under heavy interaction, and
+    /// timing the call would then shrink to near-zero and inflate FPS
+    /// to a false huge value.
     last_frame_instant: Option<Instant>,
     /// Frame counter used by `FpsDisplayMode::Snapshot` to refresh the
     /// displayed value only every `FPS_WINDOW` frames. Increments
@@ -680,15 +676,11 @@ impl Renderer {
             queue,
             atlas,
             swash_cache: SwashCache::new(),
-            timer: PollTimer::new(Duration::from_millis(16)),
-            target_duration_between_renders: Duration::from_millis(10),
-            last_render_time: Duration::from_millis(16),
             text_renderer,
             console_text_renderer,
             prepare_fault_logged: false,
             should_render: false,
             fps: None,
-            redraw_mode: RedrawMode::NoLimit,
             run: true,
             fps_display_mode: FpsDisplayMode::Off,
             fps_overlay_buffers: Vec::new(),
@@ -762,8 +754,8 @@ impl Renderer {
     }
 
     /// Set the screen-space FPS readout mode. Routes through the
-    /// decree bus so `should_render` / `StartRender` / `StopRender`
-    /// and the FPS toggle share a single in-renderer mutation point.
+    /// decree bus so `should_render` / `StartRender` and the FPS
+    /// toggle share a single in-renderer mutation point.
     pub fn set_fps_display(&mut self, mode: FpsDisplayMode) {
         self.process_decree(RenderDecree::SetFpsDisplay(mode));
     }
@@ -801,43 +793,28 @@ impl Renderer {
         self.window.request_redraw();
     }
 
-    const ZERO_DURATION: Duration = Duration::new(0, 0);
-
+    /// Draw one frame and report whether the event loop should keep
+    /// going. The loop paces itself — `ControlFlow::Poll` plus the
+    /// surface's own vsync backpressure — so there is no rate gate
+    /// here.
+    ///
+    /// There used to be one: a `RedrawMode` with `OnRequest` /
+    /// `FpsLimit(n)` / `NoLimit` arms. The field was written exactly
+    /// once, to `NoLimit`, so the other two were unreachable, and the
+    /// `FpsLimit` arm subtracted one `Duration` from another with no
+    /// saturation — with its seeded values (10 ms target, 16 ms last
+    /// render) the very first tick would have underflowed and
+    /// panicked. Wiring the mode would not have enabled a feature; it
+    /// would have crashed the frame. Reinstating a frame cap means
+    /// writing the arithmetic, not reviving this.
     #[inline]
     pub fn process(&mut self) -> bool {
-        match self.redraw_mode {
-            RedrawMode::OnRequest => {
-                self.fps = Some(0);
-            }
-            RedrawMode::FpsLimit(_) => {
-                if self.timer.is_expired() {
-                    let delta_duration = self.target_duration_between_renders - self.last_render_time;
-                    if delta_duration.le(&Self::ZERO_DURATION) {
-                        self.timer.expire_in(Duration::from(Self::ZERO_DURATION));
-                    } else {
-                        self.timer.expire_in(delta_duration);
-                    }
-                    if self.fps_display_mode != FpsDisplayMode::Off {
-                        self.tick_fps();
-                        self.rebuild_fps_overlay_if_needed();
-                    }
-                    self.rebuild_mode_status_overlay_if_needed();
-                    let sw = StopWatch::new_start();
-                    self.render();
-                    self.last_render_time = sw.stop();
-                }
-            }
-            RedrawMode::NoLimit => {
-                if self.fps_display_mode != FpsDisplayMode::Off {
-                    self.tick_fps();
-                    self.rebuild_fps_overlay_if_needed();
-                }
-                self.rebuild_mode_status_overlay_if_needed();
-                let sw = StopWatch::new_start();
-                self.render();
-                self.last_render_time = sw.stop();
-            }
+        if self.fps_display_mode != FpsDisplayMode::Off {
+            self.tick_fps();
+            self.rebuild_fps_overlay_if_needed();
         }
+        self.rebuild_mode_status_overlay_if_needed();
+        self.render();
         self.run
     }
 
@@ -936,11 +913,12 @@ impl Renderer {
 
     /// Capture the wall-clock interval since the previous frame and
     /// update `self.fps` according to the active display mode.
-    /// Wall-clock (rather than `last_render_time`) is load-bearing:
-    /// `render()` can early-return on a contended font-system lock
-    /// under heavy drag / scene-rebuild load, which would otherwise
-    /// shrink `last_render_time` to a near-zero early-return cost and
-    /// inflate the reported FPS into the hundreds of thousands.
+    /// Wall-clock (rather than the duration of the `render()` call)
+    /// is load-bearing: `render()` can early-return on a contended
+    /// font-system lock under heavy drag / scene-rebuild load, which
+    /// would otherwise shrink the measured cost to a near-zero
+    /// early-return and inflate the reported FPS into the hundreds of
+    /// thousands.
     ///
     /// A frame interval longer than [`Self::IDLE_FRAME_THRESHOLD_US`]
     /// indicates the previous "frame" was actually idle wall-clock,
