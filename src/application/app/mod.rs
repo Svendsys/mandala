@@ -773,10 +773,6 @@ impl Application {
 /// per launch; never mutated post-construction.
 #[derive(Clone)]
 pub struct Options {
-    /// Hint to wgpu's adapter selection: prefer integrated /
-    /// low-power GPUs over discrete ones. Useful on laptops
-    /// where the discrete GPU would burn battery for a render
-    /// load Mandala can run on the iGPU.
     /// `true` to short-circuit the event loop after the first
     /// frame, so a caller that only needs one render pass gets one.
     ///

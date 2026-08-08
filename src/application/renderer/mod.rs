@@ -70,16 +70,22 @@ mod tree_buffers;
 mod tree_walker;
 
 pub use borders::measure_max_glyph_advance;
-// `ConsoleFrameLayout` / `MAX_*` / `build_console_border_strings` are
-// part of the renderer's public surface and consumed by the test
-// block at the bottom of this file plus external callers (the app
-// crate threads `ConsoleFrameLayout` through the rebuild path).
-// cargo check (without `--tests`) doesn't see those usages.
-#[allow(unused_imports)]
+// The console overlay's geometry vocabulary, re-exported for the
+// app-side console shell (`app::console_input`) that fills it in.
+// That shell is native-gated, so on wasm32 nothing consumes these —
+// the same reason the overlay modules above carry a wasm32-only
+// `allow`, scoped the same way so the host lint stays armed.
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 pub use console_geometry::{
-    build_console_border_strings, compute_console_frame_layout, ConsoleFrameLayout, ConsoleOverlayCompletion,
-    ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind, MAX_CONSOLE_COMPLETION_ROWS,
+    ConsoleOverlayCompletion, ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind,
     MAX_CONSOLE_SCROLLBACK_ROWS,
+};
+// Layout math exercised only by this module's test block; the
+// production callers inside `renderer/` reach it through
+// `super::console_geometry::` directly.
+#[cfg(test)]
+use console_geometry::{
+    build_console_border_strings, compute_console_frame_layout, MAX_CONSOLE_COMPLETION_ROWS,
 };
 #[cfg(test)]
 use console_pass::{
@@ -392,10 +398,6 @@ pub struct Renderer {
     /// wins via `insert`); the vec preserves emission order so
     /// halos stay behind the main glyph at render time.
     mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
-    /// Command palette / console overlay buffers. Rendered above
-    /// everything else in screen coordinates. Populated only when
-    /// the console is open; cleared otherwise.
-    console_overlay_buffers: Vec<MindMapTextBuffer>,
     /// Screen-space geometry of the color picker's opaque backdrop.
     /// Captured inside `rebuild_color_picker_overlay_buffers`; the
     /// `render()` rect-pipeline pass appends a black fill rect for
@@ -732,7 +734,6 @@ impl Renderer {
             viewport,
             camera,
             mindmap_buffers: Default::default(),
-            console_overlay_buffers: Vec::new(),
             color_picker_backdrop: None,
             overlay_buffers: Vec::new(),
             selection_rect_shape_cache: None,

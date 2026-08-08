@@ -126,6 +126,20 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
                 rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
             }
         }
+        // Deliberately outside the `document` guard, which is a
+        // behavior change: the overlay rebuild used to sit inside
+        // `if let Some(doc)` and was skipped on a documentless
+        // drain. It no longer reads the document at all — the
+        // picker's paint comes from `color_picker_state` plus the
+        // renderer's surface size — so skipping it there dropped a
+        // frame of the picker for no reason. The independence is
+        // enforced by the signature, not by this comment:
+        // `rebuild_color_picker_overlay` has no document parameter
+        // to pass. Unreachable in practice (`startup_load` installs
+        // a document before any drain), which is why it is
+        // described here rather than covered by a test — driving
+        // `drain` needs a live `Renderer`, and TEST_CONVENTIONS §T8
+        // / §T10 rule out GPU test infrastructure.
         rebuild_color_picker_overlay(color_picker_state, app_scene, renderer);
         self.pending.clear_flags();
     }

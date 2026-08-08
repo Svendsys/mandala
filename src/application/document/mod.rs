@@ -81,15 +81,9 @@ pub use hit_test::{
     hit_test_node_resize_handle, hit_test_section_resize_handle, rect_select,
 };
 pub use nodes::{
-    BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderSide, OptionEdit, SectionPayload,
+    BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderPreviewTarget, BorderSide, OptionEdit,
+    SectionPayload,
 };
-// `BorderPreviewTarget` is consumed only by the document setters
-// (and the upcoming preview verbs) — re-exported here so the
-// commits adding the verb files import it from the same place
-// the rest of the public document API lives. Triggers an
-// unused-import warning until commit 5 lands; suppress.
-#[allow(unused_imports)]
-pub use nodes::BorderPreviewTarget;
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
 };

@@ -29,16 +29,7 @@ pub(super) fn recompute_console_completions(
     {
         let byte_cursor = find_byte_index_of_grapheme(input, *cursor).unwrap_or(input.len());
         let ctx = ConsoleContext::from_document(doc);
-        let new = complete_console(input, byte_cursor, &ctx);
-        *completions = new
-            .into_iter()
-            .map(|c| crate::application::console::completion::Completion {
-                text: c.text,
-                display: c.display,
-                hint: c.hint,
-                font_family: c.font_family,
-            })
-            .collect();
+        *completions = complete_console(input, byte_cursor, &ctx);
         // Default highlight: the first row. Matches the terminal /
         // IDE convention where the top candidate is "most likely".
         // Users Down-arrow toward the prompt when they want a

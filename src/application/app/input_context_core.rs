@@ -94,10 +94,13 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// `&` (immutable) — no dispatch arm mutates modifiers.
     ///
     /// Carried, not yet read: the arms that want modifiers still run
-    /// against native's `InputHandlerContext`. Track C in
-    /// `work_plans/WASM_CONVERGENCE.md` is what moves them onto this
-    /// bundle, and it is the named consumer for this field and
-    /// [`Self::macros`] both.
+    /// against native's `InputHandlerContext`. What moves them onto
+    /// this bundle is Track A.3 in
+    /// `work_plans/WASM_CONVERGENCE.md` — lifting per-arm bodies
+    /// into `dispatch::cross_dispatch` — and that is the named
+    /// consumer for this field and [`Self::macros`] both. (Track C,
+    /// context-type unification, is what *created* this bundle; it
+    /// has already landed.)
     #[allow(dead_code)]
     pub modifiers: &'a ModifiersState,
     /// Resolved user keybinds. `&` (immutable) — dispatch arms
@@ -136,8 +139,9 @@ pub(in crate::application::app) struct InputContextCore<'a> {
 /// **Every field is carried, none is read yet.** `split_borrow`
 /// produces the bundle and `dispatch_action` threads it through, but
 /// the native-only arms still reach their state through
-/// `InputHandlerContext` directly; moving them across is Track C in
-/// `work_plans/WASM_CONVERGENCE.md`, which is the named consumer.
+/// `InputHandlerContext` directly; moving them across is Track A.3
+/// in `work_plans/WASM_CONVERGENCE.md` — lifting per-arm bodies into
+/// `dispatch::cross_dispatch` — which is the named consumer.
 /// The allow sits on the struct rather than on nine fields because
 /// the answer is the same for all nine and will stop being true for
 /// all nine at once.

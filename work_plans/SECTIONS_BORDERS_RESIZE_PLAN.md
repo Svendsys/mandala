@@ -234,6 +234,13 @@ impl InteractionMode {
     /// True if this mode wants to absorb the next left-click as a
     /// mode-specific gesture (Reparent / Connect / Resize body-exit).
     /// Drives the click-routing fork in `event_mouse_click.rs`.
+    ///
+    /// SUPERSEDED — this predicate was deleted by #41. It shipped
+    /// with tests but never acquired a production caller: the click
+    /// router in `event_mouse_click.rs` and `click.rs` matches
+    /// `InteractionMode::Reparent` / `Connect` inline instead. Kept
+    /// in this sketch because the sketch is the historical record of
+    /// what the batch designed, not a description of today's tree.
     pub fn intercepts_left_click(&self) -> bool { ... }
 
     /// True if a click on a section-area should produce
@@ -2323,6 +2330,10 @@ Tasks:
       `interaction_mode.rs::tests` covering `intercepts_left_click`,
       `click_resolves_to_section`, `resize_handle_node`,
       `resize_handle_section`, `is_target_picker` for every variant.
+      *(Since superseded: #41 deleted `intercepts_left_click` and
+      its tests — the predicate never gained a production caller.
+      The other four predicates and their tests stand. Recorded
+      here rather than edited out; the checklist is history.)*
 
 Verification: `./test.sh` green (2274 → 2282 tests, +8 from new
 predicate tests). `./test.sh --lint` advisory clippy warnings are
