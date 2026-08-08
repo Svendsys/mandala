@@ -14,6 +14,7 @@ mod bind;
 mod config;
 mod context;
 mod resolved;
+mod surface;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod platform_desktop;
@@ -57,6 +58,6 @@ pub use config::KeybindConfig;
 // no in-binary native consumer pulls it in via `mandala::application::keybinds::ParametricBinding`,
 // hence the lint exemption.
 #[allow(unused_imports)]
-pub use config::ParametricBinding;
+pub use surface::ParametricBinding;
 pub use context::InputContext;
 pub use resolved::ResolvedKeybinds;

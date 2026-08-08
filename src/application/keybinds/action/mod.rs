@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `Action` — the abstract user-action vocabulary the event loop
-//! dispatches on. New keyboard interactions go here, then add a
-//! matching `KeybindConfig` field + default + binding-string list.
+//! dispatches on. New keyboard interactions go here; the config side
+//! is one row in the `keybind_surface!` table in
+//! [`super::config`], and the build fails until you write it.
 
 use serde::{Deserialize, Serialize};
 use strum_macros::{EnumDiscriminants, EnumIter, EnumString, IntoStaticStr};
@@ -96,10 +97,13 @@ pub enum ZoomBound {
     Max,
 }
 
-/// High-level user actions that can be bound to keys. Add a new variant
-/// here when a new keyboard interaction is introduced, extend
-/// `KeybindConfig` with a matching field + default, and handle the variant
-/// in the event loop.
+/// High-level user actions that can be bound to keys. Add a new
+/// variant here when a new keyboard interaction is introduced, give
+/// it a row in the `keybind_surface!` table (which generates its
+/// `KeybindConfig` field, its default and its resolve row from that
+/// one row — or records why it has no key surface), and handle the
+/// variant in the event loop. Skipping the table row is a compile
+/// error, not a silently dead binding: see [`super::surface`].
 ///
 /// `Serialize` / `Deserialize` are derived so macros can carry actions
 /// in their JSON payload — see `crate::application::macros::MacroStep`.
@@ -691,13 +695,17 @@ pub enum Action {
     /// Mirror `border preset cycle` — advance the selected
     /// node(s)' border preset to the next entry in
     /// `BORDER_PRESETS`, wrapping at the end. No payload, so
-    /// bindable to a single key for one-press preset cycling.
+    /// bindable to a single key for one-press preset cycling, as
+    /// `cycle_border_preset`. This doc claimed that from the day
+    /// the variant landed and the config field did not exist until
+    /// #32 — the drift class the `keybind_surface!` table closes.
     #[action(context = Document, wasm = Compatible)]
     CycleBorderPreset,
     /// Mirror `border toggle` — flip `style.show_frame` per
-    /// selected node. No payload (each node toggled
-    /// independently); bindable to a single key for one-press
-    /// border-on/off cycling.   
+    /// selected node. No payload (each node is toggled
+    /// independently), so bindable to a single key for one-press
+    /// border-on/off cycling, as `toggle_border_visible`. Same
+    /// missing-field history as [`Action::CycleBorderPreset`].
     #[action(context = Document, wasm = Compatible)]
     ToggleBorderVisible,
     /// Stage a single-kv border preview against the live
@@ -828,41 +836,37 @@ pub enum Action {
     /// keybind-stability.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
-    /// Mirror `section move x=<x> y=<y> [section=<idx>]` —
-    /// macro-only target (not bindable to a key today; no
-    /// `KeybindConfig` field). Pin the selected section's
-    /// `offset` to `(x, y)` (absolute setter, distinct from the
-    /// `dx` / `dy` delta form).   
+    /// Mirror `section move x=<x> y=<y> [section=<idx>]` — pin the
+    /// selected section's `offset` to `(x, y)`. The absolute
+    /// setter, distinct from the `dx` / `dy` delta form.
+    ///
+    /// Bindable as `set_section_offset_abs`. It was macro-only
+    /// until #32, for no reason its neighbours did not share: the
+    /// delta form had a config field and the absolute one did not.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetAbs { x: String, y: String },
-    /// Mirror `section text "<text>" [runs=preserve|clear]` —
-    /// macro-only target (not bindable to a key today; no
-    /// `KeybindConfig` field — the string-arg payload makes
-    /// keybinding awkward). `runs_mode = "preserve"` clips
-    /// existing runs to the new text length;  `"clear"`
-    /// collapses to a single run.Destructive.
+    /// Mirror `section text "<text>" [runs=preserve|clear]`.
+    /// `runs_mode = "preserve"` clips existing runs to the new text
+    /// length; `"clear"` collapses to a single run. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SetSectionText { text: String, runs_mode: String },
-    /// Mirror `section add [at=<idx>] [text="<text>"]` —
-    /// macro-only target (not bindable to a key today; no
-    /// `KeybindConfig` field). `at = ""` → append; `"K"` →
-    /// insert at K. `text = ""` → empty section.    /// Destructive.
+    /// Mirror `section add [at=<idx>] [text="<text>"]`. `at = ""`
+    /// appends; `"K"` inserts at K. `text = ""` makes an empty
+    /// section. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     AddSection { at: String, text: String },
-    /// Mirror `section delete [section=<idx>]` — macro-only
-    /// target (not bindable to a key today; no `KeybindConfig`
-    /// field). Errors when the node has only one section (the
-    /// model invariant).Destructive.
+    /// Mirror `section delete [section=<idx>]`. Errors when the
+    /// node has only one section — the model invariant.
+    /// Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSection,
-    /// Mirror `section split at=<grapheme>` — macro-only target
-    /// (not bindable to a key today; no `KeybindConfig` field).
-    /// `"K"` → split at grapheme K; `at_grapheme = ""` is
-    /// **rejected** with a warn-log, matching the verb, which
-    /// requires `at=` because split-at-end-of-text silently
-    /// creates an empty suffix section nobody wants. Field name
-    /// disambiguates from `AddSection { at }`'s section-vector
-    /// index (different units).Destructive.
+    /// Mirror `section split at=<grapheme>`. `"K"` splits at
+    /// grapheme K; `at_grapheme = ""` is **rejected** with a
+    /// warn-log, matching the verb, which requires `at=` because
+    /// split-at-end-of-text silently creates an empty suffix
+    /// section nobody wants. The field name disambiguates from
+    /// `AddSection { at }`'s section-vector index (different
+    /// units). Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SplitSection { at_grapheme: String },
     /// Mirror `open <path>` — replace the current document with the

@@ -2934,8 +2934,7 @@ modal shell is native-gated.
 
 A three-layer pipeline: abstract `Action` enum →
 parsed `KeyBind` → resolved table; with cross-platform
-configuration via XDG (native) and `?keybinds=` /
-`localStorage` (WASM).
+configuration via XDG (native) and `localStorage` (WASM).
 
 Every keystroke that does *anything* maps to
 an `Action` first; the `Action` is then dispatched in the right
@@ -2947,7 +2946,7 @@ though the config-loading paths differ.
 `src/application/keybinds/`. The three
 layers:
 
-- `Action` enum (`action.rs`) — high-level intents:
+- `Action` enum (`action/mod.rs`) — high-level intents:
   `Undo`, `CreateOrphanNode`, `EnterReparentMode`,
   `EnterConnectMode`, `DeleteSelection`, `EditSelection`,
   `OpenConsole`, `Copy`, `Paste`, `Cut`, `ExitMode`, etc.
@@ -2960,9 +2959,33 @@ layers:
 belongs to; the event loop uses it to filter eligible actions
 based on which modal is open. Native config: hardcoded defaults
 + `$XDG_CONFIG_HOME/mandala/keybinds.json` + optional
-`--keybinds <path>` CLI override. WASM: same defaults + query
-param + `localStorage`. Partial configs merge via serde
+`--keybinds <path>` CLI override. WASM: same defaults +
+`localStorage["mandala_keybinds"]` — there is deliberately no
+`?keybinds=` layer, because a query param is owned by whoever
+composed the link rather than by the user (see
+`keybinds/platform_web.rs`). Partial configs merge via serde
 `default` attributes.
+
+**The config surface is declared once.** A bindable Action used
+to be written out three times — a `KeybindConfig` field, a
+`Default` entry, a `resolve()` row — and a field missing from
+`resolve()` compiled, leaving a binding that deserialized,
+round-tripped and did nothing. `keybinds/surface.rs`'s
+`keybind_surface!` collapses the three into one row per Action
+in `keybinds/config.rs`, generates the struct itself, and emits
+an `ActionKind → BindSurface` match that the loader's
+recognized-key set is built by walking. Because that match is
+exhaustive, an `Action` variant that appears in no section of
+the table — neither bound nor listed under `unbindable` with a
+reason — fails to compile. Unit variants take the string-list
+shape (`"undo": ["Ctrl+Z"]`) and payload variants the `args`
+shape; which one is not a choice, since each section only
+accepts the variant shape it is for. Unrecognized top-level keys
+in a user's file are warned about (`"keybinds: unrecognized key
+…"`) and skipped rather than rejected — one stale key must not
+cost the user the rest of their bindings — and keys starting
+with `_` are treated as comments, which is how the shipped
+`config/default_keybinds.json` carries its instructions.
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
@@ -2986,9 +3009,9 @@ sibling `ParametricBinding` shape:
   "set_zoom": [
     { "combo": "F12", "args": ["min", "0.5"] }
   ],
-  "clear_zoom": [
-    { "combo": "Shift+F12", "args": [] }
-  ]
+  // `clear_zoom` carries no payload, so it takes the plain
+  // string-list shape every unit Action takes.
+  "clear_zoom": ["Shift+F12"]
 }
 ```
 
@@ -2996,10 +3019,17 @@ Color / font / zoom carry the axis as the first arg (`bg|text|border`,
 `size|min|max`, `min|max` respectively) so a single binding-list
 covers the whole field group. The typed `ColorAxis` / `FontSlot` /
 `ZoomBound` enums on the Action variant make the dispatcher's
-match exhaustive without a fan-out guard.
+match exhaustive without a fan-out guard, and they reach the
+payload through `surface::ArgValue`: a `String` field takes the
+argument verbatim, a typed field goes through its strum `FromStr`,
+and a payload type with no `ArgValue` impl does not compile.
 
-Each variant documents its arg shape on the `Action` definition;
-wrong arg counts emit a warn-log and are skipped (never panic).
+Each variant names its arg shape in the table row that declares
+it — the payload field names there are both the arity and the
+list quoted back at the user when a binding's `args` array is
+the wrong length. Three skips are possible and all three are
+logged, never panicked: an unparseable combo, the wrong number of
+args, and an arg that is not a valid value for its field.
 The dispatch arms call `pub(crate)` mutation cores extracted
 from each console verb, so the same setter path runs whether
 the user types the verb or fires the bound key — including

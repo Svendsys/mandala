@@ -1798,10 +1798,9 @@ fn test_parametric_zoom_resolve_set_and_clear() {
                 args: vec!["max".into(), "2.0".into()],
             },
         ],
-        clear_zoom: vec![ParametricBinding {
-            combo: "Shift+F12".into(),
-            args: vec![],
-        }],
+        // `ClearZoom` carries no payload, so it binds through the
+        // simple string-list surface rather than `args`.
+        clear_zoom: vec!["Shift+F12".into()],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
@@ -1858,21 +1857,20 @@ fn test_parametric_filesystem_variants_resolve() {
 }
 
 #[test]
-fn test_parametric_clear_zoom_with_extra_args_is_skipped() {
-    // ClearZoom is a unit variant — the builder closure rejects any
-    // non-empty args slice. Confirms the unit-variant shape works
-    // through the same `push_parametric` plumbing as payload variants.
-    let cfg = KeybindConfig {
-        clear_zoom: vec![ParametricBinding {
-            combo: "Shift+F12".into(),
-            args: vec!["unexpected".into()],
-        }],
-        ..KeybindConfig::default()
-    };
-    let resolved = cfg.resolve();
-    assert_eq!(
-        resolved.action_for_context(InputContext::Document, "f12", false, true, false),
-        None,
+fn test_clear_zoom_rejects_the_parametric_binding_shape() {
+    // `ClearZoom` is a unit variant, and the `keybind_surface!`
+    // table puts every unit variant on the simple string-list
+    // surface — the `simple` section names the variant with no
+    // payload, so a payload-carrying variant listed there would not
+    // compile. The user-visible half of that invariant is here: the
+    // `{combo, args}` object is no longer a valid value for
+    // `clear_zoom`, and a config still using it fails the parse
+    // loudly rather than resolving to a binding that never fires.
+    let json = r#"{ "clear_zoom": [ { "combo": "Shift+F12", "args": [] } ] }"#;
+    let err = KeybindConfig::from_json(json).unwrap_err();
+    assert!(
+        err.contains("parse keybinds JSON"),
+        "expected the loader's parse error, got: {err}",
     );
 }
 
@@ -1914,5 +1912,335 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "z", true, false, false),
         Some(Action::Undo),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// The declaration surface (`keybind_surface!`) — issue #32
+//
+// The table in `config.rs` is the single place a bindable Action is
+// declared, and the `bind_surface` match it generates is exhaustive
+// over `ActionKind`, so an Action with no decision is a build error.
+// These tests hold the *values* the compiler cannot: that the
+// unbindable set stays the two it is meant to be, that the struct and
+// the recognized-key set agree, and — the one that would have caught
+// the shipped `SetBorderPreview` bug — that every declared field
+// really does produce a binding.
+// ─────────────────────────────────────────────────────────────────
+
+use super::config::bind_surface;
+use super::surface::BindSurface;
+
+/// One combo, reused for every field in the coverage test below.
+/// Nothing resolves *by* it — `bound_action_kinds` reads the whole
+/// table, not a lookup — so collisions between actions are the point
+/// rather than a hazard.
+const SENTINEL_COMBO: &str = "Ctrl+Shift+Alt+F9";
+
+/// A valid `args` array for every parametric field. Hand-written
+/// because only a human knows that `set_color`'s first arg has to be
+/// a real [`ColorAxis`] — but it cannot rot: the coverage test
+/// asserts this list and the table's parametric section name exactly
+/// the same fields, so a new parametric row fails until its args
+/// land here.
+const SENTINEL_PARAMETRIC_ARGS: &[(&str, &[&str])] = &[
+    ("set_edge_anchor", &["top", "auto"]),
+    ("set_edge_body_glyph", &["dash"]),
+    ("set_border_field", &["preset", "rounded"]),
+    ("set_edge_cap", &["arrow", "none"]),
+    ("set_color", &["bg", "#fafafa"]),
+    ("set_border_preview", &["node", "preset", "rounded"]),
+    ("set_edge_type", &["cross_link"]),
+    ("set_edge_display_mode", &["portal"]),
+    ("reset_edge", &["style"]),
+    ("set_font_family", &["Norse"]),
+    ("set_font", &["size", "14"]),
+    ("set_edge_label_text", &["hello"]),
+    ("set_edge_label_position", &["middle"]),
+    ("set_spacing", &["wide"]),
+    ("set_zoom", &["min", "0.5"]),
+    ("set_section_offset_delta", &["4", "-4"]),
+    ("set_section_offset_abs", &["10", "20"]),
+    ("set_section_size_abs", &["120", "40"]),
+    ("set_section_text", &["hello", "preserve"]),
+    ("add_section", &["", "hello"]),
+    ("split_section", &["3"]),
+    ("open_document", &["/tmp/open.mindmap.json"]),
+    ("save_document_as", &["/tmp/save.mindmap.json"]),
+    ("new_document_at", &["/tmp/new.mindmap.json"]),
+];
+
+/// The Actions that deliberately have no `keybinds.json` key. Pinned
+/// by value the way the destructive set is: the compiler forces a
+/// *decision* per variant, this forces the decision to be reviewed.
+/// Both members take a hit-tested target node id that only the click
+/// handler can supply.
+const UNBINDABLE_ACTIONS: &[ActionKind] = &[ActionKind::ReparentToTarget, ActionKind::ConnectToTarget];
+
+#[test]
+fn test_only_the_click_confirmations_have_no_keybind_surface() {
+    use strum::IntoEnumIterator;
+    let expected: std::collections::HashSet<ActionKind> = UNBINDABLE_ACTIONS.iter().copied().collect();
+    let actual: std::collections::HashSet<ActionKind> = ActionKind::iter()
+        .filter(|k| bind_surface(*k) == BindSurface::Unbindable)
+        .collect();
+    assert_eq!(
+        actual, expected,
+        "the set of Actions with no keybinds.json key changed — widening it means a user lost \
+         the ability to bind something, so it wants a reason in the table's `unbindable` section",
+    );
+}
+
+#[test]
+fn test_known_keys_matches_the_serialized_default_config() {
+    // Both sides come from the `keybind_surface!` table, so this
+    // pins the macro rather than a hand-sync: every struct field is
+    // a recognized key and every recognized key is a struct field.
+    // A drift here would make the loader warn about a key it in fact
+    // honors, or stay silent about one it drops.
+    let json = serde_json::to_value(KeybindConfig::default()).unwrap();
+    let serialized: std::collections::HashSet<String> = json
+        .as_object()
+        .expect("KeybindConfig serializes to a JSON object")
+        .keys()
+        .cloned()
+        .collect();
+    let known: std::collections::HashSet<String> =
+        KeybindConfig::known_keys().into_iter().map(String::from).collect();
+    assert_eq!(known, serialized);
+}
+
+#[test]
+fn test_every_declared_binding_resolves_to_its_action() {
+    // The regression test for the whole issue. Stuff a sentinel
+    // binding into *every* declared field — the ~24 parametric ones
+    // included, which the default-coverage test cannot see because
+    // they default to empty — then resolve and demand that every
+    // Action with a key surface came back out.
+    //
+    // Pre-fix, `set_border_preview` had a struct field and no row in
+    // `resolve()`: it deserialized, it round-tripped through JSON,
+    // and it bound nothing. That shape fails here.
+    use strum::IntoEnumIterator;
+
+    let parametric_args: std::collections::HashMap<&str, &[&str]> =
+        SENTINEL_PARAMETRIC_ARGS.iter().copied().collect();
+
+    let mut object = serde_json::Map::new();
+    let mut expected: std::collections::HashSet<ActionKind> = std::collections::HashSet::new();
+    for kind in ActionKind::iter() {
+        match bind_surface(kind) {
+            BindSurface::Simple(field) => {
+                object.insert(field.to_string(), serde_json::json!([SENTINEL_COMBO]));
+                expected.insert(kind);
+            }
+            BindSurface::Parametric(field) => {
+                let args = parametric_args.get(field).unwrap_or_else(|| {
+                    panic!(
+                        "parametric field `{field}` has no SENTINEL_PARAMETRIC_ARGS entry — add one \
+                         so the new binding is covered"
+                    )
+                });
+                object.insert(
+                    field.to_string(),
+                    serde_json::json!([{ "combo": SENTINEL_COMBO, "args": args }]),
+                );
+                expected.insert(kind);
+            }
+            BindSurface::Unbindable => {}
+        }
+    }
+
+    // No stale rows either: an args entry for a field the table no
+    // longer has is a lie about coverage.
+    let declared: std::collections::HashSet<&str> = ActionKind::iter()
+        .filter_map(|k| match bind_surface(k) {
+            BindSurface::Parametric(field) => Some(field),
+            _ => None,
+        })
+        .collect();
+    let listed: std::collections::HashSet<&str> = parametric_args.keys().copied().collect();
+    assert_eq!(listed, declared, "SENTINEL_PARAMETRIC_ARGS drifted from the table");
+
+    let json = serde_json::Value::Object(object).to_string();
+    assert!(
+        KeybindConfig::unknown_top_level_keys(&json).is_empty(),
+        "the sentinel config is built from the table, so every key must be recognized",
+    );
+
+    let resolved = KeybindConfig::from_json(&json).unwrap().resolve();
+    let bound = resolved.bound_action_kinds();
+    let missing: Vec<ActionKind> = expected.difference(&bound).copied().collect();
+    assert!(
+        missing.is_empty(),
+        "declared in the keybind_surface! table but bound nothing: {missing:?}",
+    );
+}
+
+#[test]
+fn test_unit_variants_bind_through_the_simple_surface() {
+    // The rule the table enforces structurally — unit variants take
+    // the string-list shape, payload variants take `args` — read
+    // back from the user's side of the surface. `clear_zoom` and
+    // `set_section_size_fill_parent` were the two unit variants
+    // stranded on the parametric surface before #32.
+    let json = r#"{
+        "clear_zoom": ["Shift+F12"],
+        "set_section_size_fill_parent": ["Ctrl+F12"],
+        "delete_section": ["Alt+F12"],
+        "cycle_border_preset": ["Ctrl+F5"],
+        "toggle_border_visible": ["Ctrl+F6"]
+    }"#;
+    let resolved = KeybindConfig::from_json(json).unwrap().resolve();
+    for (key, ctrl, shift, alt, expected) in [
+        ("f12", false, true, false, Action::ClearZoom),
+        ("f12", true, false, false, Action::SetSectionSizeFillParent),
+        ("f12", false, false, true, Action::DeleteSection),
+        ("f5", true, false, false, Action::CycleBorderPreset),
+        ("f6", true, false, false, Action::ToggleBorderVisible),
+    ] {
+        assert_eq!(
+            resolved.action_for_context(InputContext::Document, key, ctrl, shift, alt),
+            Some(expected),
+        );
+    }
+}
+
+#[test]
+fn test_parametric_arg_that_is_not_a_valid_value_is_skipped() {
+    // Right arity, wrong value: `ColorAxis` has no `chartreuse`
+    // axis, so `ArgValue::parse_arg` returns None and the binding is
+    // dropped with its own warn-log — distinct from the wrong-arity
+    // skip, which the resolve step reports separately.
+    let cfg = KeybindConfig {
+        set_color: vec![ParametricBinding {
+            combo: "Ctrl+F7".into(),
+            args: vec!["chartreuse".into(), "#fafafa".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    assert_eq!(
+        cfg.resolve()
+            .action_for_context(InputContext::Document, "f7", true, false, false),
+        None,
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Unrecognized top-level keys
+// ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_unknown_top_level_keys_names_a_renamed_action() {
+    // `cancel_mode` was renamed to `exit_mode`; the shipped template
+    // kept the old spelling and the key vanished silently. It is now
+    // reported (and warned about at load).
+    let json = r#"{ "cancel_mode": ["Escape"], "undo": ["Ctrl+Z"] }"#;
+    assert_eq!(
+        KeybindConfig::unknown_top_level_keys(json),
+        vec!["cancel_mode".to_string()],
+    );
+}
+
+#[test]
+fn test_unknown_top_level_key_does_not_discard_the_rest_of_the_config() {
+    // Warn, don't reject: `deny_unknown_fields` would answer one
+    // stale key by throwing away every good binding beside it.
+    let json = r#"{ "cancel_mode": ["Escape"], "undo": ["Ctrl+Alt+U"] }"#;
+    let cfg = KeybindConfig::from_json(json).unwrap();
+    assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
+    assert_eq!(
+        cfg.resolve().action_for("u", true, false, true),
+        Some(Action::Undo),
+    );
+}
+
+#[test]
+fn test_underscore_prefixed_keys_are_treated_as_comments() {
+    // JSON has no comment syntax and the shipped template carries
+    // its instructions in `_comment`, so the underscore prefix is
+    // the documented annotation escape hatch.
+    let json = r#"{ "_comment": "notes", "_todo": ["anything"], "undo": ["Ctrl+Z"] }"#;
+    assert!(KeybindConfig::unknown_top_level_keys(json).is_empty());
+}
+
+#[test]
+fn test_parametric_and_extra_keys_are_recognized() {
+    // Both non-simple halves of the surface are in the recognized
+    // set — a warning about `set_color` or `macro_bindings` would be
+    // a false alarm on a valid config.
+    let json = r##"{
+        "set_color": [ { "combo": "F1", "args": ["bg", "#fafafa"] } ],
+        "macro_bindings": { "Ctrl+M": "my-macro" },
+        "console_font_size": 18.0
+    }"##;
+    assert!(KeybindConfig::unknown_top_level_keys(json).is_empty());
+}
+
+// ─────────────────────────────────────────────────────────────────
+// The shipped template, `config/default_keybinds.json`
+// ─────────────────────────────────────────────────────────────────
+
+/// The template as shipped. Compiled in rather than read at runtime
+/// so the test cannot pass by failing to find the file.
+const SHIPPED_TEMPLATE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/config/default_keybinds.json"
+));
+
+#[test]
+fn test_shipped_keybinds_template_has_no_unrecognized_keys() {
+    assert_eq!(
+        KeybindConfig::unknown_top_level_keys(SHIPPED_TEMPLATE),
+        Vec::<String>::new(),
+        "config/default_keybinds.json names a key the schema does not have — a user copying the \
+         template would edit a binding that does nothing",
+    );
+}
+
+#[test]
+fn test_shipped_keybinds_template_binds_every_key_it_names() {
+    // The test `cancel_mode` needed. Exercising the template against
+    // the schema means: for each action key the file lists, every
+    // combo under it must resolve, in that Action's own context, to
+    // that Action. A renamed or misspelled key fails the test above;
+    // a key whose binding does not survive `resolve()` fails here.
+    use strum::IntoEnumIterator;
+    let field_to_kind: std::collections::HashMap<&str, ActionKind> = ActionKind::iter()
+        .filter_map(|kind| bind_surface(kind).field().map(|field| (field, kind)))
+        .collect();
+
+    let template: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(SHIPPED_TEMPLATE).unwrap();
+    let resolved = KeybindConfig::from_json(SHIPPED_TEMPLATE).unwrap().resolve();
+
+    let mut checked = 0;
+    for (key, value) in &template {
+        let Some(&kind) = field_to_kind.get(key.as_str()) else {
+            continue; // `_comment` and the non-Action style keys.
+        };
+        let combos = value.as_array().expect("an action key holds a list of bindings");
+        for combo in combos {
+            let combo = combo.as_str().expect("the template binds unit actions by string");
+            let bind = KeyBind::parse(combo).unwrap_or_else(|e| panic!("template combo {combo:?}: {e}"));
+            let action = resolved
+                .action_for_context(kind.context(), &bind.key, bind.ctrl, bind.shift, bind.alt)
+                .unwrap_or_else(|| panic!("template key {key:?} bound to {combo:?} resolves to nothing"));
+            assert_eq!(ActionKind::from(&action), kind, "template key {key:?} → {combo:?}");
+            checked += 1;
+        }
+    }
+    assert!(checked >= 10, "the template should exercise more than {checked} bindings");
+}
+
+#[test]
+fn test_shipped_keybinds_template_escape_exits_the_mode() {
+    // The specific binding #32 found broken, spelled out: the
+    // template's `exit_mode` entry, through the real loader entry
+    // point, reaches `Action::ExitMode` on Escape.
+    let resolved = KeybindConfig::from_json(SHIPPED_TEMPLATE).unwrap().resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "escape", false, false, false),
+        Some(Action::ExitMode),
     );
 }

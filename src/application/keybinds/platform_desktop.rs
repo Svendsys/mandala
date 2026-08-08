@@ -65,6 +65,30 @@ mod tests {
     }
 
     #[test]
+    fn test_load_for_desktop_reads_the_shipped_template_end_to_end() {
+        // The template is what a user copies to
+        // `~/.config/mandala/keybinds.json`, so the path it has to
+        // survive is this one: read from disk, through the size cap
+        // and the layered fallback, parsed, resolved. Its `exit_mode`
+        // entry spent a release spelled `cancel_mode` — a key the
+        // schema had renamed — and every layer here accepted it in
+        // silence (issue #32).
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_keybinds.json");
+        let cfg = KeybindConfig::load_for_desktop(Some(&path));
+        assert_eq!(cfg.exit_mode, vec!["Escape".to_string()]);
+        assert_eq!(
+            cfg.resolve().action_for_context(
+                crate::application::keybinds::InputContext::Document,
+                "escape",
+                false,
+                false,
+                false,
+            ),
+            Some(crate::application::keybinds::Action::ExitMode),
+        );
+    }
+
+    #[test]
     fn test_load_for_desktop_valid_explicit_file_wins() {
         let scratch = TempDir::new("good-keybinds");
         let tmp = scratch.join("keybinds.json");
