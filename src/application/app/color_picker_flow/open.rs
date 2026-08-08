@@ -263,7 +263,7 @@ pub(in crate::application::app) fn open_picker_inner(
         last_dynamic_apply: None,
     };
 
-    rebuild_color_picker_overlay(state, doc, app_scene, renderer);
+    rebuild_color_picker_overlay(state, app_scene, renderer);
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
 }
 

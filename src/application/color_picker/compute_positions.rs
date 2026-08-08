@@ -34,7 +34,6 @@ pub(super) fn compute_positions(
         ring_r,
         side,
         step,
-        cell_advance: _,
     } = sizing;
 
     // Wheel center: honor the drag-override if the user has moved

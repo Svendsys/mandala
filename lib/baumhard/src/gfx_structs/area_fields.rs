@@ -257,7 +257,19 @@ impl Add for GlyphAreaField {
                         return GlyphAreaField::ZoomVisibility(other);
                     }
                 }
-                GlyphAreaField::Operation(_) => {}
+                GlyphAreaField::Operation(_) => {
+                    // Two `Operation` control variants merging is the
+                    // *reachable* case, not a mismatch: `Delta::add`
+                    // keys by discriminant tag, so the only pairs it
+                    // ever hands this impl are same-variant ones. The
+                    // arm used to fall through to the mismatch warn
+                    // below and log on every legitimate merge of two
+                    // deltas that both pin an operation. Last-wins,
+                    // matching Outline / Shape / ZoomVisibility.
+                    if let GlyphAreaField::Operation(other) = rhs {
+                        return GlyphAreaField::Operation(other);
+                    }
+                }
             }
         }
         // Composing two fields of different variants is not a

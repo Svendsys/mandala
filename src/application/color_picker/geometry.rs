@@ -11,16 +11,9 @@ use super::hit::PickerHit;
 /// Pre-render geometry pushed from the app to the renderer. Plain data,
 /// no rendering primitives — mirrors `PaletteOverlayGeometry`.
 pub struct ColorPickerOverlayGeometry {
-    /// Static label ("edge" / "portal" / "node") — held as a
-    /// `&'static str` so the picker render path doesn't allocate a
-    /// fresh `String` per rebuild. Empty string `""` signals
-    /// Standalone mode: the builder renders a generic "palette"
-    /// title instead of "࿕ {label} color".
-    pub target_label: &'static str,
     pub hue_deg: f32,
     pub sat: f32,
     pub val: f32,
-    pub preview_hex: String,
     /// Whether the hex readout should render this frame. `true`
     /// when the cursor is inside the backdrop; `false` otherwise.
     /// The readout appears only when the user is actively engaging
@@ -102,14 +95,4 @@ pub struct ColorPickerOverlayGeometry {
     /// `handle_color_picker_mouse_move` so only a change triggers a
     /// rebuild.
     pub hovered_hit: Option<PickerHit>,
-    /// Standalone-mode selection hint — `Some("section 1 of 0.1")`
-    /// or `Some("node 0.1")` etc. when the document carries a
-    /// selection at picker-build time, `None` otherwise.
-    /// Contextual mode leaves this `None` because the picker title
-    /// already shows the bound target's label
-    /// (`color_picker/targets.rs::PickerHandle::label`). Without
-    /// this, a Standalone wheel commit on a `SelectionState::Section`
-    /// gives the user no signal that the write lands per-section vs
-    /// whole-node.
-    pub selection_hint: Option<String>,
 }

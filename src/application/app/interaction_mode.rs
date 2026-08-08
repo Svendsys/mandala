@@ -40,6 +40,10 @@ pub enum InteractionMode {
     /// User is choosing a new parent for `sources`. The next left-click on
     /// a node attaches them; left-click on empty canvas promotes them to
     /// root; Esc cancels. Direct migration from `AppMode::Reparent`.
+    // Native-driver-only, with `Connect` below: both modes are
+    // entered from native-gated handlers, so nothing on wasm32
+    // constructs either.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Reparent {
         sources: Vec<String>,
     },
@@ -48,6 +52,7 @@ pub enum InteractionMode {
     /// left-click on a target node creates the edge; left-click on empty
     /// canvas cancels. Esc also cancels. Direct migration from
     /// `AppMode::Connect`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Connect {
         source: String,
     },
@@ -88,22 +93,6 @@ impl Default for InteractionMode {
 }
 
 impl InteractionMode {
-    /// True when this mode wants to absorb the next left-click as a
-    /// mode-specific gesture rather than letting the standard click
-    /// router handle it.
-    ///
-    /// Reparent / Connect intercept their next click as a "choose
-    /// target" gesture. Resize / NodeEdit / Default do not intercept;
-    /// Resize relies on a separate handle-hit-test path
-    /// (`event_mouse_click.rs`) gated on `resize_handle_*()` rather
-    /// than on a click intercept.
-    pub fn intercepts_left_click(&self) -> bool {
-        matches!(
-            self,
-            InteractionMode::Reparent { .. } | InteractionMode::Connect { .. }
-        )
-    }
-
     /// True when a click on a section-area should produce
     /// `SelectionState::Section { node_id, section_idx }` rather than
     /// folding to `SelectionState::Single(node_id)`.
@@ -114,6 +103,8 @@ impl InteractionMode {
     /// Inside `NodeEdit { node_id }` for the matching node, clicks on
     /// section-areas resolve to `Section`. Consumed by Batch 3's
     /// rewrite of `app/click.rs`'s click-routing fork.
+    // Native-driver-only: consulted by the native click router.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn click_resolves_to_section(&self, hit_node: &str) -> bool {
         match self {
             InteractionMode::NodeEdit { node_id } => node_id == hit_node,
@@ -150,6 +141,8 @@ impl InteractionMode {
     /// modes that capture the next click as a "choose target" gesture.
     /// Used by handlers that previously matched on `AppMode::Reparent { .. } |
     /// AppMode::Connect { .. }` to update hover highlights.
+    // Native-driver-only: gates the native target-picker overlay.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn is_target_picker(&self) -> bool {
         matches!(self, InteractionMode::Reparent { .. } | InteractionMode::Connect { .. })
     }
@@ -270,9 +263,8 @@ mod tests {
     }
 
     #[test]
-    fn default_mode_does_not_intercept_or_pick_targets() {
+    fn default_mode_picks_no_target_and_shows_no_handles() {
         let m = InteractionMode::Default;
-        assert!(!m.intercepts_left_click());
         assert!(!m.click_resolves_to_section("any"));
         assert_eq!(m.resize_handle_node(), None);
         assert_eq!(m.resize_handle_section(), None);
@@ -280,20 +272,18 @@ mod tests {
     }
 
     #[test]
-    fn reparent_intercepts_and_is_target_picker() {
+    fn reparent_is_target_picker() {
         let m = InteractionMode::Reparent {
             sources: vec!["0".into()],
         };
-        assert!(m.intercepts_left_click());
         assert!(m.is_target_picker());
         assert!(!m.click_resolves_to_section("0"));
         assert_eq!(m.resize_handle_node(), None);
     }
 
     #[test]
-    fn connect_intercepts_and_is_target_picker() {
+    fn connect_is_target_picker() {
         let m = InteractionMode::Connect { source: "0".into() };
-        assert!(m.intercepts_left_click());
         assert!(m.is_target_picker());
         assert!(!m.click_resolves_to_section("0"));
         assert_eq!(m.resize_handle_node(), None);
@@ -305,7 +295,6 @@ mod tests {
         assert!(m.click_resolves_to_section("0.1"));
         assert!(!m.click_resolves_to_section("0"));
         assert!(!m.click_resolves_to_section("0.2"));
-        assert!(!m.intercepts_left_click());
         assert!(!m.is_target_picker());
         assert_eq!(m.resize_handle_node(), None);
         assert_eq!(m.resize_handle_section(), None);

@@ -365,6 +365,13 @@ impl TestNudgeMutation {
 /// role without standing up an `AppScene` and a `Renderer`, so
 /// [`project_roles`] runs the passes in `CanvasFrame::update_all`'s
 /// order against the same shared inputs and collects the results.
+/// Every role is collected whether or not a test reads it: the
+/// point of the fixture is that it runs the *same set of passes* in
+/// the same order as `CanvasFrame::update_all`, and a field dropped
+/// because today's tests ignore it would quietly drop its pass with
+/// it. Hence one allow on the struct rather than a shrinking field
+/// list.
+#[allow(dead_code)]
 pub(crate) struct ProjectedRoles {
     pub connection_elements: Vec<baumhard::mindmap::tree_builder::ConnectionElement>,
     pub edge_handles: Vec<baumhard::mindmap::tree_builder::EdgeHandleElement>,

@@ -7,8 +7,7 @@
 
 /// Arena-wide subtree copy helpers built on `indextree`.
 pub mod arena_utils;
-/// Core `Color` type, arithmetic, and compile-time color-literal
-/// macros.
+/// Core `Color` type and channel-wise arithmetic.
 pub mod color;
 /// Hex ↔ RGB ↔ HSV plus theme-variable resolution.
 pub mod color_conversion;
@@ -36,8 +35,6 @@ pub(crate) mod manifests;
 /// Hashable, `Eq`-able 2D float vector (each axis wrapped in
 /// `OrderedFloat`).
 pub mod ordered_vec2;
-/// Reference palettes — internal seeds and example constants.
-pub mod palettes;
 /// Lazy Sieve of Eratosthenes — the prime table the region-params
 /// grid chooser consults to avoid prime dimension factors.
 pub mod primes;

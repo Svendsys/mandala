@@ -420,10 +420,22 @@ extending the element's data fields.
 
 `lib/baumhard/src/core/primitives.rs`. Current
 variants: `Focused`, `Mutable`, `Anchored(AnchorBox)`,
-`MutationEvents`. `AnchorBox` holds up to four `Anchor` entries
-for layout-solver pinning. `MutationEvents` is reserved — it
-marks a node that should fire events on mutation (a seam for
-future reactive handlers).
+`MutationEvents`, `SectionRoot`. `AnchorBox` holds up to four
+`Anchor` entries for layout-solver pinning. `MutationEvents` is
+reserved — it marks a node that should fire events on mutation (a
+seam for future reactive handlers).
+
+`Anchored` and its `AnchorBox` / `Anchor` / `AnchorPoint` /
+`AnchorTarget` payload have no layout solver behind them yet, and
+nothing in either crate constructs one. They survive the #41
+dead-code sweep on format grounds rather than code grounds:
+`Flag` is `Serialize` / `Deserialize` and reachable from a
+`.mindmap.json` through the `GfxElementField::Flag(Flag)`
+predicate language, where
+[`format/mutations.md`](./format/mutations.md) publishes
+`Anchored(AnchorBox)` as an authorable variant. Removing the
+variant would change what an authored map round-trips, which is a
+format decision and not a cleanup.
 
 ### `Event`, `GlyphTreeEvent`, `GlyphTreeEventInstance`, `EventSubscriber`
 
@@ -866,29 +878,36 @@ handles hit-testing today; when the region index is wired, region
 mutations must go through the mutator pipeline or the index will
 drift silently.
 
-### Animation primitives — `AnimationDef`, `AnimationInstance`, `Timeline`, `TimelineEvent`
+### Animation primitives — `AnimationTiming`, `Easing`, `Followup`
 
-An immutable animation blueprint (`AnimationDef`)
-and a per-playback state struct (`AnimationInstance`) driven by
-a `Timeline` of `TimelineEvent`s.
+The vocabulary for motion: a serializable timing
+envelope on a mutation, an easing curve, and a reserved slot for
+what happens after a run completes.
 
-Glyph animations need to define a sequence
-once and replay it many times at different speeds, phases, or
-counts without cloning the definition. `AnimationDef` is the
-shared blueprint (via `Rc`); `AnimationInstance` carries the
-live play state. The timeline is a list of events —
-`Mutator(id)`, `Interpolation { mutator, num_frames,
-duration }`, `WaitMillis(n)`, `Goto(idx)`, `Terminate` —
-processed by the animation driver one event at a time.
+A "grow font" that snaps is fine; one that
+animates reads better. Rather than a general scheduler, motion
+here rides on the mutation that causes it — an authored
+`CustomMutation` carries `timing`, and the runtime blends between
+a pre-mutation and a post-mutation snapshot instead of executing
+a separate program.
 
-`lib/baumhard/src/core/animation.rs`. A
-`TimelineBuilder` provides a fluent constructor. The
-`AnimationMutator` trait exists alongside `Mutator` so an
-animation step can interpolate rather than apply instantly.
+`lib/baumhard/src/mindmap/animation.rs` for the serializable
+half (`AnimationTiming`, `Easing`, `Followup`, and the `lerp_*`
+helpers); `src/application/document/types.rs` +
+`animations.rs` for the app-side per-playback record and tick,
+which live there because the snapshot type (`MindNode`) and the
+completion commit do. See [§4](#animation-timing) for the
+authoring surface and
+[`format/animation-roadmap.md`](./format/animation-roadmap.md)
+for what is wired versus dormant.
 
-This is today's vocabulary for motion; the
-`Followup` slot on mutation timing ([§4](#animation-timing))
-expects to extend it with loop/reverse/chain semantics.
+A second, generic vocabulary — `AnimationDef` / `AnimationInstance`
+/ `Timeline` / `TimelineEvent` in `core/animation.rs` — was
+deleted in #41. It had no implementers of its `Mutable` bound, no
+callers, and an `update` signature that took its instance by value
+and returned nothing, so it could not have driven a tick as
+written. The long-form scheduling it stood for is the `Followup`
+slot's job when that lands.
 
 ### Utilities — `grapheme_chad`, `color`, `geometry`
 
@@ -1883,10 +1902,12 @@ animation by hand. The dispatcher starts an `AnimationInstance`
 that ticks each frame, blends the in-flight state, and commits
 on completion.
 
-`lib/baumhard/src/mindmap/custom_mutation/timing.rs`. Fields:
+`lib/baumhard/src/mindmap/animation.rs` — reached as the `timing`
+field on `CustomMutation`. Fields:
 `duration_ms`, `delay_ms`, `easing` (`Linear` / `EaseIn` /
 `EaseOut` / `EaseInOut`), and a reserved `then` (`Followup`)
-slot.
+slot. The app-side `AnimationInstance` that ticks it lives in
+`src/application/document/types.rs`.
 
 `Followup::{Reverse, Chain, Loop}` is named but not
 yet wired. When it lands, mutations will compose into chains

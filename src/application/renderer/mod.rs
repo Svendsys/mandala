@@ -36,30 +36,56 @@
 //!   for the [`crate::application::scene_host::AppScene`]
 //!   tree handles.
 
+// The overlay-render modules below carry a wasm32-only
+// `allow(dead_code)`: each renders a modal whose *shell* is
+// native-gated (CLAUDE.md "Dual-target status"), so on wasm32 the
+// builders compile with no caller. Scoped to wasm32 so the host
+// lint, which can see the shell, stays armed.
 mod borders;
 mod camera;
+// Color-picker overlay tree + mutators. Shell: the native-gated
+// `app::color_picker_flow`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod color_picker;
+// Console overlay geometry. Shell: the native-gated
+// `app::console_input`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod console_geometry;
+// Console overlay glyph areas + mutators. Same shell as
+// `console_geometry`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod console_pass;
 mod decree;
+// Renderer entry points for the two overlay rebuilds. Same shells
+// as `console_pass` and `color_picker`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod overlay_dispatch;
 mod pipeline;
 mod render;
+// Rubber-band selection rectangle. Driven by the native-gated
+// drag state machine.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod selection_overlay;
 mod tree_buffers;
 mod tree_walker;
 
 pub use borders::measure_max_glyph_advance;
-// `ConsoleFrameLayout` / `MAX_*` / `build_console_border_strings` are
-// part of the renderer's public surface and consumed by the test
-// block at the bottom of this file plus external callers (the app
-// crate threads `ConsoleFrameLayout` through the rebuild path).
-// cargo check (without `--tests`) doesn't see those usages.
-#[allow(unused_imports)]
+// The console overlay's geometry vocabulary, re-exported for the
+// app-side console shell (`app::console_input`) that fills it in.
+// That shell is native-gated, so on wasm32 nothing consumes these —
+// the same reason the overlay modules above carry a wasm32-only
+// `allow`, scoped the same way so the host lint stays armed.
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 pub use console_geometry::{
-    build_console_border_strings, compute_console_frame_layout, ConsoleFrameLayout, ConsoleOverlayCompletion,
-    ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind, MAX_CONSOLE_COMPLETION_ROWS,
+    ConsoleOverlayCompletion, ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind,
     MAX_CONSOLE_SCROLLBACK_ROWS,
+};
+// Layout math exercised only by this module's test block; the
+// production callers inside `renderer/` reach it through
+// `super::console_geometry::` directly.
+#[cfg(test)]
+use console_geometry::{
+    build_console_border_strings, compute_console_frame_layout, MAX_CONSOLE_COMPLETION_ROWS,
 };
 #[cfg(test)]
 use console_pass::{
@@ -84,7 +110,7 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::application::common::{FpsDisplayMode, PollTimer, RedrawMode, RenderDecree, StopWatch};
+use crate::application::common::{FpsDisplayMode, RenderDecree};
 use baumhard::font::fonts;
 #[cfg(test)]
 use baumhard::gfx_structs::area::GlyphArea;
@@ -258,17 +284,30 @@ pub(super) const RECT_VBUF_INITIAL_CAPACITY: u64 = 8192;
 
 pub struct Renderer {
     surface: Surface<'static>,
+    /// The window the surface was created from. Held, not read: the
+    /// `Surface<'static>` lifetime is bought by handing wgpu an
+    /// `Arc<Window>` clone at `create_surface`, and this is the
+    /// renderer's own share of that ownership — dropping the field
+    /// would make the renderer's lifetime depend on whoever else
+    /// still holds the window. `should_render` gating and
+    /// `ControlFlow::Poll` mean nothing on native asks the window to
+    /// redraw itself; the browser's loop does, through
+    /// [`Self::request_redraw`].
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     window: Arc<Window>,
     config: SurfaceConfiguration,
     device: Device,
     queue: Queue,
     viewport: Viewport,
     swash_cache: SwashCache,
+    /// glyphon's shader / bind-group cache. Held, not read: it is
+    /// borrowed once each by `TextAtlas::new` and `Viewport::new` at
+    /// construction, and both keep their own handle to it. Dropping
+    /// the field would end the renderer's share of a resource its
+    /// two consumers still use.
+    #[allow(dead_code)]
     glyphon_cache: Cache,
     atlas: TextAtlas,
-    timer: PollTimer,
-    target_duration_between_renders: Duration,
-    last_render_time: Duration,
     text_renderer: TextRenderer,
     /// Second glyphon TextRenderer dedicated to the command
     /// palette overlay. Shares `self.atlas` with `text_renderer`
@@ -286,7 +325,6 @@ pub struct Renderer {
     /// frame. A failed prepare skips `present()` too, so the frame
     /// takes no vsync backpressure and the loop can spin at CPU rate.
     prepare_fault_logged: bool,
-    redraw_mode: RedrawMode,
     run: bool,
     should_render: bool,
     fps: Option<usize>,
@@ -325,11 +363,11 @@ pub struct Renderer {
     /// Wall-clock timestamp of the previous rendered frame. The
     /// difference between consecutive values is the actual frame
     /// interval, which is what FPS is derived from. Measuring
-    /// wall-clock here rather than `last_render_time` is load-bearing:
-    /// `render()` can early-return on font-system lock contention
-    /// under heavy interaction, which would otherwise make
-    /// `last_render_time` shrink to near-zero and inflate FPS to a
-    /// false huge value.
+    /// wall-clock here rather than the duration of the `render()`
+    /// call is load-bearing: `render()` can early-return on
+    /// font-system lock contention under heavy interaction, and
+    /// timing the call would then shrink to near-zero and inflate FPS
+    /// to a false huge value.
     last_frame_instant: Option<Instant>,
     /// Frame counter used by `FpsDisplayMode::Snapshot` to refresh the
     /// displayed value only every `FPS_WINDOW` frames. Increments
@@ -360,10 +398,6 @@ pub struct Renderer {
     /// wins via `insert`); the vec preserves emission order so
     /// halos stay behind the main glyph at render time.
     mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
-    /// Command palette / console overlay buffers. Rendered above
-    /// everything else in screen coordinates. Populated only when
-    /// the console is open; cleared otherwise.
-    console_overlay_buffers: Vec<MindMapTextBuffer>,
     /// Screen-space geometry of the color picker's opaque backdrop.
     /// Captured inside `rebuild_color_picker_overlay_buffers`; the
     /// `render()` rect-pipeline pass appends a black fill rect for
@@ -680,15 +714,11 @@ impl Renderer {
             queue,
             atlas,
             swash_cache: SwashCache::new(),
-            timer: PollTimer::new(Duration::from_millis(16)),
-            target_duration_between_renders: Duration::from_millis(10),
-            last_render_time: Duration::from_millis(16),
             text_renderer,
             console_text_renderer,
             prepare_fault_logged: false,
             should_render: false,
             fps: None,
-            redraw_mode: RedrawMode::NoLimit,
             run: true,
             fps_display_mode: FpsDisplayMode::Off,
             fps_overlay_buffers: Vec::new(),
@@ -704,7 +734,6 @@ impl Renderer {
             viewport,
             camera,
             mindmap_buffers: Default::default(),
-            console_overlay_buffers: Vec::new(),
             color_picker_backdrop: None,
             overlay_buffers: Vec::new(),
             selection_rect_shape_cache: None,
@@ -762,8 +791,8 @@ impl Renderer {
     }
 
     /// Set the screen-space FPS readout mode. Routes through the
-    /// decree bus so `should_render` / `StartRender` / `StopRender`
-    /// and the FPS toggle share a single in-renderer mutation point.
+    /// decree bus so `should_render` / `StartRender` and the FPS
+    /// toggle share a single in-renderer mutation point.
     pub fn set_fps_display(&mut self, mode: FpsDisplayMode) {
         self.process_decree(RenderDecree::SetFpsDisplay(mode));
     }
@@ -787,57 +816,51 @@ impl Renderer {
     /// decide whether the loop should keep iterating without
     /// burning the flag — `take` would consume it before the
     /// next `drain_camera_geometry_rebuild` got a chance to react.
+    // Native-driver-only: read by the native idle-CPU
+    // `needs_continuation` predicate; the browser's rAF loop has no
+    // idle state to decide about.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn connection_geometry_dirty(&self) -> bool {
         self.connection_geometry_dirty
     }
 
     /// Forward a redraw request to the underlying winit window. On
-    /// native this queues a `WindowEvent::RedrawRequested` for the
-    /// next event-loop iteration; on web (winit-web) it schedules
-    /// an internal `requestAnimationFrame`. Multiple calls in one
-    /// event chain coalesce to a single delivery — safe to call
-    /// from any handler that mutated visual state.
+    /// web (winit-web) this schedules an internal
+    /// `requestAnimationFrame`; multiple calls in one event chain
+    /// coalesce to a single delivery, so it is safe to call from any
+    /// handler that mutated visual state.
+    ///
+    /// Browser-only consumer: `run_wasm` drives its frames off winit
+    /// redraw requests, while native's loop runs `ControlFlow::Poll`
+    /// and never asks. Lint armed on wasm32 so the day that changes,
+    /// wasm32 says so.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn request_redraw(&self) {
         self.window.request_redraw();
     }
 
-    const ZERO_DURATION: Duration = Duration::new(0, 0);
-
+    /// Draw one frame and report whether the event loop should keep
+    /// going. The loop paces itself — `ControlFlow::Poll` plus the
+    /// surface's own vsync backpressure — so there is no rate gate
+    /// here.
+    ///
+    /// There used to be one: a `RedrawMode` with `OnRequest` /
+    /// `FpsLimit(n)` / `NoLimit` arms. The field was written exactly
+    /// once, to `NoLimit`, so the other two were unreachable, and the
+    /// `FpsLimit` arm subtracted one `Duration` from another with no
+    /// saturation — with its seeded values (10 ms target, 16 ms last
+    /// render) the very first tick would have underflowed and
+    /// panicked. Wiring the mode would not have enabled a feature; it
+    /// would have crashed the frame. Reinstating a frame cap means
+    /// writing the arithmetic, not reviving this.
     #[inline]
     pub fn process(&mut self) -> bool {
-        match self.redraw_mode {
-            RedrawMode::OnRequest => {
-                self.fps = Some(0);
-            }
-            RedrawMode::FpsLimit(_) => {
-                if self.timer.is_expired() {
-                    let delta_duration = self.target_duration_between_renders - self.last_render_time;
-                    if delta_duration.le(&Self::ZERO_DURATION) {
-                        self.timer.expire_in(Duration::from(Self::ZERO_DURATION));
-                    } else {
-                        self.timer.expire_in(delta_duration);
-                    }
-                    if self.fps_display_mode != FpsDisplayMode::Off {
-                        self.tick_fps();
-                        self.rebuild_fps_overlay_if_needed();
-                    }
-                    self.rebuild_mode_status_overlay_if_needed();
-                    let sw = StopWatch::new_start();
-                    self.render();
-                    self.last_render_time = sw.stop();
-                }
-            }
-            RedrawMode::NoLimit => {
-                if self.fps_display_mode != FpsDisplayMode::Off {
-                    self.tick_fps();
-                    self.rebuild_fps_overlay_if_needed();
-                }
-                self.rebuild_mode_status_overlay_if_needed();
-                let sw = StopWatch::new_start();
-                self.render();
-                self.last_render_time = sw.stop();
-            }
+        if self.fps_display_mode != FpsDisplayMode::Off {
+            self.tick_fps();
+            self.rebuild_fps_overlay_if_needed();
         }
+        self.rebuild_mode_status_overlay_if_needed();
+        self.render();
         self.run
     }
 
@@ -936,11 +959,12 @@ impl Renderer {
 
     /// Capture the wall-clock interval since the previous frame and
     /// update `self.fps` according to the active display mode.
-    /// Wall-clock (rather than `last_render_time`) is load-bearing:
-    /// `render()` can early-return on a contended font-system lock
-    /// under heavy drag / scene-rebuild load, which would otherwise
-    /// shrink `last_render_time` to a near-zero early-return cost and
-    /// inflate the reported FPS into the hundreds of thousands.
+    /// Wall-clock (rather than the duration of the `render()` call)
+    /// is load-bearing: `render()` can early-return on a contended
+    /// font-system lock under heavy drag / scene-rebuild load, which
+    /// would otherwise shrink the measured cost to a near-zero
+    /// early-return and inflate the reported FPS into the hundreds of
+    /// thousands.
     ///
     /// A frame interval longer than [`Self::IDLE_FRAME_THRESHOLD_US`]
     /// indicates the previous "frame" was actually idle wall-clock,
@@ -1011,6 +1035,10 @@ impl Renderer {
     /// if the overlay is at the idle marker or has never been
     /// populated. Used by the event loop to decide whether the
     /// overlay needs one more redraw to flip to "-" before parking.
+    // Native-driver-only, with the two below: the active-to-idle FPS
+    // transition belongs to `ControlFlow::Wait`, which only native's
+    // loop enters.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn has_live_fps(&self) -> bool {
         self.fps.is_some()
     }
@@ -1030,6 +1058,7 @@ impl Renderer {
     /// gates produce momentary `needs_continuation == false` gaps
     /// between drain frames would flash "FPS: -" between every
     /// drain — making the readout unusable as a diagnostic.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn fps_idle_defer_deadline(&self, grace: Duration) -> Option<Instant> {
         if !self.has_live_fps() {
             return None;
@@ -1051,14 +1080,10 @@ impl Renderer {
     /// The arm-and-consume flag protects the transitional frame
     /// from `tick_fps` re-computing a numeric reading from the
     /// pre-idle rolling-avg samples.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn set_fps_idle(&mut self) {
         self.fps = None;
         self.fps_pending_idle_paint = true;
-    }
-
-    #[inline]
-    fn get_size(&self) -> PhysicalSize<u32> {
-        self.window.inner_size()
     }
 
     #[inline]

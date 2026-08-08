@@ -142,6 +142,11 @@ where
 /// Public-in-app so the WASM macro target's impl can call it,
 /// and so unit tests under `#[cfg(test)]` can pin the contract
 /// without spinning up a `WasmInputState`.
+// Consumer is `run_wasm/`; the host build reaches this only from
+// `#[cfg(test)]`, so arm the lint on wasm32 and silence it here
+// rather than blanket-allowing on both targets — if the browser
+// caller goes away, wasm32 says so.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
     action: &Action,
     double_click_residual: Option<super::cross_dispatch::DoubleClickResidual>,

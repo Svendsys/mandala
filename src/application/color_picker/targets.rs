@@ -89,49 +89,6 @@ pub enum PickerHandle {
     },
 }
 
-impl PickerHandle {
-    /// Short label for the picker title bar. Portal-mode edges and
-    /// line-mode edges both read as "edge" here — the display mode
-    /// is already visible in the canvas, so repeating it in the
-    /// picker chrome would be noise.
-    pub fn label(&self) -> &'static str {
-        match self {
-            PickerHandle::Edge(_) => "edge",
-            PickerHandle::Node { .. } => "node",
-            PickerHandle::Section { .. } => "section",
-        }
-    }
-
-    pub fn kind(&self) -> TargetKind {
-        match self {
-            PickerHandle::Edge(_) => TargetKind::Edge,
-            PickerHandle::Node { .. } => TargetKind::Node,
-            PickerHandle::Section { .. } => TargetKind::Section,
-        }
-    }
-}
-
-/// Coarse target kind for legacy call-sites that only need to
-/// distinguish edges / nodes / sections without caring about the
-/// concrete id or axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetKind {
-    Edge,
-    Node,
-    Section,
-}
-
-impl TargetKind {
-    /// Short label for the picker title bar.
-    pub fn label(&self) -> &'static str {
-        match self {
-            TargetKind::Edge => "edge",
-            TargetKind::Node => "node",
-            TargetKind::Section => "section",
-        }
-    }
-}
-
 impl ColorTarget {
     /// Resolve the target ref to a concrete [`PickerHandle`]. Returns
     /// `None` if the underlying edge / node was deleted between the

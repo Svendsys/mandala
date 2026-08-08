@@ -175,6 +175,14 @@ impl MindMapDocument {
     /// preserves the model's "bit-exact equality after
     /// round-trip" property. User-facing verbs should validate
     /// reasonable delta magnitudes upstream.
+    ///
+    /// Test-gated with its two absolute siblings below. The shipped
+    /// console path is `set_edge_font(size, min, max)`, which writes
+    /// the whole clamp triple in one `EditEdge` undo entry; these
+    /// three write `font_size_pt` alone. The clamp semantics they
+    /// pin are the same ones `set_edge_font` relies on, so the tests
+    /// stay.
+    #[cfg(test)]
     pub fn set_edge_font_size_step(&mut self, edge_ref: &EdgeRef, delta_pt: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
@@ -183,39 +191,6 @@ impl MindMapDocument {
                 return false;
             }
             cfg.font_size_pt = new_val;
-            true
-        })
-    }
-
-    /// Set the connection's `font_size_pt` to an absolute value,
-    /// clamped into `[min_font_size_pt, max_font_size_pt]`. Returns
-    /// `true` if the clamped value differs from the current.
-    ///
-    /// Counterpart to [`Self::set_edge_font_size_step`] for the
-    /// console's `font size=<pt>` kv form, where callers have an
-    /// absolute target rather than a delta.
-    pub fn set_edge_font_size(&mut self, edge_ref: &EdgeRef, pt: f32) -> bool {
-        self.mutate_edge(edge_ref, |edge, canvas| {
-            let cfg = ensure_glyph_connection_inline(edge, canvas);
-            let new_val = pt.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-            if almost_equal(cfg.font_size_pt, new_val) {
-                return false;
-            }
-            cfg.font_size_pt = new_val;
-            true
-        })
-    }
-
-    /// Reset the connection's `font_size_pt` to the hardcoded default
-    /// (12.0). Returns `true` if the value actually changed.
-    pub fn reset_edge_font_size(&mut self, edge_ref: &EdgeRef) -> bool {
-        let default_size = GlyphConnectionConfig::default().font_size_pt;
-        self.mutate_edge(edge_ref, |edge, canvas| {
-            let cfg = ensure_glyph_connection_inline(edge, canvas);
-            if almost_equal(cfg.font_size_pt, default_size) {
-                return false;
-            }
-            cfg.font_size_pt = default_size;
             true
         })
     }

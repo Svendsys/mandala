@@ -422,11 +422,9 @@ mod tests {
 
     fn geom(hue_deg: f32, sat: f32, val: f32) -> ColorPickerOverlayGeometry {
         ColorPickerOverlayGeometry {
-            target_label: "edge",
             hue_deg,
             sat,
             val,
-            preview_hex: String::new(),
             hex_visible: false,
             max_cell_advance: 16.0,
             max_ring_advance: 24.0,
@@ -439,7 +437,6 @@ mod tests {
             arm_left_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
             arm_right_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
             preview_ink_offset: (0.0, 0.0),
-            selection_hint: None,
         }
     }
 

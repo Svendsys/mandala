@@ -105,6 +105,14 @@ fn help_for(name: &str, _ctx: &ConsoleContext) -> ExecResult {
             if !cmd.aliases.is_empty() {
                 lines.push(format!("aliases: {}", cmd.aliases.join(", ")));
             }
+            // `tags` carries the search words a verb's name doesn't
+            // contain ("pick" under `color`). Twenty commands author
+            // them and nothing read the field until #41 found it
+            // dead; printing them here is what makes them
+            // discoverable rather than decorative.
+            if !cmd.tags.is_empty() {
+                lines.push(format!("tags: {}", cmd.tags.join(", ")));
+            }
             ExecResult::lines(lines)
         }
         None => ExecResult::err(format!("unknown command: {}", name)),
@@ -314,6 +322,59 @@ mod tests {
         assert_eq!(
             cont_count, 0,
             "single-form usage shouldn't produce continuation lines"
+        );
+    }
+
+    /// `help <verb>` publishes the two optional metadata blocks —
+    /// `aliases:` and `tags:` — and omits each when the verb
+    /// authored none. `tags` in particular had no reader at all
+    /// until #41 found the field dead, so this pins the line that
+    /// makes it discoverable; `aliases` was equally untested and
+    /// is closed here rather than left to drift alongside it.
+    #[test]
+    fn test_help_for_publishes_aliases_and_tags_blocks() {
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let text_of = |name: &str| -> Vec<String> {
+            match help_for(name, &ctx) {
+                crate::application::console::ExecResult::Lines(ls) => {
+                    ls.into_iter().map(|l| l.text).collect()
+                }
+                other => panic!("expected Lines, got {:?}", other),
+            }
+        };
+
+        // `help` authors both, so both lines appear, comma-joined
+        // in declaration order.
+        let help_lines = text_of("help");
+        assert!(
+            help_lines.iter().any(|l| l == "aliases: ?, h"),
+            "help's aliases must be published verbatim; got {:?}",
+            help_lines
+        );
+        assert!(
+            help_lines.iter().any(|l| l == "tags: list, usage, commands"),
+            "help's tags must be published verbatim; got {:?}",
+            help_lines
+        );
+
+        // `color` authors tags but no aliases. The tag `pick`
+        // appears in no other field of the verb — it is exactly
+        // the search word the name doesn't contain — so its
+        // presence proves the line carries content the rest of
+        // the output cannot supply.
+        let color_lines = text_of("color");
+        assert!(
+            color_lines
+                .iter()
+                .any(|l| l == "tags: color, bg, text, border, pick, wheel"),
+            "color's tags must be published verbatim; got {:?}",
+            color_lines
+        );
+        assert!(
+            !color_lines.iter().any(|l| l.starts_with("aliases:")),
+            "a verb with no aliases must not emit an empty aliases line; got {:?}",
+            color_lines
         );
     }
 }

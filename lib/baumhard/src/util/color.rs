@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Core color type and arithmetic, plus macros for compile-time
-//! color literals. The conversion utilities (hex/RGB/HSV, theme
-//! variable resolution) live in the companion `super::color_conversion`
-//! module.
+//! Core color type and arithmetic. The conversion utilities
+//! (hex/RGB/HSV, theme variable resolution) live in the companion
+//! `super::color_conversion` module, and are the single way a string
+//! becomes a color:
+//! [`hex_to_rgba_safe`](crate::util::color_conversion::hex_to_rgba_safe)
+//! for the degrade-on-garbage posture the interactive paths need,
+//! [`hex_to_rgba`](crate::util::color_conversion::hex_to_rgba) when
+//! the caller wants to see the failure.
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
@@ -11,65 +15,6 @@ use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
 // Re-export every public item from color_conversion so existing
 // `use baumhard::util::color::*` imports continue to resolve.
 pub use super::color_conversion::*;
-
-/// Compile-time `[u8; 4]` → `[f32; 4]` RGBA literal, dividing each
-/// channel by 255.0. Use in `const`-adjacent contexts where a
-/// float-RGBA is wanted without a helper call. For runtime
-/// conversions reach for
-/// [`crate::util::color_conversion::hex_to_rgba_safe`] or the
-/// explicit accessors on [`crate::util::color::FloatRgba`].
-/// Absolute paths because `#[macro_export]` doc-renders at the
-/// crate root, where `super::` would resolve against the wrong
-/// scope.
-#[macro_export]
-macro_rules! rgba {
-    ([$r:expr, $g:expr, $b:expr, $a:expr]) => {{
-        [
-            ($r as f32) / 255.0,
-            ($g as f32) / 255.0,
-            ($b as f32) / 255.0,
-            ($a as f32) / 255.0,
-        ]
-    }};
-}
-
-/// Compile-time `[u8; 3]` → `[f32; 4]` RGB literal with alpha pinned
-/// to 1.0. Mirrors [`rgba!`] for the common no-alpha case.
-#[macro_export]
-macro_rules! rgb {
-    ([$r:expr, $g:expr, $b:expr]) => {{
-        [($r as f32) / 255.0, ($g as f32) / 255.0, ($b as f32) / 255.0, 1.0]
-    }};
-}
-
-/// Parse an `#RRGGBB`-style hex string into `[f32; 4]` RGBA at the
-/// call site, with alpha pinned to 1.0. Tolerates a leading `#` and
-/// falls back to 0.0 per channel on unparseable digits so a typo in
-/// a palette entry stays visible (transparent black) instead of
-/// panicking the frame. Runs at evaluation time, not `const` time —
-/// use it from `lazy_static!` blocks or regular expressions; it
-/// cannot appear in a `const fn` body.
-#[macro_export]
-macro_rules! hex {
-    ($color:expr) => {{
-        let color = $color.trim_start_matches('#');
-        let length = color.len();
-        let rgb_iter = (0..length)
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&color[i..i + 2], 16).unwrap_or(0));
-
-        let mut rgba = [0.0; 4];
-        for (i, c) in rgb_iter.enumerate() {
-            rgba[i] = c as f32 / 255.0;
-        }
-
-        if length == 6 {
-            rgba[3] = 1.0;
-        }
-
-        rgba
-    }};
-}
 
 /// `[R, G, B, A]` in `[0.0, 1.0]` — the canvas-space color
 /// representation consumed by the renderer. Plain array, zero

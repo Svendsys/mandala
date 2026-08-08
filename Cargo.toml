@@ -167,7 +167,6 @@ web-time = "1.1.0"
 # cost. If a build script is ever added, declare its deps then.
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-num_cpus = "1.17.0"
 pollster = "0.4.0"
 arboard = "3.6.1"
 

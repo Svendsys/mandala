@@ -56,10 +56,15 @@ pub struct AnimationInstance {
     /// at start by applying the mutation to a scratch copy.
     pub to_node: MindNode,
     /// Wall-clock timestamp (ms) when the animation started.
+    // Native-driver-only: `tick_animations` is the reader and the
+    // browser has no per-frame drain wired to it (CLAUDE.md
+    // "Per-frame animation drain").
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub start_ms: u64,
     /// Timing envelope carved from `cm.timing` at construction.
     /// Stored directly (not as `Option`) so the per-frame tick
     /// loop projects without unwrap.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub timing: AnimationTiming,
     /// The `CustomMutation` driving the animation. Carries the
     /// id (for re-trigger detection) and the mutation list (for
@@ -78,16 +83,22 @@ impl AnimationInstance {
     /// The timing envelope. Stored directly on the instance —
     /// `start_animation` carves it from `cm.timing` so the
     /// per-frame tick loop never has to unwrap.
+    // Native-driver-only: read by `tick_animations`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn timing(&self) -> &AnimationTiming {
         &self.timing
     }
 }
 
 /// Reparent-mode source color: orange, used for nodes currently being reparented.
+// Native-driver-only: `InteractionMode::Reparent` is entered from a
+// native-gated handler, so the browser never paints these tints.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub const REPARENT_SOURCE_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 1.0];
 
 /// Reparent-mode target color: green, used for the node currently hovered as
 /// a potential reparent target.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub const REPARENT_TARGET_COLOR: [f32; 4] = [0.2, 1.0, 0.4, 1.0];
 
 /// Identifies an edge in the MindMap by its endpoints and type. Edges
@@ -185,6 +196,9 @@ pub enum SelectionState {
     /// invariant `len() >= 2` is upheld by [`Self::from_sections`];
     /// callers that may produce 0 / 1 entries should route
     /// through that constructor.
+    // Native-driver-only: produced by shift-click fan-out in the
+    // native click router.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     MultiSection(Vec<SectionSel>),
     /// `range` is a `(lo, hi)` pair of **section indices** on
     /// the owning node, `[lo, hi]` inclusive. Fanned out by
@@ -197,6 +211,22 @@ pub enum SelectionState {
     /// only care about the owning section (`selected_section`,
     /// `selected_ids`, `is_selected`) treat it identically to
     /// [`Self::Section`].
+    ///
+    /// **No producer today, and that is a defect rather than a
+    /// seam.** Every consumer listed above is wired and tested, and
+    /// [`format/sections.md`](https://github.com/Svendsys/mandala/blob/main/format/sections.md)
+    /// names two producers — a `range=A..B` console kv and the
+    /// editor's shift-select lift — but neither reaches this
+    /// variant: the verbs call the range-aware setters directly
+    /// without changing the selection, and
+    /// `text_edit::editor::lift_anchor_to_section_range` returns
+    /// [`Self::Section`] despite its name, deliberately, to dodge a
+    /// grapheme-index-versus-section-index confusion that
+    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` books as its own
+    /// follow-up. Kept rather than deleted because the consumers are
+    /// real and the missing piece is one producer; reported out of
+    /// #41 rather than fixed there.
+    #[allow(dead_code)]
     SectionRange { sel: SectionSel, range: (usize, usize) },
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
@@ -229,6 +259,9 @@ impl SectionSel {
     /// Construct a section selection from owned strings + index.
     /// Mirrors [`EdgeRef::new`] — same idiomatic shape across
     /// every selection-bearing identity in the document layer.
+    /// Test-gated: production sites build the struct literally,
+    /// usually while destructuring something adjacent.
+    #[cfg(test)]
     pub fn new(node_id: impl Into<String>, section_idx: usize) -> Self {
         SectionSel {
             node_id: node_id.into(),
@@ -282,6 +315,8 @@ impl SelectionState {
     /// Cost: O(n) with a transient `HashSet` of (node_id ref,
     /// section_idx) — bounded by the input length, which is
     /// in turn bounded by user authoring (typically ≤ 10).
+    // Native-driver-only: the constructor for the variant above.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn from_sections(secs: Vec<SectionSel>) -> Self {
         let mut seen: std::collections::HashSet<(String, usize)> =
             std::collections::HashSet::with_capacity(secs.len());
@@ -394,6 +429,10 @@ impl SelectionState {
     /// for every other variant. Per-section verbs route
     /// range-targeted setters through this when the user has
     /// shift-selected a sub-range inside a section.
+    ///
+    /// Test-gated for as long as [`Self::SectionRange`] has no
+    /// producer — see the note on that variant.
+    #[cfg(test)]
     pub fn selected_range(&self) -> Option<(usize, usize)> {
         match self {
             SelectionState::SectionRange { range, .. } => Some(*range),
@@ -442,6 +481,15 @@ impl SelectionState {
     /// [`Self::selected_portal_label`] — label-target operations
     /// that specifically want the label (not the edge body)
     /// consult this accessor.
+    ///
+    /// Test-gated with its three siblings below. The live
+    /// label-target paths match the variant they need inline —
+    /// usually as one arm of a match that also handles the other
+    /// three — so a per-variant borrow has no caller. The
+    /// collapsing accessor next door,
+    /// [`Self::selected_edge_or_portal_edge`], is the one production
+    /// reaches for.
+    #[cfg(test)]
     pub fn selected_edge_label(&self) -> Option<&EdgeLabelSel> {
         match self {
             SelectionState::EdgeLabel(s) => Some(s),
@@ -453,7 +501,8 @@ impl SelectionState {
     /// selection (the portal **icon**), or `None` for any other
     /// variant. Complements `selected_edge` — the variants are
     /// mutually exclusive so at most one returns `Some` for any
-    /// given state.
+    /// given state. Test-gated — see [`Self::selected_edge_label`].
+    #[cfg(test)]
     pub fn selected_portal_label(&self) -> Option<&PortalLabelSel> {
         match self {
             SelectionState::PortalLabel(s) => Some(s),
@@ -466,7 +515,9 @@ impl SelectionState {
     /// `None` for any other variant. Distinct from
     /// [`Self::selected_portal_label`]: both use `PortalLabelSel`
     /// as the identity-carrying struct, but only one of them is
-    /// active at any moment (they're separate variants).
+    /// active at any moment (they're separate variants). Test-gated
+    /// — see [`Self::selected_edge_label`].
+    #[cfg(test)]
     pub fn selected_portal_text(&self) -> Option<&PortalLabelSel> {
         match self {
             SelectionState::PortalText(s) => Some(s),
@@ -500,7 +551,10 @@ impl SelectionState {
     /// non-portal selection. Useful for operations that target
     /// the whole portal endpoint (e.g. the `body glyph=` console
     /// verb applies to the icon regardless of whether the user
-    /// clicked icon or text).
+    /// clicked icon or text). Test-gated — see
+    /// [`Self::selected_edge_label`]; the verbs that want a portal
+    /// endpoint match both variants in one arm.
+    #[cfg(test)]
     pub fn selected_portal_endpoint(&self) -> Option<&PortalLabelSel> {
         match self {
             SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => Some(s),

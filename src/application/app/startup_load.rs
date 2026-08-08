@@ -120,6 +120,11 @@ pub(crate) async fn wasm_startup_document(url: &str) -> MindMapDocument {
 /// `test_the_browser_leg_carries_every_fetch_message_through` runs it
 /// against the real strings `fetch_map_json` emits, rather than
 /// leaving the browser's only failure path to a source scan.
+// Consumer is `run_wasm/`; the host build reaches this only from
+// `#[cfg(test)]`, so arm the lint on wasm32 and silence it here
+// rather than blanket-allowing on both targets — if the browser
+// caller goes away, wasm32 says so.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn browser_load(url: &str, fetched: Result<String, String>) -> Result<MindMapDocument, String> {
     fetched.and_then(|json| MindMapDocument::from_json_str(&json, Some(url.to_string())))
 }

@@ -154,12 +154,15 @@ pub struct BorderEditOutcome {
 /// dispatches to the matching committing setter and clears the
 /// preview slot, cancel just clears.
 ///
-/// `selection_snapshot` is the live selection at preview-set time —
-/// the scene builder treats the preview as inactive when the
-/// current `MindMapDocument.selection` no longer covers the
-/// snapshot's targets (drift). The actual clear happens at the
-/// next `set_*` / `commit_*` / `cancel_*` call; the steady-state
-/// "orphaned by drift" preview is harmless until then.
+/// Drift — the selection moving off what the preview targets — is
+/// decided by [`MindMapDocument::border_preview_covers_live_selection`],
+/// which reads `target` against the *live* selection with subset
+/// semantics. It used to compare a snapshot of the selection taken
+/// at preview-set time for equality, which rejected
+/// state-preserving subtarget moves; the snapshot went with that
+/// comparison. The scene builder treats a drifted preview as
+/// inactive, and the actual clear happens at the next `set_*` /
+/// `commit_*` / `cancel_*` call.
 ///
 /// One preview at a time: a fresh `set_border_preview` replaces
 /// any active preview atomically.
@@ -167,7 +170,6 @@ pub struct BorderEditOutcome {
 pub struct BorderPreview {
     pub target: BorderPreviewTarget,
     pub edits: BorderConfigEdits,
-    pub selection_snapshot: SelectionState,
 }
 
 /// Which border slot the preview substitutes for at scene-build
@@ -675,11 +677,7 @@ impl MindMapDocument {
         // the staged edits are a no-op against the current slot.
         // The simulation already populated it via the helper.
 
-        self.border_preview = Some(BorderPreview {
-            target,
-            edits,
-            selection_snapshot: self.selection.clone(),
-        });
+        self.border_preview = Some(BorderPreview { target, edits });
         outcome
     }
 

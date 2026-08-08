@@ -170,6 +170,9 @@ impl MindMapDocument {
     /// **post-mutation** AABB so a gesture that shifts offset and
     /// grows size in the same frame doesn't fail on the
     /// intermediate state.
+    // Native-driver-only, with `set_node_aabb`: both are written by
+    // the native resize state machine.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn set_section_aabb(
         &mut self,
         node_id: &str,
@@ -230,6 +233,7 @@ impl MindMapDocument {
     /// Same post-grow no-op-gate discipline as
     /// [`Self::set_node_size`] — see there for the framed-node
     /// idempotency rationale.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn set_node_aabb(
         &mut self,
         node_id: &str,
@@ -548,6 +552,8 @@ impl MindMapDocument {
 /// (no parent AABB), so negative coordinates are legal — a node can
 /// sit at a negative canvas-x to the left of the origin — but the
 /// *magnitude* is bounded, because the loader bounds it too.
+// Native-driver-only: guards the native drag/resize commits.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn validate_node_position(pos: baumhard::mindmap::model::Position) -> Result<(), String> {
     use baumhard::mindmap::model::validate::MAX_CANVAS_COORD;
     if !pos.x.is_finite() || !pos.y.is_finite() {

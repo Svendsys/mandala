@@ -47,9 +47,9 @@ pub struct Command {
     /// Full usage line shown in `help <cmd>`. Conventionally starts
     /// with the command name: `"anchor set <from|to> <side>"`.
     pub usage: &'static str,
-    /// Extra search tokens surfaced in `help --all` output so a
-    /// user grepping the command list can find "pick" under
-    /// `color` even though the name doesn't include it.
+    /// Extra search tokens printed by `help <cmd>` so a user
+    /// grepping the command list can find "pick" under `color`
+    /// even though the name doesn't include it.
     pub tags: &'static [&'static str],
     /// Returns `true` when the command should appear in the filtered
     /// `help` list and in completion. Commands whose args are

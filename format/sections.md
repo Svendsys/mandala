@@ -326,7 +326,11 @@ graphemes inside one section's text; per-section verbs route to
 range-aware setters (`set_section_text_color_range`,
 `set_section_font_size_range`, `set_section_font_family_range`).
 
-Two producers of `SectionRange`:
+**`SectionRange` has no producer today.** Its consumers are all
+wired and tested, but nothing in the running application ever
+constructs the variant. This section previously named two
+producers; #41's inventory found that neither reaches it, and
+that is recorded as a defect rather than as a seam:
 
 - **Console verbs** with `range=A..B` kv:
   `color text=#abc section=N range=2..7` /
@@ -334,16 +338,24 @@ Two producers of `SectionRange`:
   `font set <family> section=N range=2..7`. The verb path
   bypasses the trait dispatcher and calls the range setter
   directly; `range=A..B` requires `section=N` and rejects
-  empty / inverted / non-numeric input with a clear error.
+  empty / inverted / non-numeric input with a clear error. It
+  applies the range to the *setter call* and leaves
+  `SelectionState` untouched — so the range never becomes a
+  selection.
 - **Editor shift-select anchor**: the inline text editor's
   `Shift+Arrow*` / `Shift+Home` / `Shift+End` keystrokes seed an
   anchor at the pre-action cursor position; subsequent shift-cursor
-  moves extend the cursor while preserving the anchor. On editor
-  close (commit or cancel), `lift_anchor_to_section_range` promotes
-  a non-empty `(anchor, cursor)` pair to
-  `SelectionState::SectionRange { range: (min, max) }`. Non-shift
-  cursor moves and any text edit (typing / delete) clear the anchor
-  — range-aware editing (typing-replaces-selection) is deferred.
+  moves extend the cursor while preserving the anchor. On commit,
+  `lift_anchor_to_section_range` promotes a non-empty
+  `(anchor, cursor)` pair to `SelectionState::Section` — despite
+  its name it discards the grapheme range, deliberately, because
+  every `SectionRange` consumer reads `range` as *section*
+  indices rather than grapheme positions. Resolving that
+  grapheme-versus-section confusion is booked as its own
+  follow-up in `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`.
+  Non-shift cursor moves and any text edit (typing / delete)
+  clear the anchor — range-aware editing
+  (typing-replaces-selection) is deferred.
 
 **Clipboard contract.** `Cut` and `Paste` return
 `Outcome::NotApplicable` rather than silently destroy

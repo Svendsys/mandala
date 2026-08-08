@@ -1334,7 +1334,8 @@ mod tests {
     }
 
     /// `section resize fill` (renamed from the prior `none`
-    /// literal) clears `size` to fill-parent.    #[test]
+    /// literal) clears `size` to fill-parent.
+    #[test]
     fn section_resize_fill_literal_clears_size() {
         let (mut doc, id) = pinned_two_section_node();
         // Move offset to (0,0) so the fill-parent state passes

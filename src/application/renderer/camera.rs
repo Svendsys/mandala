@@ -82,6 +82,9 @@ impl Renderer {
     /// Size of one screen pixel in canvas units — used to convert
     /// screen-space tolerances (e.g. click tolerance) to canvas-space
     /// distances that stay visually consistent across zoom.
+    // Native-driver-only: screen-space hit tolerances are converted
+    // to canvas units only by the native mouse handlers.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn canvas_per_pixel(&self) -> f32 {
         if self.camera.zoom > f32::EPSILON {
             1.0 / self.camera.zoom

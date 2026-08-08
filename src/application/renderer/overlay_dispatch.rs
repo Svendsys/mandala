@@ -26,9 +26,10 @@ impl Renderer {
     /// glyph-rendered strip: sacred border, scrollback region,
     /// optional completion popup, and the prompt line with cursor.
     ///
-    /// Everything is positioned in screen coordinates (the render
-    /// pass draws `console_overlay_buffers` with `scale = 1.0`), so
-    /// the console stays a fixed size regardless of canvas zoom.
+    /// Everything is positioned in screen coordinates (the walk
+    /// lands in `overlay_scene_buffers`, which the render pass
+    /// draws with `scale = 1.0`), so the console stays a fixed size
+    /// regardless of canvas zoom.
     pub fn rebuild_console_overlay_buffers(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,

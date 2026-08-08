@@ -9,14 +9,13 @@
 use glam::Vec2;
 
 use baumhard::mindmap::model::{
-    portal_endpoint_state_mut, Canvas, EdgeLabelConfig, GlyphConnectionConfig, MindEdge, PortalEndpointState,
+    portal_endpoint_state_mut, Canvas, EdgeLabelConfig, MindEdge, PortalEndpointState,
 };
 use baumhard::mindmap::tree_builder;
 
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
 use super::super::MindMapDocument;
-use super::closure_helpers::ensure_glyph_connection_inline;
 
 impl MindMapDocument {
     pub fn remove_edge(&mut self, edge_ref: &EdgeRef) -> Option<(usize, MindEdge)> {
@@ -34,6 +33,9 @@ impl MindMapDocument {
     /// Computed from the live edge (so any in-progress drag is
     /// reflected), without consulting the scene cache. Bounded cost:
     /// one `build_connection_path` + up to five distance comparisons.
+    // Native-driver-only, with `commit_throttled_edge_drag`: edge
+    // handles are a native drag affordance.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn hit_test_edge_handle(
         &self,
         canvas_pos: Vec2,
@@ -345,20 +347,6 @@ impl MindMapDocument {
     // to forked edges — mirroring how CSS "computed style" copies work.
     // ========================================================================
 
-    /// Ensure `edge.glyph_connection` is `Some(_)`, forking from the
-    /// canvas default (or the hardcoded default) on first edit. Returns
-    /// a mutable reference to the freshly-installed or previously-set
-    /// config so the caller can mutate a specific field.
-    ///
-    /// Must be called AFTER the `before` snapshot has been cloned so
-    /// the undo entry still carries the pre-fork `None`.
-    pub(super) fn ensure_glyph_connection<'a>(
-        edge: &'a mut MindEdge,
-        canvas: &Canvas,
-    ) -> &'a mut GlyphConnectionConfig {
-        ensure_glyph_connection_inline(edge, canvas)
-    }
-
     /// Run `mutate` against the edge selected by `edge_ref` with the
     /// before-snapshot, rollback-on-no-op, and `EditEdge` undo-push
     /// scaffolding handled here. The closure returns `true` to commit
@@ -379,7 +367,6 @@ impl MindMapDocument {
     /// which Rust's split-borrow rules allow under a single
     /// `&mut self` because both are direct field projections of
     /// `self.mindmap`. The closure can reach
-    /// [`Self::ensure_glyph_connection`] through the free
     /// [`super::closure_helpers::ensure_glyph_connection_inline`]
     /// without having to re-fetch `&mut self`.
     pub(in crate::application::document) fn mutate_edge<F>(&mut self, edge_ref: &EdgeRef, mutate: F) -> bool
@@ -418,6 +405,7 @@ impl MindMapDocument {
     /// previously open-coded with byte-identical
     /// `if let Some(idx) = doc.edge_index(&edge_ref) { ... push +
     /// dirty ... }` scaffolding.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn commit_throttled_edge_drag<F>(&mut self, edge_ref: &EdgeRef, original: MindEdge, changed: F)
     where
         F: FnOnce(&MindEdge, &MindEdge) -> bool,

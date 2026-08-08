@@ -150,6 +150,11 @@ pub(in crate::application::app) fn double_click_outcome(
 /// they are not the same event: one is a documented stop, the other
 /// is a user's binding doing nothing at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
+// Consumer is `run_wasm/`; the host build reaches this only from
+// `#[cfg(test)]`, so arm the lint on wasm32 and silence it here
+// rather than blanket-allowing on both targets — if the browser
+// caller goes away, wasm32 says so.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(in crate::application::app) enum UnhandledPointerDispatch {
     /// The sanctioned carve-out: `DoubleClickActivate` on an edge
     /// label. The selection is committed (or was already current) and
@@ -178,6 +183,11 @@ pub(in crate::application::app) enum UnhandledPointerDispatch {
 /// [`apply_double_click_activate`] can return
 /// [`DoubleClickResidual::OpenEdgeLabelEditor`], which is in turn the
 /// only `Unhandled` that arm produces with a hit present.
+// Consumer is `run_wasm/`; the host build reaches this only from
+// `#[cfg(test)]`, so arm the lint on wasm32 and silence it here
+// rather than blanket-allowing on both targets — if the browser
+// caller goes away, wasm32 says so.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(in crate::application::app) fn classify_unhandled_pointer_dispatch(
     action: &Action,
     click_hit: &ClickHit,
@@ -402,7 +412,9 @@ pub(in crate::application::app) struct TouchGestureDispatch {
     pub(in crate::application::app) cursor_pos: (f64, f64),
     /// Canonical gesture key name (`"LongPress"`, `"TwoFingerDrag"`,
     /// …) — what the lookup used, and what the browser's warn-log
-    /// names.
+    /// names. Only the browser reads it: native's own handlers
+    /// already hold the name they looked the binding up with.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub(in crate::application::app) gesture_name: &'static str,
     /// The bound Action, or `None` when the user has no binding for
     /// this gesture. `None` still yields a `TouchGestureDispatch`

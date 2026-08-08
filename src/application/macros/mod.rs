@@ -192,6 +192,14 @@ impl MacroRegistry {
     /// Look up the highest-tier macro for `id`. Walks the slot
     /// array from Inline → Map → User → App and returns the first
     /// non-None entry.
+    ///
+    /// Test-gated with [`Self::contains`] and [`Self::is_empty`]:
+    /// the dispatcher needs the tier alongside the
+    /// macro for its privilege gate, so it reaches for
+    /// [`Self::get_with_source`] and this tier-blind form has no
+    /// production caller. `len` stays ungated — the console's
+    /// `macro` readout counts registered ids.
+    #[cfg(test)]
     pub fn get(&self, id: &str) -> Option<&Macro> {
         let slots = self.macros.get(id)?;
         for i in (0..SourceTier::COUNT).rev() {
@@ -218,7 +226,9 @@ impl MacroRegistry {
         None
     }
 
-    /// Whether any tier slot holds an entry for `id`.
+    /// Whether any tier slot holds an entry for `id`. Test-gated —
+    /// see [`Self::get`].
+    #[cfg(test)]
     pub fn contains(&self, id: &str) -> bool {
         self.macros
             .get(id)
@@ -234,18 +244,11 @@ impl MacroRegistry {
             .count()
     }
 
+    /// No id holds an entry at any tier. Test-gated — see
+    /// [`Self::get`].
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    /// Iterate registered macro ids. An id present at multiple
-    /// tiers appears once. HashMap iteration order is unspecified;
-    /// sort at the call site if a stable display is needed.
-    pub fn ids(&self) -> impl Iterator<Item = &str> {
-        self.macros
-            .iter()
-            .filter(|(_, slots)| slots.iter().any(Option::is_some))
-            .map(|(k, _)| k.as_str())
     }
 
     /// Clear the slot for `source` across every id. Lower-tier

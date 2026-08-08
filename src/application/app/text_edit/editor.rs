@@ -255,10 +255,14 @@ pub(in crate::application::app) fn revert_node_text_on_tree(
 }
 
 /// Decide whether the editor's `(anchor, cursor)` pair should
-/// promote the document selection to `SelectionState::SectionRange`
-/// at close time. Pure function — extracted from `close_text_edit`'s
-/// inline logic so the lift contract can be unit-tested without
-/// the full renderer / tree / scene plumbing.
+/// promote the document selection at close time. Pure function —
+/// extracted from `close_text_edit`'s inline logic so the lift
+/// contract can be unit-tested without the full renderer / tree /
+/// scene plumbing.
+///
+/// The name is a misnomer kept deliberately: it promotes to
+/// `Section`, **not** to `SelectionState::SectionRange`, for the
+/// reason spelled out below.
 ///
 /// Lift the editor's `(anchor, cursor)` shift-select pair into a
 /// `Section(SectionSel)` selection on commit — when the anchor
@@ -298,8 +302,11 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
 /// reverts only the edited section's transient text/regions to
 /// the pre-edit snapshot (model was untouched during editing, so
 /// the rest of the tree stays in sync). Commit also lifts a
-/// non-empty shift-select anchor to `SelectionState::SectionRange`
-/// via `lift_anchor_to_section_range`.
+/// non-empty shift-select anchor to `SelectionState::Section` via
+/// `lift_anchor_to_section_range` — which, despite its name, does
+/// not produce `SelectionState::SectionRange`; see that function's
+/// docs for why, and `SelectionState::SectionRange`'s for the
+/// producer gap that leaves.
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,
@@ -359,14 +366,17 @@ pub(in crate::application::app) fn close_text_edit(
         *interaction_mode = super::super::InteractionMode::Default;
     }
     // Editor close lifts a non-empty shift-select anchor to
-    // `SelectionState::SectionRange` so per-section verbs
-    // (color text, font size, font family) target only the
-    // shift-selected graphemes. **Commit only** — on cancel
-    // the model reverts to `original_text`, which may have
-    // fewer graphemes than the (anchor, cursor) pair was
-    // selected over. Lifting a SectionRange that points past
-    // the post-revert grapheme count would silently no-op on
-    // every downstream consumer (picker / verb).
+    // `SelectionState::Section`, so per-section verbs (color
+    // text, font size, font family) land on the section the user
+    // was editing. It does *not* reach
+    // `SelectionState::SectionRange` — the grapheme range is
+    // dropped, because that variant's `range` field is read as
+    // section indices everywhere downstream; see
+    // `lift_anchor_to_section_range`. **Commit only** — on cancel
+    // the model reverts to `original_text`, which may have fewer
+    // graphemes than the (anchor, cursor) pair was selected over,
+    // so a grapheme-derived lift would be stale before it was
+    // read.
     if commit {
         if let Some(new_sel) = lift_anchor_to_section_range(
             selection_anchor,

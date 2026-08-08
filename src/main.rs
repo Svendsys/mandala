@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-#![allow(dead_code)]
-
 use crate::application::app::{Application, Options};
-use crate::application::common::{InputMode, WindowMode};
 use crate::application::keybinds::KeybindConfig;
 use log::info;
 
@@ -44,14 +41,7 @@ fn create_options() -> Options {
     let keybind_config = KeybindConfig::load_for_desktop(keybinds_path.as_deref());
 
     Options {
-        launch_gpu_prefer_low_power: false,
         should_exit: false,
-        window_mode: WindowMode::WindowedFullscreen,
-        ui_scale: 0,
-        window_title_text: "Mandala",
-        input_mode: InputMode::MappedToInstruction,
-        avail_cores: num_cpus::get(),
-        render_must_be_main: false,
         mindmap_path,
         keybind_config,
     }
@@ -61,14 +51,7 @@ fn create_options() -> Options {
 fn create_options() -> Options {
     // WASM: mindmap_path and keybind_config are replaced later by run_wasm.
     Options {
-        launch_gpu_prefer_low_power: false,
         should_exit: false,
-        window_mode: WindowMode::WindowedFullscreen,
-        ui_scale: 0,
-        window_title_text: "Mandala",
-        input_mode: InputMode::MappedToInstruction,
-        avail_cores: 1,
-        render_must_be_main: false,
         mindmap_path: DEFAULT_MINDMAP.to_string(),
         keybind_config: KeybindConfig::default(),
     }

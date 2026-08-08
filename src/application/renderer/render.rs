@@ -359,22 +359,19 @@ impl Renderer {
 
         // Palette overlay: screen-space text, drawn in its own
         // glyphon pass so the rect-pipeline backdrop can be
-        // interleaved between the main text and this one. The
-        // glyph-wheel color picker's glyph buffers flow through
-        // `overlay_scene_buffers` (populated by
-        // `rebuild_overlay_scene_buffers` from the picker's overlay
-        // tree in `AppScene`) — it's a mutually exclusive
-        // screen-space modal that shares this pass with the
-        // console.
-        let palette_capacity = self.console_overlay_buffers.len()
-            + self.overlay_scene_buffers.len()
+        // interleaved between the main text and this one. Both the
+        // console and the glyph-wheel color picker put their glyph
+        // buffers in `overlay_scene_buffers` (populated by
+        // `rebuild_overlay_scene_buffers` from the respective
+        // overlay tree in `AppScene`) — they are mutually exclusive
+        // screen-space modals sharing this one pass.
+        let palette_capacity = self.overlay_scene_buffers.len()
             + self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len();
         let mut palette_text_areas: Vec<TextArea> = Vec::with_capacity(palette_capacity);
         palette_text_areas.extend(
-            self.console_overlay_buffers
+            self.overlay_scene_buffers
                 .iter()
-                .chain(self.overlay_scene_buffers.iter())
                 .chain(self.fps_overlay_buffers.iter())
                 .chain(self.mode_status_overlay_buffers.iter())
                 .map(|tb| TextArea {
@@ -414,9 +411,9 @@ impl Renderer {
         // first-class target under CODE_CONVENTIONS §4. Returning
         // `false` here makes the caller bail before
         // `get_current_texture()` / `present()`, so the skipped frame
-        // takes no vsync backpressure either: under
-        // `RedrawMode::NoLimit` with `ControlFlow::Poll` the loop
-        // spins at CPU rate during a drag or animation and an
+        // takes no vsync backpressure either: the loop is uncapped
+        // and runs under `ControlFlow::Poll`, so it spins at CPU rate
+        // during a drag or animation and an
         // unguarded `warn!` would write a line per spin. The flag
         // clears on the next successful prepare, so a transient fault
         // logs again if it returns.
