@@ -41,7 +41,7 @@ pub const MAX_N: u32 = 8;
 pub const DEFAULT_BUDGET: Duration = Duration::from_micros(14_000);
 
 /// Per-frame throttle that degrades mutation frequency under load.
-/// Call [`Self::reset`] when the drag ends so the next drag starts
+/// Call `reset` when the drag ends so the next drag starts
 /// at `n = 1`.
 #[derive(Debug)]
 pub struct MutationFrequencyThrottle {
@@ -111,8 +111,14 @@ impl MutationFrequencyThrottle {
     }
 
     /// Clear the moving-average window, reset `n` to `1`, reset the
-    /// skip counter. Call this when the drag ends so a fresh drag
-    /// doesn't inherit lingering throttle state from the previous one.
+    /// skip counter.
+    ///
+    /// Test-gated: a drag's throttle lives inside the `ThrottledDrag`
+    /// the release path drops, so a fresh drag starts from a fresh
+    /// throttle without anyone clearing the old one. The doc used to
+    /// claim the drag-end path called this; it never did. Remove the
+    /// gate the day a throttle outlives its interaction.
+    #[cfg(test)]
     pub fn reset(&mut self) {
         self.window.clear();
         self.n = 1;
@@ -120,6 +126,9 @@ impl MutationFrequencyThrottle {
     }
 
     /// Current drain divisor (1 = every frame; higher under load).
+    /// Test-gated: the divisor is consumed inside `should_drain`,
+    /// never read from outside.
+    #[cfg(test)]
     pub fn current_n(&self) -> u32 {
         self.n
     }
@@ -131,11 +140,6 @@ impl MutationFrequencyThrottle {
         }
         let sum: Duration = self.window.iter().sum();
         sum / self.window.len() as u32
-    }
-
-    #[cfg(test)]
-    pub fn budget(&self) -> Duration {
-        self.budget
     }
 }
 

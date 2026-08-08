@@ -24,6 +24,10 @@ pub mod animations;
 mod custom;
 pub(in crate::application) mod defaults;
 mod edges;
+// Pointer hit-testing and drag/resize tree patching. Every caller
+// is a native-gated mouse handler, so on wasm32 the module
+// compiles unreferenced; the lint stays armed on the host.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod hit_test;
 pub mod mutations;
 pub mod mutations_loader;
@@ -726,7 +730,10 @@ impl MindMapDocument {
     /// for "smallest interactive doc" — replaces field-by-field
     /// `MindMapDocument { ... }` literal construction at
     /// downstream test sites so the field list lives in one
-    /// place.
+    /// place. Test-gated: the interactive orphan-creation path is
+    /// `Action::CreateOrphanNode`, which adds a node to the open
+    /// document rather than constructing one around it.
+    #[cfg(test)]
     pub fn with_orphan(id: &str, pos: glam::Vec2) -> Self {
         let mut doc = Self::from_mindmap(MindMap::new_blank("t"), None);
         let node = super::document::defaults::default_orphan_node(id, pos);

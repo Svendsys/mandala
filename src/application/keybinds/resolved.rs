@@ -4,8 +4,6 @@
 //! into. Built once via `KeybindConfig::resolve`, then queried per
 //! input event.
 
-use std::collections::HashMap;
-
 use super::action::Action;
 use super::bind::KeyBind;
 use super::context::InputContext;
@@ -28,8 +26,15 @@ pub struct ResolvedKeybinds {
     /// a macro and a custom mutation runs the macro.
     macro_binds: Vec<(KeyBind, String)>,
     /// Console font family. Empty means "use cosmic-text default".
+    // Native-driver-only, with `console_font_size`: both are read by
+    // `app::console_input`, which is native-gated with the modal
+    // shell. (The family is then dropped on the floor even on
+    // native — see the note on
+    // `renderer::console_geometry::ConsoleOverlayGeometry::font_family`.)
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub console_font: String,
     /// Console overlay font size in pixels.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub console_font_size: f32,
 }
 
@@ -93,6 +98,12 @@ impl ResolvedKeybinds {
     /// passes the normalized key name (see `normalize_key_name`) and the
     /// current modifier state. Searches all actions regardless of context —
     /// use `action_for_context` for context-aware resolution.
+    ///
+    /// Test-gated: every runtime lookup is context-aware and goes
+    /// through [`Self::action_for_context`]. This context-blind
+    /// spelling is how the keybind tests assert "this combo is bound
+    /// at all" without naming a context.
+    #[cfg(test)]
     pub fn action_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
         for (action, bind) in &self.binds {
             if bind.matches(key, ctrl, shift, alt) {
@@ -163,6 +174,14 @@ impl ResolvedKeybinds {
     /// The `combo_string` is re-parsed through `KeyBind::parse` so
     /// invalid inputs are rejected uniformly with the resolve-time
     /// path.
+    ///
+    /// Test-gated with its sibling
+    /// [`Self::remove_custom_mutation_binding`]: custom-mutation
+    /// bindings are established at resolve time from the config
+    /// files and nothing edits them at runtime yet, so the pair's
+    /// only callers are the tests that pin replace-and-return
+    /// semantics for the console verb that will.
+    #[cfg(test)]
     pub fn set_custom_mutation_binding(
         &mut self,
         combo_string: &str,
@@ -183,7 +202,9 @@ impl ResolvedKeybinds {
     }
 
     /// Remove the custom-mutation binding for the given combo.
-    /// Returns the removed mutation id, if one was bound.
+    /// Returns the removed mutation id, if one was bound. Test-gated
+    /// — see [`Self::set_custom_mutation_binding`].
+    #[cfg(test)]
     pub fn remove_custom_mutation_binding(&mut self, combo_string: &str) -> Result<Option<String>, String> {
         let bind = KeyBind::parse(combo_string)?;
         let mut prev = None;
@@ -196,16 +217,5 @@ impl ResolvedKeybinds {
             }
         });
         Ok(prev)
-    }
-
-    /// Snapshot the current custom-mutation bindings as a `HashMap`
-    /// of `combo_string → mutation_id` for persistence. Inverse of
-    /// the resolve-time parse step — used when writing the overlay
-    /// file.
-    pub fn custom_mutation_binding_snapshot(&self) -> HashMap<String, String> {
-        self.custom_binds
-            .iter()
-            .map(|(b, id)| (b.to_binding_string(), id.clone()))
-            .collect()
     }
 }

@@ -367,14 +367,11 @@ impl InitState {
                 // the renderer's overlay buffers anchored at the
                 // pre-resize coordinates.
                 if self.color_picker_state.is_open() {
-                    if let Some(doc) = self.document.as_ref() {
-                        rebuild_color_picker_overlay(
-                            &mut self.color_picker_state,
-                            doc,
-                            &mut self.app_scene,
-                            &mut self.renderer,
-                        );
-                    }
+                    rebuild_color_picker_overlay(
+                        &mut self.color_picker_state,
+                        &mut self.app_scene,
+                        &mut self.renderer,
+                    );
                 }
                 redraw_after = true;
             }

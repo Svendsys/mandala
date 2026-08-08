@@ -41,6 +41,9 @@ pub enum RenderDecree {
     SetFpsDisplay(FpsDisplayMode),
     StartRender,
     SetSurfaceSize(u32, u32),
+    // Native-driver-only: `run_native` sends it on window-close;
+    // a browser tab has no equivalent teardown event.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Terminate,
     CameraPan(f32, f32),
     CameraZoom {

@@ -15,8 +15,9 @@
 //! written (its `update` took its instance by value and returned
 //! nothing, so no tick could observe an effect). What it was
 //! reaching for — long-form scheduling, loops, chained steps — is
-//! the [`Followup`] slot below, on a shape that already carries the
-//! model this crate actually animates.
+//! the [`Followup`](crate::mindmap::animation::Followup) slot below,
+//! on a shape that already carries the model this crate actually
+//! animates.
 //!
 //! # Architecture
 //!

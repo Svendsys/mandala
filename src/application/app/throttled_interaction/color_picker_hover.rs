@@ -121,12 +121,12 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
         // the targeted edge's preview color repaints as expected.
         let canvas_needs_rebuild = self.canvas_needs_rebuild();
 
-        if let Some(doc) = document.as_mut() {
-            if canvas_needs_rebuild {
+        if canvas_needs_rebuild {
+            if let Some(doc) = document.as_mut() {
                 rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
             }
-            rebuild_color_picker_overlay(color_picker_state, doc, app_scene, renderer);
         }
+        rebuild_color_picker_overlay(color_picker_state, app_scene, renderer);
         self.pending.clear_flags();
     }
 }

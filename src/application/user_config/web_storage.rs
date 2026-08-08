@@ -6,10 +6,24 @@
 //! fall back to a localStorage key. Same shape; same machinery —
 //! [`load_web_layered`] is that shape, wired onto the shared
 //! [`super::layered::load_layered`] driver.
+//!
+//! **The query-param layer is built but not reached.** All three
+//! browser loaders (`keybinds::platform_web`,
+//! `macros::loader::platform_web`,
+//! `document::mutations_loader::platform_web`) call
+//! [`load_web_storage_only`], so `?keybinds=<json>` and its siblings
+//! do nothing today. #41 found the two-layer chain dead and kept it
+//! rather than delete a working implementation: switching the three
+//! call sites over is a decision about what URL surface the app
+//! offers, not a cleanup. Until then this module documents a
+//! capability the app does not have, and that is recorded here
+//! rather than left for the next reader to discover.
 
 use super::{load_layered, ConfigLayer};
 
-/// Name the query-param layer answers to in log lines.
+/// Name the query-param layer answers to in log lines. Unreached —
+/// see the module header.
+#[allow(dead_code)]
 const QUERY_PARAM_SOURCE: &str = "URL query param";
 
 /// Name the `localStorage` layer answers to in log lines.
@@ -26,6 +40,10 @@ const LOCAL_STORAGE_SOURCE: &str = "localStorage";
 ///
 /// Costs: at most one `window.location` read and one `localStorage`
 /// round-trip, both skipped once a higher layer wins.
+/// Unreached today — see the module header. The consumers in
+/// waiting are the three `platform_web` loaders, each of which calls
+/// [`load_web_storage_only`] instead.
+#[allow(dead_code)]
 pub fn load_web_layered<T>(
     label: &str,
     param_name: &str,
@@ -97,6 +115,7 @@ pub fn load_web_storage_only<T>(
 ///
 /// Allocates the formatted prefix and the decoded `String` on the
 /// success path. O(n) over the query-string length.
+#[allow(dead_code)]
 pub fn read_query_param(name: &str) -> Option<String> {
     let window = web_sys::window()?;
     let search = window.location().search().ok()?;

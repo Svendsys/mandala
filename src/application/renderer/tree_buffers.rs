@@ -134,6 +134,10 @@ impl Renderer {
     /// O(patch_set_size × halos+1) — no text shaping, no font-system
     /// lock, no allocation. Halos count is 0 for mindmap nodes
     /// today, so the constant collapses on the common path.
+    // Native-driver-only, with `rebuild_node_backgrounds_from_tree`:
+    // both are drag-preview fast paths driven by the native drag
+    // state machine.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn patch_drag_positions(&mut self, patches: &[(usize, (f32, f32))]) {
         for &(unique_id, new_pos) in patches {
             let key = unique_id.to_string();
@@ -153,6 +157,7 @@ impl Renderer {
     ///
     /// O(n) descendant walk, but no text shaping, no font-system
     /// lock — just position and color reads from the arena.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn rebuild_node_backgrounds_from_tree(&mut self, tree: &Tree<GfxElement, GfxMutator>) {
         self.node_background_rects.clear();
         // Single source of background-rect math: routes through the

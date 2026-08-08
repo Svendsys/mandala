@@ -12,6 +12,9 @@ use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, MindSection, NodeStyl
 #[derive(Clone, Debug)]
 pub enum UndoAction {
     /// Stores original positions of moved nodes for restoration.
+    // Native-driver-only, with `CreateEdge`: pushed by the native
+    // drag-commit and edge-create paths.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     MoveNodes {
         original_positions: Vec<(String, Position)>,
     },
@@ -29,6 +32,7 @@ pub enum UndoAction {
     DeleteEdge { index: usize, edge: MindEdge },
     /// Edge created via connect mode (Ctrl+D). Reversed by removing the
     /// edge at `index` (assumes LIFO undo order so the index is still valid).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     CreateEdge { index: usize },
     /// Full in-place edit of an existing edge — control-point drag,
     /// anchor change, reset-to-straight via palette, etc. The `before`

@@ -123,7 +123,7 @@ impl MouseGesture {
 
     /// PascalCase emit form for this gesture — the variant name
     /// itself, which is the shape the user types in `keybinds.json`.
-    /// Used by [`KeyBind::to_binding_string`] so a parsed-then-
+    /// Used by `KeyBind::to_binding_string` so a parsed-then-
     /// emitted gesture round-trips to its canonical capitalisation
     /// rather than the lowercased internal form.
     pub fn pascal_form(self) -> &'static str {
@@ -145,6 +145,9 @@ impl MouseGesture {
 /// `lower`-case token, or `None` for keyboard names. Walks
 /// `MouseGesture::iter()` so adding a new gesture variant
 /// auto-extends the round-trip without touching this fn.
+/// Test-gated with its only caller,
+/// [`KeyBind::to_binding_string`].
+#[cfg(test)]
 fn gesture_emit_form(lower: &str) -> Option<&'static str> {
     use strum::IntoEnumIterator;
     MouseGesture::iter()
@@ -199,9 +202,14 @@ impl KeyBind {
     }
 
     /// Render the binding back to a `Ctrl+Shift+Alt+Key` string form.
-    /// Inverse of `parse` up to modifier-order normalisation — parsing
+    /// Inverse of `parse` up to modifier-order normalization — parsing
     /// this output must produce an equal `KeyBind`, which is locked in
     /// by `test_keybind_string_round_trip_through_parse`.
+    ///
+    /// Test-gated: nothing writes a keybind file back out yet, so the
+    /// round trip has only the test end. The day a "save my
+    /// keybinds" path lands, this is the emitter it needs.
+    #[cfg(test)]
     pub fn to_binding_string(&self) -> String {
         let mut parts: Vec<&str> = Vec::with_capacity(4);
         if self.ctrl {

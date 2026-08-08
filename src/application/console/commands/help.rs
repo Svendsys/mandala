@@ -105,6 +105,14 @@ fn help_for(name: &str, _ctx: &ConsoleContext) -> ExecResult {
             if !cmd.aliases.is_empty() {
                 lines.push(format!("aliases: {}", cmd.aliases.join(", ")));
             }
+            // `tags` carries the search words a verb's name doesn't
+            // contain ("pick" under `color`). Twenty commands author
+            // them and nothing read the field until #41 found it
+            // dead; printing them here is what makes them
+            // discoverable rather than decorative.
+            if !cmd.tags.is_empty() {
+                lines.push(format!("tags: {}", cmd.tags.join(", ")));
+            }
             ExecResult::lines(lines)
         }
         None => ExecResult::err(format!("unknown command: {}", name)),

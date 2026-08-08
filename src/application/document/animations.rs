@@ -63,12 +63,6 @@ impl MindMapDocument {
         self.build_mutation_registry_with_app_and_user(&[], &[]);
     }
 
-    /// Variant retained for callers that already supply a user slice.
-    /// Delegates to the four-source builder with an empty app slice.
-    pub fn build_mutation_registry_with_user(&mut self, user_mutations: &[CustomMutation]) {
-        self.build_mutation_registry_with_app_and_user(&[], user_mutations);
-    }
-
     /// Build the registry from all four sources. See the
     /// "Where mutations come from" section in `format/mutations.md`
     /// for the canonical precedence description; this method's
@@ -113,6 +107,13 @@ impl MindMapDocument {
     /// node bindings. Whole-node bindings still fire afterwards
     /// so a section-targeted gesture doesn't accidentally drop a
     /// node-level handler that an author wrote unconditionally.
+    ///
+    /// Test-gated: every production caller reaches for the
+    /// section-aware [`Self::find_triggered_mutations_at`] because
+    /// every production trigger arrives with a hit that may name a
+    /// section. This whole-node spelling stays as the tests' reading
+    /// of "no section in play".
+    #[cfg(test)]
     pub fn find_triggered_mutations(
         &self,
         node_id: &str,
@@ -122,7 +123,8 @@ impl MindMapDocument {
         self.find_triggered_mutations_at(node_id, None, trigger, platform)
     }
 
-    /// Section-aware variant of [`Self::find_triggered_mutations`].
+    /// Section-aware variant of `find_triggered_mutations` (the
+    /// whole-node spelling, which is test-gated below).
     /// `section_idx = Some(_)` consults the targeted section's
     /// per-section bindings first; `None` matches the legacy
     /// whole-node-only flow.
@@ -352,6 +354,11 @@ impl MindMapDocument {
     /// path runs exactly once from the true baseline, not on top of the
     /// last lerped frame), then the instance is dropped. Drain order is
     /// back-to-front so `swap_remove` is safe.
+    // Native-driver-only, with `shift_active_animations_start_ms`:
+    // `drain_animation_tick` is the only advance site and the
+    // browser has no rAF-driven equivalent wired to it yet
+    // (CLAUDE.md "Per-frame animation drain").
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn tick_animations(&mut self, now_ms: u64, mut tree: Option<&mut MindMapTree>) -> bool {
         if self.active_animations.is_empty() {
             return false;
@@ -529,6 +536,7 @@ impl MindMapDocument {
     /// next post-suppression tick observes a wall-clock-elapsed
     /// value `>= total` and snaps the animation to its `to` state
     /// in one frame.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn shift_active_animations_start_ms(&mut self, by_ms: u64) {
         if by_ms == 0 {
             return;

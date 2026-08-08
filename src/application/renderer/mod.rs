@@ -36,15 +36,35 @@
 //!   for the [`crate::application::scene_host::AppScene`]
 //!   tree handles.
 
+// The overlay-render modules below carry a wasm32-only
+// `allow(dead_code)`: each renders a modal whose *shell* is
+// native-gated (CLAUDE.md "Dual-target status"), so on wasm32 the
+// builders compile with no caller. Scoped to wasm32 so the host
+// lint, which can see the shell, stays armed.
 mod borders;
 mod camera;
+// Color-picker overlay tree + mutators. Shell: the native-gated
+// `app::color_picker_flow`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod color_picker;
+// Console overlay geometry. Shell: the native-gated
+// `app::console_input`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod console_geometry;
+// Console overlay glyph areas + mutators. Same shell as
+// `console_geometry`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod console_pass;
 mod decree;
+// Renderer entry points for the two overlay rebuilds. Same shells
+// as `console_pass` and `color_picker`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod overlay_dispatch;
 mod pipeline;
 mod render;
+// Rubber-band selection rectangle. Driven by the native-gated
+// drag state machine.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod selection_overlay;
 mod tree_buffers;
 mod tree_walker;
@@ -258,12 +278,28 @@ pub(super) const RECT_VBUF_INITIAL_CAPACITY: u64 = 8192;
 
 pub struct Renderer {
     surface: Surface<'static>,
+    /// The window the surface was created from. Held, not read: the
+    /// `Surface<'static>` lifetime is bought by handing wgpu an
+    /// `Arc<Window>` clone at `create_surface`, and this is the
+    /// renderer's own share of that ownership — dropping the field
+    /// would make the renderer's lifetime depend on whoever else
+    /// still holds the window. `should_render` gating and
+    /// `ControlFlow::Poll` mean nothing on native asks the window to
+    /// redraw itself; the browser's loop does, through
+    /// [`Self::request_redraw`].
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     window: Arc<Window>,
     config: SurfaceConfiguration,
     device: Device,
     queue: Queue,
     viewport: Viewport,
     swash_cache: SwashCache,
+    /// glyphon's shader / bind-group cache. Held, not read: it is
+    /// borrowed once each by `TextAtlas::new` and `Viewport::new` at
+    /// construction, and both keep their own handle to it. Dropping
+    /// the field would end the renderer's share of a resource its
+    /// two consumers still use.
+    #[allow(dead_code)]
     glyphon_cache: Cache,
     atlas: TextAtlas,
     text_renderer: TextRenderer,
@@ -779,16 +815,25 @@ impl Renderer {
     /// decide whether the loop should keep iterating without
     /// burning the flag — `take` would consume it before the
     /// next `drain_camera_geometry_rebuild` got a chance to react.
+    // Native-driver-only: read by the native idle-CPU
+    // `needs_continuation` predicate; the browser's rAF loop has no
+    // idle state to decide about.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn connection_geometry_dirty(&self) -> bool {
         self.connection_geometry_dirty
     }
 
     /// Forward a redraw request to the underlying winit window. On
-    /// native this queues a `WindowEvent::RedrawRequested` for the
-    /// next event-loop iteration; on web (winit-web) it schedules
-    /// an internal `requestAnimationFrame`. Multiple calls in one
-    /// event chain coalesce to a single delivery — safe to call
-    /// from any handler that mutated visual state.
+    /// web (winit-web) this schedules an internal
+    /// `requestAnimationFrame`; multiple calls in one event chain
+    /// coalesce to a single delivery, so it is safe to call from any
+    /// handler that mutated visual state.
+    ///
+    /// Browser-only consumer: `run_wasm` drives its frames off winit
+    /// redraw requests, while native's loop runs `ControlFlow::Poll`
+    /// and never asks. Lint armed on wasm32 so the day that changes,
+    /// wasm32 says so.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn request_redraw(&self) {
         self.window.request_redraw();
     }
@@ -989,6 +1034,10 @@ impl Renderer {
     /// if the overlay is at the idle marker or has never been
     /// populated. Used by the event loop to decide whether the
     /// overlay needs one more redraw to flip to "-" before parking.
+    // Native-driver-only, with the two below: the active-to-idle FPS
+    // transition belongs to `ControlFlow::Wait`, which only native's
+    // loop enters.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn has_live_fps(&self) -> bool {
         self.fps.is_some()
     }
@@ -1008,6 +1057,7 @@ impl Renderer {
     /// gates produce momentary `needs_continuation == false` gaps
     /// between drain frames would flash "FPS: -" between every
     /// drain — making the readout unusable as a diagnostic.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn fps_idle_defer_deadline(&self, grace: Duration) -> Option<Instant> {
         if !self.has_live_fps() {
             return None;
@@ -1029,14 +1079,10 @@ impl Renderer {
     /// The arm-and-consume flag protects the transitional frame
     /// from `tick_fps` re-computing a numeric reading from the
     /// pre-idle rolling-avg samples.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn set_fps_idle(&mut self) {
         self.fps = None;
         self.fps_pending_idle_paint = true;
-    }
-
-    #[inline]
-    fn get_size(&self) -> PhysicalSize<u32> {
-        self.window.inner_size()
     }
 
     #[inline]

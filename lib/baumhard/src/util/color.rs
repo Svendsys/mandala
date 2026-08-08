@@ -3,9 +3,11 @@
 //! Core color type and arithmetic. The conversion utilities
 //! (hex/RGB/HSV, theme variable resolution) live in the companion
 //! `super::color_conversion` module, and are the single way a string
-//! becomes a color: [`hex_to_rgba_safe`] for the degrade-on-garbage
-//! posture the interactive paths need, [`hex_to_rgba`] when the
-//! caller wants to see the failure.
+//! becomes a color:
+//! [`hex_to_rgba_safe`](crate::util::color_conversion::hex_to_rgba_safe)
+//! for the degrade-on-garbage posture the interactive paths need,
+//! [`hex_to_rgba`](crate::util::color_conversion::hex_to_rgba) when
+//! the caller wants to see the failure.
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};

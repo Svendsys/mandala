@@ -261,6 +261,11 @@ pub(in crate::application::app) fn apply_enter_node_edit(
 /// (mode, selection) state. Pure function output — testable half
 /// of the action helper.
 #[derive(Debug, Clone, PartialEq, Eq)]
+// Native-driver-only: `EnterSectionEdit` / `EnterResizeMode` open
+// modal editors the browser does not have, so only the native
+// dispatch arm reaches this trio (plus the host tests that pin the
+// plan's shape).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(in crate::application::app) enum EnterSectionEditPlan {
     /// Mode wasn't NodeEdit. Caller logs a warning and bails.
     NotInNodeEdit,
@@ -276,6 +281,7 @@ pub(in crate::application::app) enum EnterSectionEditPlan {
 /// Resolve the [`EnterSectionEditPlan`] from (mode, selection)
 /// without renderer / tree side effects. Lifts the testable
 /// preconditions out of `apply_enter_section_edit`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(in crate::application::app) fn resolve_enter_section_edit_plan(
     interaction_mode: &super::super::super::interaction_mode::InteractionMode,
     selection: &crate::application::document::SelectionState,
@@ -305,6 +311,7 @@ pub(in crate::application::app) fn resolve_enter_section_edit_plan(
 ///
 /// Returns `true` if the editor opened. Mode stays at `NodeEdit`
 /// (closing the editor returns to `NodeEdit`, not `Default`).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(in crate::application::app) fn apply_enter_section_edit(
     clean: bool,
     rc: &mut RebuildContext<'_>,
@@ -346,6 +353,7 @@ pub(in crate::application::app) fn apply_enter_section_edit(
 ///
 /// Resolution logic is shared with the `mode resize` console verb
 /// via [`interaction_mode::resolve_resize_target`].
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildContext<'_>) {
     use interaction_mode::{
         resolve_resize_target, InteractionMode, ResizeTargetError,

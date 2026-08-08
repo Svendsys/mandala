@@ -26,6 +26,7 @@ use baumhard::gfx_structs::tree::{MutatorTree, Tree};
 use baumhard::mindmap::scene_cache::EdgeKey;
 use baumhard::mindmap::tree_builder::{ConnectionLabelHitIndex, PortalHit, PortalHitIndex};
 use glam::Vec2;
+#[cfg(test)]
 use indextree::NodeId;
 
 /// The fixed **screen-space** overlay components that the app's
@@ -119,8 +120,16 @@ pub fn hash_canvas_signature<T: std::hash::Hash>(identity: &T) -> u64 {
 pub mod layers {
     // --- Canvas-space layers ----------------------------------
 
-    /// Mindmap body — every canvas-space component draws above
-    /// this once the migration reaches that step.
+    /// Mindmap body — the zero point every constant below is
+    /// stated relative to.
+    ///
+    /// Unused as a value: the node text still reaches the GPU
+    /// through the renderer's own `mindmap_buffers` rather than as
+    /// an `AppScene` canvas role, so no `register_canvas` call
+    /// passes it. It is the scale's origin and the thing "just above
+    /// the mindmap text" means, so it stays named. Its consumer is a
+    /// `CanvasRole::Mindmap`.
+    #[allow(dead_code)]
     pub const MINDMAP: i32 = 0;
     /// Borders sit just above the mindmap text.
     pub const BORDERS: i32 = 10;
@@ -282,6 +291,12 @@ impl AppScene {
     /// from a clean slate, forcing a full rebuild before the in-place
     /// mutator path can run again — and the role's hit index, so no
     /// per-role state outlives the tree it describes.
+    ///
+    /// Test-gated: roles are registered once and then re-registered
+    /// in place on rebuild, so nothing tears one down. The teardown
+    /// contract stays pinned for the day a canvas role becomes
+    /// conditional.
+    #[cfg(test)]
     pub fn unregister_canvas(&mut self, role: CanvasRole) {
         if let Some(id) = self.canvas_role_slot_mut(role).take() {
             self.canvas.remove(id);
@@ -395,7 +410,7 @@ impl AppScene {
     /// recorded structural signature — a future re-register starts
     /// from a clean slate, forcing a full rebuild before the
     /// in-place mutator path can run again. Mirrors
-    /// [`Self::unregister_canvas`].
+    /// `unregister_canvas`.
     pub fn unregister_overlay(&mut self, role: OverlayRole) {
         if let Some(id) = self.overlay_role_slot_mut(role).take() {
             self.overlay.remove(id);
@@ -456,7 +471,7 @@ impl AppScene {
     /// registers or mutates the tree is what keeps channel order
     /// and identity order in step.
     ///
-    /// [`Self::unregister_canvas`] clears it again, so the index
+    /// `unregister_canvas` clears it again, so the index
     /// never outlives the tree it names.
     pub fn set_portal_hit_index(&mut self, index: PortalHitIndex) {
         self.portal_hit_index = index;
@@ -522,6 +537,13 @@ impl AppScene {
     /// that the app owns, not a flat top-most query. Node hits
     /// still go through `document::hit_test` against the mindmap
     /// tree, which has not migrated into `AppScene`.
+    /// Test-gated with its helper [`Self::overlay_role_for_id`]:
+    /// overlay hit-testing is done by the modal that owns the
+    /// overlay (the picker's `hit_test_picker`, the console's own
+    /// row math), each against geometry the scene tree does not
+    /// carry, so nothing asks the scene which overlay a point is
+    /// over.
+    #[cfg(test)]
     pub fn overlay_at(&mut self, screen_pt: Vec2) -> Option<(OverlayRole, NodeId)> {
         let hit = self.overlay.component_at(screen_pt)?;
         let role = self.overlay_role_for_id(hit.0)?;
@@ -548,6 +570,7 @@ impl AppScene {
         }
     }
 
+    #[cfg(test)]
     fn overlay_role_for_id(&self, id: SceneTreeId) -> Option<OverlayRole> {
         if Some(id) == self.console {
             Some(OverlayRole::Console)

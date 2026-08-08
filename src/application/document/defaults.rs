@@ -140,6 +140,8 @@ pub(in crate::application) fn default_orphan_node(id: &str, position: Vec2) -> M
 /// Build a default-styled cross_link edge from `from_id` to `to_id`.
 /// Used by connect mode (Ctrl+D) to create non-hierarchical connections.
 /// Cross-links don't affect the tree structure.
+// Native-driver-only: built by `create_cross_link_edge`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(in crate::application) fn default_cross_link_edge(from_id: &str, to_id: &str) -> MindEdge {
     MindEdge {
         from_id: from_id.to_string(),
@@ -168,6 +170,11 @@ pub(in crate::application) fn default_cross_link_edge(from_id: &str, to_id: &str
 /// carries the chosen marker glyph. Callers rotate `glyph_preset_index`
 /// through `PORTAL_GLYPH_PRESETS.len()` to pick distinct glyphs per
 /// portal without forcing the user to choose up front.
+///
+/// Test-gated along with its only caller,
+/// [`super::MindMapDocument::create_portal_edge`] — see that method
+/// for why the product has no one-shot portal creation.
+#[cfg(test)]
 pub(super) fn default_portal_edge(from_id: &str, to_id: &str, glyph: &str) -> MindEdge {
     use baumhard::mindmap::model::{GlyphConnectionConfig, DISPLAY_MODE_PORTAL};
     MindEdge {

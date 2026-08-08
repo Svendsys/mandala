@@ -125,14 +125,6 @@ impl<'a> Args<'a> {
         Self { tokens }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.tokens.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.tokens.len()
-    }
-
     pub fn tokens(&self) -> &'a [String] {
         self.tokens
     }

@@ -87,20 +87,6 @@ pub enum TargetView<'a> {
     },
 }
 
-impl<'a> TargetView<'a> {
-    /// One-word label, used in per-target error messages.
-    pub fn kind(&self) -> &'static str {
-        match self {
-            TargetView::Node { .. } => "node",
-            TargetView::Section { .. } => "section",
-            TargetView::Edge { .. } => "edge",
-            TargetView::EdgeLabel { .. } => "edge label",
-            TargetView::PortalLabel { .. } => "portal label",
-            TargetView::PortalText { .. } => "portal text",
-        }
-    }
-}
-
 /// Encode a ColorValue as the string the model field wants. `Reset`
 /// resolves to `default` — each caller has its own "natural default"
 /// string.
@@ -590,11 +576,6 @@ impl<'a> HandlesCut for TargetView<'a> {
 fn is_valid_color_literal(s: &str) -> bool {
     (s.starts_with('#') && baumhard::util::color::is_valid_hex_color(s))
         || baumhard::util::color::is_var_ref(s)
-}
-
-fn read_edge_label(doc: &MindMapDocument, er: &EdgeRef) -> Option<String> {
-    let idx = doc.edge_index(er)?;
-    doc.mindmap.edges.get(idx).and_then(|e| e.label.clone())
 }
 
 /// Snapshot the selection into a list of target identities the

@@ -112,7 +112,6 @@ use crate::application::document::EdgeRef;
 #[cfg(not(target_arch = "wasm32"))]
 use glam::Vec2;
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(target_arch = "wasm32"))]
 use throttled_interaction::ThrottledDrag;
 
 #[cfg(target_arch = "wasm32")]
@@ -347,6 +346,11 @@ fn already_editing_same_target(
 /// workspace has no log-capture test facility, and installing one
 /// would be a process-global mock that §T10 rules out. Callers may
 /// ignore it.
+// Consumer is `run_wasm/`; the host build reaches this only from
+// `#[cfg(test)]`, so arm the lint on wasm32 and silence it here
+// rather than blanket-allowing on both targets — if the browser
+// caller goes away, wasm32 says so.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(super) fn warn_unhandled_native_only_once(
     warned: &std::sync::atomic::AtomicBool,
     gesture: &str,

@@ -73,18 +73,6 @@ pub enum HitTarget {
     Section { node_id: String, section_idx: usize },
 }
 
-impl HitTarget {
-    /// Owning node id — the same value every per-node consumer
-    /// (highlight, drag, …) wants regardless of whether the user
-    /// pointed at the chrome or a specific section.
-    pub fn node_id(&self) -> &str {
-        match self {
-            HitTarget::NodeContainer { node_id } => node_id,
-            HitTarget::Section { node_id, .. } => node_id,
-        }
-    }
-}
-
 /// Hit-test variant that returns a [`HitTarget`] — distinguishes
 /// "the user clicked on a specific section" from "the user
 /// clicked on the chrome of a node that happens to have one

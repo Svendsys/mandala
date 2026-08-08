@@ -357,6 +357,10 @@ impl MindMapDocument {
     }
 
     /// Create a default-styled cross_link edge between two nodes.
+    // Native-driver-only, with the four below: edge creation and
+    // node moves are reached from native-gated click / drag
+    // handlers and console verbs.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn create_cross_link_edge(&mut self, source_id: &str, target_id: &str) -> Option<usize> {
         if source_id == target_id {
             return None;
@@ -378,6 +382,7 @@ impl MindMapDocument {
     }
 
     /// Apply a position delta to a node and all its descendants.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn apply_move_subtree(&mut self, node_id: &str, dx: f64, dy: f64) -> Vec<(String, Position)> {
         let mut ids = vec![node_id.to_string()];
         ids.extend(self.mindmap.all_descendants(node_id));
@@ -392,6 +397,7 @@ impl MindMapDocument {
     }
 
     /// Apply a position delta to a single node only.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn apply_move_single(&mut self, node_id: &str, dx: f64, dy: f64) -> Option<(String, Position)> {
         if let Some(node) = self.mindmap.nodes.get_mut(node_id) {
             let original = (node_id.to_string(), node.position.clone());
@@ -403,6 +409,7 @@ impl MindMapDocument {
     }
 
     /// Move multiple root nodes at once, with subtree deduplication.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn apply_move_multiple(
         &mut self,
         node_ids: &[String],
@@ -427,6 +434,7 @@ impl MindMapDocument {
 
     /// Filter a list of node IDs to only the "roots" — nodes not
     /// descendant of any other node in the list.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(super) fn dedup_subtree_roots(&self, node_ids: &[String]) -> Vec<String> {
         let id_set: std::collections::HashSet<&str> = node_ids.iter().map(|s| s.as_str()).collect();
         node_ids

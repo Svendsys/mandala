@@ -307,9 +307,15 @@ impl TouchGestureRecognizer {
         None
     }
 
-    /// Reset to `Idle`. Called on context loss / window
-    /// minimise / similar — cancels any in-flight gesture
-    /// without emitting.
+    /// Reset to `Idle` — cancels any in-flight gesture without
+    /// emitting.
+    ///
+    /// Test-gated. The doc used to say "called on context loss /
+    /// window minimize"; neither run loop has ever called it, on
+    /// either target. Its contract stays pinned by the recognizer
+    /// tests so the day a suspend / visibility-change handler lands,
+    /// the behavior it needs is already specified.
+    #[cfg(test)]
     pub fn reset(&mut self) {
         self.state = State::Idle;
     }

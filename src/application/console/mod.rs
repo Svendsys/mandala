@@ -256,15 +256,6 @@ pub enum ConsoleLine {
     Error(String),
 }
 
-impl ConsoleLine {
-    pub fn text(&self) -> &str {
-        match self {
-            ConsoleLine::Input(s) | ConsoleLine::Error(s) => s,
-            ConsoleLine::Output { text, .. } => text,
-        }
-    }
-}
-
 /// Console UI state. Mirrors the `PaletteState` shape — either
 /// `Closed` or `Open { ... }`, with the whole line-editor +
 /// scrollback living in the `Open` arm.

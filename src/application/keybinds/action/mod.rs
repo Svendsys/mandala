@@ -957,6 +957,11 @@ pub enum WasmCompatibility {
 /// Adding a member here obliges both consumers: the keybind test
 /// asserts its classification, and the lift's `debug_assert` fires in
 /// any test build if the member has no verdict arm.
+// Consumer is `run_wasm/`; the host build reaches this only from
+// `#[cfg(test)]`, so arm the lint on wasm32 and silence it here
+// rather than blanket-allowing on both targets — if the browser
+// caller goes away, wasm32 says so.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) const MIXED_BRANCH_ACTIONS: [(Action, WasmCompatibility); 4] = [
     // Native leftover: the `hovered_node` clear for the target-picker
     // overlay rebuild. Cross-platform slice: border-preview cancel,

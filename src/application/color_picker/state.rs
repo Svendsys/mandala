@@ -251,20 +251,6 @@ impl ColorPickerState {
         matches!(self, ColorPickerState::Open { .. })
     }
 
-    /// The bound contextual handle if this picker is open in Contextual
-    /// mode. Returns `None` when the picker is closed OR when it's
-    /// open in Standalone mode (where commits target the document's
-    /// current selection instead of a pre-bound handle).
-    pub fn contextual_handle(&self) -> Option<&PickerHandle> {
-        match self {
-            ColorPickerState::Open {
-                mode: PickerMode::Contextual { handle, .. },
-                ..
-            } => Some(handle),
-            _ => None,
-        }
-    }
-
     /// True if the picker is open in Standalone mode.
     pub fn is_standalone(&self) -> bool {
         matches!(
