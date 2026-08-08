@@ -541,6 +541,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("find_nth_line_grapheme_indices", |b| {
         b.iter(do_find_nth_line_grapheme_indices)
     });
+    c.bench_function("line_model_is_coherent", |b| b.iter(do_line_model_is_coherent));
     c.bench_function("remove_prefix_unicode", |b| b.iter(do_remove_prefix_unicode));
     c.bench_function("insert_new_lines", |b| b.iter(do_insert_new_lines));
     c.bench_function("push_spaces", |b| b.iter(do_push_spaces));

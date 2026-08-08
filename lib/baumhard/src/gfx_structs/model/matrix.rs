@@ -263,11 +263,19 @@ impl GlyphMatrix {
                     graph_line_start_index = line_graph_range.0;
                     if target_line_len < offset.0 {
                         let pad = offset.0 - target_line_len;
-                        // The padding goes into the *middle* of the
-                        // buffer — every row but the last has text
-                        // after it — so the region table has to be
-                        // told, or every caller span below this row
-                        // stops pointing at its text.
+                        // The padding usually goes into the *middle*
+                        // of the buffer — every row but the last has
+                        // text after it — so the region table has to
+                        // be told, or every caller span below this row
+                        // stops pointing at its text. On the trailing
+                        // empty line of a `\n`-terminated buffer,
+                        // which this branch also serves now that
+                        // `find_nth_line_grapheme_range` addresses it
+                        // (issue #16), the insertion point is the end
+                        // of the buffer instead: no well-formed region
+                        // starts at or straddles it, so the call below
+                        // is a no-op there rather than a second
+                        // behavior to reason about.
                         // `split_and_separate` is the exact semantics:
                         // a span starting *at* the insertion point
                         // must move (`start >= idx`, which
@@ -290,10 +298,23 @@ impl GlyphMatrix {
                         regions.split_and_separate(Range::new(line_graph_range.1, line_graph_range.1 + pad));
                     }
                 } else {
-                    // Important that this is done before pushing spaces.
-                    // `push_spaces` appends past the end of the buffer,
-                    // so there is no text — and therefore no region —
-                    // after it to shift.
+                    // Unreachable while the line bookkeeping above is
+                    // right: `find_nth_line_grapheme_range` resolves
+                    // every index below `count_number_lines`, the
+                    // trailing empty line of a `\n`-terminated buffer
+                    // included (issue #16), and the `debug_assert`
+                    // above says `target_row` is such an index. `None`
+                    // now means only "row `target_row` does not
+                    // exist", which is a `have_lines` defect rather
+                    // than a shape of buffer — so this arm is the
+                    // release-build floor under that defect, painting
+                    // the row at the end of the buffer instead of
+                    // panicking on a slice in a composition path.
+                    //
+                    // Important that the index is taken before pushing
+                    // spaces. `push_spaces` appends past the end of the
+                    // buffer, so there is no text — and therefore no
+                    // region — after it to shift.
                     graph_line_start_index = count_grapheme_clusters(string);
                     push_spaces(string, offset.0);
                 }

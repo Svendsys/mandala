@@ -397,8 +397,17 @@ pub fn first_non_whitespace_grapheme(s: &str) -> Option<usize> {
 }
 
 /// Number of newline-separated lines in `s`. The trailing line counts
-/// even when `s` does not end in `\n`, so an empty string yields 1.
-/// O(n) byte scan; no allocation.
+/// even when `s` does not end in `\n`, so an empty string yields 1 and
+/// `"abc\n"` yields 2 — the second line being the empty one after the
+/// terminator.
+///
+/// That trailing line is addressable:
+/// [`find_nth_line_grapheme_range`] resolves every index in
+/// `0..count_number_lines(s)` and nothing outside it, so this count is
+/// a valid bound for a line-addressing loop. It was not always — see
+/// that function's doc for what the two disagreed about.
+///
+/// Cost: O(n) byte scan; no allocation.
 pub fn count_number_lines(s: &str) -> usize {
     s.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1
 }
@@ -426,6 +435,15 @@ pub fn count_number_lines(s: &str) -> usize {
 /// begin and end" (CONVENTIONS §B3); the editor's Home / End /
 /// up-line / down-line motions all route through it.
 ///
+/// The line it reports is the same line
+/// [`find_nth_line_grapheme_range`] addresses by index, including the
+/// empty one a trailing terminator leaves behind: for every `i <
+/// count_number_lines(s)` and every cursor inside that line's bounds,
+/// the pair returned here equals the range returned there. `"abc\n"`
+/// with the cursor at 4 is `(4, 4)`, the same span line 1 has. The
+/// three functions are one line model, checked as one by
+/// `do_line_model_is_coherent` in the crate's tests.
+///
 /// # Costs
 ///
 /// One O(n) grapheme walk that stops at the line's terminator — so
@@ -450,8 +468,29 @@ pub fn line_bounds_at(s: &str, cursor: usize) -> (usize, usize) {
 
 /// Grapheme-cluster span of the `n`-th newline-separated line in `s`,
 /// returned as a half-open `(start_grapheme, end_grapheme)` range.
-/// `n = 0` is the first line. Returns `None` if `s` is empty or `n`
-/// is past the last line.
+/// `n = 0` is the first line.
+///
+/// **Every line [`count_number_lines`] counts is addressable here**,
+/// and only those: `find_nth_line_grapheme_range(s, n).is_some()` is
+/// exactly `n < count_number_lines(s)`, for every `s` and every `n`.
+/// A caller may therefore iterate `0..count_number_lines(s)` and rely
+/// on each index resolving. The two used to disagree about the last
+/// line of every newline-terminated string, and about the empty
+/// string (issue #16 problem B): `count_number_lines` counts a
+/// trailing empty line — `"abc\n"` is two lines, `""` is one — while
+/// this finder answered `None` for it, so a `0..count` loop hit a
+/// guaranteed `None` on its final iteration and a cursor parked on
+/// the empty last line of a text area had no line to sit on. That
+/// trailing line now answers with the empty range at the end of the
+/// buffer: `"abc\n"` line 1 is `Some((4, 4))`, `""` line 0 is
+/// `Some((0, 0))`. An empty range is the honest span of a line with
+/// nothing on it, and the `("\n", 0) -> Some((0, 0))` fixture had
+/// already set that precedent for the *leading* empty line.
+///
+/// `None` therefore means one thing only: `n` is past the last line,
+/// i.e. the row does not exist. It never means "the row exists but is
+/// empty" — a caller that wants *that* distinction compares the two
+/// bounds, which costs it nothing.
 ///
 /// A "line terminator" is any cluster ending in `\n` — the same rule
 /// [`line_bounds_at`] applies, and for the same reason: UAX #29 fuses
@@ -467,34 +506,37 @@ pub fn line_bounds_at(s: &str, cursor: usize) -> (usize, usize) {
 /// [`line_bounds_at`], and the crate-private `slice_to_newline` that
 /// [`replace_graphemes_until_newline`] writes through.
 ///
-/// Cost: O(n) grapheme walk plus a final `s.graphemes(true).count()`
-/// when the last line is requested.
+/// # Costs
+///
+/// One O(n) grapheme walk that stops at the requested line's
+/// terminator — so O(distance to the end of line `n`), degrading to
+/// the whole buffer only for the last line. No allocation. The walk
+/// carries its own running cluster count, so the last-line case no
+/// longer pays a second `s.graphemes(true).count()` pass on top of
+/// it.
 pub fn find_nth_line_grapheme_range(s: &str, n: usize) -> Option<(usize, usize)> {
-    if s.is_empty() {
-        return None;
-    }
-    let mut line_head = 0;
-    let mut last_line_start = 0;
-    let mut new_line: bool = true;
+    let mut line_start = 0usize;
+    let mut line_index = 0usize;
+    let mut total = 0usize;
     for (idx, graph) in s.graphemes(true).enumerate() {
-        if new_line {
-            last_line_start = idx;
-            new_line = false;
-        }
+        total = idx + 1;
         if graph.ends_with('\n') {
-            if line_head == n {
+            if line_index == n {
                 // We're at the end of the requested line: emit the
-                // half-open range [last_line_start, idx).
-                return Some((last_line_start, idx));
+                // half-open range [line_start, idx).
+                return Some((line_start, idx));
             }
-            new_line = true;
-            line_head += 1;
+            line_index += 1;
+            line_start = idx + 1;
         }
     }
-    if line_head < n || (line_head == n && new_line) {
-        return None;
-    }
-    Some((last_line_start, s.graphemes(true).count()))
+    // Whatever follows the last terminator is the final line, and it
+    // exists whether or not any cluster landed on it — that is the
+    // line `count_number_lines`'s `+ 1` counts. An `s` with no
+    // terminator at all reaches here with `line_index == 0`, which is
+    // why the empty string answers `Some((0, 0))` for line 0 without
+    // a special case of its own.
+    (line_index == n).then_some((line_start, total))
 }
 
 /// Append `n` newline characters to `s`. Convenience wrapper around
