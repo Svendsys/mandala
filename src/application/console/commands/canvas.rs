@@ -135,12 +135,23 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
             let verb = state.tokens.get(2).map(|s| s.to_ascii_lowercase());
             canvas_value_completions(verb.as_deref(), state.partial, ctx)
         }
-        // Same for `canvas section-frame <verb>` (one positional later
-        // when the `focused` modifier is absent).
+        // `canvas section-frame focused <TAB>` — the modifier
+        // shifts the whole subverb tree one positional right, and
+        // this arm is what restores it. Without it the cursor fell
+        // through to the catch-all below and the popup offered kv
+        // keys only, hiding `show` / `reset` / `preview` and every
+        // per-field subverb that `execute_canvas` accepts there.
         CompletionContext::Token { index: 2 }
             if subject == Some("section-frame")
-                && state.tokens.get(2).map(String::as_str) != Some("focused") =>
+                && state.tokens.get(2).map(String::as_str) == Some("focused") =>
         {
+            let mut out = prefix_filter(SUBVERBS, state.partial);
+            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
+            out
+        }
+        // Same for `canvas section-frame <verb>` (one positional later
+        // when the `focused` modifier is absent).
+        CompletionContext::Token { index: 2 } if subject == Some("section-frame") => {
             let verb = state.tokens.get(2).map(|s| s.to_ascii_lowercase());
             canvas_value_completions(verb.as_deref(), state.partial, ctx)
         }
@@ -583,6 +594,31 @@ mod tests {
     use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
     use crate::application::console::ExecResult;
     use crate::application::document::tests_common::load_test_doc;
+
+    /// The `focused` modifier shifts `canvas section-frame`'s whole
+    /// subverb tree one positional to the right. Completion did not
+    /// follow it, so past `focused` the popup offered kv keys only —
+    /// hiding `show`, `reset`, `preview` and every per-field subverb
+    /// that `execute_canvas` accepts in exactly that position.
+    #[test]
+    fn test_canvas_focused_section_frame_completion_offers_subverbs() {
+        let doc = load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let line = "canvas section-frame focused ";
+        let rows: Vec<String> = crate::application::console::completion::complete(line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect();
+        for expected in super::SUBVERBS {
+            assert!(
+                rows.iter().any(|r| r == expected),
+                "`{line}<TAB>` should offer '{expected}'; got {rows:?}"
+            );
+        }
+        // The kv keys stay — `canvas section-frame focused
+        // preset=heavy` is a real form.
+        assert!(rows.iter().any(|r| r == "preset="));
+    }
 
     #[test]
     fn canvas_border_preset_writes_canvas_default() {

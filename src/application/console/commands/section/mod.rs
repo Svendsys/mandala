@@ -123,7 +123,7 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
         // showing `0..node.sections.len()` with each row's
         // hint surfacing the section's preview text.
         CompletionContext::KvValue { key } if key == "section" => {
-            section_idx_value_completions(ctx, state.partial)
+            super::range_kv::section_idx_completions(ctx, state.partial)
         }
         // `runs=preserve|clear` — static two-value enum.
         CompletionContext::KvValue { key } if key == "runs" => {
@@ -163,47 +163,6 @@ fn verb_hint(v: &str) -> &'static str {
         "frame" => "configure the section's frame border (subverb tree)",
         _ => "",
     }
-}
-
-/// Selection-aware integer completer for `section=<TAB>`.
-/// Surfaces `0..node.sections.len()` for the selection's
-/// primary node, with each row's hint showing a short text
-/// preview so the user can tell which section is which.
-fn section_idx_value_completions(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
-    use baumhard::util::grapheme_chad::take_graphemes;
-    let Some(primary_id) = ctx.document.selection.primary_node_id() else {
-        return Vec::new();
-    };
-    let Some(node) = ctx.document.mindmap.nodes.get(primary_id) else {
-        return Vec::new();
-    };
-    node.sections
-        .iter()
-        .enumerate()
-        .filter(|(idx, _)| idx.to_string().starts_with(partial))
-        .map(|(idx, section)| {
-            // Short text preview (≤20 graphemes, grapheme-aware so
-            // a multi-codepoint emoji doesn't slice mid-cluster).
-            // Empty sections render `(empty)` so the row isn't
-            // a bare bullet. One walk, no prefix allocation —
-            // `take_graphemes` returns the borrowed prefix and the
-            // overflow flag together.
-            let (preview, overflow) = take_graphemes(&section.text, 20);
-            let hint = if preview.is_empty() {
-                "(empty)".to_string()
-            } else if overflow {
-                format!("\"{}…\"", preview)
-            } else {
-                format!("\"{}\"", preview)
-            };
-            Completion {
-                text: idx.to_string(),
-                display: idx.to_string(),
-                hint: Some(hint),
-                font_family: None,
-            }
-        })
-        .collect()
 }
 
 fn kv_hint(key: &str) -> Option<&'static str> {
@@ -411,11 +370,11 @@ fn execute_show(args: &Args, doc: &MindMapDocument, node_id: &str, idx: usize) -
     // doesn't overflow the readout. Stay grapheme-aware so we
     // don't slice mid-cluster. `take_graphemes` is the single-pass
     // primitive for that: it borrows the prefix (no `String` to
-    // build) and reports overflow from the same walk. This file
-    // used to carry two different hand-rolled truncations — the
-    // other one, in `section_idx_value_completions`, walked the
-    // iterator twice, and the completion popup hits that path on
-    // every key press in some flows.
+    // build) and reports overflow from the same walk. The sibling
+    // truncation — the one behind `section=<TAB>` — now lives in
+    // `commands::range_kv` with the rest of the shared
+    // section-targeting vocabulary, so `color` and `font` reach
+    // the same popup this readout's preview mirrors.
     use baumhard::util::grapheme_chad::take_graphemes;
     let (preview, overflow) = take_graphemes(&section.text, 40);
     let text_display = if overflow {

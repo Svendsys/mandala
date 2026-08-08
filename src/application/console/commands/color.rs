@@ -39,8 +39,17 @@ pub const COMMAND: Command = Command {
     execute: execute_color,
 };
 
-fn complete_color(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
+fn complete_color(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
+        // `color picker` takes `on` / `off` and nothing else — not
+        // the kv keys, which `execute_color` rejects there. The arm
+        // sits ahead of the general one so the popup offers only
+        // what the verb accepts.
+        CompletionContext::Token { index: 1 }
+            if state.tokens.get(1).map(String::as_str) == Some("picker") =>
+        {
+            prefix_filter(&["on", "off"], state.partial)
+        }
         CompletionContext::Token { index } => {
             let mut out = kv_key_completions_with_hints(KEYS, state.partial, kv_hint);
             // At token 0 the bare verbs — `pick` plus the axis
@@ -50,14 +59,16 @@ fn complete_color(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
             if *index == 0 {
                 out.extend(prefix_filter(&["pick", "picker"], state.partial));
             }
-            // `color picker` expects `on` / `off` as the next token.
-            if *index == 1 && matches!(state.tokens.first().map(String::as_str), Some("picker")) {
-                out.extend(prefix_filter(&["on", "off"], state.partial));
-            }
             out
         }
-        CompletionContext::KvValue { key } if KEYS.iter().any(|k| k == key) => {
+        // Per-key value vocabularies. `section=` is an index, not a
+        // color; matching the whole `KEYS` list offered it the
+        // color presets, which nothing would accept.
+        CompletionContext::KvValue { key } if matches!(key.as_str(), "bg" | "text" | "border") => {
             prefix_filter(VALUE_PRESETS, state.partial)
+        }
+        CompletionContext::KvValue { key } if key == "section" => {
+            super::range_kv::section_idx_completions(ctx, state.partial)
         }
         _ => Vec::new(),
     }
@@ -516,6 +527,35 @@ mod tests {
     use super::*;
     use crate::application::console::parser::{parse, ParseResult};
     use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
+
+    /// The popup rows for `line` with the cursor at its end.
+    fn popup(line: &str, doc: &crate::application::document::MindMapDocument) -> Vec<String> {
+        let ctx = ConsoleContext::from_document(doc);
+        crate::application::console::completion::complete(line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect()
+    }
+
+    /// `color picker` accepts `on` and `off` and rejects every kv
+    /// pair. The popup used to offer the kv keys and neither of the
+    /// two words, because its guard asked `tokens.first()` — the
+    /// verb name — whether it was `picker`.
+    #[test]
+    fn test_color_picker_completion_offers_on_and_off_only() {
+        let doc = load_test_doc();
+        assert_eq!(popup("color picker ", &doc), vec!["on", "off"]);
+        assert_eq!(popup("color picker o", &doc), vec!["on", "off"]);
+    }
+
+    /// `section=` takes an index, not a color name.
+    #[test]
+    fn test_color_section_value_completion_offers_section_indices() {
+        let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        assert_eq!(popup("color section=", &doc), vec!["0", "1"]);
+        assert_eq!(popup("color bg=", &doc), VALUE_PRESETS.to_vec());
+    }
 
     #[test]
     fn apply_color_axis_writes_bg_to_node() {

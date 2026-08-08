@@ -11,6 +11,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "help"),
     (Sel::Node, "help all"),
     (Sel::Node, "help color"),
+    (Sel::Node, "help font"),
     (Sel::Node, "help nope"),
     // anchor
     (Sel::Edge, "anchor"),
@@ -308,6 +309,9 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "font se"),
     (Sel::Node, "font size="),
     (Sel::TwoSectionNode, "font section="),
+    (Sel::Node, "font ra"),
+    (Sel::TwoSectionNode, "font range="),
+    (Sel::TwoSectionNode, "color section="),
     (Sel::Node, "fps "),
     (Sel::Node, "fps o"),
     (Sel::Edge, "spacing "),

@@ -46,7 +46,11 @@ use crate::application::console::traits::{apply_to_targets, AcceptsFontFamily};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
 
-pub const KEYS: &[&str] = &["size", "min", "max", "section"];
+/// kv keys the verb accepts. `range` sat in `parse_font_args` and
+/// in the verb's own error text without ever reaching this list, so
+/// it was parseable but invisible: `font ra<TAB>` offered nothing
+/// and the usage line did not mention it. One list, read by both.
+pub const KEYS: &[&str] = &["size", "min", "max", "section", "range"];
 /// Positional subverbs surfaced as token-0 completions alongside
 /// the kv keys.
 pub const VERBS: &[&str] = &["set", "list"];
@@ -58,16 +62,17 @@ pub const COMMAND: Command = Command {
     name: "font",
     aliases: &[],
     summary: "Set font family / size / clamps on the selection, or list fonts",
-    usage: "font set <family> | font list | font size=<pt> [min=<pt>] [max=<pt>]",
+    usage: "font set <family> [section=<N>] [range=<A..B>] | font list | font size=<pt> [min=<pt>] [max=<pt>] [section=<N>] [range=<A..B>]",
     tags: &[
         "font", "family", "set", "list", "size", "min", "max", "clamp", "pt", "smaller", "larger",
+        "section", "range",
     ],
     applicable: always,
     complete: complete_font,
     execute: execute_font,
 };
 
-fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
+fn complete_font(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
         // Token 0: positional verbs (`set`, `list`) + kv keys.
         CompletionContext::Token { index: 0 } => {
@@ -98,9 +103,19 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
         // fall back to the kv keys (parity with the pre-existing
         // shape).
         CompletionContext::Token { .. } => kv_key_completions_with_hints(KEYS, state.partial, kv_hint),
-        CompletionContext::KvValue { key } if KEYS.contains(&key.as_str()) => {
+        // Per-key value vocabularies. Matching the whole `KEYS`
+        // list here is what made `font section=<TAB>` offer point
+        // sizes: `section` is a key of this verb, so the arm fired,
+        // and the only vocabulary it knew was the one belonging to
+        // `size`. Each key answers for itself now.
+        CompletionContext::KvValue { key } if matches!(key.as_str(), "size" | "min" | "max") => {
             prefix_filter(SIZE_PRESETS, state.partial)
         }
+        CompletionContext::KvValue { key } if key == "section" => {
+            super::range_kv::section_idx_completions(ctx, state.partial)
+        }
+        // `range=A..B` is free-form — grapheme indices into the
+        // targeted section, with no list to offer.
         _ => Vec::new(),
     }
 }
@@ -119,6 +134,7 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "min" => Some("lower screen-space clamp in points"),
         "max" => Some("upper screen-space clamp in points"),
         "section" => Some("target section index inside a multi-section node"),
+        "range" => Some("grapheme range A..B inside the targeted section"),
         _ => None,
     }
 }
@@ -730,6 +746,38 @@ mod tests {
     use crate::application::console::tests::fixtures::{assert_exec_ok, join_lines, run};
     use crate::application::document::tests_common::load_test_doc as fixture_doc;
     use crate::application::document::{EdgeRef, SelectionState};
+
+    /// The popup rows for `line` with the cursor at its end.
+    fn popup(line: &str, doc: &crate::application::document::MindMapDocument) -> Vec<String> {
+        let ctx = ConsoleContext::from_document(doc);
+        crate::application::console::completion::complete(line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect()
+    }
+
+    /// `section=` is an index into the selected node's sections, so
+    /// its popup must be those indices. It offered `SIZE_PRESETS`
+    /// instead — the vocabulary of `size=`, a different key of the
+    /// same verb — because the value-side arm matched the whole
+    /// `KEYS` list and knew only one list to answer with.
+    #[test]
+    fn test_font_section_value_completion_offers_section_indices() {
+        let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        assert_eq!(popup("font section=", &doc), vec!["0", "1"]);
+        assert_eq!(popup("font size=", &doc), SIZE_PRESETS.to_vec());
+    }
+
+    /// `range=` was accepted by `parse_font_args` and named in the
+    /// verb's own error text, but absent from `KEYS` — so it
+    /// completed to nothing and `help font` never mentioned it.
+    #[test]
+    fn test_font_completion_offers_the_range_key() {
+        let doc = fixture_doc();
+        assert!(popup("font ", &doc).iter().any(|t| t == "range="));
+        assert!(COMMAND.usage.contains("range="));
+    }
 
     fn first_loaded_family() -> String {
         baumhard::font::fonts::init();
