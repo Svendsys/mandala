@@ -53,11 +53,11 @@ pub(crate) use action::MIXED_BRANCH_ACTIONS;
 #[allow(unused_imports)]
 pub use bind::{key_to_name, normalize_key_name, KeyBind, MouseGesture};
 pub use config::KeybindConfig;
+pub use context::InputContext;
+pub use resolved::ResolvedKeybinds;
 // `ParametricBinding` is consumed by tests and by users authoring
 // `keybinds.json` files (the JSON schema is the public surface);
 // no in-binary native consumer pulls it in via `mandala::application::keybinds::ParametricBinding`,
 // hence the lint exemption.
 #[allow(unused_imports)]
 pub use surface::ParametricBinding;
-pub use context::InputContext;
-pub use resolved::ResolvedKeybinds;

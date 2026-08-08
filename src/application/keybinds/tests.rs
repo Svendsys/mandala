@@ -2005,8 +2005,10 @@ fn test_known_keys_matches_the_serialized_default_config() {
         .keys()
         .cloned()
         .collect();
-    let known: std::collections::HashSet<String> =
-        KeybindConfig::known_keys().into_iter().map(String::from).collect();
+    let known: std::collections::HashSet<String> = KeybindConfig::known_keys()
+        .into_iter()
+        .map(String::from)
+        .collect();
     assert_eq!(known, serialized);
 }
 
@@ -2060,7 +2062,10 @@ fn test_every_declared_binding_resolves_to_its_action() {
         })
         .collect();
     let listed: std::collections::HashSet<&str> = parametric_args.keys().copied().collect();
-    assert_eq!(listed, declared, "SENTINEL_PARAMETRIC_ARGS drifted from the table");
+    assert_eq!(
+        listed, declared,
+        "SENTINEL_PARAMETRIC_ARGS drifted from the table"
+    );
 
     let json = serde_json::Value::Object(object).to_string();
     assert!(
@@ -2226,11 +2231,22 @@ fn test_shipped_keybinds_template_binds_every_key_it_names() {
             let action = resolved
                 .action_for_context(kind.context(), &bind.key, bind.ctrl, bind.shift, bind.alt)
                 .unwrap_or_else(|| panic!("template key {key:?} bound to {combo:?} resolves to nothing"));
-            assert_eq!(ActionKind::from(&action), kind, "template key {key:?} → {combo:?}");
+            assert_eq!(
+                ActionKind::from(&action),
+                kind,
+                "template key {key:?} → {combo:?}"
+            );
             checked += 1;
         }
     }
-    assert!(checked >= 10, "the template should exercise more than {checked} bindings");
+    // A floor, so the loop cannot pass by finding nothing to check —
+    // which is how a template key silently ceasing to be an action
+    // key would otherwise read from here.
+    assert!(
+        checked >= 10,
+        "only {checked} template bindings were checked; the template lists more than that, so a \
+         key stopped being recognized as an action key",
+    );
 }
 
 #[test]

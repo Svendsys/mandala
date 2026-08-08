@@ -74,6 +74,17 @@ mod tests {
         // schema had renamed — and every layer here accepted it in
         // silence (issue #32).
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_keybinds.json");
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        // Read off the disk, not out of `include_str!`: a key the
+        // schema does not have would otherwise be invisible here,
+        // because the field it failed to fill falls back to a default
+        // that happens to carry the same combo.
+        assert_eq!(
+            KeybindConfig::unknown_top_level_keys(&on_disk),
+            Vec::<String>::new(),
+            "the file this loader reads names a key the schema does not have",
+        );
+
         let cfg = KeybindConfig::load_for_desktop(Some(&path));
         assert_eq!(cfg.exit_mode, vec!["Escape".to_string()]);
         assert_eq!(

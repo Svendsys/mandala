@@ -45,7 +45,7 @@
 //! ([`ColorAxis`], [`FontSlot`], ...) go through their strum-derived
 //! `FromStr`. A field whose type has no `ArgValue` impl does not
 //! compile, which is the seam a new typed payload extends —
-//! [`impl_arg_value_via_from_str`] takes the type name and nothing
+//! `impl_arg_value_via_from_str!` takes the type name and nothing
 //! else.
 
 use log::warn;
@@ -317,8 +317,9 @@ macro_rules! keybind_surface {
         }
     ) => {
         /// The raw, user-editable config — **generated** from the
-        /// `keybind_surface!` table below, which is the single place
-        /// a bindable [`Action`] is declared. Every action field is a
+        /// `keybind_surface!` table that declares it, which is the
+        /// single place a bindable [`Action`] is named on the config
+        /// side (see [`super::surface`]). Every action field is a
         /// list so users can assign several keys to the same action
         /// (e.g. `Ctrl+Z` and the `Undo` media key both mapped to
         /// `Undo`). Fields default via serde, so a partial config
