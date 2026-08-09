@@ -278,7 +278,7 @@ pub(in crate::application::app) fn apply_set_section_size(
         log::warn!("SetSectionSize: no section selected");
         return;
     };
-    if !section_exists(&rc.document, &node_id, idx) {
+    if !section_exists(rc.document, &node_id, idx) {
         log::warn!("SetSectionSize: section[{}] not found on node '{}'", idx, node_id);
         return;
     }
@@ -338,7 +338,7 @@ pub(in crate::application::app) fn apply_set_section_text(
         log::warn!("SetSectionText: no section selected");
         return;
     };
-    if !section_exists(&rc.document, &node_id, idx) {
+    if !section_exists(rc.document, &node_id, idx) {
         log::warn!("SetSectionText: section[{}] not found on node '{}'", idx, node_id);
         return;
     }
@@ -394,7 +394,7 @@ pub(in crate::application::app) fn apply_delete_section(rc: &mut RebuildContext<
         log::warn!("DeleteSection: no section selected");
         return;
     };
-    if !section_exists(&rc.document, &node_id, idx) {
+    if !section_exists(rc.document, &node_id, idx) {
         log::warn!("DeleteSection: section[{}] not found on node '{}'", idx, node_id);
         return;
     }
