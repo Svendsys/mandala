@@ -7,6 +7,50 @@
 //! rather than indexing a `String` by byte offset — the latter
 //! splits a 👨‍👩‍👧 ZWJ sequence on the first edit and the rest of the
 //! pipeline silently corrupts.
+//!
+//! # The line model
+//!
+//! Several of these helpers answer *where does line `n` begin and
+//! end*, and callers pair them: [`count_number_lines`] bounds the
+//! loop that [`find_nth_line_grapheme_range`] indexes, and
+//! [`line_bounds_at`] reports the same span from a cursor sitting
+//! inside it. They therefore have to mean the same thing by "line",
+//! and this is what they mean:
+//!
+//! - **A line terminator is a grapheme cluster ending in `\n`.**
+//!   UAX #29 fuses `\r\n` into one cluster, so a CRLF is a single
+//!   terminator and its CR belongs to the terminator rather than to
+//!   the line in front of it. A CR *not* followed by an LF
+//!   terminates nothing and stays in the line as ordinary content —
+//!   line 0 of `"a\r\r\nb"` is `"a\r"`.
+//! - **A terminator ends a line; it does not start one.** A buffer
+//!   ending in a terminator therefore has an empty final line:
+//!   `"abc\n"` is two lines and line 1 is the empty span at the end
+//!   of the buffer. The empty string is one empty line.
+//! - **Every line the count counts is addressable, and only those.**
+//!   `find_nth_line_grapheme_range(s, n).is_some()` is exactly
+//!   `n < count_number_lines(s)`, so `0..count_number_lines(s)` is a
+//!   loop whose every index resolves (issue #16).
+//!
+//! The crate-private `slice_to_newline` is that same model expressed
+//! in byte offsets instead of cluster indices — it is what
+//! [`replace_graphemes_until_newline`] writes through, and the one
+//! member that has to exclude the CRLF's CR by hand. Each function's
+//! own doc carries the detail and the costs; the crate's
+//! `do_line_model_is_coherent` test holds all four to this.
+//!
+//! [`count_number_lines`]: crate::util::grapheme_chad::count_number_lines
+//! [`find_nth_line_grapheme_range`]: crate::util::grapheme_chad::find_nth_line_grapheme_range
+//! [`line_bounds_at`]: crate::util::grapheme_chad::line_bounds_at
+//! [`replace_graphemes_until_newline`]: crate::util::grapheme_chad::replace_graphemes_until_newline
+
+// The four link targets above are spelled out in full rather than
+// left to shorthand resolution. `util/mod.rs` carries an outer `///`
+// on this module's `pub mod` line, and rustdoc merges that fragment
+// with this header and resolves the whole of it in `util`'s scope,
+// where these names are not visible. Reference-style definitions
+// render as nothing, so the header above reads as if they were not
+// there.
 
 use log::error;
 use unicode_segmentation::UnicodeSegmentation;
@@ -440,8 +484,9 @@ pub fn count_number_lines(s: &str) -> usize {
 /// empty one a trailing terminator leaves behind: for every `i <
 /// count_number_lines(s)` and every cursor inside that line's bounds,
 /// the pair returned here equals the range returned there. `"abc\n"`
-/// with the cursor at 4 is `(4, 4)`, the same span line 1 has. The
-/// three functions are one line model, checked as one by
+/// with the cursor at 4 is `(4, 4)`, the same span line 1 has. These
+/// functions and the byte-level `slice_to_newline` are one line
+/// model — see the module header — checked as one by
 /// `do_line_model_is_coherent` in the crate's tests.
 ///
 /// # Costs

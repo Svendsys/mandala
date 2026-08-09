@@ -194,6 +194,26 @@ impl GlyphMatrix {
     ///   reporting it exactly, is a question about the matrix cell
     ///   model and is not answered here.
     ///
+    /// **Precondition on the incoming `regions`: every span must
+    /// already describe `string`.** That is, each region satisfies
+    /// `start < end` and `end <= count_grapheme_clusters(string)`, and
+    /// no two cover the same cluster — the same "non-degenerate and
+    /// non-overlapping" precondition
+    /// [`ColorFontRegions::split_and_separate`](crate::core::primitives::ColorFontRegions::split_and_separate)
+    /// carries, plus the in-bounds half that only matters once a
+    /// *buffer* is in the picture. The requirement is on what this
+    /// call receives, not merely on what it emits: every shift and
+    /// split below is a rewrite of the existing set keyed on cluster
+    /// positions in `string`, so a region reaching past the end of the
+    /// buffer, or an empty `[k, k)` husk, is carried forward and moved
+    /// by rules that assume it points at text. Nothing here can detect
+    /// the violation and nothing repairs it; the spans simply come out
+    /// somewhere else than a caller reasoning from the buffer would
+    /// predict, and where they come out is not a contract. A caller
+    /// that built `regions` alongside `string` satisfies this by
+    /// construction — one merging a region table that outlived an edit
+    /// to the buffer does not.
+    ///
     /// Padding inserted for a non-zero x-offset is reported to
     /// `regions` too, so caller spans on the rows below survive it. It
     /// goes through `ColorFontRegions::split_and_separate`, which

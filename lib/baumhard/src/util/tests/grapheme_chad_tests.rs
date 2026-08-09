@@ -93,17 +93,25 @@ lazy_static! {
         ("\r\n", 2),
         // A lone CR terminates nothing.
         ("a\rb", 1),
+        // A lone CR *immediately before* a CRLF: the byte scan here
+        // sees one `\n` and says two lines, and the cluster walk must
+        // agree even though the two CRs sit adjacent and only the
+        // second one is half of a terminator.
+        ("a\r\r\nb", 2),
+        ("x\r\r\ny\r\r\n", 3),
     ];
 
     /// Inputs for [`do_line_model_is_coherent`]: the strings on which
-    /// `count_number_lines`, `find_nth_line_grapheme_range` and
-    /// `line_bounds_at` have to describe the same lines.
+    /// `count_number_lines`, `find_nth_line_grapheme_range`,
+    /// `line_bounds_at` and `slice_to_newline` have to describe the
+    /// same lines.
     ///
-    /// The set is chosen to cover every way the three used to come
-    /// apart, plus the ordinary shapes that must not regress: the
-    /// empty string, a bare terminator, both terminator flavors,
-    /// terminated and unterminated tails, runs of empty lines, and
-    /// multi-scalar clusters on both sides of a break.
+    /// The set is chosen to cover every way they used to come apart,
+    /// plus the ordinary shapes that must not regress: the empty
+    /// string, a bare terminator, both terminator flavors, terminated
+    /// and unterminated tails, runs of empty lines, a lone CR both
+    /// free-standing and pressed up against a CRLF, and multi-scalar
+    /// clusters on both sides of a break.
     pub static ref LINE_MODEL_COHERENCE_TEST: Vec<&'static str> = vec![
         "",
         "\n",
@@ -123,6 +131,13 @@ lazy_static! {
         // A lone CR at the very end is content, not a terminator: one
         // line, and its text keeps the CR.
         "a\r",
+        // A lone CR immediately before a CRLF — the one shape that
+        // separates a byte-level cut from a cluster-level one, since
+        // a scan that stopped at the `\n` byte and stepped back over
+        // *any* CR would eat the content one as well. Line 0 keeps
+        // its CR and the terminator keeps its own.
+        "a\r\r\nb",
+        "x\r\r\ny\r\r\n",
         "AA\r\nBB",
         "\nho\nhi\nhello",
         "🙏🏻\n👨‍👩‍👧",
@@ -196,6 +211,22 @@ lazy_static! {
         // A lone CR is not a line terminator under UAX #29 and must
         // not split the line here either.
         ("a\rb", 0, Some((0, 3))),
+        // A lone CR immediately before a CRLF. `"a\r\r\nb"` is four
+        // clusters — `a`, `\r`, `\r\n`, `b` — because GB3 joins a CR
+        // to a *following* LF only, so the first CR stands alone and
+        // is content. Line 0 is the two clusters in front of the
+        // terminator and keeps that CR; a cut taken at the `\n` byte
+        // with a blanket one-byte CR lookbehind would report
+        // `Some((0, 1))` here and lose it.
+        ("a\r\r\nb", 0, Some((0, 2))),
+        ("a\r\r\nb", 1, Some((3, 4))),
+        ("a\r\r\nb", 2, None),
+        // The same shape twice over, ending on a terminator so the
+        // trailing empty line is in the picture too.
+        ("x\r\r\ny\r\r\n", 0, Some((0, 2))),
+        ("x\r\r\ny\r\r\n", 1, Some((3, 5))),
+        ("x\r\r\ny\r\r\n", 2, Some((6, 6))),
+        ("x\r\r\ny\r\r\n", 3, None),
         // Multi-scalar clusters straddling a terminator: the line
         // bounds are cluster indices, so a ZWJ family and a skin-tone
         // sequence each count as one and the ranges stay tight around
@@ -331,6 +362,15 @@ lazy_static! {
         ("abcde\r\nfg", 5, ""),
         // A lone CR is not a terminator and stays in the line.
         ("abc\rde", 0, "abc\rde"),
+        // A lone CR immediately before a CRLF. The lookbehind is one
+        // byte and steps back over the terminator's own CR only, so
+        // the content CR in front of it survives — this is the row
+        // that separates the implemented rule from a blanket
+        // "trim every trailing CR".
+        ("a\r\r\nb", 0, "a\r"),
+        // ...and starting between the two CRs, the surviving one is
+        // all that is left of the line.
+        ("a\r\r\nb", 1, "\r"),
         // Degenerate: a byte index that lands on the LF of a CRLF is
         // mid-cluster and outside the contract, but it must not
         // produce an inverted slice and panic.
@@ -701,10 +741,12 @@ pub fn test_line_model_is_coherent() {
     do_line_model_is_coherent();
 }
 
-/// The three line helpers are one line model, and this is the check
-/// that says so for every input in [`LINE_MODEL_COHERENCE_TEST`]
-/// rather than for the individual rows the other tables happen to
-/// carry.
+/// The four line helpers — `count_number_lines`,
+/// `find_nth_line_grapheme_range`, `line_bounds_at` and the
+/// byte-level `slice_to_newline` — are one line model, and this is
+/// the check that says so for every input in
+/// [`LINE_MODEL_COHERENCE_TEST`] rather than for the individual rows
+/// the other tables happen to carry.
 ///
 /// The property issue #16 asks for is the first of the six:
 /// `(0..count_number_lines(s)).all(|i| find_nth_line_grapheme_range(s,
@@ -713,7 +755,8 @@ pub fn test_line_model_is_coherent() {
 /// answer down: the count is an exact bound and not merely a lower
 /// one, the ranges tile the buffer with exactly one terminator
 /// cluster between neighbors, no range escapes the buffer or contains
-/// a terminator, and [`line_bounds_at`] agrees with the finder from
+/// a terminator, `slice_to_newline` cuts out the same text those
+/// bounds delimit, and [`line_bounds_at`] agrees with the finder from
 /// every cursor position inside each line.
 pub fn do_line_model_is_coherent() {
     for s in LINE_MODEL_COHERENCE_TEST.clone() {
@@ -764,11 +807,29 @@ pub fn do_line_model_is_coherent() {
             }
         }
 
-        // 4. A line's own text carries no terminator — the CR of a
-        //    CRLF included, which is the half a byte-level cut gets
-        //    wrong. A trailing CR on the *last* line is content, not
-        //    a terminator, so it is exempt: nothing follows it to
-        //    make it one.
+        // 4. A line's own text carries no terminator, and the
+        //    byte-level member of the family cuts out the same text.
+        //
+        //    The CR of a CRLF cannot survive into a line
+        //    reconstructed the way this loop reconstructs one. The
+        //    bounds are *cluster* indices, so for every line but the
+        //    last `end` names the terminator cluster itself and that
+        //    cluster's CR is the first byte at `to`, never the last
+        //    byte before it. A trailing `\r` in `line` is therefore
+        //    always a lone CR that is genuine content — line 0 of
+        //    `"a\r\r\nb"` is `"a\r"` — so an assertion forbidding one
+        //    has no true positive available to it and fires only on
+        //    correct code. A line that did swallow its terminator is
+        //    caught by the `contains('\n')` clause above.
+        //
+        //    Where a CR *can* be kept is `slice_to_newline`, the
+        //    fourth member of this family: it searches for the `\n`
+        //    byte and steps back over a preceding CR by hand, so it
+        //    is the one member a byte-level cut breaks. Take its
+        //    lookbehind away and line 0 of `"AA\r\nBB"` slices to
+        //    `"AA\r"` here while the cluster-level finder still says
+        //    `"AA"` — that is the input this assertion fails on, and
+        //    the reason it replaces one that had none.
         for (i, &(start, end)) in ranges.iter().enumerate() {
             let from = find_byte_index_of_grapheme(s, start).unwrap_or(s.len());
             let to = find_byte_index_of_grapheme(s, end).unwrap_or(s.len());
@@ -777,9 +838,10 @@ pub fn do_line_model_is_coherent() {
                 !line.contains('\n'),
                 "line {i} of {s:?} is {line:?}, which still holds a terminator"
             );
-            assert!(
-                i + 1 == count || !line.ends_with('\r'),
-                "line {i} of {s:?} is {line:?}, which keeps the CR of the CRLF that ends it"
+            assert_eq!(
+                slice_to_newline(s, from),
+                line,
+                "line {i} of {s:?} is {line:?} by cluster bounds, so `slice_to_newline` must cut out the same text"
             );
         }
 
