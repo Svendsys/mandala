@@ -936,6 +936,123 @@ fn test_overlay_shape_cache_reuses_when_only_the_hitbox_moved() {
     );
 }
 
+/// One named single-field mutation of a `GlyphArea`, for
+/// [`test_glyph_area_equality_ignores_only_the_hitbox`]'s table. A
+/// `fn` pointer rather than a closure type so every row of the table
+/// shares one type and the whole thing fits in an array.
+type NamedAreaMutation = (&'static str, fn(&mut GlyphArea));
+
+/// `GlyphArea`'s `PartialEq` ignore-list is exactly `{hitbox}`.
+///
+/// The overlay cache's module header rests on "a field added to the
+/// area joins the comparison without anyone remembering to wire it
+/// in". That is only true for a field *not* marked
+/// `#[derivative(PartialEq = "ignore")]`, and the struct already
+/// carries one such marking — so the sentence needs a guard rather
+/// than trust. This is it, in two halves:
+///
+/// - the exhaustive destructuring has no `..` rest pattern, so a
+///   field added to `GlyphArea` fails to compile here until someone
+///   names it and decides which list it belongs on;
+/// - every field named on the equality-visible side is then mutated
+///   in isolation and asserted to break `==`, so an `ignore` added
+///   to one of today's fields fails rather than quietly widening the
+///   cache's blind spot.
+///
+/// Three of those fields — `background_color`, `background_padding`
+/// and `align_center` — are read by the shaper (or by the fill the
+/// shaper's walker emits) and reachable by no `GlyphAreaField`
+/// mutator variant, so the sibling
+/// `test_overlay_shape_cache_invalidates_on_every_writable_area_field`
+/// cannot see them. This is where they are covered.
+#[test]
+fn test_glyph_area_equality_ignores_only_the_hitbox() {
+    use baumhard::gfx_structs::area::EdgePadding;
+    use baumhard::gfx_structs::util::hitbox::BoundingRectangle;
+
+    let base = overlay_cache_fixture_area();
+
+    // Exhaustive on purpose — no `..`. A new `GlyphArea` field stops
+    // the build right here.
+    let GlyphArea {
+        text: _,
+        scale: _,
+        line_height: _,
+        position: _,
+        render_bounds: _,
+        regions: _,
+        background_color: _,
+        background_padding: _,
+        align_center: _,
+        outline: _,
+        shape: _,
+        zoom_visibility: _,
+        hitbox: _,
+    } = &base;
+
+    // One mutation per equality-visible field, each applied to a
+    // fresh clone of the fixture so the fields stay independent.
+    // `regions` is perturbed by its *span set* rather than by a
+    // color: derived equality bottoms out in `BTreeSet` identity by
+    // range and is deliberately blind to a recolor — the module
+    // header's "The one place `==` is not enough", which
+    // `ColorFontRegions::same_content` answers separately.
+    let visible: [NamedAreaMutation; 12] = [
+        ("text", |a| a.text.push('!')),
+        ("scale", |a| a.scale = (a.scale.0 + 1.0).into()),
+        ("line_height", |a| a.line_height = (a.line_height.0 + 1.0).into()),
+        ("position", |a| a.set_position((123.0, 456.0))),
+        ("render_bounds", |a| a.set_bounds((321.0, 654.0))),
+        ("regions", |a| {
+            a.regions = ColorFontRegions::single_span(2, Some([0.1, 0.2, 0.3, 1.0]), None)
+        }),
+        ("background_color", |a| a.background_color = Some([1, 2, 3, 4])),
+        ("background_padding", |a| {
+            a.background_padding = EdgePadding::new(1.0, 2.0, 3.0, 4.0)
+        }),
+        ("align_center", |a| a.align_center = !a.align_center),
+        ("outline", |a| a.outline = None),
+        ("shape", |a| a.shape = NodeShape::Rectangle),
+        ("zoom_visibility", |a| {
+            a.zoom_visibility = ZoomVisibility::try_new(Some(0.25), Some(4.0)).unwrap()
+        }),
+    ];
+
+    for (name, mutate) in visible {
+        let mut changed = base.clone();
+        mutate(&mut changed);
+        // Derived `Debug`, not `PartialEq` — asking `PartialEq`
+        // whether the field moved is the circularity this test
+        // exists to avoid.
+        assert_ne!(
+            format!("{:?}", changed),
+            format!("{:?}", base),
+            "the mutation for `{name}` does not change the area, so this iteration proves nothing"
+        );
+        assert_ne!(
+            changed, base,
+            "`GlyphArea::{name}` is read when shaping but `PartialEq` cannot see it — the overlay \
+             shape cache would reuse a stale buffer. Either drop its `PartialEq = \"ignore\"` or \
+             move it to the ignored side of this test and say why the shaper never reads it."
+        );
+    }
+
+    // ...and the one field on the ignored side.
+    let mut moved_hitbox = base.clone();
+    moved_hitbox
+        .hitbox_as_mut()
+        .add(BoundingRectangle::at_origin(99.0, 99.0));
+    assert_ne!(
+        format!("{:?}", moved_hitbox),
+        format!("{:?}", base),
+        "the hit box has to actually differ, or the assertion below is vacuous"
+    );
+    assert_eq!(
+        moved_hitbox, base,
+        "`hitbox` is the only field `PartialEq` is allowed to skip"
+    );
+}
+
 /// Snapshot a registered overlay tree exactly the way
 /// `rebuild_overlay_scene_buffers` does — one cache entry per walked
 /// element, in walk order. Buffers are left empty: `still_matches`
@@ -1058,19 +1175,26 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
     );
 }
 
-/// A color-picker hover re-shapes a small, bounded set of cells
-/// rather than the whole wheel.
+/// A color-picker hover re-shapes the one cell it recolors, not the
+/// whole wheel.
 ///
 /// Sibling of the console test above, on the other overlay the issue
-/// names. `build_dynamic_mutator` writes color regions, hover scale
-/// and hex text into *every* picker slot on every mouse-move frame,
-/// and the wheel's cells carry an `outline`, so each one costs nine
+/// names, and pinned to an exact count the same way that one is.
+/// `build_dynamic_mutator` writes color regions, hover scale and hex
+/// text into *every* picker slot on every mouse-move frame, and the
+/// wheel's cells carry an `outline`, so each one costs nine
 /// cosmic-text shapings; before the reuse check a hover paid that
-/// for all of them. The assertion is a fraction rather than an exact
-/// count because how many cells a hue-slot hover recolors is the
-/// picker's business, not this cache's — what is being pinned here
-/// is that the number is a small part of the wheel and not the whole
-/// of it.
+/// for all of them.
+///
+/// Nothing here is environment-dependent — the fixture and the
+/// layout are deterministic, and `still_matches` compares
+/// `GlyphArea`s without shaping anything — so there is no reason to
+/// spend the assertion on a fraction. A `changed * 4 < len` bound
+/// would have tolerated fourteen dirty cells out of fifty-nine and
+/// stayed green through a tenfold regression. If a future picker
+/// legitimately recolors more than one cell on a hue hover, this
+/// number is meant to be re-read and updated, not widened into a
+/// threshold.
 #[test]
 fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
     use crate::application::color_picker::tests::fixtures::sample_geometry;
@@ -1106,14 +1230,11 @@ fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
     scene.apply_mutator(id, &hover);
 
     let changed = overlay_elements_needing_reshape(&scene, id, &cached).len();
-    assert!(
-        changed > 0,
-        "hovering a hue slot has to change something, or this test proves nothing"
-    );
-    assert!(
-        changed * 4 < cached.len(),
-        "a hover should dirty a small part of the wheel, not most of it: \
-         {changed} of {} elements",
+    assert_eq!(
+        changed,
+        1,
+        "hovering one hue slot recolors exactly that cell, so exactly one of the wheel's {} \
+         elements may be re-shaped",
         cached.len()
     );
 }
@@ -1180,38 +1301,179 @@ fn test_walker_records_the_stamp_offset_of_every_emitted_buffer() {
 }
 
 // ====================================================================
+// Background-fill draw order
+// ====================================================================
+
+use super::tree_buffers::BackgroundRectSlot;
+
+/// A synthetic fill carrying nothing but the identity the draw-order
+/// bookkeeping keys on. `Renderer::reshape_buffer_for` matches rects
+/// by `unique_id` and never reads the geometry while re-slotting
+/// them, so the rest is filler.
+fn background_rect(unique_id: usize) -> NodeBackgroundRect {
+    NodeBackgroundRect {
+        position: Vec2::ZERO,
+        size: Vec2::new(1.0, 1.0),
+        color: [0, 0, 0, 255],
+        shape_id: 0,
+        zoom_visibility: ZoomVisibility::unbounded(),
+        unique_id,
+    }
+}
+
+fn background_rect_order(rects: &[NodeBackgroundRect]) -> Vec<usize> {
+    rects.iter().map(|rect| rect.unique_id).collect()
+}
+
+/// Re-shaping one element leaves the background-fill draw order
+/// alone.
+///
+/// `render.rs` paints `node_background_rects` in index order, so the
+/// last entry covers every earlier one it overlaps.
+/// `reshape_buffer_for` runs on every drained frame of a
+/// section-resize drag and on every keystroke of a text edit; had it
+/// re-appended the fill it just re-collected, the element being
+/// edited would have spent the whole gesture painted over its
+/// neighbors and snapped back on the next full rebuild — a defect no
+/// assertion in this repo can see in pixels (§T8), which is why the
+/// ordering is asserted on the list instead.
+#[test]
+fn test_reshaping_an_element_keeps_its_background_fill_in_draw_order() {
+    let mut rects: Vec<NodeBackgroundRect> = (0..5).map(background_rect).collect();
+    assert_eq!(background_rect_order(&rects), vec![0, 1, 2, 3, 4]);
+
+    let mut slot = BackgroundRectSlot::take_over(&mut rects, 2);
+    slot.push(background_rect(2));
+    assert_eq!(
+        background_rect_order(&rects),
+        vec![0, 1, 2, 3, 4],
+        "the re-collected fill belongs where the stale one was, not on top of the map"
+    );
+
+    // An element the walker emits more than one fill for keeps them
+    // adjacent and in emission order — `push` advances rather than
+    // inserting each one at the same index.
+    let mut slot = BackgroundRectSlot::take_over(&mut rects, 1);
+    slot.push(background_rect(1));
+    slot.push(background_rect(101));
+    assert_eq!(background_rect_order(&rects), vec![0, 1, 101, 2, 3, 4]);
+}
+
+/// An element that had no fill before the re-shape appends, because
+/// there is no earlier slot to restore. The `unwrap_or(len)` branch.
+#[test]
+fn test_reshaping_an_element_that_gained_a_fill_appends_it() {
+    let mut rects: Vec<NodeBackgroundRect> = (0..3).map(background_rect).collect();
+    let mut slot = BackgroundRectSlot::take_over(&mut rects, 77);
+    slot.push(background_rect(77));
+    assert_eq!(background_rect_order(&rects), vec![0, 1, 2, 77]);
+}
+
+/// An element that *lost* its fill leaves no hole and no stale rect
+/// — `take_over` with no `push` is the whole of the removal.
+#[test]
+fn test_reshaping_an_element_that_lost_its_fill_drops_it() {
+    let mut rects: Vec<NodeBackgroundRect> = (0..3).map(background_rect).collect();
+    let _ = BackgroundRectSlot::take_over(&mut rects, 1);
+    assert_eq!(background_rect_order(&rects), vec![0, 2]);
+}
+
+// ====================================================================
 // Glyph advance measurement
 // ====================================================================
+
+/// Shape one cluster through a scratch `cosmic_text::Buffer` and
+/// report `(widest layout glyph, summed layout glyphs, glyph count)`.
+///
+/// Deliberately *not* routed through
+/// [`baumhard::font::metric_cache::glyph_advance`]: that is the path
+/// `measure_max_glyph_advance` now takes, and an expectation
+/// computed from the code under test cannot see a change in that
+/// code. This is the scratch-buffer shaping the subject used before
+/// the metric cache, kept here as an independent second opinion —
+/// the first element of the tuple is precisely the answer the old
+/// implementation gave.
+fn shape_cluster_advances(
+    font_system: &mut baumhard::font::FontSystem,
+    cluster: &str,
+    font_size: f32,
+) -> (f32, f32, usize) {
+    use baumhard::font::{buffer, SHAPING_ADVANCED};
+
+    let mut buf = buffer::create_square(font_system, font_size);
+    buf.set_text(font_system, cluster, &Attrs::new(), SHAPING_ADVANCED, None);
+    buf.shape_until_scroll(font_system, false);
+    let (mut widest, mut summed, mut count) = (0.0f32, 0.0f32, 0usize);
+    for run in buf.layout_runs() {
+        for glyph in run.glyphs.iter() {
+            widest = widest.max(glyph.w);
+            summed += glyph.w;
+            count += 1;
+        }
+    }
+    (widest, summed, count)
+}
 
 /// `measure_max_glyph_advance` answers with the widest of the
 /// clusters it was given, and falls back to the monospace
 /// approximation only when nothing shaped at all.
 ///
-/// The measurement now runs through baumhard's `(face, size,
-/// cluster)` metric cache instead of a scratch `Buffer` per call,
-/// which is what makes the console's per-rebuild call cheap; this
-/// pins the two answers that routing must not change.
+/// The measurement runs through baumhard's `(face, size, cluster)`
+/// metric cache rather than a scratch `Buffer` per call, and that
+/// move carried a semantic correction with it: a cluster that lays
+/// out as several glyphs is now worth the *sum* of their advances,
+/// where the scratch-buffer version took the widest one inside the
+/// cluster and so under-measured it. The third assertion below is
+/// the one that can see that: its cluster is a Devanagari
+/// consonant-plus-vowel-sign that lays out as two glyphs, so sum and
+/// max are different numbers and only one of them can pass.
+///
+/// Every expectation here comes from [`shape_cluster_advances`],
+/// which shapes independently rather than asking the metric cache —
+/// otherwise the test would be quoting the subject back at itself.
 #[test]
 fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
-    use baumhard::font::metric_cache::glyph_advance;
     use baumhard::font::metrics::monospace_advance;
 
     baumhard::font::fonts::init();
     let size = 18.0;
 
-    // A light horizontal rule and a full-block, which are not the
-    // same width in any face this ships with.
-    let (narrow, wide) = ("\u{2500}", "\u{2588}");
-    let narrow_w = glyph_advance(None, size, narrow);
-    let wide_w = glyph_advance(None, size, wide);
-    assert!(narrow_w > 0.0 && wide_w > 0.0, "both clusters must shape");
-
     let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (advance)");
-    let measured = measure_max_glyph_advance(&mut fs, &[narrow, wide], size);
+
+    // A light horizontal rule and a full-block, which are not the
+    // same width in any face this ships with. Both single-glyph, so
+    // sum and max agree and this pair pins only the "max across the
+    // set" half.
+    let (narrow, wide) = ("\u{2500}", "\u{2588}");
+    let (_, narrow_w, narrow_n) = shape_cluster_advances(&mut fs, narrow, size);
+    let (_, wide_w, wide_n) = shape_cluster_advances(&mut fs, wide, size);
+    assert!(narrow_w > 0.0 && wide_w > 0.0, "both clusters must shape");
+    assert_eq!((narrow_n, wide_n), (1, 1), "both are single-glyph clusters");
+    assert!(
+        narrow_w < wide_w,
+        "the two must differ, or 'widest' proves nothing"
+    );
     assert_eq!(
-        measured,
-        narrow_w.max(wide_w),
+        measure_max_glyph_advance(&mut fs, &[narrow, wide], size),
+        wide_w,
         "the answer is the widest cluster in the set"
+    );
+
+    // Devanagari NA + vowel sign I: two layout glyphs, so the
+    // cluster's summed advance and its widest single glyph are
+    // different numbers. The scratch-buffer implementation answered
+    // with the max and under-measured the cluster by the rest of it.
+    let two_glyph = "\u{0928}\u{093F}";
+    let (widest_in_cluster, summed, count) = shape_cluster_advances(&mut fs, two_glyph, size);
+    assert!(
+        count > 1 && summed > widest_in_cluster,
+        "this cluster has to lay out as more than one glyph, or the routing below is untested: \
+         {count} glyph(s), sum {summed}, widest {widest_in_cluster}"
+    );
+    assert_eq!(
+        measure_max_glyph_advance(&mut fs, &[two_glyph], size),
+        summed,
+        "a multi-glyph cluster is worth the width it occupies, not the width of its widest piece"
     );
 
     // An empty cluster lays out no glyphs at all, so the max is

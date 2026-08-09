@@ -480,6 +480,12 @@ pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32,
 /// `walk_drag_node_and_sections`, which calls `walk_drag_subtree`
 /// once per `Flag::SectionRoot` child — one frontier per section,
 /// per drag tick.
+///
+/// `patches` is **appended to**, not cleared — a shift+drag calls
+/// this once per anchor node and wants one combined patch set. The
+/// caller owns the buffer and empties it between frames;
+/// `MovingNodeInteraction` holds it as a field and clears it once
+/// before its per-anchor loop.
 pub fn apply_drag_delta_and_collect_patches(
     tree: &mut MindMapTree,
     node_id: &str,
@@ -532,6 +538,11 @@ fn apply_drag_delta_inner(
 /// Per-frame safe; release-commit syncs the model via
 /// `set_section_offset` (which AABB-validates and pushes a single
 /// undo entry).
+///
+/// `patches` is appended to, not cleared, matching
+/// [`apply_drag_delta_and_collect_patches`];
+/// `MovingSectionInteraction` owns the buffer across frames and
+/// clears it before each call.
 pub fn apply_section_drag_delta_and_collect_patches(
     tree: &mut MindMapTree,
     node_id: &str,
@@ -645,7 +656,9 @@ fn nearest_handle_within(
 /// buffer on the map once per drained frame.
 ///
 /// `patches` is cleared first; the caller owns it so a drag can
-/// reuse one allocation across frames.
+/// reuse one allocation across frames. The one caller does:
+/// `NodeResizeInteraction` holds the buffer as a field and hands
+/// the same `Vec` back on every drained frame.
 ///
 /// **Tree-only.** The model is unchanged until release-commit
 /// where `set_node_aabb` writes the final state under one

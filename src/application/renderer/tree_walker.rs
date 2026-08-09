@@ -16,31 +16,6 @@ use baumhard::gfx_structs::tree::Tree;
 
 use super::{MindMapTextBuffer, NodeBackgroundRect};
 
-/// Shared tree → cosmic-text buffer walker.
-///
-/// Iterates every `GlyphArea` descendant of `tree`, shapes a
-/// `cosmic_text::Buffer` for each one, and hands the result to
-/// `yield_buffer` together with the element's `unique_id` (raw
-/// `usize`, not stringified — keying is the caller's choice).
-/// Background fills (if any) are forwarded to `yield_background`
-/// before the buffer is built so rects attached to text-empty
-/// areas still land.
-///
-/// `offset` is added to every `position` — callers pass
-/// `Vec2::ZERO` whenever the tree's areas are already in the
-/// destination coordinate space (e.g. the mindmap, whose nodes
-/// hold canvas-space positions); pass the registered tree offset
-/// for scene trees that lay out in their own local frame.
-///
-/// # Costs
-///
-/// O(descendants). One `cosmic_text::Buffer` allocated per
-/// non-empty-text area; background rect yields are trivial. No
-/// per-area `String` allocation — the `unique_id` flows as a raw
-/// integer and only the mindmap closure stringifies it for its
-/// `FxHashMap` key. Holds the provided `font_system` write guard
-/// for the duration of the walk — keep the call site's own guard
-/// scope tight.
 /// Extract the background-fill rect for a single `GlyphArea`, or
 /// `None` if the area carries no `background_color`. Single source
 /// for both the full-walker text path
@@ -85,6 +60,30 @@ pub(super) fn extract_background_rect(
     })
 }
 
+/// Shared tree → cosmic-text buffer walker.
+///
+/// Iterates every `GlyphArea` descendant of `tree`, shapes a
+/// `cosmic_text::Buffer` for each one, and hands the result to
+/// `yield_buffer` together with the element's `unique_id` (raw
+/// `usize`, not stringified — keying is the caller's choice).
+/// Background fills (if any) are forwarded to `yield_background`
+/// before the buffer is built so rects attached to text-empty
+/// areas still land.
+///
+/// `offset` is added to every `position` — callers pass
+/// `Vec2::ZERO` whenever the tree's areas are already in the
+/// destination coordinate space (e.g. the mindmap, whose nodes
+/// hold canvas-space positions); pass the registered tree offset
+/// for scene trees that lay out in their own local frame.
+///
+/// # Costs
+///
+/// O(descendants). One `cosmic_text::Buffer` allocated per
+/// non-empty-text area; background rect yields are trivial. No
+/// per-area `String` allocation — the `unique_id` flows as a raw
+/// integer all the way to the buffer map's key. Holds the provided
+/// `font_system` write guard for the duration of the walk — keep
+/// the call site's own guard scope tight.
 pub(super) fn walk_tree_into_buffers(
     tree: &Tree<GfxElement, GfxMutator>,
     offset: Vec2,

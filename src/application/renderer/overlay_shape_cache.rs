@@ -39,9 +39,17 @@
 //! `Scene::tree_mut` escape-hatch write, a full re-register — all of
 //! them are seen the same way, as a `GlyphArea` that no longer
 //! compares equal. `GlyphArea`'s `PartialEq` is derived, so a field
-//! added to the area in the future joins the comparison without
-//! anyone remembering to wire it in; the one field it skips,
-//! `hitbox`, is not read by the shaper.
+//! added to the area joins the comparison by default rather than by
+//! anyone remembering to wire it in. "By default" and not
+//! "always": the derive is `derivative`'s, and a field carrying
+//! `#[derivative(PartialEq = "ignore")]` opts back out — exactly
+//! what `hitbox`, the one field skipped today, does. So the
+//! ignore-list is pinned rather than trusted:
+//! `test_glyph_area_equality_ignores_only_the_hitbox` destructures
+//! `GlyphArea` exhaustively and asserts every other field breaks
+//! `==`, which fails both on a new field nobody classified and on
+//! an `ignore` added to an existing one. `hitbox` itself is on the
+//! ignored side because the shaper never reads it.
 //!
 //! ## The one place `==` is not enough
 //!
@@ -68,7 +76,7 @@
 //!
 //! The reuse rule is pinned by
 //! `test_overlay_shape_cache_invalidates_on_every_writable_area_field`
-//! and its two neighbors in `renderer::tests`.
+//! and its three neighbors in `renderer::tests`.
 
 use glam::Vec2;
 

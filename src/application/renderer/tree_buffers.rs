@@ -12,7 +12,57 @@ use glam::Vec2;
 
 use super::overlay_shape_cache::ShapedOverlayElement;
 use super::tree_walker::{shape_one_element_into_buffers, walk_tree_into_buffers};
-use super::Renderer;
+use super::{NodeBackgroundRect, Renderer};
+
+/// Draw-order-preserving write-back cursor for the background fills
+/// of a single re-shaped element.
+///
+/// `node_background_rects` is drawn in index order — `render.rs`
+/// pushes one quad per entry into a single vertex stream, so a later
+/// entry paints over an earlier one — and
+/// [`Renderer::rebuild_buffers_from_tree`] fills it in tree-walk
+/// order. A keyed re-shape that dropped an element's fill and
+/// re-pushed the fresh one at the end would therefore lift that
+/// element's fill above every other node's, for as long as the
+/// caller keeps re-shaping it: the whole of a text-edit or a
+/// section-resize drag, snapping back on the next full rebuild.
+/// Writing the fresh fills into the slot the old ones held keeps the
+/// order stable instead, without a per-frame re-walk of the tree.
+pub(super) struct BackgroundRectSlot<'a> {
+    rects: &'a mut Vec<NodeBackgroundRect>,
+    next: usize,
+}
+
+impl<'a> BackgroundRectSlot<'a> {
+    /// Remove every fill authored by `unique_id` and remember where
+    /// the first of them sat, so [`Self::push`] writes the fresh
+    /// ones back into the same place.
+    ///
+    /// An element with no fill in the list yet — one that just
+    /// gained a `background_color` — has no slot to preserve, and
+    /// appending is the only order available.
+    ///
+    /// # Costs
+    ///
+    /// O(len) for the scan and the retain, plus O(len) per
+    /// [`Self::push`] for the shift. Same order as the `retain` +
+    /// `push` it replaces.
+    pub(super) fn take_over(rects: &'a mut Vec<NodeBackgroundRect>, unique_id: usize) -> Self {
+        let next = rects
+            .iter()
+            .position(|rect| rect.unique_id == unique_id)
+            .unwrap_or(rects.len());
+        rects.retain(|rect| rect.unique_id != unique_id);
+        BackgroundRectSlot { rects, next }
+    }
+
+    /// Write one fresh fill into the slot, advancing so a second
+    /// fill from the same element lands after it rather than before.
+    pub(super) fn push(&mut self, rect: NodeBackgroundRect) {
+        self.rects.insert(self.next, rect);
+        self.next += 1;
+    }
+}
 
 impl Renderer {
     /// Rebuild text buffers from a Baumhard tree (nodes rendered from GlyphArea
@@ -60,11 +110,15 @@ impl Renderer {
     /// writes the new buffers back into the same `Vec` entry.
     /// Background rects authored by this same `unique_id` are
     /// removed from `node_background_rects` and re-collected from
-    /// the fresh element so a section whose background colour just
+    /// the fresh element so a section whose background color just
     /// changed reflects the new fill *without* leaking duplicate
     /// stale rects per keystroke. Other elements' rects are
     /// untouched — the filter compares `NodeBackgroundRect.unique_id`
-    /// directly.
+    /// directly — and the fresh fill goes back into the slot the old
+    /// one held, because that list is drawn in index order and
+    /// re-appending would float this element's fill over every other
+    /// node's for the duration of the edit. See
+    /// [`BackgroundRectSlot`].
     ///
     /// Silent no-op when `arena_id` doesn't resolve (e.g. the tree
     /// was rebuilt between the caller's lookup and this call). The
@@ -84,9 +138,11 @@ impl Renderer {
         // Drop the existing buffers + background entries authored
         // by this element so the re-shape pass can write fresh
         // ones. Background rects use direct `unique_id` equality
-        // so other elements' rects survive the filter.
+        // so other elements' rects survive the filter, and the
+        // draw-order slot is remembered across the removal so the
+        // fresh fill goes back where the old one was.
         self.mindmap_buffers.remove(&unique_id);
-        self.node_background_rects.retain(|rect| rect.unique_id != unique_id);
+        let mut slot = BackgroundRectSlot::take_over(&mut self.node_background_rects, unique_id);
 
         let mut font_system = fonts::acquire_font_system_write("reshape_buffer_for");
         shape_one_element_into_buffers(
@@ -96,7 +152,7 @@ impl Renderer {
             &mut |uid, buffer| {
                 self.mindmap_buffers.entry(uid).or_default().push(buffer);
             },
-            &mut |rect| self.node_background_rects.push(rect),
+            &mut |rect| slot.push(rect),
         );
     }
 

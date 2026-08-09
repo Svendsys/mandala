@@ -37,6 +37,15 @@ pub(in crate::application::app) struct NodeResizeInteraction {
     /// finalizing left-button drags when the user accidentally
     /// clicks the right button mid-drag.
     pub started_with_right: bool,
+    /// Scratch `(unique_id, new_position)` buffer handed to
+    /// [`apply_node_resize_to_tree`] and then to
+    /// `Renderer::patch_drag_positions`. Lives on the interaction so
+    /// the one allocation is made at drag start and reused for the
+    /// rest of the gesture — the reuse the out-param shape exists
+    /// for, which a `Vec::new()` per drained frame did not honor.
+    /// `apply_node_resize_to_tree` clears it on entry, so nothing
+    /// from the previous frame survives into this one.
+    patches: Vec<(usize, (f32, f32))>,
 }
 
 impl NodeResizeInteraction {
@@ -54,6 +63,7 @@ impl NodeResizeInteraction {
             start_size,
             pending: ThrottledPending::accumulating_deltas(),
             started_with_right,
+            patches: Vec::new(),
         }
     }
 
@@ -115,19 +125,18 @@ impl ThrottledInteraction for NodeResizeInteraction {
             // move-drag path uses. `rebuild_buffers_from_tree`, which
             // this replaced, re-shaped every text buffer on the map
             // per drained frame.
-            let mut patches = Vec::new();
             let container = apply_node_resize_to_tree(
                 tree,
                 &self.node_id,
                 canvas_pos,
                 canvas_size,
                 pending_pos_delta,
-                &mut patches,
+                &mut self.patches,
             );
             if let Some(container) = container {
                 renderer.reshape_buffer_for(container, &tree.tree);
             }
-            renderer.patch_drag_positions(&patches);
+            renderer.patch_drag_positions(&self.patches);
             // Section fills moved with their sections; the
             // container's own rect was re-collected by the reshape
             // above. This walk is position/color reads only — no
