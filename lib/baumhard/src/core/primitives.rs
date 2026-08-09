@@ -107,6 +107,28 @@ impl ColorFontRegion {
             color: None,
         }
     }
+
+    /// Field-by-field equality, including the font and color pins
+    /// that `Eq` deliberately ignores.
+    ///
+    /// `PartialEq` on this type is *set identity*: two regions with
+    /// the same [`Range`] are the same region, whatever they are
+    /// painted, which is what lets the owning `BTreeSet` find a
+    /// stored region from a bare range. That makes `==` the wrong
+    /// question for anyone asking "would this render differently?"
+    /// — a recolored span compares equal to the one it replaced.
+    /// This is that question. The renderer's overlay re-shape cache
+    /// asks it on every frame of a color-picker hover, where the
+    /// only thing that changes is a cell's color inside an unchanged
+    /// range.
+    ///
+    /// Cost: three field compares, no allocation. The body
+    /// destructures `self`, so a field added to this struct will not
+    /// compile until it is accounted for here.
+    pub fn same_content(&self, other: &Self) -> bool {
+        let ColorFontRegion { range, font, color } = self;
+        *range == other.range && *font == other.font && *color == other.color
+    }
 }
 
 /// Ordered set of [`ColorFontRegion`]s keyed on `Range`. Acts as the
@@ -149,6 +171,30 @@ impl ColorFontRegions {
     /// Number of regions currently stored.
     pub fn num_regions(&self) -> usize {
         self.regions.len()
+    }
+
+    /// Whether two tables would style their text identically —
+    /// same ranges, same font pins, same colors.
+    ///
+    /// The set-level counterpart to
+    /// [`ColorFontRegion::same_content`], and needed for the same
+    /// reason: `PartialEq` on this type reduces to `BTreeSet`
+    /// equality, whose element equality is range identity, so
+    /// `regions_a == regions_b` is true for two tables that paint
+    /// the same spans in different colors. Any consumer deciding
+    /// whether shaped output can be reused has to ask this one
+    /// instead.
+    ///
+    /// Cost: O(n_regions) — a length check then a paired walk over
+    /// two `BTreeSet`s, which iterate in `Range` order, so equal
+    /// tables line up positionally. No allocation.
+    pub fn same_content(&self, other: &Self) -> bool {
+        self.regions.len() == other.regions.len()
+            && self
+                .regions
+                .iter()
+                .zip(other.regions.iter())
+                .all(|(a, b)| a.same_content(b))
     }
 
     /// Build a `ColorFontRegions` containing a single region that

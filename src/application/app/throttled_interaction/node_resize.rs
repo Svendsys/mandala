@@ -107,8 +107,33 @@ impl ThrottledInteraction for NodeResizeInteraction {
                 if fx == -1 { pending_delta.x } else { 0.0 },
                 if fy == -1 { pending_delta.y } else { 0.0 },
             );
-            apply_node_resize_to_tree(tree, &self.node_id, canvas_pos, canvas_size, pending_pos_delta);
-            renderer.rebuild_buffers_from_tree(&tree.tree);
+            // What this frame wrote, and nothing else, is what gets
+            // refreshed: the container's bounds changed so it is
+            // re-shaped; the section elements only moved, so their
+            // existing buffers get their positions patched with no
+            // shaping and no font-system lock — the same split the
+            // move-drag path uses. `rebuild_buffers_from_tree`, which
+            // this replaced, re-shaped every text buffer on the map
+            // per drained frame.
+            let mut patches = Vec::new();
+            let container = apply_node_resize_to_tree(
+                tree,
+                &self.node_id,
+                canvas_pos,
+                canvas_size,
+                pending_pos_delta,
+                &mut patches,
+            );
+            if let Some(container) = container {
+                renderer.reshape_buffer_for(container, &tree.tree);
+            }
+            renderer.patch_drag_positions(&patches);
+            // Section fills moved with their sections; the
+            // container's own rect was re-collected by the reshape
+            // above. This walk is position/color reads only — no
+            // shaping — and is the same call the move-drag path
+            // makes for the same reason.
+            renderer.rebuild_node_backgrounds_from_tree(&tree.tree);
             let elements = build_node_resize_handles(&self.node_id, canvas_pos, canvas_size);
             update_node_resize_handle_tree_from_slice(&elements, app_scene);
             flush_canvas_scene_buffers(app_scene, renderer);

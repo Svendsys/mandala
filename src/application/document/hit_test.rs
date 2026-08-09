@@ -550,10 +550,14 @@ pub fn apply_section_drag_delta_and_collect_patches(
 
 /// Per-frame tree mutation for the section-resize gesture: write
 /// the in-progress `(canvas_position, canvas_size)` to the
-/// targeted section-area's `GlyphArea`. The renderer's
-/// `rebuild_buffers_from_tree` reshapes the section's text against
-/// the new bounds on the next pass, so the user sees the section
-/// resize live (text reflow + handle tracking).
+/// targeted section-area's `GlyphArea`, so the user sees the
+/// section resize live (text reflow + handle tracking).
+///
+/// Returns the section-area's arena id — the one element this
+/// wrote, and so the one element the caller has to re-shape. The
+/// caller used to answer that with
+/// `Renderer::rebuild_buffers_from_tree`, which re-shapes every
+/// text buffer on the map once per drained frame.
 ///
 /// **Tree-only.** The model is unchanged until release-commit
 /// where `set_section_aabb` writes the final state under one
@@ -570,11 +574,8 @@ pub fn apply_section_resize_to_tree(
     section_idx: usize,
     new_position: Vec2,
     new_size: Vec2,
-) {
-    let section_root = match tree.section_arena_id(node_id, section_idx) {
-        Some(id) => id,
-        None => return,
-    };
+) -> Option<indextree::NodeId> {
+    let section_root = tree.section_arena_id(node_id, section_idx)?;
     if let Some(node) = tree.tree.arena.get_mut(section_root) {
         if let Some(area) = node.get_mut().glyph_area_mut() {
             area.set_position((new_position.x, new_position.y));
@@ -582,6 +583,7 @@ pub fn apply_section_resize_to_tree(
         }
     }
     tree.tree.invalidate_caches();
+    Some(section_root)
 }
 
 /// Hit-test the 8 resize handles of a node at `canvas_pos`.
@@ -628,9 +630,22 @@ fn nearest_handle_within(
 /// in-progress `(canvas_position, canvas_size)` to the node's
 /// container `GlyphArea` and shift every `Flag::SectionRoot` child
 /// by `position_delta` so section content tracks the moving frame.
-/// The renderer's `rebuild_buffers_from_tree` reshapes against
-/// the new bounds on the next pass, so the user sees the node
-/// resize live.
+///
+/// Returns the container's arena id, and fills `patches` with one
+/// `(unique_id, new_canvas_position)` entry per shifted section
+/// element — the same shape
+/// [`Renderer::patch_drag_positions`](crate::application::renderer::Renderer::patch_drag_positions)
+/// consumes, and the same one the move-drag path already collects
+/// through [`walk_drag_subtree`]. Together those two outputs name
+/// **everything this function wrote**: the container, whose bounds
+/// changed and so has to be re-shaped, and the section elements,
+/// which only moved and so only need their buffer positions
+/// patched. Callers used to answer the same question with
+/// `Renderer::rebuild_buffers_from_tree`, re-shaping every text
+/// buffer on the map once per drained frame.
+///
+/// `patches` is cleared first; the caller owns it so a drag can
+/// reuse one allocation across frames.
 ///
 /// **Tree-only.** The model is unchanged until release-commit
 /// where `set_node_aabb` writes the final state under one
@@ -653,11 +668,10 @@ pub fn apply_node_resize_to_tree(
     new_position: Vec2,
     new_size: Vec2,
     position_delta: Vec2,
-) {
-    let container_id = match tree.arena_id_for(node_id) {
-        Some(id) => id,
-        None => return,
-    };
+    patches: &mut Vec<(usize, (f32, f32))>,
+) -> Option<indextree::NodeId> {
+    patches.clear();
+    let container_id = tree.arena_id_for(node_id)?;
     if let Some(node) = tree.tree.arena.get_mut(container_id) {
         if let Some(area) = node.get_mut().glyph_area_mut() {
             area.set_position((new_position.x, new_position.y));
@@ -687,11 +701,18 @@ pub fn apply_node_resize_to_tree(
                 .map(|n| n.get().flag_is_set(Flag::SectionRoot))
                 .unwrap_or(false);
             if is_section {
-                walk_drag_subtree(&mut tree.tree.arena, cid, position_delta.x, position_delta.y, None);
+                walk_drag_subtree(
+                    &mut tree.tree.arena,
+                    cid,
+                    position_delta.x,
+                    position_delta.y,
+                    Some(patches),
+                );
             }
         }
     }
     tree.tree.invalidate_caches();
+    Some(container_id)
 }
 
 /// Hit-test the 8 resize handles of a `Some`-sized section at

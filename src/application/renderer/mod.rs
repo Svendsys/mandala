@@ -60,6 +60,7 @@ mod decree;
 // as `console_pass` and `color_picker`.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod overlay_dispatch;
+mod overlay_shape_cache;
 mod pipeline;
 mod render;
 // Rubber-band selection rectangle. Driven by the native-gated
@@ -387,17 +388,25 @@ pub struct Renderer {
     fps_pending_idle_paint: bool,
 
     camera: Camera2D,
-    /// Mindmap text buffers keyed by `GfxElement::unique_id`
-    /// (stringified for use as a `FxHashMap` key alongside the
-    /// edit / undo paths' Dewey-decimal addressing). The value is
-    /// a `Vec<MindMapTextBuffer>` because the tree walker emits
-    /// **multiple buffers per element** when an outline halo is
-    /// configured: one buffer per halo offset emitted before the
-    /// main glyph, all sharing the same `unique_id`. Pre-vec the
-    /// store collapsed every halo onto the main glyph (last-write-
-    /// wins via `insert`); the vec preserves emission order so
-    /// halos stay behind the main glyph at render time.
-    mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
+    /// Mindmap text buffers keyed by `GfxElement::unique_id`.
+    ///
+    /// The key is the raw `usize`. It used to be that `usize`
+    /// stringified, justified as fitting "the edit / undo paths'
+    /// Dewey-decimal addressing" — but no Dewey-decimal string ever
+    /// reaches this map: every writer and every reader has a
+    /// `unique_id` integer in hand and was allocating a `String` to
+    /// spell it, once per element per rebuild and once per moved
+    /// node per drained drag frame.
+    ///
+    /// The value is a `Vec<MindMapTextBuffer>` because the tree
+    /// walker emits **multiple buffers per element** when an
+    /// outline halo is configured: one buffer per halo offset
+    /// emitted before the main glyph, all sharing the same
+    /// `unique_id`. Pre-vec the store collapsed every halo onto the
+    /// main glyph (last-write-wins via `insert`); the vec preserves
+    /// emission order so halos stay behind the main glyph at render
+    /// time.
+    mindmap_buffers: FxHashMap<usize, Vec<MindMapTextBuffer>>,
     /// Screen-space geometry of the color picker's opaque backdrop.
     /// Captured inside `rebuild_color_picker_overlay_buffers`; the
     /// `render()` rect-pipeline pass appends a black fill rect for
@@ -414,11 +423,19 @@ pub struct Renderer {
     /// cleared or holds a non-selection-rect shape.
     selection_rect_shape_cache: Option<(usize, usize)>,
     /// Screen-space buffers produced by walking the app's
-    /// [`AppScene`](crate::application::scene_host::AppScene).
-    /// Populated by [`Self::rebuild_overlay_scene_buffers`] and
-    /// drawn alongside the existing console/color-picker overlay
-    /// buffer lists. Empty until an overlay migrates to a tree.
-    overlay_scene_buffers: Vec<MindMapTextBuffer>,
+    /// [`AppScene`](crate::application::scene_host::AppScene), in
+    /// draw order, one entry per walked element. Populated by
+    /// [`Self::rebuild_overlay_scene_buffers`] and drawn alongside
+    /// the existing console/color-picker overlay buffer lists. Empty
+    /// until an overlay migrates to a tree.
+    ///
+    /// Each entry carries the shaping inputs its buffers came from
+    /// so the next pass can reuse them unchanged; see
+    /// [`overlay_shape_cache`] for the reuse rule. That is also why
+    /// this is a `Vec` of per-element groups rather than one flat
+    /// buffer list — the grouping is what a walk position can be
+    /// checked against.
+    overlay_scene_buffers: Vec<overlay_shape_cache::ShapedOverlayElement>,
     /// Canvas-space buffers for the app's
     /// [`AppScene`](crate::application::scene_host::AppScene)'s
     /// canvas sub-scene (borders, connections, portals, etc.).
@@ -1114,6 +1131,14 @@ impl Renderer {
 pub struct MindMapTextBuffer {
     pub buffer: Buffer,
     pub pos: (f32, f32),
+    /// The `(dx, dy)` this buffer was emitted at relative to its
+    /// authoring `GlyphArea`'s anchor — `(0, 0)` for a main glyph,
+    /// one of [`OutlineStyle::offsets`](baumhard::gfx_structs::area_fields::OutlineStyle::offsets)
+    /// for an outline-halo stamp. Kept so a position-only patch
+    /// (`Renderer::patch_drag_positions`) can re-derive
+    /// `pos = anchor + emission_offset` instead of collapsing every
+    /// halo of a dragged element onto its main glyph.
+    pub emission_offset: (f32, f32),
     pub bounds: (f32, f32),
     /// Per-`GlyphArea` zoom window copied in at buffer-build time.
     /// The main render loop skips this buffer whenever

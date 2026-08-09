@@ -9,7 +9,7 @@
 use glam::Vec2;
 
 use baumhard::font::{buffer, Align, Attrs, Color, FontSystem, SHAPING_ADVANCED};
-use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
+use baumhard::font::attrs::{rich_text_spans_into, RegionFamilies};
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
@@ -139,14 +139,17 @@ pub(super) fn shape_one_element_into_buffers(
     let bound_x = area.render_bounds.x.0;
     let bound_y = area.render_bounds.y.0;
 
-    // Pre-resolve every region's family-name string once; reuse
-    // the result across the main glyph + every halo stamp so the
-    // `font_system.db().face(...)` lookups don't re-run per
-    // stamp. Lives in baumhard so the styled-region → cosmic-text
-    // bridge has a single owner.
-    let families = RegionFamilies::resolve(&area.regions, font_system);
+    // Pre-resolve every region's family-name string and byte range
+    // once; reuse the result across the main glyph + every halo
+    // stamp so neither the `font_system.db().face(...)` lookups nor
+    // the grapheme walk that turns cluster ranges into byte ranges
+    // re-runs per stamp. Lives in baumhard so the styled-region →
+    // cosmic-text bridge has a single owner.
+    let families = RegionFamilies::resolve(&area.text, &area.regions, font_system);
+    // Declared after `families` so it drops first: the spans borrow
+    // out of it.
+    let mut spans: Vec<(&str, Attrs)> = Vec::new();
 
-    let text = &area.text;
     let alignment = if area.align_center {
         Some(Align::Center)
     } else {
@@ -158,10 +161,16 @@ pub(super) fn shape_one_element_into_buffers(
     // — `Word` mode silently dropped supplementary-plane glyphs
     // (e.g. picker Egyptian hieroglyphs) whose shaped advance
     // exceeded the cell box.
-    let mut shape_and_yield = |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
+    let mut shape_and_yield = |spans: &[(&str, Attrs)], x_off: f32, y_off: f32, fs: &mut FontSystem| {
         let mut buffer = buffer::create(fs, scale, line_height);
         buffer.set_size(fs, Some(bound_x), Some(bound_y));
-        buffer.set_rich_text(fs, spans, &Attrs::new(), SHAPING_ADVANCED, alignment);
+        buffer.set_rich_text(
+            fs,
+            spans.iter().cloned(),
+            &Attrs::new(),
+            SHAPING_ADVANCED,
+            alignment,
+        );
         buffer.shape_until_scroll(fs, false);
         let text_buffer = MindMapTextBuffer {
             buffer,
@@ -169,6 +178,7 @@ pub(super) fn shape_one_element_into_buffers(
                 area.position.x.0 + x_off + offset.x,
                 area.position.y.0 + y_off + offset.y,
             ),
+            emission_offset: (x_off, y_off),
             bounds: (bound_x, bound_y),
             zoom_visibility: area.zoom_visibility,
         };
@@ -180,8 +190,10 @@ pub(super) fn shape_one_element_into_buffers(
     // visually behind. The stamp geometry is canonical in
     // baumhard (`OutlineStyle::offsets`); the per-region attrs
     // construction is canonical in
-    // `baumhard::font::attrs::rich_text_spans_from_regions`. We
-    // just stamp once per offset.
+    // `baumhard::font::attrs::rich_text_spans_into`. Every stamp
+    // shapes the *same* span list — only the buffer position
+    // differs — so the list is built once outside the loop rather
+    // than once per offset.
     if let Some(outline) = area.outline {
         if outline.px > 0.0 {
             let halo_color = Color::rgba(
@@ -190,17 +202,17 @@ pub(super) fn shape_one_element_into_buffers(
                 outline.color[2],
                 outline.color[3],
             );
+            rich_text_spans_into(&families, scale, line_height, Some(halo_color), &mut spans);
             for (dx, dy) in outline.offsets() {
-                let halo_spans =
-                    rich_text_spans_from_regions(text, &families, scale, line_height, Some(halo_color));
-                shape_and_yield(halo_spans, dx, dy, font_system);
+                shape_and_yield(&spans, dx, dy, font_system);
             }
         }
     }
 
     // Main glyph. Always emitted last so it sits on top of any
-    // halos.
-    let main_spans = rich_text_spans_from_regions(text, &families, scale, line_height, None);
-    shape_and_yield(main_spans, 0.0, 0.0, font_system);
+    // halos. Refills the same span buffer, which by now already
+    // holds the capacity the halo pass grew it to.
+    rich_text_spans_into(&families, scale, line_height, None, &mut spans);
+    shape_and_yield(&spans, 0.0, 0.0, font_system);
 }
 

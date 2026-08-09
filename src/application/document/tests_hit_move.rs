@@ -880,8 +880,12 @@ fn test_apply_section_resize_to_tree_writes_position_and_bounds() {
     let mut tree = doc.build_tree();
     let new_pos = Vec2::new(100.0, 50.0);
     let new_size = Vec2::new(40.0, 20.0);
-    apply_section_resize_to_tree(&mut tree, &id, 1, new_pos, new_size);
+    let written = apply_section_resize_to_tree(&mut tree, &id, 1, new_pos, new_size);
     let arena_id = tree.section_arena_id(&id, 1).unwrap();
+    // The returned id is what the resize drain re-shapes; if it
+    // named anything but the section it just wrote, the drag would
+    // refresh the wrong element and leave this one stale on screen.
+    assert_eq!(written, Some(arena_id));
     let area = tree
         .tree
         .arena
@@ -912,7 +916,11 @@ fn test_apply_section_resize_to_tree_unknown_section_no_op() {
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
         .unwrap();
-    apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let written = apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    assert_eq!(
+        written, None,
+        "a write that did not happen must not name an element to re-shape"
+    );
     let area_after = tree
         .tree
         .arena
@@ -1534,8 +1542,14 @@ fn test_apply_node_resize_to_tree_writes_position_and_bounds() {
     let mut tree = doc.build_tree();
     let new_pos = Vec2::new(500.0, 200.0);
     let new_size = Vec2::new(150.0, 70.0);
-    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, Vec2::ZERO);
+    let mut patches = Vec::new();
+    let written = apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, Vec2::ZERO, &mut patches);
     let arena_id = tree.arena_id_for(&id).unwrap();
+    assert_eq!(written, Some(arena_id));
+    assert!(
+        patches.is_empty(),
+        "a zero position delta moves no section, so nothing needs a position patch"
+    );
     let area = tree
         .tree
         .arena
@@ -1583,7 +1597,8 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
     let new_pos = Vec2::new(500.0, 200.0);
     let new_size = Vec2::new(150.0, 70.0);
     let position_delta = Vec2::new(50.0, 25.0);
-    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, position_delta);
+    let mut patches = Vec::new();
+    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, position_delta, &mut patches);
 
     // Child mind-node should be untouched — even when it's not
     // a descendant of `id`, the helper should never have walked
@@ -1613,6 +1628,93 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
     assert!((resized_pos.1 - 200.0).abs() < 0.001);
 }
 
+/// The node-resize drag no longer re-shapes the whole arena per
+/// frame: it re-shapes the container this call returns and patches
+/// the positions this call reports. That split is only safe while
+/// those two outputs *between them name every element the call
+/// moved* — anything moved but unreported keeps a stale buffer
+/// position on screen for the rest of the drag, which no pixel
+/// assertion in this repo could see.
+///
+/// So this walks the whole arena, diffs positions across the call,
+/// and holds the moved set against `{container} ∪ patched`. A
+/// future edit that shifts one more element without emitting its
+/// patch fails here.
+#[test]
+fn test_node_resize_reports_every_element_it_moved() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+    use std::collections::{HashMap, HashSet};
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+
+    let positions = |tree: &baumhard::mindmap::tree_builder::MindMapTree| {
+        let mut out: HashMap<usize, (f32, f32)> = HashMap::new();
+        for arena_id in tree.tree.root().descendants(&tree.tree.arena) {
+            let Some(element) = tree.tree.arena.get(arena_id).map(|n| n.get()) else {
+                continue;
+            };
+            if let Some(area) = element.glyph_area() {
+                out.insert(element.unique_id(), (area.position.x.0, area.position.y.0));
+            }
+        }
+        out
+    };
+
+    let before = positions(&tree);
+    let container_uid = tree
+        .tree
+        .arena
+        .get(tree.arena_id_for(&id).unwrap())
+        .map(|n| n.get().unique_id())
+        .unwrap();
+
+    let mut patches = Vec::new();
+    let written = apply_node_resize_to_tree(
+        &mut tree,
+        &id,
+        Vec2::new(500.0, 200.0),
+        Vec2::new(150.0, 70.0),
+        Vec2::new(50.0, 25.0),
+        &mut patches,
+    );
+    assert_eq!(written, Some(tree.arena_id_for(&id).unwrap()));
+
+    let after = positions(&tree);
+    let moved: HashSet<usize> = after
+        .iter()
+        .filter(|(uid, pos)| before.get(uid) != Some(*pos))
+        .map(|(uid, _)| *uid)
+        .collect();
+    let patched: HashSet<usize> = patches.iter().map(|(uid, _)| *uid).collect();
+
+    assert!(
+        !patched.is_empty(),
+        "the fixture must have sections to move, or this test proves nothing"
+    );
+    assert!(
+        !moved.contains(&container_uid) || moved.len() > 1,
+        "the fixture must move more than the container, or this test proves nothing"
+    );
+
+    let mut reported = patched.clone();
+    reported.insert(container_uid);
+    assert_eq!(
+        moved, reported,
+        "every element the resize moved must be either the returned container \
+         or a reported patch — unreported movement leaves a stale buffer"
+    );
+
+    // The reported position has to be the one actually written, not
+    // merely the right element: the caller writes it straight into
+    // the buffer without re-reading the arena.
+    for (uid, pos) in &patches {
+        assert_eq!(after.get(uid), Some(pos), "patch for {uid} names the wrong position");
+    }
+}
+
 #[test]
 fn test_apply_node_resize_to_tree_unknown_node_no_op() {
     use crate::application::document::apply_node_resize_to_tree;
@@ -1621,8 +1723,15 @@ fn test_apply_node_resize_to_tree_unknown_node_no_op() {
 
     let (doc, _id) = pinned_two_section_node();
     let mut tree = doc.build_tree();
-    // No panic; tree untouched.
-    apply_node_resize_to_tree(&mut tree, "nope", Vec2::ZERO, Vec2::new(10.0, 10.0), Vec2::ZERO);
+    // No panic; tree untouched. A stale entry left in `patches`
+    // would make the caller patch a buffer this call never moved,
+    // so the clear-on-entry contract is asserted with a non-empty
+    // input rather than a fresh `Vec`.
+    let mut patches = vec![(usize::MAX, (1.0, 2.0))];
+    let written =
+        apply_node_resize_to_tree(&mut tree, "nope", Vec2::ZERO, Vec2::new(10.0, 10.0), Vec2::ZERO, &mut patches);
+    assert_eq!(written, None);
+    assert!(patches.is_empty());
 }
 
 /// A long `parent_id` chain is legal and acyclic, so the loader
