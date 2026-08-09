@@ -232,7 +232,7 @@ pub fn build_label_elements(
                         None
                     }
                 })
-                .unwrap_or_else(|| edge.label_color(&map.canvas))
+                .unwrap_or_else(|| map.edge_label_color(edge))
         };
 
         if is_edited {
@@ -284,7 +284,7 @@ pub fn build_label_elements(
                                     None
                                 }
                             })
-                            .unwrap_or_else(|| edge.label_color(&map.canvas));
+                            .unwrap_or_else(|| map.edge_label_color(edge));
                         connection_label_elements.push(compute_label_layout(
                             edge,
                             target_key.clone(),

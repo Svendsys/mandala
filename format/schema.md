@@ -363,13 +363,19 @@ untouched and never reported as unrecognized. See
 |---|---|---|
 | `background_color` | string | `#RRGGBB`, empty (`""` for transparent), or `var(--name)` |
 | `frame_color` | string | Border color |
-| `text_color` | string | Base text color |
+| `text_color` | string | Base text color — the section default, which a `TextRun`'s own `color` overrides |
 | `shape` | string | See [enums.md](./enums.md) |
 | `corner_radius_percent` | number | 0–100 |
 | `frame_thickness` | number | Border width in pixels |
 | `show_frame` | bool | Whether to render the border |
 | `show_shadow` | bool | Whether to render a drop shadow |
 | `border` | object\|null | `GlyphBorderConfig`; optional per-node override |
+
+The three color fields are the **fallback** tier. A node carrying a
+`color_schema` takes its fill, frame and text from the referenced
+palette group instead, and these values are what it would fall back
+to if the schema were removed or its palette went missing. See
+[palettes.md](./palettes.md).
 
 ## NodeLayout
 
@@ -444,9 +450,14 @@ node-level `text_runs` after the section refactor.
 | Field | Type | Notes |
 |---|---|---|
 | `palette` | string | Key into `map.palettes` |
-| `level` | integer | Depth from schema root; indexes `palette.groups` |
-| `starts_at_root` | bool | Whether level-0 applies to the root or its children |
-| `connections_colored` | bool | Whether edges inherit palette colors |
+| `level` | non-negative integer | Depth from schema root; indexes `palette.groups`, clamped to the last group |
+| `starts_at_root` | bool | `false` leaves the schema root on its own `style` and shifts the index down one |
+| `connections_colored` | bool | Whether edges *leaving* this node take the group's `frame` as their stroke |
+
+`level` is a `usize`: a negative value is not a deep subtree, it is a
+typo, and the loader rejects the file rather than silently clamping it
+to the palette's last group (which is what the previous signed field
+did, by way of an `as usize` wrap).
 
 See [palettes.md](./palettes.md) for resolution semantics.
 
@@ -462,7 +473,13 @@ See [palettes.md](./palettes.md) for resolution semantics.
 ```
 
 Each `ColorGroup` is `{ background, frame, text, title }` as `#RRGGBB`
-strings. The `groups` array is indexed by the node's `color_schema.level`.
+strings. The `groups` array is indexed by the node's
+`color_schema.level`. `background`, `frame` and `text` stand in for the
+node's `style.background_color` / `frame_color` / `text_color`;
+`title` stands in for `text` on the first line of the node's first
+section. An empty string in any channel means "no palette value here"
+for `title` and is passed through verbatim for the other three (an
+empty `background` is the format's "no fill" spelling).
 
 ## Edge
 

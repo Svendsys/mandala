@@ -114,8 +114,14 @@ different `edge_type` values are allowed.
 - Every palette has at least one group
 
 **Why**: a missing palette falls back to the node's base `style` colors,
-which silently wipes the theme. An empty palette produces no colors at
-any level.
+which silently wipes the theme — and since the render-time cascade
+reads the palette first (see [palettes.md](./palettes.md)), a dangling
+reference is the difference between a themed node and an unthemed one.
+An empty palette produces no colors at any level.
+
+`level` needs no rule of its own: it is a `usize` in the model, so a
+negative value fails the load outright, and a value past the last group
+is legal and clamps.
 
 ### Named enums
 

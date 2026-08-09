@@ -111,6 +111,7 @@ fn portal_marker_stamps_the_resolved_glyph_and_font_size() {
             portal_endpoint_state(edge, &marker.endpoint_node_id),
             &map.canvas,
             None,
+            map.edge_theme_stroke_color(edge),
             1.0,
         );
         assert_eq!(
@@ -413,7 +414,7 @@ fn portal_text_font_size_inherits_icon_default_when_absent() {
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
-    let icon = resolve_portal_endpoint_style(&map.edges[0], None, &map.canvas, None, 1.0);
+    let icon = resolve_portal_endpoint_style(&map.edges[0], None, &map.canvas, None, None, 1.0);
     let text = resolve_portal_endpoint_text_style(&map.edges[0], None, &map.canvas, None, &icon.color, 1.0);
     assert!((icon.font_size_pt - text.font_size_pt).abs() < 1.0e-4);
 }

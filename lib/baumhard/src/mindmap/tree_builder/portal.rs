@@ -328,6 +328,10 @@ pub fn portal_pair_data(
             }
         });
 
+        // The palette tier of the edge color cascade, resolved once
+        // per edge rather than per endpoint — both markers of a pair
+        // take their color from the same source node.
+        let themed = map.edge_theme_stroke_color(edge);
         let make_endpoint = |owner: &MindNode, partner: &MindNode| -> EndpointAreas {
             let (ox, oy) = offsets.get(&owner.id).copied().unwrap_or((0.0, 0.0));
             let owner_pos = owner.pos_vec2() + Vec2::new(ox, oy);
@@ -352,6 +356,7 @@ pub fn portal_pair_data(
                 endpoint_state,
                 &map.canvas,
                 raw_color_override,
+                themed,
                 camera_zoom,
             );
             let text_style = resolve_portal_endpoint_text_style(

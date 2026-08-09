@@ -240,9 +240,10 @@ pub struct SidePatternQuad {
 /// Which `ColorGroup` channel the border cycles through when a
 /// `color_palette` is bound. Defaults to [`PaletteField::Frame`]
 /// because frame is the channel whose meaning matches the border
-/// today (`resolve_theme_colors` writes the same field into the
-/// resolved colors). Open seam — adding a new variant here is a
-/// localized change.
+/// today — the same channel
+/// [`MindMap::node_frame_color`](crate::mindmap::model::MindMap::node_frame_color)
+/// hands the single-color path as its cascade base. Open seam —
+/// adding a new variant here is a localized change.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum PaletteField {
     /// Cycle the border across each `ColorGroup`'s `frame`

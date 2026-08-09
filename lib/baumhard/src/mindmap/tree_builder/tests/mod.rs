@@ -53,6 +53,11 @@
 //!   `NodeEdit` (gating, cascade, focused variant, preview).
 //! - [`node_edit`] — the inactive-node dimming affordance across
 //!   the border pass and the app-facing alpha constant.
+//! - [`palette_cascade`] — the palette cascade as the projection
+//!   passes see it: fill / frame / text / title from
+//!   `map.palettes`, `starts_at_root`, level clamping,
+//!   `connections_colored`, and the palette edit that moves them
+//!   all at once.
 
 mod fixtures;
 
@@ -69,6 +74,7 @@ mod node_basic;
 mod node_clip;
 mod node_edit;
 mod node_scale;
+mod palette_cascade;
 mod point_inside;
 mod portal;
 mod portal_emit;

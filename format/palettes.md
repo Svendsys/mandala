@@ -51,24 +51,65 @@ Hoisting palettes solves this:
 
 ## How a node resolves its colors
 
-`resolve_theme_colors(node)` in `lib/baumhard/src/mindmap/model/mod.rs`:
+`MindMap::resolve_theme_colors(node)` in
+`lib/baumhard/src/mindmap/model/theme.rs`:
 
 1. Read `node.color_schema` — if absent, the node uses the colors in its
    `style` (background_color, frame_color, text_color)
 2. Look up `schema.palette` in `map.palettes`
-3. Index into `palette.groups` by `schema.level`. If the level exceeds
-   the group count, clamp to the last group.
+3. Pick the group index: `schema.level` when `starts_at_root` is true,
+   `schema.level - 1` when it is false (see below)
+4. Index into `palette.groups`. If the index exceeds the group count,
+   clamp to the last group.
 
-If the palette name doesn't exist in the map, `resolve_theme_colors`
-returns `None` and the renderer falls back to the node's plain `style`
-colors. `maptool verify` flags missing palette references as errors.
+If the palette name doesn't exist in the map — or exists with an empty
+`groups` array, or the `starts_at_root` shift leaves no index at all —
+`resolve_theme_colors` returns `None` and the renderer falls back to the
+node's plain `style` colors. `maptool verify` flags missing palette
+references and empty palettes as errors.
+
+The resolved group is what the projection passes read, through four
+sibling helpers on `MindMap` that each name one role and each fall back
+to the same `style` field:
+
+| Role | Palette channel | Fallback | Read by |
+|---|---|---|---|
+| Node fill | `group.background` | `style.background_color` | `node_background_color` |
+| Node frame | `group.frame` | `style.frame_color` | `node_frame_color` |
+| Node text | `group.text` | `style.text_color` | `node_text_color` |
+| Node title | `group.title` | the text role above | `node_title_color` |
+
+Everything below the node level is *more* specific and wins over the
+theme:
+
+- A **text run** naming its own `color` keeps it. The theme reaches text
+  through runs that leave `color` empty and through sections that carry
+  no runs at all. This is the inline-style-beats-inherited rule: a
+  per-word color the author picked must survive a retheme.
+- A **`border.color`** override on the node (or on the canvas default
+  border) keeps painting the border glyphs; the theme supplies only the
+  cascade base that override sits on.
+
+The **title** role applies to the first hard-newline-delimited line of
+the node's *first* section, and only when that section has no text runs.
+A palette that leaves `title` empty, or sets it equal to `text`, leaves
+the section undivided.
 
 ## What `level` means
 
-Depth from the schema root. The root of a themed subtree has `level: 0`
-and indexes into `groups[0]`. Its children have `level: 1` (groups[1]),
-grandchildren `level: 2`, and so on. A palette with 7 groups themes 7
-levels of hierarchy before wrapping.
+Depth from the schema root, as a non-negative integer. The root of a
+themed subtree has `level: 0` and indexes into `groups[0]`. Its children
+have `level: 1` (groups[1]), grandchildren `level: 2`, and so on. A
+palette with 7 groups themes 7 levels of hierarchy; the eighth and every
+level below it **clamp to the last group** rather than cycling back to
+`groups[0]`, so a subtree deeper than its palette degrades to one color
+instead of repeating the root's.
+
+> The miMind corpus this format was migrated from cycled instead: in
+> `maps/testament.mindmap.json`, the `sandy` palette has 7 groups and
+> nodes at levels 7–15 carry baked frame colors matching
+> `groups[level % 7]`. Mandala clamps. The two rules agree for every
+> level inside the palette and differ only past its end.
 
 `level` is stored explicitly rather than computed from parent chain depth
 because subtrees may be themed independently — a deep subtree can restart
@@ -76,12 +117,35 @@ at level 0 with a different palette.
 
 ## The `starts_at_root` and `connections_colored` flags
 
-Inherited from miMind. `starts_at_root` controls whether the palette's
-level 0 applies to the root of the themed subtree or to its children.
-`connections_colored` controls whether edges inherit palette colors for
-their stroke.
+Inherited from miMind.
 
-Both are preserved faithfully; see `schema.md` for the full semantic.
+**`starts_at_root`** answers "is the schema root itself themed?"
+
+- `true` — level 0 *is* the root. Group index equals `level`.
+- `false` — the root is transparent: it keeps its own `style` colors and
+  resolves to no group at all. Its children, at `level: 1`, take
+  `groups[0]`. Group index is `level - 1`.
+
+**`connections_colored`** controls whether edges inherit the palette
+stroke. When the flag is set on a node's schema, every edge *leaving*
+that node (its `from_id`) takes the resolved group's `frame` as its
+stroke color, ahead of the edge's own `color`. The source node governs,
+not the target: an edge is drawn in its parent's branch color. A cross
+link follows the same rule, so the direction it was authored in is the
+direction it takes its color from.
+
+The edge color cascade, highest priority first, is therefore:
+
+1. `edge.glyph_connection.color`, or `canvas.default_connection.color`
+   when the edge has not forked its own connection config — an explicitly
+   named stroke beats the theme
+2. the source node's palette `frame`, when `connections_colored` is set
+   and the schema resolves
+3. `edge.color`
+
+The label and portal-marker channels hang off the same cascade: each
+takes its own override when it has one, and otherwise follows the edge
+body, theme tier included.
 
 ## What's no longer in the format
 

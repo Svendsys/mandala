@@ -60,7 +60,7 @@ pub use connection_label::{
 };
 pub use edge_handle::{build_edge_handles, edge_handle_channel_for, EdgeHandleElement, EdgeHandleKind};
 pub use handle::{build_handle_mutator_tree, build_handle_tree, handle_identity_sequence, HandleVisual};
-pub use node::DEFAULT_SECTION_FONT_SCALE;
+pub use node::{section_default_regions, DEFAULT_SECTION_FONT_SCALE};
 pub use node_clip::{node_clip_aabbs, INACTIVE_NODE_ALPHA_MULTIPLIER};
 pub use node_resize_handle::{
     build_node_resize_handles, build_selected_node_handles, NodeResizeHandleElement,
@@ -171,19 +171,17 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
     let mut section_map: HashMap<(String, usize), NodeId> = HashMap::new();
     let mut id_counter: usize = 1; // 0 is reserved for the Void root
 
-    let vars = &map.canvas.theme_variables;
-    let canvas_default_border = map.canvas.default_border.as_ref();
     let index = ChildIndex::build(map);
     for root in index.roots() {
         // Roots have no ancestors, so they are never hidden by fold.
-        let area = mindnode_container_area(root, vars, canvas_default_border);
+        let area = mindnode_container_area(map, root);
         let element = GfxElement::new_area_non_indexed_with_id(area, root.channel, id_counter);
         id_counter += 1;
 
         let node_id = tree.root.append_value(element, &mut tree.arena);
         node_map.insert(root.id.clone(), node_id);
 
-        append_node_sections(root, node_id, vars, &mut tree, &mut section_map, &mut id_counter);
+        append_node_sections(map, root, node_id, &mut tree, &mut section_map, &mut id_counter);
 
         build_descendants(
             map,

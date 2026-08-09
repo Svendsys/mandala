@@ -1172,10 +1172,10 @@ fn fold_hidden_set_traverses_orphan_component() {
 fn test_edge_colors_bottom_out_at_edge_color() {
     let edge = synthetic_edge("a", "b", "auto", "auto");
     let canvas = blank_canvas();
-    assert_eq!(edge.body_color(&canvas), "#fff");
-    assert_eq!(edge.label_color(&canvas), "#fff");
-    assert_eq!(edge.portal_endpoint_color(&canvas, None), "#fff");
-    assert_eq!(edge.portal_endpoint_text_color(&canvas, None), "#fff");
+    assert_eq!(edge.body_color(&canvas, None), "#fff");
+    assert_eq!(edge.label_color(&canvas, None), "#fff");
+    assert_eq!(edge.portal_endpoint_color(&canvas, None, None), "#fff");
+    assert_eq!(edge.portal_endpoint_text_color(&canvas, None, None), "#fff");
 }
 
 /// The canvas default connection supplies the body color for an
@@ -1189,8 +1189,8 @@ fn test_edge_body_color_falls_back_to_canvas_default_connection() {
         color: Some("#canvas".into()),
         ..GlyphConnectionConfig::default()
     });
-    assert_eq!(edge.body_color(&canvas), "#canvas");
-    assert_eq!(edge.label_color(&canvas), "#canvas");
+    assert_eq!(edge.body_color(&canvas, None), "#canvas");
+    assert_eq!(edge.label_color(&canvas, None), "#canvas");
 }
 
 /// **Struct-level, not field-level.** Once an edge forks a
@@ -1209,7 +1209,7 @@ fn test_edge_body_color_ignores_canvas_default_once_forked() {
         ..GlyphConnectionConfig::default()
     });
     assert_eq!(
-        edge.body_color(&canvas),
+        edge.body_color(&canvas, None),
         "#fff",
         "a forked edge with color=None uses edge.color, not the canvas default"
     );
@@ -1229,7 +1229,7 @@ fn test_edge_body_color_prefers_glyph_connection_override() {
         color: Some("#canvas".into()),
         ..GlyphConnectionConfig::default()
     });
-    assert_eq!(edge.body_color(&canvas), "#body");
+    assert_eq!(edge.body_color(&canvas, None), "#body");
 }
 
 /// The label channel detaches from the body when it authors its
@@ -1242,13 +1242,13 @@ fn test_edge_label_color_override_detaches_from_body() {
         ..GlyphConnectionConfig::default()
     });
     let canvas = blank_canvas();
-    assert_eq!(edge.label_color(&canvas), "#body");
+    assert_eq!(edge.label_color(&canvas, None), "#body");
     edge.label_config = Some(EdgeLabelConfig {
         color: Some("#label".into()),
         ..EdgeLabelConfig::default()
     });
-    assert_eq!(edge.label_color(&canvas), "#label");
-    assert_eq!(edge.body_color(&canvas), "#body", "body is unaffected");
+    assert_eq!(edge.label_color(&canvas, None), "#label");
+    assert_eq!(edge.body_color(&canvas, None), "#body", "body is unaffected");
 }
 
 /// A portal endpoint's icon color overrides the body cascade,
@@ -1264,9 +1264,9 @@ fn test_portal_endpoint_color_channels_are_independent() {
         ..PortalEndpointState::default()
     });
     let from = portal_endpoint_state(&edge, "a");
-    assert_eq!(edge.portal_endpoint_color(&canvas, from), "#icon");
+    assert_eq!(edge.portal_endpoint_color(&canvas, from, None), "#icon");
     assert_eq!(
-        edge.portal_endpoint_text_color(&canvas, from),
+        edge.portal_endpoint_text_color(&canvas, from, None),
         "#icon",
         "text with no override follows the icon"
     );
@@ -1277,8 +1277,8 @@ fn test_portal_endpoint_color_channels_are_independent() {
         ..PortalEndpointState::default()
     });
     let from = portal_endpoint_state(&edge, "a");
-    assert_eq!(edge.portal_endpoint_color(&canvas, from), "#icon");
-    assert_eq!(edge.portal_endpoint_text_color(&canvas, from), "#text");
+    assert_eq!(edge.portal_endpoint_color(&canvas, from, None), "#icon");
+    assert_eq!(edge.portal_endpoint_text_color(&canvas, from, None), "#text");
 }
 
 /// An endpoint with no state at all inherits the body cascade on
@@ -1294,8 +1294,8 @@ fn test_portal_endpoint_color_does_not_leak_across_endpoints() {
     });
     let to = portal_endpoint_state(&edge, "b");
     assert!(to.is_none());
-    assert_eq!(edge.portal_endpoint_color(&canvas, to), "#edge");
-    assert_eq!(edge.portal_endpoint_text_color(&canvas, to), "#edge");
+    assert_eq!(edge.portal_endpoint_color(&canvas, to, None), "#edge");
+    assert_eq!(edge.portal_endpoint_text_color(&canvas, to, None), "#edge");
 }
 
 /// **The clamp helpers must not reintroduce the panic this module

@@ -1261,17 +1261,31 @@ whole map" into a single edit. Each palette is an array of
 it pulls from. Level-clamping (last group when out of range) makes
 deep subtrees degrade gracefully.
 
-`lib/baumhard/src/mindmap/model/palette.rs`. A node's binding
-lives in its optional `color_schema` field, a `ColorSchema`
-record with `palette: String` (the key into `map.palettes`),
+`lib/baumhard/src/mindmap/model/palette.rs`, with the cascade
+itself in `model/theme.rs`. A node's binding lives in its
+optional `color_schema` field, a `ColorSchema` record with
+`palette: String` (the key into `map.palettes`),
 `level: usize` (which `ColorGroup` to pull from), and two
 flags — `starts_at_root` (does level 0 apply to the schema
 root or to its children?) and `connections_colored` (do edges
-inherit the palette stroke color?). `resolve_theme_colors` on
-`MindMap` does the lookup; out-of-range `level` clamps to the
-last group rather than failing. Validation requires every
-referenced palette to exist with at least one group. Full
-reference: [`format/palettes.md`](./format/palettes.md).
+leaving this node inherit the palette stroke color?).
+`resolve_theme_colors` on `MindMap` does the lookup;
+out-of-range `level` clamps to the last group rather than
+failing, and `starts_at_root: false` leaves the schema root
+itself unresolved so its own `style` stands. Validation
+requires every referenced palette to exist with at least one
+group.
+
+The cascade is **palette first, `style` second**, and the
+projection passes read it through four sibling helpers —
+`node_background_color`, `node_frame_color`,
+`node_text_color`, `node_title_color` — plus
+`edge_theme_stroke_color`, which supplies the palette tier of
+[`MindEdge`](#mindedge)'s color cascade for an edge whose
+source node sets `connections_colored`. Anything more specific
+than the node still wins: a `TextRun` naming its own color, a
+`border.color` override, a per-edge `glyph_connection.color`.
+Full reference: [`format/palettes.md`](./format/palettes.md).
 
 Animated palette transitions are the seam — the data
 shape is already mutation-friendly; the runtime would need to

@@ -401,6 +401,34 @@ impl MindMapDocument {
             section_snapshots.push(snapshot);
         }
 
+        // Everything the reverse comparison needs from the *map*
+        // rather than from the node alone, captured before the
+        // mutable borrow below takes `self.mindmap` exclusively.
+        //
+        // Both entries answer the same question — "what would the
+        // forward path have produced from the model as it stands?" —
+        // for the two places a section's colors come from something
+        // other than a `TextRun`: the palette cascade
+        // (`MindMap::node_text_color`) and, for a run-less section,
+        // the default region table the tree builder synthesizes.
+        let Some(read_node) = self.mindmap.nodes.get(node_id) else {
+            return false;
+        };
+        let node_text_color = self.mindmap.node_text_color(read_node).to_string();
+        let projected_default_regions: Vec<Vec<ColorFontRegion>> = read_node
+            .sections
+            .iter()
+            .enumerate()
+            .map(|(idx, section)| {
+                baumhard::mindmap::tree_builder::section_default_regions(
+                    &self.mindmap,
+                    read_node,
+                    section,
+                    idx,
+                )
+            })
+            .collect();
+
         let Some(model_node) = self.mindmap.nodes.get_mut(node_id) else {
             return false;
         };
@@ -422,12 +450,6 @@ impl MindMapDocument {
         let node_pos_y = tree_py;
         let node_size_x = model_node.size.width as f32;
         let node_size_y = model_node.size.height as f32;
-        // Effective default color for a runless section, captured
-        // before the section loop takes `&mut section` — used to
-        // color a synthesized run when a font-size mutation lands
-        // on a section that carries no runs (see
-        // [`sync_section_font_size`]).
-        let node_text_color = model_node.style.text_color.clone();
 
         for (idx, snapshot) in section_snapshots.into_iter().enumerate() {
             let Some(snapshot) = snapshot else {
@@ -527,6 +549,41 @@ impl MindMapDocument {
             // from sections the mutation didn't touch. Build a
             // map keyed by `(start, end)` and compare each
             // tree-side region against the same-range prior.
+            //
+            // **A run-less section is not a region-less section.**
+            // The forward path emits the node's color defaults as
+            // explicit regions for a section with no runs
+            // (`tree_builder::section_default_regions`), so comparing
+            // the tree's regions against an empty run list would
+            // report divergence on every apply and synthesize a
+            // phantom `TextRun` out of the default. Project the same
+            // defaults from the model and compare against those
+            // instead; a mutation that genuinely recolored the
+            // section still differs and still falls through to the
+            // round trip below.
+            if section.text_runs.is_empty() {
+                let defaults = projected_default_regions.get(idx);
+                let matches = defaults.is_some_and(|expected| {
+                    expected.len() == snapshot.regions.len()
+                        && expected
+                            .iter()
+                            .zip(snapshot.regions.iter())
+                            .all(|(a, b)| {
+                                a.range == b.range && a.color == b.color && a.font == b.font
+                            })
+                });
+                if section.text == snapshot.text && matches {
+                    if sync_section_font_size(
+                        section,
+                        snapshot.tree_scale,
+                        pre_round_trip_scale,
+                        &node_text_color,
+                    ) {
+                        changed = true;
+                    }
+                    continue;
+                }
+            }
             let model_runs_by_range: rustc_hash::FxHashMap<(usize, usize), &TextRun> =
                 section.text_runs.iter().map(|r| ((r.start, r.end), r)).collect();
             let model_regions_match = model_runs_by_range.len() == snapshot.regions.len()

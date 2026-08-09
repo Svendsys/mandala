@@ -160,7 +160,24 @@ impl MindEdge {
     /// Cascade: the `color` of the connection config
     /// [`GlyphConnectionConfig::resolved_for`] selects
     /// (`edge.glyph_connection` → `canvas.default_connection` →
-    /// hardcoded default) → `edge.color`.
+    /// hardcoded default) → `themed` → `edge.color`.
+    ///
+    /// `themed` is the palette tier: the stroke color the source
+    /// node's `color_schema` lends this edge when its
+    /// `connections_colored` flag is on. Resolve it with
+    /// [`MindMap::edge_theme_stroke_color`] first, or reach for
+    /// [`MindMap::edge_body_color`], which supplies it for you —
+    /// passing `None` by hand means "this edge has no theme", which
+    /// is a claim, not a default. It sits *below* an explicit
+    /// connection-config color because naming a color on the edge
+    /// (or as the canvas-wide connection default) is a deliberate
+    /// choice and a theme must not overrule it, and *above*
+    /// `edge.color` because `edge.color` is never absent — a tier
+    /// under it could never win.
+    ///
+    /// [`MindMap`]: crate::mindmap::model::MindMap
+    /// [`MindMap::edge_theme_stroke_color`]: crate::mindmap::model::MindMap::edge_theme_stroke_color
+    /// [`MindMap::edge_body_color`]: crate::mindmap::model::MindMap::edge_body_color
     ///
     /// **Struct-level, not field-level.** Once an edge has forked
     /// a `glyph_connection` of its own, the canvas default drops
@@ -179,31 +196,32 @@ impl MindEdge {
     /// Scene-builder connection emission and the document layer's
     /// clipboard resolver both read through here, so a future
     /// third tier is one edit. O(1), no allocation.
-    pub fn body_color<'a>(&'a self, canvas: &'a Canvas) -> &'a str {
+    pub fn body_color<'a>(&'a self, canvas: &'a Canvas, themed: Option<&'a str>) -> &'a str {
         self.glyph_connection
             .as_ref()
             .or(canvas.default_connection.as_ref())
             .and_then(|cfg| cfg.color.as_deref())
+            .or(themed)
             .unwrap_or(self.color.as_str())
     }
 
     /// This edge's **label** color, as authored (line-mode
     /// edges). Cascade: `label_config.color` → the body cascade
-    /// ([`Self::body_color`]).
+    /// ([`Self::body_color`], `themed` and all).
     ///
     /// The label channel's own override wins; absent an override
     /// the label follows the edge body so the two stay visually
     /// consistent unless deliberately detached. O(1).
-    pub fn label_color<'a>(&'a self, canvas: &'a Canvas) -> &'a str {
+    pub fn label_color<'a>(&'a self, canvas: &'a Canvas, themed: Option<&'a str>) -> &'a str {
         self.label_config
             .as_ref()
             .and_then(|c| c.color.as_deref())
-            .unwrap_or_else(|| self.body_color(canvas))
+            .unwrap_or_else(|| self.body_color(canvas, themed))
     }
 
     /// One portal endpoint's **icon** color, as authored.
     /// Cascade: `endpoint.color` → the body cascade
-    /// ([`Self::body_color`]).
+    /// ([`Self::body_color`], `themed` and all).
     ///
     /// `endpoint` is the state for the side being drawn — resolve
     /// it with [`portal_endpoint_state`] first. `None` means the
@@ -213,10 +231,11 @@ impl MindEdge {
         &'a self,
         canvas: &'a Canvas,
         endpoint: Option<&'a PortalEndpointState>,
+        themed: Option<&'a str>,
     ) -> &'a str {
         endpoint
             .and_then(|s| s.color.as_deref())
-            .unwrap_or_else(|| self.body_color(canvas))
+            .unwrap_or_else(|| self.body_color(canvas, themed))
     }
 
     /// One portal endpoint's **text** color, as authored.
@@ -231,10 +250,11 @@ impl MindEdge {
         &'a self,
         canvas: &'a Canvas,
         endpoint: Option<&'a PortalEndpointState>,
+        themed: Option<&'a str>,
     ) -> &'a str {
         endpoint
             .and_then(|s| s.text_color.as_deref())
-            .unwrap_or_else(|| self.portal_endpoint_color(canvas, endpoint))
+            .unwrap_or_else(|| self.portal_endpoint_color(canvas, endpoint, themed))
     }
 }
 
@@ -247,7 +267,8 @@ impl MindEdge {
 ///
 /// Icon color cascade (highest-priority first):
 /// `PortalEndpointState.color` → `MindEdge.glyph_connection.color` →
-/// `MindEdge.color` → theme variable resolution. Mirrors the
+/// the source node's palette stroke → `MindEdge.color` → theme
+/// variable resolution. Mirrors the
 /// edge-body color cascade so the two markers and the (absent)
 /// line stay visually consistent when the user recolors the whole
 /// edge.

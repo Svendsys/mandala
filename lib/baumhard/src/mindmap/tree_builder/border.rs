@@ -190,7 +190,10 @@ pub fn border_node_data(
             continue;
         }
         let (ox, oy) = offsets.get(&node.id).copied().unwrap_or((0.0, 0.0));
-        let frame_color_hex = color::resolve_var(&node.style.frame_color, vars);
+        // Palette first, `style.frame_color` second — the node color
+        // cascade lives on `MindMap` so this pass and the container
+        // pass cannot disagree about what a themed node's frame is.
+        let frame_color_hex = color::resolve_var(map.node_frame_color(node), vars);
         // Border preview: when this node is a `Nodes(ids)` target,
         // fold the staged edits into a clone of its committed slot
         // before resolution. A `CanvasDefault` preview instead

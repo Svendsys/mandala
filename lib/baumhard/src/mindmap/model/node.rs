@@ -722,33 +722,51 @@ pub struct NodeLayout {
 
 /// Links a node to one entry in a named [`super::Palette`] keyed by
 /// depth. `level` is the index into the palette's `groups`; clamped
-/// at theme-resolve time (`resolve_theme_colors`) so a schema
-/// referencing a level beyond the palette's length falls back to
-/// the last group rather than erroring.
+/// at theme-resolve time ([`super::MindMap::resolve_theme_colors`])
+/// so a schema referencing a level beyond the palette's length falls
+/// back to the last group rather than erroring.
 /// `starts_at_root` and `connections_colored` are round-tripped
-/// miMind-compat flags that the renderer interprets when resolving
-/// effective colors. Plain data; no runtime cost.
+/// miMind-compat flags that the projection passes interpret when
+/// resolving effective colors — see
+/// [`crate::mindmap::model::theme`] for the whole cascade. Plain
+/// data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorSchema {
     /// Named palette to bind this node's colors to — keys into
     /// [`super::MindMap::palettes`].
     pub palette: String,
-    /// Index into the palette's `groups` for this node's depth.
-    /// Clamped against the palette's length at resolve time so a
-    /// level past the end falls back to the last group.
-    pub level: i32,
+    /// Depth from the schema root, and the index into the palette's
+    /// `groups` it produces. Clamped against the palette's length at
+    /// resolve time so a level past the end falls back to the last
+    /// group.
+    ///
+    /// `usize` rather than a signed type because depth cannot be
+    /// negative and this value is only ever used as a slice index —
+    /// the `as usize` this field used to need turned an authored
+    /// `-1` into a huge index that then clamped silently to the last
+    /// group. A negative `level` is now refused by the loader with
+    /// serde's own message instead.
+    pub level: usize,
     /// `true` when depth indexing begins at the root (level 0 is the
     /// root itself); `false` shifts the indexing so the root is
-    /// transparent and children start at level 0.
+    /// transparent — it keeps its `style` colors — and its children,
+    /// at `level: 1`, take `groups[0]`.
     pub starts_at_root: bool,
-    /// When `true`, outgoing connections inherit the palette's
-    /// color at this node's level instead of the edge's own color.
+    /// When `true`, connections *leaving* this node inherit the
+    /// palette's `frame` color at this node's level instead of the
+    /// edge's own `color`. Read through
+    /// [`super::MindMap::edge_theme_stroke_color`].
     pub connections_colored: bool,
 }
 
 /// One palette entry — the four colors a themed node inherits at a
 /// given depth level. Referenced from [`ColorSchema::level`] via
-/// [`super::Palette::groups`]. Plain data; no runtime cost.
+/// [`super::Palette::groups`], resolved by
+/// [`super::MindMap::resolve_theme_colors`], and also the source of
+/// the per-glyph cycle a [`GlyphBorderConfig::color_palette`] border
+/// draws from (which channel it cycles is
+/// [`GlyphBorderConfig::color_palette_field`]). Plain data; no
+/// runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorGroup {
     /// Background-fill color for a node at this level.
@@ -757,8 +775,15 @@ pub struct ColorGroup {
     pub frame: String,
     /// Text color for a node at this level.
     pub text: String,
-    /// First-line / title color — overrides `text` for the first
-    /// line of a node's text when present.
+    /// First-line / title color — stands in for `text` on the first
+    /// hard-newline-delimited line of the node's first
+    /// [`MindSection`], the stratum miMind called the node title.
+    /// Empty means "no distinct title color"; the whole section then
+    /// takes `text`.
+    ///
+    /// Like `text`, it is a *section default*: a [`TextRun`] naming
+    /// its own color keeps it, so a node whose runs all carry
+    /// explicit colors shows neither channel.
     pub title: String,
 }
 

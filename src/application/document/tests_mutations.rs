@@ -2302,6 +2302,11 @@ fn test_grow_font_clamps_to_maximum() {
 /// have nowhere to live and evaporate on the next rebuild. The
 /// synthesized run spans the whole text and inherits the node's
 /// default text color so rendering is unchanged except for size.
+///
+/// The node's `color_schema` is cleared first so `style.text_color`
+/// really is the effective default here; the themed half of that
+/// cascade is
+/// `test_grow_font_on_runless_section_of_themed_node_takes_palette_color`.
 #[test]
 fn test_grow_font_on_runless_section_synthesizes_run() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
@@ -2310,6 +2315,7 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
     let nid = first_testament_node_id(&doc);
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.color_schema = None;
         node.style.text_color = "#abcdef".into();
         // A section with text but no runs (size defaults to 14pt).
         node.sections
@@ -2336,6 +2342,53 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
     assert_eq!(
         run.color, "#abcdef",
         "synthesized run inherits the node's default text color"
+    );
+}
+
+/// The themed half of the previous test: when the node carries a
+/// `color_schema`, the effective default text color is the palette
+/// group's, not `style.text_color` — so that is what the
+/// synthesized run must carry, or the section changes color the
+/// moment somebody grows its font.
+#[test]
+fn test_grow_font_on_runless_section_of_themed_node_takes_palette_color() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::mindmap::model::{ColorGroup, ColorSchema, MindSection, Palette};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.mindmap.palettes.insert(
+        "grow-probe".into(),
+        Palette {
+            groups: vec![ColorGroup {
+                background: "#101010".into(),
+                frame: "#202020".into(),
+                text: "#30ff30".into(),
+                title: String::new(),
+            }],
+        },
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.style.text_color = "#abcdef".into();
+        node.color_schema = Some(ColorSchema {
+            palette: "grow-probe".into(),
+            level: 0,
+            starts_at_root: true,
+            connections_colored: false,
+        });
+        node.sections
+            .push(MindSection::new_default("runless".into(), Vec::new()));
+    }
+    let runless_idx = doc.mindmap.nodes.get(&nid).unwrap().sections.len() - 1;
+    let cm = make_font_scale_mutation("grow-themed", GlyphAreaCommand::GrowFont(2.0), TS::SelfOnly);
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[runless_idx];
+    assert_eq!(section.text_runs.len(), 1, "a run must be synthesized");
+    assert_eq!(
+        section.text_runs[0].color, "#30ff30",
+        "the palette's text color is the effective default, not style.text_color"
     );
 }
 
