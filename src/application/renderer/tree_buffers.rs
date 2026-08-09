@@ -213,8 +213,7 @@ impl Renderer {
         }
         // Lazily acquired: a pass in which every element still
         // matches its cached inputs never touches the lock.
-        let mut font_system: Option<std::sync::RwLockWriteGuard<'static, baumhard::font::FontSystem>> =
-            None;
+        let mut font_system: Option<std::sync::RwLockWriteGuard<'static, baumhard::font::FontSystem>> = None;
         let mut slot = 0usize;
         for id in ids {
             let Some(entry) = app_scene.overlay_scene().get(id) else {

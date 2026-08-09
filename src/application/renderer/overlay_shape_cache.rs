@@ -124,9 +124,9 @@ impl ShapedOverlayElement {
     /// # Costs
     ///
     /// Two integer compares, a `Vec2` compare, one `GlyphArea`
-    /// equality and one region-content walk — together O(text length
-    /// + region count) and allocation-free. Cheap against the
-    /// cosmic-text shaping it stands in for.
+    /// equality and one region-content walk — together
+    /// O(text length + region count) and allocation-free. Cheap
+    /// against the cosmic-text shaping it stands in for.
     pub(super) fn still_matches(&self, tree: SceneTreeId, element: &GfxElement, offset: Vec2) -> bool {
         if self.tree != tree || self.unique_id != element.unique_id() || self.offset != offset {
             return false;

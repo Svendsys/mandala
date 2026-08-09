@@ -922,7 +922,9 @@ fn test_overlay_shape_cache_reuses_when_only_the_hitbox_moved() {
     let mut moved_hitbox = element.clone();
     let area = moved_hitbox.glyph_area_mut().expect("fixture is an area element");
     area.hitbox_as_mut()
-        .add(baumhard::gfx_structs::util::hitbox::BoundingRectangle::at_origin(99.0, 99.0));
+        .add(baumhard::gfx_structs::util::hitbox::BoundingRectangle::at_origin(
+            99.0, 99.0,
+        ));
     assert_ne!(
         moved_hitbox.glyph_area().map(|a| a.hitbox().rectangles.len()),
         element.glyph_area().map(|a| a.hitbox().rectangles.len()),

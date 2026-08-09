@@ -1022,7 +1022,7 @@ impl Renderer {
         match self.fps_display_mode {
             FpsDisplayMode::Off => {}
             FpsDisplayMode::Snapshot => {
-                if self.fps_clock % FPS_WINDOW == 0 && frame_micros > 0 {
+                if self.fps_clock.is_multiple_of(FPS_WINDOW) && frame_micros > 0 {
                     self.fps = Some((1_000_000u128 / frame_micros) as usize);
                 }
                 self.fps_clock = self.fps_clock.wrapping_add(1);

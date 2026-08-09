@@ -916,7 +916,8 @@ fn test_apply_section_resize_to_tree_unknown_section_no_op() {
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
         .unwrap();
-    let written = apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let written =
+        apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
     assert_eq!(
         written, None,
         "a write that did not happen must not name an element to re-shape"
@@ -1711,7 +1712,11 @@ fn test_node_resize_reports_every_element_it_moved() {
     // merely the right element: the caller writes it straight into
     // the buffer without re-reading the arena.
     for (uid, pos) in &patches {
-        assert_eq!(after.get(uid), Some(pos), "patch for {uid} names the wrong position");
+        assert_eq!(
+            after.get(uid),
+            Some(pos),
+            "patch for {uid} names the wrong position"
+        );
     }
 }
 
@@ -1728,8 +1733,14 @@ fn test_apply_node_resize_to_tree_unknown_node_no_op() {
     // so the clear-on-entry contract is asserted with a non-empty
     // input rather than a fresh `Vec`.
     let mut patches = vec![(usize::MAX, (1.0, 2.0))];
-    let written =
-        apply_node_resize_to_tree(&mut tree, "nope", Vec2::ZERO, Vec2::new(10.0, 10.0), Vec2::ZERO, &mut patches);
+    let written = apply_node_resize_to_tree(
+        &mut tree,
+        "nope",
+        Vec2::ZERO,
+        Vec2::new(10.0, 10.0),
+        Vec2::ZERO,
+        &mut patches,
+    );
     assert_eq!(written, None);
     assert!(patches.is_empty());
 }
