@@ -561,97 +561,94 @@ impl MindMapDocument {
             // instead; a mutation that genuinely recolored the
             // section still differs and still falls through to the
             // round trip below.
-            if section.text_runs.is_empty() {
-                let defaults = projected_default_regions.get(idx);
-                let matches = defaults.is_some_and(|expected| {
+            let model_regions_match = if section.text_runs.is_empty() {
+                // The run-less arm: compare against the projected
+                // defaults, which the forward path derives with the
+                // same function. Both sides come out of
+                // `hex_to_rgba_safe` over the same authored string,
+                // so the `f32` channels are bit-identical and an
+                // exact compare is the right one here — no
+                // case-folding tier is needed, because neither side
+                // is a hand-authored string.
+                projected_default_regions.get(idx).is_some_and(|expected| {
                     expected.len() == snapshot.regions.len()
                         && expected
                             .iter()
                             .zip(snapshot.regions.iter())
                             .all(|(a, b)| a.range == b.range && a.color == b.color && a.font == b.font)
-                });
-                if section.text == snapshot.text && matches {
-                    if sync_section_font_size(
-                        section,
-                        snapshot.tree_scale,
-                        pre_round_trip_scale,
-                        &node_text_color,
-                    ) {
-                        changed = true;
-                    }
-                    continue;
-                }
-            }
-            let model_runs_by_range: rustc_hash::FxHashMap<(usize, usize), &TextRun> =
-                section.text_runs.iter().map(|r| ((r.start, r.end), r)).collect();
-            let model_regions_match = model_runs_by_range.len() == snapshot.regions.len()
-                && snapshot.regions.iter().all(|region| {
-                    let key = (region.range.start, region.range.end);
-                    let Some(run) = model_runs_by_range.get(&key) else {
-                        return false;
-                    };
-                    // Color comparison is **case-insensitive on
-                    // hex**: `rgba_to_hex` always emits lowercase,
-                    // but model-side `run.color` may have been
-                    // hand-authored as `#FFFFFF` or mixed case. A
-                    // byte-equal `==` would always-mismatch those
-                    // and trigger the lossy round-trip on every
-                    // apply_to_tree call.
-                    let region_color_hex = region.color.map(rgba_to_hex);
-                    let model_color_hex = if run.color.starts_with('#') {
-                        Some(run.color.clone())
-                    } else {
-                        None
-                    };
-                    let model_is_var = is_var_ref(&run.color);
-                    let colors_equal = match (region_color_hex.as_deref(), model_color_hex.as_deref()) {
-                        (Some(a), Some(b)) => str::eq_ignore_ascii_case(a, b),
-                        (None, None) => true,
-                        // `(Some(hex), None)` with the model carrying
-                        // a `var(--…)` reference: presume the
-                        // variable resolves to the tree-side hex
-                        // and treat as equal. Documented limit: a
-                        // custom mutation that *deliberately*
-                        // recolors a `var()`-bearing run is
-                        // silently swallowed; the run keeps the
-                        // variable.
-                        (Some(_), None) if model_is_var => true,
-                        _ => false,
-                    };
-                    if !colors_equal {
-                        return false;
-                    }
-                    // Font comparison **forward-projects the model**,
-                    // exactly like the position / offset / size
-                    // comparisons above: run the model's family
-                    // string through `app_font_by_family` (empty →
-                    // `None`, matching the forward path in
-                    // `tree_builder/node.rs::mindnode_section_area`)
-                    // and compare the resulting `Option<AppFont>`
-                    // against what the tree actually carries.
-                    //
-                    // Comparing the tree-side font back-projected to
-                    // a *name* against the model's raw string is
-                    // asymmetric and can never succeed for a family
-                    // the font database doesn't know: the forward
-                    // path maps an unresolvable family to `None`, so
-                    // `family_name_of(None)` yields `None` while the
-                    // model still holds the authored string. Every
-                    // section then reads as divergent on every apply
-                    // — the lossy text/regions round-trip runs
-                    // needlessly and `changed` comes back `true` for
-                    // a genuine no-op, resurrecting exactly the dead
-                    // undo entries P0-02 (#2) removed. The testament
-                    // map hits this on all 252 nodes: it authors
-                    // `"LiberationSans"` while the face registers
-                    // `"Liberation Sans"`.
-                    let model_font = if run.font.is_empty() {
-                        None
-                    } else {
-                        app_font_by_family(&run.font)
-                    };
-                    region.font == model_font
-                });
+                })
+            } else {
+                let model_runs_by_range: rustc_hash::FxHashMap<(usize, usize), &TextRun> =
+                    section.text_runs.iter().map(|r| ((r.start, r.end), r)).collect();
+                model_runs_by_range.len() == snapshot.regions.len()
+                    && snapshot.regions.iter().all(|region| {
+                        let key = (region.range.start, region.range.end);
+                        let Some(run) = model_runs_by_range.get(&key) else {
+                            return false;
+                        };
+                        // Color comparison is **case-insensitive on
+                        // hex**: `rgba_to_hex` always emits lowercase,
+                        // but model-side `run.color` may have been
+                        // hand-authored as `#FFFFFF` or mixed case. A
+                        // byte-equal `==` would always-mismatch those
+                        // and trigger the lossy round-trip on every
+                        // apply_to_tree call.
+                        let region_color_hex = region.color.map(rgba_to_hex);
+                        let model_color_hex = if run.color.starts_with('#') {
+                            Some(run.color.clone())
+                        } else {
+                            None
+                        };
+                        let model_is_var = is_var_ref(&run.color);
+                        let colors_equal = match (region_color_hex.as_deref(), model_color_hex.as_deref()) {
+                            (Some(a), Some(b)) => str::eq_ignore_ascii_case(a, b),
+                            (None, None) => true,
+                            // `(Some(hex), None)` with the model carrying
+                            // a `var(--…)` reference: presume the
+                            // variable resolves to the tree-side hex
+                            // and treat as equal. Documented limit: a
+                            // custom mutation that *deliberately*
+                            // recolors a `var()`-bearing run is
+                            // silently swallowed; the run keeps the
+                            // variable.
+                            (Some(_), None) if model_is_var => true,
+                            _ => false,
+                        };
+                        if !colors_equal {
+                            return false;
+                        }
+                        // Font comparison **forward-projects the model**,
+                        // exactly like the position / offset / size
+                        // comparisons above: run the model's family
+                        // string through `app_font_by_family` (empty →
+                        // `None`, matching the forward path in
+                        // `tree_builder/node.rs::mindnode_section_area`)
+                        // and compare the resulting `Option<AppFont>`
+                        // against what the tree actually carries.
+                        //
+                        // Comparing the tree-side font back-projected to
+                        // a *name* against the model's raw string is
+                        // asymmetric and can never succeed for a family
+                        // the font database doesn't know: the forward
+                        // path maps an unresolvable family to `None`, so
+                        // `family_name_of(None)` yields `None` while the
+                        // model still holds the authored string. Every
+                        // section then reads as divergent on every apply
+                        // — the lossy text/regions round-trip runs
+                        // needlessly and `changed` comes back `true` for
+                        // a genuine no-op, resurrecting exactly the dead
+                        // undo entries P0-02 (#2) removed. The testament
+                        // map hits this on all 252 nodes: it authors
+                        // `"LiberationSans"` while the face registers
+                        // `"Liberation Sans"`.
+                        let model_font = if run.font.is_empty() {
+                            None
+                        } else {
+                            app_font_by_family(&run.font)
+                        };
+                        region.font == model_font
+                    })
+            };
             // Selective gate: only run the lossy text/regions
             // round-trip when the tree side diverged. Note this is
             // NOT a `continue` — the font-size sync below must run
