@@ -9,18 +9,31 @@
 //! `_font_family_range`) consume directly; `section=N` lifts a
 //! non-negative integer.
 //!
-//! Alongside the parsers sits [`section_idx_completions`], the
-//! popup those same verbs offer on the value side of `section=`.
-//! It lives here for the same reason the parsers do: `color`,
-//! `font` and `section` all speak this one kv, and a copy per verb
-//! is how `font section=<TAB>` came to offer point sizes — the
-//! vocabulary of a *different* key on the same verb — while
-//! `color section=<TAB>` offered color presets. Neither was wrong
-//! about its own verb; both were reading a list that had nothing
-//! to do with the key under the cursor.
+//! Alongside the parsers sit [`section_idx_completions`] — the
+//! popup those same verbs offer on the value side of `section=` —
+//! and [`kv_hint`], the one sentence each of the two keys is
+//! described by wherever it is offered.
+//!
+//! They live here for the same reason the parsers do: `color`,
+//! `font`, `section` and `section frame` all speak these two kvs.
+//! What went wrong was not a copied value list but a *missing*
+//! one: each verb's `KvValue` arm matched against its whole `KEYS`
+//! list and answered with the single vocabulary it happened to
+//! know, so `font section=<TAB>` offered point sizes — the
+//! vocabulary of a different key on the same verb — while `color
+//! section=<TAB>` offered color presets. Neither verb was wrong
+//! about itself; neither had an arm for the key under the cursor.
+//! Giving a shared kv one shared answer is what retires the class.
 
 use crate::application::console::completion::Completion;
 use crate::application::console::ConsoleContext;
+
+/// The `section=<idx>` key as a one-entry keyset, for the verbs
+/// that splice it into a keyset they do not own — `section frame
+/// …`, whose other keys belong to the `border` verb. A verb with
+/// a `KEYS` list of its own spells `"section"` into that list
+/// instead and reaches here only for the hint.
+pub(super) const SECTION_KEY: &[&str] = &["section"];
 
 /// Parse a `range=A..B` kv value into `(start, end)` grapheme
 /// indices. Accepts the Rust-style `usize..usize` half-open
@@ -58,6 +71,20 @@ pub(super) fn parse_section_kv(verb: &str, value: &str) -> Result<usize, String>
     value
         .parse::<usize>()
         .map_err(|_| format!("{}: section='{}' is not a non-negative integer", verb, value))
+}
+
+/// The sentence each shared key is described by, wherever it is
+/// offered. Every verb that accepts `section=` / `range=` falls
+/// back to this from its own `kv_hint`, so the four popups that
+/// surface `section=` cannot come to describe it four ways.
+/// `None` for anything else — the caller's own table answers for
+/// the keys it owns.
+pub(super) fn kv_hint(key: &str) -> Option<&'static str> {
+    match key {
+        "section" => Some("target section index inside a multi-section node"),
+        "range" => Some("grapheme range A..B inside the targeted section"),
+        _ => None,
+    }
 }
 
 /// The popup for `section=<TAB>`: one row per section on the

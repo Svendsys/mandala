@@ -13,11 +13,26 @@ use crate::application::console::ConsoleContext;
 
 pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     // The engine's `Token { index: N }` indexes positionals
-    // *after* the verb name (`border`). The dispatch reads
-    // tokens[1..] (tokens[0] is "border" itself); first
-    // positional after the verb name is at engine index 0.
-    let token1 = state.tokens.get(1).map(String::as_str);
-    let token2 = state.tokens.get(2).map(String::as_str);
+    // *after* the verb name (`border`), which is exactly what
+    // `CompletionState::positional` returns — so the lookahead
+    // below and the arms it feeds count the same slots the
+    // execute path's `Args::positional` does.
+    //
+    // Gated on the same discriminator `execute_border` applies: a
+    // kv ahead of the subverb slot means the line is kv form and
+    // the positional grammar is not what will run, so the popup
+    // must not offer its vocabulary.
+    //
+    // Lowercased once, because `execute_border` dispatches on
+    // `verb.to_ascii_lowercase()` — `border Preset <TAB>` reaches
+    // the arm that `border Preset heavy` will run.
+    let positional_form = super::subverb_slot_is_positional(state.arg_tokens(), 0);
+    let subverb = positional_form
+        .then(|| state.positional(0))
+        .flatten()
+        .map(str::to_ascii_lowercase);
+    let token1 = subverb.as_deref();
+    let token2 = state.positional(1);
     let after_preview = token1 == Some("preview");
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
@@ -31,7 +46,7 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
             out.extend(key_completions(state.partial));
             out
         }
-        CompletionContext::Token { index: 1 } => match token1.map(str::to_ascii_lowercase).as_deref() {
+        CompletionContext::Token { index: 1 } => match token1 {
             Some("preset") => preset_value_completions(state.partial),
             Some("color") => prefix_filter(super::COLOR_PRESETS, state.partial),
             Some("palette") => palette_value_completions(state.partial, ctx),
@@ -46,19 +61,50 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
         //second-positional value: side <TAB> takes
         // pattern (free-form) or `reset`; corner <TAB> takes a
         // single glyph (free-form) or `reset`.
-        CompletionContext::Token { index: 2 } => match token1.map(str::to_ascii_lowercase).as_deref() {
-            Some("side") => side_pattern_completions(state.partial, token2),
-            Some("corner") => corner_glyph_completions(state.partial),
-            _ => Vec::new(),
-        },
+        CompletionContext::Token { index: 2 } => second_positional_completions(token1, state.partial, token2),
         CompletionContext::Token { .. } => key_completions(state.partial),
+        // `border show side=<TAB>`. The `side=` filter is a kv of
+        // the `show` subverb, not of the border vocabulary — it is
+        // absent from `KEYS`, so the shared value completer below
+        // has no arm for it and the popup went quiet on a closed
+        // five-word vocabulary `execute_border_show` validates
+        // against by name. Scoped to `show`: the canvas and
+        // section-frame readouts take no arguments at all.
+        CompletionContext::KvValue { key } if key == "side" && token1 == Some("show") => {
+            prefix_filter(SIDE_VALUES, state.partial)
+        }
         CompletionContext::KvValue { key } => kv_value_completions(key.as_str(), state.partial, ctx),
         _ => Vec::new(),
     }
 }
 
-const SIDE_VALUES: &[&str] = &["top", "bottom", "left", "right", "all"];
-const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
+/// The `side` / `corner` argument vocabularies. `pub(crate)` so
+/// the canvas mirrors of those subverbs offer the same five words
+/// rather than re-listing them — `canvas.rs` held its own copy of
+/// both until the depth-2 gap below was closed.
+pub(crate) const SIDE_VALUES: &[&str] = &["top", "bottom", "left", "right", "all"];
+pub(crate) const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
+
+/// The slot *two* positionals past a border subverb — the pattern
+/// after `side <which>`, the glyph after `corner <which>`. Every
+/// other subverb's second argument is free-form or absent, so the
+/// vocabulary is just the `reset` sentinel users would not guess.
+///
+/// `pub(crate)` for the same reason [`SIDE_VALUES`] is: `canvas
+/// border side top <TAB>` and `canvas section-frame [focused]
+/// side top <TAB>` reach exactly this slot, and answered with kv
+/// keys until they were routed here.
+pub(crate) fn second_positional_completions(
+    verb: Option<&str>,
+    partial: &str,
+    which: Option<&str>,
+) -> Vec<Completion> {
+    match verb.map(str::to_ascii_lowercase).as_deref() {
+        Some("side") => side_pattern_completions(partial, which),
+        Some("corner") => corner_glyph_completions(partial),
+        _ => Vec::new(),
+    }
+}
 
 /// `border preset <TAB>` and `border preset=<TAB>` value
 /// completion: every entry from `BORDER_PRESETS` plus `cycle`.
@@ -298,7 +344,6 @@ mod tests {
     ) -> CompletionState<'a> {
         CompletionState {
             tokens: tokens_owned,
-            cursor_token: 0,
             partial,
             context: ctx,
         }
@@ -463,25 +508,17 @@ mod plan_5_9_tests {
         crate::application::document::tests_common::load_test_doc()
     }
 
-    fn at_token1<'a>(
-        partial: &'a str,
-        tokens: &'a [String],
-    ) -> CompletionState<'a> {
+    fn at_token1<'a>(partial: &'a str, tokens: &'a [String]) -> CompletionState<'a> {
         CompletionState {
             tokens,
-            cursor_token: 1,
             partial,
             context: CompletionContext::Token { index: 1 },
         }
     }
 
-    fn at_token2<'a>(
-        partial: &'a str,
-        tokens: &'a [String],
-    ) -> CompletionState<'a> {
+    fn at_token2<'a>(partial: &'a str, tokens: &'a [String]) -> CompletionState<'a> {
         CompletionState {
             tokens,
-            cursor_token: 2,
             partial,
             context: CompletionContext::Token { index: 2 },
         }
@@ -537,7 +574,6 @@ mod plan_5_9_tests {
         let tokens = vec!["border".to_string()];
         let s = CompletionState {
             tokens: &tokens,
-            cursor_token: 1,
             partial: "",
             context: CompletionContext::KvValue {
                 key: "preset".to_string(),
@@ -618,6 +654,28 @@ mod plan_5_9_tests {
             .map(|c| c.display)
             .collect();
         assert!(labels.iter().any(|l| l == "reset"));
+    }
+
+    /// `border show <TAB>` has offered the `side=` key since B6.8,
+    /// but `border show side=<TAB>` offered nothing — `side` is
+    /// not in `KEYS`, so the shared per-key value completer had no
+    /// arm for it, while `execute_border_show` validates the value
+    /// against a closed five-word list and names all five in its
+    /// rejection.
+    #[test]
+    fn show_side_kv_value_completion_lists_the_five_sides() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "show".to_string()];
+        let s = CompletionState {
+            tokens: &tokens,
+            partial: "",
+            context: CompletionContext::KvValue {
+                key: "side".to_string(),
+            },
+        };
+        let labels: Vec<String> = complete_border(&s, &ctx).into_iter().map(|c| c.display).collect();
+        assert_eq!(labels, SIDE_VALUES.to_vec());
     }
 
     #[test]

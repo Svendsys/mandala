@@ -14,6 +14,26 @@
 //! to four times per verb (parse, complete, usage, hints) and the
 //! copies drifted. The oracle is what makes "the framework changed
 //! nothing a user can see" a checkable claim rather than a hope.
+//!
+//! # What the oracle does not see
+//!
+//! [`exec_signature`] renders the [`ExecResult`] and nothing else.
+//! It drops the [`ConsoleEffects`] the verb filled in — the side
+//! effect, the `close_console` flag, the undo entry — and it drops
+//! the mutated document, which it then throws away. So a row
+//! pinned as `"OK …"` says the verb accepted the line and worded
+//! its acknowledgment that way; it does not say a write landed,
+//! and the six rows whose verbs answer `ExecResult::ok_empty()`
+//! (`color pick|bg|text|border`, `color picker on|off`) pin
+//! nothing beyond `"OK "` itself — for those the side effect the
+//! signature discards *is* the whole behavior.
+//!
+//! That is the deliberate scope: accepts / rejects with which
+//! words / what the popup offers. It is not a substitute for the
+//! per-verb tests that assert against the document, and a green
+//! oracle is not evidence that a mutation is correct. Widening the
+//! signature to cover effects and document state would make it
+//! one, and is the obvious next move on this file.
 
 use crate::application::console::completion::complete;
 use crate::application::console::parser::{parse, Args, ParseResult};
@@ -133,14 +153,6 @@ fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\n', "\\n")
 }
 
-/// Cut a measured readout down to its host-independent head.
-pub fn stable_head(sig: &str) -> &str {
-    match sig.find("\\nsize:") {
-        Some(i) => &sig[..i],
-        None => sig,
-    }
-}
-
 /// Every corpus line's outcome still reads exactly the way it was
 /// pinned. Positional: expectation N answers corpus line N.
 #[test]
@@ -161,8 +173,10 @@ fn test_console_oracle_execution_outcomes_are_unchanged() {
     }
 }
 
-/// The measured readouts still open the way they were pinned. Only
-/// the host-independent head is compared — see
+/// The host-dependent readouts still *open* the way they were
+/// pinned — the pinned string is a prefix of the signature rather
+/// than the whole of it, because each of these rows ends in bytes
+/// this machine chose. See
 /// [`super::oracle_corpus::EXEC_PREFIX_CORPUS`].
 #[test]
 fn test_console_oracle_measured_readouts_open_unchanged() {
@@ -171,10 +185,9 @@ fn test_console_oracle_measured_readouts_open_unchanged() {
     assert_eq!(corpus.len(), expected.len());
     for (i, ((sel, line), want)) in corpus.iter().zip(expected).enumerate() {
         let got = exec_signature(line, *sel);
-        assert_eq!(
-            stable_head(&got),
-            *want,
-            "oracle prefix row {i} drifted for input {line:?}"
+        assert!(
+            got.starts_with(want),
+            "oracle prefix row {i} drifted for input {line:?}\n  want prefix: {want}\n  got:         {got}"
         );
     }
 }
@@ -219,10 +232,21 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
         families,
         "`border font <TAB>` offers one row per loaded family"
     );
-    assert!(
-        rows.iter().all(|c| c.font_family.is_some()),
-        "each family row shapes its own label"
-    );
+    // The shaped face is the fourth channel `completion_signature`
+    // renders, and the only one no pinned row exercises — every
+    // corpus line whose popup carries a family is a font
+    // vocabulary, and those are excluded from the byte-pins for the
+    // host-dependence reason above. `is_some()` alone left the
+    // channel effectively unchecked: replacing every family tag
+    // with one constant sentinel kept all four oracle tests green.
+    // The row must name *its own* family, not merely some family.
+    for c in &rows {
+        assert_eq!(
+            c.font_family.as_deref(),
+            Some(c.display.as_str()),
+            "each family row shapes its own label"
+        );
+    }
 
     match exec_signature("font list", Sel::Node).strip_prefix("LINES ") {
         Some(body) => assert_eq!(body.split("\\n").count(), families.len()),

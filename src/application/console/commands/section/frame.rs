@@ -49,7 +49,7 @@ pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> 
     // vocabulary as the committing kv-form). The engine's
     // `Token { index }` counts past the parent command, so
     // `section frame preview <here>` lands at index 2.
-    let after_preview = state.tokens.get(2).map(String::as_str) == Some("preview");
+    let after_preview = state.positional(1) == Some("preview");
     match &state.context {
         // The engine's `Token { index }` is the count of non-kv
         // positionals *after* the command name, so for the input
@@ -59,7 +59,7 @@ pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> 
         // the same kv keyset the top-level `border …` verb does.
         CompletionContext::Token { index: 1 } => {
             let mut out = prefix_filter(VERBS, state.partial);
-            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
+            out.extend(frame_key_completions(state.partial));
             out
         }
         CompletionContext::Token { index: 2 } if after_preview => {
@@ -67,11 +67,16 @@ pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> 
             // helper) so the popup tells users what each does.
             let mut out =
                 crate::application::console::commands::border::preview_subverb_completions(state.partial);
-            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
+            out.extend(frame_key_completions(state.partial));
             out
         }
-        CompletionContext::Token { index: i } if *i > 1 => {
-            kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint)
+        CompletionContext::Token { index: i } if *i > 1 => frame_key_completions(state.partial),
+        // `section=<idx>` is this verb's own target selector, not
+        // part of the border vocabulary it borrows — the shared
+        // popup answers for it, the same one `section show
+        // section=<TAB>` and `color section=<TAB>` get.
+        CompletionContext::KvValue { key } if key == "section" => {
+            super::super::range_kv::section_idx_completions(ctx, state.partial)
         }
         // KvValue completions for `preset=` / `palette=` / `font=` /
         // `color=` / `field=`. Mirror `border/complete.rs` so the
@@ -88,11 +93,30 @@ pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> 
     }
 }
 
+/// The kv keyset every `section frame …` slot offers: the border
+/// vocabulary it borrows wholesale, plus the `section=<idx>`
+/// target its own usage line documents and
+/// [`parse_section_target_kv`] honors. Reading `BORDER_KEYS`
+/// alone is what left `section frame se<TAB>` silent about a key
+/// the verb had accepted all along — and `section frame preview`
+/// silent about it twice.
+fn frame_key_completions(partial: &str) -> Vec<Completion> {
+    let mut out = kv_key_completions_with_hints(BORDER_KEYS, partial, kv_hint);
+    out.extend(kv_key_completions_with_hints(
+        super::super::range_kv::SECTION_KEY,
+        partial,
+        kv_hint,
+    ));
+    out
+}
+
 /// Per-key hint table — delegates to the shared
 /// [`super::super::border::kv_hint`] so `border …`,
-/// `section frame …`, and `canvas …` surface identical hints.
+/// `section frame …`, and `canvas …` surface identical hints, and
+/// to [`super::super::range_kv::kv_hint`] for the `section=`
+/// target this verb adds on top.
 fn kv_hint(key: &str) -> Option<&'static str> {
-    super::super::border::kv_hint(key)
+    super::super::border::kv_hint(key).or_else(|| super::super::range_kv::kv_hint(key))
 }
 
 /// Entry point dispatched from `section/mod.rs::execute_section`
@@ -585,6 +609,52 @@ mod tests {
             .as_ref()
             .expect("section[0]'s frame_border populated");
         assert_eq!(cfg.preset, "heavy");
+    }
+
+    /// `section frame` is the fourth verb that speaks `section=`,
+    /// and the only one whose completion did not: its keyset is
+    /// the `border` verb's, which has no such key, so `section
+    /// frame se<TAB>` offered nothing and `section frame
+    /// section=<TAB>` offered nothing — while its own printed
+    /// usage documents `[section=<idx>]` and
+    /// `parse_section_target_kv` honors it.
+    #[test]
+    fn section_frame_completion_offers_the_section_target_key() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        let popup = |line: &str| -> Vec<String> {
+            let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+            crate::application::console::completion::complete(line, line.len(), &ctx)
+                .into_iter()
+                .map(|c| c.text)
+                .collect()
+        };
+        assert_eq!(popup("section frame se"), vec!["section="]);
+        assert_eq!(popup("section frame preview se"), vec!["section="]);
+        // The value side is the shared section-index popup, the
+        // same rows `section show section=<TAB>` offers.
+        assert_eq!(popup("section frame section="), vec!["0", "1"]);
+        assert_eq!(popup("section frame preview section="), vec!["0", "1"]);
+        // The border vocabulary it borrows is untouched.
+        assert!(popup("section frame ").iter().any(|r| r == "preset="));
+    }
+
+    /// The execute half the popup above was silent about.
+    #[test]
+    fn section_frame_section_kv_targets_that_section() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run("section frame section=1 preset=heavy", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).expect("node");
+        assert!(node.sections[0].frame_border.is_none());
+        assert_eq!(
+            node.sections[1]
+                .frame_border
+                .as_ref()
+                .expect("section[1] frame_border populated")
+                .preset,
+            "heavy"
+        );
     }
 
     /// Multi-section + Single selection still requires explicit

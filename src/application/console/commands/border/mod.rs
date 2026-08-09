@@ -36,7 +36,10 @@ mod show;
 mod tests;
 
 pub use complete::complete_border;
-pub(crate) use complete::{kv_value_completions, preview_subverb_completions};
+pub(crate) use complete::{
+    kv_value_completions, preview_subverb_completions, second_positional_completions, CORNER_VALUES,
+    SIDE_VALUES,
+};
 pub use execute::execute_border;
 pub(crate) use execute::{
     apply_border_field_to_selection, cycle_border_preset_on_selection, prepend_line,
@@ -63,7 +66,9 @@ pub(crate) use execute::{custom_preset_hint, edits_has_glyph_field, kv_hint, nod
 // `palette` / `font` / `side` / `corner`) is surface-agnostic:
 // `canvas border …` and `canvas section-frame [focused] …` speak
 // exactly the same one. `canvas.rs` used to carry a second copy.
-pub(crate) use positional::{positional_subverb_to_edits, BorderSurface};
+pub(crate) use positional::{
+    positional_subverb_to_edits, subverb_slot_is_positional, unquoted_multiword_hint, BorderSurface,
+};
 
 /// kv keys recognized on the kv-form path.
 pub const KEYS: &[&str] = &[

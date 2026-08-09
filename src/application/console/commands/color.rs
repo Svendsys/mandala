@@ -25,15 +25,22 @@ use crate::application::console::traits::{
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{SectionSel, SelectionState};
 
-pub const KEYS: &[&str] = &["bg", "text", "border", "section"];
+/// kv keys the verb accepts. `range` reached `execute_color` and
+/// the verb's own error text without ever reaching this list, so
+/// it was parseable but invisible — the same gap `font` carried
+/// for the same key. `section` was in the list but missing from
+/// the usage line, which is the other half of the same drift.
+pub const KEYS: &[&str] = &["bg", "text", "border", "section", "range"];
 pub const VALUE_PRESETS: &[&str] = &["accent", "edge", "fg", "reset"];
 
 pub const COMMAND: Command = Command {
     name: "color",
     aliases: &[],
     summary: "Set bg/text/border color, or pick via the glyph wheel",
-    usage: "color bg=<color> text=<color> border=<color>   |   color bg|text|border|pick",
-    tags: &["color", "bg", "text", "border", "pick", "wheel"],
+    usage: "color bg=<color> text=<color> border=<color> [section=<N>] [range=<A..B>] | color bg|text|border|pick | color picker on|off",
+    tags: &[
+        "color", "bg", "text", "border", "section", "range", "pick", "picker", "wheel",
+    ],
     applicable: always,
     complete: complete_color,
     execute: execute_color,
@@ -45,9 +52,7 @@ fn complete_color(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completi
         // the kv keys, which `execute_color` rejects there. The arm
         // sits ahead of the general one so the popup offers only
         // what the verb accepts.
-        CompletionContext::Token { index: 1 }
-            if state.tokens.get(1).map(String::as_str) == Some("picker") =>
-        {
+        CompletionContext::Token { index: 1 } if state.positional(0) == Some("picker") => {
             prefix_filter(&["on", "off"], state.partial)
         }
         CompletionContext::Token { index } => {
@@ -70,6 +75,8 @@ fn complete_color(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completi
         CompletionContext::KvValue { key } if key == "section" => {
             super::range_kv::section_idx_completions(ctx, state.partial)
         }
+        // `range=A..B` is free-form — grapheme indices into the
+        // targeted section, with no list to offer.
         _ => Vec::new(),
     }
 }
@@ -79,8 +86,8 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "bg" => Some("fill / background color"),
         "text" => Some("text / label color"),
         "border" => Some("frame / line color"),
-        "section" => Some("target section index inside a multi-section node"),
-        _ => None,
+        // `section` / `range` are the shared targeting vocabulary.
+        other => super::range_kv::kv_hint(other),
     }
 }
 
@@ -555,6 +562,48 @@ mod tests {
         doc.selection = SelectionState::Single(id);
         assert_eq!(popup("color section=", &doc), vec!["0", "1"]);
         assert_eq!(popup("color bg=", &doc), VALUE_PRESETS.to_vec());
+    }
+
+    /// `range=` reached `execute_color` and the verb's own error
+    /// text without ever reaching `KEYS`, exactly as it had on
+    /// `font` — accepted, named in the rejection the user gets for
+    /// omitting `section=`, and offered by nothing. `section=` was
+    /// the mirror gap: in `KEYS`, absent from the usage line.
+    #[test]
+    fn test_color_completion_offers_the_range_key() {
+        let doc = load_test_doc();
+        assert!(popup("color ", &doc).iter().any(|t| t == "range="));
+        assert_eq!(popup("color ra", &doc), vec!["range="]);
+        for key in KEYS {
+            assert!(
+                COMMAND.usage.contains(&format!("{}=", key)),
+                "`color` accepts `{key}=` but its usage line never says so: {}",
+                COMMAND.usage
+            );
+            assert!(
+                COMMAND.tags.contains(key),
+                "`color` accepts `{key}=` but it is not a search tag: {:?}",
+                COMMAND.tags
+            );
+        }
+    }
+
+    /// `color range=A..B` without `section=` is a usage error, and
+    /// the message names the key the popup now offers — the two
+    /// halves the drift had apart.
+    #[test]
+    fn test_color_range_without_section_is_rejected_by_name() {
+        let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        use crate::application::console::tests::fixtures::run;
+        match run("color range=0..2 text=accent", &mut doc) {
+            ExecResult::Err(m) => assert!(m.contains("range=A..B requires section=N"), "{}", m),
+            other => panic!("expected Err, got {:?}", other),
+        }
+        match run("color section=0 range=0..2 text=accent", &mut doc) {
+            ExecResult::Ok(m) => assert!(m.contains("range 0..2"), "{}", m),
+            other => panic!("expected Ok, got {:?}", other),
+        }
     }
 
     #[test]

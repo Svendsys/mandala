@@ -49,7 +49,16 @@ use crate::application::document::SelectionState;
 /// kv keys the verb accepts. `range` sat in `parse_font_args` and
 /// in the verb's own error text without ever reaching this list, so
 /// it was parseable but invisible: `font ra<TAB>` offered nothing
-/// and the usage line did not mention it. One list, read by both.
+/// and the usage line did not mention it.
+///
+/// That *instance* is closed; the drift that produced it is not.
+/// `usage` and `tags` below are hand-written literals — `help`
+/// prints them verbatim (`commands/help.rs::help_for`) and nothing
+/// reads this list — so adding a key here still offers it in the
+/// popup while leaving `help font` silent, with every test green.
+/// Deriving the three from one declaration is the verb-framework
+/// work tracked by #27; until then a key added here is added to
+/// `usage` and `tags` by hand, in the same edit.
 pub const KEYS: &[&str] = &["size", "min", "max", "section", "range"];
 /// Positional subverbs surfaced as token-0 completions alongside
 /// the kv keys.
@@ -96,7 +105,7 @@ fn complete_font(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completio
         // Token 1 after `set`: every loaded font family, each
         // pre-shaped in its own face so the user sees the look
         // before committing.
-        CompletionContext::Token { index: 1 } if state.tokens.get(1).map(String::as_str) == Some("set") => {
+        CompletionContext::Token { index: 1 } if state.positional(0) == Some("set") => {
             font_family_completions(state.partial)
         }
         // Bare-token slots past index 0 with no preceding `set`
@@ -133,9 +142,8 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "size" => Some("target on-screen size in points"),
         "min" => Some("lower screen-space clamp in points"),
         "max" => Some("upper screen-space clamp in points"),
-        "section" => Some("target section index inside a multi-section node"),
-        "range" => Some("grapheme range A..B inside the targeted section"),
-        _ => None,
+        // `section` / `range` are the shared targeting vocabulary.
+        other => super::range_kv::kv_hint(other),
     }
 }
 
@@ -772,11 +780,31 @@ mod tests {
     /// `range=` was accepted by `parse_font_args` and named in the
     /// verb's own error text, but absent from `KEYS` — so it
     /// completed to nothing and `help font` never mentioned it.
+    ///
+    /// The `usage` half of this is a check on one key, not an
+    /// invariant: `usage` is a hand-written literal (see the
+    /// `KEYS` doc comment), so this catches `range=` being dropped
+    /// from it and nothing else. Every key `KEYS` names is
+    /// documented, though, so assert that much rather than the one
+    /// key this test was written for — a key added to `KEYS` and
+    /// forgotten in `usage` is the drift, and it is the drift that
+    /// should fail.
     #[test]
     fn test_font_completion_offers_the_range_key() {
         let doc = fixture_doc();
         assert!(popup("font ", &doc).iter().any(|t| t == "range="));
-        assert!(COMMAND.usage.contains("range="));
+        for key in KEYS {
+            assert!(
+                COMMAND.usage.contains(&format!("{}=", key)),
+                "`font` accepts `{key}=` but its usage line never says so: {}",
+                COMMAND.usage
+            );
+            assert!(
+                COMMAND.tags.contains(key),
+                "`font` accepts `{key}=` but it is not a search tag: {:?}",
+                COMMAND.tags
+            );
+        }
     }
 
     fn first_loaded_family() -> String {

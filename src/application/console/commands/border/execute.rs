@@ -32,7 +32,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // subverb name (e.g. "Palette") is coincidental and should
         // route to the quoting-hint branch below, not the
         // positional dispatcher.
-        let first_token_is_positional = args.tokens().first().map(|t| !t.contains('=')).unwrap_or(false);
+        let first_token_is_positional = super::subverb_slot_is_positional(args.tokens(), 0);
         // C14: case-insensitive subverb match — same posture as
         // `border preview` already uses, and as `canvas …` and
         // top-level command lookup. Without normalizing here,
@@ -70,12 +70,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 // the generic "unknown subverb" message — the latter
                 // is technically correct but unhelpful.
                 if args.kvs().next().is_some() {
-                    return ExecResult::err(format!(
-                        "border: unexpected positional '{}' alongside a kv pair — \
-                         did you mean to quote a multi-word value? \
-                         e.g. `border palette=\"{}\"`",
-                        verb, verb
-                    ));
+                    return ExecResult::err(super::unquoted_multiword_hint("border", verb));
                 }
                 return ExecResult::err(unknown_subverb_message(verb));
             }

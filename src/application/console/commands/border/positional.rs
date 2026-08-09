@@ -119,6 +119,43 @@ impl BorderSurface {
     }
 }
 
+/// Whether the subverb slot at positional index `verb_pos` is
+/// genuinely positional — no kv token sits at or before it on the
+/// line.
+///
+/// The discriminator exists because the tokenizer splits an
+/// unquoted multi-word value: `border palette=My Palette` becomes
+/// `["palette=My", "Palette"]`, so `Args::positional(0)` reads
+/// `"Palette"` and coincidentally matches a subverb name. A kv
+/// ahead of the subverb slot means the user is writing kv form,
+/// whatever the later positional happens to spell — so the caller
+/// routes to [`unquoted_multiword_hint`] instead of dispatching
+/// the positional grammar with the wrong value.
+///
+/// `tokens` is the verb's own token list with the command name
+/// already stripped — [`Args::tokens`] on the execute path,
+/// `state.tokens[1..]` on the completion path. Both sides ask the
+/// same question so the popup cannot offer a positional
+/// vocabulary at a slot the verb will read as kv form.
+pub(crate) fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> bool {
+    tokens
+        .iter()
+        .take(verb_pos + 1)
+        .all(|t| !crate::application::console::parser::is_kv_token(t))
+}
+
+/// The "you probably meant to quote this" rejection every border
+/// surface shares. `label` is the surface prefix (`border`,
+/// `canvas border`, …) so the suggested line is copy-pasteable.
+pub(crate) fn unquoted_multiword_hint(label: &str, verb: &str) -> String {
+    format!(
+        "{}: unexpected positional '{}' alongside a kv pair — \
+         did you mean to quote a multi-word value? \
+         e.g. `{} palette=\"{}\"`",
+        label, verb, label, verb
+    )
+}
+
 /// A staged positional edit plus the one piece of presentation
 /// state the caller needs back: the preset a `cycle` resolved to,
 /// so the surface can prepend its `→ 'heavy' (cycle)` header.

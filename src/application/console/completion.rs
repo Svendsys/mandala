@@ -64,17 +64,58 @@ pub enum CompletionContext {
 
 /// Snapshot of where the cursor is, passed to each command's
 /// `complete` fn. `context` is the primary dispatch switch;
-/// `tokens` + `cursor_token` are available for lookahead / lookbehind
-/// when a command needs them.
+/// [`Self::positional`] and [`Self::arg_tokens`] are the lookahead
+/// views a command reaches for when it needs to know what sits
+/// earlier on the line.
+///
+/// There is deliberately no raw cursor-token index here. One used
+/// to be published beside `tokens`, and reaching for it is what
+/// let a `Token { index }` arm — which counts *positionals* — pair
+/// with a lookahead that counted *tokens*, so the two disagreed
+/// the moment a kv pair sat earlier on the line.
 pub struct CompletionState<'a> {
     pub tokens: &'a [String],
-    pub cursor_token: usize,
     /// What the user has typed in the current completion slot:
     /// - `CommandName`: the leading verb chars (e.g. `"co"`)
     /// - `Token`: the current bare token (e.g. `"he"`)
     /// - `KvValue`: the text after `=` within the current token
     pub partial: &'a str,
     pub context: CompletionContext,
+}
+
+impl CompletionState<'_> {
+    /// The `index`-th bare positional after the command name — the
+    /// very tokens [`CompletionContext::Token`]'s `index` counts,
+    /// and the very tokens [`super::parser::Args::positional`]
+    /// hands the execute path. An arm keyed on `Token { index }`
+    /// and a lookahead written with this agree by construction.
+    ///
+    /// Indexing `tokens` directly does not agree: `tokens` is every
+    /// token on the line, kv pairs included. `border color=#fff
+    /// preset <TAB>` puts the cursor at positional 1 — which is
+    /// what `execute_border` reads the subverb from — while raw
+    /// `tokens[1]` is `color=#fff`, so a raw lookahead answers for
+    /// the wrong slot and the popup goes quiet on a line the verb
+    /// accepts. Cost is a short linear scan of a hand-typed line
+    /// per call.
+    pub fn positional(&self, index: usize) -> Option<&str> {
+        self.arg_tokens()
+            .iter()
+            .filter(|t| !is_kv_token(t))
+            .nth(index)
+            .map(String::as_str)
+    }
+
+    /// The verb's own tokens — everything past the command name,
+    /// which is the same slice [`super::parser::Args`] is built
+    /// from on the execute side. Empty when the state carries no
+    /// tokens at all, so a completer that reasons over raw token
+    /// order never indexes off the end (`Application::run` reaches
+    /// these on every keystroke; `CODE_CONVENTIONS.md` §9 forbids
+    /// a panic there).
+    pub fn arg_tokens(&self) -> &[String] {
+        self.tokens.get(1..).unwrap_or(&[])
+    }
 }
 
 /// Build completion candidates for `input` given a cursor byte
@@ -84,7 +125,8 @@ pub fn complete(input: &str, cursor: usize, ctx: &ConsoleContext) -> Vec<Complet
     let prefix = &input[..cursor];
     let tokens = tokenize(prefix);
     // If the prefix ends on whitespace (or is empty), the user is
-    // starting a fresh token — cursor_token is `tokens.len()`.
+    // starting a fresh token, so the cursor sits one slot past the
+    // last complete one.
     let at_word_boundary = prefix.chars().last().map(|c| c.is_whitespace()).unwrap_or(true);
     let cursor_token = if at_word_boundary {
         tokens.len()
@@ -128,7 +170,6 @@ pub fn complete(input: &str, cursor: usize, ctx: &ConsoleContext) -> Vec<Complet
 
     let state = CompletionState {
         tokens: &tokens_view,
-        cursor_token,
         partial: partial.as_str(),
         context,
     };

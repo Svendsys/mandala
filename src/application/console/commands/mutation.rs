@@ -13,7 +13,7 @@
 //!   scope, behavior, and source layer.
 
 use super::Command;
-use crate::application::console::completion::{Completion, CompletionState};
+use crate::application::console::completion::{Completion, CompletionContext, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -31,8 +31,17 @@ pub const COMMAND: Command = Command {
 };
 
 fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    match state.cursor_token {
-        1 => {
+    // Slot-counted through the same positional view the execute
+    // path reads (`Args::positional`), rather than through raw
+    // token offsets — this verb takes no kv form today, so the two
+    // agree on every line, and keeping the one idiom is what stops
+    // them from parting company when one does arrive.
+    let index = match state.context {
+        CompletionContext::Token { index } => index,
+        _ => return Vec::new(),
+    };
+    match index {
+        0 => {
             // Sub-command slot.
             let partial = state.partial.to_ascii_lowercase();
             ["list", "apply", "help", "inspect"]
@@ -46,8 +55,8 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
                 })
                 .collect()
         }
-        2 if matches!(
-            state.tokens.get(1).map(String::as_str),
+        1 if matches!(
+            state.positional(0),
             Some("apply") | Some("help") | Some("inspect")
         ) =>
         {

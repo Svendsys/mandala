@@ -78,6 +78,11 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas border padding abc"),
     (Sel::Node, "canvas border side top reset"),
     (Sel::Node, "canvas border corner tl reset"),
+    (Sel::Node, "canvas border corner nope x"),
+    // A kv ahead of the subverb slot means kv form, on the canvas
+    // surfaces exactly as on the per-node one — this dispatched
+    // positionally and dropped the color without a word.
+    (Sel::Node, "canvas border color=#fff preset heavy"),
     (Sel::Node, "canvas section-frame"),
     (Sel::Node, "canvas section-frame show"),
     (Sel::Node, "canvas section-frame reset"),
@@ -85,6 +90,8 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas section-frame focused show"),
     (Sel::Node, "canvas section-frame focused reset"),
     (Sel::Node, "canvas section-frame focused nope"),
+    (Sel::Node, "canvas section-frame side top reset"),
+    (Sel::Node, "canvas section-frame focused side top reset"),
     (Sel::Node, "canvas border preview commit"),
     (Sel::Node, "canvas border preview cancel"),
     (Sel::Node, "canvas border preview nope"),
@@ -111,6 +118,9 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Section, "color bg"),
     (Sel::Node, "color section=0 bg=#112233"),
     (Sel::Node, "color section=abc bg=#112233"),
+    (Sel::TwoSectionNode, "color section=0 range=0..2 text=accent"),
+    (Sel::TwoSectionNode, "color range=0..2 text=accent"),
+    (Sel::TwoSectionNode, "color section=0 range=zz text=accent"),
     // edge
     (Sel::Edge, "edge"),
     (Sel::Edge, "edge type=cross_link"),
@@ -185,7 +195,6 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "node nope"),
     // open / new / save
     (Sel::Node, "open"),
-    (Sel::Node, "open /nonexistent-dir-xyz/x.mindmap.json"),
     (Sel::Node, "save"),
     (Sel::Node, "new"),
     // section
@@ -231,6 +240,8 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Section, "section frame preview commit"),
     (Sel::Section, "section frame preview cancel"),
     (Sel::Section, "section frame preview nope"),
+    (Sel::TwoSectionNode, "section frame section=1 preset=heavy"),
+    (Sel::TwoSectionNode, "section frame section=abc preset=heavy"),
     (Sel::Node, "section show"),
     (Sel::None, "section show"),
     (Sel::Multi, "section show"),
@@ -260,6 +271,7 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Edge, "b"),
     (Sel::Node, "help "),
     (Sel::Node, "help co"),
+    (Sel::Node, "help a"),
     (Sel::Edge, "anchor "),
     (Sel::Edge, "anchor fr"),
     (Sel::Edge, "anchor from="),
@@ -278,7 +290,14 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border corner "),
     (Sel::Node, "border corner tl "),
     (Sel::Node, "border show "),
+    (Sel::Node, "border show side="),
     (Sel::Node, "border preview "),
+    // A kv ahead of the subverb slot puts the line in kv form, so
+    // the positional vocabulary is not what would run.
+    (Sel::Node, "border color=#fff preset "),
+    // Subverb names are matched case-insensitively on the execute
+    // side; the popup follows so the two agree on the same line.
+    (Sel::Node, "border PRESET "),
     (Sel::Node, "border preset="),
     (Sel::Node, "border field="),
     (Sel::Node, "border size="),
@@ -291,16 +310,39 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas border preset "),
     (Sel::Node, "canvas border preview "),
     (Sel::Node, "canvas border preset="),
+    (Sel::Node, "canvas border show "),
+    (Sel::Node, "canvas border color "),
+    (Sel::Node, "canvas border palette "),
+    (Sel::Node, "canvas border padding "),
+    // The depth-2 slots: the value *after* a `side` / `corner`
+    // which-arg, on all three canvas surfaces. `EXEC_CORPUS` has
+    // pinned `canvas border side top reset` as working since the
+    // oracle landed while this table had no counterpart, and that
+    // asymmetry is what hid a popup answering with kv keys.
+    (Sel::Node, "canvas border side "),
+    (Sel::Node, "canvas border side top "),
+    (Sel::Node, "canvas border corner "),
+    (Sel::Node, "canvas border corner tl "),
+    (Sel::Node, "canvas border color=#fff side "),
+    (Sel::Node, "canvas Border SIDE top "),
     (Sel::Node, "canvas section-frame "),
     (Sel::Node, "canvas section-frame focused "),
     (Sel::Node, "canvas section-frame focused preview "),
     (Sel::Node, "canvas section-frame preset "),
+    (Sel::Node, "canvas section-frame side "),
+    (Sel::Node, "canvas section-frame side top "),
+    (Sel::Node, "canvas section-frame focused preset "),
+    (Sel::Node, "canvas section-frame focused side "),
+    (Sel::Node, "canvas section-frame focused side top "),
+    (Sel::Node, "canvas section-frame focused corner tl "),
     (Sel::Edge, "cap "),
     (Sel::Edge, "cap from="),
     (Sel::Node, "color "),
     (Sel::Node, "color bg="),
     (Sel::Node, "color picker "),
     (Sel::Node, "color se"),
+    (Sel::Node, "color ra"),
+    (Sel::TwoSectionNode, "color range="),
     (Sel::Edge, "edge "),
     (Sel::Edge, "edge type="),
     (Sel::Edge, "edge reset="),
@@ -345,17 +387,34 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::TwoSectionNode, "section frame preset="),
     (Sel::TwoSectionNode, "section frame preview "),
     (Sel::TwoSectionNode, "section frame preset "),
+    (Sel::TwoSectionNode, "section frame se"),
+    (Sel::TwoSectionNode, "section frame section="),
+    (Sel::TwoSectionNode, "section frame preview section="),
     (Sel::Node, "zoom "),
     (Sel::Node, "zoom c"),
     (Sel::Node, "zoom min="),
     (Sel::Node, "zoom max="),
 ];
 
-/// Readouts whose body quotes *measured* layout — glyph cluster
-/// counts and rendered side runs depend on which fonts the host
-/// has installed, so only the stable head of each is pinned.
+/// Outcomes whose tail this machine chose rather than the console
+/// — pinned as a prefix, with the host-dependent bytes left off
+/// the end. Two reasons qualify a row:
+///
+/// - **Measured layout.** `border show`'s body quotes glyph
+///   cluster counts and rendered side runs, which depend on which
+///   fonts the host has installed.
+/// - **An `io::Error` in the message.** Rust's `Display` for
+///   `io::Error` goes through `strerror_r`, so the words after the
+///   path are glibc's and are `LC_MESSAGES`-sensitive: the same
+///   `open` of the same missing file reads "No such file or
+///   directory" under `LC_ALL=C` and something else under a
+///   translated locale. Pinning through the errno string would
+///   assert the tester's locale, not the console's behavior — the
+///   part that *is* the console's is the prefix it wraps around
+///   the loader's message, and that is what is pinned.
 pub const EXEC_PREFIX_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border show"),
     (Sel::Node, "border show verbose"),
     (Sel::Node, "border show side=top"),
+    (Sel::Node, "open /nonexistent-dir-xyz/x.mindmap.json"),
 ];

@@ -77,12 +77,12 @@ pub const COMMAND: Command = Command {
 };
 
 fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    // `state.tokens[0]` is the command name ("section"); the first
-    // arg (`move`, `resize`, or `frame`) lives at index 1. The
-    // engine's `Token { index }` already counts past the command,
-    // so `index: 0` means "the user is typing the first positional
-    // after `section`."
-    let first_arg = state.tokens.get(1).map(String::as_str);
+    // The engine's `Token { index }` already counts past the
+    // command, so `index: 0` means "the user is typing the first
+    // positional after `section`" — and `positional(0)` is the
+    // subverb sitting in that slot, the same one `execute_section`
+    // reads through `Args::positional(0)`.
+    let first_arg = state.positional(0);
     // `frame` opens a sub-verb tree — once the user has typed
     // `section frame …` we delegate every later token to the
     // frame-specific completer (which surfaces the same kv keys
@@ -167,7 +167,6 @@ fn verb_hint(v: &str) -> &'static str {
 
 fn kv_hint(key: &str) -> Option<&'static str> {
     match key {
-        "section" => Some("target section index inside a multi-section node"),
         "dx" => Some("relative move along x axis (canvas units)"),
         "dy" => Some("relative move along y axis (canvas units)"),
         "x" => Some("absolute x offset within parent node"),
@@ -177,7 +176,8 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "text" => Some("section text payload (quote multi-word values)"),
         "runs" => Some("preserve|clear — keep or drop per-grapheme styling"),
         "at" => Some("insertion / split index"),
-        _ => None,
+        // `section` is the shared targeting vocabulary.
+        other => super::range_kv::kv_hint(other),
     }
 }
 
@@ -1777,7 +1777,6 @@ mod tests {
         let tokens = vec!["section".to_string()];
         let state = CompletionState {
             tokens: &tokens,
-            cursor_token: 0,
             partial: "",
             context: CompletionContext::Token { index: 0 },
         };
@@ -1821,7 +1820,6 @@ mod tests {
         let tokens = vec!["section".to_string(), "show".to_string()];
         let state = CompletionState {
             tokens: &tokens,
-            cursor_token: 0,
             partial: "",
             context: CompletionContext::KvValue {
                 key: "section".to_string(),
@@ -1857,7 +1855,6 @@ mod tests {
         let tokens = vec!["section".to_string(), "text".to_string()];
         let state = CompletionState {
             tokens: &tokens,
-            cursor_token: 0,
             partial: "",
             context: CompletionContext::KvValue {
                 key: "runs".to_string(),
