@@ -52,6 +52,14 @@ pub mod rust_source;
 /// parser for its own source.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod serde_coverage;
+/// The same question `serde_coverage` answers, asked of the
+/// **generated** `Deserialize` impls instead of the source text that
+/// produced them — so the published positional-array list has
+/// something that can disagree with it. Test-only; unlike its
+/// counterpart it reads no files and needs no `syn`, and it is gated
+/// native-only only because every caller is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod serde_probe;
 /// Readers over the workspace's own source text — which bytes are
 /// shipped code, and whether a `test_*` name a comment writes down is
 /// one that exists. The single place `#[cfg(test)]` is reasoned

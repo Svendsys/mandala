@@ -1868,6 +1868,234 @@ mod tests {
         );
     }
 
+    /// **The derivation itself, held to a second one that shares
+    /// nothing with it.**
+    ///
+    /// `test_the_published_positional_arrays_are_the_ones_the_model_has`
+    /// below compares the document against the source walk, which
+    /// catches a document nobody updated and cannot catch a *walk*
+    /// that is wrong — the document was written by reading the same
+    /// model the same way, so the two agree on being wrong and the
+    /// comparison certifies the agreement. Three of the sixteen names
+    /// in that block were missing for exactly that reason:
+    /// `ColorFontRegions::regions` is a `BTreeSet` and the walk
+    /// matched the token `Vec`; `MutationListSrc::Literal` and
+    /// `GlyphModelField::GlyphLines` are newtype-variant payloads and
+    /// the walk skipped fields with no name. All three are live
+    /// arrays in today's model.
+    ///
+    /// So the walk needs something that can disagree with it, and it
+    /// has to get its answer from somewhere else. `serde_derive`
+    /// already wrote the answer down: the impl it generates for a
+    /// struct hands `deserialize_struct` the exact list of JSON
+    /// member names, and a growable array asks for `deserialize_seq`
+    /// whatever it is spelled as. [`crate::util::serde_probe`] drives
+    /// those generated impls with a `Deserializer` that records what
+    /// they ask for. No source text, no `syn`, no list — the two
+    /// derivations share only the model they are both about.
+    ///
+    /// A disagreement here is not automatically a bug in the walk.
+    /// It is a shape one reader can see and the other cannot, and
+    /// which one is right is a decision — which is the whole
+    /// improvement over a silence nobody can question.
+    #[test]
+    fn test_the_derived_positional_arrays_survive_an_independent_derivation() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph};
+        use crate::util::serde_probe::derived_shape;
+
+        let graph = TypeGraph::build(&crate_src_root());
+        let scanned = graph.key_bearing_sequences_from("MindMap");
+        let derived = derived_shape::<crate::mindmap::model::MindMap>().key_bearing_sequences();
+
+        assert!(
+            scanned.len() > 10,
+            "the source walk found {} array(s), which is too few for this model to have \
+             lost honestly — the derivation broke rather than the model: {scanned:?}",
+            scanned.len()
+        );
+        let unseen_by_the_probe: Vec<&String> = scanned.difference(&derived).collect();
+        let unseen_by_the_walk: Vec<&String> = derived.difference(&scanned).collect();
+        assert!(
+            unseen_by_the_probe.is_empty() && unseen_by_the_walk.is_empty(),
+            "the two derivations of the positional-array set disagree.\n  \
+             the source walk has, the generated impls do not: {unseen_by_the_probe:?}\n  \
+             the generated impls have, the source walk does not: {unseen_by_the_walk:?}\n\n\
+             The generated impls are the on-disk truth about *shape*; the source walk is \
+             the only one that can see `#[serde(alias = \"…\")]`, which adds a spelling \
+             the derive never names. A name the walk has and the probe does not is \
+             therefore either an alias — legitimate, and it belongs in the published \
+             list — or a shape `util::serde_coverage::TypeGraph::sequence_element` has \
+             classified wrongly. A name the probe has and the walk does not is the walk \
+             failing to see an array, which is the defect issue #122 exists for."
+        );
+
+        assert!(
+            graph.unnamed_sequences_from("MindMap").is_empty()
+                && derived_shape::<crate::mindmap::model::MindMap>()
+                    .unnamed_sequences()
+                    .is_empty(),
+            "the model has grown an array at a place with no JSON member name — a tuple \
+             position, or the value of a map whose keys are data. A captured key's route \
+             crosses it positionally and `format/schema.md`'s one-name-per-line block \
+             has no way to name it, so what the document should say is a decision \
+             somebody has to make:\n  walk: {:?}\n  generated impls: {:?}",
+            graph.unnamed_sequences_from("MindMap"),
+            derived_shape::<crate::mindmap::model::MindMap>().unnamed_sequences()
+        );
+    }
+
+    /// **What the model's members are called on disk, from the
+    /// compiler.**
+    ///
+    /// The array list is published under member names, and the walk
+    /// that produces them reads `#[serde(rename …)]` out of source
+    /// text. It read exactly one of the four spellings serde accepts
+    /// until #122 — `rename = "…"` — so a field carrying
+    /// `rename(deserialize = "points")` published the Rust
+    /// identifier, and a container `rename_all` published every
+    /// field's identifier. Neither is exercised by the model today,
+    /// which is why nothing failed and why the rule is checked here
+    /// rather than left to the first field that uses one.
+    ///
+    /// `serde_derive`'s `FIELDS` list is the same question already
+    /// answered by the code that will actually do the reading, so
+    /// this holds every struct the walk reaches against it. The
+    /// witnesses are named because a comparison over an empty
+    /// intersection passes just as loudly as one that agrees.
+    #[test]
+    fn test_the_derived_member_names_are_the_ones_the_compiler_generated() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph};
+        use crate::util::serde_probe::derived_shape;
+
+        let scanned = TypeGraph::build(&crate_src_root()).member_names_from("MindMap");
+        let derived = derived_shape::<crate::mindmap::model::MindMap>();
+
+        let mut compared: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        let mut disagreements = Vec::new();
+        for (container, walked) in &scanned {
+            // Struct variants are recorded by the probe under
+            // `Enum::Variant` and by the walk under the enum, so an
+            // enum's members are pooled before they are compared.
+            let generated: std::collections::BTreeSet<String> = derived
+                .containers()
+                .filter(|name| {
+                    *name == container || name.split_once("::").is_some_and(|(owner, _)| owner == container)
+                })
+                .filter_map(|name| derived.members_of(name))
+                .flatten()
+                .cloned()
+                .collect();
+            // A type no value reaches — a serialize-only proxy, or one
+            // behind a variant the sweep proved unreachable — has no
+            // generated answer to compare against.
+            if generated.is_empty() {
+                continue;
+            }
+            compared.insert(container.as_str());
+            if walked != &generated {
+                disagreements.push(format!("{container}: walk {walked:?} vs generated {generated:?}"));
+            }
+        }
+
+        assert!(
+            disagreements.is_empty(),
+            "the source walk and the generated `Deserialize` impls disagree about what \
+             {} type(s) call their members on disk. The generated list is what the \
+             loader will actually match against, so the walk is wrong wherever they \
+             differ — teach `util::serde_coverage`'s name reader the spelling rather \
+             than adjusting the expectation:\n  {}",
+            disagreements.len(),
+            disagreements.join("\n  ")
+        );
+        assert!(
+            compared.len() > 20,
+            "only {} type(s) were compared, which is too few for this model — the walk \
+             and the probe have stopped meeting, and a check with nothing in its \
+             intersection passes for the wrong reason",
+            compared.len()
+        );
+        // Named rather than counted, because the count above is
+        // satisfied by any twenty types: a comparison that quietly
+        // stopped covering `MindNode` would still pass it. Each of
+        // these carries members on both sides today, so a witness
+        // that drops out of `compared` means one of the two
+        // derivations stopped reaching it.
+        for witness in ["MindNode", "MindEdge", "MindSection", "CustomMutationIn"] {
+            assert!(
+                compared.contains(witness),
+                "`{witness}` was not compared — either the walk stopped reaching it or \
+                 no value of it reaches the probe, and it is one of the types this \
+                 check exists to cover: compared {compared:?}"
+            );
+        }
+        assert!(
+            scanned
+                .get("MindEdge")
+                .is_some_and(|names| names.contains("type") && !names.contains("edge_type")),
+            "`MindEdge::edge_type` is written `type`, and the true positive that proves \
+             this comparison is about the *file's* names rather than the model's"
+        );
+    }
+
+    /// **A variant name is a JSON member name too**, and the walk was
+    /// reading it off the identifier.
+    ///
+    /// An externally tagged enum writes its variant as the single
+    /// member of a wrapper object, and
+    /// `test_every_reachable_variant_name_resolves_both_ways` drives
+    /// `expand_route` over every one of them — so a variant that
+    /// renamed itself, or an enum carrying `rename_all`, would send
+    /// that test through a JSON level no document contains, and it
+    /// would pass, because `expand_route` would be asked about the
+    /// same wrong name it was handed. Nothing in the model renames a
+    /// variant today, which is why the identifier and the member name
+    /// coincide and why this has to be checked rather than observed.
+    ///
+    /// `serde_derive` hands `deserialize_enum` its `VARIANTS` list
+    /// with every rename already applied, which is the same answer
+    /// arrived at without reading a line of source.
+    #[test]
+    fn test_the_derived_variant_names_are_the_ones_the_compiler_generated() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};
+        use crate::util::serde_probe::derived_shape;
+
+        let graph = TypeGraph::build(&crate_src_root());
+        let derived = derived_shape::<crate::mindmap::model::MindMap>();
+
+        let mut compared = 0usize;
+        let mut disagreements = Vec::new();
+        for info in graph.reachable_from("MindMap") {
+            if info.kind != TypeKind::Enum {
+                continue;
+            }
+            let Some(generated) = derived.variants_of(&info.name) else {
+                continue;
+            };
+            compared += 1;
+            if info.variants != generated {
+                disagreements.push(format!(
+                    "{}: walk {:?} vs generated {:?}",
+                    info.name, info.variants, generated
+                ));
+            }
+        }
+
+        assert!(
+            disagreements.is_empty(),
+            "the source walk and the generated `Deserialize` impls disagree about what \
+             {} enum(s) call their variants on disk, including the order — a variant is \
+             the wrapper member an externally tagged payload sits under, so the \
+             generated list is what a document actually spells:\n  {}",
+            disagreements.len(),
+            disagreements.join("\n  ")
+        );
+        assert!(
+            compared > 10,
+            "only {compared} enum(s) were compared, which is too few for this model — a \
+             comparison with nothing in its intersection passes for the wrong reason"
+        );
+    }
+
     /// **The one list of arrays, held to the model in both
     /// directions.** `format/schema.md` publishes where a captured
     /// key's route turns positional, because that is where an edit
@@ -1884,6 +2112,12 @@ mod tests {
     /// matter: an array the doc omits is a place a reader does not
     /// know to be careful about, and an array the doc names that the
     /// model no longer has is a claim that stopped being true.
+    ///
+    /// It cannot, on its own, catch a *derivation* that is wrong —
+    /// the document is written by reading the walk, so the two agree
+    /// however wrong the walk is. That is
+    /// `test_the_derived_positional_arrays_survive_an_independent_derivation`'s
+    /// job, above.
     ///
     /// The discriminator is **"can a key be captured at or below an
     /// element"**, not "is a `Vec`": `macros` and `inline_macros` are

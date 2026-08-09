@@ -934,6 +934,19 @@ pub fn do_shape_shader_ids_are_stable() {
 /// which arm is a fact about source text. So this module reads it out
 /// of the source.
 ///
+/// **Deriving from the source is not the same as being right**, and
+/// the precedent cited above has since been caught at it: issue #122
+/// found `serde_coverage` publishing a list `format/schema.md`
+/// carried verbatim, both of them wrong in the same three places
+/// because the document was written by reading the walk. The lesson
+/// that transfers is the one this module already applies in its own
+/// way — a source reader has to be a **whitelist that refuses what it
+/// does not model**, never a search that reports what it happens to
+/// find, because a search's silence is indistinguishable from
+/// approval. `check_routing` below is that whitelist;
+/// `util::serde_probe` is the same discipline reached by a different
+/// road, a second derivation that can disagree.
+///
 /// **What changed in round 3, and why it is not three more cases.**
 /// The first version of this module *searched* for `log::` calls: it
 /// walked the body looking for `if`s, remembered the method name of

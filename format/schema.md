@@ -187,6 +187,8 @@ by its name — that route is stable across any edit. Below one, it is
 positional. These are the arrays a captured key's route can cross:
 
 ```
+GlyphLines
+Literal
 children
 control_points
 custom_mutations
@@ -197,10 +199,17 @@ inline_mutations
 line
 matrix
 mutations
+regions
 sections
 text_runs
 trigger_bindings
 ```
+
+The two capitalized names are not fields. An externally tagged enum
+writes its payload as the single member of a wrapper object, so a
+variant whose payload is an array is an array published under the
+*variant's* name: `{"Literal": [ … ]}` inside a macro's mutation list,
+`{"GlyphLines": [ … ]}` inside a model-field delta.
 
 That list is **derived from the model, not kept by hand**:
 `unknown_keys::tests::test_the_published_positional_arrays_are_the_ones_the_model_has`
@@ -210,6 +219,22 @@ and a palette's `groups`. `macros` and `inline_macros` are arrays and
 are deliberately *not* on it — their elements are opaque JSON, so
 nothing inside one is ever reported as unrecognized and no route
 crosses their indexes.
+
+**Derived is not the same as right, and this list has been wrong
+while saying it was derived.** The walk behind it read the model's
+source text, and three of the sixteen names above were missing from
+it until [#122](https://github.com/Svendsys/mandala/issues/122):
+`regions` is a `BTreeSet`, which is an array on disk but does not
+spell the token `Vec`, and `GlyphLines` and `Literal` are the variant
+payloads described above, which the walk skipped for having no field
+name. The document matched the walk exactly, which is why nothing
+noticed. The list is now cross-checked against a second derivation
+that shares nothing with the first — `util::serde_probe` asks the
+*generated* `Deserialize` impls what they expect, so the compiler's
+own expansion of the model has to agree before this block can be
+called correct. Fixed-arity arrays — a tuple, a tuple variant's
+payload slots — are still absent on purpose: a route does cross their
+indexes, but no edit can move one without changing the format.
 
 Position alone is not trusted there: the load records what each array
 looked like, so the save re-finds the element the key was attached to
