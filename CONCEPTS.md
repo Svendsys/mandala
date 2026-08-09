@@ -2982,10 +2982,18 @@ shape (`"undo": ["Ctrl+Z"]`) and payload variants the `args`
 shape; which one is not a choice, since each section only
 accepts the variant shape it is for. Unrecognized top-level keys
 in a user's file are warned about (`"keybinds: unrecognized key
-…"`) and skipped rather than rejected — one stale key must not
-cost the user the rest of their bindings — and keys starting
-with `_` are treated as comments, which is how the shipped
-`config/default_keybinds.json` carries its instructions.
+…"`, naming the nearest recognized key when there is one) and
+skipped rather than rejected — one stale *key* must not cost the
+user the rest of their bindings — and keys starting with `_` are
+treated as comments, which is how the shipped
+`config/default_keybinds.json` carries its instructions. That
+tolerance stops at the key: a *malformed value* under a
+recognized key fails the whole serde pass, and
+`user_config::layered::load_layered` answers a failed parse by
+skipping the layer, so it costs the user every binding in the
+file. The asymmetry is real rather than designed — the three
+user configs share the seam — and issue #129 tracks the
+per-field parsing that would close it.
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
@@ -3027,9 +3035,18 @@ and a payload type with no `ArgValue` impl does not compile.
 Each variant names its arg shape in the table row that declares
 it — the payload field names there are both the arity and the
 list quoted back at the user when a binding's `args` array is
-the wrong length. Three skips are possible and all three are
-logged, never panicked: an unparseable combo, the wrong number of
-args, and an arg that is not a valid value for its field.
+the wrong length. **Their order is the positional `args`
+contract**, and nothing in the language enforces that: the
+generated constructor is a struct expression, which does not
+care what order its fields are written in, so a row whose names
+are transposed compiles and hands the user's arguments to the
+wrong fields. What holds the line is a test — the sentinel table
+in `keybinds/tests.rs` carries the `Action` each row's args must
+produce, and cannot omit a row, so every parametric variant has
+a payload assertion written independently of the row it checks.
+Three skips are possible and all three are logged, never
+panicked: an unparseable combo, the wrong number of args, and an
+arg that is not a valid value for its field.
 The dispatch arms call `pub(crate)` mutation cores extracted
 from each console verb, so the same setter path runs whether
 the user types the verb or fires the bound key — including
