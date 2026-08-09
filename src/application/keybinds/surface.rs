@@ -329,7 +329,12 @@ macro_rules! keybind_surface {
         /// purpose: they are reported by
         /// [`KeybindConfig::unknown_top_level_keys`] and warned about
         /// at load, rather than rejected — one stale key must not
-        /// cost the user the rest of their config.
+        /// cost the user the rest of their config. That tolerance
+        /// covers stale *keys* only; a malformed *value* under a
+        /// recognized key still fails the whole parse and costs the
+        /// user the layer, which
+        /// [`KeybindConfig::unknown_top_level_keys`] names and issue
+        /// #129 tracks.
         #[derive(Debug, Clone, Serialize, Deserialize)]
         #[serde(default)]
         pub struct KeybindConfig {

@@ -4,10 +4,17 @@
 //!
 //! Hardcoded defaults overlaid with JSON: desktop reads
 //! `--keybinds <path>` or `$XDG_CONFIG_HOME/mandala/keybinds.json`;
-//! WASM reads `?keybinds=<json>` or `localStorage["mandala_keybinds"]`.
+//! WASM reads `localStorage["mandala_keybinds"]` and nothing else.
+//! There is **no `?keybinds=` layer** — the query-param machinery
+//! exists in `crate::application::user_config::web_storage` and no
+//! loader reaches it, because a query param is owned by whoever
+//! composed the link rather than by the user; see
+//! `KeybindConfig::load_for_web` for the full argument.
 //! Failures log and skip the layer — the app never crashes for a bad
 //! keybinds file. Partial configs work via serde's `default`
-//! attribute.
+//! attribute, but only per *key*: a key whose value has the wrong
+//! shape fails the whole parse and costs the user that entire layer
+//! (issue #129).
 
 mod action;
 mod bind;

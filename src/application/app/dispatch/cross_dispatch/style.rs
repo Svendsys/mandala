@@ -293,7 +293,7 @@ pub(in crate::application::app) fn apply_set_section_size(
 
 /// Pin the selected section's `offset` to `(x, y)` (absolute,
 /// not delta). Mirror of `section move x=<x> y=<y>` for the
-/// macro path.`Action::SetSectionOffsetAbs`.
+/// keybind / macro path (`Action::SetSectionOffsetAbs`).
 pub(in crate::application::app) fn apply_set_section_offset_abs(x: f64, y: f64, rc: &mut RebuildContext<'_>) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
         log::warn!("SetSectionOffsetAbs: no section selected");
@@ -327,7 +327,8 @@ pub(in crate::application::app) fn apply_set_section_offset_abs(x: f64, y: f64, 
 /// drops every prior run and lays down a single template-cloned
 /// run; `false` (the default for `runs=preserve`) clips existing
 /// runs to the new text length. Mirror of `section text "<text>"
-/// [runs=preserve|clear]` for the macro path./// `Action::SetSectionText`. Destructive.
+/// [runs=preserve|clear]` for the keybind / macro path
+/// (`Action::SetSectionText`). Destructive.
 pub(in crate::application::app) fn apply_set_section_text(
     text: String,
     clear_runs: bool,
@@ -361,7 +362,8 @@ fn section_exists(doc: &MindMapDocument, node_id: &str, idx: usize) -> bool {
 /// Insert a new section into the selection's primary node.
 /// `at = None` appends; `Some(K)` inserts at index `K` (clamped
 /// to `[0, len]`). Mirror of `section add [at=<idx>]
-/// [text="<text>"]` for the macro path./// `Action::AddSection`. Destructive.
+/// [text="<text>"]` for the keybind / macro path
+/// (`Action::AddSection`). Destructive.
 pub(in crate::application::app) fn apply_add_section(
     at: Option<usize>,
     text: String,
@@ -385,8 +387,8 @@ pub(in crate::application::app) fn apply_add_section(
 /// Remove the resolved section from the selection's primary
 /// node. Errors when the node has only one section (model
 /// invariant: every renderable node has at least one section).
-/// Mirror of `section delete [section=<idx>]` for the macro
-/// path.`Action::DeleteSection`. Destructive.
+/// Mirror of `section delete [section=<idx>]` for the keybind /
+/// macro path (`Action::DeleteSection`). Destructive.
 pub(in crate::application::app) fn apply_delete_section(rc: &mut RebuildContext<'_>) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
         log::warn!("DeleteSection: no section selected");
@@ -407,7 +409,7 @@ pub(in crate::application::app) fn apply_delete_section(rc: &mut RebuildContext<
 
 /// Split the resolved section in two at a grapheme boundary.
 /// Mirror of `section split [section=<idx>] at=<grapheme>` for
-/// the macro path (`Action::SplitSection`). Destructive.
+/// the keybind / macro path (`Action::SplitSection`). Destructive.
 ///
 /// `at_grapheme` is **required**, exactly as `at=` is on the verb
 /// path: the old end-of-text default silently produced an empty
@@ -431,11 +433,11 @@ pub(in crate::application::app) fn apply_split_section(
     });
 }
 
-/// Validate a macro-path `SplitSection` against the live
-/// document, returning `(node_id, section_idx, at_grapheme)` when
-/// the split may proceed. Every rejection logs its reason —
-/// the macro path has no scrollback, so a silent `None` would
-/// leave the user with no signal at all.
+/// Validate a keybind- or macro-path `SplitSection` against the
+/// live document, returning `(node_id, section_idx, at_grapheme)`
+/// when the split may proceed. Every rejection logs its reason —
+/// neither path has scrollback, so a silent `None` would leave the
+/// user with no signal at all.
 ///
 /// Split out from [`apply_split_section`] so the gate is
 /// reachable without a `Renderer` (`TEST_CONVENTIONS.md` §T8 /
@@ -540,15 +542,16 @@ mod tests {
 
     /// `Action::SplitSection { at_grapheme: None }` is refused.
     /// The console verb requires `at=` because split-at-end-of-text
-    /// silently creates an empty suffix section; a macro step must
-    /// not be able to do the thing the verb was hardened against.
+    /// silently creates an empty suffix section; neither a keybind
+    /// nor a macro step may do the thing the verb was hardened
+    /// against.
     #[test]
     fn split_section_action_rejects_missing_at_grapheme() {
         let (doc, _id) = doc_with_section_selected();
         assert_eq!(
             resolve_split_section_target(&doc, None),
             None,
-            "macro-path SplitSection must reject an absent at_grapheme"
+            "keybind- and macro-path SplitSection must reject an absent at_grapheme"
         );
     }
 

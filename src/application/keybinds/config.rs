@@ -452,9 +452,9 @@ keybind_surface! {
 
     // ─────────────────────────────────────────────────────────────
     // Actions with no key surface. The reason is required and is
-    // published as documentation on `keybind_field_for`; the line
-    // it has to be able to state is "a key could not supply this
-    // Action's payload", not "nobody has wired it up yet".
+    // published as documentation on `bind_surface`; the line it has
+    // to be able to state is "a key could not supply this Action's
+    // payload", not "nobody has wired it up yet".
     // ─────────────────────────────────────────────────────────────
     unbindable {
         ReparentToTarget => "confirmation dispatched by the click handler; the payload is the \
@@ -492,12 +492,27 @@ impl KeybindConfig {
     pub fn from_json(json: &str) -> Result<Self, String> {
         let config: Self =
             baumhard::format::json::parse(json).map_err(|e| format!("parse keybinds JSON: {}", e))?;
-        for key in Self::unknown_top_level_keys(json) {
-            warn!(
-                "keybinds: unrecognized key '{}' — ignored. Check it against \
-                 config/default_keybinds.json; keys starting with '_' are treated as comments.",
-                key,
-            );
+        let unknown = Self::unknown_top_level_keys(json);
+        if !unknown.is_empty() {
+            // `known_keys()` allocates, so it is built once for the
+            // whole report rather than per offending key.
+            let known = Self::known_keys();
+            for key in unknown {
+                match nearest_known_key(&key, &known) {
+                    Some(near) => warn!(
+                        "keybinds: unrecognized key '{}' — ignored. Did you mean '{}'? Keys \
+                         starting with '_' are treated as comments.",
+                        key, near,
+                    ),
+                    None => warn!(
+                        "keybinds: unrecognized key '{}' — ignored. None of the {} keys this \
+                         config recognizes is close to it; keys starting with '_' are treated as \
+                         comments.",
+                        key,
+                        known.len(),
+                    ),
+                }
+            }
         }
         Ok(config)
     }
@@ -509,13 +524,28 @@ impl KeybindConfig {
     /// `_comment` key, so the underscore prefix is the documented
     /// way to annotate a config.
     ///
-    /// **Warn, don't reject.** A hand-edited config is exactly the
-    /// surface where a silently-ignored key is the whole bug — a
-    /// renamed action (`cancel_mode` → `exit_mode`) left the shipped
-    /// template's Esc entry inert and said nothing. But
-    /// `deny_unknown_fields` would answer one stale key by discarding
-    /// every good binding beside it, so the loader keeps the config
-    /// and names the key instead.
+    /// **Warn, don't reject — for an unrecognized *key*.** A
+    /// hand-edited config is exactly the surface where a
+    /// silently-ignored key is the whole bug: a renamed action
+    /// (`cancel_mode` → `exit_mode`) left the shipped template's Esc
+    /// entry inert and said nothing. But `deny_unknown_fields` would
+    /// answer one stale key by discarding every good binding beside
+    /// it, so the loader keeps the config and names the key instead.
+    ///
+    /// **A malformed *value* under a recognized key is the opposite,
+    /// and this is not the good outcome.** Serde fails the whole
+    /// document, [`Self::from_json`] returns `Err`, and
+    /// `user_config::layered::load_layered` answers a failed parse by
+    /// logging one warning and walking to the next layer — so one
+    /// bad value costs the user every good binding in the same file,
+    /// which is precisely what the paragraph above rejects. The
+    /// asymmetry is real, not a design: it falls out of parsing the
+    /// document in one serde pass, and the same seam gives
+    /// `macros.json` and `mutations.json` the same behavior. Issue
+    /// #129 tracks the fix (per-field parsing with warn-and-skip, so
+    /// a malformed value costs its own field and nothing else);
+    /// `test_clear_zoom_rejects_the_parametric_binding_shape` pins
+    /// the blast radius until then.
     ///
     /// Costs one extra pass over the source, keys only
     /// ([`IgnoredAny`] skips the values), on a config that is parsed
@@ -569,4 +599,70 @@ impl KeybindConfig {
             self.console_font_size.max(4.0),
         )
     }
+}
+
+/// The entry of `known` closest to `key`, when one is close enough
+/// to be worth quoting back at the user.
+///
+/// The unrecognized-key warning used to point at
+/// `config/default_keybinds.json`, which lists nine of the keys the
+/// schema has: a user who misspelled anything outside that nine was
+/// sent to a file that would not contain the right spelling either.
+/// [`KeybindConfig::known_keys`] is the actual schema, so the report
+/// is built from it — a candidate when there is one, the recognized
+/// count when there is not.
+///
+/// Distance is Levenshtein over **grapheme clusters**, not bytes or
+/// `char`s: the key comes from a hand-edited file and may be
+/// anything at all (CODE_CONVENTIONS §1). The acceptance threshold
+/// is a third of the longer name, which admits `exit_modes` →
+/// `exit_mode` and `set_colour` → `set_color` while refusing
+/// `cancel_mode` → `exit_mode`; an invented key gets the count
+/// rather than a misleading guess.
+///
+/// Ties go to the lexicographically first candidate so the message
+/// is deterministic. Costs one `Vec<String>` per name plus an
+/// `O(n·m)` two-row grid per candidate, over ~135 candidates, on a
+/// config parsed once per launch.
+pub(super) fn nearest_known_key(key: &str, known: &[&'static str]) -> Option<&'static str> {
+    use baumhard::util::grapheme_chad::split_graphemes_owned;
+
+    let target = split_graphemes_owned(key);
+    let mut best: Option<(usize, &'static str)> = None;
+    for candidate in known {
+        let other = split_graphemes_owned(candidate);
+        let longer = target.len().max(other.len());
+        let distance = grapheme_levenshtein(&target, &other);
+        if distance * 3 > longer {
+            continue;
+        }
+        let better = match best {
+            None => true,
+            Some((best_distance, best_key)) => {
+                distance < best_distance || (distance == best_distance && *candidate < best_key)
+            }
+        };
+        if better {
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+}
+
+/// Levenshtein edit distance between two grapheme-cluster
+/// sequences. Two rows rather than a full grid — the caller only
+/// wants the number, and the longest key here is a few dozen
+/// clusters, so the allocation is what dominates either way.
+fn grapheme_levenshtein(a: &[String], b: &[String]) -> usize {
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    let mut current: Vec<usize> = vec![0; b.len() + 1];
+    for (i, ga) in a.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, gb) in b.iter().enumerate() {
+            let substitute = previous[j] + usize::from(ga != gb);
+            current[j + 1] = substitute.min(previous[j + 1] + 1).min(current[j] + 1);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b.len()]
 }

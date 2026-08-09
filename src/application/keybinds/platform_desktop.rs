@@ -73,12 +73,54 @@ mod tests {
         // entry spent a release spelled `cancel_mode` — a key the
         // schema had renamed — and every layer here accepted it in
         // silence (issue #32).
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_keybinds.json");
-        let on_disk = std::fs::read_to_string(&path).unwrap();
+        use crate::application::keybinds::{Action, InputContext};
+
         // Read off the disk, not out of `include_str!`: a key the
         // schema does not have would otherwise be invisible here,
         // because the field it failed to fill falls back to a default
         // that happens to carry the same combo.
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default_keybinds.json");
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+
+        // Provenance first, because it is the thing this test is
+        // named for. The two assertions at the bottom — the file's
+        // `exit_mode` value, and Escape resolving to `ExitMode` —
+        // both pass through the built-in `exit_mode` default, which
+        // carries the same `Escape`, so on their own they cannot
+        // fail on a renamed key; the schema check further down used
+        // to be the only assertion here that noticed, and it is a
+        // duplicate of
+        // `test_shipped_keybinds_template_has_no_unrecognized_keys`
+        // with a different source. So the file's own value is proven
+        // live: a copy of the real file with `exit_mode` swapped for
+        // a combo no default carries, driven through the same loader
+        // off disk. A rename puts the swap under a key the schema
+        // ignores, the default `Escape` survives untouched, and both
+        // halves fail.
+        let scratch = TempDir::new("template-exit-mode-provenance");
+        let probe_path = scratch.join("keybinds.json");
+        let mut template: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&on_disk).unwrap();
+        let shipped = template.insert("exit_mode".to_string(), serde_json::json!(["Ctrl+Alt+F9"]));
+        assert_eq!(
+            shipped,
+            Some(serde_json::json!(["Escape"])),
+            "the file this loader reads no longer binds Escape under `exit_mode`",
+        );
+        std::fs::write(&probe_path, serde_json::Value::Object(template).to_string()).unwrap();
+        let probed = KeybindConfig::load_for_desktop(Some(probe_path.as_path())).resolve();
+        assert_eq!(
+            probed.action_for_context(InputContext::Document, "f9", true, false, true),
+            Some(Action::ExitMode),
+            "the file's `exit_mode` list is not what the loader read",
+        );
+        assert_eq!(
+            probed.action_for_context(InputContext::Document, "escape", false, false, false),
+            None,
+            "Escape still exits the mode after the file moved `exit_mode` off it, so the binding \
+             this test is about comes from the built-in default rather than from disk",
+        );
+
         assert_eq!(
             KeybindConfig::unknown_top_level_keys(&on_disk),
             Vec::<String>::new(),
@@ -88,14 +130,9 @@ mod tests {
         let cfg = KeybindConfig::load_for_desktop(Some(&path));
         assert_eq!(cfg.exit_mode, vec!["Escape".to_string()]);
         assert_eq!(
-            cfg.resolve().action_for_context(
-                crate::application::keybinds::InputContext::Document,
-                "escape",
-                false,
-                false,
-                false,
-            ),
-            Some(crate::application::keybinds::Action::ExitMode),
+            cfg.resolve()
+                .action_for_context(InputContext::Document, "escape", false, false, false),
+            Some(Action::ExitMode),
         );
     }
 
