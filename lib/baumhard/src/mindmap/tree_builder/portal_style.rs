@@ -172,8 +172,8 @@ pub fn resolve_portal_endpoint_style(
     // `raw_color_override`) always win so live feedback is
     // visible; the committed cascade below them is
     // `MindEdge::portal_endpoint_color`'s.
-    let raw_color: &str = raw_color_override
-        .unwrap_or_else(|| edge.portal_endpoint_color(canvas, endpoint_state, themed));
+    let raw_color: &str =
+        raw_color_override.unwrap_or_else(|| edge.portal_endpoint_color(canvas, endpoint_state, themed));
 
     ResolvedPortalStyle {
         glyph,

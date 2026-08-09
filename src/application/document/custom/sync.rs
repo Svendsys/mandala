@@ -568,9 +568,7 @@ impl MindMapDocument {
                         && expected
                             .iter()
                             .zip(snapshot.regions.iter())
-                            .all(|(a, b)| {
-                                a.range == b.range && a.color == b.color && a.font == b.font
-                            })
+                            .all(|(a, b)| a.range == b.range && a.color == b.color && a.font == b.font)
                 });
                 if section.text == snapshot.text && matches {
                     if sync_section_font_size(

@@ -407,7 +407,11 @@ fn test_cascade_fixture_edge_colors_follow_their_source_nodes() {
             .clone()
     };
     assert_eq!(color_of("0", "0.0"), "#a20000", "source node 0 is at groups[0]");
-    assert_eq!(color_of("0.0", "0.0.0"), "#b20000", "source node 0.0 is at groups[1]");
+    assert_eq!(
+        color_of("0.0", "0.0.0"),
+        "#b20000",
+        "source node 0.0 is at groups[1]"
+    );
     assert_eq!(
         color_of("1", "1.0"),
         "#909090",

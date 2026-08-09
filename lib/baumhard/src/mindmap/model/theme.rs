@@ -295,7 +295,8 @@ mod tests {
     #[test]
     fn test_resolve_theme_colors_none_for_an_empty_palette() {
         let mut map = probe_map();
-        map.palettes.insert("probe".into(), Palette { groups: Vec::new() });
+        map.palettes
+            .insert("probe".into(), Palette { groups: Vec::new() });
         map.nodes.get_mut("a").unwrap().color_schema = Some(schema(0, true, false));
         let node = map.nodes.get("a").unwrap();
         assert!(map.resolve_theme_colors(node).is_none());
