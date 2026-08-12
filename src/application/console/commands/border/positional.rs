@@ -119,6 +119,25 @@ impl BorderSurface {
     }
 }
 
+/// The per-field positional subverbs
+/// [`positional_subverb_to_edits`] parses, in the order every
+/// border popup offers them.
+///
+/// This is *the* vocabulary [`subverb_slot_is_positional`] gates,
+/// and naming it once is what lets the popup withhold exactly what
+/// the verb will refuse. Every other subverb a border surface
+/// accepts — `on` / `off` / `toggle` / `show` / `reset` /
+/// `preview` on the per-node verb, `show` / `reset` / `preview` on
+/// the canvas ones — is matched *ahead* of the discriminator on
+/// the execute side, so those stay on offer at a kv-form slot and
+/// the two sides still agree.
+///
+/// `test_every_positional_subverb_is_parsed` holds this list
+/// against the parser below, so a subverb added to one and not the
+/// other fails rather than going quietly missing from a popup.
+pub(crate) const POSITIONAL_SUBVERBS: &[&str] =
+    &["preset", "color", "padding", "palette", "font", "side", "corner"];
+
 /// Whether the subverb slot at positional index `verb_pos` is
 /// genuinely positional — no kv token sits at or before it on the
 /// line.
@@ -134,9 +153,18 @@ impl BorderSurface {
 ///
 /// `tokens` is the verb's own token list with the command name
 /// already stripped — [`Args::tokens`] on the execute path,
-/// `state.tokens[1..]` on the completion path. Both sides ask the
-/// same question so the popup cannot offer a positional
-/// vocabulary at a slot the verb will read as kv form.
+/// [`crate::application::console::completion::CompletionState::arg_tokens`]
+/// on the completion path.
+///
+/// Both sides ask this at *every* slot that emits
+/// [`POSITIONAL_SUBVERBS`] — the per-node verb's token-0 popup,
+/// both canvas subjects' subverb popups, and the three execute
+/// dispatchers — so the popup cannot offer a positional
+/// vocabulary at a slot the verb will read as kv form. It reached
+/// the execute sides and one completion slot per verb for a
+/// while, missing the slot where the vocabulary is actually
+/// emitted, which is how `border color=#fff <TAB>` came to offer
+/// thirteen subverbs seven of which that line rejects.
 pub(crate) fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> bool {
     tokens
         .iter()
@@ -457,5 +485,53 @@ fn reject_extra_positional(
             subject, extra, label, kv_example, label
         )),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::load_test_doc;
+
+    /// Every name in [`POSITIONAL_SUBVERBS`] is one
+    /// [`positional_subverb_to_edits`] actually parses, and a name
+    /// outside it is not. The constant is what both popups
+    /// withhold at a kv-form slot and what all three execute
+    /// dispatchers gate, so a subverb added to the parser and
+    /// forgotten here would be silently unreachable from every
+    /// border popup — with every other test still green.
+    #[test]
+    fn test_every_positional_subverb_is_parsed() {
+        let doc = load_test_doc();
+        let tokens: Vec<String> = Vec::new();
+        let args = Args::new(&tokens);
+        for verb in POSITIONAL_SUBVERBS {
+            // No value token follows, so each recognized subverb
+            // answers with its own usage error — the one answer
+            // that is neither "not mine" nor a staged edit.
+            assert!(
+                positional_subverb_to_edits(verb, &args, 0, BorderSurface::Selection, &doc).is_err(),
+                "'{verb}' is offered as a positional subverb but the parser does not claim it"
+            );
+        }
+        assert!(matches!(
+            positional_subverb_to_edits("show", &args, 0, BorderSurface::Selection, &doc),
+            Ok(None)
+        ));
+    }
+
+    /// The discriminator is about *position*, not about whether a
+    /// kv appears anywhere: a kv past the subverb slot leaves the
+    /// line positional (`border nope palette=coral` is an unknown
+    /// subverb, not an unquoted multi-word value), while one at or
+    /// before it does not.
+    #[test]
+    fn test_subverb_slot_is_positional_reads_position_not_presence() {
+        let toks = |line: &str| crate::application::console::parser::tokenize(line);
+        assert!(subverb_slot_is_positional(&toks("nope palette=coral"), 0));
+        assert!(!subverb_slot_is_positional(&toks("palette=My Palette"), 0));
+        // `canvas border …` reads its subverb one slot right.
+        assert!(subverb_slot_is_positional(&toks("border preset heavy"), 1));
+        assert!(!subverb_slot_is_positional(&toks("border color=#fff preset"), 1));
     }
 }

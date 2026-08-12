@@ -21,7 +21,9 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
     // Gated on the same discriminator `execute_border` applies: a
     // kv ahead of the subverb slot means the line is kv form and
     // the positional grammar is not what will run, so the popup
-    // must not offer its vocabulary.
+    // must not offer its vocabulary — at the slot that *emits*
+    // that vocabulary (`Token { index: 0 }`, below) as much as at
+    // the lookahead this binding feeds.
     //
     // Lowercased once, because `execute_border` dispatches on
     // `verb.to_ascii_lowercase()` — `border Preset <TAB>` reaches
@@ -35,7 +37,7 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
     let token2 = state.positional(1);
     let after_preview = token1 == Some("preview");
     match &state.context {
-        CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
+        CompletionContext::Token { index: 0 } => verb_or_key(state.partial, positional_form),
         //positional-subverb value completion. When
         // tokens[1] is a known positional subverb, the next
         // positional is its value — surface a typed vocabulary
@@ -233,20 +235,41 @@ pub fn kv_value_completions(key: &str, partial: &str, ctx: &ConsoleContext) -> V
     }
 }
 
-fn verb_or_key(partial: &str) -> Vec<Completion> {
-    let mut out: Vec<Completion> = Vec::new();
-    for v in super::VERBS {
-        if v.starts_with(partial) {
-            out.push(Completion {
-                text: v.to_string(),
-                display: v.to_string(),
-                hint: Some(verb_hint(v).to_string()),
-                font_family: None,
-            });
-        }
+/// The token-0 popup: the subverbs `execute_border` can reach
+/// from this slot, then the kv keys that are the other way to say
+/// the same thing.
+///
+/// `positional_form` is [`super::subverb_slot_is_positional`]'s
+/// answer for slot 0. When it is false a kv already sits ahead of
+/// the subverb, so `execute_border` will read the line as kv form
+/// and refuse the seven per-field subverbs by name — the popup
+/// withholds exactly those seven and keeps the rest, which the
+/// verb still honors there.
+fn verb_or_key(partial: &str, positional_form: bool) -> Vec<Completion> {
+    let mut out: Vec<Completion> = verb_rows(super::UNGATED_VERBS, partial);
+    if positional_form {
+        out.extend(verb_rows(super::POSITIONAL_SUBVERBS, partial));
     }
     out.extend(key_completions(partial));
     out
+}
+
+/// One hinted row per subverb in `verbs` whose name starts with
+/// `partial`, case-insensitively — `execute_border` dispatches on
+/// `verb.to_ascii_lowercase()`, so `border PRE<TAB>` must reach
+/// the same arm `border PRESET heavy` runs.
+fn verb_rows(verbs: &[&'static str], partial: &str) -> Vec<Completion> {
+    let partial_lc = partial.to_ascii_lowercase();
+    verbs
+        .iter()
+        .filter(|v| v.starts_with(&partial_lc))
+        .map(|v| Completion {
+            text: v.to_string(),
+            display: v.to_string(),
+            hint: Some(verb_hint(v).to_string()),
+            font_family: None,
+        })
+        .collect()
 }
 
 fn key_completions(partial: &str) -> Vec<Completion> {

@@ -64,6 +64,15 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border preview nope"),
     (Sel::Node, "border preview"),
     (Sel::Edge, "border on"),
+    // The per-node twin of the canvas kv-form row below: seven of
+    // the thirteen subverbs the token-0 popup used to offer are
+    // refused at a slot a kv already made kv-form, and the other
+    // six are not — each for its own reason, which is why the
+    // popup withholds only the seven.
+    (Sel::Node, "border color=#fff preset heavy"),
+    (Sel::Node, "border color=#fff preview"),
+    (Sel::Node, "border color=#fff show side=nope"),
+    (Sel::Node, "border color=#fff on"),
     // canvas
     (Sel::Node, "canvas"),
     (Sel::Node, "canvas nope"),
@@ -83,6 +92,14 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // surfaces exactly as on the per-node one — this dispatched
     // positionally and dropped the color without a word.
     (Sel::Node, "canvas border color=#fff preset heavy"),
+    // …and the three the discriminator does *not* gate, on both
+    // subjects and past the `focused` modifier. These are why the
+    // popup withholds seven of ten rather than all ten.
+    (Sel::Node, "canvas border color=#fff show"),
+    (Sel::Node, "canvas border color=#fff reset"),
+    (Sel::Node, "canvas border color=#fff preview commit"),
+    (Sel::Node, "canvas section-frame color=#fff focused preset heavy"),
+    (Sel::Node, "canvas section-frame color=#fff focused show"),
     (Sel::Node, "canvas section-frame"),
     (Sel::Node, "canvas section-frame show"),
     (Sel::Node, "canvas section-frame reset"),
@@ -295,6 +312,11 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     // A kv ahead of the subverb slot puts the line in kv form, so
     // the positional vocabulary is not what would run.
     (Sel::Node, "border color=#fff preset "),
+    // …and the slot that *emits* that vocabulary. The gate reached
+    // the lookahead above eight lines before it reached this row's
+    // arm, so the popup went on offering thirteen subverbs at a
+    // slot the verb refuses seven of.
+    (Sel::Node, "border color=#fff "),
     // Subverb names are matched case-insensitively on the execute
     // side; the popup follows so the two agree on the same line.
     (Sel::Node, "border PRESET "),
@@ -325,6 +347,14 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas border corner tl "),
     (Sel::Node, "canvas border color=#fff side "),
     (Sel::Node, "canvas Border SIDE top "),
+    // The three canvas slots that emit the subverb vocabulary: the
+    // `border` subject's, the `section-frame` subject's, and the
+    // one past the `focused` modifier. All three offered every
+    // positional subverb at a slot `execute_canvas` reads as kv
+    // form and rejects seven of.
+    (Sel::Node, "canvas color=#fff border "),
+    (Sel::Node, "canvas color=#fff section-frame "),
+    (Sel::Node, "canvas section-frame color=#fff focused "),
     (Sel::Node, "canvas section-frame "),
     (Sel::Node, "canvas section-frame focused "),
     (Sel::Node, "canvas section-frame focused preview "),

@@ -46,15 +46,16 @@ use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionE
 
 /// Subverbs surfaced as token-0 completions.
 pub const VERBS: &[&str] = &["border", "section-frame"];
-/// Subverbs surfaced under `border` / `section-frame`.
-pub const SUBVERBS: &[&str] = &[
-    "show", "reset", "preview",
-    // Per-field positional subverbs — same vocabulary the per-node
-    // `border` verb surfaces. Pre-fix this list omitted them so
-    // tab-completion silently hid `canvas border preset heavy` etc.
-    // even though `execute_border_subject` accepts them.
-    "preset", "color", "padding", "palette", "font", "side", "corner",
-];
+/// Subverbs both canvas subjects match *ahead* of the
+/// positional-vs-kv discriminator, so they stay on offer at a
+/// kv-form slot: `canvas border color=#fff show` prints the
+/// readout and `canvas border color=#fff preview commit`
+/// terminates a preview. The per-field positional subverbs the
+/// discriminator does gate are
+/// [`super::border::POSITIONAL_SUBVERBS`] — the same seven the
+/// per-node `border` verb surfaces, offered here only when the
+/// slot is positional.
+pub const UNGATED_SUBVERBS: &[&str] = &["show", "reset", "preview"];
 /// Modifier under `section-frame` (followed by show|reset|kv).
 pub const SECTION_FRAME_MODIFIERS: &[&str] = &["focused"];
 
@@ -111,14 +112,15 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
     let focused =
         subject == Some("section-frame") && lower(state.positional(1)).as_deref() == Some("focused");
     let verb_at = if focused { 2 } else { 1 };
-    // Gated on the same discriminator `execute_border_subject`
-    // applies: a kv at or ahead of the subverb slot means the line
-    // is kv form, so the positional vocabulary is not what runs.
-    let verb = lower(
-        super::border::subverb_slot_is_positional(state.arg_tokens(), verb_at)
-            .then(|| state.positional(verb_at))
-            .flatten(),
-    );
+    // The same discriminator `execute_border_subject` applies: a
+    // kv at or ahead of the subverb slot means the line is kv
+    // form, so the positional vocabulary is not what runs. It
+    // gates the lookahead below *and* both slots that emit the
+    // vocabulary — gating only the lookahead is how `canvas
+    // color=#fff border <TAB>` came to offer ten subverbs of
+    // which that line rejects seven.
+    let positional_form = super::border::subverb_slot_is_positional(state.arg_tokens(), verb_at);
+    let verb = lower(positional_form.then(|| state.positional(verb_at)).flatten());
     let verb = verb.as_deref();
     match &state.context {
         // First positional after `canvas`: offer the subjects.
@@ -131,13 +133,17 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
         // still *typing* `focused` the cursor is at this slot while
         // `focused` already reads as present one token ahead.
         CompletionContext::Token { index: 1 } => match subject {
-            Some("border") => subverb_completions(state.partial, /* modifiers */ false),
-            Some("section-frame") => subverb_completions(state.partial, true),
+            Some("border") => {
+                subverb_completions(state.partial, /* modifiers */ false, positional_form)
+            }
+            Some("section-frame") => subverb_completions(state.partial, true, positional_form),
             _ => Vec::new(),
         },
         // The subverb slot itself, reachable here only past the
         // `focused` modifier (without it the arm above answers).
-        CompletionContext::Token { index } if *index == verb_at => subverb_completions(state.partial, false),
+        CompletionContext::Token { index } if *index == verb_at => {
+            subverb_completions(state.partial, false, positional_form)
+        }
         // The subverb's first argument: `preview`'s commit/cancel
         // pair, or the per-field vocabulary of `preset` / `color` /
         // `palette` / `font` / `side` / `corner`.
@@ -168,17 +174,28 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
     }
 }
 
-/// The subverb slot's rows: `show` / `reset` / `preview` and the
-/// per-field positional subverbs, the kv keys that are the other
-/// way to say the same thing, and — at the one slot where it is
-/// still ahead of the user — the `focused` modifier.
-fn subverb_completions(partial: &str, with_modifiers: bool) -> Vec<Completion> {
+/// The subverb slot's rows: `show` / `reset` / `preview` and —
+/// when `positional_form` says the slot is one the verb will read
+/// positionally — the per-field positional subverbs; then the kv
+/// keys that are the other way to say the same thing, and, at the
+/// one slot where it is still ahead of the user, the `focused`
+/// modifier.
+///
+/// `focused` is ungated with the readout subverbs and for the same
+/// reason: `execute_section_frame_subject` reads it off
+/// `positional(1)` before the discriminator runs, so `canvas
+/// section-frame color=#fff focused show` still reaches the
+/// focused slot's readout.
+fn subverb_completions(partial: &str, with_modifiers: bool, positional_form: bool) -> Vec<Completion> {
     let mut out = if with_modifiers {
         prefix_filter(SECTION_FRAME_MODIFIERS, partial)
     } else {
         Vec::new()
     };
-    out.extend(prefix_filter(SUBVERBS, partial));
+    out.extend(prefix_filter(UNGATED_SUBVERBS, partial));
+    if positional_form {
+        out.extend(prefix_filter(super::border::POSITIONAL_SUBVERBS, partial));
+    }
     out.extend(kv_key_completions_with_hints(BORDER_KEYS, partial, kv_hint));
     out
 }
@@ -633,7 +650,10 @@ mod tests {
             .into_iter()
             .map(|c| c.text)
             .collect();
-        for expected in super::SUBVERBS {
+        let offered = super::UNGATED_SUBVERBS
+            .iter()
+            .chain(super::super::border::POSITIONAL_SUBVERBS);
+        for expected in offered {
             assert!(
                 rows.iter().any(|r| r == expected),
                 "`{line}<TAB>` should offer '{expected}'; got {rows:?}"
