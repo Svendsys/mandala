@@ -10,8 +10,61 @@ use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
 use glam::Vec2;
 
+use super::overlay_shape_cache::ShapedOverlayElement;
 use super::tree_walker::{shape_one_element_into_buffers, walk_tree_into_buffers};
-use super::Renderer;
+use super::{NodeBackgroundRect, Renderer};
+
+/// Draw-order-preserving write-back cursor for the background fills
+/// of a single re-shaped element.
+///
+/// `node_background_rects` is drawn in index order — `render.rs`
+/// pushes one quad per entry into a single vertex stream, so a later
+/// entry paints over an earlier one — and
+/// [`Renderer::rebuild_buffers_from_tree`] fills it in tree-walk
+/// order. A keyed re-shape that dropped an element's fill and
+/// re-pushed the fresh one at the end would therefore lift that
+/// element's fill above every other node's, for as long as the
+/// caller keeps re-shaping it: the whole of a text-edit or a
+/// section-resize drag, snapping back on the next full rebuild.
+/// Writing the fresh fills into the slot the old ones held keeps the
+/// order stable instead, without a per-frame re-walk of the tree.
+pub(super) struct BackgroundRectSlot<'a> {
+    rects: &'a mut Vec<NodeBackgroundRect>,
+    next: usize,
+}
+
+impl<'a> BackgroundRectSlot<'a> {
+    /// Remove every fill authored by `unique_id` and remember where
+    /// the first of them sat, so [`Self::push`] writes the fresh
+    /// ones back into the same place.
+    ///
+    /// An element with no fill in the list yet — one that just
+    /// gained a `background_color` — has no slot to preserve, so it
+    /// appends. Its tree-order position is derivable, but only by
+    /// walking the tree, which is the per-frame cost this type
+    /// exists to avoid; no live caller reaches that case today.
+    ///
+    /// # Costs
+    ///
+    /// O(len) for the scan and the retain, plus O(len) per
+    /// [`Self::push`] for the shift. Same order as the `retain` +
+    /// `push` it replaces.
+    pub(super) fn take_over(rects: &'a mut Vec<NodeBackgroundRect>, unique_id: usize) -> Self {
+        let next = rects
+            .iter()
+            .position(|rect| rect.unique_id == unique_id)
+            .unwrap_or(rects.len());
+        rects.retain(|rect| rect.unique_id != unique_id);
+        BackgroundRectSlot { rects, next }
+    }
+
+    /// Write one fresh fill into the slot, advancing so a second
+    /// fill from the same element lands after it rather than before.
+    pub(super) fn push(&mut self, rect: NodeBackgroundRect) {
+        self.rects.insert(self.next, rect);
+        self.next += 1;
+    }
+}
 
 impl Renderer {
     /// Rebuild text buffers from a Baumhard tree (nodes rendered from GlyphArea
@@ -39,10 +92,7 @@ impl Renderer {
                 // the entry's `Vec` so all of them survive in
                 // emission order — `insert`-style replace would
                 // collapse halos onto the main glyph silently.
-                self.mindmap_buffers
-                    .entry(unique_id.to_string())
-                    .or_default()
-                    .push(buffer);
+                self.mindmap_buffers.entry(unique_id).or_default().push(buffer);
             },
             |rect| self.node_background_rects.push(rect),
         );
@@ -62,11 +112,15 @@ impl Renderer {
     /// writes the new buffers back into the same `Vec` entry.
     /// Background rects authored by this same `unique_id` are
     /// removed from `node_background_rects` and re-collected from
-    /// the fresh element so a section whose background colour just
+    /// the fresh element so a section whose background color just
     /// changed reflects the new fill *without* leaking duplicate
     /// stale rects per keystroke. Other elements' rects are
     /// untouched — the filter compares `NodeBackgroundRect.unique_id`
-    /// directly.
+    /// directly — and the fresh fill goes back into the slot the old
+    /// one held, because that list is drawn in index order and
+    /// re-appending would float this element's fill over every other
+    /// node's for the duration of the edit. See
+    /// [`BackgroundRectSlot`].
     ///
     /// Silent no-op when `arena_id` doesn't resolve (e.g. the tree
     /// was rebuilt between the caller's lookup and this call). The
@@ -86,10 +140,11 @@ impl Renderer {
         // Drop the existing buffers + background entries authored
         // by this element so the re-shape pass can write fresh
         // ones. Background rects use direct `unique_id` equality
-        // so other elements' rects survive the filter.
-        let key = unique_id.to_string();
-        self.mindmap_buffers.remove(&key);
-        self.node_background_rects.retain(|rect| rect.unique_id != unique_id);
+        // so other elements' rects survive the filter, and the
+        // draw-order slot is remembered across the removal so the
+        // fresh fill goes back where the old one was.
+        self.mindmap_buffers.remove(&unique_id);
+        let mut slot = BackgroundRectSlot::take_over(&mut self.node_background_rects, unique_id);
 
         let mut font_system = fonts::acquire_font_system_write("reshape_buffer_for");
         shape_one_element_into_buffers(
@@ -97,12 +152,9 @@ impl Renderer {
             Vec2::ZERO,
             &mut font_system,
             &mut |uid, buffer| {
-                self.mindmap_buffers
-                    .entry(uid.to_string())
-                    .or_default()
-                    .push(buffer);
+                self.mindmap_buffers.entry(uid).or_default().push(buffer);
             },
-            &mut |rect| self.node_background_rects.push(rect),
+            &mut |rect| slot.push(rect),
         );
     }
 
@@ -115,19 +167,18 @@ impl Renderer {
     /// field. Buffers for nodes not in the patch set are left
     /// untouched; their shaped text and position remain valid.
     ///
-    /// **Halo limitation.** When an element has an outline halo,
-    /// the walker emits one buffer per halo offset (positioned at
+    /// **Halos.** When an element has an outline halo, the walker
+    /// emits one buffer per halo offset (positioned at
     /// `area.position + (dx, dy)` per `OutlineStyle::offsets()`)
-    /// then the main glyph. This patch path overwrites every
-    /// halo's `pos` with `new_pos` — collapsing halos onto the
-    /// main glyph. Today this is latent because mindmap-tree
-    /// elements (`mindnode_container_area`, `mindnode_section_area`)
-    /// never set `area.outline`; halos live on the picker overlay
-    /// path which doesn't go through `mindmap_buffers`. If a
-    /// future feature sets `outline` on a mindmap element, drag
-    /// will visibly collapse the halos. The fix at that point is
-    /// to store per-buffer `(dx, dy)` offsets alongside `pos` and
-    /// re-derive `pos = new_pos + offset` here.
+    /// then the main glyph, and each of them records the `(dx, dy)`
+    /// it was stamped at in
+    /// [`MindMapTextBuffer::emission_offset`](super::MindMapTextBuffer#structfield.emission_offset).
+    /// The patch re-derives `pos = new_pos + emission_offset`, so a
+    /// dragged element's halos keep their ring around the main
+    /// glyph. Writing `new_pos` flat — which this path used to do —
+    /// collapsed every halo onto the main glyph; that was latent
+    /// only because no mindmap-tree element sets `area.outline`
+    /// today, and a latent landmine is still the finding (§5).
     ///
     /// # Costs
     ///
@@ -140,10 +191,12 @@ impl Renderer {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn patch_drag_positions(&mut self, patches: &[(usize, (f32, f32))]) {
         for &(unique_id, new_pos) in patches {
-            let key = unique_id.to_string();
-            if let Some(bufs) = self.mindmap_buffers.get_mut(&key) {
+            if let Some(bufs) = self.mindmap_buffers.get_mut(&unique_id) {
                 for buf in bufs.iter_mut() {
-                    buf.pos = new_pos;
+                    buf.pos = (
+                        new_pos.0 + buf.emission_offset.0,
+                        new_pos.1 + buf.emission_offset.1,
+                    );
                 }
             }
         }
@@ -174,31 +227,52 @@ impl Renderer {
         }
     }
 
-    /// Rebuild the screen-space buffer list for every tree the app
+    /// Refresh the screen-space buffer list for every tree the app
     /// has registered into [`crate::application::scene_host::AppScene`].
-    /// Walks the scene in layer
-    /// order and produces one flat list; callers do not need to
-    /// know about individual overlays. The renderer composites the
-    /// result into the palette pass alongside the per-overlay
-    /// buffer stores that predate this refactor — once every
-    /// overlay has migrated to a tree, those per-overlay stores go
-    /// away.
+    /// Walks the scene in layer order and produces one list in draw
+    /// order; callers do not need to know about individual overlays.
+    ///
+    /// **Only elements whose shaping inputs changed are re-shaped.**
+    /// Each walk position is checked against the
+    /// [`ShapedOverlayElement`] that occupied it last pass, and a
+    /// match keeps the existing buffers untouched. Every overlay
+    /// mutator apply routes here — picker hover, picker HSV drag,
+    /// console keystroke, console scrollback — and each of those
+    /// writes every slot's fields whether or not the value moved, so
+    /// before this check the pass re-shaped the picker's ~58 outlined
+    /// cells (9 buffers each) or the console's ~50 rows on every
+    /// event. It now shapes the cells whose `GlyphArea` differs from
+    /// the one it was last shaped from. See
+    /// [`super::overlay_shape_cache`] for the reuse rule and why it
+    /// needs no cooperation from the writers.
     ///
     /// # Costs
     ///
-    /// O(sum of descendants) across every tree in the scene.
-    /// Allocates a `cosmic_text::Buffer` per `GlyphArea` with
-    /// non-empty text. Empty scenes short-circuit cheaply.
+    /// O(sum of descendants) across every tree in the scene for the
+    /// walk and the equality checks, plus one `cosmic_text::Buffer`
+    /// allocation and shaping per *changed* non-empty `GlyphArea`
+    /// (times `halos + 1`). The `FONT_SYSTEM` write guard is
+    /// acquired lazily on the first element that actually needs
+    /// shaping, so an all-hit pass takes no lock at all. Empty
+    /// scenes short-circuit cheaply.
     pub fn rebuild_overlay_scene_buffers(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
-        self.overlay_scene_buffers.clear();
+        // Taken out of `self` so the per-element shaping closures can
+        // borrow it mutably while `self`'s other fields stay
+        // reachable; put back unconditionally below.
+        let mut shaped = std::mem::take(&mut self.overlay_scene_buffers);
         let ids = app_scene.overlay_ids_in_layer_order();
         if ids.is_empty() {
+            shaped.clear();
+            self.overlay_scene_buffers = shaped;
             return;
         }
-        let mut font_system = fonts::acquire_font_system_write("rebuild_overlay_scene_buffers");
+        // Lazily acquired: a pass in which every element still
+        // matches its cached inputs never touches the lock.
+        let mut font_system: Option<std::sync::RwLockWriteGuard<'static, baumhard::font::FontSystem>> = None;
+        let mut slot = 0usize;
         for id in ids {
             let Some(entry) = app_scene.overlay_scene().get(id) else {
                 continue;
@@ -206,23 +280,48 @@ impl Renderer {
             if !entry.visible() {
                 continue;
             }
-            walk_tree_into_buffers(
-                entry.tree(),
-                entry.offset(),
-                &mut font_system,
-                |_unique_id, buffer| {
-                    self.overlay_scene_buffers.push(buffer);
-                },
-                |_rect| {
-                    // Overlay-tree background fills aren't wired to
-                    // a screen-space rect pipeline yet. When a
-                    // screen-space overlay actually needs background
-                    // fills, add a dedicated
-                    // `overlay_scene_background_rects` field and a
-                    // screen-space draw pass.
-                },
-            );
+            let tree = entry.tree();
+            let offset = entry.offset();
+            for descendant_id in tree.root().descendants(&tree.arena) {
+                let Some(element) = tree.arena.get(descendant_id).map(|n| n.get()) else {
+                    continue;
+                };
+                if shaped
+                    .get(slot)
+                    .is_some_and(|cached| cached.still_matches(id, element, offset))
+                {
+                    slot += 1;
+                    continue;
+                }
+                let font_system = font_system
+                    .get_or_insert_with(|| fonts::acquire_font_system_write("rebuild_overlay_scene_buffers"));
+                let mut buffers = Vec::new();
+                shape_one_element_into_buffers(
+                    element,
+                    offset,
+                    font_system,
+                    &mut |_unique_id, buffer| buffers.push(buffer),
+                    &mut |_rect| {
+                        // Overlay-tree background fills aren't wired to
+                        // a screen-space rect pipeline yet. When a
+                        // screen-space overlay actually needs background
+                        // fills, add a dedicated
+                        // `overlay_scene_background_rects` field and a
+                        // screen-space draw pass.
+                    },
+                );
+                let fresh = ShapedOverlayElement::new(id, element, offset, buffers);
+                match shaped.get_mut(slot) {
+                    Some(existing) => *existing = fresh,
+                    None => shaped.push(fresh),
+                }
+                slot += 1;
+            }
         }
+        // Anything past the last walked position belongs to an
+        // overlay that has since been unregistered or shortened.
+        shaped.truncate(slot);
+        self.overlay_scene_buffers = shaped;
     }
 
     /// Rebuild the canvas-space buffer list for every tree the app

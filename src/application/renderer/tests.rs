@@ -419,7 +419,7 @@ fn console_signature_shifts_on_scrollback_grow() {
 /// than panicking when a caller violates the
 /// `scrollback_rows = min(scrollback.len(), MAX)` (or
 /// `completion_rows` mirror) invariant — interactive paths never
-/// abort (§7). Pin the degraded behaviour: artificially shorten the
+/// abort (§7). Pin the degraded behavior: artificially shorten the
 /// geometry's scrollback vec AFTER computing the layout so
 /// `scrollback_rows` (baked into the layout) exceeds
 /// `geometry.scrollback.len()`, then call `console_overlay_areas`
@@ -719,4 +719,770 @@ fn frame_interval_ring_clear_restores_empty_state() {
     // leak through clear().
     ring.push(42);
     assert_eq!(ring.avg_micros(), Some(42));
+}
+
+// ====================================================================
+// Overlay re-shape granularity
+// ====================================================================
+//
+// `rebuild_overlay_scene_buffers` keeps an element's shaped buffers
+// when nothing the shaper reads has changed. These tests pin the
+// reuse rule in `overlay_shape_cache` — what invalidates a cached
+// element, and what deliberately does not. The pass itself is not
+// exercised: it lives on `Renderer`, and standing up a wgpu device
+// for a test is what TEST_CONVENTIONS §T8 forbids. What is
+// exercised is the whole of the decision that pass makes.
+
+use baumhard::core::primitives::{Applicable, ApplyOperation, ColorFontRegions};
+use baumhard::gfx_structs::area::DeltaGlyphArea;
+use baumhard::gfx_structs::area_fields::{GlyphAreaField, GlyphAreaFieldType, OutlineStyle};
+use baumhard::gfx_structs::delta::DeltaField;
+use baumhard::gfx_structs::element::GfxElement;
+use baumhard::gfx_structs::mutator::GfxMutator;
+use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
+use baumhard::gfx_structs::shape::NodeShape;
+use baumhard::gfx_structs::tree::Tree;
+use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
+use strum::IntoEnumIterator;
+
+use super::overlay_shape_cache::ShapedOverlayElement;
+
+/// A styled, outlined, background-filled area — every field the
+/// shaper reads set to something other than its default, so a
+/// mutation to any one of them is a real difference rather than a
+/// coincidence with `GlyphArea::new`'s zeros.
+fn overlay_cache_fixture_area() -> GlyphArea {
+    let mut area = GlyphArea::new_with_str("cell", 16.0, 18.0, Vec2::new(3.0, 5.0), Vec2::new(40.0, 20.0));
+    area.regions = ColorFontRegions::single_span(4, Some([0.1, 0.2, 0.3, 1.0]), None);
+    area.background_color = Some([9, 8, 7, 255]);
+    area.align_center = true;
+    area.outline = Some(OutlineStyle {
+        color: [1, 2, 3, 4],
+        px: 2.0,
+    });
+    area.shape = NodeShape::Ellipse;
+    area
+}
+
+/// The fixture area wrapped in an element, registered in a scene so
+/// the test has a real [`SceneTreeId`] to key against.
+fn overlay_cache_fixture() -> (Scene, SceneTreeId, GfxElement) {
+    let element = GfxElement::new_area_non_indexed_with_id(overlay_cache_fixture_area(), 7, 7);
+    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let leaf = tree.arena.new_node(element.clone());
+    tree.root.append(leaf, &mut tree.arena);
+    let mut scene = Scene::new();
+    let id = scene.insert(tree, 0, Vec2::ZERO);
+    (scene, id, element)
+}
+
+/// One representative payload per area-field tag, differing from
+/// [`overlay_cache_fixture_area`] on every one. The `match` is over
+/// the strum-derived tag enum, so it is exhaustive and a new
+/// `GlyphAreaField` variant will not compile until it is classified
+/// here — the same forcing `gfx_structs::tests::delta_tests`'s
+/// `area_field_for` relies on.
+fn overlay_cache_field_for(tag: GlyphAreaFieldType) -> GlyphAreaField {
+    match tag {
+        GlyphAreaFieldType::Text => GlyphAreaField::Text("other".to_string()),
+        GlyphAreaFieldType::Scale => GlyphAreaField::scale(11.0),
+        GlyphAreaFieldType::LineHeight => GlyphAreaField::line_height(13.0),
+        GlyphAreaFieldType::Position => GlyphAreaField::position(101.0, 202.0),
+        GlyphAreaFieldType::Bounds => GlyphAreaField::bounds(303.0, 404.0),
+        GlyphAreaFieldType::ColorFontRegions => GlyphAreaField::ColorFontRegions(
+            ColorFontRegions::single_span(4, Some([0.9, 0.8, 0.7, 1.0]), None),
+        ),
+        GlyphAreaFieldType::Outline => GlyphAreaField::Outline(Some(OutlineStyle {
+            color: [200, 201, 202, 203],
+            px: 5.0,
+        })),
+        GlyphAreaFieldType::Shape => GlyphAreaField::Shape(NodeShape::Rectangle),
+        GlyphAreaFieldType::ZoomVisibility => {
+            GlyphAreaField::ZoomVisibility(ZoomVisibility::try_new(Some(0.5), Some(2.0)).unwrap())
+        }
+        // Control variant: it names the arithmetic the sibling
+        // deltas apply with and writes no field of its own.
+        GlyphAreaFieldType::Operation => GlyphAreaField::Operation(ApplyOperation::Assign),
+    }
+}
+
+/// Every `GlyphAreaField` a mutator can write invalidates the cached
+/// shaping — and the one control variant that writes nothing does
+/// not.
+///
+/// This is the guard the narrowing rests on.
+/// `rebuild_overlay_scene_buffers` skips re-shaping an element whose
+/// inputs still compare equal, so a field a mutator can change but
+/// the comparison cannot see would leave a stale glyph on screen —
+/// with no test in this repo able to see it (§T8 rules out pixels).
+/// Adding a variant to `GlyphAreaField` fails to compile here until
+/// it is classified, and classifying it as a real field fails the
+/// assertion below unless the comparison actually covers it.
+#[test]
+fn test_overlay_shape_cache_invalidates_on_every_writable_area_field() {
+    for tag in GlyphAreaFieldType::iter() {
+        let (_scene, id, element) = overlay_cache_fixture();
+        let cached = ShapedOverlayElement::new(id, &element, Vec2::ZERO, Vec::new());
+        assert!(
+            cached.still_matches(id, &element, Vec2::ZERO),
+            "an untouched element must match what it was shaped from"
+        );
+
+        let mut mutated = element.clone();
+        let area = mutated.glyph_area_mut().expect("fixture is an area element");
+        DeltaGlyphArea::new(vec![
+            GlyphAreaField::Operation(ApplyOperation::Assign),
+            overlay_cache_field_for(tag),
+        ])
+        .apply_to(area);
+
+        // "Did the area actually change?" is asked through derived
+        // `Debug`, not through `PartialEq`. `PartialEq` is half of
+        // what `still_matches` consults, so using it here would make
+        // the guard below circular — and it is specifically blind to
+        // a region recolor, the exact change a picker hover makes.
+        // `Debug` is derived over every field, so it sees whatever
+        // moved.
+        let described = |e: &GfxElement| format!("{:?}", e.glyph_area());
+        if tag == GlyphAreaField::OPERATION_KEY {
+            assert_eq!(
+                described(&mutated),
+                described(&element),
+                "GlyphAreaField::{tag} is documented as writing no field, but it changed the area"
+            );
+            assert!(
+                cached.still_matches(id, &mutated, Vec2::ZERO),
+                "GlyphAreaField::{tag} changes nothing the shaper reads, so it must not force a re-shape"
+            );
+            continue;
+        }
+
+        // Without this the next assertion would pass for a payload
+        // that happens to equal the fixture's value — the field
+        // would look covered while nothing had actually changed.
+        assert_ne!(
+            described(&mutated),
+            described(&element),
+            "the representative payload for GlyphAreaField::{tag} does not differ from the \
+             fixture, so this iteration cannot prove anything"
+        );
+        assert!(
+            !cached.still_matches(id, &mutated, Vec2::ZERO),
+            "GlyphAreaField::{tag} changed the area but the overlay shape cache would have \
+             reused the old buffers — the element would render stale"
+        );
+    }
+}
+
+/// The three shaping inputs that are not area fields. Read straight
+/// off `shape_one_element_into_buffers`, whose entire input is
+/// `element.glyph_area()`, `element.unique_id()`, and its `offset`
+/// argument; the tree id is carried alongside because a scene slab
+/// index is reused after an overlay unregisters.
+#[test]
+fn test_overlay_shape_cache_invalidates_on_identity_and_offset() {
+    let (mut scene, id, element) = overlay_cache_fixture();
+    let cached = ShapedOverlayElement::new(id, &element, Vec2::ZERO, Vec::new());
+
+    // `unique_id` reaches the emitted buffer through the walker's
+    // yield, and is how a caller finds the buffer again.
+    let renamed = GfxElement::new_area_non_indexed_with_id(overlay_cache_fixture_area(), 7, 8);
+    assert!(
+        !cached.still_matches(id, &renamed, Vec2::ZERO),
+        "a different element at this walk position must not inherit the cached buffers"
+    );
+
+    // The registered tree offset is added to every emitted buffer's
+    // `pos`, so moving the overlay must re-shape rather than leave
+    // buffers at the old screen slot.
+    assert!(
+        !cached.still_matches(id, &element, Vec2::new(0.0, 30.0)),
+        "a shifted tree offset must not reuse buffers positioned for the old one"
+    );
+
+    // A second tree in the same scene is a different overlay.
+    let other_tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let other_id = scene.insert(other_tree, 1, Vec2::ZERO);
+    assert!(
+        !cached.still_matches(other_id, &element, Vec2::ZERO),
+        "cached buffers belong to the tree they were walked from"
+    );
+}
+
+/// `hitbox` is the one `GlyphArea` field the equality check skips,
+/// and it is skipped because the shaper never reads it. Asserted so
+/// the check is known to be a real discriminator rather than a
+/// constant `false` that would make every other assertion above
+/// vacuous.
+#[test]
+fn test_overlay_shape_cache_reuses_when_only_the_hitbox_moved() {
+    let (_scene, id, element) = overlay_cache_fixture();
+    let cached = ShapedOverlayElement::new(id, &element, Vec2::ZERO, Vec::new());
+
+    let mut moved_hitbox = element.clone();
+    let area = moved_hitbox.glyph_area_mut().expect("fixture is an area element");
+    area.hitbox_as_mut()
+        .add(baumhard::gfx_structs::util::hitbox::BoundingRectangle::at_origin(
+            99.0, 99.0,
+        ));
+    assert_ne!(
+        moved_hitbox.glyph_area().map(|a| a.hitbox().rectangles.len()),
+        element.glyph_area().map(|a| a.hitbox().rectangles.len()),
+        "the hit box has to actually differ, or this test proves nothing"
+    );
+    assert!(
+        cached.still_matches(id, &moved_hitbox, Vec2::ZERO),
+        "the hit box does not reach cosmic-text, so changing it must not cost a re-shape"
+    );
+}
+
+/// One named single-field mutation of a `GlyphArea`, for
+/// [`test_glyph_area_equality_ignores_only_the_hitbox`]'s table. A
+/// `fn` pointer rather than a closure type so every row of the table
+/// shares one type and the whole thing fits in an array.
+type NamedAreaMutation = (&'static str, fn(&mut GlyphArea));
+
+/// `GlyphArea`'s `PartialEq` ignore-list is exactly `{hitbox}`.
+///
+/// The overlay cache's module header rests on "a field added to the
+/// area joins the comparison without anyone remembering to wire it
+/// in". That is only true for a field *not* marked
+/// `#[derivative(PartialEq = "ignore")]`, and the struct already
+/// carries one such marking — so the sentence needs a guard rather
+/// than trust. This is it, in two halves:
+///
+/// - the exhaustive destructuring has no `..` rest pattern, so a
+///   field added to `GlyphArea` fails to compile here until someone
+///   names it and decides which list it belongs on;
+/// - every field named on the equality-visible side is then mutated
+///   in isolation and asserted to break `==`, so an `ignore` added
+///   to one of today's fields fails rather than quietly widening the
+///   cache's blind spot.
+///
+/// Three of those fields — `background_color`, `background_padding`
+/// and `align_center` — are read by the shaper (or by the fill the
+/// shaper's walker emits) and reachable by no `GlyphAreaField`
+/// mutator variant, so the sibling
+/// `test_overlay_shape_cache_invalidates_on_every_writable_area_field`
+/// cannot see them. This is where they are covered.
+#[test]
+fn test_glyph_area_equality_ignores_only_the_hitbox() {
+    use baumhard::gfx_structs::area::EdgePadding;
+    use baumhard::gfx_structs::util::hitbox::BoundingRectangle;
+
+    let base = overlay_cache_fixture_area();
+
+    // Exhaustive on purpose — no `..`. A new `GlyphArea` field stops
+    // the build right here.
+    let GlyphArea {
+        text: _,
+        scale: _,
+        line_height: _,
+        position: _,
+        render_bounds: _,
+        regions: _,
+        background_color: _,
+        background_padding: _,
+        align_center: _,
+        outline: _,
+        shape: _,
+        zoom_visibility: _,
+        hitbox: _,
+    } = &base;
+
+    // One mutation per equality-visible field, each applied to a
+    // fresh clone of the fixture so the fields stay independent.
+    // `regions` is perturbed by its *span set* rather than by a
+    // color: derived equality bottoms out in `BTreeSet` identity by
+    // range and is deliberately blind to a recolor — the module
+    // header's "The one place `==` is not enough", which
+    // `ColorFontRegions::same_content` answers separately.
+    let visible: [NamedAreaMutation; 12] = [
+        ("text", |a| a.text.push('!')),
+        ("scale", |a| a.scale = (a.scale.0 + 1.0).into()),
+        ("line_height", |a| a.line_height = (a.line_height.0 + 1.0).into()),
+        ("position", |a| a.set_position((123.0, 456.0))),
+        ("render_bounds", |a| a.set_bounds((321.0, 654.0))),
+        ("regions", |a| {
+            a.regions = ColorFontRegions::single_span(2, Some([0.1, 0.2, 0.3, 1.0]), None)
+        }),
+        ("background_color", |a| a.background_color = Some([1, 2, 3, 4])),
+        ("background_padding", |a| {
+            a.background_padding = EdgePadding::new(1.0, 2.0, 3.0, 4.0)
+        }),
+        ("align_center", |a| a.align_center = !a.align_center),
+        ("outline", |a| a.outline = None),
+        ("shape", |a| a.shape = NodeShape::Rectangle),
+        ("zoom_visibility", |a| {
+            a.zoom_visibility = ZoomVisibility::try_new(Some(0.25), Some(4.0)).unwrap()
+        }),
+    ];
+
+    for (name, mutate) in visible {
+        let mut changed = base.clone();
+        mutate(&mut changed);
+        // Derived `Debug`, not `PartialEq` — asking `PartialEq`
+        // whether the field moved is the circularity this test
+        // exists to avoid.
+        assert_ne!(
+            format!("{:?}", changed),
+            format!("{:?}", base),
+            "the mutation for `{name}` does not change the area, so this iteration proves nothing"
+        );
+        assert_ne!(
+            changed, base,
+            "`GlyphArea::{name}` is read when shaping but `PartialEq` cannot see it — the overlay \
+             shape cache would reuse a stale buffer. Either drop its `PartialEq = \"ignore\"` or \
+             move it to the ignored side of this test and say why the shaper never reads it."
+        );
+    }
+
+    // ...and the one field on the ignored side.
+    let mut moved_hitbox = base.clone();
+    moved_hitbox
+        .hitbox_as_mut()
+        .add(BoundingRectangle::at_origin(99.0, 99.0));
+    assert_ne!(
+        format!("{:?}", moved_hitbox),
+        format!("{:?}", base),
+        "the hit box has to actually differ, or the assertion below is vacuous"
+    );
+    assert_eq!(
+        moved_hitbox, base,
+        "`hitbox` is the only field `PartialEq` is allowed to skip"
+    );
+}
+
+/// Snapshot a registered overlay tree exactly the way
+/// `rebuild_overlay_scene_buffers` does — one cache entry per walked
+/// element, in walk order. Buffers are left empty: `still_matches`
+/// never inspects them, and shaping real ones would buy the test
+/// nothing it could assert on (§T8).
+fn snapshot_overlay(scene: &Scene, id: SceneTreeId) -> Vec<ShapedOverlayElement> {
+    let tree = scene.tree(id).expect("tree registered");
+    tree.root()
+        .descendants(&tree.arena)
+        .filter_map(|d| tree.arena.get(d).map(|n| n.get()))
+        .map(|element| ShapedOverlayElement::new(id, element, Vec2::ZERO, Vec::new()))
+        .collect()
+}
+
+/// Which walk positions of a registered overlay tree no longer match
+/// `cached` — i.e. exactly the elements
+/// `rebuild_overlay_scene_buffers` would re-shape.
+fn overlay_elements_needing_reshape<'a>(
+    scene: &'a Scene,
+    id: SceneTreeId,
+    cached: &[ShapedOverlayElement],
+) -> Vec<&'a GfxElement> {
+    let tree = scene.tree(id).expect("tree registered");
+    tree.root()
+        .descendants(&tree.arena)
+        .filter_map(|d| tree.arena.get(d).map(|n| n.get()))
+        .enumerate()
+        .filter(|(i, element)| {
+            !cached
+                .get(*i)
+                .is_some_and(|c| c.still_matches(id, element, Vec2::ZERO))
+        })
+        .map(|(_, element)| element)
+        .collect()
+}
+
+/// A console keystroke re-shapes the prompt line and nothing else.
+///
+/// This is the granularity claim for the console half of the issue,
+/// asserted on the real console tree and the real in-place mutator.
+/// `build_console_overlay_mutator` writes a `full_assign_from` delta
+/// to *every* slot on every keystroke, so before the reuse check the
+/// pass re-shaped every border, gutter, scrollback row, completion
+/// row and the prompt; the count below is what the same event costs
+/// now.
+///
+/// The identical-state case is asserted alongside it because it is
+/// what makes the count meaningful: a mutator that overwrote each
+/// slot with a *different-looking* value would also produce "1
+/// changed" here for the wrong reason.
+#[test]
+fn test_console_keystroke_reshapes_only_the_prompt_line() {
+    baumhard::font::fonts::init();
+
+    let mut before = sample_console_geometry();
+    before.input = "anchor".into();
+    before.cursor_grapheme = 6;
+    let layout_before = compute_console_frame_layout(&before, 1280.0, 720.0);
+
+    let mut after = sample_console_geometry();
+    after.input = "anchors".into();
+    after.cursor_grapheme = 7;
+    let layout_after = compute_console_frame_layout(&after, 1280.0, 720.0);
+
+    // The in-place mutator arm only runs while the structural
+    // signature holds; a keystroke that changed it would take the
+    // full-rebuild arm and this test would be describing a path the
+    // console never takes.
+    assert_eq!(
+        console_overlay_signature(&layout_before),
+        console_overlay_signature(&layout_after)
+    );
+
+    let tree = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (keystroke tree)");
+        build_console_overlay_tree(&before, &layout_before, &mut fs)
+    };
+    let mut scene = Scene::new();
+    let id = scene.insert(tree, 0, Vec2::ZERO);
+    let cached = snapshot_overlay(&scene, id);
+    assert!(
+        cached.len() > 10,
+        "the console fixture must have many slots, or \"only one changed\" says nothing: {} slots",
+        cached.len()
+    );
+
+    // Re-applying the state it already holds must invalidate
+    // nothing, even though the mutator assigns every field of every
+    // slot.
+    let idempotent = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (keystroke same)");
+        build_console_overlay_mutator(&before, &layout_before, &mut fs)
+    };
+    scene.apply_mutator(id, &idempotent);
+    assert!(
+        overlay_elements_needing_reshape(&scene, id, &cached).is_empty(),
+        "a mutator that writes the state already on screen must not cost a single re-shape"
+    );
+
+    let keystroke = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (keystroke next)");
+        build_console_overlay_mutator(&after, &layout_after, &mut fs)
+    };
+    scene.apply_mutator(id, &keystroke);
+
+    let changed = overlay_elements_needing_reshape(&scene, id, &cached);
+    let texts: Vec<&str> = changed
+        .iter()
+        .filter_map(|e| e.glyph_area())
+        .map(|a| a.text.as_str())
+        .collect();
+    assert_eq!(
+        changed.len(),
+        1,
+        "one keystroke should dirty one console line, got {texts:?}"
+    );
+    assert!(
+        texts[0].contains("anchors"),
+        "the dirtied line should be the prompt carrying the new input, got {texts:?}"
+    );
+}
+
+/// A color-picker hover re-shapes the one cell it recolors, not the
+/// whole wheel.
+///
+/// Sibling of the console test above, on the other overlay the issue
+/// names, and pinned to an exact count the same way that one is.
+/// `build_dynamic_mutator` writes color regions, hover scale and hex
+/// text into *every* picker slot on every mouse-move frame, and the
+/// wheel's cells carry an `outline`, so each one costs nine
+/// cosmic-text shapings; before the reuse check a hover paid that
+/// for all of them.
+///
+/// Nothing here is environment-dependent — the fixture and the
+/// layout are deterministic, and `still_matches` compares
+/// `GlyphArea`s without shaping anything — so there is no reason to
+/// spend the assertion on a fraction. A `changed * 4 < len` bound
+/// would have tolerated fourteen dirty cells out of fifty-nine and
+/// stayed green through a tenfold regression. If a future picker
+/// legitimately recolors more than one cell on a hue hover, this
+/// number is meant to be re-read and updated, not widened into a
+/// threshold.
+#[test]
+fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
+    use crate::application::color_picker::tests::fixtures::sample_geometry;
+    use crate::application::color_picker::{compute_color_picker_layout, PickerHit};
+    use crate::application::color_picker_overlay;
+
+    baumhard::font::fonts::init();
+
+    let geometry = sample_geometry();
+    let layout = compute_color_picker_layout(&geometry, 1280.0, 720.0);
+    let built = color_picker_overlay::build(&geometry, &layout);
+    let mut scene = Scene::new();
+    let id = scene.insert(built.tree, 0, Vec2::ZERO);
+    let cached = snapshot_overlay(&scene, id);
+    assert!(
+        cached.len() > 30,
+        "the picker fixture must have many cells, or a fraction says nothing: {} cells",
+        cached.len()
+    );
+
+    // Re-asserting the state already on screen must cost nothing,
+    // even though the dynamic mutator assigns every slot.
+    let idempotent = color_picker_overlay::build_dynamic_mutator(&geometry, &layout);
+    scene.apply_mutator(id, &idempotent);
+    assert!(
+        overlay_elements_needing_reshape(&scene, id, &cached).is_empty(),
+        "a hover frame that changed nothing must not re-shape a single cell"
+    );
+
+    let mut hovered = sample_geometry();
+    hovered.hovered_hit = Some(PickerHit::Hue(3));
+    let hover = color_picker_overlay::build_dynamic_mutator(&hovered, &layout);
+    scene.apply_mutator(id, &hover);
+
+    let changed = overlay_elements_needing_reshape(&scene, id, &cached).len();
+    assert_eq!(
+        changed,
+        1,
+        "hovering one hue slot recolors exactly that cell, so exactly one of the wheel's {} \
+         elements may be re-shaped",
+        cached.len()
+    );
+}
+
+// ====================================================================
+// Halo stamp bookkeeping
+// ====================================================================
+
+/// Every buffer the walker emits records the stamp offset it was
+/// emitted at, and its `pos` is the area's anchor plus that offset
+/// plus the tree offset.
+///
+/// `patch_drag_positions` re-derives `pos = new_anchor +
+/// emission_offset` from nothing but this invariant, so if the
+/// walker's stamp geometry and the recorded offset ever disagreed,
+/// a drag would silently scatter (or collapse) an outlined
+/// element's halo. Pinned here rather than at the patch, which is
+/// on `Renderer` and so out of reach of a test (§T8).
+#[test]
+fn test_walker_records_the_stamp_offset_of_every_emitted_buffer() {
+    baumhard::font::fonts::init();
+
+    let anchor = Vec2::new(11.0, 23.0);
+    let tree_offset = Vec2::new(100.0, -50.0);
+    let outline = OutlineStyle {
+        color: [255, 0, 0, 255],
+        px: 3.0,
+    };
+    let mut area = GlyphArea::new_with_str("halo", 16.0, 18.0, anchor, Vec2::new(80.0, 24.0));
+    area.outline = Some(outline);
+    let element = GfxElement::new_area_non_indexed_with_id(area, 1, 1);
+
+    let mut emitted: Vec<((f32, f32), (f32, f32))> = Vec::new();
+    {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (halo stamps)");
+        super::tree_walker::shape_one_element_into_buffers(
+            &element,
+            tree_offset,
+            &mut fs,
+            &mut |_uid, buffer| emitted.push((buffer.emission_offset, buffer.pos)),
+            &mut |_rect| {},
+        );
+    }
+
+    // Eight halo stamps then the main glyph, in that order — the
+    // main glyph draws last so it sits on top.
+    let expected: Vec<(f32, f32)> = outline.offsets().chain(std::iter::once((0.0, 0.0))).collect();
+    assert_eq!(expected.len(), 9, "the halo technique is 8 stamps plus the glyph");
+    assert_eq!(
+        emitted.iter().map(|(off, _)| *off).collect::<Vec<_>>(),
+        expected,
+        "recorded stamp offsets must be the offsets the walker actually stamped at"
+    );
+    for (offset, pos) in &emitted {
+        assert_eq!(
+            *pos,
+            (
+                anchor.x + offset.0 + tree_offset.x,
+                anchor.y + offset.1 + tree_offset.y
+            ),
+            "a buffer's position must be its anchor plus its recorded stamp offset"
+        );
+    }
+}
+
+// ====================================================================
+// Background-fill draw order
+// ====================================================================
+
+use super::tree_buffers::BackgroundRectSlot;
+
+/// A synthetic fill carrying nothing but the identity the draw-order
+/// bookkeeping keys on. `Renderer::reshape_buffer_for` matches rects
+/// by `unique_id` and never reads the geometry while re-slotting
+/// them, so the rest is filler.
+fn background_rect(unique_id: usize) -> NodeBackgroundRect {
+    NodeBackgroundRect {
+        position: Vec2::ZERO,
+        size: Vec2::new(1.0, 1.0),
+        color: [0, 0, 0, 255],
+        shape_id: 0,
+        zoom_visibility: ZoomVisibility::unbounded(),
+        unique_id,
+    }
+}
+
+fn background_rect_order(rects: &[NodeBackgroundRect]) -> Vec<usize> {
+    rects.iter().map(|rect| rect.unique_id).collect()
+}
+
+/// Re-shaping one element leaves the background-fill draw order
+/// alone.
+///
+/// `render.rs` paints `node_background_rects` in index order, so the
+/// last entry covers every earlier one it overlaps.
+/// `reshape_buffer_for` runs on every drained frame of a
+/// section-resize drag and on every keystroke of a text edit; had it
+/// re-appended the fill it just re-collected, the element being
+/// edited would have spent the whole gesture painted over its
+/// neighbors and snapped back on the next full rebuild — a defect no
+/// assertion in this repo can see in pixels (§T8), which is why the
+/// ordering is asserted on the list instead.
+#[test]
+fn test_reshaping_an_element_keeps_its_background_fill_in_draw_order() {
+    let mut rects: Vec<NodeBackgroundRect> = (0..5).map(background_rect).collect();
+    assert_eq!(background_rect_order(&rects), vec![0, 1, 2, 3, 4]);
+
+    let mut slot = BackgroundRectSlot::take_over(&mut rects, 2);
+    slot.push(background_rect(2));
+    assert_eq!(
+        background_rect_order(&rects),
+        vec![0, 1, 2, 3, 4],
+        "the re-collected fill belongs where the stale one was, not on top of the map"
+    );
+
+    // An element the walker emits more than one fill for keeps them
+    // adjacent and in emission order — `push` advances rather than
+    // inserting each one at the same index.
+    let mut slot = BackgroundRectSlot::take_over(&mut rects, 1);
+    slot.push(background_rect(1));
+    slot.push(background_rect(101));
+    assert_eq!(background_rect_order(&rects), vec![0, 1, 101, 2, 3, 4]);
+}
+
+/// An element that had no fill before the re-shape appends, because
+/// there is no earlier slot to restore. The `unwrap_or(len)` branch.
+#[test]
+fn test_reshaping_an_element_that_gained_a_fill_appends_it() {
+    let mut rects: Vec<NodeBackgroundRect> = (0..3).map(background_rect).collect();
+    let mut slot = BackgroundRectSlot::take_over(&mut rects, 77);
+    slot.push(background_rect(77));
+    assert_eq!(background_rect_order(&rects), vec![0, 1, 2, 77]);
+}
+
+/// An element that *lost* its fill leaves no hole and no stale rect
+/// — `take_over` with no `push` is the whole of the removal.
+#[test]
+fn test_reshaping_an_element_that_lost_its_fill_drops_it() {
+    let mut rects: Vec<NodeBackgroundRect> = (0..3).map(background_rect).collect();
+    let _ = BackgroundRectSlot::take_over(&mut rects, 1);
+    assert_eq!(background_rect_order(&rects), vec![0, 2]);
+}
+
+// ====================================================================
+// Glyph advance measurement
+// ====================================================================
+
+/// Shape one cluster through a scratch `cosmic_text::Buffer` and
+/// report `(widest layout glyph, summed layout glyphs, glyph count)`.
+///
+/// Deliberately *not* routed through
+/// [`baumhard::font::metric_cache::glyph_advance`]: that is the path
+/// `measure_max_glyph_advance` now takes, and an expectation
+/// computed from the code under test cannot see a change in that
+/// code. This is the scratch-buffer shaping the subject used before
+/// the metric cache, kept here as an independent second opinion —
+/// the first element of the tuple is precisely the answer the old
+/// implementation gave.
+fn shape_cluster_advances(
+    font_system: &mut baumhard::font::FontSystem,
+    cluster: &str,
+    font_size: f32,
+) -> (f32, f32, usize) {
+    use baumhard::font::{buffer, SHAPING_ADVANCED};
+
+    let mut buf = buffer::create_square(font_system, font_size);
+    buf.set_text(font_system, cluster, &Attrs::new(), SHAPING_ADVANCED, None);
+    buf.shape_until_scroll(font_system, false);
+    let (mut widest, mut summed, mut count) = (0.0f32, 0.0f32, 0usize);
+    for run in buf.layout_runs() {
+        for glyph in run.glyphs.iter() {
+            widest = widest.max(glyph.w);
+            summed += glyph.w;
+            count += 1;
+        }
+    }
+    (widest, summed, count)
+}
+
+/// `measure_max_glyph_advance` answers with the widest of the
+/// clusters it was given, and falls back to the monospace
+/// approximation only when nothing shaped at all.
+///
+/// The measurement runs through baumhard's `(face, size, cluster)`
+/// metric cache rather than a scratch `Buffer` per call, and that
+/// move carried a semantic correction with it: a cluster that lays
+/// out as several glyphs is now worth the *sum* of their advances,
+/// where the scratch-buffer version took the widest one inside the
+/// cluster and so under-measured it. The third assertion below is
+/// the one that can see that: its cluster is a Devanagari
+/// consonant-plus-vowel-sign that lays out as two glyphs, so sum and
+/// max are different numbers and only one of them can pass.
+///
+/// Every expectation here comes from [`shape_cluster_advances`],
+/// which shapes independently rather than asking the metric cache —
+/// otherwise the test would be quoting the subject back at itself.
+#[test]
+fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
+    use baumhard::font::metrics::monospace_advance;
+
+    baumhard::font::fonts::init();
+    let size = 18.0;
+
+    let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (advance)");
+
+    // A light horizontal rule and a full-block, which are not the
+    // same width in any face this ships with. Both single-glyph, so
+    // sum and max agree and this pair pins only the "max across the
+    // set" half.
+    let (narrow, wide) = ("\u{2500}", "\u{2588}");
+    let (_, narrow_w, narrow_n) = shape_cluster_advances(&mut fs, narrow, size);
+    let (_, wide_w, wide_n) = shape_cluster_advances(&mut fs, wide, size);
+    assert!(narrow_w > 0.0 && wide_w > 0.0, "both clusters must shape");
+    assert_eq!((narrow_n, wide_n), (1, 1), "both are single-glyph clusters");
+    assert!(
+        narrow_w < wide_w,
+        "the two must differ, or 'widest' proves nothing"
+    );
+    assert_eq!(
+        measure_max_glyph_advance(&mut fs, &[narrow, wide], size),
+        wide_w,
+        "the answer is the widest cluster in the set"
+    );
+
+    // Devanagari NA + vowel sign I: two layout glyphs, so the
+    // cluster's summed advance and its widest single glyph are
+    // different numbers. The scratch-buffer implementation answered
+    // with the max and under-measured the cluster by the rest of it.
+    let two_glyph = "\u{0928}\u{093F}";
+    let (widest_in_cluster, summed, count) = shape_cluster_advances(&mut fs, two_glyph, size);
+    assert!(
+        count > 1 && summed > widest_in_cluster,
+        "this cluster has to lay out as more than one glyph, or the routing below is untested: \
+         {count} glyph(s), sum {summed}, widest {widest_in_cluster}"
+    );
+    assert_eq!(
+        measure_max_glyph_advance(&mut fs, &[two_glyph], size),
+        summed,
+        "a multi-glyph cluster is worth the width it occupies, not the width of its widest piece"
+    );
+
+    // An empty cluster lays out no glyphs at all, so the max is
+    // zero and the monospace approximation takes over — the branch
+    // that keeps a tofu-only glyph set from collapsing the console
+    // frame to zero columns.
+    assert_eq!(
+        measure_max_glyph_advance(&mut fs, &[""], size),
+        monospace_advance(size),
+        "a set that shapes to nothing must fall back rather than return zero"
+    );
 }

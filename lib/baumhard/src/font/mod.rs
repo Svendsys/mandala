@@ -8,9 +8,10 @@
 
 /// `ColorFontRegions` → cosmic-text bridges
 /// ([`attrs::attrs_list_from_regions`] for `Editor::insert_string`,
-/// [`attrs::RegionFamilies`] +
-/// [`attrs::rich_text_spans_from_regions`] for
-/// `Buffer::set_rich_text`).
+/// [`attrs::RegionFamilies`] + [`attrs::rich_text_spans_into`] for
+/// `Buffer::set_rich_text`, with
+/// [`attrs::rich_text_spans_from_regions`] as the allocating
+/// convenience shape over the same body).
 pub mod attrs;
 /// Float-RGBA ↔ `cosmic_text::Color` bridge — the boundary helpers
 /// every render path uses to hand cosmic-text a color or read one

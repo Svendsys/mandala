@@ -365,13 +365,18 @@ impl Renderer {
         // `rebuild_overlay_scene_buffers` from the respective
         // overlay tree in `AppScene`) — they are mutually exclusive
         // screen-space modals sharing this one pass.
-        let palette_capacity = self.overlay_scene_buffers.len()
+        let palette_capacity = self
+            .overlay_scene_buffers
+            .iter()
+            .map(|e| e.buffers.len())
+            .sum::<usize>()
             + self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len();
         let mut palette_text_areas: Vec<TextArea> = Vec::with_capacity(palette_capacity);
         palette_text_areas.extend(
             self.overlay_scene_buffers
                 .iter()
+                .flat_map(|e| e.buffers.iter())
                 .chain(self.fps_overlay_buffers.iter())
                 .chain(self.mode_status_overlay_buffers.iter())
                 .map(|tb| TextArea {
