@@ -64,7 +64,11 @@ fn complete_mode(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 }
 
 fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    match args.positional(0) {
+    // Subverb names are case-insensitive console-wide — see
+    // `commands/mod.rs` § Casing. The unknown-subverb arm still
+    // echoes what the user typed, not the normalized form.
+    let verb = args.positional(0);
+    match verb.map(str::to_ascii_lowercase).as_deref() {
         Some("default") => {
             eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Default));
             eff.close_console = true;
@@ -90,9 +94,9 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             Err(msg) => ExecResult::err(msg),
         },
-        Some(other) => ExecResult::err(format!(
+        Some(_) => ExecResult::err(format!(
             "mode: unknown subverb '{}'; use 'default', 'resize', or 'node-edit'",
-            other
+            verb.unwrap_or_default()
         )),
         None => ExecResult::err("usage: mode default | mode resize | mode node-edit"),
     }

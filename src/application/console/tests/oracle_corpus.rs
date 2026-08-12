@@ -277,6 +277,37 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "zoom bogus=1"),
     (Sel::Node, "zoom nope"),
     (Sel::None, "zoom min=0.5"),
+    // Casing. Command names, aliases and positional subverbs are
+    // matched case-insensitively console-wide
+    // (`commands/mod.rs` § Casing); every subverb popup already
+    // filtered its partial that way and inserted the canonical
+    // spelling, but only five verbs honored it on the execute
+    // side, so a word the popup listed could still be refused
+    // when typed out. One row per verb whose dispatch normalizes,
+    // each the upper-case twin of a row above.
+    (Sel::Node, "help ALL"),
+    (Sel::Node, "help BORDER"),
+    (Sel::Node, "border PRESET heavy"),
+    (Sel::Node, "border PREVIEW COMMIT"),
+    (Sel::Node, "canvas BORDER PRESET heavy"),
+    (Sel::Node, "canvas SECTION-FRAME FOCUSED show"),
+    (Sel::Node, "color PICKER ON"),
+    (Sel::Node, "font SET NoSuchFamilyHere"),
+    (Sel::Node, "fps ON"),
+    (Sel::EdgeLabel, "label CLEAR"),
+    (Sel::Node, "mode DEFAULT"),
+    (Sel::Node, "mutation LIST"),
+    (Sel::Node, "node FIT"),
+    (Sel::TwoSectionNode, "section FRAME SHOW"),
+    (Sel::Section, "section frame PREVIEW commit"),
+    (Sel::Node, "zoom CLEAR"),
+    // …and the two halves that stay exact. A kv key is a field
+    // name, not a word the user picks, so `TOP=` is unknown on
+    // both sides; a palette name is stored verbatim, so the value
+    // is compared as written even though the popup finds it
+    // case-insensitively.
+    (Sel::Node, "border TOP=x"),
+    (Sel::Node, "font SIZE=14"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for
@@ -424,6 +455,34 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "zoom c"),
     (Sel::Node, "zoom min="),
     (Sel::Node, "zoom max="),
+    // Casing, popup side. Each row is the upper-case twin of a
+    // lower-case row above and must answer identically: the
+    // popup's filter and the verb's dispatch read the same way
+    // (`commands/mod.rs` § Casing). `border PRE` and `section
+    // frame PREVIEW ` answered nothing at all before — a hard
+    // stop on a line each verb accepts.
+    (Sel::Node, "border PRE"),
+    (Sel::Node, "border preset=H"),
+    (Sel::Node, "border palette=CO"),
+    (Sel::Node, "border side top RE"),
+    (Sel::Node, "border show VER"),
+    (Sel::Node, "border preview CO"),
+    (Sel::Node, "canvas SECTION-FRAME FO"),
+    (Sel::Node, "color PICKER "),
+    (Sel::Node, "font SE"),
+    (Sel::Node, "fps O"),
+    (Sel::EdgeLabel, "label CL"),
+    (Sel::Node, "mode D"),
+    (Sel::Node, "mutation LI"),
+    (Sel::Node, "node R"),
+    (Sel::TwoSectionNode, "section FRAME "),
+    (Sel::TwoSectionNode, "section frame PREVIEW "),
+    (Sel::Node, "help AL"),
+    (Sel::Node, "zoom C"),
+    // The exact half: a kv key filters case-sensitively because
+    // `stage_kv` matches it that way, so an upper-case key offers
+    // nothing rather than offering a row the verb would reject.
+    (Sel::Node, "border TOP"),
 ];
 
 /// Outcomes whose tail this machine chose rather than the console

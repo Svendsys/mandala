@@ -7,6 +7,31 @@
 //! matching the `const PALETTE_ACTIONS` pattern — zero-cost startup,
 //! no HashMap construction, and `action_by_id`-style lookup is a
 //! linear scan over a dozen entries.
+//!
+//! # Casing
+//!
+//! One rule, and it is the one every completer already assumes:
+//!
+//! - **Command names, aliases and positional subverbs are matched
+//!   case-insensitively.** `mode DEFAULT`, `font SET Norse` and
+//!   `border PRESET heavy` all run. Every subverb popup filters
+//!   its partial case-insensitively and inserts the canonical
+//!   spelling, so this is what the popup has always promised; five
+//!   verbs honored it and the rest did not, which meant a word the
+//!   popup listed could still be refused when typed out in full.
+//! - **Kv *keys* are exact.** `border TOP=x` is `unknown key
+//!   'TOP'`, and `kv_key_completions` filters case-sensitively to
+//!   say so. A key is a field name, not a word the user picks.
+//! - **Kv *values* belong to the key's own parser.** Most are
+//!   case-insensitive (`preset=HEAVY`, `color=ACCENT`,
+//!   `side=TOP`); a palette name is stored verbatim and compared
+//!   as written. Each value completer matches the way its parser
+//!   does, and the oracle corpus pins the pair.
+//!
+//! What makes the first bullet checkable rather than aspirational
+//! is [`super::tests::oracle_corpus`]: every verb whose subverb
+//! dispatch normalizes carries an upper-case corpus row beside its
+//! lower-case one.
 
 use super::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::console::completion::{Completion, CompletionState};

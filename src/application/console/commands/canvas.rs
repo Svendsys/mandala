@@ -159,7 +159,7 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
         // <which>`, the glyph after `corner <which>`. Same slot,
         // same vocabulary as the per-node verb's.
         CompletionContext::Token { index } if *index == verb_at + 2 => {
-            super::border::second_positional_completions(verb, state.partial, state.positional(verb_at + 1))
+            super::border::second_positional_completions(verb, state.partial)
         }
         // Anything past a subverb's arguments is kv-form.
         CompletionContext::Token { .. } => kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint),

@@ -34,7 +34,6 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
         .flatten()
         .map(str::to_ascii_lowercase);
     let token1 = subverb.as_deref();
-    let token2 = state.positional(1);
     let after_preview = token1 == Some("preview");
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial, positional_form),
@@ -63,7 +62,7 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
         //second-positional value: side <TAB> takes
         // pattern (free-form) or `reset`; corner <TAB> takes a
         // single glyph (free-form) or `reset`.
-        CompletionContext::Token { index: 2 } => second_positional_completions(token1, state.partial, token2),
+        CompletionContext::Token { index: 2 } => second_positional_completions(token1, state.partial),
         CompletionContext::Token { .. } => key_completions(state.partial),
         // `border show side=<TAB>`. The `side=` filter is a kv of
         // the `show` subverb, not of the border vocabulary — it is
@@ -92,20 +91,48 @@ pub(crate) const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
 /// other subverb's second argument is free-form or absent, so the
 /// vocabulary is just the `reset` sentinel users would not guess.
 ///
+/// The two arms answer identically on purpose, and share one body:
+/// a side pattern and a corner glyph are both free-form, so
+/// neither has a catalogue to offer and both accept the same
+/// sentinel. `stage_side` and `stage_corner` each read it through
+/// `eq_ignore_ascii_case`, so the row is matched that way too.
+///
+/// There is deliberately no `which` parameter. One was carried
+/// here and into `side_pattern_completions` and then ignored at
+/// the bottom — the caller in `canvas.rs` computed
+/// `positional(verb_at + 1)` purely to throw it away. Nothing
+/// about `top` versus `all` changes what can be typed next, and a
+/// parameter a function does not read is a claim its signature
+/// cannot honor (#41 removed the crate-wide `dead_code` allow for
+/// the same reason). If a per-side glyph catalogue ever arrives,
+/// it arrives with the parameter.
+///
 /// `pub(crate)` for the same reason [`SIDE_VALUES`] is: `canvas
 /// border side top <TAB>` and `canvas section-frame [focused]
 /// side top <TAB>` reach exactly this slot, and answered with kv
 /// keys until they were routed here.
-pub(crate) fn second_positional_completions(
-    verb: Option<&str>,
-    partial: &str,
-    which: Option<&str>,
-) -> Vec<Completion> {
+pub(crate) fn second_positional_completions(verb: Option<&str>, partial: &str) -> Vec<Completion> {
     match verb.map(str::to_ascii_lowercase).as_deref() {
-        Some("side") => side_pattern_completions(partial, which),
-        Some("corner") => corner_glyph_completions(partial),
+        Some("side") | Some("corner") => reset_sentinel_completion(partial),
         _ => Vec::new(),
     }
+}
+
+/// The lone row [`second_positional_completions`] can offer:
+/// `reset`, which restores the surface's current preset's default
+/// glyph. Templates and glyphs themselves are free-form, so there
+/// is no catalogue to surface beside it — but `reset` is the word
+/// no user guesses without seeing it.
+fn reset_sentinel_completion(partial: &str) -> Vec<Completion> {
+    if !"reset".starts_with(&partial.to_ascii_lowercase()) {
+        return Vec::new();
+    }
+    vec![Completion {
+        text: "reset".to_string(),
+        display: "reset".to_string(),
+        hint: Some("restore the slot's preset's default glyph".to_string()),
+        font_family: None,
+    }]
 }
 
 /// `border preset <TAB>` and `border preset=<TAB>` value
@@ -116,6 +143,12 @@ pub(crate) fn second_positional_completions(
 /// — a preset added to the table arrives here already described,
 /// instead of completing with a blank hint.
 fn preset_value_completions(partial: &str) -> Vec<Completion> {
+    // Case-insensitive because both consumers are:
+    // `positional_subverb_to_edits` lowercases before checking
+    // `PRESETS`, and `stage_kv`'s `preset=` arm does the same, so
+    // `border preset=HEAVY` is accepted and `border preset=H<TAB>`
+    // must not go quiet on it.
+    let partial = &partial.to_ascii_lowercase();
     let mut out: Vec<Completion> = super::PRESETS
         .iter()
         .filter(|p| p.starts_with(partial))
@@ -141,6 +174,9 @@ fn preset_value_completions(partial: &str) -> Vec<Completion> {
 /// kv and the `verbose` positional flag (/ B6.8).
 /// Pre-fix neither was discoverable from completion.
 fn show_arg_completions(partial: &str) -> Vec<Completion> {
+    // `execute_border_show` reads `verbose` through
+    // `eq_ignore_ascii_case`, so the popup matches the same way.
+    let partial = &partial.to_ascii_lowercase();
     let mut out = Vec::new();
     if "side=".starts_with(partial) || "side".starts_with(partial) {
         out.push(Completion {
@@ -161,36 +197,6 @@ fn show_arg_completions(partial: &str) -> Vec<Completion> {
     out
 }
 
-/// `border side WHICH <TAB>` — pattern templates plus `reset`.
-/// Templates are free-form so we don't surface a glyph
-/// catalogue, but `reset` is the discoverability gap (users
-/// won't guess "reset" without seeing it).
-fn side_pattern_completions(partial: &str, _which: Option<&str>) -> Vec<Completion> {
-    let mut out = Vec::new();
-    if "reset".starts_with(partial) {
-        out.push(Completion {
-            text: "reset".to_string(),
-            display: "reset".to_string(),
-            hint: Some("restore the slot's preset's default glyph".to_string()),
-            font_family: None,
-        });
-    }
-    out
-}
-
-fn corner_glyph_completions(partial: &str) -> Vec<Completion> {
-    let mut out = Vec::new();
-    if "reset".starts_with(partial) {
-        out.push(Completion {
-            text: "reset".to_string(),
-            display: "reset".to_string(),
-            hint: Some("restore the slot's preset's default glyph".to_string()),
-            font_family: None,
-        });
-    }
-    out
-}
-
 /// `border preview <TAB>` → `commit` / `cancel` rows with hints.
 /// C12 fix: the prior shape used `prefix_filter(PREVIEW_SUBVERBS, …)`
 /// which yields hint-less rows; users couldn't tell which subverb
@@ -198,6 +204,10 @@ fn corner_glyph_completions(partial: &str) -> Vec<Completion> {
 /// section-frame and canvas verbs so all four preview surfaces
 /// share the same hint vocabulary.
 pub(crate) fn preview_subverb_completions(partial: &str) -> Vec<Completion> {
+    // `dispatch_border_preview` lowercases the terminator before
+    // matching, so `border preview CO<TAB>` reaches the arm
+    // `border preview COMMIT` runs.
+    let partial = &partial.to_ascii_lowercase();
     super::PREVIEW_SUBVERBS
         .iter()
         .filter(|s| s.starts_with(partial))
@@ -313,12 +323,21 @@ fn key_hint(k: &str) -> &'static str {
     super::kv_hint(k).unwrap_or("")
 }
 
+/// `border palette=<TAB>` — the document's palette names plus the
+/// `off` sentinel.
+///
+/// Matched case-insensitively while inserting the palette's own
+/// spelling, so `palette=CO<TAB>` finds `coral` and tab-accept
+/// still writes the name the map stores. `off` is compared the
+/// same way because `stage_palette` reads it through
+/// `eq_ignore_ascii_case`.
 fn palette_value_completions(partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
+    let partial = &partial.to_ascii_lowercase();
     let mut names: Vec<&str> = ctx.document.mindmap.palettes.keys().map(String::as_str).collect();
     names.sort();
     let mut out: Vec<Completion> = names
         .into_iter()
-        .filter(|n| n.starts_with(partial))
+        .filter(|n| n.to_ascii_lowercase().starts_with(partial))
         .map(|n| Completion {
             text: n.to_string(),
             display: n.to_string(),

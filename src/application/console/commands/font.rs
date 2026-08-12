@@ -86,8 +86,9 @@ fn complete_font(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completio
         // Token 0: positional verbs (`set`, `list`) + kv keys.
         CompletionContext::Token { index: 0 } => {
             let mut out: Vec<Completion> = Vec::new();
+            let verb_partial = state.partial.to_ascii_lowercase();
             for v in VERBS {
-                if v.starts_with(state.partial) {
+                if v.starts_with(&verb_partial) {
                     out.push(Completion {
                         text: match *v {
                             "set" => "set ".to_string(),
@@ -105,7 +106,9 @@ fn complete_font(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completio
         // Token 1 after `set`: every loaded font family, each
         // pre-shaped in its own face so the user sees the look
         // before committing.
-        CompletionContext::Token { index: 1 } if state.positional(0) == Some("set") => {
+        CompletionContext::Token { index: 1 }
+            if state.positional(0).is_some_and(|v| v.eq_ignore_ascii_case("set")) =>
+        {
             font_family_completions(state.partial)
         }
         // Bare-token slots past index 0 with no preceding `set`
@@ -252,7 +255,11 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Positional subverbs are checked first — they're channel-less
     // operations and don't share parse state with the kv triple.
     if let Some(verb) = args.positional(0) {
-        return match verb {
+        // Subverb names are case-insensitive console-wide — see
+        // `commands/mod.rs` § Casing. The *family* at
+        // positional(1) is not: `font set Norse` names a loaded
+        // face, and the loaded-family lookup owns that comparison.
+        return match verb.to_ascii_lowercase().as_str() {
             "set" => execute_font_set(args, eff),
             "list" => execute_font_list(args),
             _ => ExecResult::err(format!(

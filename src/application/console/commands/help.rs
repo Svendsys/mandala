@@ -61,7 +61,13 @@ fn complete_help(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 fn execute_help(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let ctx = ConsoleContext::from_document(eff.document);
     match args.positional(0) {
-        Some("all") => help_listing(&ctx, true),
+        // `all` is the one argument that is not a command name, and
+        // it was the one matched exactly while `command_by_name`
+        // beside it is case-insensitive — so `help BORDER` printed
+        // the border usage and `help ALL` answered "unknown
+        // command: ALL". Same rule for both now (see
+        // `commands/mod.rs` § Casing).
+        Some(name) if name.eq_ignore_ascii_case("all") => help_listing(&ctx, true),
         Some(name) => help_for(name, &ctx),
         None => help_listing(&ctx, false),
     }

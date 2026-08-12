@@ -82,7 +82,12 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
     // positional after `section`" — and `positional(0)` is the
     // subverb sitting in that slot, the same one `execute_section`
     // reads through `Args::positional(0)`.
-    let first_arg = state.positional(0);
+    // Lowercased once, because `execute_section` dispatches on
+    // `verb.to_ascii_lowercase()` (see `commands/mod.rs`
+    // § Casing) — `section FRAME <TAB>` has to open the same
+    // sub-verb tree `section FRAME show` runs.
+    let first_arg = state.positional(0).map(str::to_ascii_lowercase);
+    let first_arg = first_arg.as_deref();
     // `frame` opens a sub-verb tree — once the user has typed
     // `section frame …` we delegate every later token to the
     // frame-specific completer (which surfaces the same kv keys
@@ -138,6 +143,7 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
 /// (`border` / `font` / `color` already do this; section was
 /// the outlier shipping hint-less verb rows).
 fn verb_completions(partial: &str) -> Vec<Completion> {
+    let partial = &partial.to_ascii_lowercase();
     VERBS
         .iter()
         .filter(|v| v.starts_with(partial))
@@ -190,11 +196,15 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             )
         }
     };
+    // Subverb names are case-insensitive console-wide — see
+    // `commands/mod.rs` § Casing. `verb` itself stays as the user
+    // typed it so the unknown-subverb message echoes their spelling.
+    let verb_lc = verb.to_ascii_lowercase();
     // `frame` is a kv-form subverb whose own selection rules differ
     // from move/resize (it tolerates Single + section=K, walks
     // multiple nodes, doesn't require a positional dx/dy). Hand
     // off before move/resize's resolver runs.
-    if verb == "frame" {
+    if verb_lc == "frame" {
         return frame::execute_section_frame(args, eff);
     }
     // `add` resolves its own target — the `at=` kv supplies the
@@ -203,7 +213,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // resolver so a Single(node) selection (no section pre-
     // selected) doesn't trip the "select a specific section"
     // error.
-    if verb == "add" {
+    if verb_lc == "add" {
         let node_id = match resolve_node_id(&eff.document.selection) {
             Ok(id) => id,
             Err(msg) => return ExecResult::err(msg),
@@ -221,7 +231,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     const KNOWN_VERBS: &[&str] = &[
         "move", "resize", "show", "text", "edit", "delete", "split", "frame", "add",
     ];
-    if !KNOWN_VERBS.iter().any(|v| *v == verb) {
+    if !KNOWN_VERBS.iter().any(|v| *v == verb_lc) {
         return ExecResult::err(format!(
             "section: unknown subverb '{}'\n  \
              readout:   show\n  \
@@ -291,7 +301,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if target_idx >= section_count {
         return ExecResult::err(format!("section[{}] not found on node '{}'", target_idx, node_id));
     }
-    match verb {
+    match verb_lc.as_str() {
         "move" => execute_move(args, eff.document, &node_id, target_idx),
         "resize" => execute_resize(args, eff.document, &node_id, target_idx),
         "show" => execute_show(args, eff.document, &node_id, target_idx),
@@ -305,7 +315,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             log::error!("section add reached the per-section dispatcher; expected upstream routing");
             ExecResult::err("internal: section add routing miss")
         }
-        other => ExecResult::err(format!("section: unknown subverb '{}'", other)),
+        _ => ExecResult::err(format!("section: unknown subverb '{}'", verb)),
     }
 }
 

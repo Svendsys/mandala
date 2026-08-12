@@ -56,7 +56,7 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
                 .collect()
         }
         1 if matches!(
-            state.positional(0),
+            state.positional(0).map(str::to_ascii_lowercase).as_deref(),
             Some("apply") | Some("help") | Some("inspect")
         ) =>
         {
@@ -86,14 +86,19 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
 }
 
 fn execute_mutation(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    match args.positional(0) {
+    // Sub-command names are case-insensitive console-wide — see
+    // `commands/mod.rs` § Casing. The mutation *id* at
+    // positional(1) is not: it is a registry key, matched as
+    // written.
+    let sub = args.positional(0);
+    match sub.map(str::to_ascii_lowercase).as_deref() {
         Some("list") => list(args, eff),
         Some("apply") => apply(args, eff),
         Some("help") => help(args, eff),
         Some("inspect") => inspect(args, eff),
-        Some(other) => ExecResult::err(format!(
+        Some(_) => ExecResult::err(format!(
             "unknown mutation sub-command: {} (try list / apply / help / inspect)",
-            other
+            sub.unwrap_or_default()
         )),
         None => ExecResult::err("mutation needs a sub-command (list / apply / help / inspect)"),
     }

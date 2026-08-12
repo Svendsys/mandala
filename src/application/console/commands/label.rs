@@ -66,8 +66,10 @@ fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
 fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Positional verbs: `edit`, `clear`. These sit *alongside* the
     // kv surface — `label edit` with no kvs hands off to the modal;
-    // `label clear` empties the label.
-    match args.positional(0) {
+    // `label clear` empties the label. Case-insensitive
+    // console-wide — see `commands/mod.rs` § Casing.
+    let verb = args.positional(0);
+    match verb.map(str::to_ascii_lowercase).as_deref() {
         Some("edit") => {
             // `label edit` opens the inline editor. Dispatches
             // to the edge label editor for `Edge` selections and
@@ -113,10 +115,10 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             _ => return ExecResult::err("no edge selected"),
         },
-        Some(other) => {
+        Some(_) => {
             return ExecResult::err(format!(
                 "unknown label verb '{}'; use kv form (text=... position=...) or 'edit' / 'clear'",
-                other
+                verb.unwrap_or_default()
             ))
         }
         None => {}

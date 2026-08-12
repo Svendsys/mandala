@@ -49,7 +49,13 @@ pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> 
     // vocabulary as the committing kv-form). The engine's
     // `Token { index }` counts past the parent command, so
     // `section frame preview <here>` lands at index 2.
-    let after_preview = state.positional(1) == Some("preview");
+    // `eq_ignore_ascii_case`, because `execute_section_frame`
+    // dispatches on `verb.to_ascii_lowercase()`: `section frame
+    // PREVIEW commit` runs, so `section frame PREVIEW <TAB>` has
+    // to reach the same arm rather than falling to the kv keys.
+    let after_preview = state
+        .positional(1)
+        .is_some_and(|v| v.eq_ignore_ascii_case("preview"));
     match &state.context {
         // The engine's `Token { index }` is the count of non-kv
         // positionals *after* the command name, so for the input

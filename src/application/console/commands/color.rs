@@ -52,7 +52,11 @@ fn complete_color(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completi
         // the kv keys, which `execute_color` rejects there. The arm
         // sits ahead of the general one so the popup offers only
         // what the verb accepts.
-        CompletionContext::Token { index: 1 } if state.positional(0) == Some("picker") => {
+        CompletionContext::Token { index: 1 }
+            if state
+                .positional(0)
+                .is_some_and(|v| v.eq_ignore_ascii_case("picker")) =>
+        {
             prefix_filter(&["on", "off"], state.partial)
         }
         CompletionContext::Token { index } => {
@@ -250,8 +254,11 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     //    standalone palette (no target; commit applies to selection)
     //  - `color picker off` — close any open picker
     if let Some(verb) = args.positional(0) {
-        if verb == "picker" {
-            match args.positional(1) {
+        // Subverb names are case-insensitive console-wide — see
+        // `commands/mod.rs` § Casing.
+        let verb_lc = verb.to_ascii_lowercase();
+        if verb_lc == "picker" {
+            match args.positional(1).map(str::to_ascii_lowercase).as_deref() {
                 Some("on") => {
                     eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPickerStandalone);
                     eff.close_console = true;
@@ -265,7 +272,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 _ => return ExecResult::err("usage: color picker on | color picker off"),
             }
         }
-        match picker_target_for(verb, &eff.document.selection) {
+        match picker_target_for(&verb_lc, &eff.document.selection) {
             PickerTargetOutcome::Open(target) => {
                 eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPicker(target));
                 eff.close_console = true;
@@ -276,7 +283,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             PickerTargetOutcome::Unknown => {}
         }
-        if matches!(verb, "pick" | "bg" | "text" | "border") {
+        if matches!(verb_lc.as_str(), "pick" | "bg" | "text" | "border") {
             return ExecResult::err(format!("color {}: nothing to pick for this selection", verb));
         }
     }
