@@ -82,6 +82,11 @@ field:
 | Node text | `overrides.text` | `group.text` | `style.text_color` | `node_text_color` |
 | Node title | `overrides.title` | `group.title` | the text role above | `node_title_color` |
 
+An **empty** value in the frame, text or title column is a hole rather
+than a color: the reader skips that tier and takes the next one. Only
+`background` passes an empty string along, where it means "no fill".
+See [schema.md](./schema.md#palette-on-the-map).
+
 ## Overriding one channel on one node
 
 ```json
@@ -152,9 +157,12 @@ instead of repeating the root's.
 
 > The miMind corpus this format was migrated from cycled instead: in
 > `maps/testament.mindmap.json`, the `sandy` palette has 7 groups and
-> nodes at levels 7–15 carry baked frame colors matching
-> `groups[level % 7]`. Mandala clamps. The two rules agree for every
-> level inside the palette and differ only past its end.
+> **32 of the 39** nodes at levels 7–15 carry baked frame colors
+> matching `groups[level % 7]`. One matches the clamp; the remaining
+> seven — six at level 9 and one at level 12 — match neither rule, so
+> the corpus is evidence for cycling rather than a demonstration of
+> it. Mandala clamps. The two rules agree for every level inside the
+> palette and differ only past its end.
 
 `level` is stored explicitly rather than computed from parent chain depth
 because subtrees may be themed independently — a deep subtree can restart

@@ -50,6 +50,22 @@ fn channel_override<'a>(
     pick(&node.color_schema.as_ref()?.overrides)
 }
 
+/// `None` for the empty string, `Some` otherwise.
+///
+/// **Which channels use it is the whole content of the rule.** An
+/// empty `background` is a value: the node pass reads it as "no
+/// fill, let the canvas show through", so it has to be passed
+/// along. An empty `frame`, `text` or `title` is not — none of
+/// them has a transparent spelling (a frame is switched off with
+/// `show_frame`, and text has no off), so an empty one reaches
+/// `hex_to_rgba_safe` and paints opaque black, losing the
+/// `style` value it was supposed to be shadowing. `title` already
+/// fell through; the other two now do too, which is the symmetry
+/// `format/schema.md` describes.
+fn non_empty(value: &str) -> Option<&str> {
+    (!value.is_empty()).then_some(value)
+}
+
 impl MindMap {
     /// Resolve the [`ColorGroup`] a themed node draws from, or
     /// `None` when the node is unthemed and its `style` colors
@@ -123,15 +139,18 @@ impl MindMap {
     ///
     /// Cost: one [`Self::resolve_theme_colors`]. No allocation.
     pub fn node_frame_theme_tier<'a>(&'a self, node: &'a MindNode) -> Option<&'a str> {
-        if let Some(own) = channel_override(node, |o| o.frame.as_deref()) {
+        if let Some(own) = channel_override(node, |o| o.frame.as_deref()).and_then(non_empty) {
             return Some(own);
         }
-        Some(self.resolve_theme_colors(node)?.frame.as_str())
+        non_empty(self.resolve_theme_colors(node)?.frame.as_str())
     }
 
     /// The authored **frame** color for a node: this node's own
     /// `frame` override, else the resolved palette group's `frame`,
     /// else `node.style.frame_color`.
+    ///
+    /// An **empty** group `frame` is not a color and falls
+    /// through to `style.frame_color`; see [`non_empty`].
     ///
     /// This is the cascade base the border resolver
     /// (`mindmap::border::resolve_border_style`) sits on top of, so
@@ -150,6 +169,12 @@ impl MindMap {
     /// `text` override, else the resolved palette group's `text`,
     /// else `node.style.text_color`.
     ///
+    /// An **empty** group `text` is not a color; it falls through
+    /// to `style.text_color`, exactly as an empty `title` falls
+    /// through to `text`. Only `background` passes an empty string
+    /// along, because there it spells "transparent" — see
+    /// [`non_empty`].
+    ///
     /// This is the section-level default, not a per-grapheme one. A
     /// [`TextRun`](super::TextRun) carrying a non-empty `color`
     /// keeps it: a run is a deliberate per-slice override and the
@@ -159,13 +184,12 @@ impl MindMap {
     /// carry no runs at all. Cost: one
     /// [`Self::resolve_theme_colors`].
     pub fn node_text_color<'a>(&'a self, node: &'a MindNode) -> &'a str {
-        if let Some(own) = channel_override(node, |o| o.text.as_deref()) {
+        if let Some(own) = channel_override(node, |o| o.text.as_deref()).and_then(non_empty) {
             return own;
         }
-        match self.resolve_theme_colors(node) {
-            Some(group) => group.text.as_str(),
-            None => node.style.text_color.as_str(),
-        }
+        self.resolve_theme_colors(node)
+            .and_then(|group| non_empty(group.text.as_str()))
+            .unwrap_or(node.style.text_color.as_str())
     }
 
     /// The authored **title** color for a node — the first-line
@@ -181,13 +205,12 @@ impl MindMap {
     ///
     /// Cost: one [`Self::resolve_theme_colors`].
     pub fn node_title_color<'a>(&'a self, node: &'a MindNode) -> &'a str {
-        if let Some(own) = channel_override(node, |o| o.title.as_deref()) {
+        if let Some(own) = channel_override(node, |o| o.title.as_deref()).and_then(non_empty) {
             return own;
         }
-        match self.resolve_theme_colors(node) {
-            Some(group) if !group.title.is_empty() => group.title.as_str(),
-            _ => self.node_text_color(node),
-        }
+        self.resolve_theme_colors(node)
+            .and_then(|group| non_empty(group.title.as_str()))
+            .unwrap_or_else(|| self.node_text_color(node))
     }
 
     /// [`Self::node_text_color`] carried the whole way to pixels —
@@ -228,11 +251,30 @@ impl MindMap {
     ///
     /// **The source node, not the target.** An edge is drawn in its
     /// parent's branch color, which is what the miMind-derived
-    /// corpus shows: of the 248 `parent_child` edges in
-    /// `maps/testament.mindmap.json`, 229 carry their `from_id`
-    /// node's frame color and 5 carry their `to_id` node's. A
-    /// cross-link is colored by the same rule, so the direction the
-    /// author drew it in is the direction it takes its color from.
+    /// corpus shows. Counted over the 248 `parent_child` edges in
+    /// `maps/testament.mindmap.json`, on each of the three bases
+    /// one could reasonably measure — the endpoints' baked
+    /// `style.frame_color`, and the palette frame this cascade
+    /// actually resolves, under each of the two level rules:
+    ///
+    /// | basis | `from_id` | `to_id` | neither | both |
+    /// |---|---|---|---|---|
+    /// | `style.frame_color` | 229 | 5 | 17 | 3 |
+    /// | resolved palette, clamp (what this code does) | 145 | 14 | 103 | 14 |
+    /// | resolved palette, wrap | 194 | 0 | 54 | 0 |
+    ///
+    /// Rows do not sum to 248 because an edge can match both
+    /// endpoints or neither. Excluding the ties, the margin is 226
+    /// against 2, 131 against 0, and 194 against 0: the conclusion
+    /// survives every basis, which is why it is stated as one. The
+    /// middle row is the one this code produces, and it is the
+    /// weakest of the three — the baked `style` values the first
+    /// row measures have drifted from the palettes they came from,
+    /// which is the whole reason this cascade had to be wired.
+    ///
+    /// A cross-link is colored by the same rule, so the direction
+    /// the author drew it in is the direction it takes its color
+    /// from.
     ///
     /// The group's `frame` is the channel used, not `background`: a
     /// connection is a stroke, and the frame is the palette's
@@ -475,6 +517,56 @@ mod tests {
             map.node_title_color(node),
             "#fff",
             "no style field carries a title color, so it follows text"
+        );
+    }
+
+    /// An empty channel is a *hole*, not a color — for every
+    /// channel except `background`, where empty spells
+    /// "transparent". A group leaving `text` or `frame` empty used
+    /// to hand the empty string straight to `hex_to_rgba_safe`,
+    /// which paints opaque black: a documented-legal palette value
+    /// silently discarding the `style` value it shadows, while the
+    /// identically-empty `title` fell through correctly.
+    #[test]
+    fn test_an_empty_group_channel_falls_through_except_for_background() {
+        let mut map = probe_map();
+        map.palettes.insert(
+            "holes".into(),
+            Palette {
+                groups: vec![group("", "", "", "")],
+            },
+        );
+        {
+            let node = map.nodes.get_mut("a").unwrap();
+            node.color_schema = Some(ColorSchema {
+                palette: "holes".into(),
+                level: 0,
+                starts_at_root: true,
+                connections_colored: true,
+                overrides: ColorOverrides::default(),
+            });
+        }
+        let node = map.nodes.get("a").unwrap();
+        assert_eq!(
+            map.node_frame_color(node),
+            "#fff",
+            "empty frame falls through to style"
+        );
+        assert_eq!(
+            map.node_text_color(node),
+            "#fff",
+            "empty text falls through to style"
+        );
+        assert_eq!(map.node_title_color(node), "#fff", "…and title follows text");
+        assert_eq!(
+            map.node_background_color(node),
+            "",
+            "an empty background is the format's `transparent`, and is passed along"
+        );
+        assert_eq!(
+            map.node_frame_theme_tier(node),
+            None,
+            "a hole is not a theme tier, so a canvas-wide border color still applies"
         );
     }
 

@@ -487,9 +487,19 @@ strings. The `groups` array is indexed by the node's
 `color_schema.level`. `background`, `frame` and `text` stand in for the
 node's `style.background_color` / `frame_color` / `text_color`;
 `title` stands in for `text` on the first line of the node's first
-section. An empty string in any channel means "no palette value here"
-for `title` and is passed through verbatim for the other three (an
-empty `background` is the format's "no fill" spelling).
+section.
+
+An empty string means **"no palette value here"** in three of the four
+channels — `frame`, `text` and `title` — and the node falls through to
+the tier below (`style.frame_color`, `style.text_color`, and the text
+role respectively). `background` is the exception and passes its empty
+string through verbatim, because there empty is the format's "no fill,
+let the canvas show through" spelling. The asymmetry is the point: a
+transparent fill is a thing an author can want, while a transparent
+frame is spelled `show_frame: false` and transparent text is not a
+thing at all — an empty value in those channels reaches the color
+parser and paints opaque black, discarding the `style` value it was
+supposed to be shadowing.
 
 ## Edge
 

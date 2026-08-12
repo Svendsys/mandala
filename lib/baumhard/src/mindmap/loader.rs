@@ -1373,6 +1373,89 @@ mod tests {
         assert_eq!(node.sections[0].text, "ok");
     }
 
+    /// `ColorSchema.level` is a `usize`, and the loader is where
+    /// that stops being a claim. It used to be an `i32` the
+    /// resolver cast with `as usize`, which turned an authored
+    /// `-1` into 18446744073709551615 and clamped it silently to
+    /// the last group — a themed node quietly wearing the wrong
+    /// color with nothing in the output to say so. Three shapes,
+    /// three verdicts, and none of them was pinned by anything:
+    /// the converter's floor is tested, the loader's refusal was
+    /// not.
+    fn map_with_level(level: &str) -> String {
+        format!(
+            r##"{{
+            "version": "1.0",
+            "name": "leveled",
+            "canvas": {{"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {{}},
+                       "theme_variants": {{}}}},
+            "palettes": {{"p": {{"groups": [
+                {{"background":"#100000","frame":"#200000","text":"#300000","title":""}},
+                {{"background":"#110000","frame":"#210000","text":"#310000","title":""}}
+            ]}}}},
+            "nodes": {{"0": {{
+                "id": "0", "parent_id": null,
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{{"text": "ok"}}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": "",
+                "color_schema": {{"palette":"p","level":{level},
+                                  "starts_at_root":true,"connections_colored":false}}
+            }}}},
+            "edges": []
+        }}"##
+        )
+    }
+
+    #[test]
+    fn test_negative_color_schema_level_is_refused_by_the_loader() {
+        let err = load_from_str(&map_with_level("-1")).expect_err("a negative level must not load");
+        assert!(
+            err.contains("invalid value") && err.contains("expected usize"),
+            "serde's own type message is the diagnostic; got: {err}"
+        );
+        assert!(
+            err.contains("\"0\""),
+            "the message must name the node it came from: {err}"
+        );
+    }
+
+    #[test]
+    fn test_fractional_color_schema_level_is_refused_by_the_loader() {
+        let err = load_from_str(&map_with_level("1.5")).expect_err("a fractional level must not load");
+        assert!(
+            err.contains("invalid type") && err.contains("expected usize"),
+            "serde's own type message is the diagnostic; got: {err}"
+        );
+    }
+
+    /// The other end: a level far past the palette's last group is
+    /// **legal** and clamps. Nothing about a deep subtree is
+    /// malformed, so the loader has no business refusing it — the
+    /// resolver degrades it to the last group instead (see
+    /// `format/palettes.md`).
+    #[test]
+    fn test_an_enormous_color_schema_level_loads_and_clamps() {
+        let map = load_from_str(&map_with_level("1000000000000000000"))
+            .expect("a level past the palette's end is legal");
+        let node = map.nodes.get("0").expect("node 0 loads");
+        assert_eq!(
+            node.color_schema.as_ref().unwrap().level,
+            1_000_000_000_000_000_000
+        );
+        let group = map
+            .resolve_theme_colors(node)
+            .expect("an out-of-range level clamps rather than failing");
+        assert_eq!(group.frame, "#210000", "clamped to the last group");
+        assert_eq!(map.node_frame_color(node), "#210000");
+    }
+
     /// A node with `sections: []` is rejected — every renderable
     /// node needs at least one section, and the loader catches this
     /// at parse time so the tree builder's recursion never sees a
