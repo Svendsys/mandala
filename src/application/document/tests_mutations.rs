@@ -2364,31 +2364,25 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
 /// every sibling section and leave this one behind.
 #[test]
 fn test_grow_font_on_runless_section_of_themed_node_keeps_deferring() {
+    use super::tests_common::theme_node_with_probe_palette;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, MindSection, Palette};
+    use baumhard::mindmap::model::{ColorGroup, MindSection};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    doc.mindmap.palettes.insert(
-        "grow-probe".into(),
-        Palette {
-            groups: vec![ColorGroup {
-                background: "#101010".into(),
-                frame: "#202020".into(),
-                text: "#30ff30".into(),
-                title: String::new(),
-            }],
+    theme_node_with_probe_palette(
+        &mut doc,
+        &nid,
+        "grow-probe",
+        ColorGroup {
+            background: "#101010".into(),
+            frame: "#202020".into(),
+            text: "#30ff30".into(),
+            title: String::new(),
         },
     );
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.style.text_color = "#abcdef".into();
-        node.color_schema = Some(ColorSchema {
-            palette: "grow-probe".into(),
-            level: 0,
-            starts_at_root: true,
-            connections_colored: false,
-            overrides: ColorOverrides::default(),
-        });
         node.sections
             .push(MindSection::new_default("runless".into(), Vec::new()));
     }
@@ -2437,31 +2431,25 @@ fn test_grow_font_on_runless_section_of_themed_node_keeps_deferring() {
 /// pushed an undo entry for a no-op.
 #[test]
 fn test_no_op_mutation_leaves_a_colorless_run_on_a_themed_node_alone() {
+    use super::tests_common::theme_node_with_probe_palette;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette, TextRun};
+    use baumhard::mindmap::model::{ColorGroup, TextRun};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    doc.mindmap.palettes.insert(
-        "colorless-probe".into(),
-        Palette {
-            groups: vec![ColorGroup {
-                background: "#101010".into(),
-                frame: "#202020".into(),
-                text: "#30ff30".into(),
-                title: String::new(),
-            }],
+    theme_node_with_probe_palette(
+        &mut doc,
+        &nid,
+        "colorless-probe",
+        ColorGroup {
+            background: "#101010".into(),
+            frame: "#202020".into(),
+            text: "#30ff30".into(),
+            title: String::new(),
         },
     );
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.style.text_color = "#abcdef".into();
-        node.color_schema = Some(ColorSchema {
-            palette: "colorless-probe".into(),
-            level: 0,
-            starts_at_root: true,
-            connections_colored: false,
-            overrides: ColorOverrides::default(),
-        });
         let section = node.sections.first_mut().expect("testament node 0 has a section");
         section.text = "abcdef".into();
         section.text_runs = vec![TextRun {
@@ -2502,30 +2490,24 @@ fn test_no_op_mutation_leaves_a_colorless_run_on_a_themed_node_alone() {
 /// than the comparison gate.
 #[test]
 fn test_text_edit_keeps_a_colorless_run_deferring_on_a_themed_node() {
+    use super::tests_common::theme_node_with_probe_palette;
     use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
-    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette, TextRun};
+    use baumhard::mindmap::model::{ColorGroup, TextRun};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    doc.mindmap.palettes.insert(
-        "editor-probe".into(),
-        Palette {
-            groups: vec![ColorGroup {
-                background: "#101010".into(),
-                frame: "#202020".into(),
-                text: "#30ff30".into(),
-                title: String::new(),
-            }],
+    theme_node_with_probe_palette(
+        &mut doc,
+        &nid,
+        "editor-probe",
+        ColorGroup {
+            background: "#101010".into(),
+            frame: "#202020".into(),
+            text: "#30ff30".into(),
+            title: String::new(),
         },
     );
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
-        node.color_schema = Some(ColorSchema {
-            palette: "editor-probe".into(),
-            level: 0,
-            starts_at_root: true,
-            connections_colored: false,
-            overrides: ColorOverrides::default(),
-        });
         let section = node.sections.first_mut().expect("testament node 0 has a section");
         section.text = "abcdef".into();
         section.text_runs = vec![TextRun {

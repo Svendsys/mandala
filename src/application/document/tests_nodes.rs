@@ -1561,30 +1561,24 @@ fn test_set_node_text_color_round_trips_through_undo() {
 /// lands in the node's own overrides where the read path looks.
 #[test]
 fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
-    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette};
+    use super::tests_common::theme_node_with_probe_palette;
+    use baumhard::mindmap::model::ColorGroup;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
-    doc.mindmap.palettes.insert(
-        "write-probe".into(),
-        Palette {
-            groups: vec![ColorGroup {
-                background: "#101010".into(),
-                frame: "#202020".into(),
-                text: "#303030".into(),
-                title: String::new(),
-            }],
+    theme_node_with_probe_palette(
+        &mut doc,
+        &nid,
+        "write-probe",
+        ColorGroup {
+            background: "#101010".into(),
+            frame: "#202020".into(),
+            text: "#303030".into(),
+            title: String::new(),
         },
     );
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
-        node.color_schema = Some(ColorSchema {
-            palette: "write-probe".into(),
-            level: 0,
-            starts_at_root: true,
-            connections_colored: false,
-            overrides: ColorOverrides::default(),
-        });
         // `style.text_color` is a stale copy the palette shadows —
         // the shape every migrated node is in.
         node.style.text_color = "#dddddd".into();

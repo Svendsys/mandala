@@ -314,29 +314,23 @@ fn current_color_at_section_range_unanimous_across_multiple_adjacent_runs() {
 #[test]
 fn current_color_at_node_reads_through_the_palette_cascade() {
     use crate::application::color_picker::NodeColorAxis;
-    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette};
+    use crate::application::document::tests_common::theme_node_with_probe_palette;
+    use baumhard::mindmap::model::ColorGroup;
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    doc.mindmap.palettes.insert(
-        "picker-probe".into(),
-        Palette {
-            groups: vec![ColorGroup {
-                background: "#a10000".into(),
-                frame: "#a20000".into(),
-                text: "#a30000".into(),
-                title: String::new(),
-            }],
+    theme_node_with_probe_palette(
+        &mut doc,
+        &id,
+        "picker-probe",
+        ColorGroup {
+            background: "#a10000".into(),
+            frame: "#a20000".into(),
+            text: "#a30000".into(),
+            title: String::new(),
         },
     );
     {
         let node = doc.mindmap.nodes.get_mut(&id).unwrap();
-        node.color_schema = Some(ColorSchema {
-            palette: "picker-probe".into(),
-            level: 0,
-            starts_at_root: true,
-            connections_colored: false,
-            overrides: ColorOverrides::default(),
-        });
         node.style.background_color = "#111111".into();
         node.style.frame_color = "#222222".into();
         node.style.text_color = "#333333".into();
