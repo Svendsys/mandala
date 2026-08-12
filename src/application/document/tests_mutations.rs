@@ -2307,7 +2307,7 @@ fn test_grow_font_clamps_to_maximum() {
 /// The node's `color_schema` is cleared first so `style.text_color`
 /// really is the effective default here; the themed half of that
 /// cascade is
-/// `test_grow_font_on_runless_section_of_themed_node_takes_palette_color`.
+/// `test_grow_font_on_runless_section_of_themed_node_keeps_deferring`.
 #[test]
 fn test_grow_font_on_runless_section_synthesizes_run() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
@@ -2363,7 +2363,7 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
 /// section into a hardcoded one: the next palette edit would move
 /// every sibling section and leave this one behind.
 #[test]
-fn test_grow_font_on_runless_section_of_themed_node_takes_palette_color() {
+fn test_grow_font_on_runless_section_of_themed_node_keeps_deferring() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
     use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, MindSection, Palette};
     let mut doc = load_test_doc();

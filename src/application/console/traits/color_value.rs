@@ -20,7 +20,13 @@ pub enum ColorValue {
     /// against the canvas's theme_variables.
     Var(&'static str),
     /// Clear any local override — the component falls back to its
-    /// natural default. What "natural default" means is per-trait.
+    /// natural default. What "natural default" means is per-trait,
+    /// but *clearing* is not optional: every impl reaches the
+    /// setter through `None` (or, at the run tier, the empty
+    /// string that spells "follow the node"), never through a
+    /// literal standing in for the default. A literal is a value,
+    /// and a value written into the winning tier is an exception
+    /// to the cascade that only undo can take back.
     Reset,
 }
 

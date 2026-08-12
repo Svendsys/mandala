@@ -466,8 +466,15 @@ did, by way of an `as usize` wrap).
 as a `ColorGroup` (`background`, `frame`, `text`, `title`), each an
 optional `#RRGGBB` / `var(--name)` string. A channel present here is
 this node's own color and outranks the group; the key is omitted
-entirely when nothing is overridden. It is where the interactive
-color setters write on a themed node.
+entirely when nothing is overridden, and an explicit `null` reads
+the same as omitting it. It is where the interactive color setters
+write on a themed node, and a `reset` on one of them drops the
+channel back out.
+
+An **empty** string is a hole rather than a color on `frame`,
+`text` and `title`, exactly as it is in a `ColorGroup`: the reader
+skips the tier. Only `background` carries one as a value, where it
+means "no fill".
 
 See [palettes.md](./palettes.md) for resolution semantics.
 

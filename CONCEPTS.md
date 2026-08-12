@@ -1301,7 +1301,16 @@ nothing on screen. `set_node_bg_color` /
 unthemed one, through one shared
 `set_node_color_channel`; `UndoAction::EditNodeStyle` carries
 `before_color_schema` so undo puts the node back on its
-palette. Full reference:
+palette.
+
+A tier you can write is only half a tier: each of the three
+setters takes an `Option`, and `None` — what `color bg=reset`
+and the empty string on a non-fill channel both resolve to —
+*drops* the override so the group shows through again, rather
+than storing the authoring literal that would pin the node off
+its theme forever. On an unthemed node there is nothing below
+`style`, so the same `None` names the authoring default
+instead. Full reference:
 [`format/palettes.md`](./format/palettes.md).
 
 Animated palette transitions are the seam — the data

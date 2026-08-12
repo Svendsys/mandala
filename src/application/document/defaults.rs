@@ -16,6 +16,33 @@ use baumhard::mindmap::model::{
 /// nothing else in the cascade supplies one.
 pub(in crate::application) const DEFAULT_RUN_FONT_FAMILY: &str = "LiberationSans";
 
+/// Fill color of a node nothing has said anything about — what
+/// [`default_orphan_node`] writes into `style.background_color`.
+///
+/// Also what a `color bg=reset` writes on an **unthemed** node.
+/// The two are one constant on purpose: "reset" means *the
+/// natural default*, and the only defensible reading of that on a
+/// node with no theme to fall back to is the fill every node this
+/// application creates already has. A themed node resets to its
+/// palette instead and never reaches this value — see
+/// `MindMapDocument::set_node_bg_color`.
+pub(in crate::application) const DEFAULT_NODE_BACKGROUND_COLOR: &str = "#141414";
+
+/// Frame color of a node nothing has said anything about, and the
+/// unthemed `color frame=reset` target. Same reasoning as
+/// [`DEFAULT_NODE_BACKGROUND_COLOR`].
+pub(in crate::application) const DEFAULT_NODE_FRAME_COLOR: &str = "#30b082";
+
+/// Text color of a node nothing has said anything about, and the
+/// unthemed `color text=reset` target. Same reasoning as
+/// [`DEFAULT_NODE_BACKGROUND_COLOR`].
+///
+/// Distinct from [`DEFAULT_RUN_COLOR`], which is the *run* tier's
+/// answer to the same question: a run has a node underneath it to
+/// defer to and says so with the empty string, while
+/// `style.text_color` is the floor and has to name a color.
+pub(in crate::application) const DEFAULT_NODE_TEXT_COLOR: &str = "#ffffff";
+
 /// Point size a freshly-authored [`TextRun`] carries.
 ///
 /// **Not the same number as the renderer's no-runs fallback.**
@@ -125,9 +152,9 @@ pub(in crate::application) fn default_orphan_node(id: &str, position: Vec2) -> M
         // (offset 0, fill the node, channel 0) shape.
         sections: vec![MindSection::new_default(text, text_runs)],
         style: NodeStyle {
-            background_color: "#141414".to_string(),
-            frame_color: "#30b082".to_string(),
-            text_color: "#ffffff".to_string(),
+            background_color: DEFAULT_NODE_BACKGROUND_COLOR.to_string(),
+            frame_color: DEFAULT_NODE_FRAME_COLOR.to_string(),
+            text_color: DEFAULT_NODE_TEXT_COLOR.to_string(),
             shape: "rectangle".to_string(),
             corner_radius_percent: 10.0,
             frame_thickness: 4.0,

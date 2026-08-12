@@ -57,7 +57,10 @@ Hoisting palettes solves this:
 1. Read `node.color_schema` — if absent, the node uses the colors in its
    `style` (background_color, frame_color, text_color). A channel the
    schema names in `overrides` short-circuits every step below and is
-   used verbatim, even when the palette lookup would fail
+   used verbatim, even when the palette lookup would fail — with the
+   one exception the table below spells out: an *empty* `frame`,
+   `text` or `title` override is a hole, not a color, and falls
+   through exactly as an empty group channel does
 2. Look up `schema.palette` in `map.palettes`
 3. Pick the group index: `schema.level` when `starts_at_root` is true,
    `schema.level - 1` when it is false (see below)
@@ -83,8 +86,9 @@ field:
 | Node title | `overrides.title` | `group.title` | the text role above | `node_title_color` |
 
 An **empty** value in the frame, text or title column is a hole rather
-than a color: the reader skips that tier and takes the next one. Only
-`background` passes an empty string along, where it means "no fill".
+than a color, in the *override* column as much as the palette one: the
+reader skips that tier and takes the next one. Only `background`
+passes an empty string along, where it means "no fill".
 See [schema.md](./schema.md#palette-on-the-map).
 
 ## Overriding one channel on one node
@@ -121,13 +125,41 @@ The three interactive setters cover `background`, `frame` and
 load and has no setter, because `node_title_color` falls through to
 the text role and overriding *that* already moves the title.
 
-Undo restores the whole `color_schema`, so undoing a per-node
-recolor puts the node back on its palette rather than on the stale
-`style` value.
-
 An **unthemed** node has no `color_schema` and therefore no
 override tier; its setters write `style` directly, which is the
 only tier it has.
+
+### Taking an override back off
+
+`color bg=reset` (likewise `text=reset`, `border=reset`) is the verb
+that removes one, and every setter spells the same request as a
+`None`:
+
+| Node | `reset` writes | What it looks like |
+|---|---|---|
+| themed | drops the channel from `overrides` | back on the palette group |
+| unthemed | the node authoring default — `#141414` fill, `#30b082` frame, `#ffffff` text | the colors a freshly created node has |
+
+A themed node ends up **back on the palette**, not merely showing
+the group's current color: a later palette edit reaches it again.
+Writing the authoring literal into `overrides` instead would look
+identical the same afternoon and diverge on the next retheme, which
+is the whole reason `reset` is a clear rather than a value.
+
+Undo restores the whole `color_schema` and so also puts a node back
+on its palette, but it is the *second* way to get there and only
+works while the entry is still on the stack.
+
+The **empty string** is not a color on `frame` and `text`, so a
+write of one is read as the same request as `reset`: the readers
+skip an empty value on those channels, and a setter that stored one
+would report success and paint nothing new. On `background` the
+empty string *is* a color — the transparent one — and is stored as
+written. A run's channel spells the same absence differently: a
+`TextRun` says "follow the node" with an empty `color`, so
+`color text=reset section=K` empties the section's run colors
+rather than clearing anything on the node
+([text-runs.md](./text-runs.md)).
 
 Everything below the node level is *more* specific and wins over the
 theme:

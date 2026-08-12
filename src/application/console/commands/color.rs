@@ -383,37 +383,44 @@ fn apply_section_colors(
                         continue;
                     }
                 };
-                let resolved = color_value
-                    .as_model_string()
-                    .unwrap_or_else(|| "#ffffff".to_string());
-                let applied = match range {
-                    Some((rs, re)) => {
-                        let ok = doc.set_section_text_color_range(&node_id, section_idx, rs, re, resolved);
-                        if !ok {
-                            // Mirror the picker path's stale-range
-                            // diagnostic: the pre-flight `rs >= total`
-                            // check above already rejects ranges past
-                            // the section's grapheme count, so a
-                            // `false` here means either the node /
-                            // section was deleted concurrently or
-                            // `range_end` exceeds total. Surface so
-                            // it doesn't silently land as
-                            // "color: no change".
-                            log::warn!(
-                                "color verb on section {} of node {} \
-                                 range {}..{} produced no change \
-                                 (range may extend past the section's \
-                                 grapheme count or section was deleted)",
-                                section_idx,
-                                node_id,
-                                rs,
-                                re
-                            );
-                        }
-                        ok
-                    }
-                    None => doc.set_section_text_color(&node_id, section_idx, resolved),
+                // Routed through the very `TargetView::Section`
+                // arm the collapsed `SelectionState::Section`
+                // path uses, rather than re-deriving the same
+                // call. The copy that used to live here had
+                // drifted already: it resolved `reset` to a
+                // literal `#ffffff` and baked it onto the runs,
+                // where the trait arm hands the run tier its own
+                // "no color of my own" — the empty string.
+                let mut view = crate::application::console::traits::TargetView::Section {
+                    doc: &mut *doc,
+                    id: node_id.clone(),
+                    section_idx,
+                    range,
                 };
+                let applied = view.set_text_color(color_value) == Outcome::Applied;
+                if !applied {
+                    if let Some((rs, re)) = range {
+                        // Mirror the picker path's stale-range
+                        // diagnostic: the pre-flight `rs >= total`
+                        // check above already rejects ranges past
+                        // the section's grapheme count, so no
+                        // change here means either the node /
+                        // section was deleted concurrently or
+                        // `range_end` exceeds total. Surface so
+                        // it doesn't silently land as
+                        // "color: no change".
+                        log::warn!(
+                            "color verb on section {} of node {} \
+                             range {}..{} produced no change \
+                             (range may extend past the section's \
+                             grapheme count or section was deleted)",
+                            section_idx,
+                            node_id,
+                            rs,
+                            re
+                        );
+                    }
+                }
                 if applied {
                     any_applied = true;
                 }
@@ -958,5 +965,77 @@ mod tests {
             "no picker should open for bg axis on a section selection"
         );
         assert_exec_err_contains(result, "not applicable");
+    }
+
+    /// `color text=reset section=K` unpins the section's runs
+    /// instead of baking a literal white onto them.
+    ///
+    /// A run's color is the *most* specific tier in the cascade, so
+    /// a literal written here survives every retheme — which is the
+    /// opposite of what "reset" promises. The run tier's own
+    /// spelling for "no color of my own" is the empty string, and
+    /// that is what a reset has to produce.
+    #[test]
+    fn color_text_section_reset_unpins_the_runs() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run("color text=reset section=1", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.color.is_empty()),
+            "reset must leave the runs deferring, got {:?}",
+            node.sections[1].text_runs
+        );
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.color == "#aaaaaa"),
+            "the sibling section is not part of the gesture"
+        );
+    }
+
+    /// `color bg=reset` / `border=reset` / `text=reset` on a themed
+    /// node, end to end through the verb.
+    ///
+    /// The node has to come back onto its palette. Before the
+    /// override tier existed the reset literals landed in `style`,
+    /// which the palette shadows, so the gesture was a no-op nobody
+    /// noticed; landing them in the override tier instead would
+    /// have made it a permanent exception with no verb to lift it.
+    #[test]
+    fn color_reset_on_a_themed_node_hands_it_back_to_the_palette() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+        use crate::application::document::tests_common::theme_node_with_probe_palette;
+        use baumhard::mindmap::model::ColorGroup;
+
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        let group = theme_node_with_probe_palette(
+            &mut doc,
+            &id,
+            "verb-reset-probe",
+            ColorGroup {
+                background: "#a9decb".into(),
+                frame: "#30b082".into(),
+                text: "#0f0f0f".into(),
+                title: String::new(),
+            },
+        );
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run("color bg=#111111 border=#222222 text=#333333", &mut doc));
+        assert_exec_ok(run("color bg=reset border=reset text=reset", &mut doc));
+
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.color_schema
+                .as_ref()
+                .expect("still themed")
+                .overrides
+                .is_empty(),
+            "every channel must be back to having no opinion"
+        );
+        assert_eq!(doc.mindmap.node_background_color(node), group.background);
+        assert_eq!(doc.mindmap.node_frame_color(node), group.frame);
+        assert_eq!(doc.mindmap.node_text_color(node), group.text);
     }
 }

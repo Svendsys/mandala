@@ -52,6 +52,62 @@ enum NodeColorChannel {
     Text,
 }
 
+impl NodeColorChannel {
+    /// The color this channel has on a node nothing has said
+    /// anything about — [`default_orphan_node`]'s `NodeStyle`.
+    ///
+    /// Only the **unthemed** half of a clear reaches this. A
+    /// themed node clears to its palette group, which is the
+    /// natural default it actually has; an unthemed node has no
+    /// tier underneath `style`, so the floor has to be named.
+    ///
+    /// [`default_orphan_node`]: super::defaults::default_orphan_node
+    fn unthemed_default(self) -> &'static str {
+        use super::defaults::{
+            DEFAULT_NODE_BACKGROUND_COLOR, DEFAULT_NODE_FRAME_COLOR, DEFAULT_NODE_TEXT_COLOR,
+        };
+        match self {
+            NodeColorChannel::Background => DEFAULT_NODE_BACKGROUND_COLOR,
+            NodeColorChannel::Frame => DEFAULT_NODE_FRAME_COLOR,
+            NodeColorChannel::Text => DEFAULT_NODE_TEXT_COLOR,
+        }
+    }
+
+    /// Whether the empty string is a *value* on this channel.
+    ///
+    /// Only on `background`, where it spells "no fill, let the
+    /// canvas show through" and every reader passes it along. On
+    /// `frame` and `text` there is no transparent spelling — a
+    /// frame is switched off with `show_frame` and text has no off
+    /// — so the readers skip an empty value and take the next
+    /// tier (`MindMap::node_frame_theme_tier`,
+    /// `MindMap::node_text_color`). Writing one there would report
+    /// success and paint nothing new, which is the whole defect
+    /// this branch exists to close.
+    fn empty_is_a_color(self) -> bool {
+        self == NodeColorChannel::Background
+    }
+}
+
+/// What a per-node color write is asking for, once the empty
+/// string has been read against the channel it landed on.
+///
+/// The two arms are genuinely different requests, and the tier
+/// the node has decides how each is spelled — which is why this
+/// resolution happens in one place rather than at the three
+/// public setters. See [`MindMapDocument::set_node_color_channel`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeColorWrite<'a> {
+    /// Paint this channel this color.
+    Set(&'a str),
+    /// This node has no color of its own on this channel: take
+    /// whatever it would have had. On a themed node that is the
+    /// palette group, reached by clearing the override slot; on an
+    /// unthemed node there is nothing below `style`, so it is
+    /// [`NodeColorChannel::unthemed_default`].
+    Clear,
+}
+
 /// Snapshot of a `MindSection`'s user-facing fields, used by the
 /// structured-clipboard path (`ClipboardContent::Section` carries
 /// it, the in-process buffer in `application/clipboard.rs` stashes
@@ -358,12 +414,12 @@ impl MindMapDocument {
         .is_some()
     }
 
-    /// Set this node's **fill** color. Returns `true` if the value
-    /// actually changed. Pushes one `UndoAction::EditNodeStyle`
-    /// entry so undo restores the `NodeStyle`, the `ColorSchema`
-    /// *and* the `text_runs` (unchanged for this setter, but the
-    /// variant always carries all three so the undo arm has a
-    /// single shape).
+    /// Set this node's **fill** color, or clear it with `None`.
+    /// Returns `true` if the value actually changed. Pushes one
+    /// `UndoAction::EditNodeStyle` entry so undo restores the
+    /// `NodeStyle`, the `ColorSchema` *and* the `text_runs`
+    /// (unchanged for this setter, but the variant always carries
+    /// all three so the undo arm has a single shape).
     ///
     /// **Where the value lands depends on whether the node is
     /// themed**, because it has to land where the read path looks
@@ -375,30 +431,52 @@ impl MindMapDocument {
     /// instead. An unthemed node has no such tier and takes the
     /// `style` write directly. See `format/palettes.md`.
     ///
+    /// `None` means "this node has no fill of its own": a themed
+    /// node goes back to its palette group, an unthemed one to
+    /// [`DEFAULT_NODE_BACKGROUND_COLOR`]. `Some("")` is *not* the
+    /// same request — on this channel the empty string is a color,
+    /// the transparent one, and it is written through.
+    ///
+    /// [`DEFAULT_NODE_BACKGROUND_COLOR`]: super::defaults::DEFAULT_NODE_BACKGROUND_COLOR
+    ///
     /// No-op on missing node id, matching the `EditEdge` pattern.
-    pub fn set_node_bg_color(&mut self, node_id: &str, color: String) -> bool {
+    pub fn set_node_bg_color(&mut self, node_id: &str, color: Option<&str>) -> bool {
         self.set_node_color_channel(node_id, NodeColorChannel::Background, color)
     }
 
-    /// Set this node's **frame** (border) color. Returns `true` on
-    /// change. Lands in the same two places for the same reason as
-    /// [`Self::set_node_bg_color`].
+    /// Set this node's **frame** (border) color, or clear it with
+    /// `None`. Returns `true` on change. Lands in the same two
+    /// places for the same reason as [`Self::set_node_bg_color`].
     ///
     /// This is the cascade *base* the border resolver sits on: a
     /// node carrying an explicit `style.border.color` keeps
     /// painting that, and this setter does not touch it — the
     /// `border color=` verb is the one that does.
-    pub fn set_node_border_color(&mut self, node_id: &str, color: String) -> bool {
+    ///
+    /// `None` clears: back to the palette group on a themed node,
+    /// to [`DEFAULT_NODE_FRAME_COLOR`] on an unthemed one. Unlike
+    /// the fill channel, `Some("")` clears too — a frame has no
+    /// transparent spelling (that is `show_frame`), the readers
+    /// skip an empty frame, and writing one would report success
+    /// and paint nothing new.
+    ///
+    /// [`DEFAULT_NODE_FRAME_COLOR`]: super::defaults::DEFAULT_NODE_FRAME_COLOR
+    pub fn set_node_border_color(&mut self, node_id: &str, color: Option<&str>) -> bool {
         self.set_node_color_channel(node_id, NodeColorChannel::Frame, color)
     }
 
     /// Set the *default* text color on a node, and recolor every
     /// [`TextRun`] that was
-    /// following that default.
+    /// following that default. `None` clears instead of setting.
     ///
     /// The default itself lands in the same two places as
     /// [`Self::set_node_bg_color`] — the node's own overrides when
-    /// it is themed, `style.text_color` when it is not.
+    /// it is themed, `style.text_color` when it is not — and
+    /// clears the same way: back to the palette group when themed,
+    /// to [`DEFAULT_NODE_TEXT_COLOR`] when not. `Some("")` clears
+    /// as well, for the same reason it does on the frame channel.
+    ///
+    /// [`DEFAULT_NODE_TEXT_COLOR`]: super::defaults::DEFAULT_NODE_TEXT_COLOR
     ///
     /// Runs are treated in three groups, which is the whole
     /// content of "following the default":
@@ -426,12 +504,20 @@ impl MindMapDocument {
     /// there, `style.text_color` is a stale copy the palette
     /// shadows, and a run baked from the palette would never match
     /// it.
-    pub fn set_node_text_color(&mut self, node_id: &str, color: String) -> bool {
+    ///
+    /// On a **clear**, the baked runs are rewritten to the empty
+    /// string rather than to the node's new effective color. That
+    /// is the run tier's own spelling for "follow the node", so
+    /// the graphemes rejoin the cascade instead of being re-pinned
+    /// one tier down — which is the same trap `DEFAULT_RUN_COLOR`
+    /// exists to avoid.
+    pub fn set_node_text_color(&mut self, node_id: &str, color: Option<&str>) -> bool {
         self.set_node_color_channel(node_id, NodeColorChannel::Text, color)
     }
 
     /// Shared body of the three per-node color setters — the one
-    /// place that decides *where* a per-node color write lands.
+    /// place that decides *where* a per-node color write lands and
+    /// what an absent color means once it gets there.
     ///
     /// Reads the effective pre-edit color through the same cascade
     /// the renderer uses, then writes the node's own
@@ -440,8 +526,21 @@ impl MindMapDocument {
     /// never shifts a glyph advance, so there is nothing to
     /// re-measure.
     ///
+    /// `color` is `None` for a clear, and an empty string counts
+    /// as one on every channel where the empty string is not
+    /// itself a color ([`NodeColorChannel::empty_is_a_color`]).
+    /// Each tier spells a clear its own way: the override tier by
+    /// dropping the slot, so the palette group shows through;
+    /// `style`, which has nothing underneath it, by naming
+    /// [`NodeColorChannel::unthemed_default`].
+    ///
     /// Returns `true` when it wrote anything.
-    fn set_node_color_channel(&mut self, node_id: &str, channel: NodeColorChannel, color: String) -> bool {
+    fn set_node_color_channel(
+        &mut self,
+        node_id: &str,
+        channel: NodeColorChannel,
+        color: Option<&str>,
+    ) -> bool {
         let Some(node) = self.mindmap.nodes.get(node_id) else {
             return false;
         };
@@ -457,6 +556,28 @@ impl MindMapDocument {
         }
         .to_string();
 
+        let write = match color {
+            Some(c) if !c.is_empty() || channel.empty_is_a_color() => NodeColorWrite::Set(c),
+            _ => NodeColorWrite::Clear,
+        };
+        // Both halves of the write are settled here, off the
+        // mutable borrow, so the closure below only compares and
+        // assigns. `run_target` is what a baked run follows the
+        // node to: the new color when there is one, and the run
+        // tier's "defer to the node" empty string on a clear.
+        let themed_slot = match write {
+            NodeColorWrite::Set(c) => Some(c.to_string()),
+            NodeColorWrite::Clear => None,
+        };
+        let style_value = match write {
+            NodeColorWrite::Set(c) => c.to_string(),
+            NodeColorWrite::Clear => channel.unthemed_default().to_string(),
+        };
+        let run_target = match write {
+            NodeColorWrite::Set(c) => c.to_string(),
+            NodeColorWrite::Clear => String::new(),
+        };
+
         self.mutate_node_with_style_undo(node_id, NodeEditTail::None, move |node| {
             let mut changed = match node.color_schema.as_mut() {
                 // Themed: the palette group shadows `style`
@@ -468,9 +589,9 @@ impl MindMapDocument {
                         NodeColorChannel::Frame => &mut schema.overrides.frame,
                         NodeColorChannel::Text => &mut schema.overrides.text,
                     };
-                    let differs = slot.as_deref() != Some(color.as_str());
+                    let differs = *slot != themed_slot;
                     if differs {
-                        *slot = Some(color.clone());
+                        *slot = themed_slot.clone();
                     }
                     differs
                 }
@@ -481,9 +602,9 @@ impl MindMapDocument {
                         NodeColorChannel::Frame => &mut node.style.frame_color,
                         NodeColorChannel::Text => &mut node.style.text_color,
                     };
-                    let differs = *slot != color;
+                    let differs = *slot != style_value;
                     if differs {
-                        *slot = color.clone();
+                        slot.clone_from(&style_value);
                     }
                     differs
                 }
@@ -496,8 +617,8 @@ impl MindMapDocument {
                 for section in node.sections.iter_mut() {
                     clamp_runs_to_text(section);
                     for run in section.text_runs.iter_mut() {
-                        if !run.color.is_empty() && run.color == effective_before && run.color != color {
-                            run.color = color.clone();
+                        if !run.color.is_empty() && run.color == effective_before && run.color != run_target {
+                            run.color.clone_from(&run_target);
                             changed = true;
                         }
                     }

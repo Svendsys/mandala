@@ -58,10 +58,22 @@ fn channel_override<'a>(
 /// along. An empty `frame`, `text` or `title` is not — none of
 /// them has a transparent spelling (a frame is switched off with
 /// `show_frame`, and text has no off), so an empty one reaches
-/// `hex_to_rgba_safe` and paints opaque black, losing the
-/// `style` value it was supposed to be shadowing. `title` already
+/// `hex_to_rgba_safe` and paints opaque black. `title` already
 /// fell through; the other two now do too, which is the symmetry
 /// `format/schema.md` describes.
+///
+/// It runs on the [`ColorOverrides`] tier as well as the group,
+/// and the reason there is not the group's. A hole in the group
+/// would lose the `style` value it was shadowing; a hole in an
+/// override is a *node* claiming a color it has not named, which
+/// is not a claim the format can honor. So the readers skip it —
+/// and, symmetrically, the setters never write one: a per-node
+/// write of the empty string to `frame` or `text` clears the slot
+/// instead, because storing a value the reader is guaranteed to
+/// skip is the "reported success, changed nothing on screen"
+/// failure this whole cascade exists to make impossible. A
+/// hand-authored file can still carry one, which is why the skip
+/// stays.
 fn non_empty(value: &str) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
