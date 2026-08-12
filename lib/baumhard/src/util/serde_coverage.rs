@@ -2527,24 +2527,21 @@ pub struct PlantedLeaf {
         /// mistakes would live, and a generated one cannot drift at
         /// all.
         macro_rules! planted {
-            ($($rule:literal => $fields:ident / $variants:ident,)*) => {
+            (
+                fields $field_body:tt
+                variants $variant_body:tt
+                $($rule:literal => $fields:ident / $variants:ident,)*
+            ) => {
                 $(
                     #[derive(serde::Deserialize)]
                     #[serde(rename_all = $rule)]
                     #[allow(dead_code, non_snake_case)]
-                    struct $fields {
-                        control_points: f64,
-                        thing_ß: f64,
-                    }
+                    struct $fields $field_body
 
                     #[derive(serde::Deserialize)]
                     #[serde(rename_all = $rule)]
                     #[allow(dead_code)]
-                    enum $variants {
-                        ControlPoints,
-                        ABCd,
-                        NaÏve,
-                    }
+                    enum $variants $variant_body
                 )*
 
                 /// Reaches every one of them, so the probe's sweep
@@ -2558,27 +2555,58 @@ pub struct PlantedLeaf {
                     )*
                 }
 
-                /// The declarations above, as text for the source
-                /// walk.
-                const SOURCE: &str = concat!(
+                // The declarations above, as text for the source
+                // walk — built from the *same* token trees the
+                // declarations used, so the two halves cannot drift.
+                // `concat!` takes only literals, so this is assembled
+                // at run time; it is a test, and a contract that
+                // cannot drift beats a `const`.
+                // An item, not a `let`: `macro_rules!` bindings are
+                // hygienic and would not be visible to the caller,
+                // whereas the items above (`Rules`) already are.
+                fn planted_source() -> String {
+                    // `stringify!` on the whole braced group, so the
+                    // text and the declaration are the same tokens.
+                    let field_body = stringify!($field_body);
+                    let variant_body = stringify!($variant_body);
+                    let mut s = String::new();
                     $(
-                        "#[derive(Deserialize)]\n#[serde(rename_all = \"", $rule, "\")]\n",
-                        "pub struct ", stringify!($fields),
-                        " { pub control_points: f64, pub thing_ß: f64 }\n",
-                        "#[derive(Deserialize)]\n#[serde(rename_all = \"", $rule, "\")]\n",
-                        "pub enum ", stringify!($variants), " { ControlPoints, ABCd, NaÏve }\n",
+                        s.push_str(&format!(
+                            "#[derive(Deserialize)]\n#[serde(rename_all = \"{}\")]\npub struct {} {}\n",
+                            $rule,
+                            stringify!($fields),
+                            field_body,
+                        ));
+                        s.push_str(&format!(
+                            "#[derive(Deserialize)]\n#[serde(rename_all = \"{}\")]\npub enum {} {}\n",
+                            $rule,
+                            stringify!($variants),
+                            variant_body,
+                        ));
                     )*
-                    "#[derive(Deserialize)] pub struct Rules {",
+                    s.push_str("#[derive(Deserialize)] pub struct Rules {");
                     $(
-                        " pub ", stringify!($fields), ": ", stringify!($fields), ",",
-                        " pub ", stringify!($variants), ": ", stringify!($variants), ",",
+                        s.push_str(&format!(" pub {}: {},", stringify!($fields), stringify!($fields)));
+                        s.push_str(&format!(" pub {}: {},", stringify!($variants), stringify!($variants)));
                     )*
-                    " }\n",
-                );
+                    s.push_str(" }\n");
+                    s
+                }
             };
         }
 
         planted! {
+            // `wayPoint` is load-bearing, not decoration. `lowercase`
+            // and `snake_case` are *identity* on fields — `case.rs`
+            // reads `None | LowerCase | SnakeCase => field.to_owned()`
+            // — so a field that is already lowercase cannot tell the
+            // real rule from a plausible-looking
+            // `ident.to_ascii_lowercase()`. Only an identifier with an
+            // ASCII uppercase letter makes serde's leaving it alone
+            // observable, and without one those two arms have no true
+            // positive available.
+            fields { pub control_points: f64, pub thing_ß: f64, pub wayPoint: f64, }
+            variants { ControlPoints, ABCd, NaÏve, }
             "lowercase" => LowerFields / LowerVariants,
             "UPPERCASE" => UpperFields / UpperVariants,
             "PascalCase" => PascalFields / PascalVariants,
@@ -2589,7 +2617,7 @@ pub struct PlantedLeaf {
             "SCREAMING-KEBAB-CASE" => ScreamingKebabFields / ScreamingKebabVariants,
         }
 
-        let graph = graph_of(SOURCE);
+        let graph = graph_of(&planted_source());
         let derived = derived_shape::<Rules>();
         let walked = graph.member_names_from("Rules");
 
@@ -2606,8 +2634,8 @@ pub struct PlantedLeaf {
         ] {
             let fields = walked.get(fields_of);
             assert!(
-                fields.is_some_and(|fields| fields.len() == 2),
-                "`{fields_of}`'s two fields have to reach the walk before their names can \
+                fields.is_some_and(|fields| fields.len() == 3),
+                "`{fields_of}`'s three fields have to reach the walk before their names can \
                  be compared: {fields:?}"
             );
             assert_eq!(

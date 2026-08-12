@@ -299,6 +299,17 @@ struct Memory {
     /// so far was a distinct field, the rejected index belongs to the
     /// one immediately before it. Empty for a model with no aliases,
     /// which costs the sweep nothing.
+    ///
+    /// That last step assumes **no alias spells a name some earlier
+    /// field already claimed**. If one does, the visitor rejects it
+    /// for the earlier field while this attributes it to the most
+    /// recently accepted one, and the offending spelling is filed
+    /// under the wrong member — nothing is dropped, and every distinct
+    /// field is still offered and walked, but `sequences()`'s
+    /// per-member map is wrong for that entry. The shape is
+    /// self-announcing: rustc emits `unreachable pattern … no value
+    /// can reach this` on such an alias, so it cannot be introduced
+    /// silently. No type in the model has one.
     folded: BTreeMap<String, BTreeMap<usize, usize>>,
     /// How many boundaries [`Self::fold`] has recorded. A pass that
     /// failed while this grew is a pass worth replaying.
