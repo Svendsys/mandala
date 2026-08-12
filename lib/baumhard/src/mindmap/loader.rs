@@ -1413,6 +1413,86 @@ mod tests {
         )
     }
 
+    /// One themed node whose `color_schema.overrides` is spelled
+    /// `overrides_json` — used to pin what the loader accepts in
+    /// that slot.
+    fn map_with_overrides(overrides_json: &str) -> String {
+        format!(
+            r##"{{
+            "version": "1.0",
+            "name": "overridden",
+            "canvas": {{"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {{}},
+                       "theme_variants": {{}}}},
+            "palettes": {{"p": {{"groups": [
+                {{"background":"#a9decb","frame":"#30b082","text":"#000000","title":""}}
+            ]}}}},
+            "nodes": {{"0": {{
+                "id": "0", "parent_id": null,
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{{"text": "ok"}}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": "",
+                "color_schema": {{"palette":"p","level":0,
+                                  "starts_at_root":true,"connections_colored":false,
+                                  "overrides":{overrides_json}}}
+            }}}},
+            "edges": []
+        }}"##
+        )
+    }
+
+    /// `"overrides": null` loads, and reads exactly as the missing
+    /// key does.
+    ///
+    /// `#[serde(default)]` fires on an absent key and not on an
+    /// explicit `null`, so the field refused a spelling every other
+    /// optional object in the format accepts and
+    /// `format/schema.md` calls "an optional object" — with a whole
+    /// load failure (`invalid type: null, expected struct
+    /// ColorOverrides`), not a degrade.
+    #[test]
+    fn test_null_color_overrides_reads_as_no_overrides() {
+        for spelling in ["null", "{}"] {
+            let map = load_from_str(&map_with_overrides(spelling))
+                .unwrap_or_else(|e| panic!("`\"overrides\": {spelling}` must load: {e}"));
+            let node = map.nodes.get("0").expect("node 0 loads");
+            let schema = node.color_schema.as_ref().expect("themed");
+            assert!(
+                schema.overrides.is_empty(),
+                "`{spelling}` must read as no overrides at all"
+            );
+            // And the node is on its palette, which is the whole
+            // observable consequence of "no overrides".
+            assert_eq!(map.node_background_color(node), "#a9decb");
+            assert_eq!(map.node_frame_color(node), "#30b082");
+        }
+    }
+
+    /// The `null` acceptance is per-channel too: a channel spelled
+    /// `null` is a channel with no opinion, not a channel holding
+    /// the string `"null"`. Already true by `Option`'s own
+    /// deserializer — pinned because the outer `null` needed a
+    /// custom one and the two must not diverge.
+    #[test]
+    fn test_null_color_override_channel_reads_as_no_opinion() {
+        let map = load_from_str(&map_with_overrides(
+            r##"{"background":"#00ff00","frame":null,"text":null,"title":null}"##,
+        ))
+        .expect("per-channel nulls must load");
+        let node = map.nodes.get("0").expect("node 0 loads");
+        let overrides = &node.color_schema.as_ref().expect("themed").overrides;
+        assert_eq!(overrides.background.as_deref(), Some("#00ff00"));
+        assert_eq!(overrides.frame, None);
+        assert_eq!(map.node_background_color(node), "#00ff00");
+        assert_eq!(map.node_frame_color(node), "#30b082");
+    }
+
     #[test]
     fn test_negative_color_schema_level_is_refused_by_the_loader() {
         let err = load_from_str(&map_with_level("-1")).expect_err("a negative level must not load");

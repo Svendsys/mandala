@@ -44,6 +44,22 @@ pub const MAX_NODE_AXIS: f64 = 1_000_000.0;
 /// memory rather than parsed, and `maptool verify` still reports it.
 pub const MAX_SECTIONS_PER_NODE: usize = 1024;
 
+/// Read an absent-or-`null` value as `T::default()`.
+///
+/// `#[serde(default)]` covers the *missing key* and nothing else, so
+/// a field that is conceptually optional still refuses an explicit
+/// `null`. Pair the two on any optional object whose absence and
+/// whose `null` mean the same thing.
+///
+/// Cost: one `Option<T>` deserialize, no allocation of its own.
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + serde::Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// Deserialize `sections`, refusing at the first element past
 /// [`MAX_SECTIONS_PER_NODE`] rather than after the allocation.
 ///
@@ -766,7 +782,19 @@ pub struct ColorSchema {
     /// This node's exceptions to the group above — see
     /// [`ColorOverrides`]. Absent from the JSON when empty, which is
     /// the ordinary case.
-    #[serde(default, skip_serializing_if = "ColorOverrides::is_empty")]
+    ///
+    /// An explicit `null` reads the same as a missing key.
+    /// `#[serde(default)]` alone fires only on the missing key, so
+    /// without the custom deserializer `"overrides": null` — the
+    /// spelling every other optional object in this format accepts,
+    /// and the one a generator emitting a fixed key set naturally
+    /// produces — failed the whole load with
+    /// `invalid type: null, expected struct ColorOverrides`.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_null_as_default",
+        skip_serializing_if = "ColorOverrides::is_empty"
+    )]
     pub overrides: ColorOverrides,
 }
 
