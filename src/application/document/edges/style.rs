@@ -68,8 +68,8 @@ impl MindMapDocument {
     /// Set (or clear, with `color = None`) the `label_config.color`
     /// override on a line-mode edge's label. Sibling of
     /// [`Self::set_edge_color`], which targets the edge body cascade;
-    /// this setter writes only the label channel so a coloured edge
-    /// can carry a differently-coloured label. Forks a fresh
+    /// this setter writes only the label channel so a colored edge
+    /// can carry a differently-colored label. Forks a fresh
     /// `EdgeLabelConfig` on the edge if one isn't already present.
     /// Rolls back an all-default `EdgeLabelConfig` when clearing the
     /// color would leave the struct entirely empty, matching the

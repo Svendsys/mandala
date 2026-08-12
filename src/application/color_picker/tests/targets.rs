@@ -9,13 +9,13 @@ use crate::application::document::tests_common::{
 };
 
 /// Build a node with two sections, each carrying a distinct
-/// uniform run colour so the cascade-primary read on either
+/// uniform run color so the cascade-primary read on either
 /// section returns a different value (`#111111` for section 0,
 /// `#222222` for section 1). Returns `(doc, node_id)`.
 fn doc_with_two_uniform_sections() -> (crate::application::document::MindMapDocument, String) {
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    // text_color_default is set to one of the per-section colours
+    // text_color_default is set to one of the per-section colors
     // so the section-1 cascade falls back to it cleanly when a
     // disagreement test appends a contrarian run.
     make_two_section_node_with_pinned_runs(
@@ -30,7 +30,7 @@ fn doc_with_two_uniform_sections() -> (crate::application::document::MindMapDocu
 }
 
 /// `current_color_at` on a Section handle returns the unanimous
-/// run colour when every run on the section shares one (cascade
+/// run color when every run on the section shares one (cascade
 /// primary).
 #[test]
 fn current_color_at_section_reads_unanimous_run_color() {
@@ -43,11 +43,11 @@ fn current_color_at_section_reads_unanimous_run_color() {
     assert_eq!(
         current_color_at(&doc, &handle).as_deref(),
         Some("#222222"),
-        "section 1's unanimous run colour should be returned"
+        "section 1's unanimous run color should be returned"
     );
 }
 
-/// When a section's runs disagree on colour, the cascade falls
+/// When a section's runs disagree on color, the cascade falls
 /// back to the node's `style.text_color` default. Pins Item 8
 /// (cascade fallback). Mirrors the write-side cascade source
 /// `set_section_text_color` reads.
@@ -57,7 +57,7 @@ fn current_color_at_section_falls_back_to_node_default_on_run_disagreement() {
     {
         let node = doc.mindmap.nodes.get_mut(&id).unwrap();
         node.style.text_color = "#abcdef".into();
-        // Append a second run on section 1 with a different colour
+        // Append a second run on section 1 with a different color
         // so the runs no longer agree.
         let section = node.sections.get_mut(1).expect("section 1 exists");
         section.text_runs.push(baumhard::mindmap::model::TextRun {
@@ -127,7 +127,7 @@ fn color_target_section_resolves_to_none_when_index_out_of_range() {
 
 /// `current_color_at` over a sub-range scans only the in-range
 /// runs. With section 1 set up so different ranges yield
-/// different unanimous colours, the picker reads each correctly.
+/// different unanimous colors, the picker reads each correctly.
 /// Pins the N4-C.b.1 range-aware seed.
 #[test]
 fn current_color_at_section_range_reads_in_range_runs() {
@@ -162,7 +162,7 @@ fn current_color_at_section_range_reads_in_range_runs() {
     assert_eq!(
         current_color_at(&doc, &handle_in_range).as_deref(),
         Some("#bbbbbb"),
-        "range-restricted cascade reads only the in-range run's colour"
+        "range-restricted cascade reads only the in-range run's color"
     );
     // Range [0, 7) = first two runs disagree (#aaaaaa, #bbbbbb)
     // → cascade falls back to node.style.text_color (the
@@ -182,11 +182,11 @@ fn current_color_at_section_range_reads_in_range_runs() {
 
 /// **Gap coverage check.** A range that covers a single run
 /// AND a gap (uncovered grapheme range) must NOT report the
-/// run's colour as the picker seed — the gap's effective
-/// colour is the node default, so the range is non-unanimous.
+/// run's color as the picker seed — the gap's effective
+/// color is the node default, so the range is non-unanimous.
 /// Pre-fix the trivial `iter().all` on a one-element slice
 /// would have passed and seeded the picker with the run's
-/// colour. Pin the fall-back-to-default behaviour.
+/// color. Pin the fall-back-to-default behavior.
 #[test]
 fn current_color_at_section_range_falls_back_when_range_crosses_gap() {
     use baumhard::mindmap::model::TextRun;
@@ -220,7 +220,7 @@ fn current_color_at_section_range_falls_back_when_range_crosses_gap() {
         current_color_at(&doc, &handle).as_deref(),
         Some("#abcdef"),
         "range that crosses a gap must fall back to node default, \
-         not seed with the partial run's colour"
+         not seed with the partial run's color"
     );
 }
 
@@ -261,7 +261,7 @@ fn current_color_at_section_range_falls_back_when_range_in_pure_gap() {
 }
 
 /// Range covering multiple consecutive runs with the same
-/// colour reads unanimous. Pins the `iter().all` branch with
+/// color reads unanimous. Pins the `iter().all` branch with
 /// `len > 1` (today's other range tests cover only `len == 1`
 /// and the disagree case).
 #[test]
@@ -273,7 +273,7 @@ fn current_color_at_section_range_unanimous_across_multiple_adjacent_runs() {
         s.text = "abcdefghij".into();
         s.text_runs.clear();
         // Two adjacent runs covering [0..6), both yellow. Range
-        // [0..6) → two runs, both same colour → unanimous.
+        // [0..6) → two runs, both same color → unanimous.
         for (start, end) in [(0, 3), (3, 6)] {
             s.text_runs.push(TextRun {
                 start,
@@ -297,7 +297,7 @@ fn current_color_at_section_range_unanimous_across_multiple_adjacent_runs() {
     assert_eq!(
         current_color_at(&doc, &handle).as_deref(),
         Some("#ffff00"),
-        "unanimous colour across multiple fully-covering adjacent runs"
+        "unanimous color across multiple fully-covering adjacent runs"
     );
 }
 

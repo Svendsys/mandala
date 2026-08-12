@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Per-node and per-section-geometry setters and node-style
-//! helpers. Section text / colour / font / runs / payload
+//! helpers. Section text / color / font / runs / payload
 //! setters live in `section_text.rs`. Every setter here routes
 //! through the shared envelope in `undo_envelope.rs`, which owns
 //! the snapshot → verdict → undo-push → auto-fit sequence; a

@@ -48,7 +48,7 @@ pub enum TargetView<'a> {
     /// Line-mode edge body target. Color operations write the
     /// edge's `color` / `glyph_connection.color`; clipboard
     /// copy/paste/cut target the resolved **edge color** hex
-    /// (the user's mental model of "copy this edge's colour").
+    /// (the user's mental model of "copy this edge's color").
     Edge {
         doc: &'a mut MindMapDocument,
         er: EdgeRef,
@@ -77,7 +77,7 @@ pub enum TargetView<'a> {
     /// One endpoint's portal **text** on a portal-mode edge —
     /// the adjacent glyph area. Routes color writes to
     /// `PortalEndpointState.text_color` (independent from the
-    /// icon) so a coloured badge can host a differently-coloured
+    /// icon) so a colored badge can host a differently-colored
     /// annotation. Clipboard operates on the resolved text
     /// color hex.
     PortalText {
@@ -246,7 +246,7 @@ impl<'a> AcceptsWheelColor for TargetView<'a> {
         match self {
             // Node default: background fill.
             TargetView::Node { .. } => self.set_bg_color(c),
-            // Section: text is the only colour axis a section has
+            // Section: text is the only color axis a section has
             // (no bg/border chrome — see `HasBgColor`/`HasBorderColor`
             // arms above), so the undirected wheel commit routes
             // through `set_text_color` → `set_section_text_color`.
@@ -358,8 +358,8 @@ impl<'a> HandlesCopy for TargetView<'a> {
                 None => ClipboardContent::NotApplicable,
             },
             // Edge copy = the resolved edge color hex. User-facing
-            // spec: clipboard copy on an edge copies its colour
-            // (changed from the prior label-text behaviour — edge
+            // spec: clipboard copy on an edge copies its color
+            // (changed from the prior label-text behavior — edge
             // label text is edited through the inline modal, which
             // handles its own OS-clipboard surface).
             TargetView::Edge { doc, er } => match doc.resolve_edge_color(er) {
@@ -616,7 +616,7 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
         SelectionState::Single(id) => vec![TargetId::Node(id.clone())],
         SelectionState::Multi(ids) => ids.iter().cloned().map(TargetId::Node).collect(),
         // A section selection routes to a dedicated `Section`
-        // target. Per-trait behaviour at the dispatch site:
+        // target. Per-trait behavior at the dispatch site:
         // clipboard copy / cut / paste land on the section's
         // `text`; color (text axis) and font (size + family) write
         // per-section through the matching `set_section_*`
@@ -629,7 +629,7 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
             range: None,
         }],
         // Multi-section fans out to one `Section` target per
-        // entry — every per-section verb (colour text axis,
+        // entry — every per-section verb (color text axis,
         // font size / family, clipboard text) applies to each.
         SelectionState::MultiSection(secs) => secs
             .iter()

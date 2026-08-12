@@ -74,7 +74,7 @@ pub enum UndoAction {
     /// color / font size). Captures the pre-edit `NodeStyle` and
     /// `color_schema` plus the full `sections` snapshot — `set_node_text_color`,
     /// `set_node_font_size`, and `set_node_font_family` rewrite per-
-    /// run colours / sizes / fonts on top of the style change, and
+    /// run colors / sizes / fonts on top of the style change, and
     /// the section-resident runs need to come back wholesale on undo.
     /// Separate from `EditNodeText` because the round-trip contract
     /// is different (text is untouched here; only the section

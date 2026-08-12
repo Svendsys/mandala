@@ -3,7 +3,7 @@
 //! Default constructors for `MindEdge` and `MindNode` values —
 //! the shapes new orphan nodes, new parent→child edges, and new
 //! cross-link edges inherit when the user creates them. Keeps the
-//! field lists in one place so visual defaults (colour, font,
+//! field lists in one place so visual defaults (color, font,
 //! cap glyphs) don't drift across call sites.
 
 use glam::Vec2;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Section text / colour / font / runs / payload setters. Every
+//! Section text / color / font / runs / payload setters. Every
 //! setter in this file routes through the shared envelope in
 //! `undo_envelope.rs` — `mutate_section_with_style_undo` for the
 //! formatting-only edits, `mutate_section_with_text_undo` for the
@@ -161,15 +161,15 @@ impl MindMapDocument {
     }
 
     /// Rewrite every run on the section that matches the cascade
-    /// predicate (unanimous run colour, or the node's effective
-    /// text colour) to `color`. Mixed-colour sections preserve
-    /// their non-predicate runs. The node's own text colour — its
+    /// predicate (unanimous run color, or the node's effective
+    /// text color) to `color`. Mixed-color sections preserve
+    /// their non-predicate runs. The node's own text color — its
     /// palette override or its `style.text_color` — is never
     /// touched: this setter is section-scoped, and its siblings
     /// must keep following the node.
     pub fn set_section_text_color(&mut self, node_id: &str, section_idx: usize, color: String) -> bool {
         // The predicate's fallback is the *node's* effective text
-        // colour, so this one reaches for the node-scoped envelope
+        // color, so this one reaches for the node-scoped envelope
         // rather than the section wrapper. Read through the
         // cascade, not off `style`: on a themed node
         // `style.text_color` is a value the palette shadows, and
@@ -259,13 +259,13 @@ impl MindMapDocument {
     // Range-aware mirrors of the uniform setters above; route
     // through `text_run_ops::mutate_in_range`.
 
-    /// Set the text colour on a sub-range of one section's text.
+    /// Set the text color on a sub-range of one section's text.
     /// Bounded sibling of [`Self::set_section_text_color`] — that
     /// setter rewrites every run uniformly, this one targets
     /// `[range_start, range_end)` graphemes only. Ranges that
     /// partially or wholly cross uncovered gaps fill the gap
     /// with a fresh run inheriting the section / node cascade
-    /// defaults plus the new colour, so the user's "make these
+    /// defaults plus the new color, so the user's "make these
     /// graphemes red" intent is honoured even where no run
     /// exists today.
     ///
@@ -282,7 +282,7 @@ impl MindMapDocument {
         range_end: usize,
         color: String,
     ) -> bool {
-        // Text colour doesn't affect glyph advance — no grow.
+        // Text color doesn't affect glyph advance — no grow.
         self.mutate_section_runs_in_range(
             node_id,
             section_idx,

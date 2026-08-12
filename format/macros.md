@@ -6,7 +6,7 @@ keybind layer can fire as a single unit. A macro is a list of
 id in `keybinds.json` and pressing the key runs the whole sequence.
 
 Macros are a *user-authoring layer* on top of the existing dispatch
-funnel — they don't introduce new behaviours, just orchestrate
+funnel — they don't introduce new behaviors, just orchestrate
 existing ones (`Action`, `CustomMutation`, console verbs).
 
 This document is the on-disk format reference. For the Rust-side

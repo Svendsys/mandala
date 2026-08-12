@@ -23,7 +23,7 @@ pub enum NodeColorAxis {
 }
 
 /// Which visual axis on a section the picker should write to. Today
-/// sections only have a text colour axis (no bg/border chrome by
+/// sections only have a text color axis (no bg/border chrome by
 /// spec — see `format/sections.md` and the `HasBgColor` /
 /// `HasBorderColor` trait arms in `console/traits/view.rs`).
 /// Single-variant on purpose so adding `Bg` / `Border` later (only
@@ -199,13 +199,13 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
                         // span the entire `[rs, re)` with no gaps
                         // for "unanimous" to be meaningful — a
                         // partially-covered range mixes the
-                        // covered run's colour with the gap's
+                        // covered run's color with the gap's
                         // node-default fall-through, so the
-                        // user's effective colour in the range
+                        // user's effective color in the range
                         // is *not* unanimous. Without this
                         // check, a single in-range run would
                         // pass the trivial `iter().all` and
-                        // seed the picker with the wrong colour.
+                        // seed the picker with the wrong color.
                         let fully_covered = in_range
                             .first()
                             .is_some_and(|first| first.start == *rs)

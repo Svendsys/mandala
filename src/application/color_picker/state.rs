@@ -30,7 +30,7 @@ use super::targets::PickerHandle;
 pub enum PickerMode {
     /// Target-bound picker. Commit writes to this handle and closes.
     /// `seed_var_ref` is `Some(raw)` when the target's pre-open
-    /// colour was a `var(--name)` reference, `None` for plain hex
+    /// color was a `var(--name)` reference, `None` for plain hex
     /// seeds; `seed_hsv` is the HSV the picker opened at. Together
     /// they let the commit preserve the variable reference when the
     /// user didn't move the wheel — without these, every contextual
@@ -146,9 +146,9 @@ pub enum ColorPickerState {
         /// divided by `measurement_font_size`), measured once at open
         /// via `baumhard::font::fonts::measure_glyph_ink_bounds`.
         /// Used by `compute_color_picker_layout` to re-anchor each
-        /// arm's cell position on the ink centre rather than the
-        /// em-box centre. One offset per arm cell (8 cells per arm,
-        /// excluding the centre slot) — every glyph in the picker has
+        /// arm's cell position on the ink center rather than the
+        /// em-box center. One offset per arm cell (8 cells per arm,
+        /// excluding the center slot) — every glyph in the picker has
         /// distinct sidebearings and a distinct baseline-relative ink
         /// extent, so a per-arm aggregate can't keep both axes flush.
         arm_top_ink_offsets: [(f32, f32); CROSSHAIR_CENTER_CELL],

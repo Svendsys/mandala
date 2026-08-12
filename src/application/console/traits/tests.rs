@@ -226,7 +226,7 @@ fn test_section_range_paste_clamps_end_past_total() {
 /// in-range runs), not the whole-section setter. Pin by
 /// constructing a `Section` selection extended with a sub-range,
 /// dispatching `apply_wheel_color`, and asserting only the
-/// in-range runs changed colour.
+/// in-range runs changed color.
 #[test]
 fn test_section_range_dispatches_to_range_aware_color_setter() {
     use crate::application::document::tests_common::pinned_two_section_node;

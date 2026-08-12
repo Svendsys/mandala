@@ -30,7 +30,7 @@ impl ColorValue {
     /// - `"accent"` / `"edge"` / `"fg"` / `"bg"` — as well-known vars
     /// - `"reset"` — as Reset
     ///
-    /// Returns `Err(msg)` on unrecognised input. Callers report the
+    /// Returns `Err(msg)` on unrecognized input. Callers report the
     /// error through the per-kv outcome.
     pub fn parse(s: &str) -> Result<Self, String> {
         let t = s.trim();

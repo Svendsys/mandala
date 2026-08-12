@@ -35,7 +35,7 @@ fn test_set_node_text_updates_text_and_collapses_runs() {
 }
 
 /// `set_section_text(node, idx, text)` writes through to the
-/// requested section — section 0 gets the same behaviour as the
+/// requested section — section 0 gets the same behavior as the
 /// pre-section `set_node_text`, sections 1+ stay untouched
 /// unless explicitly targeted. Pins the section-aware setter's
 /// addressing for the per-section text-edit path.
@@ -1432,7 +1432,7 @@ fn test_set_node_border_color_writes_frame_color() {
 /// `"rounded"` — the previous default — surfaces here. The
 /// trigger is any kv edit that *touches a config field*; we
 /// use `padding=` because it's a leaf field with no other
-/// behaviour entanglement.
+/// behavior entanglement.
 #[test]
 fn test_default_border_config_first_edit_materialises_light_preset() {
     use crate::application::document::{BorderConfigEdits, OptionEdit};
@@ -2178,7 +2178,7 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
     // — `MindMapDocument::from_json_str` calls `finalize`,
     // which runs both grow passes. Direct construction skips
     // it.
-    let json = serde_json::to_string(&map).expect("serialises");
+    let json = serde_json::to_string(&map).expect("serializes");
     let doc = MindMapDocument::from_json_str(&json, None).expect("loads through finalize");
     let n = doc.mindmap.nodes.get("0").expect("node 0 exists");
     assert!(
@@ -2191,7 +2191,7 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
 
 // ── Range-targeted section setters (Tier 2C-N4-B) ─────────────────
 
-/// Set a colour on `[range_start, range_end)` inside one section
+/// Set a color on `[range_start, range_end)` inside one section
 /// — pins the simplest happy path (range entirely inside one run).
 #[test]
 fn test_set_section_text_color_range_inside_one_run() {
@@ -2199,7 +2199,7 @@ fn test_set_section_text_color_range_inside_one_run() {
     let (mut doc, id) = pinned_two_section_node();
     set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
     // Apply blue to a sub-range and verify the section now has
-    // three runs: original-colour | blue | original-colour.
+    // three runs: original-color | blue | original-color.
     let applied = doc.set_section_text_color_range(&id, 0, 1, 9, "#abcdef".into());
     assert!(applied);
     let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
@@ -2327,8 +2327,8 @@ fn test_set_section_font_family_range_writes_in_range_only() {
     }
 }
 
-/// Gap-fill: applying a colour on a range that falls in a gap
-/// (no covering run) inserts a fresh run carrying the colour.
+/// Gap-fill: applying a color on a range that falls in a gap
+/// (no covering run) inserts a fresh run carrying the color.
 /// Pins the foundation gap N4-A.1's `insert_run` primitive
 /// closes — without it, the user's "make graphemes 5..8 blue"
 /// would silently no-op when no run covers that range.
@@ -2393,7 +2393,7 @@ fn set_section_zero_text_and_single_run(doc: &mut MindMapDocument, node_id: &str
 // `color_picker_preview` (tests_edges_style.rs) and the
 // node-border / section-frame / canvas auto-promotion contract.
 // Scene-build threading lands in a later commit; these tests
-// assert behaviour observable from the document layer alone.
+// assert behavior observable from the document layer alone.
 
 /// Setting a preview must not push undo, flip `dirty`, or mutate
 /// the model. Same discipline as `color_picker_preview` — preview

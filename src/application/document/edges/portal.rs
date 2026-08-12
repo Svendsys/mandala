@@ -179,7 +179,7 @@ impl MindMapDocument {
     /// **text** color override on a portal-mode edge. Sibling of
     /// [`Self::set_portal_label_color`], which targets the icon
     /// cascade; this setter targets `PortalEndpointState.text_color`
-    /// so a coloured badge can host a differently-coloured
+    /// so a colored badge can host a differently-colored
     /// annotation. Returns `true` if the value changed. Rolls back
     /// a newly-installed empty `PortalEndpointState` when clearing
     /// a text color would leave the state entirely default, so an

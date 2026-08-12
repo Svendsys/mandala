@@ -591,7 +591,7 @@ mod tests {
         split_at(&mut runs, 7);
         assert_eq!(runs.len(), 3);
 
-        // Mutate the carved-out middle run's colour.
+        // Mutate the carved-out middle run's color.
         for r in runs.iter_mut() {
             if r.start >= 3 && r.end <= 7 {
                 r.color = "blue".into();
@@ -723,7 +723,7 @@ mod tests {
         assert_eq!(runs[0], run(0, 5, "blue"));
     }
 
-    /// User applies the same colour the runs already carry —
+    /// User applies the same color the runs already carry —
     /// after the mutate-then-merge dance, the runs collapse
     /// back to their original shape.
     #[test]

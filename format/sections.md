@@ -97,10 +97,10 @@ sections the mutation didn't touch. Range-mutating mutations
 new range) inherit prior styling via dominant-overlap fallback
 when no exact-range prior matches.
 
-Documented round-trip limit: `var(--name)` colour references
+Documented round-trip limit: `var(--name)` color references
 collapse to their resolved hex on the round trip — the tree-side
 `FloatRgba` carries no record of the variable. Authors who edit
-section colours through custom mutations and then save the model
+section colors through custom mutations and then save the model
 will see the variable replaced with a hex literal. The
 `set_section_text` / `set_section_text_color` /
 `set_section_font_size` / `set_section_font_family` document
@@ -253,14 +253,14 @@ would have refused.
 
 ### Console axis applicability on a section selection
 
-Sections only have a **text** colour axis (`color text=…`). The
+Sections only have a **text** color axis (`color text=…`). The
 `bg=` and `border=` axes are node-level chrome and have no
 section-level field — running them against a `SelectionState::Section`
 returns `Outcome::NotApplicable` rather than collapsing to the
 owning node's `background_color` / `frame_color`. This applies
 both to the kv form (`color bg=#fff section=K`) and to the
 trait-dispatch form (`color bg=#fff` with the section already
-selected). The colour-picker modal follows the same rule:
+selected). The color-picker modal follows the same rule:
 opening the picker on `color bg` / `color border` against a
 section selection surfaces the NotApplicable message rather
 than opening the picker on the owning node's chrome axis.
@@ -268,21 +268,21 @@ than opening the picker on the owning node's chrome axis.
 The picker's read seed (`current_color_at` for a section handle)
 and the write predicate (`set_section_text_color`) are
 **cascade-symmetric**: if every run on the section shares one
-colour that is the section's effective colour and is the
+color that is the section's effective color and is the
 predicate the write rewrites against, otherwise both fall back
 to `node.style.text_color`. So a uniformly customized section
-opens the picker at its current colour and commits to a new
-colour, instead of the picker silently no-op'ing because the
+opens the picker at its current color and commits to a new
+color, instead of the picker silently no-op'ing because the
 runs no longer match the node default.
 
 `var(--name)` references on section runs survive the kv / trait
 write paths verbatim (see "Documented round-trip limit" above).
-The colour picker preserves them too, but only when the user
+The color picker preserves them too, but only when the user
 **doesn't move the wheel** from its open seed. Bit-exact equality
 on `(hue_deg, sat, val)` is the "did the user touch it?" signal:
 an open-and-close cycle with no interaction commits the original
 `var(--accent)` literal back; any cell click or keyboard nudge
-flips the commit to the new HSV's hex (the new colour was
+flips the commit to the new HSV's hex (the new color was
 explicitly chosen, so honouring the old reference would silently
 discard it). Custom-mutation writes still collapse var refs to
 hex on round-trip (`FloatRgba` carries no record of the variable);
