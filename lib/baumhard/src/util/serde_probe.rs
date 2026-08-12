@@ -73,12 +73,16 @@ type Error = serde_json::Error;
 /// How deep the probe will follow a chain of required values before
 /// it decides the walk does not terminate.
 ///
-/// Reached only by a type whose deserialization cannot bottom out:
-/// every recursion in a deserializable model passes through an
-/// `Option`, a sequence or a map, and [`Mode::Terminate`] empties all
-/// three. A type that recursed through a required enum payload
-/// instead would spin here, so the depth is capped and the run stops
-/// by name.
+/// A recursion reaches bottom one of two ways, and the probe has to
+/// do both. Through an `Option`, a sequence or a map there is an
+/// emptier value to answer with, and [`Mode::Terminate`] answers it.
+/// Through a **required enum payload** there is not — `Repeat {
+/// template: Box<MutatorNode> }` has no empty form — so terminating
+/// means picking a different variant, which is what
+/// [`terminating_variant`] does. What is left over is a type with no
+/// bottoming variant anywhere on the cycle; that one really cannot be
+/// deserialized, and the depth is capped so the run stops by name
+/// rather than spinning.
 const MAX_DEPTH: usize = 64;
 
 /// How many passes the variant sweep will make before it gives up.
@@ -194,6 +198,111 @@ struct Decision {
     chosen: usize,
 }
 
+/// Whether a variant carries anything the walk has to go into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VariantKind {
+    /// A unit variant. Nothing below it, so it always bottoms out.
+    Unit,
+    /// A newtype, tuple or struct variant. Whether it bottoms out
+    /// depends on what is inside it.
+    Payload,
+}
+
+/// What one enum variant has turned out to be, accumulated over the
+/// whole sweep rather than one pass.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct VariantFacts {
+    /// `true` once an [`Mode::Explore`] pass has taken this variant —
+    /// the coverage question the sweep's queue drains against. A
+    /// [`Mode::Terminate`] visit deliberately does not set it: it
+    /// walks an emptied subtree, so counting it as reached would end
+    /// the sweep with shape still unseen.
+    reached: bool,
+    /// `Some(_)` once any pass has entered the variant and learned
+    /// whether it carries a payload.
+    kind: Option<VariantKind>,
+    /// `true` once a [`Mode::Terminate`] visit of this variant
+    /// returned — proof that taking it reaches bottom.
+    bottoms_out: bool,
+}
+
+/// What the sweep remembers between passes, keyed by enum name and
+/// indexed by variant.
+///
+/// Two questions live here rather than in a [`Run`] because both
+/// outlive a single pass: which variants still need a pass of their
+/// own, and which variant to take when the walk is only trying to
+/// stop. The second is why the memory has to accumulate at all — the
+/// pass that discovers `Repeat` carries a payload is the same pass
+/// that then has to get out of `Repeat`.
+#[derive(Debug, Default)]
+struct Memory {
+    facts: BTreeMap<String, Vec<VariantFacts>>,
+}
+
+impl Memory {
+    /// The facts for `container`, sized to `options` on first
+    /// sighting.
+    fn facts_mut(&mut self, container: &str, options: usize) -> &mut Vec<VariantFacts> {
+        self.facts
+            .entry(container.to_string())
+            .or_insert_with(|| vec![VariantFacts::default(); options])
+    }
+
+    /// Note what `container`'s variant number `at` turned out to be.
+    /// Silently ignores an index the enum does not declare, which
+    /// cannot happen — the index comes from the same `variants` slice.
+    fn note(&mut self, container: &str, at: usize, kind: VariantKind) {
+        if let Some(facts) = self.facts.get_mut(container).and_then(|all| all.get_mut(at)) {
+            facts.kind = Some(kind);
+        }
+    }
+
+    /// Note that a [`Mode::Terminate`] visit of `container`'s variant
+    /// number `at` reached bottom.
+    fn note_bottomed(&mut self, container: &str, at: usize) {
+        if let Some(facts) = self.facts.get_mut(container).and_then(|all| all.get_mut(at)) {
+            facts.bottoms_out = true;
+        }
+    }
+
+    /// Whether an [`Mode::Explore`] pass has taken this variant.
+    fn reached(&self, container: &str, at: usize) -> bool {
+        self.facts
+            .get(container)
+            .and_then(|all| all.get(at))
+            .is_some_and(|facts| facts.reached)
+    }
+}
+
+/// The variant to take when the walk is no longer discovering shape
+/// and only needs to stop, in order of how sure the choice is.
+///
+/// A unit variant is the emptiest value an enum admits and always
+/// bottoms out; one an earlier terminating visit already walked to
+/// the end is proven; one nothing has classified yet may be either
+/// and is worth trying, since every attempt classifies it and so
+/// removes it from the next level's candidates. Variant 0 is the last
+/// resort, and reaching it means every variant is known to carry a
+/// payload and none has been seen to bottom out — a cycle the depth
+/// cap is right to stop.
+fn terminating_variant(memory: &Memory, container: &str, options: usize) -> usize {
+    let Some(facts) = memory.facts.get(container) else {
+        return 0;
+    };
+    let pick = |wanted: fn(&VariantFacts) -> bool| {
+        facts
+            .iter()
+            .take(options)
+            .position(wanted)
+            .filter(|at| *at < options)
+    };
+    pick(|facts| facts.kind == Some(VariantKind::Unit))
+        .or_else(|| pick(|facts| facts.bottoms_out))
+        .or_else(|| pick(|facts| facts.kind.is_none()))
+        .unwrap_or(0)
+}
+
 /// State threaded through one pass of the walk.
 struct Run<'a> {
     /// Variant index to take at each decision, by decision order. A
@@ -201,8 +310,8 @@ struct Run<'a> {
     plan: Vec<usize>,
     /// The decisions this pass actually met, in order.
     trace: Vec<Decision>,
-    /// `(enum, variant index)` pairs reached by any pass so far.
-    visited: &'a mut BTreeSet<(String, usize)>,
+    /// What the sweep has learned about enum variants so far.
+    memory: &'a mut Memory,
     /// Container names currently open on the walk's path — the
     /// recursion guard.
     active: Vec<String>,
@@ -234,7 +343,7 @@ struct Run<'a> {
 /// Cost: one pass per reachable enum variant, each a full walk of the
 /// type graph. No I/O and no parsing.
 pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
-    let mut visited: BTreeSet<(String, usize)> = BTreeSet::new();
+    let mut memory = Memory::default();
     let mut shape = DerivedShape::default();
     let mut targeted: BTreeSet<(String, usize)> = BTreeSet::new();
     let mut queue: VecDeque<Vec<usize>> = VecDeque::new();
@@ -253,7 +362,7 @@ pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
         let mut run = Run {
             plan,
             trace: Vec::new(),
-            visited: &mut visited,
+            memory: &mut memory,
             active: Vec::new(),
             named_key_sites: 0,
             shape,
@@ -287,7 +396,10 @@ pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
                 // (site, option) pair is what turns a sweep bounded
                 // by the variant count into one bounded by the size
                 // of the choice tree.
-                if option == decision.chosen || visited.contains(&pair) || !targeted.insert(pair) {
+                if option == decision.chosen
+                    || memory.reached(&decision.container, option)
+                    || !targeted.insert(pair)
+                {
                     continue;
                 }
                 let mut next: Vec<usize> = trace[..at].iter().map(|d| d.chosen).collect();
@@ -317,11 +429,11 @@ struct Probe<'a, 'r> {
 fn deeper(depth: usize, what: &str) -> Result<usize, Error> {
     if depth >= MAX_DEPTH {
         return Err(serde::de::Error::custom(format!(
-            "the probe reached depth {MAX_DEPTH} at `{what}` without bottoming out. Every \
-             recursion in a deserializable type passes through an `Option`, a sequence or \
-             a map, and the probe empties all three once a container reappears on its own \
-             path — so a type that spins here recurses through something else and the \
-             probe has to learn that shape."
+            "the probe reached depth {MAX_DEPTH} at `{what}` without bottoming out. Once a \
+             container reappears on its own path the probe empties every `Option`, \
+             sequence and map below it, and takes the emptiest variant it can find at \
+             every enum — so a cycle that still spins has no bottoming variant on it \
+             anywhere, and no document can hold a value of it."
         )));
     }
     Ok(depth + 1)
@@ -549,13 +661,16 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
             .entry(name.to_string())
             .or_insert_with(|| variants.iter().map(|v| (*v).to_string()).collect());
         let mode = descend_mode(run, name, mode);
-        // A terminate-mode pass takes variant 0 unconditionally and
-        // records no decision. Both halves matter: the sweep's plans
-        // are indexed by decision order, so a choice that varied with
-        // how deep the recursion happened to be would move every
-        // later index out from under the plan that produced it.
+        run.memory.facts_mut(name, variants.len());
+        // A terminate-mode pass records no decision, and that is the
+        // load-bearing half: the sweep's plans are indexed by decision
+        // order, so a choice that varied with how deep the recursion
+        // happened to be would move every later index out from under
+        // the plan that produced it. Which variant it takes is free
+        // to depend on what the sweep has learned, because nothing
+        // downstream is indexed by it.
         let chosen = if mode == Mode::Terminate {
-            0
+            terminating_variant(run.memory, name, variants.len())
         } else {
             let want = run.plan.get(run.trace.len()).copied().unwrap_or(0);
             let chosen = want.min(variants.len().saturating_sub(1));
@@ -564,7 +679,9 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
                 options: variants.len(),
                 chosen,
             });
-            run.visited.insert((name.to_string(), chosen));
+            if let Some(facts) = run.memory.facts_mut(name, variants.len()).get_mut(chosen) {
+                facts.reached = true;
+            }
             chosen
         };
         let Some(variant) = variants.get(chosen) else {
@@ -578,10 +695,14 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
             run: &mut *run,
             container: name,
             variant,
+            at: chosen,
             mode,
             depth,
         });
         run.active.pop();
+        if mode == Mode::Terminate && out.is_ok() {
+            run.memory.note_bottomed(name, chosen);
+        }
         out
     }
 
@@ -715,6 +836,9 @@ struct Variant<'a, 'r> {
     run: &'r mut Run<'a>,
     container: &'static str,
     variant: &'static str,
+    /// Its index in the enum's `VARIANTS` list, so what it turns out
+    /// to be can be written back to [`Memory`].
+    at: usize,
     mode: Mode,
     depth: usize,
 }
@@ -734,10 +858,16 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
     type Error = Error;
 
     fn unit_variant(self) -> Result<(), Error> {
+        self.run.memory.note(self.container, self.at, VariantKind::Unit);
         Ok(())
     }
 
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Error> {
+        // Noted before the payload is walked, not after: the pass
+        // that finds `Repeat { template: Box<MutatorNode> }` is the
+        // same pass that then has to terminate inside it, and it can
+        // only rule the variant out if the fact is already recorded.
+        self.run.memory.note(self.container, self.at, VariantKind::Payload);
         // An externally tagged newtype variant writes its payload as
         // the single member of a wrapper object, so the variant name
         // *is* the JSON member a `Vec` payload sits under — and the
@@ -751,6 +881,7 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Error> {
+        self.run.memory.note(self.container, self.at, VariantKind::Payload);
         visitor.visit_seq(Elements {
             run: self.run,
             remaining: len,
@@ -764,6 +895,7 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
         fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Error> {
+        self.run.memory.note(self.container, self.at, VariantKind::Payload);
         let key = format!("{}::{}", self.container, self.variant);
         record_container(self.run, &key, fields);
         self.run.named_key_sites += 1;
@@ -885,6 +1017,27 @@ mod tests {
         Both(Vec<Leaf>, f64),
     }
 
+    /// Recursion that passes through **neither** an `Option`, a
+    /// sequence nor a map: a boxed newtype variant, which
+    /// [`Mode::Terminate`] has no emptier value to answer with. The
+    /// only way out is to take a different variant, and `Stop` is
+    /// deliberately declared *second* — the shape only bottoms out by
+    /// accident if the walk always takes variant 0.
+    #[derive(Deserialize)]
+    enum Spinner {
+        #[allow(dead_code)]
+        Deeper(Box<Holder>),
+        Stop,
+    }
+
+    #[derive(Deserialize)]
+    struct Holder {
+        #[allow(dead_code)]
+        s: Spinner,
+        #[allow(dead_code)]
+        leaves: Vec<Leaf>,
+    }
+
     /// **The member names come from the generated code, so every
     /// spelling of `rename` is resolved before the probe ever sees
     /// one.**
@@ -1002,6 +1155,35 @@ mod tests {
         assert!(
             arrays.contains("children"),
             "the recursive array is still an array: {arrays:?}"
+        );
+    }
+
+    /// **Emptying every container is not enough to bottom out.** A
+    /// required enum payload is a recursion [`Mode::Terminate`] has
+    /// no emptier answer for, so terminating has to mean *choosing* —
+    /// a unit variant where there is one, and otherwise a variant
+    /// nothing has yet found a payload behind.
+    ///
+    /// `MutatorNode::Repeat { template: Box<MutatorNode> }` is this
+    /// shape in the live model, and it survives only because `Void`
+    /// is declared before it. Declaration order is not a property the
+    /// format has an opinion about — an externally tagged enum reads
+    /// the same however its variants are ordered, and both
+    /// derivations reorder together — so a purely cosmetic reorder
+    /// must not be able to stop the sweep. `Stop` is second here for
+    /// exactly that reason.
+    #[test]
+    fn test_the_probe_terminates_through_a_boxed_enum_newtype_variant() {
+        let shape = derived_shape::<Holder>();
+        assert_eq!(
+            shape.variants_of("Spinner"),
+            Some(["Deeper".to_string(), "Stop".to_string()].as_slice()),
+            "the sweep has to have reached the enum at all"
+        );
+        assert!(
+            shape.key_bearing_sequences().contains("leaves"),
+            "and to have walked past it to the rest of the container: {:?}",
+            shape.key_bearing_sequences()
         );
     }
 
