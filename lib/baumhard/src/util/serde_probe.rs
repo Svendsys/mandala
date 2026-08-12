@@ -345,7 +345,11 @@ impl Memory {
     /// [`crate::util::serde_coverage::TypeGraph::key_bearing_sequences_from`]
     /// gives from the other side.
     fn spellings(&self, container: &str, fields: &[&str], at: usize) -> Vec<String> {
-        let mut out: Vec<String> = fields.get(at).map(|name| (*name).to_string()).into_iter().collect();
+        let mut out: Vec<String> = fields
+            .get(at)
+            .map(|name| (*name).to_string())
+            .into_iter()
+            .collect();
         if let Some(folded) = self.folded.get(container) {
             out.extend(
                 folded
@@ -1172,7 +1176,9 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
         // that finds `Repeat { template: Box<MutatorNode> }` is the
         // same pass that then has to terminate inside it, and it can
         // only rule the variant out if the fact is already recorded.
-        self.run.memory.note(self.container, self.at, VariantKind::Payload);
+        self.run
+            .memory
+            .note(self.container, self.at, VariantKind::Payload);
         // An externally tagged newtype variant writes its payload as
         // the single member of a wrapper object, so the variant name
         // *is* the JSON member a `Vec` payload sits under — and the
@@ -1189,7 +1195,9 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Error> {
-        self.run.memory.note(self.container, self.at, VariantKind::Payload);
+        self.run
+            .memory
+            .note(self.container, self.at, VariantKind::Payload);
         visitor.visit_seq(Elements {
             parent: format!("{}::{}", self.container, self.variant),
             run: self.run,
@@ -1205,7 +1213,9 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
         fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Error> {
-        self.run.memory.note(self.container, self.at, VariantKind::Payload);
+        self.run
+            .memory
+            .note(self.container, self.at, VariantKind::Payload);
         let key = format!("{}::{}", self.container, self.variant);
         record_container(self.run, &key, fields);
         self.run.named_key_sites += 1;

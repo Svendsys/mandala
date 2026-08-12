@@ -543,6 +543,14 @@ impl TypeGraph {
     /// cannot resolve. The first one to appear is a decision about
     /// what `format/schema.md` should say, not a bug in this walk.
     ///
+    /// **An empty answer here is not evidence that the model has
+    /// none.** This walk classifies *fields*, and a `Vec<Vec<T>>` is
+    /// one field: it sees the outer array, names it, and never asks
+    /// what the element is. Nesting is a third way to be unnamed and
+    /// only [`crate::util::serde_probe::DerivedShape::unnamed_sequences`]
+    /// can see it, which is why the test that consumes both requires
+    /// both to be empty rather than either.
+    ///
     /// Cost: the same walk as [`Self::key_bearing_sequences_from`].
     pub fn unnamed_sequences_from(&self, root: &str) -> BTreeSet<String> {
         self.sequence_fields_from(root)
@@ -2621,7 +2629,10 @@ pub struct PlantedLeaf {
             );
             compared += 2;
         }
-        assert_eq!(compared, 16, "one rule × direction path each, and there are sixteen");
+        assert_eq!(
+            compared, 16,
+            "one rule × direction path each, and there are sixteen"
+        );
 
         // Named as well as compared, because an agreement is only
         // worth as much as the transform it agrees about. Each of
@@ -2642,7 +2653,12 @@ pub struct PlantedLeaf {
                 .get(container)
                 .into_iter()
                 .flatten()
-                .chain(graph.get(container).into_iter().flat_map(|info| info.variants.iter()))
+                .chain(
+                    graph
+                        .get(container)
+                        .into_iter()
+                        .flat_map(|info| info.variants.iter()),
+                )
                 .map(String::as_str)
                 .collect();
             assert!(
