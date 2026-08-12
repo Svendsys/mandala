@@ -1035,11 +1035,18 @@ field name. The document said the same three things, because it was
 written by reading the walk, so nothing disagreed
 ([#122](https://github.com/Svendsys/mandala/issues/122)).
 
-The walk now resolves a field's type through the index — an alias, a
-newtype struct, any ordered container — and reads every spelling
-serde accepts for a member name, including the `deserialize` arm of a
-list-form `rename`, a container `rename_all`, and the extra
-spellings an `alias` admits. But the fix that matters is that the
+The walk now resolves a field's type through the index — a `type`
+alias, a newtype struct, any of the eleven container spellings serde
+writes as a growable array, and the bare slice `[T]` that `Cow<'a,
+[T]>` bottoms out on. Four of those eleven do not keep the order the
+file was written in at all: `HashSet` and `FxHashSet` iterate by hash,
+`BTreeSet` by the element, `BinaryHeap` by its heap. That is a
+*stronger* reason to publish them than a `Vec`, not a weaker one — a
+save re-sorts them, so an index into one can move without anybody
+having edited anything. The walk also reads every spelling serde
+accepts for a member name, including the `deserialize` arm of a
+list-form `rename`, a container `rename_all`, and the extra spellings
+an `alias` admits. But the fix that matters is that the
 walk is no longer the only witness.
 `lib/baumhard/src/util/serde_probe.rs` asks the **generated**
 `Deserialize` impls the same questions by handing them a

@@ -610,6 +610,15 @@ impl TypeGraph {
                 Type::Paren(inner) => current = &inner.elem,
                 Type::Group(inner) => current = &inner.elem,
                 Type::Reference(inner) => current = &inner.elem,
+                // `[T]` is not a name, so no entry in
+                // [`SEQUENCE_CONTAINERS`] can catch it, and it is the
+                // shape every owning slice wrapper bottoms out on:
+                // `Cow<'a, [T]>`, `Box<[T]>`, `Rc<[T]>`, `Arc<[T]>`
+                // all deserialize by collecting a JSON array whose
+                // length the file decides. `[T; N]` is `Type::Array`
+                // and deliberately keeps falling through — its arity
+                // is the format's, not the document's.
+                Type::Slice(slice) => return Some(&slice.elem),
                 Type::Path(path) => {
                     let segment = path.path.segments.last()?;
                     let name = segment.ident.to_string();
@@ -1130,6 +1139,11 @@ fn referenced_types(fields: &Fields) -> Vec<String> {
 /// Fixed-arity shapes — a tuple, `[T; N]` — are deliberately absent.
 /// They are arrays on disk and a route does cross their indexes, but
 /// no edit can move one without changing the format itself.
+///
+/// The list is *names*, so the one growable array spelled without one
+/// — the slice `[T]` that `Cow<'a, [T]>` and `Box<[T]>` bottom out on
+/// — cannot be a member of it; [`TypeGraph::sequence_element`] answers
+/// that shape structurally instead.
 const SEQUENCE_CONTAINERS: &[&str] = &[
     "ArrayVec",
     "BTreeSet",
@@ -2247,15 +2261,24 @@ mod tests {
     /// are not places a route can be *moved*, and publishing them
     /// would tell a reader to worry about something that cannot
     /// happen.
+    ///
+    /// `borrowed` is the one growable array that no *name* can catch.
+    /// `Cow` is a transparent wrapper, so the walk unwraps it and
+    /// lands on the slice `[Leaf]` — a `syn::Type::Slice`, not a path
+    /// with an identifier to match — and a list of container
+    /// spellings has nowhere to put it. It sits beside `fixed`
+    /// deliberately: the two look alike in source and only one of
+    /// them has a length the document decides.
     #[test]
     fn test_a_sequence_is_what_serde_writes_as_an_array_not_what_spells_vec() {
         let graph = graph_of(
             "pub type Leaves = Vec<Leaf>;\n\
-             #[derive(Deserialize)] pub struct Root { \
+             #[derive(Deserialize)] pub struct Root<'a> { \
                pub aliased: Leaves, \
                pub ordered: BTreeSet<Leaf>, \
                pub queued: VecDeque<Leaf>, \
                pub optional: Option<Vec<Leaf>>, \
+               pub borrowed: Cow<'a, [Leaf]>, \
                pub keyed: HashMap<String, Leaf>, \
                pub fixed: [Leaf; 2], \
                pub payload: Payload }\n\
@@ -2264,7 +2287,7 @@ mod tests {
              #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
         );
         let names = graph.key_bearing_sequences_from("Root");
-        for array in ["aliased", "ordered", "queued", "optional", "Literal"] {
+        for array in ["aliased", "ordered", "queued", "optional", "borrowed", "Literal"] {
             assert!(
                 names.contains(array),
                 "`{array}` is written as an array whose length an edit can change, so a \
