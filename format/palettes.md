@@ -55,7 +55,9 @@ Hoisting palettes solves this:
 `lib/baumhard/src/mindmap/model/theme.rs`:
 
 1. Read `node.color_schema` — if absent, the node uses the colors in its
-   `style` (background_color, frame_color, text_color)
+   `style` (background_color, frame_color, text_color). A channel the
+   schema names in `overrides` short-circuits every step below and is
+   used verbatim, even when the palette lookup would fail
 2. Look up `schema.palette` in `map.palettes`
 3. Pick the group index: `schema.level` when `starts_at_root` is true,
    `schema.level - 1` when it is false (see below)
@@ -69,15 +71,58 @@ node's plain `style` colors. `maptool verify` flags missing palette
 references and empty palettes as errors.
 
 The resolved group is what the projection passes read, through four
-sibling helpers on `MindMap` that each name one role and each fall back
-to the same `style` field:
+sibling helpers on `MindMap` that each name one role, each check this
+node's own override first, and each fall back to the same `style`
+field:
 
-| Role | Palette channel | Fallback | Read by |
-|---|---|---|---|
-| Node fill | `group.background` | `style.background_color` | `node_background_color` |
-| Node frame | `group.frame` | `style.frame_color` | `node_frame_color` |
-| Node text | `group.text` | `style.text_color` | `node_text_color` |
-| Node title | `group.title` | the text role above | `node_title_color` |
+| Role | Override | Palette channel | Fallback | Read by |
+|---|---|---|---|---|
+| Node fill | `overrides.background` | `group.background` | `style.background_color` | `node_background_color` |
+| Node frame | `overrides.frame` | `group.frame` | `style.frame_color` | `node_frame_color` |
+| Node text | `overrides.text` | `group.text` | `style.text_color` | `node_text_color` |
+| Node title | `overrides.title` | `group.title` | the text role above | `node_title_color` |
+
+## Overriding one channel on one node
+
+```json
+"color_schema": {
+  "palette": "coral",
+  "level": 2,
+  "starts_at_root": true,
+  "connections_colored": true,
+  "overrides": { "background": "#00ff00" }
+}
+```
+
+`overrides` is where a per-node color edit lands — `color bg=#00ff00`
+on a themed node, the glyph-wheel picker, `set_node_bg_color`. One
+optional string per `ColorGroup` channel; absent channels take the
+group's. The whole key is omitted from the JSON when nothing is
+overridden, which is every node until somebody recolors one.
+
+**Why not `style`?** Because `style` is the tier the palette
+*shadows*. Every node the legacy converter produced carries baked
+`style` colors that are stale copies of its own theme, so a reader
+that let `style` win would un-theme the entire corpus, and a writer
+that wrote `style` would report success and change nothing on
+screen. The override is a third tier precisely so `style` can go on
+meaning "what this node would be if it had no theme" while a direct
+edit still beats an inherited one — the same
+inline-style-beats-inherited rule the sub-node channels below
+already follow.
+
+The three interactive setters cover `background`, `frame` and
+`text`, the channels `NodeStyle` also has. `title` is honored on
+load and has no setter, because `node_title_color` falls through to
+the text role and overriding *that* already moves the title.
+
+Undo restores the whole `color_schema`, so undoing a per-node
+recolor puts the node back on its palette rather than on the stale
+`style` value.
+
+An **unthemed** node has no `color_schema` and therefore no
+override tier; its setters write `style` directly, which is the
+only tier it has.
 
 Everything below the node level is *more* specific and wins over the
 theme:

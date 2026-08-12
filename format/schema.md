@@ -335,7 +335,7 @@ untouched and never reported as unrecognized. See
 | `layout` | object | How this node's *children* are arranged |
 | `folded` | bool | If `true`, hide the subtree below this node |
 | `notes` | string | Free-form notes; empty string when none |
-| `color_schema` | object\|null | Palette reference — see [palettes.md](./palettes.md) |
+| `color_schema` | object\|null | Palette reference plus this node's own exceptions to it (`overrides`) — see [palettes.md](./palettes.md) |
 | `channel` | integer | Mutation channel — see [channels.md](./channels.md); defaults to 0 |
 | `trigger_bindings` | array | Event→mutation bindings attached to this node |
 | `inline_mutations` | array | Node-local custom mutation definitions |
@@ -373,9 +373,12 @@ untouched and never reported as unrecognized. See
 
 The three color fields are the **fallback** tier. A node carrying a
 `color_schema` takes its fill, frame and text from the referenced
-palette group instead, and these values are what it would fall back
-to if the schema were removed or its palette went missing. See
-[palettes.md](./palettes.md).
+palette group instead — or from `color_schema.overrides` where that
+node has excepted a channel by hand — and these values are what it
+would fall back to if the schema were removed. They are *not* where
+a per-node recolor lands on a themed node; that is
+`color_schema.overrides`, because the read path never consults
+`style` while a theme is bound. See [palettes.md](./palettes.md).
 
 ## NodeLayout
 
@@ -458,6 +461,13 @@ node-level `text_runs` after the section refactor.
 typo, and the loader rejects the file rather than silently clamping it
 to the palette's last group (which is what the previous signed field
 did, by way of an `as usize` wrap).
+
+`overrides` is an optional object with the same four channel names
+as a `ColorGroup` (`background`, `frame`, `text`, `title`), each an
+optional `#RRGGBB` / `var(--name)` string. A channel present here is
+this node's own color and outranks the group; the key is omitted
+entirely when nothing is overridden. It is where the interactive
+color setters write on a themed node.
 
 See [palettes.md](./palettes.md) for resolution semantics.
 

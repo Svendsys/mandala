@@ -161,18 +161,26 @@ impl MindMapDocument {
     }
 
     /// Rewrite every run on the section that matches the cascade
-    /// predicate (unanimous run colour, or the node's
-    /// `style.text_color` default) to `color`. Mixed-colour
-    /// sections preserve their non-predicate runs. The node's own
-    /// `style.text_color` is never touched.
+    /// predicate (unanimous run colour, or the node's effective
+    /// text colour) to `color`. Mixed-colour sections preserve
+    /// their non-predicate runs. The node's own text colour — its
+    /// palette override or its `style.text_color` — is never
+    /// touched: this setter is section-scoped, and its siblings
+    /// must keep following the node.
     pub fn set_section_text_color(&mut self, node_id: &str, section_idx: usize, color: String) -> bool {
-        // The predicate's fallback is the *node's*
-        // `style.text_color`, so this one reaches for the
-        // node-scoped envelope rather than the section wrapper.
+        // The predicate's fallback is the *node's* effective text
+        // colour, so this one reaches for the node-scoped envelope
+        // rather than the section wrapper. Read through the
+        // cascade, not off `style`: on a themed node
+        // `style.text_color` is a value the palette shadows, and
+        // runs baked from the palette would never match it.
         // `NodeEditTail::None`: color never shifts a glyph
         // advance.
+        let Some(read_node) = self.mindmap.nodes.get(node_id) else {
+            return false;
+        };
+        let node_default = self.mindmap.node_text_color(read_node).to_string();
         self.mutate_node_with_style_undo(node_id, NodeEditTail::None, move |node| {
-            let node_default = node.style.text_color.clone();
             let section = node.sections.get_mut(section_idx)?;
             let predicate_color = section
                 .text_runs

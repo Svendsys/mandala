@@ -39,7 +39,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 mod tests {
     use super::*;
     use crate::verify::test_helpers::node;
-    use baumhard::mindmap::model::{ColorGroup, ColorSchema, Palette};
+    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette};
 
     fn group() -> ColorGroup {
         ColorGroup {
@@ -65,6 +65,7 @@ mod tests {
             level: 0,
             starts_at_root: true,
             connections_colored: true,
+            overrides: ColorOverrides::default(),
         });
         map.nodes.insert("0".into(), n);
         assert!(check(&map).is_empty());
@@ -79,6 +80,7 @@ mod tests {
             level: 0,
             starts_at_root: true,
             connections_colored: true,
+            overrides: ColorOverrides::default(),
         });
         map.nodes.insert("0".into(), n);
         let v = check(&map);

@@ -300,3 +300,88 @@ fn current_color_at_section_range_unanimous_across_multiple_adjacent_runs() {
         "unanimous colour across multiple fully-covering adjacent runs"
     );
 }
+
+/// A Node handle seeds from the **effective** color, not the
+/// authored `style` field. On a themed node those differ — `style`
+/// is the tier the palette shadows — and seeding from `style`
+/// opens the wheel on a color the node is not drawn in, so the
+/// user's first hover jumps.
+#[test]
+fn current_color_at_node_reads_through_the_palette_cascade() {
+    use crate::application::color_picker::NodeColorAxis;
+    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette};
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    doc.mindmap.palettes.insert(
+        "picker-probe".into(),
+        Palette {
+            groups: vec![ColorGroup {
+                background: "#a10000".into(),
+                frame: "#a20000".into(),
+                text: "#a30000".into(),
+                title: String::new(),
+            }],
+        },
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.color_schema = Some(ColorSchema {
+            palette: "picker-probe".into(),
+            level: 0,
+            starts_at_root: true,
+            connections_colored: false,
+            overrides: ColorOverrides::default(),
+        });
+        node.style.background_color = "#111111".into();
+        node.style.frame_color = "#222222".into();
+        node.style.text_color = "#333333".into();
+    }
+    for (axis, expected) in [
+        (NodeColorAxis::Bg, "#a10000"),
+        (NodeColorAxis::Border, "#a20000"),
+        (NodeColorAxis::Text, "#a30000"),
+    ] {
+        let handle = PickerHandle::Node { id: id.clone(), axis };
+        assert_eq!(
+            current_color_at(&doc, &handle).as_deref(),
+            Some(expected),
+            "{axis:?} must seed from the palette group, not style"
+        );
+    }
+
+    // A per-node override outranks the group, and the picker has to
+    // seed from that too — it is what the node is drawn in.
+    assert!(doc.set_node_bg_color(&id, "#00ff00".into()));
+    let handle = PickerHandle::Node {
+        id: id.clone(),
+        axis: NodeColorAxis::Bg,
+    };
+    assert_eq!(current_color_at(&doc, &handle).as_deref(), Some("#00ff00"));
+}
+
+/// A section whose runs all decline to name a color defers to the
+/// node, so the picker seeds from the node's effective text color
+/// rather than opening on the empty string (which parses to
+/// nothing and drops the wheel to its mid-gray fallback).
+#[test]
+fn current_color_at_section_falls_through_when_every_run_defers() {
+    let (mut doc, id) = doc_with_two_uniform_sections();
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.style.text_color = "#abcdef".into();
+        for run in node.sections[1].text_runs.iter_mut() {
+            run.color = String::new();
+        }
+    }
+    let handle = PickerHandle::Section {
+        node_id: id,
+        section_idx: 1,
+        axis: SectionColorAxis::Text,
+        range: None,
+    };
+    assert_eq!(
+        current_color_at(&doc, &handle).as_deref(),
+        Some("#abcdef"),
+        "a deferring run seeds the picker from the node, not from the empty string"
+    );
+}

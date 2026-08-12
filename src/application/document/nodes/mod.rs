@@ -36,6 +36,22 @@ pub(in crate::application::document) use border::merge_outcome;
 pub use option_edit::OptionEdit;
 pub(in crate::application::document) use section_text::clamp_runs_to_text;
 
+/// Which of a node's three color channels a per-node write
+/// targets.
+///
+/// Named rather than written out three times: *where* the value
+/// lands — the node's own `color_schema.overrides` on a themed
+/// node, `node.style` otherwise — is one rule, and the three
+/// channels differ only in which field it picks. Three copies of
+/// that rule is how "change this node's fill" came to be broken on
+/// themed nodes while "change its text color" happened to survive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeColorChannel {
+    Background,
+    Frame,
+    Text,
+}
+
 /// Snapshot of a `MindSection`'s user-facing fields, used by the
 /// structured-clipboard path (`ClipboardContent::Section` carries
 /// it, the in-process buffer in `application/clipboard.rs` stashes
@@ -342,75 +358,152 @@ impl MindMapDocument {
         .is_some()
     }
 
-    /// Set the background color on a node's `style.background_color`.
-    /// Returns `true` if the value actually changed. Pushes one
-    /// `UndoAction::EditNodeStyle` entry so undo restores both the
-    /// `NodeStyle` *and* the `text_runs` (unchanged for this setter,
-    /// but the variant always carries both so the undo arm has a
+    /// Set this node's **fill** color. Returns `true` if the value
+    /// actually changed. Pushes one `UndoAction::EditNodeStyle`
+    /// entry so undo restores the `NodeStyle`, the `ColorSchema`
+    /// *and* the `text_runs` (unchanged for this setter, but the
+    /// variant always carries all three so the undo arm has a
     /// single shape).
+    ///
+    /// **Where the value lands depends on whether the node is
+    /// themed**, because it has to land where the read path looks
+    /// (`MindMap::node_background_color`). A themed node's fill
+    /// comes from its palette group, which shadows
+    /// `style.background_color` entirely, so writing `style` there
+    /// would report success and change nothing on screen; the
+    /// write goes to the node's own `color_schema.overrides`
+    /// instead. An unthemed node has no such tier and takes the
+    /// `style` write directly. See `format/palettes.md`.
     ///
     /// No-op on missing node id, matching the `EditEdge` pattern.
     pub fn set_node_bg_color(&mut self, node_id: &str, color: String) -> bool {
-        self.mutate_node_with_style_undo(node_id, NodeEditTail::None, |node| {
-            if node.style.background_color == color {
-                return None;
-            }
-            node.style.background_color = color;
-            Some(())
-        })
-        .is_some()
+        self.set_node_color_channel(node_id, NodeColorChannel::Background, color)
     }
 
-    /// Set the frame (border) color on a node's `style.frame_color`.
-    /// Returns `true` on change.
-    pub fn set_node_border_color(&mut self, node_id: &str, color: String) -> bool {
-        self.mutate_node_with_style_undo(node_id, NodeEditTail::None, |node| {
-            if node.style.frame_color == color {
-                return None;
-            }
-            node.style.frame_color = color;
-            Some(())
-        })
-        .is_some()
-    }
-
-    /// Set the *default* text color on a node. Writes
-    /// `style.text_color` directly, and for every `TextRun` whose
-    /// `color` matches the pre-edit default, rewrites that run's
-    /// `color` to the new value — so a node whose runs all inherited
-    /// the default gets visually recolored, while runs the user
-    /// explicitly colored by hand keep their per-span override.
+    /// Set this node's **frame** (border) color. Returns `true` on
+    /// change. Lands in the same two places for the same reason as
+    /// [`Self::set_node_bg_color`].
     ///
-    /// The match is byte-exact on the pre-edit `style.text_color`
-    /// string. This is deliberately strict: if the user wrote
-    /// `"#FFFFFF"` (uppercase) as the default but an authored run
-    /// carries `"#ffffff"`, the run is *not* considered
-    /// default-following and keeps its lowercase override. Matches the
-    /// convention in `baumhard::util::color::hex_to_rgba_safe` —
-    /// colors are strings in the model and comparisons are literal.
+    /// This is the cascade *base* the border resolver sits on: a
+    /// node carrying an explicit `style.border.color` keeps
+    /// painting that, and this setter does not touch it — the
+    /// `border color=` verb is the one that does.
+    pub fn set_node_border_color(&mut self, node_id: &str, color: String) -> bool {
+        self.set_node_color_channel(node_id, NodeColorChannel::Frame, color)
+    }
+
+    /// Set the *default* text color on a node, and recolor every
+    /// [`TextRun`](baumhard::mindmap::model::TextRun) that was
+    /// following that default.
+    ///
+    /// The default itself lands in the same two places as
+    /// [`Self::set_node_bg_color`] — the node's own overrides when
+    /// it is themed, `style.text_color` when it is not.
+    ///
+    /// Runs are treated in three groups, which is the whole
+    /// content of "following the default":
+    ///
+    /// - A run with an **empty** `color` defers to the node's text
+    ///   color by construction. It needs no rewrite and gets none;
+    ///   it follows the new value for free, and rewriting it would
+    ///   opt those graphemes out of the cascade for good.
+    /// - A run whose `color` byte-matches the **effective** pre-edit
+    ///   text color is a baked copy of the old default — the shape
+    ///   `maptool convert --legacy` leaves behind — and is rewritten
+    ///   so the node recolors as a whole.
+    /// - Every other run is a deliberate per-span override and is
+    ///   left alone.
+    ///
+    /// The match is byte-exact, deliberately: if the effective
+    /// default is `"#FFFFFF"` but a run carries `"#ffffff"`, the
+    /// run is *not* considered default-following and keeps its
+    /// lowercase override. Colors are strings in the model and
+    /// comparisons are literal, matching
+    /// `baumhard::util::color::hex_to_rgba_safe`.
+    ///
+    /// Comparing against the *effective* color rather than
+    /// `style.text_color` is what makes this work on a themed node:
+    /// there, `style.text_color` is a stale copy the palette
+    /// shadows, and a run baked from the palette would never match
+    /// it.
     pub fn set_node_text_color(&mut self, node_id: &str, color: String) -> bool {
-        // `NodeEditTail::None`: color never shifts a glyph
-        // advance, so there is nothing to re-measure.
+        self.set_node_color_channel(node_id, NodeColorChannel::Text, color)
+    }
+
+    /// Shared body of the three per-node color setters — the one
+    /// place that decides *where* a per-node color write lands.
+    ///
+    /// Reads the effective pre-edit color through the same cascade
+    /// the renderer uses, then writes the node's own
+    /// `color_schema.overrides` when the node is themed and
+    /// `node.style` when it is not. `NodeEditTail::None`: color
+    /// never shifts a glyph advance, so there is nothing to
+    /// re-measure.
+    ///
+    /// Returns `true` when it wrote anything.
+    fn set_node_color_channel(&mut self, node_id: &str, channel: NodeColorChannel, color: String) -> bool {
+        let Some(node) = self.mindmap.nodes.get(node_id) else {
+            return false;
+        };
+        // Captured before the envelope's mutable borrow, and read
+        // through the cascade rather than off `style`: on a themed
+        // node `style.text_color` is a value the palette shadows,
+        // so a run baked from the palette would never match it and
+        // the whole node would refuse to recolor.
+        let effective_before = match channel {
+            NodeColorChannel::Background => self.mindmap.node_background_color(node),
+            NodeColorChannel::Frame => self.mindmap.node_frame_color(node),
+            NodeColorChannel::Text => self.mindmap.node_text_color(node),
+        }
+        .to_string();
+
         self.mutate_node_with_style_undo(node_id, NodeEditTail::None, move |node| {
-            let old_default = node.style.text_color.clone();
-            let any_run_changes = node
-                .sections
-                .iter()
-                .flat_map(|s| s.text_runs.iter())
-                .any(|r| r.color == old_default && r.color != color);
-            if old_default == color && !any_run_changes {
-                return None;
-            }
-            node.style.text_color = color.clone();
-            for section in node.sections.iter_mut() {
-                clamp_runs_to_text(section);
-                for run in section.text_runs.iter_mut() {
-                    if run.color == old_default {
-                        run.color = color.clone();
+            let mut changed = match node.color_schema.as_mut() {
+                // Themed: the palette group shadows `style`
+                // entirely, so `style` is not where the read path
+                // looks and not where the write may land.
+                Some(schema) => {
+                    let slot = match channel {
+                        NodeColorChannel::Background => &mut schema.overrides.background,
+                        NodeColorChannel::Frame => &mut schema.overrides.frame,
+                        NodeColorChannel::Text => &mut schema.overrides.text,
+                    };
+                    let differs = slot.as_deref() != Some(color.as_str());
+                    if differs {
+                        *slot = Some(color.clone());
+                    }
+                    differs
+                }
+                // Unthemed: `style` is the only tier there is.
+                None => {
+                    let slot = match channel {
+                        NodeColorChannel::Background => &mut node.style.background_color,
+                        NodeColorChannel::Frame => &mut node.style.frame_color,
+                        NodeColorChannel::Text => &mut node.style.text_color,
+                    };
+                    let differs = *slot != color;
+                    if differs {
+                        *slot = color.clone();
+                    }
+                    differs
+                }
+            };
+            // Runs that carry a baked copy of the old default
+            // follow the node; runs that left `color` empty follow
+            // it already and must keep doing so; everything else is
+            // a deliberate per-span override.
+            if channel == NodeColorChannel::Text {
+                for section in node.sections.iter_mut() {
+                    clamp_runs_to_text(section);
+                    for run in section.text_runs.iter_mut() {
+                        if !run.color.is_empty() && run.color == effective_before && run.color != color {
+                            run.color = color.clone();
+                            changed = true;
+                        }
                     }
                 }
             }
-            Some(())
+            changed.then_some(())
         })
         .is_some()
     }

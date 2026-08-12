@@ -2365,7 +2365,7 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
 #[test]
 fn test_grow_font_on_runless_section_of_themed_node_takes_palette_color() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::mindmap::model::{ColorGroup, ColorSchema, MindSection, Palette};
+    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, MindSection, Palette};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.mindmap.palettes.insert(
@@ -2387,6 +2387,7 @@ fn test_grow_font_on_runless_section_of_themed_node_takes_palette_color() {
             level: 0,
             starts_at_root: true,
             connections_colored: false,
+            overrides: ColorOverrides::default(),
         });
         node.sections
             .push(MindSection::new_default("runless".into(), Vec::new()));
@@ -2437,7 +2438,7 @@ fn test_grow_font_on_runless_section_of_themed_node_takes_palette_color() {
 #[test]
 fn test_no_op_mutation_leaves_a_colorless_run_on_a_themed_node_alone() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::mindmap::model::{ColorGroup, ColorSchema, Palette, TextRun};
+    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette, TextRun};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.mindmap.palettes.insert(
@@ -2459,6 +2460,7 @@ fn test_no_op_mutation_leaves_a_colorless_run_on_a_themed_node_alone() {
             level: 0,
             starts_at_root: true,
             connections_colored: false,
+            overrides: ColorOverrides::default(),
         });
         let section = node.sections.first_mut().expect("testament node 0 has a section");
         section.text = "abcdef".into();
@@ -2501,7 +2503,7 @@ fn test_no_op_mutation_leaves_a_colorless_run_on_a_themed_node_alone() {
 #[test]
 fn test_text_edit_keeps_a_colorless_run_deferring_on_a_themed_node() {
     use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
-    use baumhard::mindmap::model::{ColorGroup, ColorSchema, Palette, TextRun};
+    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette, TextRun};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.mindmap.palettes.insert(
@@ -2522,6 +2524,7 @@ fn test_text_edit_keeps_a_colorless_run_deferring_on_a_themed_node() {
             level: 0,
             starts_at_root: true,
             connections_colored: false,
+            overrides: ColorOverrides::default(),
         });
         let section = node.sections.first_mut().expect("testament node 0 has a section");
         section.text = "abcdef".into();

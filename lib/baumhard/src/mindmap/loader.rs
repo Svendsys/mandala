@@ -2248,6 +2248,16 @@ mod tests {
             })
         }),
         ("is_zero_u32", |v| v.as_u64() == Some(0)),
+        // `ColorSchema.overrides`: an object whose four channels are
+        // all absent or `null` carries no override, which is what
+        // every node that has never been recolored by hand holds.
+        ("ColorOverrides::is_empty", |v| {
+            v.as_object().is_some_and(|o| {
+                ["background", "frame", "text", "title"]
+                    .iter()
+                    .all(|k| o.get(*k).is_none_or(serde_json::Value::is_null))
+            })
+        }),
     ];
 
     /// Assert that saving `source` as `saved` lost nothing an author

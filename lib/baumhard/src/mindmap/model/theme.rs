@@ -5,17 +5,26 @@
 //!
 //! A node binds itself to a map-level [`Palette`](super::Palette) by
 //! carrying a [`ColorSchema`](super::ColorSchema): a palette name, a
-//! depth `level`, and two miMind-inherited flags. Resolution walks
-//! *palette first, `style` second* — the whole reason palettes were
-//! hoisted out of the nodes during migration is that the palette, not
-//! the node, is where a theme edit lands. `format/palettes.md` is the
-//! normative spec; this module is its implementation, and the
-//! projection passes under [`crate::mindmap::tree_builder`] read
-//! colors only through the four `node_*` / `edge_*` readers below.
+//! depth `level`, two miMind-inherited flags, and this node's own
+//! exceptions to the group ([`ColorOverrides`](super::ColorOverrides)).
+//! Resolution walks *override first, palette second, `style` third*.
+//!
+//! The middle tier is the reason palettes were hoisted out of the
+//! nodes during migration: the palette, not the node, is where a
+//! *theme* edit lands. The top tier is the reason a per-node edit
+//! still works: a theme is inherited and a direct edit is specific,
+//! so the direct edit wins — the same rule a [`TextRun`](super::TextRun)
+//! color and a `border.color` already follow one level down. It
+//! cannot be `style`: `style` is what the palette shadows, and every
+//! migrated node carries baked `style` colors that are stale copies
+//! of its own theme. `format/palettes.md` is the normative spec;
+//! this module is its implementation, and the projection passes
+//! under [`crate::mindmap::tree_builder`] read colors only through
+//! the four `node_*` / `edge_*` readers below.
 //!
 //! ## Why the readers return `&str` and not a parsed color
 //!
-//! Both tiers store authored strings — `#rrggbb`, `#rrggbbaa`, or a
+//! Every tier stores authored strings — `#rrggbb`, `#rrggbbaa`, or a
 //! `var(--name)` reference the canvas theme map expands later. The
 //! cascade's job is to pick *which string*, and
 //! [`crate::util::color::resolve_var`] is a separate, later step that
@@ -23,8 +32,23 @@
 //! cascade allocation-free on a per-node, per-frame path (§4's mobile
 //! budget).
 
-use super::{ColorGroup, MindEdge, MindMap, MindNode};
+use super::{ColorGroup, ColorOverrides, MindEdge, MindMap, MindNode};
 use crate::util::color::{hex_to_rgba_safe, resolve_var, FloatRgba};
+
+/// One channel of a node's own [`ColorOverrides`], or `None` when
+/// the node is unthemed or has no opinion on that channel.
+///
+/// The tier above the palette group in all four readers below.
+/// Reaching it needs no palette lookup and no `resolve_theme_colors`
+/// — an override stands even when the schema's palette is missing,
+/// because "I painted this node green" does not stop being true when
+/// the theme it excepts breaks.
+fn channel_override<'a>(
+    node: &'a MindNode,
+    pick: impl Fn(&'a ColorOverrides) -> Option<&'a str>,
+) -> Option<&'a str> {
+    pick(&node.color_schema.as_ref()?.overrides)
+}
 
 impl MindMap {
     /// Resolve the [`ColorGroup`] a themed node draws from, or
@@ -65,22 +89,27 @@ impl MindMap {
         palette.groups.get(index).or_else(|| palette.groups.last())
     }
 
-    /// The authored **fill** color for a node: the resolved
-    /// palette group's `background`, else `node.style.background_color`.
+    /// The authored **fill** color for a node: this node's own
+    /// `background` override, else the resolved palette group's
+    /// `background`, else `node.style.background_color`.
     ///
     /// The empty string is a meaningful value downstream — the node
     /// pass reads it as "no fill, let the canvas show through" — so
     /// it is passed along rather than treated as a miss. Cost: one
     /// [`Self::resolve_theme_colors`].
     pub fn node_background_color<'a>(&'a self, node: &'a MindNode) -> &'a str {
+        if let Some(own) = channel_override(node, |o| o.background.as_deref()) {
+            return own;
+        }
         match self.resolve_theme_colors(node) {
             Some(group) => group.background.as_str(),
             None => node.style.background_color.as_str(),
         }
     }
 
-    /// The authored **frame** color for a node: the resolved
-    /// palette group's `frame`, else `node.style.frame_color`.
+    /// The authored **frame** color for a node: this node's own
+    /// `frame` override, else the resolved palette group's `frame`,
+    /// else `node.style.frame_color`.
     ///
     /// This is the cascade base the border resolver
     /// (`mindmap::border::resolve_border_style`) sits on top of, so
@@ -88,14 +117,18 @@ impl MindMap {
     /// theme — an explicit choice beats an inherited one. Cost: one
     /// [`Self::resolve_theme_colors`].
     pub fn node_frame_color<'a>(&'a self, node: &'a MindNode) -> &'a str {
+        if let Some(own) = channel_override(node, |o| o.frame.as_deref()) {
+            return own;
+        }
         match self.resolve_theme_colors(node) {
             Some(group) => group.frame.as_str(),
             None => node.style.frame_color.as_str(),
         }
     }
 
-    /// The authored **text** color for a node: the resolved palette
-    /// group's `text`, else `node.style.text_color`.
+    /// The authored **text** color for a node: this node's own
+    /// `text` override, else the resolved palette group's `text`,
+    /// else `node.style.text_color`.
     ///
     /// This is the section-level default, not a per-grapheme one. A
     /// [`TextRun`](super::TextRun) carrying a non-empty `color`
@@ -106,6 +139,9 @@ impl MindMap {
     /// carry no runs at all. Cost: one
     /// [`Self::resolve_theme_colors`].
     pub fn node_text_color<'a>(&'a self, node: &'a MindNode) -> &'a str {
+        if let Some(own) = channel_override(node, |o| o.text.as_deref()) {
+            return own;
+        }
         match self.resolve_theme_colors(node) {
             Some(group) => group.text.as_str(),
             None => node.style.text_color.as_str(),
@@ -115,15 +151,19 @@ impl MindMap {
     /// The authored **title** color for a node — the first-line
     /// stand-in for [`Self::node_text_color`].
     ///
-    /// Only the palette carries this channel; [`NodeStyle`] has no
-    /// title field, so an unthemed node — or a themed one whose
-    /// group leaves `title` empty — returns the node's text color
-    /// and the first line is not distinguished.
+    /// Only the palette and this node's own overrides carry this
+    /// channel; [`NodeStyle`] has no title field, so an unthemed
+    /// node — or a themed one whose group leaves `title` empty and
+    /// which overrides nothing — returns the node's text color and
+    /// the first line is not distinguished.
     ///
     /// [`NodeStyle`]: super::NodeStyle
     ///
     /// Cost: one [`Self::resolve_theme_colors`].
     pub fn node_title_color<'a>(&'a self, node: &'a MindNode) -> &'a str {
+        if let Some(own) = channel_override(node, |o| o.title.as_deref()) {
+            return own;
+        }
         match self.resolve_theme_colors(node) {
             Some(group) if !group.title.is_empty() => group.title.as_str(),
             _ => self.node_text_color(node),
@@ -234,7 +274,7 @@ impl MindMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::mindmap::model::{ColorGroup, ColorSchema, MindMap, Palette};
+    use crate::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, MindMap, Palette};
     use crate::mindmap::test_helpers::{synthetic_edge, synthetic_map, synthetic_node_full};
 
     /// Three groups whose every channel is a distinct sentinel, so a
@@ -264,6 +304,7 @@ mod tests {
             level,
             starts_at_root,
             connections_colored,
+            overrides: ColorOverrides::default(),
         }
     }
 
@@ -307,6 +348,7 @@ mod tests {
             level: 0,
             starts_at_root: true,
             connections_colored: false,
+            overrides: ColorOverrides::default(),
         });
         let node = map.nodes.get("a").unwrap();
         assert!(

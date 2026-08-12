@@ -728,8 +728,14 @@ pub struct NodeLayout {
 /// `starts_at_root` and `connections_colored` are round-tripped
 /// miMind-compat flags that the projection passes interpret when
 /// resolving effective colors — see
-/// [`crate::mindmap::model::theme`] for the whole cascade. Plain
-/// data; no runtime cost.
+/// [`crate::mindmap::model::theme`] for the whole cascade.
+///
+/// `overrides` is the one field that is not a miMind inheritance:
+/// it carries this node's own exceptions to the group, and it lives
+/// here rather than in [`NodeStyle`] because `style` is the tier the
+/// palette shadows. See [`ColorOverrides`].
+///
+/// Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorSchema {
     /// Named palette to bind this node's colors to — keys into
@@ -757,6 +763,59 @@ pub struct ColorSchema {
     /// edge's own `color`. Read through
     /// [`super::MindMap::edge_theme_stroke_color`].
     pub connections_colored: bool,
+    /// This node's exceptions to the group above — see
+    /// [`ColorOverrides`]. Absent from the JSON when empty, which is
+    /// the ordinary case.
+    #[serde(default, skip_serializing_if = "ColorOverrides::is_empty")]
+    pub overrides: ColorOverrides,
+}
+
+/// Per-node exceptions to a [`ColorSchema`]'s palette group — the
+/// tier a direct "make *this* node green" edit lands in.
+///
+/// A theme is an inherited value and a per-node edit is a specific
+/// one, so the edit has to win; the format already spells that rule
+/// out below the node level (a [`TextRun`] naming its own `color`,
+/// a [`GlyphBorderConfig::color`] on the node's border) and this is
+/// the same rule at the node's own level. It cannot be expressed by
+/// writing [`NodeStyle`] instead, because `style` is the tier the
+/// palette *shadows*: every migrated node carries baked `style`
+/// colors that are stale copies of its theme, so letting `style`
+/// win would un-theme the whole corpus. Hence a channel that says
+/// "overridden" by existing.
+///
+/// One `Option` per [`ColorGroup`] channel, `None` meaning "this
+/// node has no opinion; take the group's". `title` is here for
+/// completeness of the group it shadows — the interactive setters
+/// cover the three channels [`NodeStyle`] also has.
+///
+/// Plain data; no runtime cost. Serialized only where non-empty, so
+/// an untouched map round-trips byte-identically.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ColorOverrides {
+    /// Replaces the group's `background` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
+    /// Replaces the group's `frame` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<String>,
+    /// Replaces the group's `text` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Replaces the group's `title` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl ColorOverrides {
+    /// `true` when no channel is overridden — the state a themed
+    /// node has until somebody recolors it by hand, and the
+    /// condition that keeps the key out of the serialized JSON.
+    ///
+    /// Cost: four `Option` discriminant reads.
+    pub fn is_empty(&self) -> bool {
+        self.background.is_none() && self.frame.is_none() && self.text.is_none() && self.title.is_none()
+    }
 }
 
 /// One palette entry — the four colors a themed node inherits at a

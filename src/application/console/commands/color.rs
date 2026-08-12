@@ -517,6 +517,11 @@ mod tests {
     use crate::application::console::parser::{parse, ParseResult};
     use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
 
+    /// Read back through the palette cascade rather than off
+    /// `style`: every testament node is themed, so its fill comes
+    /// from its palette group and a write that landed in `style`
+    /// would report success while the node kept painting the
+    /// palette color (`format/palettes.md`).
     #[test]
     fn apply_color_axis_writes_bg_to_node() {
         let mut doc = load_test_doc();
@@ -524,8 +529,8 @@ mod tests {
         doc.selection = SelectionState::Single(id.clone());
         let changed = apply_color_axis_to_selection(&mut doc, "bg", "#fafafa");
         assert!(changed);
-        let style = &doc.mindmap.nodes.get(&id).unwrap().style;
-        assert_eq!(style.background_color, "#fafafa");
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert_eq!(doc.mindmap.node_background_color(node), "#fafafa");
     }
 
     #[test]

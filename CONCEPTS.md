@@ -1265,10 +1265,12 @@ deep subtrees degrade gracefully.
 itself in `model/theme.rs`. A node's binding lives in its
 optional `color_schema` field, a `ColorSchema` record with
 `palette: String` (the key into `map.palettes`),
-`level: usize` (which `ColorGroup` to pull from), and two
+`level: usize` (which `ColorGroup` to pull from), two
 flags — `starts_at_root` (does level 0 apply to the schema
 root or to its children?) and `connections_colored` (do edges
-leaving this node inherit the palette stroke color?).
+leaving this node inherit the palette stroke color?) — and
+`overrides`, a `ColorOverrides` record of four optional strings
+naming this node's own exceptions to the group.
 `resolve_theme_colors` on `MindMap` does the lookup;
 out-of-range `level` clamps to the last group rather than
 failing, and `starts_at_root: false` leaves the schema root
@@ -1276,7 +1278,8 @@ itself unresolved so its own `style` stands. Validation
 requires every referenced palette to exist with at least one
 group.
 
-The cascade is **palette first, `style` second**, and the
+The cascade is **override first, palette second, `style`
+third**, and the
 projection passes read it through four sibling helpers —
 `node_background_color`, `node_frame_color`,
 `node_text_color`, `node_title_color` — plus
@@ -1285,7 +1288,21 @@ projection passes read it through four sibling helpers —
 source node sets `connections_colored`. Anything more specific
 than the node still wins: a `TextRun` naming its own color, a
 `border.color` override, a per-edge `glyph_connection.color`.
-Full reference: [`format/palettes.md`](./format/palettes.md).
+
+The `overrides` tier is what makes the theme *editable per
+node*. A direct "make this one green" is more specific than an
+inherited theme and has to win, and it cannot land in `style`:
+`style` is the tier the palette shadows, and every migrated
+node carries baked `style` colors that are stale copies of its
+own theme, so a `style` write would report success and change
+nothing on screen. `set_node_bg_color` /
+`set_node_border_color` / `set_node_text_color` therefore write
+`color_schema.overrides` on a themed node and `style` on an
+unthemed one, through one shared
+`set_node_color_channel`; `UndoAction::EditNodeStyle` carries
+`before_color_schema` so undo puts the node back on its
+palette. Full reference:
+[`format/palettes.md`](./format/palettes.md).
 
 Animated palette transitions are the seam — the data
 shape is already mutation-friendly; the runtime would need to

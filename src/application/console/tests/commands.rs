@@ -95,16 +95,17 @@ fn test_color_kv_text_accent_sets_var_accent_on_edge() {
     assert_eq!(color.as_deref(), Some("var(--accent)"));
 }
 
+/// Asserted through the palette cascade, which is what the node is
+/// drawn from — the fixture's nodes are themed, so `style` is a
+/// tier nothing reads.
 #[test]
 fn test_color_kv_bg_sets_node_background() {
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     let _ = run("color bg=#112233", &mut doc);
-    assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.background_color,
-        "#112233"
-    );
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(doc.mindmap.node_background_color(node), "#112233");
 }
 
 /// `color bg` with a single node selected opens the glyph-wheel

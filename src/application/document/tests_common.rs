@@ -149,9 +149,14 @@ pub(in crate::application) fn doc_with_one_edge() -> (MindMapDocument, super::Ed
 
 /// Materialize `node_id` into a two-section node with one pinned
 /// text run per section. Sets the node's `style.text_color` to
-/// `text_color_default` so the cascade source the section color
-/// setter consults (and the color picker reads) resolves against
-/// a known anchor. Each section's single run carries the color
+/// `text_color_default` **and drops its `color_schema`** so the
+/// cascade source the section color setter consults (and the color
+/// picker reads) resolves against a known anchor. The schema has to
+/// go for that to be true: every node in `testament` is themed, and
+/// a themed node's text color comes from its palette group, which
+/// shadows `style.text_color` entirely (`format/palettes.md`).
+/// Callers wanting the *themed* cascade install their own schema
+/// after this returns. Each section's single run carries the color
 /// at the matching index in `section_run_colors`; both share
 /// `font` and `size_pt`. The pre-existing first section's `text`
 /// field is preserved (only its runs are replaced).
@@ -172,6 +177,7 @@ pub(in crate::application) fn make_two_section_node_with_pinned_runs(
     let node = doc.mindmap.nodes.get_mut(node_id).expect("node id exists in doc");
     node.sections
         .push(MindSection::new_default("second".into(), Vec::new()));
+    node.color_schema = None;
     node.style.text_color = text_color_default.into();
     for (i, section) in node.sections.iter_mut().enumerate() {
         section.text_runs.clear();

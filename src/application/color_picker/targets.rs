@@ -136,10 +136,33 @@ impl ColorTarget {
     }
 }
 
+/// One node axis read through the palette cascade — the same
+/// funnel the renderer projects from, so the picker seeds on the
+/// color the node is actually drawn in.
+fn node_axis_color<'a>(
+    doc: &'a MindMapDocument,
+    node: &'a baumhard::mindmap::model::MindNode,
+    axis: NodeColorAxis,
+) -> &'a str {
+    match axis {
+        NodeColorAxis::Bg => doc.mindmap.node_background_color(node),
+        NodeColorAxis::Text => doc.mindmap.node_text_color(node),
+        NodeColorAxis::Border => doc.mindmap.node_frame_color(node),
+    }
+}
+
 /// Read the current color string for a handle. Used to seed picker
 /// HSV at open time and to read the effective color for the
 /// preview after a chip action. Returns `None` if the index / id
 /// no longer resolves.
+///
+/// **Effective**, not authored: every node / section arm reads
+/// through the palette cascade
+/// (`MindMap::node_background_color` and its three siblings)
+/// rather than off `node.style`. On a themed node those differ —
+/// `style` is the tier the palette shadows — and seeding the
+/// picker from `style` opens the wheel on a color the node is not
+/// drawn in, so the user's first hover is a jump.
 pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<String> {
     match handle {
         PickerHandle::Edge(index) => {
@@ -153,11 +176,7 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
         }
         PickerHandle::Node { id, axis } => {
             let n = doc.mindmap.nodes.get(id)?;
-            Some(match axis {
-                NodeColorAxis::Bg => n.style.background_color.clone(),
-                NodeColorAxis::Text => n.style.text_color.clone(),
-                NodeColorAxis::Border => n.style.frame_color.clone(),
-            })
+            Some(node_axis_color(doc, n, *axis).to_string())
         }
         PickerHandle::Section {
             node_id,
@@ -203,18 +222,20 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
                         if unanimous {
                             in_range
                                 .first()
+                                .filter(|r| !r.color.is_empty())
                                 .map(|r| r.color.clone())
-                                .unwrap_or_else(|| n.style.text_color.clone())
+                                .unwrap_or_else(|| doc.mindmap.node_text_color(n).to_string())
                         } else {
-                            n.style.text_color.clone()
+                            doc.mindmap.node_text_color(n).to_string()
                         }
                     }
                     None => section
                         .text_runs
                         .first()
                         .filter(|first| section.text_runs.iter().all(|r| r.color == first.color))
+                        .filter(|first| !first.color.is_empty())
                         .map(|r| r.color.clone())
-                        .unwrap_or_else(|| n.style.text_color.clone()),
+                        .unwrap_or_else(|| doc.mindmap.node_text_color(n).to_string()),
                 },
             };
             Some(resolved)

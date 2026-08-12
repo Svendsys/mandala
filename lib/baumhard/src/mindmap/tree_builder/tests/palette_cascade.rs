@@ -17,7 +17,7 @@
 
 use super::super::*;
 use super::fixtures::*;
-use crate::mindmap::model::{ColorGroup, ColorSchema, MindMap, Palette};
+use crate::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, MindMap, Palette};
 
 /// Distinct sentinel per channel per group — a reader that grabs
 /// the wrong one cannot accidentally agree with the right one.
@@ -46,6 +46,7 @@ fn schema(level: usize, starts_at_root: bool, connections_colored: bool) -> Colo
         level,
         starts_at_root,
         connections_colored,
+        overrides: ColorOverrides::default(),
     }
 }
 

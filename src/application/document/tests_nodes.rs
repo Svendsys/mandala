@@ -1366,62 +1366,64 @@ fn test_set_node_text_inherits_first_run_formatting() {
 // Node style setters (bg / border / text color, font size)
 // -----------------------------------------------------------------
 
+/// Asserted through the cascade, not off `style`: every testament
+/// node is themed, so its fill comes from its palette group and
+/// `style.background_color` is a value nothing reads. A write that
+/// landed there would leave this node rendering the palette color
+/// while the setter reported success.
 #[test]
 fn test_set_node_bg_color_round_trips_through_undo() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
-    let before = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
-        .style
-        .background_color
-        .clone();
-    assert!(doc.set_node_bg_color(&nid, "#123456".to_string()));
-    assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.background_color,
-        "#123456"
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert!(
+        node.color_schema.is_some(),
+        "the fixture node must be themed for this test to mean anything"
     );
+    let before = doc.mindmap.node_background_color(node).to_string();
+    assert!(doc.set_node_bg_color(&nid, "#123456".to_string()));
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(doc.mindmap.node_background_color(node), "#123456");
     assert!(matches!(
         doc.undo_stack.last(),
         Some(UndoAction::EditNodeStyle { .. })
     ));
     assert!(doc.undo());
-    assert_eq!(
-        doc.mindmap.nodes.get(&nid).unwrap().style.background_color,
-        before
-    );
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(doc.mindmap.node_background_color(node), before);
 }
 
+/// The no-op verdict is decided against the value the setter would
+/// write, which on a themed node is the override slot rather than
+/// `style` — so "unchanged" here means "already overridden to this
+/// exact color", and the fixture has to be put in that state first.
+/// A themed node with *no* override that is handed its palette's
+/// own color does change: it stops tracking the palette.
 #[test]
 fn test_set_node_bg_color_unchanged_is_noop() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
-    let current = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
-        .style
-        .background_color
-        .clone();
+    assert!(doc.set_node_bg_color(&nid, "#123456".to_string()));
     doc.undo_stack.clear();
     doc.dirty = false;
-    assert!(!doc.set_node_bg_color(&nid, current));
+    assert!(!doc.set_node_bg_color(&nid, "#123456".to_string()));
     assert!(doc.undo_stack.is_empty());
     assert!(!doc.dirty);
 }
 
+/// Same reasoning as `test_set_node_bg_color_round_trips_through_undo`:
+/// the frame channel is read through the cascade, so that is where
+/// the assertion has to look.
 #[test]
 fn test_set_node_border_color_writes_frame_color() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     assert!(doc.set_node_border_color(&nid, "#ff00ff".to_string()));
-    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().style.frame_color, "#ff00ff");
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(doc.mindmap.node_frame_color(node), "#ff00ff");
 }
 
 /// First-edit materialization of `node.style.border` uses
@@ -1456,14 +1458,19 @@ fn test_default_border_config_first_edit_materialises_light_preset() {
     assert_eq!(cfg.preset, "light");
 }
 
-/// Setting text color rewrites `style.text_color` and every run
-/// whose color matched the pre-edit default. A run the user
-/// colored by hand (mismatched) keeps its override.
+/// Setting text color rewrites the node's default and every run
+/// whose color matched the pre-edit *effective* default. A run the
+/// user colored by hand (mismatched) keeps its override.
+///
+/// Unthemed, so `style.text_color` really is the effective default
+/// — the themed half is
+/// `test_set_node_text_color_on_a_themed_node_follows_the_palette`.
 #[test]
 fn test_set_node_text_color_preserves_per_run_overrides() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
+    doc.mindmap.nodes.get_mut(&nid).unwrap().color_schema = None;
     // Seed the node with a known default and two runs: one
     // matching the default, one hand-colored. Pin
     // `sections[0].text` to a string of known grapheme count so
@@ -1522,6 +1529,7 @@ fn test_set_node_text_color_round_trips_through_undo() {
     doc.selection = SelectionState::Single(nid.clone());
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.color_schema = None;
         node.style.text_color = "#dddddd".into();
         for run in node.sections[0].text_runs.iter_mut() {
             run.color = "#dddddd".into();
@@ -1543,6 +1551,257 @@ fn test_set_node_text_color_round_trips_through_undo() {
         .map(|r| r.color.clone())
         .collect();
     assert_eq!(restored_colors, before_run_colors);
+}
+
+/// The themed half of
+/// `test_set_node_text_color_preserves_per_run_overrides`. On a
+/// node bound to a palette, the *effective* default is the group's
+/// `text`, not `style.text_color` — so that is the value a run has
+/// to match to count as default-following, and the new default
+/// lands in the node's own overrides where the read path looks.
+#[test]
+fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
+    use baumhard::mindmap::model::{ColorGroup, ColorOverrides, ColorSchema, Palette};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
+    doc.mindmap.palettes.insert(
+        "write-probe".into(),
+        Palette {
+            groups: vec![ColorGroup {
+                background: "#101010".into(),
+                frame: "#202020".into(),
+                text: "#303030".into(),
+                title: String::new(),
+            }],
+        },
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.color_schema = Some(ColorSchema {
+            palette: "write-probe".into(),
+            level: 0,
+            starts_at_root: true,
+            connections_colored: false,
+            overrides: ColorOverrides::default(),
+        });
+        // `style.text_color` is a stale copy the palette shadows —
+        // the shape every migrated node is in.
+        node.style.text_color = "#dddddd".into();
+        node.sections[0].text = "abcdefghi".into();
+        node.sections[0].text_runs = vec![
+            TextRun {
+                start: 0,
+                end: 3,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 24,
+                color: "#303030".into(), // baked copy of the palette default
+                hyperlink: None,
+            },
+            TextRun {
+                start: 3,
+                end: 6,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 24,
+                color: "#abcdef".into(), // hand-colored
+                hyperlink: None,
+            },
+            TextRun {
+                start: 6,
+                end: 9,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 24,
+                color: String::new(), // defers to the node
+                hyperlink: None,
+            },
+        ];
+    }
+    assert!(doc.set_node_text_color(&nid, "#111111".into()));
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(
+        doc.mindmap.node_text_color(node),
+        "#111111",
+        "the node's effective text color must be the one just set"
+    );
+    assert_eq!(
+        node.style.text_color, "#dddddd",
+        "the stale style copy is not the tier the read path consults and must not be touched"
+    );
+    let runs = &node.sections[0].text_runs;
+    assert_eq!(
+        runs[0].color, "#111111",
+        "a run baked from the old default follows"
+    );
+    assert_eq!(runs[1].color, "#abcdef", "a hand-colored run keeps its override");
+    assert_eq!(
+        runs[2].color, "",
+        "a deferring run stays deferring — it already follows the new default"
+    );
+}
+
+/// A per-node fill / frame write on a themed node has to be
+/// *visible*: the verb reporting success while the node keeps
+/// painting its palette color is the exact failure this cascade
+/// nearly shipped. Also pins that the write did not disturb the
+/// node's palette binding or its other channels.
+#[test]
+fn test_per_node_color_writes_are_visible_on_a_themed_node() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let (palette_fill, palette_frame, palette_text) = {
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        assert!(node.color_schema.is_some(), "testament nodes are all themed");
+        (
+            doc.mindmap.node_background_color(node).to_string(),
+            doc.mindmap.node_frame_color(node).to_string(),
+            doc.mindmap.node_text_color(node).to_string(),
+        )
+    };
+    assert!(doc.set_node_bg_color(&nid, "#00ff00".into()));
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(doc.mindmap.node_background_color(node), "#00ff00");
+    assert_ne!(
+        palette_fill, "#00ff00",
+        "the fixture must start on a different fill or this proves nothing"
+    );
+    assert_eq!(
+        doc.mindmap.node_frame_color(node),
+        palette_frame,
+        "a fill write must not move the frame channel off the palette"
+    );
+    assert_eq!(
+        doc.mindmap.node_text_color(node),
+        palette_text,
+        "a fill write must not move the text channel off the palette"
+    );
+    assert!(
+        node.color_schema.is_some(),
+        "the node keeps its palette binding — only one channel excepted it"
+    );
+
+    assert!(doc.set_node_border_color(&nid, "#0000ff".into()));
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(doc.mindmap.node_frame_color(node), "#0000ff");
+    assert_eq!(doc.mindmap.node_background_color(node), "#00ff00");
+}
+
+/// Undo of a per-node color write on a themed node puts the node
+/// back on its palette — not on the stale `style` value, and not
+/// on an empty override that would read as "no opinion" but still
+/// leave the key in the file.
+#[test]
+fn test_per_node_color_write_on_a_themed_node_undoes_back_to_the_palette() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let before = {
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        doc.mindmap.node_background_color(node).to_string()
+    };
+    assert!(doc.set_node_bg_color(&nid, "#00ff00".into()));
+    assert!(doc.undo());
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(doc.mindmap.node_background_color(node), before);
+    assert!(
+        node.color_schema
+            .as_ref()
+            .is_some_and(|schema| schema.overrides.is_empty()),
+        "undo must clear the override, not merely blank it"
+    );
+    // ...and the node tracks its palette again, which is the
+    // property "restores what was there" actually means here.
+    let group_fill = doc
+        .mindmap
+        .resolve_theme_colors(node)
+        .expect("a themed node resolves")
+        .background
+        .clone();
+    assert_eq!(doc.mindmap.node_background_color(node), group_fill);
+}
+
+/// An override outranks the group even when the schema's palette
+/// has gone missing. "I painted this node green" does not stop
+/// being true because the theme it excepts broke.
+#[test]
+fn test_a_color_override_survives_a_dangling_palette_reference() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    assert!(doc.set_node_bg_color(&nid, "#00ff00".into()));
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.color_schema.as_mut().unwrap().palette = "no-such-palette".into();
+    }
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert!(doc.mindmap.resolve_theme_colors(node).is_none());
+    assert_eq!(doc.mindmap.node_background_color(node), "#00ff00");
+}
+
+/// The literal reproduction from the review: node `0` of
+/// `maps/palette_cascade.mindmap.json` draws its palette's
+/// `#a10000` while `style.background_color` says `#111111`.
+/// `color bg=#00ff00` on it must move the pixels.
+///
+/// This fixture exists precisely because `testament`'s baked
+/// `style` values have drifted toward its palette — here the two
+/// tiers are unmistakably different, so a write to the wrong one
+/// cannot accidentally look right.
+#[test]
+fn test_bg_write_moves_the_fill_on_the_palette_cascade_fixture() {
+    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("maps/palette_cascade.mindmap.json");
+    let map =
+        baumhard::mindmap::loader::load_from_file(&path).expect("the palette-cascade fixture must load");
+    let mut doc = MindMapDocument::from_mindmap(map, None);
+    {
+        let node = doc.mindmap.nodes.get("0").expect("fixture node 0");
+        assert_eq!(node.style.background_color, "#111111");
+        assert_eq!(doc.mindmap.node_background_color(node), "#a10000");
+    }
+    assert!(doc.set_node_bg_color("0", "#00ff00".into()));
+    let node = doc.mindmap.nodes.get("0").unwrap();
+    assert_eq!(
+        doc.mindmap.node_background_color(node),
+        "#00ff00",
+        "the verb reported success, so the node must be drawn in the new color"
+    );
+    assert!(doc.undo());
+    let node = doc.mindmap.nodes.get("0").unwrap();
+    assert_eq!(
+        doc.mindmap.node_background_color(node),
+        "#a10000",
+        "undo restores what was actually there — the palette color, not #111111"
+    );
+}
+
+/// A themed node recolored by hand survives a save / load round
+/// trip with its override intact — the write is not a runtime-only
+/// effect. The unrecolored siblings keep the key out of their JSON.
+#[test]
+fn test_a_color_override_round_trips_through_save_and_load() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    assert!(doc.set_node_bg_color(&nid, "#00ff00".into()));
+    let dir = baumhard::util::test_temp::TempDir::new("color-override-round-trip");
+    let path = dir.join("overridden.mindmap.json");
+    baumhard::mindmap::loader::save_to_file(&path, &doc.mindmap).expect("save must succeed");
+    let reloaded = baumhard::mindmap::loader::load_from_file(&path).expect("reload must succeed");
+    let node = reloaded.nodes.get(&nid).expect("node survives the round trip");
+    assert_eq!(reloaded.node_background_color(node), "#00ff00");
+    let untouched = reloaded
+        .nodes
+        .values()
+        .filter(|n| n.id != nid)
+        .filter_map(|n| n.color_schema.as_ref())
+        .all(|schema| schema.overrides.is_empty());
+    assert!(untouched, "only the recolored node carries an override");
 }
 
 #[test]
@@ -2934,8 +3193,28 @@ fn assert_setter_no_op<F>(label: &str, call: F)
 where
     F: FnOnce(&mut MindMapDocument, &str) -> bool,
 {
+    assert_setter_no_op_after(label, |_, _| {}, call);
+}
+
+/// [`assert_setter_no_op`] with a `prepare` step that runs
+/// **before** the snapshot, for setters whose "already at this
+/// value" state has to be arranged first.
+///
+/// The three per-node color setters need it: on a themed node they
+/// write the node's `color_schema.overrides`, so "unchanged" means
+/// "already overridden to this color" and a fixture node that has
+/// never been recolored is not in that state. Preparing before the
+/// snapshot keeps the whole-node fingerprint comparison honest —
+/// arranging inside `call` would make the setup itself look like
+/// the mutation.
+fn assert_setter_no_op_after<P, F>(label: &str, prepare: P, call: F)
+where
+    P: FnOnce(&mut MindMapDocument, &str),
+    F: FnOnce(&mut MindMapDocument, &str) -> bool,
+{
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    prepare(&mut doc, &nid);
     doc.undo_stack.clear();
     doc.dirty = false;
     let before = doc.mindmap.nodes.get(&nid).expect("node").clone();
@@ -2968,18 +3247,50 @@ fn node_fingerprint(node: &MindNode) -> String {
 /// if the callers actually reach it.
 #[test]
 fn test_node_setters_are_no_ops_when_value_is_unchanged() {
-    assert_setter_no_op("set_node_bg_color", |doc, nid| {
+    // The three color setters get the contract pinned in both
+    // worlds, because they write to two different places. Unthemed:
+    // `style` is the live tier, so re-writing what is already there
+    // is the no-op.
+    let unthemed = |doc: &mut MindMapDocument, nid: &str| {
+        doc.mindmap.nodes.get_mut(nid).unwrap().color_schema = None;
+    };
+    assert_setter_no_op_after("set_node_bg_color/unthemed", unthemed, |doc, nid| {
         let current = doc.mindmap.nodes.get(nid).unwrap().style.background_color.clone();
         doc.set_node_bg_color(nid, current)
     });
-    assert_setter_no_op("set_node_border_color", |doc, nid| {
+    assert_setter_no_op_after("set_node_border_color/unthemed", unthemed, |doc, nid| {
         let current = doc.mindmap.nodes.get(nid).unwrap().style.frame_color.clone();
         doc.set_node_border_color(nid, current)
     });
-    assert_setter_no_op("set_node_text_color", |doc, nid| {
+    assert_setter_no_op_after("set_node_text_color/unthemed", unthemed, |doc, nid| {
         let current = doc.mindmap.nodes.get(nid).unwrap().style.text_color.clone();
         doc.set_node_text_color(nid, current)
     });
+    // Themed: the override slot is the live tier, so the node has
+    // to already carry the override for the second write to be the
+    // no-op. Every testament node is themed, so no setup beyond the
+    // first write is needed.
+    assert_setter_no_op_after(
+        "set_node_bg_color/themed",
+        |doc, nid| {
+            doc.set_node_bg_color(nid, "#123456".to_string());
+        },
+        |doc, nid| doc.set_node_bg_color(nid, "#123456".to_string()),
+    );
+    assert_setter_no_op_after(
+        "set_node_border_color/themed",
+        |doc, nid| {
+            doc.set_node_border_color(nid, "#123456".to_string());
+        },
+        |doc, nid| doc.set_node_border_color(nid, "#123456".to_string()),
+    );
+    assert_setter_no_op_after(
+        "set_node_text_color/themed",
+        |doc, nid| {
+            doc.set_node_text_color(nid, "#123456".to_string());
+        },
+        |doc, nid| doc.set_node_text_color(nid, "#123456".to_string()),
+    );
     assert_setter_no_op("set_node_border_visible", |doc, nid| {
         let current = doc.mindmap.nodes.get(nid).unwrap().style.show_frame;
         doc.set_node_border_visible(nid, current)
