@@ -396,6 +396,16 @@ impl MindMapDocument {
         if tail == NodeEditTail::None {
             return;
         }
+        // The border grow reads the *resolved* frame color, so it
+        // has to come off the palette cascade rather than
+        // `node.style.frame_color` — the same base the render path
+        // uses. Read it here, before the mutable borrow, and pay
+        // one `String` per committed edit for it; this runs per
+        // edit, not per frame.
+        let frame_color = match self.mindmap.nodes.get(node_id) {
+            Some(node) => self.mindmap.node_frame_color(node).to_string(),
+            None => return,
+        };
         let Some(node) = self.mindmap.nodes.get_mut(node_id) else {
             return;
         };
@@ -406,10 +416,10 @@ impl MindMapDocument {
             // pass, not a panic on a document-mutation path
             // (`CODE_CONVENTIONS.md` §9).
             NodeEditTail::None => {}
-            NodeEditTail::Border => grow_one_node_to_fit_border(node, canvas_default),
+            NodeEditTail::Border => grow_one_node_to_fit_border(node, canvas_default, &frame_color),
             NodeEditTail::Grow | NodeEditTail::GrowAndCleanup => {
                 grow_one_node_to_fit_text(node);
-                grow_one_node_to_fit_border(node, canvas_default);
+                grow_one_node_to_fit_border(node, canvas_default, &frame_color);
             }
         }
         if tail == NodeEditTail::GrowAndCleanup {

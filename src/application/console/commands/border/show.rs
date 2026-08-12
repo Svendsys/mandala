@@ -11,7 +11,7 @@
 
 use baumhard::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
 use baumhard::mindmap::border_pattern::SidePattern;
-use baumhard::mindmap::model::MindNode;
+use baumhard::mindmap::model::{MindMap, MindNode};
 
 use crate::application::console::parser::Args;
 use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
@@ -55,13 +55,7 @@ pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
         Some(n) => n,
         None => return ExecResult::err(format!("border: node '{}' not found", id)),
     };
-    let mut lines = format_border_readout(
-        node,
-        eff.document.mindmap.canvas.default_border.as_ref(),
-        &eff.document.mindmap.palettes,
-        side_filter.as_deref(),
-        verbose,
-    );
+    let mut lines = format_border_readout(&eff.document.mindmap, node, side_filter.as_deref(), verbose);
     // API/UX M4: when the selection covers more than one node,
     // the readout silently rolls up to the first one. Prepend a
     // single-line note so the user knows there are siblings —
@@ -115,17 +109,48 @@ fn first_selected_node_id(sel: &SelectionState) -> Result<String, String> {
     }
 }
 
+/// Which tier of the palette cascade the node's frame color came
+/// from, phrased for a console readout. The whole point of
+/// `border show verbose` is telling the user *where* a color they
+/// did not expect is coming from, and "the palette" is now one of
+/// the answers.
+fn frame_color_source(map: &MindMap, node: &MindNode) -> String {
+    let Some(schema) = node.color_schema.as_ref() else {
+        return "style.frame_color".to_string();
+    };
+    if schema.overrides.frame.is_some() {
+        return format!(
+            "color_schema.overrides.frame (excepting palette `{}`)",
+            schema.palette
+        );
+    }
+    match map.resolve_theme_colors(node) {
+        Some(_) => format!("palette `{}` at level {}", schema.palette, schema.level),
+        None => format!(
+            "style.frame_color (palette `{}` does not resolve)",
+            schema.palette
+        ),
+    }
+}
+
 fn format_border_readout(
+    map: &MindMap,
     node: &MindNode,
-    canvas_default: Option<&baumhard::mindmap::model::GlyphBorderConfig>,
-    palettes: &std::collections::HashMap<String, baumhard::mindmap::model::Palette>,
     side_filter: Option<&str>,
     verbose: bool,
 ) -> Vec<OutputLine> {
+    let canvas_default = map.canvas.default_border.as_ref();
+    let palettes = &map.palettes;
+    // The **effective** frame color, through the same cascade the
+    // render path uses (`tree_builder/border.rs`). A readout that
+    // reached for `node.style.frame_color` here would print
+    // `#222222` while the glyphs paint the node's palette frame —
+    // which is precisely the confusion this verb exists to clear
+    // up.
     let style = resolve_border_style(
         node.style.border.as_ref(),
         canvas_default,
-        &node.style.frame_color,
+        map.node_frame_color(node),
     );
     let approx_char_width = style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let size = node.size_vec2();
@@ -181,14 +206,24 @@ fn format_border_readout(
         face_str, style.font_size_pt, font_override
     )));
     if verbose {
-        //surface both color surfaces so the user
-        // can see why their border colour doesn't match what they
-        // expected. `style.frame_color` is set via `color border=`;
-        // `style.border.color` is set via `border color`. Different
-        // verbs, different fields, identical-looking authoring.
+        // Surface every color surface the border sits on, so the
+        // user can see why their border colour doesn't match what
+        // they expected. Three of them now: the node's *effective*
+        // frame color and where it came from, the raw
+        // `style.frame_color` the palette may be shadowing, and
+        // `style.border.color`, which outranks both. Printing only
+        // the raw field — as this did — reported `#222222` on a
+        // node whose glyphs paint its palette's `#a20000`, which
+        // is exactly the confusion the verb exists to clear up.
         lines.push(OutputLine::plain("color (cascade):".to_string()));
+        let frame_color = map.node_frame_color(node);
         lines.push(OutputLine::plain(format!(
-            "  style.frame_color    = {}          # set via `color border=`",
+            "  node frame (effective) = {}          # source: {}",
+            frame_color,
+            frame_color_source(map, node)
+        )));
+        lines.push(OutputLine::plain(format!(
+            "  style.frame_color    = {}          # the unthemed tier, set via `color border=`",
             node.style.frame_color
         )));
         let per_node_color = node
@@ -196,7 +231,7 @@ fn format_border_readout(
             .border
             .as_ref()
             .and_then(|c| c.color.as_deref());
-        let cascade_target = per_node_color.unwrap_or(node.style.frame_color.as_str());
+        let cascade_target = per_node_color.unwrap_or(frame_color);
         let per_node_label = per_node_color.unwrap_or("(unset)");
         lines.push(OutputLine::plain(format!(
             "  style.border.color   = {} [\u{2192} {}]   # set via `border color`",
@@ -289,5 +324,84 @@ fn corner_line(style: &baumhard::mindmap::border::BorderStyle, face: &Option<Str
     match face {
         Some(family) => OutputLine::in_font(text, family),
         None => OutputLine::plain(text),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
+    use baumhard::mindmap::model::MindMap;
+
+    fn readout_blob(map: &MindMap, node: &MindNode, verbose: bool) -> String {
+        format_border_readout(map, node, None, verbose)
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The readout has to agree with the glyphs. Every testament
+    /// node is themed, so a `border show` that reached for
+    /// `style.frame_color` printed a color the border is not
+    /// painted in — the verb's own doc comment says it exists so
+    /// the user can see why their border color does not match what
+    /// they expected, and it was the thing lying to them.
+    #[test]
+    fn test_border_show_reports_the_effective_frame_color() {
+        // `maps/palette_cascade.mindmap.json` rather than
+        // testament: its `style` values are deliberately different
+        // from its palette's, where testament's have drifted
+        // toward each other and would let a wrong read pass.
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("maps/palette_cascade.mindmap.json");
+        let map =
+            baumhard::mindmap::loader::load_from_file(&path).expect("the palette-cascade fixture must load");
+        let node = map.nodes.get("0").expect("fixture node 0");
+        assert!(node.color_schema.is_some(), "fixture node 0 is themed");
+        let effective = map.node_frame_color(node).to_string();
+        assert_ne!(
+            effective, node.style.frame_color,
+            "the fixture must keep its tiers apart or this test proves nothing"
+        );
+        let blob = readout_blob(&map, node, false);
+        assert!(
+            blob.contains(&format!("color:   {effective}")),
+            "readout must print the color the border is painted in: {blob}"
+        );
+    }
+
+    /// `verbose` names the tier the color came from, which is the
+    /// whole reason the flag exists. A themed node reports its
+    /// palette; a per-node override reports itself.
+    #[test]
+    fn test_border_show_verbose_names_the_cascade_tier() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        let palette = doc
+            .mindmap
+            .nodes
+            .get(&id)
+            .and_then(|n| n.color_schema.as_ref())
+            .map(|s| s.palette.clone())
+            .expect("testament nodes are themed");
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        let blob = readout_blob(&doc.mindmap, node, true);
+        assert!(
+            blob.contains(&format!("palette `{palette}`")),
+            "a themed node must be told its color comes from the palette: {blob}"
+        );
+
+        assert!(doc.set_node_border_color(&id, "#00ff00".into()));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        let blob = readout_blob(&doc.mindmap, node, true);
+        assert!(
+            blob.contains("color_schema.overrides.frame"),
+            "a hand-recolored node must be told the override is what won: {blob}"
+        );
+        assert!(
+            blob.contains("#00ff00"),
+            "...and the effective color must be the one just set: {blob}"
+        );
     }
 }

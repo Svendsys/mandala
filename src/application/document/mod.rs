@@ -539,8 +539,19 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
 /// both run on the same map.
 pub(super) fn grow_node_sizes_to_fit_borders(map: &mut MindMap) {
     let canvas_default = map.canvas.default_border.clone();
+    // Resolve every node's frame color through the palette cascade
+    // *before* the mutable walk, because the cascade reads the
+    // map's palettes and the walk holds the map exclusively. One
+    // `String` per node, on a load-time pass that already clones
+    // the canvas default.
+    let frame_colors: rustc_hash::FxHashMap<String, String> = map
+        .nodes
+        .values()
+        .map(|node| (node.id.clone(), map.node_frame_color(node).to_string()))
+        .collect();
     for node in map.nodes.values_mut() {
-        grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        let frame_color = frame_colors.get(&node.id).map_or("", String::as_str);
+        grow_one_node_to_fit_border(node, canvas_default.as_ref(), frame_color);
     }
 }
 
@@ -552,16 +563,13 @@ pub(super) fn grow_node_sizes_to_fit_borders(map: &mut MindMap) {
 pub(super) fn grow_one_node_to_fit_border(
     node: &mut baumhard::mindmap::model::MindNode,
     canvas_default: Option<&baumhard::mindmap::model::GlyphBorderConfig>,
+    frame_color: &str,
 ) {
     use baumhard::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
     if !node.style.show_frame {
         return;
     }
-    let style = resolve_border_style(
-        node.style.border.as_ref(),
-        canvas_default,
-        &node.style.frame_color,
-    );
+    let style = resolve_border_style(node.style.border.as_ref(), canvas_default, frame_color);
     let approx_char_width = style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let corners = style.corner_clusters();
 
