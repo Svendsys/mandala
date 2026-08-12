@@ -26,7 +26,9 @@ optional `hyperlink`.
 
 `text_runs` defaults to an empty array when absent. A section with
 empty runs renders its entire text using the owning node's base
-style (`style.text_color`, a default font, a default size).
+style — the node's *effective* text color (the palette group's
+`text` when the node is themed, `style.text_color` otherwise; see
+[palettes](./palettes.md)), a default font, a default size.
 
 This matters for hand-authoring. A simple node becomes:
 
@@ -72,8 +74,25 @@ violations with run indices.
 }
 ```
 
-"Hello" is bold. " world" inherits the node's base `style.text_color`,
+"Hello" is bold. " world" inherits the node's effective text color,
 default font, default size. Valid.
+
+## Leaving `color` empty
+
+`color` is the one run field with a **third** state. A run naming a
+`#rrggbb` (or `var(--name)`) color owns those graphemes outright and
+keeps them through a retheme. A run whose `color` is the empty
+string declines to name one and takes the node's effective text
+color, exactly as an uncovered range does — it is a formatting span
+that happens to carry no color opinion.
+
+The distinction is load-bearing, and it is why the authoring layer
+writes an empty `color` on every run it creates with nothing to
+inherit from (a text edit on a run-less section, a `bold` over a
+range, a clipboard splice). Baking the currently-effective hex in
+would render identically the same day and quietly opt those
+graphemes out of the palette: the next palette edit would move every
+sibling and leave them behind.
 
 ## Hyperlinks
 

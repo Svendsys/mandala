@@ -41,6 +41,12 @@ impl MindMapDocument {
         if new_regions.all_regions().is_empty() {
             return self.set_section_text(node_id, section_idx, new_text);
         }
+        // The pixel value a colorless run is painted in, so the
+        // converter can tell "this run still defers to the node's
+        // text color" from "this run was deliberately recolored".
+        // Without it a single keystroke in the inline editor bakes
+        // every theme-following run on the node into a literal hex.
+        let theme_text_rgba = self.mindmap.node_text_rgba(node);
         let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
         let new_runs: Vec<TextRun> = new_regions
             .all_regions()
@@ -51,7 +57,7 @@ impl MindMapDocument {
                     region.range.start,
                     region.range.end,
                 );
-                super::super::custom::sync::region_to_text_run(region, prior)
+                super::super::custom::sync::region_to_text_run(region, prior, theme_text_rgba)
             })
             .collect();
         self.mutate_section_with_text_undo(node_id, section_idx, NodeEditTail::Grow, move |s| {
@@ -381,9 +387,13 @@ impl MindMapDocument {
     /// Range-setter pre-flight: clamps `range_end` to the
     /// section's grapheme count and builds the gap-fill
     /// template from the section's first run (cascade source)
-    /// or the authoring defaults recolored to the node's
-    /// `style.text_color` when the section has no runs. Caller
-    /// overwrites the one attribute it's setting.
+    /// or the authoring defaults when the section has no runs.
+    /// Caller overwrites the one attribute it's setting.
+    ///
+    /// The defaults leave `color` empty on purpose — a `bold` over
+    /// a range must not decide the color of the graphemes it
+    /// fills, and empty is the spelling that leaves the node's
+    /// text color (palette or `style`) in charge.
     fn clamp_range_and_build_template(
         &self,
         node_id: &str,
@@ -394,10 +404,11 @@ impl MindMapDocument {
         let section = node.sections.get(section_idx)?;
         let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
         let clamped_end = range_end.min(total);
-        let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
-            color: node.style.text_color.clone(),
-            ..default_text_run(0)
-        });
+        let template = section
+            .text_runs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| default_text_run(0));
         Some((clamped_end, template))
     }
 

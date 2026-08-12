@@ -29,10 +29,23 @@ pub(in crate::application) const DEFAULT_RUN_FONT_FAMILY: &str = "LiberationSans
 /// run onto it.
 pub(in crate::application) const DEFAULT_RUN_SIZE_PT: u32 = 24;
 
-/// Color a freshly-authored [`TextRun`] carries — the same
-/// fall-through-to-white floor the renderer applies to a node
-/// with no explicit `style.text_color`.
-pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "#ffffff";
+/// Color a freshly-authored [`TextRun`] carries: **none**.
+///
+/// The empty string is the model's spelling for "take the node's
+/// section-level text color" — the palette group's `text` on a
+/// themed node, `style.text_color` otherwise
+/// (`format/palettes.md`, `format/text-runs.md`). That is what an
+/// authoring path with nothing to inherit from actually means, and
+/// it is the only value that keeps working after a retheme: a run
+/// created with a literal hex is a per-slice override the theme is
+/// then forbidden to repaint, so every new run would silently opt
+/// its graphemes out of the palette.
+///
+/// It changes nothing for an untouched new node, whose
+/// [`default_node`] `style.text_color` is `#ffffff` — the same
+/// white the constant used to spell out. It changes everything for
+/// a run authored onto a themed node.
+pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "";
 
 /// One unstyled [`TextRun`] covering `[0, end)` graphemes, in the
 /// authoring defaults above.
@@ -40,9 +53,11 @@ pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "#ffffff";
 /// The single template every "this section has no run to inherit
 /// from" path reaches for — node/section text setters, the
 /// range-setter gap filler, the clipboard cut/paste splice
-/// templates. Callers that need one field different use struct
-/// update syntax, e.g.
-/// `TextRun { color: node.style.text_color.clone(), ..default_text_run(0) }`.
+/// templates. Every one of those wants the color cascade left
+/// intact, which is why [`DEFAULT_RUN_COLOR`] is empty and none of
+/// them overrides it; a caller that needs some *other* field
+/// different uses struct update syntax, e.g.
+/// `TextRun { size_pt: 12, ..default_text_run(0) }`.
 ///
 /// `end == 0` is legal here because most callers use the result
 /// purely as a *template* (they overwrite `start` / `end` from

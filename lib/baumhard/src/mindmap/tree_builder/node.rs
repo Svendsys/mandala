@@ -220,8 +220,7 @@ pub(super) fn mindnode_section_area(
     // contract `MindSection` and `TextRun` have always documented;
     // before the palette cascade was wired it was `hex_to_rgba_safe`
     // that answered, and it answered black.
-    let node_text = color::resolve_var(map.node_text_color(node), vars);
-    let node_text_rgba = color::hex_to_rgba_safe(node_text, [0.0, 0.0, 0.0, 1.0]);
+    let node_text_rgba = map.node_text_rgba(node);
     let mut regions = ColorFontRegions::new_empty();
     for run in &section.text_runs {
         let rgba = if run.color.is_empty() {
@@ -290,10 +289,9 @@ pub fn section_default_regions(
     if clusters == 0 {
         return Vec::new();
     }
-    let vars = &map.canvas.theme_variables;
-    let text = color::resolve_var(map.node_text_color(node), vars);
-    let text_rgba = color::hex_to_rgba_safe(text, [0.0, 0.0, 0.0, 1.0]);
+    let text_rgba = map.node_text_rgba(node);
     let title_split = if section_idx == 0 {
+        let vars = &map.canvas.theme_variables;
         let title = color::resolve_var(map.node_title_color(node), vars);
         let title_rgba = color::hex_to_rgba_safe(title, text_rgba);
         // Nothing to split when the title color is the text color —

@@ -732,10 +732,7 @@ fn cut_section_range(
         .text_runs
         .first()
         .cloned()
-        .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
-            color: node.style.text_color.clone(),
-            ..default_text_run(0)
-        });
+        .unwrap_or_else(|| default_text_run(0));
     baumhard::mindmap::model::text_run_ops::splice_range(
         &mut new_runs,
         range_start,
@@ -816,10 +813,7 @@ fn paste_section_range(
     })
     .map(|idx| section.text_runs[idx].clone())
     .or_else(|| section.text_runs.first().cloned())
-    .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
-        color: node.style.text_color.clone(),
-        ..default_text_run(0)
-    });
+    .unwrap_or_else(|| default_text_run(0));
     baumhard::mindmap::model::text_run_ops::splice_range(
         &mut new_runs,
         range_start,

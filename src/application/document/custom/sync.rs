@@ -133,9 +133,18 @@ pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> u32 {
 ///
 /// **Runless sections** have nowhere to store a size, so the change
 /// would evaporate. To honor it we synthesize one run spanning the
-/// whole text carrying the new size and the section's effective
-/// default color (`default_color`) so rendering is unchanged
-/// except for the size.
+/// whole text carrying the new size and an **empty** `color`, so
+/// rendering is unchanged except for the size.
+///
+/// Empty rather than the section's currently-effective color, which
+/// is the whole point: an empty `color` is the model's spelling for
+/// "take the node's section-level text color", which is exactly
+/// what a run-less section was already doing. Baking the resolved
+/// value in instead would render identically *today* and convert a
+/// themed section into a hardcoded one — the next palette edit
+/// would move every sibling section and leave this one behind. A
+/// font-size mutation has no business deciding a section's color
+/// (`format/palettes.md`).
 ///
 /// `old_scale` is the section's effective scale **before** this
 /// sync ran — i.e. the value the forward path put in the tree,
@@ -154,7 +163,6 @@ fn sync_section_font_size(
     section: &mut baumhard::mindmap::model::MindSection,
     tree_scale: f32,
     old_scale: f32,
-    default_color: &str,
 ) -> bool {
     use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
@@ -175,11 +183,6 @@ fn sync_section_font_size(
             return false;
         }
         let size_pt = clamp_run_size_pt(tree_scale.round());
-        let color = if default_color.is_empty() {
-            DEFAULT_TEXT_RUN_COLOR.to_string()
-        } else {
-            default_color.to_string()
-        };
         section.text_runs.push(TextRun {
             start: 0,
             end,
@@ -188,7 +191,7 @@ fn sync_section_font_size(
             underline: false,
             font: String::new(),
             size_pt,
-            color,
+            color: String::new(),
             hyperlink: None,
         });
         return true;
@@ -219,36 +222,68 @@ fn sync_section_font_size(
 /// just before each apply, so every region's range was an
 /// authored run before the mutation ran).
 ///
+/// `theme_text_rgba` is the pixel value the forward path paints a
+/// *colorless* run in — [`baumhard::mindmap::model::MindMap::node_text_rgba`]
+/// for the node that owns the section. It is what lets a run that
+/// deferred to the theme survive the trip; see the
+/// `prior_deferred_color` short-circuit below.
+///
 /// Limitations:
 /// - `var(--name)` color references collapse to their resolved
 ///   hex on the round trip *unless* the prior run shares the
-///   region's range — see the `prior_var_color` short-circuit
-///   below.
+///   region's range — see the `prior_deferred_color`
+///   short-circuit below.
 /// - Unknown `AppFont` (corrupt tree state) falls through to
 ///   the empty string, matching the loader's tolerance for
 ///   missing-font runs.
 ///
 /// Visible to [`super::super::nodes`] so the editor commit path
 /// can reuse the converter through `set_section_text_and_runs`.
-pub(crate) fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRun>) -> TextRun {
-    // Preserve `var(--name)` references when the prior run
-    // shares the region's range and carries one. Without theme-
-    // variables resolution at sync time we can't tell whether a
-    // mutation deliberately recolored the run away from the
-    // variable; trusting the prior keeps the variable reference
-    // verbatim across mutations that didn't touch the color.
-    // Same documented trade-off as the selective gate: a
-    // deliberate `SetRegionColor` on a `var()`-bearing run is
-    // silently swallowed here — the run keeps the variable.
-    let prior_var_color: Option<&str> = prior.and_then(|p| {
-        if is_var_ref(&p.color) && p.start == region.range.start && p.end == region.range.end {
-            Some(p.color.as_str())
-        } else {
-            None
+pub(crate) fn region_to_text_run(
+    region: &ColorFontRegion,
+    prior: Option<&TextRun>,
+    theme_text_rgba: baumhard::util::color::FloatRgba,
+) -> TextRun {
+    // Two model-side color spellings have no tree-side
+    // representation at all: a `var(--name)` reference and the
+    // empty string that defers to the node's section-level text
+    // color. Both reach the tree as a concrete rgba, so a naive
+    // reverse conversion replaces them with a literal hex and the
+    // authored indirection is gone for good — the variable stops
+    // tracking the canvas theme, the empty run stops tracking the
+    // palette. Recover both from the prior run when it shares the
+    // region's exact range.
+    //
+    // The two differ in how much evidence they can muster, and so
+    // in how strict they have to be.
+    //
+    // Resolving a `var()` here would need the canvas theme map the
+    // converter is not handed, so that arm has nothing to check
+    // against and simply trusts the prior — but only when the
+    // prior covers the region's *exact* range, since a resized
+    // span is no longer demonstrably the one that carried the
+    // variable. The documented trade-off stands: a mutation
+    // deliberately recoloring a `var()`-bearing run is silently
+    // swallowed.
+    //
+    // The empty-color arm has the evidence the `var()` arm lacks —
+    // whether the region still paints `theme_text_rgba` — and so
+    // needs no range test at all. That matters: the commonest way
+    // a deferring run reaches this function is a keystroke in the
+    // inline editor, which extends `[0,6)` to `[0,7)`. An exact-
+    // range rule would bake the palette hex on the first character
+    // typed, which is the whole defect this arm exists to stop.
+    // A recolor moves the region off the theme color and lands as
+    // a literal hex, exactly as it should.
+    let prior_deferred_color: Option<&str> = prior.and_then(|p| {
+        if p.color.is_empty() {
+            return (region.color == Some(theme_text_rgba)).then_some("");
         }
+        let same_range = p.start == region.range.start && p.end == region.range.end;
+        (is_var_ref(&p.color) && same_range).then_some(p.color.as_str())
     });
-    let color = match (prior_var_color, region.color) {
-        (Some(var_color), _) => var_color.to_string(),
+    let color = match (prior_deferred_color, region.color) {
+        (Some(deferred), _) => deferred.to_string(),
         (None, Some(rgba)) => rgba_to_hex(rgba),
         (None, None) => prior
             .map(|p| p.color.clone())
@@ -408,13 +443,14 @@ impl MindMapDocument {
         // Both entries answer the same question — "what would the
         // forward path have produced from the model as it stands?" —
         // for the two places a section's colors come from something
-        // other than a `TextRun`: the palette cascade
-        // (`MindMap::node_text_color`) and, for a run-less section,
+        // other than an explicitly-colored `TextRun`: the palette
+        // cascade, as the pixel value a colorless run is painted in
+        // (`MindMap::node_text_rgba`), and, for a run-less section,
         // the default region table the tree builder synthesizes.
         let Some(read_node) = self.mindmap.nodes.get(node_id) else {
             return false;
         };
-        let node_text_color = self.mindmap.node_text_color(read_node).to_string();
+        let node_text_rgba = self.mindmap.node_text_rgba(read_node);
         let projected_default_regions: Vec<Vec<ColorFontRegion>> = read_node
             .sections
             .iter()
@@ -612,6 +648,27 @@ impl MindMapDocument {
                             // silently swallowed; the run keeps the
                             // variable.
                             (Some(_), None) if model_is_var => true,
+                            // `(Some(hex), None)` with the model
+                            // carrying an **empty** color: the run
+                            // declined to name one and defers to the
+                            // node's section-level text color — the
+                            // palette group's `text` on a themed
+                            // node (`format/palettes.md`: "The theme
+                            // reaches text through runs that leave
+                            // `color` empty"). The forward path
+                            // paints such a run with exactly
+                            // `node_text_rgba`, so that — not a
+                            // literal hex the model never held — is
+                            // what the region has to be compared
+                            // against. Without this arm every
+                            // section holding a colorless run reads
+                            // as divergent on *every* apply, and the
+                            // round trip below bakes the palette hex
+                            // into the run, severing the cascade for
+                            // good on a mutation that moved nothing.
+                            (Some(_), None) if run.color.is_empty() => {
+                                region.color == Some(node_text_rgba)
+                            }
                             _ => false,
                         };
                         if !colors_equal {
@@ -674,7 +731,7 @@ impl MindMapDocument {
                     .map(|region| {
                         let prior =
                             exact_or_dominant_overlap(&prior_runs, region.range.start, region.range.end);
-                        region_to_text_run(region, prior)
+                        region_to_text_run(region, prior, node_text_rgba)
                     })
                     .collect();
 
@@ -694,12 +751,7 @@ impl MindMapDocument {
             // still persisted). Distributes the tree-side `scale`
             // delta across the section's runs; see
             // [`sync_section_font_size`].
-            if sync_section_font_size(
-                section,
-                snapshot.tree_scale,
-                pre_round_trip_scale,
-                &node_text_color,
-            ) {
+            if sync_section_font_size(section, snapshot.tree_scale, pre_round_trip_scale) {
                 changed = true;
             }
         }
@@ -714,6 +766,13 @@ mod region_converter_tests {
     };
     use baumhard::core::primitives::{ColorFontRegion, Range};
     use baumhard::mindmap::model::TextRun;
+
+    /// Stand-in for the owning node's effective text color as the
+    /// forward path paints it. Every channel is exactly
+    /// representable in `f32`, so the equality the converter does
+    /// against a region's color is decided by the test's intent
+    /// rather than by a rounding accident.
+    const THEME_TEXT_RGBA: baumhard::util::color::FloatRgba = [0.25, 0.5, 0.75, 1.0];
 
     fn run(start: usize, end: usize, color: &str, font: &str) -> TextRun {
         TextRun {
@@ -747,7 +806,7 @@ mod region_converter_tests {
     fn test_region_to_text_run_merges_with_prior() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
         let prior = styled_run(0, 5);
-        let out = region_to_text_run(&region, Some(&prior));
+        let out = region_to_text_run(&region, Some(&prior), THEME_TEXT_RGBA);
         assert_eq!(out.start, 0);
         assert_eq!(out.end, 5);
         assert_eq!(out.color, "#ff0000");
@@ -761,7 +820,7 @@ mod region_converter_tests {
     #[test]
     fn test_region_to_text_run_falls_back_to_defaults_without_prior() {
         let region = ColorFontRegion::new(Range::new(0, 5), None, None);
-        let out = region_to_text_run(&region, None);
+        let out = region_to_text_run(&region, None, THEME_TEXT_RGBA);
         assert!(!out.bold);
         assert!(!out.italic);
         assert!(!out.underline);
@@ -774,7 +833,7 @@ mod region_converter_tests {
     #[test]
     fn test_region_to_text_run_uses_region_color_without_prior() {
         let region = ColorFontRegion::new(Range::new(0, 3), None, Some([0.0, 1.0, 0.0, 1.0]));
-        let out = region_to_text_run(&region, None);
+        let out = region_to_text_run(&region, None, THEME_TEXT_RGBA);
         assert_eq!(out.color, "#00ff00");
     }
 
@@ -785,7 +844,7 @@ mod region_converter_tests {
             color: "var(--accent)".into(),
             ..styled_run(0, 5)
         };
-        let out = region_to_text_run(&region, Some(&prior_with_var));
+        let out = region_to_text_run(&region, Some(&prior_with_var), THEME_TEXT_RGBA);
         assert_eq!(out.color, "var(--accent)");
     }
 
@@ -796,8 +855,60 @@ mod region_converter_tests {
             color: "var(--accent)".into(),
             ..styled_run(0, 5)
         };
-        let out = region_to_text_run(&region, Some(&prior_with_var));
+        let out = region_to_text_run(&region, Some(&prior_with_var), THEME_TEXT_RGBA);
         assert_eq!(out.color, "#ff0000");
+    }
+
+    /// A run that left `color` empty defers to the node's
+    /// section-level text color. The tree can only carry the
+    /// resolved pixel value, so the converter has to recognize it
+    /// and hand the deferral back — otherwise one round trip bakes
+    /// the palette hex into the model and the node stops tracking
+    /// its palette forever.
+    #[test]
+    fn test_region_to_text_run_keeps_empty_color_when_region_still_paints_the_theme() {
+        let region = ColorFontRegion::new(Range::new(0, 5), None, Some(THEME_TEXT_RGBA));
+        let prior_deferring = TextRun {
+            color: String::new(),
+            ..styled_run(0, 5)
+        };
+        let out = region_to_text_run(&region, Some(&prior_deferring), THEME_TEXT_RGBA);
+        assert_eq!(out.color, "");
+        // The rest of the merge is unaffected.
+        assert!(out.bold);
+        assert_eq!(out.size_pt, 21);
+    }
+
+    /// The other half of the same rule: a mutation that genuinely
+    /// recolored the run moves the region off the theme color, and
+    /// then the literal hex is the honest answer. This is what
+    /// separates the empty-color arm from the `var()` arm, which
+    /// cannot check and so always trusts the prior.
+    #[test]
+    fn test_region_to_text_run_bakes_empty_color_when_region_was_recolored() {
+        let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
+        let prior_deferring = TextRun {
+            color: String::new(),
+            ..styled_run(0, 5)
+        };
+        let out = region_to_text_run(&region, Some(&prior_deferring), THEME_TEXT_RGBA);
+        assert_eq!(out.color, "#ff0000");
+    }
+
+    /// Unlike the `var()` arm, the deferral survives a range
+    /// change — the region's color is the evidence, not the range.
+    /// This is the inline-editor shape: one keystroke turns
+    /// `[0,5)` into `[0,6)`, and an exact-range rule would bake the
+    /// palette hex on the first character typed.
+    #[test]
+    fn test_region_to_text_run_keeps_empty_color_across_a_range_change() {
+        let region = ColorFontRegion::new(Range::new(0, 6), None, Some(THEME_TEXT_RGBA));
+        let prior_deferring = TextRun {
+            color: String::new(),
+            ..styled_run(0, 5)
+        };
+        let out = region_to_text_run(&region, Some(&prior_deferring), THEME_TEXT_RGBA);
+        assert_eq!(out.color, "");
     }
 
     #[test]

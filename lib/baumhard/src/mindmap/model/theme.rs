@@ -129,6 +129,31 @@ impl MindMap {
         }
     }
 
+    /// [`Self::node_text_color`] carried the whole way to pixels —
+    /// through the canvas theme variables and through
+    /// [`crate::util::color::hex_to_rgba_safe`], with opaque black
+    /// as the floor for an unparseable string.
+    ///
+    /// This is the value a section's glyphs are actually painted
+    /// in when nothing more specific claims them, so it is what
+    /// both the forward projection and any reverse comparison must
+    /// use. Keeping it here rather than at the three call sites is
+    /// what stops the projection and the comparison from drifting:
+    /// a reverse gate that resolved the string differently from
+    /// the forward pass would read every themed section as
+    /// divergent.
+    ///
+    /// Cost: one [`Self::node_text_color`] plus one hex parse. No
+    /// allocation — `resolve_var` borrows when there is nothing to
+    /// substitute.
+    pub fn node_text_rgba(&self, node: &MindNode) -> crate::util::color::FloatRgba {
+        let resolved = crate::util::color::resolve_var(
+            self.node_text_color(node),
+            &self.canvas.theme_variables,
+        );
+        crate::util::color::hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 1.0])
+    }
+
     /// The palette stroke color an edge inherits from its **source**
     /// node, or `None` when no theme tier applies.
     ///
