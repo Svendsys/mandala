@@ -1905,7 +1905,8 @@ mod tests {
 
         let graph = TypeGraph::build(&crate_src_root());
         let scanned = graph.key_bearing_sequences_from("MindMap");
-        let derived = derived_shape::<crate::mindmap::model::MindMap>().key_bearing_sequences();
+        let shape = derived_shape::<crate::mindmap::model::MindMap>();
+        let derived = shape.key_bearing_sequences();
 
         assert!(
             scanned.len() > 10,
@@ -1920,27 +1921,54 @@ mod tests {
             "the two derivations of the positional-array set disagree.\n  \
              the source walk has, the generated impls do not: {unseen_by_the_probe:?}\n  \
              the generated impls have, the source walk does not: {unseen_by_the_walk:?}\n\n\
-             The generated impls are the on-disk truth about *shape*; the source walk is \
-             the only one that can see `#[serde(alias = \"…\")]`, which adds a spelling \
-             the derive never names. A name the walk has and the probe does not is \
-             therefore either an alias — legitimate, and it belongs in the published \
-             list — or a shape `util::serde_coverage::TypeGraph::sequence_element` has \
-             classified wrongly. A name the probe has and the walk does not is the walk \
-             failing to see an array, which is the defect issue #122 exists for."
+             The generated impls are the on-disk truth about *shape* — including every \
+             `#[serde(alias = \"…\")]` spelling, which the derive writes into the same \
+             `FIELDS` and `VARIANTS` lists as the name it aliases. A name the walk has \
+             and the probe does not is therefore a shape \
+             `util::serde_coverage::TypeGraph::sequence_element` has classified wrongly. \
+             A name the probe has and the walk does not is the walk failing to see an \
+             array, which is the defect issue #122 exists for."
         );
 
         assert!(
-            graph.unnamed_sequences_from("MindMap").is_empty()
-                && derived_shape::<crate::mindmap::model::MindMap>()
-                    .unnamed_sequences()
-                    .is_empty(),
+            graph.unnamed_sequences_from("MindMap").is_empty() && shape.unnamed_sequences().is_empty(),
             "the model has grown an array at a place with no JSON member name — a tuple \
-             position, or the value of a map whose keys are data. A captured key's route \
-             crosses it positionally and `format/schema.md`'s one-name-per-line block \
-             has no way to name it, so what the document should say is a decision \
-             somebody has to make:\n  walk: {:?}\n  generated impls: {:?}",
+             position, the value of a map whose keys are data, or an array nested \
+             directly inside another one, as `Vec<Vec<T>>` is. Only the probe can see \
+             that last shape: the walk classifies *fields*, and a nested array is one \
+             field, so an empty answer from it is not evidence. A captured key's route \
+             crosses whichever it is positionally and `format/schema.md`'s \
+             one-name-per-line block has no way to name it, so what the document should \
+             say is a decision somebody has to make:\n  walk: {:?}\n  generated impls: \
+             {:?}",
             graph.unnamed_sequences_from("MindMap"),
-            derived_shape::<crate::mindmap::model::MindMap>().unnamed_sequences()
+            shape.unnamed_sequences()
+        );
+
+        // Every member below which the probe stops seeing, held to
+        // the two the model means opaque. `MindMap::macros` and
+        // `MindNode::inline_macros` are the crate's only
+        // `Vec<serde_json::Value>` fields, deliberately so — nothing
+        // inside one is ever captured — and a self-describing value
+        // is the only thing here that asks a deserializer to decide
+        // for itself. An `#[serde(untagged)]` enum asks the same way
+        // and would otherwise vanish in silence, which is the one
+        // blind spot in this derivation that raises no error of its
+        // own.
+        let expected: std::collections::BTreeSet<String> = ["MindMap.macros[0]", "MindNode.inline_macros[0]"]
+            .iter()
+            .map(|site| (*site).to_string())
+            .collect();
+        assert_eq!(
+            shape.opaque_sites(),
+            &expected,
+            "the probe answered a `deserialize_any` somewhere new. Either a member became \
+             deliberately opaque — a `serde_json::Value`, in which case add it here — or \
+             a type on the load path grew `#[serde(untagged)]`, which decides its variant \
+             by replaying a buffered `Content` through a deserializer the loader's capture \
+             is not part of, and drops every key no variant claimed. \
+             `loader::tests::test_no_loadable_type_can_swallow_an_unknown_key` refuses that \
+             attribute; this is the same refusal arrived at from the compiler's side."
         );
     }
 

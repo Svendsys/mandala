@@ -188,8 +188,9 @@ pub struct TypeInfo {
     /// least one struct variant. Tuple and unit shapes have no field
     /// names for a stray key to hide in.
     pub has_named_fields: bool,
-    /// Every variant an enum declares, in source order and **under
-    /// the name the file uses**; empty for a struct or an alias.
+    /// Every spelling an enum's variants can be written under, in
+    /// source order and **under the names the file uses**; empty for
+    /// a struct or an alias.
     ///
     /// An externally tagged enum writes its variant as the single
     /// member of a wrapper object, which is a JSON level serde's
@@ -204,6 +205,14 @@ pub struct TypeInfo {
     /// They were read off the identifier until #122, which would have
     /// driven `expand_route` over a level no document contains the
     /// moment anything renamed a variant.
+    ///
+    /// A variant that carries `#[serde(alias = "…")]` contributes
+    /// **every** spelling, sorted, in place of the one — which is
+    /// exactly the shape of the `VARIANTS` list `serde_derive` hands
+    /// `deserialize_enum`, per variant in source order and sorted
+    /// inside each variant's group. Publishing the alias is the same
+    /// decision [`Self::fields`] carries for a field's: a file may
+    /// write it, so a route may cross it.
     pub variants: Vec<String>,
     /// Every type name mentioned by a deserializable field, in
     /// source order and de-duplicated by the walk rather than here.
@@ -555,6 +564,14 @@ impl TypeGraph {
     /// variant names, and comparing them against a `FIELDS` list
     /// would be comparing two different things.
     ///
+    /// **Every alias is here**, for the same reason
+    /// [`Self::key_bearing_sequences_from`] publishes them: a name a
+    /// file may write is a name this walk is answering about. The
+    /// derive agrees — `serde_derive` puts a field's aliases straight
+    /// into the `FIELDS` list it hands `deserialize_struct` — so the
+    /// two surfaces would otherwise disagree about `alias` in
+    /// opposite directions, which they did until #122's review.
+    ///
     /// Cost: one walk from `root`; no I/O.
     pub fn member_names_from(&self, root: &str) -> BTreeMap<String, BTreeSet<String>> {
         let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -565,6 +582,7 @@ impl TypeGraph {
                     continue;
                 }
                 entry.extend(field.member.iter().cloned());
+                entry.extend(field.aliases.iter().cloned());
             }
         }
         out
@@ -835,10 +853,18 @@ impl TypeGraph {
                         fields.extend(serde_fields(
                             &format!("{owner}::{variant_member}"),
                             inner_rule,
-                            Some(&variant_member),
+                            Some((variant_member.as_str(), variant_names.aliases.as_slice())),
                             &variant.fields,
                         ));
-                        variants.push(variant_member);
+                        // Sorted inside the variant's own group and
+                        // appended in source order, which is how
+                        // `serde_derive` lays out `VARIANTS`: it
+                        // flat-maps a `BTreeSet` per variant, and the
+                        // set holds the resolved name alongside every
+                        // alias.
+                        let mut group: BTreeSet<String> = variant_names.aliases.into_iter().collect();
+                        group.insert(variant_member);
+                        variants.extend(group);
                     }
                     self.insert(TypeInfo {
                         transparent_target: None,
@@ -1433,12 +1459,13 @@ fn read_deserialize_arm(meta: &syn::meta::ParseNestedMeta) -> syn::Result<Option
 ///
 /// `owner` names the type for the site string; `rule` is the
 /// container's `rename_all` as it applies to *these* fields;
-/// `payload_member` is the JSON name of the variant that wraps them,
-/// present only for an enum variant.
+/// `payload` is the JSON name of the variant that wraps them together
+/// with every alias spelling that variant accepts, present only for
+/// an enum variant.
 fn serde_fields(
     owner: &str,
     rule: Option<RenameRule>,
-    payload_member: Option<&str>,
+    payload: Option<(&str, &[String])>,
     fields: &Fields,
 ) -> Vec<SerdeField> {
     let mut out = Vec::new();
@@ -1464,13 +1491,21 @@ fn serde_fields(
             // `transparent_target` from whatever names it. Anything
             // wider is a fixed-arity array whose positions no member
             // names.
-            None if unnamed_arity == 1 => payload_member.map(str::to_string),
+            None if unnamed_arity == 1 => payload.map(|(member, _)| member.to_string()),
             None => None,
         };
         let kind = if field.ident.is_some() {
             MemberKind::Field
         } else {
             MemberKind::VariantPayload
+        };
+        // A newtype variant's payload is published under the
+        // *variant's* names, so the extra spellings that reach it are
+        // the variant's aliases and not the unnamed field's — which
+        // serde would have nothing to do with anyway.
+        let aliases = match kind {
+            MemberKind::Field => names.aliases,
+            MemberKind::VariantPayload => payload.map(|(_, aliases)| aliases.to_vec()).unwrap_or_default(),
         };
         // A newtype struct is reached through its parent; emitting it
         // here as well would report the same array twice under two
@@ -1485,7 +1520,7 @@ fn serde_fields(
         out.push(SerdeField {
             member,
             kind,
-            aliases: names.aliases,
+            aliases,
             ty: DeclaredType(field.ty.clone()),
             site,
         });
@@ -2425,6 +2460,120 @@ pub struct PlantedLeaf {
             scanned.contains("controlPoints") && scanned.contains("points") && scanned.contains("Literal"),
             "and the agreement has to be about something — a renamed alias, a renamed \
              set, and a variant payload are the three the old walk got wrong: {scanned:?}"
+        );
+    }
+
+    /// **`#[serde(alias = "…")]` is in the published contract, and it
+    /// has to be in *both* published surfaces.**
+    ///
+    /// The decision is not arbitrary and it is not the walk's to make
+    /// alone. `serde_derive` puts a field's aliases into the same
+    /// `FIELDS` list it hands `deserialize_struct` and a variant's
+    /// into `VARIANTS`, so the compiler already publishes them; a
+    /// file may write any of them, and a captured route is recorded
+    /// against whichever it wrote. `key_bearing_sequences_from` said
+    /// so from the start. `member_names_from` dropped them and the
+    /// variant reader discarded them, which made one walk answer
+    /// "alias is a name" and two answer "alias is nothing" — and it
+    /// put the variant surface in *direct* conflict with the probe,
+    /// which sees a variant alias whether or not the walk does.
+    ///
+    /// Held against `serde_probe` in the same test for the same
+    /// reason the planted-shape check exists: an expectation written
+    /// by hand proves the walk does what its author believed and
+    /// nothing about whether serde agrees. Sorted-inside-the-group
+    /// ordering is checked explicitly — `VARIANTS` flat-maps a
+    /// `BTreeSet` per variant, so `lit` follows `Literal` rather than
+    /// preceding it.
+    #[test]
+    fn test_every_alias_reaches_both_published_surfaces() {
+        use crate::util::serde_probe::derived_shape;
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        struct AliasRoot {
+            #[serde(alias = "waypoints")]
+            #[allow(dead_code)]
+            control_points: Vec<AliasLeaf>,
+            #[allow(dead_code)]
+            payload: AliasPayload,
+        }
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        enum AliasPayload {
+            #[serde(alias = "lit")]
+            #[allow(dead_code)]
+            Literal(Vec<AliasLeaf>),
+            #[allow(dead_code)]
+            Bare,
+        }
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        struct AliasLeaf {
+            #[allow(dead_code)]
+            x: f64,
+        }
+
+        /// The declarations above, as text for the source walk.
+        const SOURCE: &str = "\
+#[derive(Deserialize)]
+pub struct AliasRoot {
+    #[serde(alias = \"waypoints\")]
+    pub control_points: Vec<AliasLeaf>,
+    pub payload: AliasPayload,
+}
+#[derive(Deserialize)]
+pub enum AliasPayload {
+    #[serde(alias = \"lit\")]
+    Literal(Vec<AliasLeaf>),
+    Bare,
+}
+#[derive(Deserialize)]
+pub struct AliasLeaf {
+    pub x: f64,
+}
+";
+
+        let graph = graph_of(SOURCE);
+        let derived = derived_shape::<AliasRoot>();
+
+        let arrays = graph.key_bearing_sequences_from("AliasRoot");
+        assert_eq!(
+            arrays,
+            derived.key_bearing_sequences(),
+            "both derivations publish every spelling an array can be reached under: \
+             {arrays:?}"
+        );
+        for spelling in ["control_points", "waypoints", "Literal", "lit"] {
+            assert!(
+                arrays.contains(spelling),
+                "and the agreement has to be about something — a field alias and a \
+                 variant alias are the two the surfaces disagreed on: {arrays:?}"
+            );
+        }
+
+        let members = graph.member_names_from("AliasRoot");
+        assert_eq!(
+            members.get("AliasRoot"),
+            derived.members_of("AliasRoot"),
+            "the member-name surface carries the field's alias too, which is what the \
+             derive's `FIELDS` list says"
+        );
+
+        let variants = graph.get("AliasPayload").map(|info| info.variants.as_slice());
+        assert_eq!(
+            variants,
+            derived.variants_of("AliasPayload"),
+            "and the variant surface carries the variant's, in `VARIANTS` order — \
+             sorted inside each variant's group, groups in source order"
+        );
+        assert_eq!(
+            variants,
+            Some(["Literal".to_string(), "lit".to_string(), "Bare".to_string()].as_slice()),
+            "which is not the same as sorting the whole list, and is what \
+             `mindmap::unknown_keys::expand_route` is driven over"
         );
     }
 

@@ -34,13 +34,32 @@
 //! and no `.mindmap.json` is involved: the walk is the compiler's own
 //! expansion of the model, driven from `MindMap::deserialize` outward.
 //!
+//! `#[serde(alias = "…")]` is in that truth too, and reading it the
+//! other way round was the module's first real defect. The derive
+//! puts a field's aliases into the same `FIELDS` list as its name and
+//! a variant's into `VARIANTS`, grouped with the name they alias and
+//! sorted inside the group — so the probe sees every spelling, and
+//! the published list carries all of them. What the list does *not*
+//! say is where one field's group ends, and offering it blindly hands
+//! the derived visitor the same field twice, which it refuses. That
+//! refusal is where a group boundary gets learned; see
+//! [`fold_a_rejected_spelling`].
+//!
 //! **It is not a replacement for the source walk and must not become
 //! one.** It cannot see a type no value reaches (a serialize-only
-//! proxy), it cannot see `#[serde(alias = "…")]` (serde matches
-//! aliases without ever naming them), and it says nothing about
-//! `deny_unknown_fields` or `flatten`. What it is good for is exactly
-//! one thing: being a **second, independent** answer to "which JSON
-//! members hold growable arrays of key-bearing values", so
+//! proxy), and it says nothing about `deny_unknown_fields`. Three
+//! shapes stop it outright rather than being seen: a
+//! `#[serde(flatten)]` field, an internally or adjacently tagged
+//! enum, and a `deserialize_with` that validates what it is handed.
+//! One more is worse than any of those, and it is the only one that
+//! is not loud: **`#[serde(untagged)]`**, which decides its variant
+//! by replaying a buffered `Content` and so quietly matches whichever
+//! variant accepts the probe's unit, losing every other variant's
+//! shape without an error. That is why [`DerivedShape::opaque_sites`]
+//! exists — the silence is reported as a place rather than left as an
+//! absence. What the module is good for is exactly one thing: being a
+//! **second, independent** answer to "which JSON members hold
+//! growable arrays of key-bearing values", so
 //! `mindmap::unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
 //! has something that can disagree.
 //!
@@ -132,6 +151,7 @@ pub struct DerivedShape {
     variants: BTreeMap<String, Vec<String>>,
     sequences: BTreeMap<String, DerivedSequence>,
     unnamed_sequences: BTreeSet<String>,
+    opaque_sites: BTreeSet<String>,
 }
 
 impl DerivedShape {
@@ -174,16 +194,43 @@ impl DerivedShape {
     }
 
     /// Growable arrays the sweep met at a place with **no** JSON
-    /// member name to publish them under — inside a tuple, or as the
-    /// value of a map whose keys are data.
+    /// member name to publish them under — inside a tuple, as the
+    /// value of a map whose keys are data, or nested directly inside
+    /// another array, as `Vec<Vec<T>>` is.
     ///
     /// Empty for the model today. It is reported rather than dropped
     /// for the same reason [`crate::util::serde_coverage`] reports a
     /// name it cannot resolve: an array with no publishable name is a
     /// positional route the document cannot warn anybody about, and
     /// silence about it reads as absence.
+    ///
+    /// The nesting case is one only this derivation can see.
+    /// [`crate::util::serde_coverage::TypeGraph::unnamed_sequences_from`]
+    /// inspects *fields*, and `Vec<Vec<T>>` is one field, so the walk
+    /// classifies the outer array and never asks about the inner one.
     pub fn unnamed_sequences(&self) -> &BTreeSet<String> {
         &self.unnamed_sequences
+    }
+
+    /// Every place the walk answered a `deserialize_any` — where it
+    /// handed back a value without being told what shape was wanted,
+    /// and so learned nothing about what is below.
+    ///
+    /// Two things ask for one. A self-describing value
+    /// (`serde_json::Value`) is deliberately opaque and the model has
+    /// two of them. An `#[serde(untagged)]` enum is not: serde
+    /// buffers the object into a `Content` and replays it through
+    /// each variant, so a `Content::Unit` matches whichever variant
+    /// accepts a unit and every other variant's shape disappears
+    /// **without an error**. That would be the only blind spot here
+    /// that says nothing at all — `flatten` and a validating
+    /// `deserialize_with` both stop the run — so it is reported
+    /// instead, and a test that pins this set to the members the
+    /// model means opaque turns the silence into a red.
+    ///
+    /// Cost: none; the set is accumulated during the sweep.
+    pub fn opaque_sites(&self) -> &BTreeSet<String> {
+        &self.opaque_sites
     }
 }
 
@@ -226,18 +273,36 @@ struct VariantFacts {
     bottoms_out: bool,
 }
 
-/// What the sweep remembers between passes, keyed by enum name and
-/// indexed by variant.
+/// What the sweep remembers between passes.
 ///
-/// Two questions live here rather than in a [`Run`] because both
-/// outlive a single pass: which variants still need a pass of their
-/// own, and which variant to take when the walk is only trying to
-/// stop. The second is why the memory has to accumulate at all — the
-/// pass that discovers `Repeat` carries a payload is the same pass
-/// that then has to get out of `Repeat`.
+/// Three questions live here rather than in a [`Run`] because all
+/// three outlive a single pass: which variants still need a pass of
+/// their own, which variant to take when the walk is only trying to
+/// stop, and which `FIELDS` entries are second spellings of a field
+/// an earlier entry already named. The last two are why the memory
+/// has to *accumulate* rather than just be shared — each is learned
+/// by a pass that then has to act on what it learned.
 #[derive(Debug, Default)]
 struct Memory {
+    /// Per enum name, one entry per `VARIANTS` index.
     facts: BTreeMap<String, Vec<VariantFacts>>,
+    /// Per container name, the `FIELDS` indices the derived visitor
+    /// resolves to a field an earlier index already claimed, each
+    /// mapped to that earlier index.
+    ///
+    /// `FIELDS` is the concatenation of one sorted group per field —
+    /// its serde name and every `#[serde(alias = "…")]` spelling — and
+    /// nothing in the list says where a group ends. Offering the whole
+    /// list hands the derived visitor the same field twice, which it
+    /// rejects; the rejection is where a group boundary is *learned*,
+    /// and because the groups are contiguous and every index accepted
+    /// so far was a distinct field, the rejected index belongs to the
+    /// one immediately before it. Empty for a model with no aliases,
+    /// which costs the sweep nothing.
+    folded: BTreeMap<String, BTreeMap<usize, usize>>,
+    /// How many boundaries [`Self::fold`] has recorded. A pass that
+    /// failed while this grew is a pass worth replaying.
+    learned: usize,
 }
 
 impl Memory {
@@ -247,6 +312,50 @@ impl Memory {
         self.facts
             .entry(container.to_string())
             .or_insert_with(|| vec![VariantFacts::default(); options])
+    }
+
+    /// Record that `container`'s `FIELDS` entry number `at` is
+    /// another spelling of the field entry `primary` names.
+    fn fold(&mut self, container: &str, at: usize, primary: usize) {
+        if self
+            .folded
+            .entry(container.to_string())
+            .or_default()
+            .insert(at, primary)
+            .is_none()
+        {
+            self.learned += 1;
+        }
+    }
+
+    /// Whether `container`'s `FIELDS` entry number `at` is a spelling
+    /// some earlier entry already offered.
+    fn is_folded(&self, container: &str, at: usize) -> bool {
+        self.folded
+            .get(container)
+            .is_some_and(|folded| folded.contains_key(&at))
+    }
+
+    /// Every spelling the derive accepts for the field `container`'s
+    /// `FIELDS` entry number `at` names, that entry first.
+    ///
+    /// A route is recorded against the spelling the *file* used, so an
+    /// array reached through an aliased field is published under all
+    /// of them — the same answer
+    /// [`crate::util::serde_coverage::TypeGraph::key_bearing_sequences_from`]
+    /// gives from the other side.
+    fn spellings(&self, container: &str, fields: &[&str], at: usize) -> Vec<String> {
+        let mut out: Vec<String> = fields.get(at).map(|name| (*name).to_string()).into_iter().collect();
+        if let Some(folded) = self.folded.get(container) {
+            out.extend(
+                folded
+                    .iter()
+                    .filter(|(_, primary)| **primary == at)
+                    .filter_map(|(spelling, _)| fields.get(*spelling))
+                    .map(|name| (*name).to_string()),
+            );
+        }
+        out
     }
 
     /// Note what `container`'s variant number `at` turned out to be.
@@ -303,6 +412,26 @@ fn terminating_variant(memory: &Memory, container: &str, options: usize) -> usiz
         .unwrap_or(0)
 }
 
+/// A `FIELDS` entry handed to a derived visitor that has not yet
+/// asked for its value.
+///
+/// Set between those two calls and cleared by the second, so it is
+/// non-`None` at exactly one moment: after the visitor has resolved a
+/// key and before it has accepted it. The only thing the generated
+/// code does in that window is reject a field it already has, which
+/// is what makes this a duplicate detector rather than a guess.
+#[derive(Debug, Clone)]
+struct PendingKey {
+    /// The container whose [`Fields`] offered it.
+    container: String,
+    /// Its index in that container's `FIELDS`.
+    at: usize,
+    /// The last index the same visit offered *and* was asked for the
+    /// value of. `FIELDS` groups a field's spellings contiguously, so
+    /// a rejection at [`Self::at`] is a second spelling of this one.
+    after: Option<usize>,
+}
+
 /// State threaded through one pass of the walk.
 struct Run<'a> {
     /// Variant index to take at each decision, by decision order. A
@@ -310,7 +439,8 @@ struct Run<'a> {
     plan: Vec<usize>,
     /// The decisions this pass actually met, in order.
     trace: Vec<Decision>,
-    /// What the sweep has learned about enum variants so far.
+    /// What the sweep has learned about enum variants and about
+    /// `FIELDS` grouping so far.
     memory: &'a mut Memory,
     /// Container names currently open on the walk's path — the
     /// recursion guard.
@@ -319,6 +449,8 @@ struct Run<'a> {
     /// for. Compared before and after an element to decide whether
     /// the element can carry named keys.
     named_key_sites: usize,
+    /// The key a [`Fields`] map is waiting to be asked the value of.
+    pending_key: Option<PendingKey>,
     /// What the sweep has recorded.
     shape: DerivedShape,
 }
@@ -334,14 +466,22 @@ struct Run<'a> {
 /// one pass, so a `Vec` that only exists under `Mutation`'s
 /// fourteenth variant is still found.
 ///
-/// Panics when a pass fails, when the walk cannot bottom out
-/// ([`MAX_DEPTH`]), or when the sweep exceeds [`MAX_RUNS`]. All three
-/// are the probe declining to answer rather than answering short: an
-/// under-explored shape is exactly the silent wrongness this module
-/// exists to expose.
+/// A pass that ends by learning a `FIELDS` group boundary is replayed
+/// rather than counted, which is how an `#[serde(alias = "…")]` is
+/// resolved: the derive concatenates a field's spellings into
+/// `FIELDS` without saying where one field's group ends, so the only
+/// place a boundary can be read off is the visitor's refusal of the
+/// second spelling.
 ///
-/// Cost: one pass per reachable enum variant, each a full walk of the
-/// type graph. No I/O and no parsing.
+/// Panics when a pass fails for any other reason, when the walk
+/// cannot bottom out ([`MAX_DEPTH`]), or when the sweep exceeds
+/// [`MAX_RUNS`]. All three are the probe declining to answer rather
+/// than answering short: an under-explored shape is exactly the
+/// silent wrongness this module exists to expose.
+///
+/// Cost: one pass per reachable enum variant plus one per alias
+/// spelling, each a full walk of the type graph. No I/O and no
+/// parsing.
 pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
     let mut memory = Memory::default();
     let mut shape = DerivedShape::default();
@@ -355,35 +495,54 @@ pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
         assert!(
             passes <= MAX_RUNS,
             "the variant sweep passed {MAX_RUNS} runs without draining its queue. Each \
-             queued plan targets one enum variant nothing had reached yet, so crossing \
-             this means the choice tree grew a dimension — raise the cap deliberately \
-             rather than by reflex."
+             queued plan targets one enum variant nothing had reached yet, or one alias \
+             spelling whose group boundary the last pass found, so crossing this means \
+             the choice tree grew a dimension — raise the cap deliberately rather than \
+             by reflex."
         );
+        let replay = plan.clone();
         let mut run = Run {
             plan,
             trace: Vec::new(),
             memory: &mut memory,
             active: Vec::new(),
             named_key_sites: 0,
+            pending_key: None,
             shape,
         };
+        let learned_before = run.memory.learned;
         let probe = Probe {
             run: &mut run,
-            member: None,
+            member: Vec::new(),
+            slot: "<root>".to_string(),
             mode: Mode::Explore,
             depth: 0,
         };
-        if let Err(e) = T::deserialize(probe) {
-            panic!(
-                "the probe could not deserialize {} from its own answers: {e}. It serves \
-                 the emptiest value every request admits, so a failure here is a shape it \
-                 does not know how to satisfy — teach it that shape rather than narrowing \
-                 what it walks.",
-                std::any::type_name::<T>()
-            );
-        }
+        let outcome = T::deserialize(probe);
+        let learned = run.memory.learned;
         let trace = run.trace;
         shape = run.shape;
+        if let Err(e) = outcome {
+            assert!(
+                learned > learned_before,
+                "the probe could not deserialize {} from its own answers: {e}. It serves \
+                 the emptiest value every request admits, so a failure here is a shape it \
+                 does not know how to satisfy. Two shapes it deliberately does not: a \
+                 `#[serde(flatten)]` field, which makes the derive ask for a map and then \
+                 miss the members it declared, and a `#[serde(tag = \"…\")]` enum, which \
+                 buffers through `Content` and refuses a unit. Both are independently \
+                 banned from every loadable type by \
+                 `loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`, so a \
+                 red here from either is that alarm a second time — anything else is a \
+                 shape to teach it rather than one to narrow what it walks.",
+                std::any::type_name::<T>()
+            );
+            // A boundary the pass had to fail to find. The same plan
+            // now runs with the second spelling folded away, and gets
+            // further.
+            queue.push_front(replay);
+            continue;
+        }
         for (at, decision) in trace.iter().enumerate() {
             for option in 0..decision.options {
                 let pair = (decision.container.clone(), option);
@@ -416,10 +575,18 @@ pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
 /// writes down what was asked for.
 struct Probe<'a, 'r> {
     run: &'r mut Run<'a>,
-    /// The JSON member this value sits under, when it has one. `None`
-    /// inside a sequence element, a tuple position, or a map value —
-    /// places whose name is data rather than schema.
-    member: Option<String>,
+    /// Every JSON member name this value sits under — one normally,
+    /// more where `#[serde(alias = "…")]` makes more than one
+    /// spelling reach it. Empty inside a sequence element, a tuple
+    /// position, or a map entry: places whose name is data or
+    /// position rather than schema.
+    member: Vec<String>,
+    /// Where this value sits when [`Self::member`] is empty, as a
+    /// path through the positions that reach it —
+    /// `MindEdge.control_points[0]`, `Tupled::Both.1`. Two unnamed
+    /// arrays in one container are two places and have to read as
+    /// two.
+    slot: String,
     mode: Mode,
     depth: usize,
 }
@@ -439,34 +606,36 @@ fn deeper(depth: usize, what: &str) -> Result<usize, Error> {
     Ok(depth + 1)
 }
 
-/// `Container.member`, or the container alone where the value has no
-/// member name, for a message that names a place in the model.
-fn site_of(run: &Run<'_>, member: Option<&str>) -> String {
+/// `Container.member`, or the slot path where the value has no member
+/// name, for a message that names a place in the model.
+fn site_of(run: &Run<'_>, member: &[String], slot: &str) -> String {
     let container = run.active.last().map_or("<root>", String::as_str);
-    match member {
+    match member.first() {
         Some(name) => format!("{container}.{name}"),
-        None => format!("{container} (no member name)"),
+        None => slot.to_string(),
     }
 }
 
-/// Record a growable array under the member that holds it, merging
-/// with any earlier sighting: the same member name met twice is
-/// key-bearing if it was key-bearing anywhere.
-fn record_sequence(run: &mut Run<'_>, member: Option<String>, site: String, key_bearing: bool) {
-    let Some(name) = member else {
+/// Record a growable array under every member name that holds it,
+/// merging with any earlier sighting: the same member name met twice
+/// is key-bearing if it was key-bearing anywhere.
+fn record_sequence(run: &mut Run<'_>, member: Vec<String>, site: String, key_bearing: bool) {
+    if member.is_empty() {
         run.shape.unnamed_sequences.insert(site);
         return;
-    };
-    let entry = run
-        .shape
-        .sequences
-        .entry(name.clone())
-        .or_insert_with(|| DerivedSequence {
-            member: name,
-            key_bearing: false,
-            site,
-        });
-    entry.key_bearing |= key_bearing;
+    }
+    for name in member {
+        let entry = run
+            .shape
+            .sequences
+            .entry(name.clone())
+            .or_insert_with(|| DerivedSequence {
+                member: name,
+                key_bearing: false,
+                site: site.clone(),
+            });
+        entry.key_bearing |= key_bearing;
+    }
 }
 
 /// The scalar answers, each the emptiest value its visitor accepts.
@@ -483,8 +652,27 @@ macro_rules! probe_scalar {
 impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
     type Error = Error;
 
+    /// The one request the probe answers **without seeing what asked
+    /// it**, so it records where it was asked.
+    ///
+    /// `deserialize_any` is what a self-describing value wants — a
+    /// `serde_json::Value` — and it is also what an
+    /// `#[serde(untagged)]` enum asks for, because serde buffers the
+    /// object into a `Content` and replays it through each variant in
+    /// turn. A `Content` built from `visit_unit` matches whichever
+    /// variant accepts a unit and drops every other variant's shape
+    /// with no error, which would be the module's one *silent* blind
+    /// spot. Naming the site turns it into a loud one: an untagged
+    /// enum appears here as a place the probe stopped seeing, and
+    /// `mindmap::unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
+    /// holds the list of such places to the ones the model means.
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        let site = site_of(self.run, &self.member, &self.slot);
+        self.run.shape.opaque_sites.insert(site);
+        visitor.visit_unit()
+    }
+
     probe_scalar! {
-        deserialize_any => visit_unit(),
         deserialize_ignored_any => visit_unit(),
         deserialize_unit => visit_unit(),
         deserialize_bool => visit_bool(false),
@@ -525,6 +713,7 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         visitor.visit_newtype_struct(Probe {
             run: self.run,
             member: self.member,
+            slot: self.slot,
             mode: self.mode,
             depth,
         })
@@ -538,6 +727,7 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         visitor.visit_some(Probe {
             run: self.run,
             member: self.member,
+            slot: self.slot,
             mode: self.mode,
             depth,
         })
@@ -547,13 +737,16 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         let Probe {
             run,
             member,
+            slot,
             mode,
             depth,
         } = self;
-        let site = site_of(run, member.as_deref());
+        let site = site_of(run, &member, &slot);
         if mode == Mode::Terminate {
             let out = visitor.visit_seq(Elements {
                 run: &mut *run,
+                parent: site.clone(),
+                at: 0,
                 remaining: 0,
                 mode,
                 depth,
@@ -570,6 +763,8 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         let before = run.named_key_sites;
         let out = visitor.visit_seq(Elements {
             run: &mut *run,
+            parent: site.clone(),
+            at: 0,
             remaining: 1,
             mode,
             depth,
@@ -584,9 +779,12 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         // edit cannot slide a route onto a different position. It is
         // walked for what is inside it and never recorded as a
         // growable array.
+        let parent = site_of(self.run, &self.member, &self.slot);
         let depth = deeper(self.depth, "tuple")?;
         visitor.visit_seq(Elements {
             run: self.run,
+            parent,
+            at: 0,
             remaining: len,
             mode: self.mode,
             depth,
@@ -602,6 +800,8 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         let depth = deeper(self.depth, name)?;
         visitor.visit_seq(Elements {
             run: self.run,
+            parent: name.to_string(),
+            at: 0,
             remaining: len,
             mode: self.mode,
             depth,
@@ -612,13 +812,17 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         // Not a named-key site: a map's members are data — a palette
         // name, a node id — so none of them is ever "unrecognized".
         let entries = usize::from(self.mode == Mode::Explore);
+        let parent = site_of(self.run, &self.member, &self.slot);
         let depth = deeper(self.depth, "map")?;
-        visitor.visit_map(Entries {
-            run: self.run,
-            remaining: entries,
-            mode: self.mode,
-            depth,
-        })
+        visitor
+            .visit_map(Entries {
+                run: self.run,
+                parent: parent.clone(),
+                remaining: entries,
+                mode: self.mode,
+                depth,
+            })
+            .map_err(|e| flatten_hint(&parent, e))
     }
 
     fn deserialize_struct<V: Visitor<'de>>(
@@ -639,13 +843,15 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         run.active.push(name.to_string());
         let out = visitor.visit_map(Fields {
             run: &mut *run,
+            container: name.to_string(),
             fields,
             at: 0,
+            accepted: None,
             mode,
             depth,
         });
         run.active.pop();
-        out
+        fold_a_rejected_spelling(run, name, fields, out)
     }
 
     fn deserialize_enum<V: Visitor<'de>>(
@@ -711,6 +917,69 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
     }
 }
 
+/// Turn a failed struct visit into a learned `FIELDS` group boundary
+/// where that is what it was, and leave every other failure alone.
+///
+/// The derived visitor rejects a field it already holds, and the
+/// rejection lands in the one window between resolving a key and
+/// asking for its value — which is exactly when [`Run::pending_key`]
+/// is set. Nothing else the generated code does happens in that
+/// window, so a pending key belonging to *this* container is a
+/// duplicate and nothing else. `FIELDS` groups a field's spellings
+/// contiguously and every index this visit got a value for was a
+/// distinct field, so the rejected spelling belongs to the index
+/// immediately before it.
+fn fold_a_rejected_spelling<T>(
+    run: &mut Run<'_>,
+    name: &str,
+    fields: &[&str],
+    out: Result<T, Error>,
+) -> Result<T, Error> {
+    if out.is_ok() {
+        return out;
+    }
+    let Some(pending) = run.pending_key.as_ref().filter(|key| key.container == name) else {
+        return out;
+    };
+    let (at, after) = (pending.at, pending.after);
+    run.pending_key = None;
+    let Some(after) = after else {
+        // The first spelling offered was rejected, which needs an
+        // earlier one to be a second spelling *of*. Nothing in
+        // `serde_derive` produces this; leave the error as it came.
+        return out;
+    };
+    run.memory.fold(name, at, after);
+    Err(serde::de::Error::custom(format!(
+        "`{name}` accepts `{}` and `{}` as the same field, which the probe learns by \
+         being refused and then replays without the second spelling",
+        fields.get(after).copied().unwrap_or("<out of range>"),
+        fields.get(at).copied().unwrap_or("<out of range>"),
+    )))
+}
+
+/// Add the one cause of a `missing field` out of a map that a reader
+/// would otherwise chase in the wrong place.
+///
+/// A struct with a `#[serde(flatten)]` field is not offered to
+/// `deserialize_struct` at all — the derive asks for a *map* and
+/// collects the members itself — so the probe hands it one entry
+/// whose key is not any declared name, and the visitor ends up
+/// missing every field it declared. The message it raises names the
+/// field and says nothing about why the probe could not supply it.
+fn flatten_hint(site: &str, error: Error) -> Error {
+    if !error.to_string().starts_with("missing field") {
+        return error;
+    }
+    serde::de::Error::custom(format!(
+        "{error}, asked for as a map at `{site}`. A `#[serde(flatten)]` field is what \
+         turns a struct's `deserialize_struct` into a `deserialize_map`, and the probe \
+         has no member names to answer one with — so this is a flattened type, and \
+         `loader::tests::test_no_loadable_type_can_swallow_an_unknown_key` is already \
+         refusing it for swallowing captured keys."
+    ))
+}
+
 /// Note the JSON member names a container accepts, merging with any
 /// earlier sighting of the same container.
 fn record_container(run: &mut Run<'_>, name: &str, fields: &[&str]) {
@@ -733,9 +1002,13 @@ fn descend_mode(run: &Run<'_>, name: &str, mode: Mode) -> Mode {
 }
 
 /// `remaining` sequence or tuple positions, each probed with no
-/// member name of its own.
+/// member name of its own but with the position it sits at.
 struct Elements<'a, 'r> {
     run: &'r mut Run<'a>,
+    /// The site of the array or tuple these are positions in.
+    parent: String,
+    /// How many have been handed out, which is the next one's index.
+    at: usize,
     remaining: usize,
     mode: Mode,
     depth: usize,
@@ -749,9 +1022,12 @@ impl<'de, 'a, 'r> SeqAccess<'de> for Elements<'a, 'r> {
             return Ok(None);
         }
         self.remaining -= 1;
+        let slot = format!("{}[{}]", self.parent, self.at);
+        self.at += 1;
         seed.deserialize(Probe {
             run: &mut *self.run,
-            member: None,
+            member: Vec::new(),
+            slot,
             mode: self.mode,
             depth: self.depth,
         })
@@ -766,6 +1042,8 @@ impl<'de, 'a, 'r> SeqAccess<'de> for Elements<'a, 'r> {
 /// `remaining` entries of a map whose keys are data.
 struct Entries<'a, 'r> {
     run: &'r mut Run<'a>,
+    /// The site of the map these are entries of.
+    parent: String,
     remaining: usize,
     mode: Mode,
     depth: usize,
@@ -781,7 +1059,8 @@ impl<'de, 'a, 'r> MapAccess<'de> for Entries<'a, 'r> {
         self.remaining -= 1;
         seed.deserialize(Probe {
             run: &mut *self.run,
-            member: None,
+            member: Vec::new(),
+            slot: format!("{} (a map key)", self.parent),
             mode: self.mode,
             depth: self.depth,
         })
@@ -791,7 +1070,8 @@ impl<'de, 'a, 'r> MapAccess<'de> for Entries<'a, 'r> {
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
         seed.deserialize(Probe {
             run: &mut *self.run,
-            member: None,
+            member: Vec::new(),
+            slot: format!("{} (a map value)", self.parent),
             mode: self.mode,
             depth: self.depth,
         })
@@ -802,8 +1082,15 @@ impl<'de, 'a, 'r> MapAccess<'de> for Entries<'a, 'r> {
 /// derived impl declared them.
 struct Fields<'a, 'r> {
     run: &'r mut Run<'a>,
+    /// The container whose `FIELDS` this is, keying both the pending
+    /// key and the learned group boundaries.
+    container: String,
     fields: &'static [&'static str],
+    /// The next `FIELDS` index to offer.
     at: usize,
+    /// The last index this visit was asked the value of — the field a
+    /// rejection of the next index would be a second spelling of.
+    accepted: Option<usize>,
     mode: Mode,
     depth: usize,
 }
@@ -812,19 +1099,37 @@ impl<'de, 'a, 'r> MapAccess<'de> for Fields<'a, 'r> {
     type Error = Error;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, Error> {
+        // A spelling the sweep already found to be a second name for
+        // an earlier field. Offering it again is the duplicate this
+        // whole mechanism exists to stop offering.
+        while self.run.memory.is_folded(&self.container, self.at) {
+            self.at += 1;
+        }
         let Some(name) = self.fields.get(self.at) else {
             return Ok(None);
         };
-        seed.deserialize(IntoDeserializer::<'de, Error>::into_deserializer(*name))
-            .map(Some)
+        let key = seed.deserialize(IntoDeserializer::<'de, Error>::into_deserializer(*name))?;
+        // Set only once the visitor has resolved the key, so the
+        // window this marks holds nothing but the visitor's own
+        // accept-or-reject.
+        self.run.pending_key = Some(PendingKey {
+            container: self.container.clone(),
+            at: self.at,
+            after: self.accepted,
+        });
+        Ok(Some(key))
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
-        let member = self.fields.get(self.at).map(|name| (*name).to_string());
+        self.run.pending_key = None;
+        let member = self.run.memory.spellings(&self.container, self.fields, self.at);
+        let slot = site_of(self.run, &member, &self.container);
+        self.accepted = Some(self.at);
         self.at += 1;
         seed.deserialize(Probe {
             run: &mut *self.run,
             member,
+            slot,
             mode: self.mode,
             depth: self.depth,
         })
@@ -872,9 +1177,12 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
         // the single member of a wrapper object, so the variant name
         // *is* the JSON member a `Vec` payload sits under — and the
         // member a positional route through it would be published as.
+        let member = vec![self.variant.to_string()];
+        let slot = site_of(self.run, &member, self.container);
         seed.deserialize(Probe {
             run: self.run,
-            member: Some(self.variant.to_string()),
+            member,
+            slot,
             mode: self.mode,
             depth: self.depth,
         })
@@ -883,7 +1191,9 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
     fn tuple_variant<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Error> {
         self.run.memory.note(self.container, self.at, VariantKind::Payload);
         visitor.visit_seq(Elements {
+            parent: format!("{}::{}", self.container, self.variant),
             run: self.run,
+            at: 0,
             remaining: len,
             mode: self.mode,
             depth: self.depth,
@@ -899,13 +1209,16 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
         let key = format!("{}::{}", self.container, self.variant);
         record_container(self.run, &key, fields);
         self.run.named_key_sites += 1;
-        visitor.visit_map(Fields {
-            run: self.run,
+        let out = visitor.visit_map(Fields {
+            run: &mut *self.run,
+            container: key.clone(),
             fields,
             at: 0,
+            accepted: None,
             mode: self.mode,
             depth: self.depth,
-        })
+        });
+        fold_a_rejected_spelling(self.run, &key, fields, out)
     }
 }
 
@@ -1036,6 +1349,60 @@ mod tests {
         s: Spinner,
         #[allow(dead_code)]
         leaves: Vec<Leaf>,
+    }
+
+    /// An `#[serde(untagged)]` enum whose *first* variant accepts a
+    /// unit, which is the shape that used to swallow the probe
+    /// whole: serde buffers the object into a `Content`, the probe's
+    /// `deserialize_any` answers `visit_unit`, `URoot` matches, and
+    /// `Items`'s array and `ULeaf`'s members are gone with no error
+    /// raised anywhere.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Untagged {
+        #[allow(dead_code)]
+        Nothing(URoot),
+        #[allow(dead_code)]
+        Items(Vec<ULeaf>),
+    }
+
+    #[derive(Deserialize)]
+    struct URoot;
+
+    #[derive(Deserialize)]
+    struct ULeaf {
+        #[allow(dead_code)]
+        y: f64,
+    }
+
+    #[derive(Deserialize)]
+    struct CarriesUntagged {
+        #[allow(dead_code)]
+        maybe: Untagged,
+        #[allow(dead_code)]
+        visible: Vec<Leaf>,
+    }
+
+    /// `#[serde(alias)]` on both surfaces the derive names: a field,
+    /// where the extra spelling joins `FIELDS`, and a variant, where
+    /// it joins `VARIANTS`. `waypoints` is the live shape — the name
+    /// a `MindEdge::control_points` migration would take.
+    #[derive(Deserialize)]
+    struct Aliased {
+        #[serde(alias = "waypoints")]
+        #[allow(dead_code)]
+        control_points: Vec<Leaf>,
+        #[allow(dead_code)]
+        payload: AliasedPayload,
+    }
+
+    #[derive(Deserialize)]
+    enum AliasedPayload {
+        #[serde(alias = "lit")]
+        #[allow(dead_code)]
+        Literal(Vec<Leaf>),
+        #[allow(dead_code)]
+        Bare,
     }
 
     /// **The member names come from the generated code, so every
@@ -1184,6 +1551,83 @@ mod tests {
             shape.key_bearing_sequences().contains("leaves"),
             "and to have walked past it to the rest of the container: {:?}",
             shape.key_bearing_sequences()
+        );
+    }
+
+    /// **`#[serde(alias = "…")]` is a spelling the derive writes
+    /// down, on both surfaces.** A field's aliases join its `FIELDS`
+    /// entry and a variant's join `VARIANTS`, sorted, grouped with the
+    /// name they alias — so the probe sees every one of them and the
+    /// published list has to carry all of them, because a file may
+    /// write any and a captured route is recorded against whichever
+    /// it wrote.
+    ///
+    /// The grouping is the part that needs doing rather than reading:
+    /// offering `FIELDS` blindly hands the derived visitor the same
+    /// field twice, which it rejects as a duplicate. That failure
+    /// used to read as "the probe does not know this shape", which
+    /// pointed a reader at the model instead of at the probe.
+    #[test]
+    fn test_the_probe_reads_every_spelling_an_alias_adds() {
+        let shape = derived_shape::<Aliased>();
+        let members = shape
+            .members_of("Aliased")
+            .expect("the probe must have reached the root type");
+        assert!(
+            members.contains("control_points") && members.contains("waypoints"),
+            "a field's aliases are in the `FIELDS` list the derive generated: {members:?}"
+        );
+        assert_eq!(
+            shape.variants_of("AliasedPayload"),
+            Some(["Literal".to_string(), "lit".to_string(), "Bare".to_string()].as_slice()),
+            "and a variant's are in `VARIANTS`, grouped with the name they alias and \
+             sorted inside the group — which is the order `serde_derive` emits"
+        );
+        let arrays = shape.key_bearing_sequences();
+        for spelling in ["control_points", "waypoints", "Literal", "lit"] {
+            assert!(
+                arrays.contains(spelling),
+                "a route can cross the array under any spelling the derive accepts, so \
+                 every one of them is published: {arrays:?}"
+            );
+        }
+    }
+
+    /// **The one blind spot that says nothing, made to say
+    /// something.** `flatten` stops the run and a validating
+    /// `deserialize_with` stops the run; `#[serde(untagged)]` does
+    /// not. Serde decides an untagged variant by buffering the value
+    /// into a `Content` and replaying it, so the probe's
+    /// `deserialize_any` answers a unit, the first unit-accepting
+    /// variant claims it, and everything behind the others is gone
+    /// with nothing raised.
+    ///
+    /// So the probe records where it answered a `deserialize_any`.
+    /// The site is not itself a verdict — a `serde_json::Value` is a
+    /// legitimate one and the model has two — but it is a place the
+    /// derivation stopped seeing, and a list of those is a thing a
+    /// test can pin.
+    #[test]
+    fn test_the_probe_names_the_place_an_untagged_enum_stopped_it() {
+        let shape = derived_shape::<CarriesUntagged>();
+        assert!(
+            !shape.key_bearing_sequences().contains("maybe"),
+            "the untagged enum's array variant really is invisible — this is the blind \
+             spot, not a claim that there is none: {:?}",
+            shape.key_bearing_sequences()
+        );
+        assert!(
+            shape.key_bearing_sequences().contains("visible"),
+            "and the rest of the container is walked as usual, so the report has to be \
+             what distinguishes the two: {:?}",
+            shape.key_bearing_sequences()
+        );
+        assert_eq!(
+            shape.opaque_sites(),
+            &["CarriesUntagged.maybe".to_string()]
+                .into_iter()
+                .collect::<BTreeSet<String>>(),
+            "the member the walk went blind under is named, once, at the place it sits"
         );
     }
 

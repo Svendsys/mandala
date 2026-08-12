@@ -1057,8 +1057,12 @@ on both member names and array-ness.
 `unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
 and its member-name sibling fail when the two disagree. Neither is a
 replacement for the other: the probe cannot see a serialize-only
-proxy or an `alias`, and the walk cannot see through a generic
-instantiation. Their disagreement is the signal.
+proxy, and the walk cannot see through a generic instantiation. Their
+disagreement is the signal. Both see `#[serde(alias = "…")]` and both
+publish it — the derive writes a field's aliases into the same
+`FIELDS` list as its name and a variant's into `VARIANTS` — because a
+file may write any accepted spelling and a captured route is recorded
+against whichever it wrote.
 
 Openness is about **keys, not meanings**. An `edge_type` the renderer
 does not know still loads — open vocabularies stay open — and semantic
