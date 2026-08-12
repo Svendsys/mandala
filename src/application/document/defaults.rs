@@ -42,7 +42,7 @@ pub(in crate::application) const DEFAULT_RUN_SIZE_PT: u32 = 24;
 /// its graphemes out of the palette.
 ///
 /// It changes nothing for an untouched new node, whose
-/// [`default_node`] `style.text_color` is `#ffffff` — the same
+/// [`default_orphan_node`] `style.text_color` is `#ffffff` — the same
 /// white the constant used to spell out. It changes everything for
 /// a run authored onto a themed node.
 pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "";

@@ -6,7 +6,7 @@
 //! A node binds itself to a map-level [`Palette`](super::Palette) by
 //! carrying a [`ColorSchema`](super::ColorSchema): a palette name, a
 //! depth `level`, two miMind-inherited flags, and this node's own
-//! exceptions to the group ([`ColorOverrides`](super::ColorOverrides)).
+//! exceptions to the group ([`ColorOverrides`]).
 //! Resolution walks *override first, palette second, `style` third*.
 //!
 //! The middle tier is the reason palettes were hoisted out of the
@@ -150,7 +150,9 @@ impl MindMap {
     /// else `node.style.frame_color`.
     ///
     /// An **empty** group `frame` is not a color and falls
-    /// through to `style.frame_color`; see [`non_empty`].
+    /// through to `style.frame_color`, the same way an empty
+    /// `title` falls through to `text`. Only `background` passes
+    /// an empty string along, where it spells "transparent".
     ///
     /// This is the cascade base the border resolver
     /// (`mindmap::border::resolve_border_style`) sits on top of, so
@@ -172,8 +174,7 @@ impl MindMap {
     /// An **empty** group `text` is not a color; it falls through
     /// to `style.text_color`, exactly as an empty `title` falls
     /// through to `text`. Only `background` passes an empty string
-    /// along, because there it spells "transparent" — see
-    /// [`non_empty`].
+    /// along, because there it spells "transparent".
     ///
     /// This is the section-level default, not a per-grapheme one. A
     /// [`TextRun`](super::TextRun) carrying a non-empty `color`

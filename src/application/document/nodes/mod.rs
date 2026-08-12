@@ -393,7 +393,7 @@ impl MindMapDocument {
     }
 
     /// Set the *default* text color on a node, and recolor every
-    /// [`TextRun`](baumhard::mindmap::model::TextRun) that was
+    /// [`TextRun`] that was
     /// following that default.
     ///
     /// The default itself lands in the same two places as
