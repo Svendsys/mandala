@@ -216,8 +216,10 @@ lazy_static! {
         // to a *following* LF only, so the first CR stands alone and
         // is content. Line 0 is the two clusters in front of the
         // terminator and keeps that CR; a cut taken at the `\n` byte
-        // with a blanket one-byte CR lookbehind would report
-        // `Some((0, 1))` here and lose it.
+        // with a blanket "trim every trailing CR" lookbehind would
+        // report `Some((0, 1))` here and lose it. The implemented
+        // one-byte lookbehind steps back over the terminator's own
+        // CR only, and lands on the correct `Some((0, 2))`.
         ("a\r\r\nb", 0, Some((0, 2))),
         ("a\r\r\nb", 1, Some((3, 4))),
         ("a\r\r\nb", 2, None),
@@ -368,8 +370,9 @@ lazy_static! {
         // that separates the implemented rule from a blanket
         // "trim every trailing CR".
         ("a\r\r\nb", 0, "a\r"),
-        // ...and starting between the two CRs, the surviving one is
-        // all that is left of the line.
+        // ...and starting at the content CR, that CR is all that is
+        // left of the line. (Byte 2 — between the two CRs — is a
+        // different offset with a different answer: `""`.)
         ("a\r\r\nb", 1, "\r"),
         // Degenerate: a byte index that lands on the LF of a CRLF is
         // mid-cluster and outside the contract, but it must not

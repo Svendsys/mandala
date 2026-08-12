@@ -60,7 +60,9 @@ use unicode_segmentation::UnicodeSegmentation;
 ///
 /// The terminator is a cluster ending in `\n` — the same rule
 /// [`line_bounds_at`] and [`find_nth_line_grapheme_range`] apply, and
-/// this helper is the third member of that family: it is what
+/// this helper is the third of the three that answer *where does the
+/// line end* (distinct from the four-helper line model, which adds
+/// [`count_number_lines`]): it is what
 /// [`replace_graphemes_until_newline`] uses to decide how much of a
 /// line it may overwrite. Under UAX #29 `\r\n` is a single cluster, so
 /// cutting at the raw `\n` byte would leave the CR inside the returned
