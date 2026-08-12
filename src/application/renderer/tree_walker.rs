@@ -38,7 +38,7 @@ pub(super) fn extract_background_rect(
     // matches each side. The `is_zero` fast-path skips the four-add
     // arithmetic for unframed nodes (the common case);
     // `EdgePadding::ZERO` means the fill coincides with the text
-    // rect, the historical behaviour.
+    // rect, the historical behavior.
     let pad = area.background_padding;
     let pos = Vec2::new(area.position.x.0, area.position.y.0);
     let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);

@@ -1710,12 +1710,14 @@ fn test_node_resize_reports_every_element_it_moved() {
 
     let after_areas = areas(&tree);
     let after = positions(&tree);
-    let touched: HashSet<usize> = after_areas
-        .iter()
-        .filter(|(uid, area)| {
-            before_areas.get(uid).map(&described).as_deref() != Some(described(area).as_str())
-        })
-        .map(|(uid, _)| *uid)
+    // Union both key sets rather than walking `after_areas` alone, so an
+    // element the call *removed* counts as touched. Resize removes nothing
+    // today; the union is here so the next edit that does cannot slip past.
+    let touched: HashSet<usize> = before_areas
+        .keys()
+        .chain(after_areas.keys())
+        .copied()
+        .filter(|uid| before_areas.get(uid).map(&described) != after_areas.get(uid).map(&described))
         .collect();
     let patched: HashSet<usize> = patches.iter().map(|(uid, _)| *uid).collect();
 

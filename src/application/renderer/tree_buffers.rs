@@ -39,8 +39,10 @@ impl<'a> BackgroundRectSlot<'a> {
     /// ones back into the same place.
     ///
     /// An element with no fill in the list yet — one that just
-    /// gained a `background_color` — has no slot to preserve, and
-    /// appending is the only order available.
+    /// gained a `background_color` — has no slot to preserve, so it
+    /// appends. Its tree-order position is derivable, but only by
+    /// walking the tree, which is the per-frame cost this type
+    /// exists to avoid; no live caller reaches that case today.
     ///
     /// # Costs
     ///
