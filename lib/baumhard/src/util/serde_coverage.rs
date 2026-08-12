@@ -1271,11 +1271,11 @@ impl RenameRule {
     fn apply_to_field(self, ident: &str) -> String {
         match self {
             RenameRule::Lower | RenameRule::Snake => ident.to_string(),
-            RenameRule::Upper | RenameRule::ScreamingSnake => ident.to_uppercase(),
+            RenameRule::Upper | RenameRule::ScreamingSnake => ident.to_ascii_uppercase(),
             RenameRule::Pascal => snake_to_pascal(ident),
             RenameRule::Camel => lower_first(&snake_to_pascal(ident)),
             RenameRule::Kebab => ident.replace('_', "-"),
-            RenameRule::ScreamingKebab => ident.to_uppercase().replace('_', "-"),
+            RenameRule::ScreamingKebab => ident.to_ascii_uppercase().replace('_', "-"),
         }
     }
 
@@ -1283,19 +1283,27 @@ impl RenameRule {
     /// is already `PascalCase`.
     fn apply_to_variant(self, ident: &str) -> String {
         match self {
-            RenameRule::Lower => ident.to_lowercase(),
-            RenameRule::Upper => ident.to_uppercase(),
+            RenameRule::Lower => ident.to_ascii_lowercase(),
+            RenameRule::Upper => ident.to_ascii_uppercase(),
             RenameRule::Pascal => ident.to_string(),
             RenameRule::Camel => lower_first(ident),
             RenameRule::Snake => pascal_to_snake(ident),
-            RenameRule::ScreamingSnake => pascal_to_snake(ident).to_uppercase(),
+            RenameRule::ScreamingSnake => pascal_to_snake(ident).to_ascii_uppercase(),
             RenameRule::Kebab => pascal_to_snake(ident).replace('_', "-"),
-            RenameRule::ScreamingKebab => pascal_to_snake(ident).to_uppercase().replace('_', "-"),
+            RenameRule::ScreamingKebab => pascal_to_snake(ident).to_ascii_uppercase().replace('_', "-"),
         }
     }
 }
 
 /// `"control_points"` → `"ControlPoints"`.
+///
+/// **ASCII case, deliberately**, here and in the two helpers below.
+/// Serde's own rule reaches for `to_ascii_uppercase` throughout, so
+/// `ß_thing` stays `ßThing` for it while Unicode case would make it
+/// `SSThing` — a name the loader will never match, produced silently,
+/// which is the exact failure #122 is about. What the case *decides*
+/// stays Unicode-aware where serde's does: `pascal_to_snake` asks
+/// `char::is_uppercase`, not `is_ascii_uppercase`.
 fn snake_to_pascal(ident: &str) -> String {
     let mut out = String::with_capacity(ident.len());
     let mut capitalize = true;
@@ -1303,7 +1311,7 @@ fn snake_to_pascal(ident: &str) -> String {
         if character == '_' {
             capitalize = true;
         } else if capitalize {
-            out.extend(character.to_uppercase());
+            out.push(character.to_ascii_uppercase());
             capitalize = false;
         } else {
             out.push(character);
@@ -1322,17 +1330,22 @@ fn pascal_to_snake(ident: &str) -> String {
         if character.is_uppercase() && at > 0 {
             out.push('_');
         }
-        out.extend(character.to_lowercase());
+        out.push(character.to_ascii_lowercase());
     }
     out
 }
 
 /// `"ControlPoints"` → `"controlPoints"`, lowercasing the first
 /// character only.
+///
+/// Serde slices the first *byte* rather than the first character, so
+/// on an identifier starting outside ASCII its own macro panics
+/// before this walk could disagree with it. Taking the character is
+/// the same answer everywhere the two can both produce one.
 fn lower_first(ident: &str) -> String {
     let mut chars = ident.chars();
     match chars.next() {
-        Some(first) => first.to_lowercase().chain(chars).collect(),
+        Some(first) => std::iter::once(first.to_ascii_lowercase()).chain(chars).collect(),
         None => String::new(),
     }
 }
@@ -2461,6 +2474,183 @@ pub struct PlantedLeaf {
             "and the agreement has to be about something — a renamed alias, a renamed \
              set, and a variant payload are the three the old walk got wrong: {scanned:?}"
         );
+    }
+
+    /// **Sixteen rule × direction paths, none of which the model
+    /// exercises.**
+    ///
+    /// `RenameRule` is a *published* derivation: what it says a field
+    /// or a variant is called is what `format/schema.md` prints and
+    /// what `expand_route` is driven over. Nothing in this crate
+    /// carries a `rename_all` today, so replacing
+    /// `apply_to_variant`'s body with `format!("MUTANT_{ident}")`
+    /// left all 1354 tests green, as did seven of the eight
+    /// `apply_to_field` arms — an unexercised branch of a published
+    /// derivation is a wrong doc waiting for the first field that
+    /// uses it, which is a sentence this module already contained.
+    ///
+    /// So all sixteen are planted, and held against `serde_derive`'s
+    /// own expansion of a copy of the same declarations rather than
+    /// against names written out by hand. Three identifiers do the
+    /// work no plain one can:
+    ///
+    /// - `ABCd`, because serde's variant snake rule inserts a
+    ///   separator before *every* capital after the first, so a run
+    ///   of them becomes one underscore per letter (`a_b_cd`) rather
+    ///   than the `ab_cd` a reader would write;
+    /// - `thing_ß` and `NaÏve`, because serde's rules are
+    ///   `to_ascii_uppercase` and `to_ascii_lowercase` throughout.
+    ///   Unicode case maps `ß` to `SS` and `Ï` to `ï`, so a walk that
+    ///   reached for `str::to_uppercase` publishes `THING_SS` and
+    ///   `naïve` — names no loader will ever match, produced in
+    ///   silence.
+    #[test]
+    fn test_every_rename_all_rule_is_the_one_serde_applies() {
+        use crate::util::serde_probe::derived_shape;
+
+        /// One planted container per rule per direction, emitted
+        /// twice from one list: as declarations the compiler derives
+        /// `Deserialize` for, and as the source text the walk parses.
+        ///
+        /// The two are the same characters by construction. Every
+        /// other planted check in this module keeps a hand-written
+        /// copy and relies on the comparison failing when the two
+        /// drift; with sixteen containers that copy is where the
+        /// mistakes would live, and a generated one cannot drift at
+        /// all.
+        macro_rules! planted {
+            ($($rule:literal => $fields:ident / $variants:ident,)*) => {
+                $(
+                    #[derive(serde::Deserialize)]
+                    #[serde(rename_all = $rule)]
+                    #[allow(dead_code, non_snake_case)]
+                    struct $fields {
+                        control_points: f64,
+                        thing_ß: f64,
+                    }
+
+                    #[derive(serde::Deserialize)]
+                    #[serde(rename_all = $rule)]
+                    #[allow(dead_code)]
+                    enum $variants {
+                        ControlPoints,
+                        ABCd,
+                        NaÏve,
+                    }
+                )*
+
+                /// Reaches every one of them, so the probe's sweep
+                /// does too.
+                #[derive(serde::Deserialize)]
+                #[allow(dead_code, non_snake_case)]
+                struct Rules {
+                    $(
+                        $fields: $fields,
+                        $variants: $variants,
+                    )*
+                }
+
+                /// The declarations above, as text for the source
+                /// walk.
+                const SOURCE: &str = concat!(
+                    $(
+                        "#[derive(Deserialize)]\n#[serde(rename_all = \"", $rule, "\")]\n",
+                        "pub struct ", stringify!($fields),
+                        " { pub control_points: f64, pub thing_ß: f64 }\n",
+                        "#[derive(Deserialize)]\n#[serde(rename_all = \"", $rule, "\")]\n",
+                        "pub enum ", stringify!($variants), " { ControlPoints, ABCd, NaÏve }\n",
+                    )*
+                    "#[derive(Deserialize)] pub struct Rules {",
+                    $(
+                        " pub ", stringify!($fields), ": ", stringify!($fields), ",",
+                        " pub ", stringify!($variants), ": ", stringify!($variants), ",",
+                    )*
+                    " }\n",
+                );
+            };
+        }
+
+        planted! {
+            "lowercase" => LowerFields / LowerVariants,
+            "UPPERCASE" => UpperFields / UpperVariants,
+            "PascalCase" => PascalFields / PascalVariants,
+            "camelCase" => CamelFields / CamelVariants,
+            "snake_case" => SnakeFields / SnakeVariants,
+            "SCREAMING_SNAKE_CASE" => ScreamingSnakeFields / ScreamingSnakeVariants,
+            "kebab-case" => KebabFields / KebabVariants,
+            "SCREAMING-KEBAB-CASE" => ScreamingKebabFields / ScreamingKebabVariants,
+        }
+
+        let graph = graph_of(SOURCE);
+        let derived = derived_shape::<Rules>();
+        let walked = graph.member_names_from("Rules");
+
+        let mut compared = 0usize;
+        for (fields_of, variants_of) in [
+            ("LowerFields", "LowerVariants"),
+            ("UpperFields", "UpperVariants"),
+            ("PascalFields", "PascalVariants"),
+            ("CamelFields", "CamelVariants"),
+            ("SnakeFields", "SnakeVariants"),
+            ("ScreamingSnakeFields", "ScreamingSnakeVariants"),
+            ("KebabFields", "KebabVariants"),
+            ("ScreamingKebabFields", "ScreamingKebabVariants"),
+        ] {
+            let fields = walked.get(fields_of);
+            assert!(
+                fields.is_some_and(|fields| fields.len() == 2),
+                "`{fields_of}`'s two fields have to reach the walk before their names can \
+                 be compared: {fields:?}"
+            );
+            assert_eq!(
+                fields,
+                derived.members_of(fields_of),
+                "`{fields_of}`: the walk and `serde_derive` disagree about what \
+                 `rename_all` makes these fields called on disk"
+            );
+            let variants = graph.get(variants_of).map(|info| info.variants.as_slice());
+            assert!(
+                variants.is_some_and(|variants| variants.len() == 3),
+                "`{variants_of}`'s three variants have to reach the walk too: {variants:?}"
+            );
+            assert_eq!(
+                variants,
+                derived.variants_of(variants_of),
+                "`{variants_of}`: the walk and `serde_derive` disagree about what \
+                 `rename_all` makes these variants called on disk"
+            );
+            compared += 2;
+        }
+        assert_eq!(compared, 16, "one rule × direction path each, and there are sixteen");
+
+        // Named as well as compared, because an agreement is only
+        // worth as much as the transform it agrees about. Each of
+        // these is a name a reader would get wrong writing it by
+        // hand, and the first three are the whole reason `ABCd`,
+        // `thing_ß` and `NaÏve` are in the plant.
+        for (container, expected) in [
+            ("SnakeVariants", "a_b_cd"),
+            ("ScreamingKebabVariants", "A-B-CD"),
+            ("UpperFields", "THING_ß"),
+            ("LowerVariants", "naÏve"),
+            ("CamelFields", "controlPoints"),
+            ("PascalFields", "ControlPoints"),
+            ("KebabFields", "control-points"),
+            ("ScreamingSnakeFields", "CONTROL_POINTS"),
+        ] {
+            let names: Vec<&str> = walked
+                .get(container)
+                .into_iter()
+                .flatten()
+                .chain(graph.get(container).into_iter().flat_map(|info| info.variants.iter()))
+                .map(String::as_str)
+                .collect();
+            assert!(
+                names.contains(&expected),
+                "`{container}` must publish `{expected}`, which is what serde's rule \
+                 produces and not what the identifier reads as: {names:?}"
+            );
+        }
     }
 
     /// **`#[serde(alias = "…")]` is in the published contract, and it
