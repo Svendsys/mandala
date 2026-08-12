@@ -569,7 +569,10 @@ pub(super) fn grow_one_node_to_fit_border(
     if !node.style.show_frame {
         return;
     }
-    let style = resolve_border_style(node.style.border.as_ref(), canvas_default, frame_color);
+    // `None` for the theme tier: only `font_size_pt` and the side
+    // patterns are read below, and the caller has already resolved
+    // the color through the cascade.
+    let style = resolve_border_style(node.style.border.as_ref(), canvas_default, None, frame_color);
     let approx_char_width = style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let corners = style.corner_clusters();
 

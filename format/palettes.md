@@ -181,14 +181,32 @@ direction it takes its color from.
 
 The edge color cascade, highest priority first, is therefore:
 
-1. `edge.glyph_connection.color`, or `canvas.default_connection.color`
-   when the edge has not forked its own connection config — an explicitly
-   named stroke beats the theme
+1. `edge.glyph_connection.color` — a stroke this edge names for
+   itself, which a theme must not overrule
 2. the source node's palette `frame`, when `connections_colored` is set
    and the schema resolves
-3. `edge.color`
+3. `canvas.default_connection.color`, when the edge has not forked a
+   connection config of its own
+4. `edge.color`
 
-The label and portal-marker channels hang off the same cascade: each
+**Most specific wins, and the theme is per-node.** Tier 2 sits above
+tier 3 because the palette entry belongs to one node while the canvas
+default belongs to the whole map — ordered the other way round, a
+single `canvas connection color=#888888` flattens every
+palette-derived stroke in the document, and the only per-edge recovery
+is forking a `glyph_connection` onto each edge by hand.
+
+The struct-level fork rule is unchanged by that ordering: once an edge
+carries a `glyph_connection` of its own, `canvas.default_connection`
+drops out of the cascade entirely, including for fields the fork left
+unset.
+
+The **node border** channel has the same shape and the same order: an
+explicit `style.border.color` on the node, then the node's palette
+`frame` (or its `overrides.frame`), then `canvas.default_border.color`,
+then `style.frame_color` as the floor.
+
+The label and portal-marker channels hang off the edge cascade: each
 takes its own override when it has one, and otherwise follows the edge
 body, theme tier included.
 

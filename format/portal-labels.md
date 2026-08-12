@@ -70,12 +70,13 @@ dispatch splits on the current selection variant).
 Highest priority wins:
 
 1. `portal_from` / `portal_to.color` — per-endpoint override.
-2. `edge.glyph_connection.color` — edge-level override (or
-   `canvas.default_connection.color` when the edge has not forked a
-   connection config of its own).
+2. `edge.glyph_connection.color` — edge-level override.
 3. The source node's palette `frame`, when its `color_schema` sets
    `connections_colored` — see [palettes.md](./palettes.md).
-4. `edge.color` — the edge's always-present base color.
+4. `canvas.default_connection.color`, when the edge has not forked a
+   connection config of its own — map-wide, so it ranks below the
+   per-node theme above it.
+5. `edge.color` — the edge's always-present base color.
 
 The wheel color picker, `color` console verb, paste, and cut all
 route to the per-endpoint field when a portal label is selected,

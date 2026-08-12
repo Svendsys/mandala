@@ -116,11 +116,15 @@ pub(super) fn mindnode_container_area(map: &MindMap, node: &MindNode) -> GlyphAr
     // is the natural carrier because a section sits *inside* the
     // node AABB and never touches the surrounding border.
     if node.style.show_frame && shape == NodeShape::Rectangle {
-        let frame_color_resolved = color::resolve_var(map.node_frame_color(node), vars);
+        let themed_frame = map
+            .node_frame_theme_tier(node)
+            .map(|c| color::resolve_var(c, vars));
+        let style_frame = color::resolve_var(&node.style.frame_color, vars);
         let border_style = resolve_border_style(
             node.style.border.as_ref(),
             canvas_default_border,
-            frame_color_resolved,
+            themed_frame,
+            style_frame,
         );
         let fs = border_style.font_size_pt;
         let acw = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;

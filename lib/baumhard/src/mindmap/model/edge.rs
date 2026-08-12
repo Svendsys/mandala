@@ -157,10 +157,9 @@ impl MindEdge {
     /// This edge's **body** color, as authored — the raw string
     /// before `var(--name)` theme resolution.
     ///
-    /// Cascade: the `color` of the connection config
-    /// [`GlyphConnectionConfig::resolved_for`] selects
-    /// (`edge.glyph_connection` → `canvas.default_connection` →
-    /// hardcoded default) → `themed` → `edge.color`.
+    /// Cascade, most-specific first:
+    /// `edge.glyph_connection.color` → `themed` →
+    /// `canvas.default_connection.color` → `edge.color`.
     ///
     /// `themed` is the palette tier: the stroke color the source
     /// node's `color_schema` lends this edge when its
@@ -168,12 +167,18 @@ impl MindEdge {
     /// [`MindMap::edge_theme_stroke_color`] first, or reach for
     /// [`MindMap::edge_body_color`], which supplies it for you —
     /// passing `None` by hand means "this edge has no theme", which
-    /// is a claim, not a default. It sits *below* an explicit
-    /// connection-config color because naming a color on the edge
-    /// (or as the canvas-wide connection default) is a deliberate
-    /// choice and a theme must not overrule it, and *above*
-    /// `edge.color` because `edge.color` is never absent — a tier
-    /// under it could never win.
+    /// is a claim, not a default.
+    ///
+    /// It sits *below* the edge's own `glyph_connection.color`,
+    /// because naming a color on this edge is a deliberate choice a
+    /// theme must not overrule — and *above*
+    /// `canvas.default_connection.color`, because that one is
+    /// map-wide while a theme is per-node. Ordering it the other
+    /// way round lets a single `canvas connection color=#888888`
+    /// flatten every palette-derived stroke in the document, with
+    /// no per-edge recovery short of forking a `glyph_connection`
+    /// on each one. `edge.color` is last because it is never
+    /// absent — a tier under it could never win.
     ///
     /// [`MindMap`]: crate::mindmap::model::MindMap
     /// [`MindMap::edge_theme_stroke_color`]: crate::mindmap::model::MindMap::edge_theme_stroke_color
@@ -185,8 +190,10 @@ impl MindEdge {
     /// at `None` — the "computed style copy" rule the document
     /// mutation layer establishes when it forks. Resolving
     /// `color` field-by-field would silently re-attach a forked
-    /// edge to the canvas default. The hardcoded default's
-    /// `color` is `None`, so the chain bottoms out at
+    /// edge to the canvas default. That rule survives the theme
+    /// tier moving above the canvas default: the canvas tier is
+    /// still consulted only when this edge has no
+    /// `glyph_connection` at all. The chain bottoms out at
     /// `edge.color`, which the model always carries: the result
     /// is never empty and is always safe to hand to
     /// `resolve_var`.
@@ -197,12 +204,22 @@ impl MindEdge {
     /// clipboard resolver both read through here, so a future
     /// third tier is one edit. O(1), no allocation.
     pub fn body_color<'a>(&'a self, canvas: &'a Canvas, themed: Option<&'a str>) -> &'a str {
-        self.glyph_connection
-            .as_ref()
-            .or(canvas.default_connection.as_ref())
-            .and_then(|cfg| cfg.color.as_deref())
-            .or(themed)
-            .unwrap_or(self.color.as_str())
+        // Forked: this edge's own config is the only config in the
+        // cascade, per the struct-level rule above. Unforked: the
+        // canvas default is the config tier — but it is map-wide,
+        // so it ranks *below* the per-node theme rather than with
+        // the edge's own color.
+        let (own, canvas_wide) = match self.glyph_connection.as_ref() {
+            Some(cfg) => (cfg.color.as_deref(), None),
+            None => (
+                None,
+                canvas
+                    .default_connection
+                    .as_ref()
+                    .and_then(|cfg| cfg.color.as_deref()),
+            ),
+        };
+        own.or(themed).or(canvas_wide).unwrap_or(self.color.as_str())
     }
 
     /// This edge's **label** color, as authored (line-mode
@@ -267,7 +284,8 @@ impl MindEdge {
 ///
 /// Icon color cascade (highest-priority first):
 /// `PortalEndpointState.color` → `MindEdge.glyph_connection.color` →
-/// the source node's palette stroke → `MindEdge.color` → theme
+/// the source node's palette stroke → `canvas.default_connection.color`
+/// → `MindEdge.color` → theme
 /// variable resolution. Mirrors the
 /// edge-body color cascade so the two markers and the (absent)
 /// line stay visually consistent when the user recolors the whole

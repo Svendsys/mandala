@@ -107,6 +107,28 @@ impl MindMap {
         }
     }
 
+    /// The frame color the node supplies **for itself** — its own
+    /// `frame` override or its palette group's `frame` — or `None`
+    /// when the only answer left is `style.frame_color`.
+    ///
+    /// Split out from [`Self::node_frame_color`] because the two
+    /// halves sit on opposite sides of the *canvas-wide* border
+    /// default in `mindmap::border::resolve_border_style`. A
+    /// per-node theme is more specific than a map-wide border
+    /// color and outranks it; `style.frame_color` is the floor
+    /// underneath everything. Collapsing them into one string
+    /// would make one map-wide `canvas border color=…` flatten
+    /// every palette-derived frame in the document with no
+    /// per-node recovery.
+    ///
+    /// Cost: one [`Self::resolve_theme_colors`]. No allocation.
+    pub fn node_frame_theme_tier<'a>(&'a self, node: &'a MindNode) -> Option<&'a str> {
+        if let Some(own) = channel_override(node, |o| o.frame.as_deref()) {
+            return Some(own);
+        }
+        Some(self.resolve_theme_colors(node)?.frame.as_str())
+    }
+
     /// The authored **frame** color for a node: this node's own
     /// `frame` override, else the resolved palette group's `frame`,
     /// else `node.style.frame_color`.
@@ -114,16 +136,14 @@ impl MindMap {
     /// This is the cascade base the border resolver
     /// (`mindmap::border::resolve_border_style`) sits on top of, so
     /// a per-node `border.color` override still wins over the
-    /// theme — an explicit choice beats an inherited one. Cost: one
-    /// [`Self::resolve_theme_colors`].
+    /// theme — an explicit choice beats an inherited one. Callers
+    /// that also have to place the *canvas-wide* border default in
+    /// that cascade want [`Self::node_frame_theme_tier`] and
+    /// `node.style.frame_color` separately; this collapses the two.
+    /// Cost: one [`Self::resolve_theme_colors`].
     pub fn node_frame_color<'a>(&'a self, node: &'a MindNode) -> &'a str {
-        if let Some(own) = channel_override(node, |o| o.frame.as_deref()) {
-            return own;
-        }
-        match self.resolve_theme_colors(node) {
-            Some(group) => group.frame.as_str(),
-            None => node.style.frame_color.as_str(),
-        }
+        self.node_frame_theme_tier(node)
+            .unwrap_or(node.style.frame_color.as_str())
     }
 
     /// The authored **text** color for a node: this node's own
@@ -533,6 +553,99 @@ mod tests {
             "#explicit",
             "a color the author named on the edge is not a theme's to overrule"
         );
+    }
+
+    /// The tier that had been sitting in the wrong place: a
+    /// **map-wide** connection default is less specific than a
+    /// **per-node** theme, so the theme wins. Ordered the other way
+    /// round, one `canvas connection color=…` flattens every
+    /// palette-derived stroke in the document and no per-edge edit
+    /// short of forking a `glyph_connection` recovers one.
+    #[test]
+    fn test_the_theme_outranks_the_canvas_wide_connection_default() {
+        use crate::mindmap::model::GlyphConnectionConfig;
+        let mut map = probe_map();
+        map.edges[0].color = "#edge00".into();
+        map.canvas.default_connection = Some(GlyphConnectionConfig {
+            color: Some("#888888".into()),
+            ..GlyphConnectionConfig::default()
+        });
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema(0, true, true));
+        assert_eq!(map.edge_body_color(&map.edges[0]), "#a20000");
+        // Without a theme the canvas default is still the tier
+        // above `edge.color` — the reorder moved it, it did not
+        // remove it.
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema(0, true, false));
+        assert_eq!(map.edge_body_color(&map.edges[0]), "#888888");
+    }
+
+    /// The struct-level fork rule survives the reorder: an edge
+    /// that has forked a `glyph_connection` of its own never
+    /// consults the canvas default again, even for a field the
+    /// fork left at `None`.
+    #[test]
+    fn test_a_forked_connection_still_ignores_the_canvas_default() {
+        use crate::mindmap::model::GlyphConnectionConfig;
+        let mut map = probe_map();
+        map.edges[0].color = "#edge00".into();
+        map.canvas.default_connection = Some(GlyphConnectionConfig {
+            color: Some("#888888".into()),
+            ..GlyphConnectionConfig::default()
+        });
+        map.edges[0].glyph_connection = Some(GlyphConnectionConfig {
+            color: None,
+            ..GlyphConnectionConfig::default()
+        });
+        assert_eq!(
+            map.edge_body_color(&map.edges[0]),
+            "#edge00",
+            "a forked edge with no color of its own falls to `edge.color`, not the canvas default"
+        );
+    }
+
+    /// The border channel has the same shape and now the same
+    /// order: an explicit per-node `border.color` wins, the node's
+    /// theme outranks the canvas-wide default border, and
+    /// `style.frame_color` is the floor.
+    #[test]
+    fn test_the_theme_outranks_the_canvas_wide_default_border() {
+        use crate::mindmap::border::resolve_border_style;
+        use crate::mindmap::model::GlyphBorderConfig;
+        let mut map = probe_map();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema(0, true, false));
+        let canvas_default = GlyphBorderConfig {
+            preset: "light".into(),
+            font: None,
+            font_size_pt: 14.0,
+            color: Some("#888888".into()),
+            glyphs: None,
+            padding: 4.0,
+            color_palette: None,
+            color_palette_field: None,
+        };
+        let node = map.nodes.get("a").unwrap();
+        let resolved = resolve_border_style(
+            node.style.border.as_ref(),
+            Some(&canvas_default),
+            map.node_frame_theme_tier(node),
+            &node.style.frame_color,
+        );
+        assert_eq!(
+            resolved.color, "#a20000",
+            "the node's palette frame beats a map-wide border color"
+        );
+
+        // Unthemed, the canvas default is still the tier above
+        // `style.frame_color`.
+        map.nodes.get_mut("a").unwrap().color_schema = None;
+        let node = map.nodes.get("a").unwrap();
+        let resolved = resolve_border_style(
+            node.style.border.as_ref(),
+            Some(&canvas_default),
+            map.node_frame_theme_tier(node),
+            &node.style.frame_color,
+        );
+        assert_eq!(resolved.color, "#888888");
     }
 
     #[test]

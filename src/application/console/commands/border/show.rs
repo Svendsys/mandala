@@ -150,7 +150,8 @@ fn format_border_readout(
     let style = resolve_border_style(
         node.style.border.as_ref(),
         canvas_default,
-        map.node_frame_color(node),
+        map.node_frame_theme_tier(node),
+        &node.style.frame_color,
     );
     let approx_char_width = style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let size = node.size_vec2();

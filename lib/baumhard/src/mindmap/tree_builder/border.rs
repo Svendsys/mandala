@@ -193,7 +193,13 @@ pub fn border_node_data(
         // Palette first, `style.frame_color` second — the node color
         // cascade lives on `MindMap` so this pass and the container
         // pass cannot disagree about what a themed node's frame is.
-        let frame_color_hex = color::resolve_var(map.node_frame_color(node), vars);
+        // The two halves stay apart because the canvas-wide border
+        // default sits *between* them: a per-node theme outranks a
+        // map-wide border color, and `style.frame_color` does not.
+        let themed_frame = map
+            .node_frame_theme_tier(node)
+            .map(|c| color::resolve_var(c, vars));
+        let style_frame_hex = color::resolve_var(&node.style.frame_color, vars);
         // Border preview: when this node is a `Nodes(ids)` target,
         // fold the staged edits into a clone of its committed slot
         // before resolution. A `CanvasDefault` preview instead
@@ -223,7 +229,8 @@ pub fn border_node_data(
         // border cascade in a frame: the clip-AABB pass needs just
         // the extent and takes `resolve_border_font_size_pt`, and
         // nothing downstream of here resolves it again.
-        let mut border_style = resolve_border_style(node_slot_ref, canvas_default_ref, frame_color_hex);
+        let mut border_style =
+            resolve_border_style(node_slot_ref, canvas_default_ref, themed_frame, style_frame_hex);
         // NodeEdit dimming: every node *other* than the active
         // target renders its frame at half alpha so the active
         // node visually pops. `node_edit_for == None` (Default

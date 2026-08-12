@@ -1434,7 +1434,10 @@ Fields: `body: String` (default mid-dot `·`), `cap_start` /
 `cap_end: Option<String>`, `font: Option<String>`, `font_size_pt:
 f32`, `min_font_size_pt` / `max_font_size_pt: Option<f32>`,
 `color: Option<String>`. Color cascade priority (highest
-first): edge-label → `glyph_connection.color` → `edge.color`.
+first): edge-label → `glyph_connection.color` → the source
+node's palette `frame` → `canvas.default_connection.color` →
+`edge.color`. The theme sits above the canvas default because
+it is per-node and the default is map-wide.
 `effective_font_size_pt(zoom)` is the helper callers reach for
 to derive the clamped screen-space size.
 
