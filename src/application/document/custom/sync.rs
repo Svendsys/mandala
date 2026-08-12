@@ -666,9 +666,7 @@ impl MindMapDocument {
                             // round trip below bakes the palette hex
                             // into the run, severing the cascade for
                             // good on a mutation that moved nothing.
-                            (Some(_), None) if run.color.is_empty() => {
-                                region.color == Some(node_text_rgba)
-                            }
+                            (Some(_), None) if run.color.is_empty() => region.color == Some(node_text_rgba),
                             _ => false,
                         };
                         if !colors_equal {

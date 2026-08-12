@@ -24,6 +24,7 @@
 //! budget).
 
 use super::{ColorGroup, MindEdge, MindMap, MindNode};
+use crate::util::color::{hex_to_rgba_safe, resolve_var, FloatRgba};
 
 impl MindMap {
     /// Resolve the [`ColorGroup`] a themed node draws from, or
@@ -146,12 +147,9 @@ impl MindMap {
     /// Cost: one [`Self::node_text_color`] plus one hex parse. No
     /// allocation — `resolve_var` borrows when there is nothing to
     /// substitute.
-    pub fn node_text_rgba(&self, node: &MindNode) -> crate::util::color::FloatRgba {
-        let resolved = crate::util::color::resolve_var(
-            self.node_text_color(node),
-            &self.canvas.theme_variables,
-        );
-        crate::util::color::hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 1.0])
+    pub fn node_text_rgba(&self, node: &MindNode) -> FloatRgba {
+        let resolved = resolve_var(self.node_text_color(node), &self.canvas.theme_variables);
+        hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 1.0])
     }
 
     /// The palette stroke color an edge inherits from its **source**
