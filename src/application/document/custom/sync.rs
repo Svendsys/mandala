@@ -21,16 +21,17 @@ use baumhard::mindmap::model::TextRun;
 use baumhard::mindmap::tree_builder::MindMapTree;
 use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
 
+// The reverse converter's "this run has nothing to inherit from"
+// answer is the authoring layer's answer — one question, one
+// constant. It used to be a second `#ffffff` local to this file,
+// which kept saying white after the authoring default became the
+// empty string: a region with no color and no overlapping prior
+// run baked opaque white into the model and opted those graphemes
+// out of the palette for good, which is the exact defect the
+// authoring default was changed to avoid.
+use super::super::defaults::DEFAULT_RUN_COLOR;
 use super::super::nodes::clamp_runs_to_text;
 use super::super::MindMapDocument;
-
-/// Default text-run color when neither the tree-side region nor
-/// a prior model run carries one. Matches the renderer's
-/// fall-through-to-`#ffffff` floor on a node with no explicit
-/// `style.text_color` override — the same white
-/// [`crate::application::document::defaults::DEFAULT_RUN_COLOR`]
-/// gives a freshly-authored run.
-pub(super) const DEFAULT_TEXT_RUN_COLOR: &str = "#ffffff";
 
 /// Default font-size the *renderer* uses when a section pins none,
 /// pinned to the forward path's
@@ -228,11 +229,19 @@ fn sync_section_font_size(
 /// deferred to the theme survive the trip; see the
 /// `prior_deferred_color` short-circuit below.
 ///
-/// Limitations:
+/// Limitations, both of them a *recolor* the converter cannot see
+/// because the tree side keeps no record of what the model said:
 /// - `var(--name)` color references collapse to their resolved
 ///   hex on the round trip *unless* the prior run shares the
 ///   region's range — see the `prior_deferred_color`
-///   short-circuit below.
+///   short-circuit below. A mutation that recolors a
+///   `var()`-bearing run without resizing it is swallowed; the
+///   run keeps the variable.
+/// - A recolor of a **colorless** run to exactly
+///   `theme_text_rgba` is likewise swallowed: the run stays
+///   colorless. Same pixels either way, and the deferral is the
+///   safer of the two readings — see the arm's own comment for
+///   why no range test can separate them here.
 /// - Unknown `AppFont` (corrupt tree state) falls through to
 ///   the empty string, matching the loader's tolerance for
 ///   missing-font runs.
@@ -266,15 +275,29 @@ pub(crate) fn region_to_text_run(
     // deliberately recoloring a `var()`-bearing run is silently
     // swallowed.
     //
-    // The empty-color arm has the evidence the `var()` arm lacks —
+    // The empty-color arm has evidence the `var()` arm lacks —
     // whether the region still paints `theme_text_rgba` — and so
     // needs no range test at all. That matters: the commonest way
     // a deferring run reaches this function is a keystroke in the
     // inline editor, which extends `[0,6)` to `[0,7)`. An exact-
     // range rule would bake the palette hex on the first character
     // typed, which is the whole defect this arm exists to stop.
-    // A recolor moves the region off the theme color and lands as
+    // A recolor that moves the region off the theme color lands as
     // a literal hex, exactly as it should.
+    //
+    // A recolor to *exactly* the theme color does not, and cannot:
+    // the region carries a resolved rgba and nothing else, so
+    // "still deferring" and "deliberately pinned to the color the
+    // node happens to have" are the same four floats. This arm
+    // reads them as the first, and committing the palette's own
+    // text color onto a deferring run therefore comes back as the
+    // empty string. Pixels are identical; the lost intent is "pin
+    // these graphemes so a retheme cannot move them". It is the
+    // same shape as the `var()` arm's swallow, traded the same
+    // way, and the only thing that would distinguish the two cases
+    // is the exact-range test whose cost is baking on the first
+    // keystroke — much the commoner gesture, and destructive where
+    // this is merely lossy.
     let prior_deferred_color: Option<&str> = prior.and_then(|p| {
         if p.color.is_empty() {
             return (region.color == Some(theme_text_rgba)).then_some("");
@@ -287,7 +310,7 @@ pub(crate) fn region_to_text_run(
         (None, Some(rgba)) => rgba_to_hex(rgba),
         (None, None) => prior
             .map(|p| p.color.clone())
-            .unwrap_or_else(|| DEFAULT_TEXT_RUN_COLOR.to_string()),
+            .unwrap_or_else(|| DEFAULT_RUN_COLOR.to_string()),
     };
     let font = match region.font.and_then(family_name_of) {
         Some(name) => name.to_string(),
@@ -759,9 +782,7 @@ impl MindMapDocument {
 
 #[cfg(test)]
 mod region_converter_tests {
-    use super::{
-        exact_or_dominant_overlap, region_to_text_run, DEFAULT_TEXT_RUN_COLOR, DEFAULT_TEXT_RUN_SIZE_PT,
-    };
+    use super::{exact_or_dominant_overlap, region_to_text_run, DEFAULT_RUN_COLOR, DEFAULT_TEXT_RUN_SIZE_PT};
     use baumhard::core::primitives::{ColorFontRegion, Range};
     use baumhard::mindmap::model::TextRun;
 
@@ -825,7 +846,14 @@ mod region_converter_tests {
         assert_eq!(out.size_pt, DEFAULT_TEXT_RUN_SIZE_PT);
         assert_eq!(out.hyperlink, None);
         assert_eq!(out.font, "");
-        assert_eq!(out.color, DEFAULT_TEXT_RUN_COLOR);
+        // Spelled out rather than compared to the constant: the
+        // point of the assertion is that a run with nothing to
+        // inherit from *defers*, and an assertion against the
+        // constant would follow the constant anywhere it went —
+        // including back to the `#ffffff` that baked white into
+        // the model and severed the graphemes from the palette.
+        assert_eq!(out.color, "", "a colorless region with no prior must defer");
+        assert_eq!(out.color, DEFAULT_RUN_COLOR, "and that is the authoring default");
     }
 
     #[test]
@@ -907,6 +935,32 @@ mod region_converter_tests {
         };
         let out = region_to_text_run(&region, Some(&prior_deferring), THEME_TEXT_RGBA);
         assert_eq!(out.color, "");
+    }
+
+    /// The documented cost of the range-insensitivity above: a
+    /// recolor to *exactly* the node's current text color is
+    /// indistinguishable from still deferring, because the region
+    /// carries a resolved rgba and nothing else. The run comes back
+    /// colorless. Pixels are identical; the lost intent is "pin
+    /// these graphemes so a retheme cannot move them".
+    ///
+    /// Pinned rather than left implicit because the arm's comment
+    /// used to claim the opposite — that a recolor always lands as
+    /// a literal hex — which is true of every recolor except this
+    /// one.
+    #[test]
+    fn test_region_to_text_run_swallows_a_recolor_to_the_theme_color_itself() {
+        let region = ColorFontRegion::new(Range::new(0, 5), None, Some(THEME_TEXT_RGBA));
+        let prior_deferring = TextRun {
+            color: String::new(),
+            ..styled_run(0, 5)
+        };
+        let out = region_to_text_run(&region, Some(&prior_deferring), THEME_TEXT_RGBA);
+        assert_eq!(
+            out.color, "",
+            "a recolor onto the theme color is swallowed — the evidence to \
+             tell it apart from a deferral does not reach this function"
+        );
     }
 
     #[test]

@@ -97,15 +97,30 @@ sections the mutation didn't touch. Range-mutating mutations
 new range) inherit prior styling via dominant-overlap fallback
 when no exact-range prior matches.
 
-Documented round-trip limit: `var(--name)` color references
-collapse to their resolved hex on the round trip — the tree-side
-`FloatRgba` carries no record of the variable. Authors who edit
-section colors through custom mutations and then save the model
-will see the variable replaced with a hex literal. The
-`set_section_text` / `set_section_text_color` /
+Documented round-trip limit: the tree side carries a resolved
+`FloatRgba` and no record of how the model spelled it, so the two
+spellings that are *not* a literal hex can only be recovered from
+the prior run — and each recovery has a case it reads the wrong
+way:
+
+- A `var(--name)` reference survives when the prior run covers the
+  region's exact range. A mutation that recolors such a run
+  without resizing it is swallowed; the run keeps the variable. A
+  mutation that resizes it loses the variable to a hex literal.
+- An **empty** color — the spelling for "take the node's text
+  color" — survives whenever the region still paints that color,
+  with no range test, because the commonest way one reaches the
+  converter is a keystroke in the inline editor and an exact-range
+  rule would bake the resolved hex on the first character typed.
+  The case it reads the wrong way is a deliberate recolor to
+  exactly the node's current text color: it comes back empty. The
+  pixels match; what is lost is "pin these graphemes so a retheme
+  cannot move them".
+
+The `set_section_text` / `set_section_text_color` /
 `set_section_font_size` / `set_section_font_family` document
-setters bypass the round trip and preserve `var(--name)`
-references verbatim.
+setters bypass the round trip entirely and preserve both
+spellings verbatim.
 
 ### Subverbs (Batch 5 redesign)
 

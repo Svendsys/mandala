@@ -873,18 +873,12 @@ impl MindMapDocument {
 /// Commit writes `style.show_frame = true` through the normal
 /// setter when the user wants the visibility flip persisted (today
 /// via `border on`); the force flag never reaches the model.
-fn build_border_preview_scene_view<'a>(
-    bp: &'a BorderPreview,
-) -> tree_builder::BorderPreview<'a> {
+fn build_border_preview_scene_view<'a>(bp: &'a BorderPreview) -> tree_builder::BorderPreview<'a> {
     let target = match &bp.target {
         BorderPreviewTarget::Nodes(ids) => tree_builder::BorderPreviewTargetRef::Nodes(ids.as_slice()),
-        BorderPreviewTarget::Sections(ts) => {
-            tree_builder::BorderPreviewTargetRef::Sections(ts.as_slice())
-        }
+        BorderPreviewTarget::Sections(ts) => tree_builder::BorderPreviewTargetRef::Sections(ts.as_slice()),
         BorderPreviewTarget::CanvasDefault => tree_builder::BorderPreviewTargetRef::CanvasDefault,
-        BorderPreviewTarget::CanvasSectionFrame => {
-            tree_builder::BorderPreviewTargetRef::CanvasSectionFrame
-        }
+        BorderPreviewTarget::CanvasSectionFrame => tree_builder::BorderPreviewTargetRef::CanvasSectionFrame,
         BorderPreviewTarget::CanvasSectionFrameFocused => {
             tree_builder::BorderPreviewTargetRef::CanvasSectionFrameFocused
         }
