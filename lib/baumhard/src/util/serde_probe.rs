@@ -1330,6 +1330,34 @@ mod tests {
         Both(Vec<Leaf>, f64),
     }
 
+    /// Two of them in one container, plus a third nested inside a
+    /// named one — three distinct places with no member name between
+    /// them.
+    #[derive(Deserialize)]
+    enum TwiceTupled {
+        #[allow(dead_code)]
+        Both(Vec<Leaf>, Vec<Leaf>),
+    }
+
+    #[derive(Deserialize)]
+    struct Nesting {
+        #[allow(dead_code)]
+        pair: TwiceTupled,
+        #[allow(dead_code)]
+        rows: Vec<Vec<Leaf>>,
+    }
+
+    /// A struct serde reads as a *map* rather than a struct, because
+    /// one field absorbs everything the others did not claim.
+    #[derive(Deserialize)]
+    struct Flattened {
+        #[allow(dead_code)]
+        named: f64,
+        #[serde(flatten)]
+        #[allow(dead_code)]
+        rest: std::collections::BTreeMap<String, f64>,
+    }
+
     /// Recursion that passes through **neither** an `Option`, a
     /// sequence nor a map: a boxed newtype variant, which
     /// [`Mode::Terminate`] has no emptier value to answer with. The
@@ -1650,5 +1678,56 @@ mod tests {
             "and it must not be published under a name it does not have: {:?}",
             shape.key_bearing_sequences()
         );
+    }
+
+    /// **An unnamed array is a *place*, and two of them are two
+    /// places.** The site used to be the enclosing container's name,
+    /// so a container holding two of them reported one — and the
+    /// report exists precisely so a reader can go and look at each.
+    ///
+    /// `rows` is the shape only this derivation can see at all. The
+    /// source walk classifies fields, and `Vec<Vec<Leaf>>` is one
+    /// field: it sees the outer array, names it `rows`, and never
+    /// asks what the element is. The inner array has no member name
+    /// of its own and is a positional route just the same.
+    #[test]
+    fn test_two_unnamed_arrays_in_one_container_are_two_reports() {
+        let shape = derived_shape::<Nesting>();
+        let unnamed = shape.unnamed_sequences();
+        assert_eq!(
+            unnamed.len(),
+            3,
+            "both tuple positions and the nested array are separate places: {unnamed:?}"
+        );
+        for site in ["TwiceTupled::Both[0]", "TwiceTupled::Both[1]", "Nesting.rows[0]"] {
+            assert!(
+                unnamed.contains(site),
+                "and each is named by the path that reaches it: {unnamed:?}"
+            );
+        }
+        assert!(
+            shape.key_bearing_sequences().contains("rows"),
+            "the outer array keeps its name — the nesting is an extra report, not a \
+             replacement: {:?}",
+            shape.key_bearing_sequences()
+        );
+    }
+
+    /// **A `#[serde(flatten)]` field stops the probe, and has to say
+    /// why.**
+    ///
+    /// The derive does not hand a flattened struct to
+    /// `deserialize_struct` at all — it asks for a *map* and collects
+    /// the members itself — so the probe, which has member names and
+    /// no data, cannot answer one and the visitor ends up missing
+    /// every field it declared. `missing field \`named\`` on its own
+    /// sends a reader looking at the field. It is not a defect this
+    /// module has to fix: `flatten` is independently refused on every
+    /// loadable type, for hiding captured keys, so this red is that
+    /// one arriving from the other side and the message says so.
+    #[test]
+    #[should_panic(expected = "A `#[serde(flatten)]` field is what")]
+    fn test_a_flattened_field_says_what_stopped_the_probe() {
+        let _ = derived_shape::<Flattened>();
     }
 }
