@@ -224,17 +224,16 @@ fn check_text_cap_against(json: &str, ceiling: Option<u64>) -> Result<(), String
 /// invariant sweep — one parse of `json`.
 pub fn parse_for_inspection(json: &str) -> Result<MindMap, String> {
     check_text_cap(json)?;
-    let (mut map, routes): (MindMap, Vec<Vec<Step>>) =
-        match unknown_keys::deserialize_capturing(json) {
-            Ok(parsed) => parsed,
-            Err(e) => {
-                // A construct from a newer build must not take the
-                // whole document down with it — see
-                // `load_skipping_unreadable_constructs`.
-                return load_skipping_unreadable_constructs(json)
-                    .unwrap_or_else(|| Err(diagnose_rejected_json(json, &e)));
-            }
-        };
+    let (mut map, routes): (MindMap, Vec<Vec<Step>>) = match unknown_keys::deserialize_capturing(json) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            // A construct from a newer build must not take the
+            // whole document down with it — see
+            // `load_skipping_unreadable_constructs`.
+            return load_skipping_unreadable_constructs(json)
+                .unwrap_or_else(|| Err(diagnose_rejected_json(json, &e)));
+        }
+    };
     // Refused *before* `adopt_unknown_keys`, which is where the two
     // full `Value` trees are built — a count check made after them
     // would be made after the memory was already spent.
@@ -1711,7 +1710,8 @@ mod tests {
             }
 
             // Verify sampling produces non-empty result
-            let samples = connection::sample_path(&conn_path, 7.2, crate::mindmap::connection::MAX_PATH_SAMPLES);
+            let samples =
+                connection::sample_path(&conn_path, 7.2, crate::mindmap::connection::MAX_PATH_SAMPLES);
             assert!(
                 !samples.is_empty(),
                 "Edge {}→{} produced no samples",
@@ -3463,7 +3463,11 @@ mod tests {
         );
         let map = crate::mindmap::unknown_keys::with_key_ceiling(Some(CAP), || load_from_str(&json))
             .expect("the tolerant path loads around the construct");
-        assert_eq!(map.skipped_constructs.len(), 1, "and it really was the tolerant path");
+        assert_eq!(
+            map.skipped_constructs.len(),
+            1,
+            "and it really was the tolerant path"
+        );
         assert_eq!(map.unknown_keys.len(), 8, "with the keys captured");
     }
 
@@ -4649,8 +4653,8 @@ mod tests {
 
         // The wasm32 arm, driven with an affordable ceiling.
         let payload = " ".repeat(64);
-        let err = check_text_cap_against(&payload, Some(32))
-            .expect_err("text over the ceiling must be refused");
+        let err =
+            check_text_cap_against(&payload, Some(32)).expect_err("text over the ceiling must be refused");
         assert!(err.contains("over the"), "must name the limit: {err}");
         assert!(
             !err.contains("expected value"),

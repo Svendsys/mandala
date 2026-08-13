@@ -43,9 +43,9 @@ pub mod tree_builder;
 /// once, and written back untouched at save.
 pub mod unknown_keys;
 
+mod border_tests;
 #[cfg(test)]
 pub(crate) mod test_helpers;
-mod border_tests;
 
 /// Cyan selection highlight applied at scene / tree emission time
 /// (selected edges, edge handles, portal markers, portal mutator

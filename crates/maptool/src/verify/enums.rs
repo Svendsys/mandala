@@ -3,7 +3,7 @@
 //! Named-enum invariants: check string fields against the known value sets.
 
 use baumhard::gfx_structs::shape::KNOWN_SHAPES;
-use baumhard::mindmap::model::{DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL, MindMap};
+use baumhard::mindmap::model::{MindMap, DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL};
 
 use super::Violation;
 
@@ -50,30 +50,9 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 
     for (loc, edge) in map.edge_locations() {
         check_value(&mut out, &loc, "type", &edge.edge_type, EDGE_TYPES, false);
-        check_value(
-            &mut out,
-            &loc,
-            "line_style",
-            &edge.line_style,
-            LINE_STYLES,
-            false,
-        );
-        check_value(
-            &mut out,
-            &loc,
-            "anchor_from",
-            &edge.anchor_from,
-            ANCHORS,
-            false,
-        );
-        check_value(
-            &mut out,
-            &loc,
-            "anchor_to",
-            &edge.anchor_to,
-            ANCHORS,
-            false,
-        );
+        check_value(&mut out, &loc, "line_style", &edge.line_style, LINE_STYLES, false);
+        check_value(&mut out, &loc, "anchor_from", &edge.anchor_from, ANCHORS, false);
+        check_value(&mut out, &loc, "anchor_to", &edge.anchor_to, ANCHORS, false);
         if let Some(mode) = edge.display_mode.as_deref() {
             check_value(&mut out, &loc, "display_mode", mode, DISPLAY_MODES, false);
         }
@@ -131,7 +110,10 @@ mod tests {
         let mut n = node("0", None);
         n.style.shape = "Rectangle".into();
         map.nodes.insert("0".into(), n);
-        assert!(check(&map).is_empty(), "runtime accepts Rectangle, so verify must too");
+        assert!(
+            check(&map).is_empty(),
+            "runtime accepts Rectangle, so verify must too"
+        );
     }
 
     #[test]

@@ -459,10 +459,8 @@ mod tests {
             "a node with no sections must be reported: {found:?}"
         );
         assert!(
-            found
-                .iter()
-                .any(|v| v.message.contains("zero sections")
-                    && matches!(v.severity, crate::verify::Severity::Error)),
+            found.iter().any(|v| v.message.contains("zero sections")
+                && matches!(v.severity, crate::verify::Severity::Error)),
             "and as an error, so `maptool verify` exits nonzero rather than printing `valid`"
         );
 

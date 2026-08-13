@@ -593,9 +593,7 @@ mod tests {
             "a2",
             vec![
                 MacroStep::Action { action: Action::Undo },
-                MacroStep::Action {
-                    action: Action::Cut,
-                },
+                MacroStep::Action { action: Action::Cut },
                 MacroStep::Action { action: Action::Undo },
             ],
         );

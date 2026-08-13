@@ -360,8 +360,7 @@ pub(in crate::application::app) fn close_text_edit(
     // inside an already-active NodeEdit session) keep
     // `exit_to_default_on_close == false` — close returns to
     // NodeEdit so the user can pick a different section.
-    if exit_to_default_on_close
-        && matches!(*interaction_mode, super::super::InteractionMode::NodeEdit { .. })
+    if exit_to_default_on_close && matches!(*interaction_mode, super::super::InteractionMode::NodeEdit { .. })
     {
         *interaction_mode = super::super::InteractionMode::Default;
     }
@@ -378,12 +377,9 @@ pub(in crate::application::app) fn close_text_edit(
     // so a grapheme-derived lift would be stale before it was
     // read.
     if commit {
-        if let Some(new_sel) = lift_anchor_to_section_range(
-            selection_anchor,
-            cursor_grapheme_pos,
-            &node_id,
-            section_idx,
-        ) {
+        if let Some(new_sel) =
+            lift_anchor_to_section_range(selection_anchor, cursor_grapheme_pos, &node_id, section_idx)
+        {
             doc.selection = new_sel;
         }
     }
@@ -409,7 +405,14 @@ pub(in crate::application::app) fn close_text_edit(
         // them before the rebuild. The drag drop path already
         // does the equivalent (`event_mouse_click.rs`).
         scene_cache.clear();
-        rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
+        rebuild_all(
+            doc,
+            interaction_mode,
+            mindmap_tree,
+            app_scene,
+            renderer,
+            scene_cache,
+        );
     } else {
         // Cancel: model is untouched, so we only need to revert the
         // edited section's transient caret-bearing text/regions to
@@ -831,5 +834,4 @@ mod tests {
             &mut some_tree,
         ));
     }
-
 }

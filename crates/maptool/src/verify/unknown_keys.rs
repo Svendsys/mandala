@@ -200,7 +200,8 @@ mod tests {
         let dir = baumhard::util::test_temp::TempDir::new("verify-inspection-door");
         let path = dir.join("probe.mindmap.json");
         let mut map = MindMap::new_blank("t");
-        map.nodes.insert("0".into(), super::super::test_helpers::node("0", None));
+        map.nodes
+            .insert("0".into(), super::super::test_helpers::node("0", None));
         let mut raw = serde_json::to_value(&map).expect("serialize the map");
         raw["nodes"]["0"]["a_key_from_a_newer_build"] = serde_json::json!(42);
         std::fs::write(&path, serde_json::to_string_pretty(&raw).expect("render"))
@@ -210,9 +211,9 @@ mod tests {
             .expect("an unknown key must not stop the inspection load");
         let reported = crate::verify::verify(&loaded);
         assert!(
-            reported.iter().any(|v| {
-                v.category == "unknown_keys" && v.message.contains("a_key_from_a_newer_build")
-            }),
+            reported
+                .iter()
+                .any(|v| { v.category == "unknown_keys" && v.message.contains("a_key_from_a_newer_build") }),
             "`verify` must report the key through its own load path: {reported:?}"
         );
         // The blank map is otherwise clean, so nothing else can be

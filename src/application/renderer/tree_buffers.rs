@@ -127,11 +127,7 @@ impl Renderer {
     /// caller is expected to fall back to a full
     /// `rebuild_buffers_from_tree` if it cannot guarantee the
     /// arena id is fresh.
-    pub fn reshape_buffer_for(
-        &mut self,
-        arena_id: indextree::NodeId,
-        tree: &Tree<GfxElement, GfxMutator>,
-    ) {
+    pub fn reshape_buffer_for(&mut self, arena_id: indextree::NodeId, tree: &Tree<GfxElement, GfxMutator>) {
         let Some(element) = tree.arena.get(arena_id).map(|n| n.get()) else {
             return;
         };

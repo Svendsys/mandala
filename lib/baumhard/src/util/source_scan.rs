@@ -673,8 +673,8 @@ pub(crate) fn node_position_component_writes() -> Vec<(String, usize, String)> {
             };
             // `= ` or `+= ` / `-= ` / `*= ` / `/= `, but not `==`.
             let rest = rest.trim_start();
-            let assigns = rest.starts_with("= ")
-                || ["+=", "-=", "*=", "/="].iter().any(|op| rest.starts_with(op));
+            let assigns =
+                rest.starts_with("= ") || ["+=", "-=", "*=", "/="].iter().any(|op| rest.starts_with(op));
             if assigns {
                 out.push((relative_to_repo(&file), number + 1, code.trim().to_string()));
             }

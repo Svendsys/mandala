@@ -924,8 +924,9 @@ mod position_clamp_tests {
         // One carve-out with one reason, not a list of sites: anything
         // under `gfx_structs/` is scene space. The count is asserted
         // below so it cannot quietly grow into the whole set.
-        let (scene, model): (Vec<_>, Vec<_>) =
-            writes.iter().partition(|(file, _, _)| file.contains("gfx_structs/"));
+        let (scene, model): (Vec<_>, Vec<_>) = writes
+            .iter()
+            .partition(|(file, _, _)| file.contains("gfx_structs/"));
 
         let stray: Vec<_> = model
             .iter()
@@ -966,7 +967,8 @@ mod position_clamp_tests {
     /// accumulating one clamps the **sum** rather than the delta.
     #[test]
     fn test_the_position_clamp_bounds_both_entry_points() {
-        let mut node: super::MindNode = crate::mindmap::test_helpers::synthetic_node_full("0", None, 0.0, 0.0, 100.0, 50.0, false);
+        let mut node: super::MindNode =
+            crate::mindmap::test_helpers::synthetic_node_full("0", None, 0.0, 0.0, 100.0, 50.0, false);
 
         node.set_position_clamped(1.0e30, -1.0e30);
         assert_eq!(node.position.x, MAX_CANVAS_COORD);
@@ -1033,12 +1035,9 @@ mod section_cap_tests {
         // The negative control: exactly at the cap still parses, so the
         // guard cannot be passing by refusing everything.
         let ok_sections = "{},".repeat(MAX_SECTIONS_PER_NODE);
-        let json = json.replace(
-            sections.trim_end_matches(','),
-            ok_sections.trim_end_matches(','),
-        );
-        let node = serde_json::from_str::<MindNode>(&json)
-            .expect("a node exactly at the cap must still parse");
+        let json = json.replace(sections.trim_end_matches(','), ok_sections.trim_end_matches(','));
+        let node =
+            serde_json::from_str::<MindNode>(&json).expect("a node exactly at the cap must still parse");
         assert_eq!(node.sections.len(), MAX_SECTIONS_PER_NODE);
     }
 }

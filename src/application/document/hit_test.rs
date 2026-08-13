@@ -18,11 +18,10 @@ use baumhard::gfx_structs::tree::MutatorTree;
 use baumhard::gfx_structs::tree_walker::walk_tree_from;
 use baumhard::mindmap::connection;
 use baumhard::mindmap::model::MindMap;
-use baumhard::mindmap::tree_builder::{
-    build_node_resize_handles, build_section_resize_handles, ResizeHandleSide,
-    INACTIVE_NODE_ALPHA_MULTIPLIER,
-};
 use baumhard::mindmap::tree_builder::MindMapTree;
+use baumhard::mindmap::tree_builder::{
+    build_node_resize_handles, build_section_resize_handles, ResizeHandleSide, INACTIVE_NODE_ALPHA_MULTIPLIER,
+};
 
 use super::types::EdgeRef;
 
@@ -614,7 +613,11 @@ pub fn hit_test_node_resize_handle(
         return None;
     }
     let handles = build_node_resize_handles(node_id, node.pos_vec2(), node.size_vec2());
-    nearest_handle_within(handles.iter().map(|h| (h.side, h.position)), canvas_pos, tolerance)
+    nearest_handle_within(
+        handles.iter().map(|h| (h.side, h.position)),
+        canvas_pos,
+        tolerance,
+    )
 }
 
 /// Pick the closest handle whose canvas-space position is within
@@ -700,11 +703,7 @@ pub fn apply_node_resize_to_tree(
         // position was already written above via `set_position`,
         // so we walk children directly rather than calling the
         // sibling helper that would re-shift the container.
-        let mut child = tree
-            .tree
-            .arena
-            .get(container_id)
-            .and_then(|n| n.first_child());
+        let mut child = tree.tree.arena.get(container_id).and_then(|n| n.first_child());
         while let Some(cid) = child {
             child = tree.tree.arena.get(cid).and_then(|n| n.next_sibling());
             let is_section = tree
@@ -757,7 +756,11 @@ pub fn hit_test_section_resize_handle(
     );
     let size = Vec2::new(section_size.width as f32, section_size.height as f32);
     let handles = build_section_resize_handles(node_id, section_idx, section_pos, Some(size));
-    nearest_handle_within(handles.iter().map(|h| (h.side, h.position)), canvas_pos, tolerance)
+    nearest_handle_within(
+        handles.iter().map(|h| (h.side, h.position)),
+        canvas_pos,
+        tolerance,
+    )
 }
 
 /// Walk the container's section-bearing children only — siblings
