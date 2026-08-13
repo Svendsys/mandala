@@ -94,6 +94,23 @@ impl ResolvedKeybinds {
         self.binds.iter().any(|(a, _)| *a == action)
     }
 
+    /// Every `Action` variant kind that has at least one binding in
+    /// the resolved table, regardless of combo or context.
+    ///
+    /// Test-gated: runtime lookups all go through a key event, and
+    /// this asks the opposite question — *which actions came out of
+    /// the config at all*. That is what the coverage test over the
+    /// `keybind_surface!` table needs, because a declared field that
+    /// produces no binding is exactly the silent-dead-keybind bug
+    /// (issue #32) and cannot be seen from a per-combo lookup.
+    #[cfg(test)]
+    pub fn bound_action_kinds(&self) -> std::collections::HashSet<super::action::ActionKind> {
+        self.binds
+            .iter()
+            .map(|(action, _)| super::action::ActionKind::from(action))
+            .collect()
+    }
+
     /// Return the action bound to the given key event, if any. The caller
     /// passes the normalized key name (see `normalize_key_name`) and the
     /// current modifier state. Searches all actions regardless of context —

@@ -63,7 +63,8 @@ pub(super) fn parse_action_runs_mode(s: &str) -> Option<bool> {
 /// parser's: `AddSection` reads it as "append", while
 /// `SplitSection` rejects it — the console verb requires `at=`
 /// because splitting at end-of-text silently creates an empty
-/// suffix section, and the macro path holds the same line.
+/// suffix section, and the keybind / macro path holds the same
+/// line.
 pub(super) fn parse_action_optional_usize(s: &str) -> Option<Option<usize>> {
     if s.is_empty() {
         return Some(None);

@@ -3027,8 +3027,7 @@ modal shell is native-gated.
 
 A three-layer pipeline: abstract `Action` enum →
 parsed `KeyBind` → resolved table; with cross-platform
-configuration via XDG (native) and `?keybinds=` /
-`localStorage` (WASM).
+configuration via XDG (native) and `localStorage` (WASM).
 
 Every keystroke that does *anything* maps to
 an `Action` first; the `Action` is then dispatched in the right
@@ -3040,7 +3039,7 @@ though the config-loading paths differ.
 `src/application/keybinds/`. The three
 layers:
 
-- `Action` enum (`action.rs`) — high-level intents:
+- `Action` enum (`action/mod.rs`) — high-level intents:
   `Undo`, `CreateOrphanNode`, `EnterReparentMode`,
   `EnterConnectMode`, `DeleteSelection`, `EditSelection`,
   `OpenConsole`, `Copy`, `Paste`, `Cut`, `ExitMode`, etc.
@@ -3053,9 +3052,41 @@ layers:
 belongs to; the event loop uses it to filter eligible actions
 based on which modal is open. Native config: hardcoded defaults
 + `$XDG_CONFIG_HOME/mandala/keybinds.json` + optional
-`--keybinds <path>` CLI override. WASM: same defaults + query
-param + `localStorage`. Partial configs merge via serde
+`--keybinds <path>` CLI override. WASM: same defaults +
+`localStorage["mandala_keybinds"]` — there is deliberately no
+`?keybinds=` layer, because a query param is owned by whoever
+composed the link rather than by the user (see
+`keybinds/platform_web.rs`). Partial configs merge via serde
 `default` attributes.
+
+**The config surface is declared once.** A bindable Action used
+to be written out three times — a `KeybindConfig` field, a
+`Default` entry, a `resolve()` row — and a field missing from
+`resolve()` compiled, leaving a binding that deserialized,
+round-tripped and did nothing. `keybinds/surface.rs`'s
+`keybind_surface!` collapses the three into one row per Action
+in `keybinds/config.rs`, generates the struct itself, and emits
+an `ActionKind → BindSurface` match that the loader's
+recognized-key set is built by walking. Because that match is
+exhaustive, an `Action` variant that appears in no section of
+the table — neither bound nor listed under `unbindable` with a
+reason — fails to compile. Unit variants take the string-list
+shape (`"undo": ["Ctrl+Z"]`) and payload variants the `args`
+shape; which one is not a choice, since each section only
+accepts the variant shape it is for. Unrecognized top-level keys
+in a user's file are warned about (`"keybinds: unrecognized key
+…"`, naming the nearest recognized key when there is one) and
+skipped rather than rejected — one stale *key* must not cost the
+user the rest of their bindings — and keys starting with `_` are
+treated as comments, which is how the shipped
+`config/default_keybinds.json` carries its instructions. That
+tolerance stops at the key: a *malformed value* under a
+recognized key fails the whole serde pass, and
+`user_config::layered::load_layered` answers a failed parse by
+skipping the layer, so it costs the user every binding in the
+file. The asymmetry is real rather than designed — the three
+user configs share the seam — and issue #129 tracks the
+per-field parsing that would close it.
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
@@ -3079,9 +3110,9 @@ sibling `ParametricBinding` shape:
   "set_zoom": [
     { "combo": "F12", "args": ["min", "0.5"] }
   ],
-  "clear_zoom": [
-    { "combo": "Shift+F12", "args": [] }
-  ]
+  // `clear_zoom` carries no payload, so it takes the plain
+  // string-list shape every unit Action takes.
+  "clear_zoom": ["Shift+F12"]
 }
 ```
 
@@ -3089,10 +3120,47 @@ Color / font / zoom carry the axis as the first arg (`bg|text|border`,
 `size|min|max`, `min|max` respectively) so a single binding-list
 covers the whole field group. The typed `ColorAxis` / `FontSlot` /
 `ZoomBound` enums on the Action variant make the dispatcher's
-match exhaustive without a fan-out guard.
+match exhaustive without a fan-out guard, and they reach the
+payload through `surface::ArgValue`: a `String` field takes the
+argument verbatim, a typed field goes through its strum `FromStr`,
+and a payload type with no `ArgValue` impl does not compile.
 
-Each variant documents its arg shape on the `Action` definition;
-wrong arg counts emit a warn-log and are skipped (never panic).
+Each variant names its arg shape in the table row that declares
+it — the payload field names there are both the arity and the
+list quoted back at the user when a binding's `args` array is
+the wrong length. **Their order is the positional `args`
+contract**, and the language does not enforce it on its own: the
+generated constructor is a struct expression, which does not
+care what order its fields are written in, so a row whose names
+are transposed would compile and hand the user's arguments to
+the wrong fields.
+
+Two mechanisms hold that line, pinning different halves of it.
+The build holds the *names*:
+`mandala_derive::PayloadFieldNames` publishes each variant's
+field names in declaration order into `action_payload_fields`,
+`surface::keybind_field_order_check!` compares the row's names
+against them under `const _: () = assert!(…)`, and a
+transposition is an `error[E0080]` naming the row. Two
+independent sources — the declaration and the table — so it is
+not a mirror agreeing with itself, and a brand-new row is
+covered with nothing written by hand. The tests hold the
+*values*: the sentinel table in `keybinds/tests.rs` carries the
+`Action` each row's args must produce, cannot omit a row, and
+drives the args end to end through the JSON, the `ArgValue`
+conversion and `resolve()` — which is where "`set_color`'s first
+arg has to be a real `ColorAxis`" lives, and which the const
+check, reading two lists of identifiers, cannot see.
+
+Tuple rows (`SetEdgeBodyGlyph(glyph)`) sit outside the const
+check by construction rather than by omission: their names are
+local bindings the table invents, and the pattern that binds
+them and the constructor that consumes them are the same macro
+repetition, so there is no second order to disagree with.
+
+Three skips are possible at resolve time and all three are
+logged, never panicked: an unparseable combo, the wrong number
+of args, and an arg that is not a valid value for its field.
 The dispatch arms call `pub(crate)` mutation cores extracted
 from each console verb, so the same setter path runs whether
 the user types the verb or fires the bound key — including

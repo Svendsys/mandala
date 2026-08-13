@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Web (WASM) config-source plumbing for keybinds: URL `?keybinds=`
-//! query param > `localStorage` under the `mandala_keybinds` key >
-//! hardcoded defaults. Not compiled on native.
+//! Web (WASM) config-source plumbing for keybinds: `localStorage`
+//! under the `mandala_keybinds` key, then hardcoded defaults. Not
+//! compiled on native.
 //!
-//! The query/storage reads, the size cap, and the fallback walk all
-//! belong to `crate::application::user_config::web_storage` — the
-//! mutations and macros web loaders name their layers against the
-//! same driver, so the three cannot drift.
+//! **There is no `?keybinds=` layer.** The query-param machinery
+//! exists in `crate::application::user_config::web_storage` and this
+//! loader deliberately does not reach it — see
+//! [`KeybindConfig::load_for_web`] below for the trust argument, and
+//! the `web_storage` module header for the same note against its two
+//! siblings.
+//!
+//! The storage read, the size cap, and the fallback walk all belong
+//! to `crate::application::user_config::web_storage` — the mutations
+//! and macros web loaders name their layers against the same driver,
+//! so the three cannot drift.
 
 use super::config::KeybindConfig;
 use crate::application::user_config::web_storage::load_web_storage_only;
