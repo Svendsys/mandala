@@ -144,8 +144,12 @@ the parity trajectory (or why none is owed):
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
   cross-platform drift can pass a green run. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
-  `target/llvm-cov/html/index.html`), `--lint` (advisory
-  `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt` runs
+  `target/llvm-cov/html/index.html`), `--lint` (runs
+  `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt` and the
+  three `doc` legs are **hard gates** — their baselines are zero
+  (#130, #134), a regression prints a `FAILED:` line and the run
+  exits non-zero at the end, after every other gate has reported;
+  `clippy` is advisory until its warning baseline is zero. `fmt` runs
   **once** — rustfmt parses rather than compiles, so it is
   target-independent and there is no wasm32 leg for it. `clippy` and
   `doc` run **twice**, on the host target and on

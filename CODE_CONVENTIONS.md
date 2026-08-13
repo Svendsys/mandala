@@ -337,6 +337,22 @@ industrial cost/benefit reasoning. This is not license for speculation.
   carry a doc comment; a well-named private helper does not.
 - **Module `//!` headers describe the concept, not the item list.**
   `cargo doc` generates the list; the concept is what the reader needs.
+- **Intra-doc links must point at targets that survive `cfg`
+  stripping.** Rustdoc compiles with `cfg(test)` off: a doc link from
+  live code into a `#[cfg(test)]` module is always broken — the
+  target does not exist when rustdoc resolves it — while a broken
+  link *inside* a `#[cfg(test)]` module can never fail anything,
+  because the module is stripped before doc collection ever sees it.
+  The same asymmetry holds per target: a link from cross-platform
+  code to a `#[cfg(target_arch = "wasm32")]` item breaks the host
+  doc leg, a link to a native-gated item breaks the wasm32 leg, and
+  each break is visible to exactly one of `./test.sh --lint`'s two
+  doc targets — which is why there are two. Name a cfg-stripped item
+  as a plain code-span (backticks, no link): the only form that
+  resolves everywhere. The doc gates hold a zero baseline on both
+  targets and fail the run (#134); PR #133 established the
+  stripped-side half of this rule, the #134 incident the live-side
+  half.
 - **Inline `//` comments explain *why*, never *what*.** `// increment
   counter` on `counter += 1` is noise; `// clamp to canvas bounds so
   the palette cannot scroll off-screen during zoom` is signal.
@@ -481,7 +497,9 @@ Workspace-level commitment:
 - **Tests land in the commit that introduces the code they test.**
 - **`./test.sh` is green before committing.** It also type-checks the
   benchmark targets and the wasm32 leg, so neither can rot between
-  merges. `./test.sh --lint` is advisory; review it.
+  merges. `./test.sh --lint`'s fmt and doc gates are hard at zero
+  baselines (#130, #134); clippy is advisory until its baseline is
+  zero — review it.
 - **`./build.sh` is green for cross-platform changes.** Anything
   outside an explicit `cfg` guard must build for
   `wasm32-unknown-unknown` before commit.

@@ -288,9 +288,13 @@ re-litigate them without a strong reason.
   `cargo install cargo-llvm-cov`). HTML at
   `target/llvm-cov/html/index.html`, LCOV at
   `target/llvm-cov/lcov.info`.
-- `./test.sh --lint` — also runs `cargo fmt --check` and
-  `cargo clippy --workspace --all-targets`. Both advisory; review
-  output but they do not fail the run.
+- `./test.sh --lint` — also runs `cargo fmt --all -- --check`
+  (hard: the tree stays formatted, #130), clippy on the host target
+  and on wasm32-unknown-unknown (advisory until the warning baseline
+  is zero), and three `cargo doc` legs — baumhard host, mandala
+  host, mandala wasm32 — each hard at a zero-warning baseline
+  (#134). A hard-gate failure prints a `FAILED:` line inline and the
+  run exits non-zero at the end, after every gate has reported.
 - `./test.sh --bench` — also *runs* `cargo bench` after tests pass.
   Maintainers only: `AGENTS.md` forbids automated agents this flag,
   `./bench.sh`, and `cargo bench` alike, along with any performance

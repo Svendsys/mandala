@@ -7,6 +7,9 @@ export RUST_BACKTRACE=1
 COVERAGE=0
 LINT=0
 BENCH=0
+# Set by the hard lint gates (fmt, doc) on failure; checked at the very
+# end of the run so every other gate still reports first (#134).
+LINT_FAILED=0
 
 usage() {
   cat <<'EOF'
@@ -17,8 +20,12 @@ Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
                type-check the benchmark targets and the WASM target so
                neither can rot silently between merges.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
-  --lint       Also run cargo fmt --check, cargo clippy and cargo doc
-               (advisory, never fails the run). fmt runs once — rustfmt
+  --lint       Also run cargo fmt --check, cargo clippy and cargo doc.
+               fmt and the three doc legs are hard gates: their
+               baselines are zero (#130, #134), so a regression prints
+               a FAILED: line and the run exits non-zero at the end,
+               after every other gate has reported. clippy is advisory
+               until its warning baseline is zero. fmt runs once — rustfmt
                parses rather than compiles, so it is target-independent.
                clippy and doc run twice, on the host target *and* on
                wasm32-unknown-unknown: a host-target compile drops
@@ -50,19 +57,28 @@ if [ "$LINT" -eq 1 ]; then
   # wasm32 leg for it. The clippy and rustdoc legs below are the ones
   # that need doubling, because both go through a real compile and a
   # host compile drops everything under #[cfg(target_arch = "wasm32")].
-  echo "== fmt (advisory) =="
-  cargo fmt --all -- --check || echo "(fmt diffs present — not failing the run)"
+  echo "== fmt (hard) =="
+  cargo fmt --all -- --check \
+    || { echo "FAILED (exit $?): cargo fmt --all -- --check — the tree stays formatted (#130)"; LINT_FAILED=1; }
   echo "== clippy, host target (advisory) =="
   cargo clippy --workspace --all-targets 2>&1 || echo "(clippy issues present — not failing the run)"
-  # Both doc gates are at zero warnings and are meant to stay there,
-  # so `-D warnings` turns a new broken intra-doc link into a visible
-  # failure line instead of one more warning scrolling past. Still
-  # advisory: `|| echo` keeps --lint from failing the run.
-  echo "== doc, host target (advisory) =="
+  # The doc gates hold a zero-warning baseline, which makes them the
+  # one lint gate that can be hard today (#134): clippy still carries
+  # a pre-existing warning count, but a broken intra-doc link is a
+  # hard `error:` against a baseline of zero. `-D warnings` turns it
+  # into a failure; the handler records it and the run exits non-zero
+  # at the end, after the remaining gates have reported. An `|| echo`
+  # used to sit here instead, and it swallowed a red `cargo doc` for
+  # a full review round. The direction rule for links whose target is
+  # cfg-stripped (`#[cfg(test)]`, platform gates) lives in
+  # CODE_CONVENTIONS.md §8 — rustdoc never compiles the stripped
+  # half, so the link breaks from live code and goes unchecked from
+  # stripped code.
+  echo "== doc, host target (hard) =="
   RUSTDOCFLAGS="-D warnings" cargo doc -p baumhard --no-deps 2>&1 \
-    || echo "(doc warnings present — this gate expects 0 — not failing the run)"
+    || { echo "FAILED (exit $?): cargo doc -p baumhard, host — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
   RUSTDOCFLAGS="-D warnings" cargo doc -p mandala --no-deps --document-private-items 2>&1 \
-    || echo "(doc warnings present — this gate expects 0 — not failing the run)"
+    || { echo "FAILED (exit $?): cargo doc -p mandala, host — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
 
   # The host-target runs above compile nothing gated behind
   # #[cfg(target_arch = "wasm32")], so every lint and every broken
@@ -96,7 +112,7 @@ if [ "$LINT" -eq 1 ]; then
     # cross-platform file, invisible to the host leg by construction.
     # All 11 are fixed (named as plain code-spans, which is the only
     # form that resolves on both targets), so the expected count is 0
-    # and `-D warnings` keeps it there.
+    # and this leg is as hard as the host legs above (#134).
     #
     # `-p mandala`, i.e. the host invocation with only the target
     # changed, rather than `--workspace`: baumhard cannot be
@@ -107,10 +123,10 @@ if [ "$LINT" -eq 1 ]; then
     # baumhard's private-item links, which the host baumhard gate
     # does not document either. mandala is the crate that carries the
     # #[cfg(target_arch = "wasm32")] modules.
-    echo "== doc, wasm32-unknown-unknown (advisory) =="
+    echo "== doc, wasm32-unknown-unknown (hard) =="
     RUSTDOCFLAGS="-D warnings" cargo doc -p mandala --no-deps --document-private-items \
       --target wasm32-unknown-unknown 2>&1 \
-      || echo "(doc warnings present — this gate expects 0 — not failing the run)"
+      || { echo "FAILED (exit $?): cargo doc -p mandala, wasm32 — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
   else
     echo "== clippy + doc, wasm32-unknown-unknown =="
     echo "(wasm32-unknown-unknown target not installed — skipping. Install with:"
@@ -203,4 +219,14 @@ else
   echo "== wasm32 check =="
   echo "(wasm32-unknown-unknown target not installed — skipping. Install with:"
   echo "    rustup target add wasm32-unknown-unknown)"
+fi
+
+# Deferred hard-gate verdict (#134). The fmt and doc gates record
+# failures instead of aborting so a single run reports every gate;
+# the recorded verdict lands here, last, where it cannot be mistaken
+# for advisory noise scrolling past.
+if [ "$LINT_FAILED" -ne 0 ]; then
+  echo
+  echo "== FAILED: hard lint gates — see the FAILED: lines above =="
+  exit 1
 fi
