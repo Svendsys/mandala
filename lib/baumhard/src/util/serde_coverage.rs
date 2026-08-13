@@ -66,6 +66,75 @@ pub enum TypeKind {
     Alias,
 }
 
+/// Where a JSON member name comes from.
+///
+/// The distinction matters because only one of the two is a *field*
+/// name: `serde_derive` hands its `FIELDS` list to
+/// `deserialize_struct`, so a reader that wants to check this walk
+/// against the compiler has to compare like with like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberKind {
+    /// A named field, under its serde name.
+    Field,
+    /// An unnamed field, which has a member name only when a variant
+    /// wraps it. `{"Literal": [ … ]}` writes an externally tagged
+    /// newtype variant's payload as the one member of a wrapper
+    /// object, and the variant's name is that member — so a `Vec`
+    /// payload is an array published under the variant name. Every
+    /// other unnamed position is a slot in a fixed-arity array and
+    /// has no member name at all.
+    VariantPayload,
+}
+
+/// A type exactly as it was written, kept so the walk can ask
+/// structural questions of it rather than of a bag of its
+/// identifiers.
+///
+/// The wrapper exists for one reason: `syn::Type` implements `Debug`
+/// only under syn's `extra-traits` feature, and turning that on for
+/// the whole workspace to satisfy one `derive` here would compile a
+/// trait tree nothing else wants. It prints as the list of names the
+/// walk resolves the type by rather than as source — writing
+/// `Vec<Leaf>` would claim a nesting the flat list cannot always
+/// reconstruct, and the names are what a failure message needs.
+#[derive(Clone)]
+pub struct DeclaredType(pub Type);
+
+impl std::fmt::Debug for DeclaredType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut names = Vec::new();
+        collect_type_names(&self.0, &mut names);
+        write!(f, "{names:?}")
+    }
+}
+
+/// One place a deserializer can put on-disk data, and the JSON member
+/// it is read under.
+#[derive(Debug, Clone)]
+pub struct SerdeField {
+    /// The member name the *file* uses, or `None` where there is
+    /// none to publish — a position inside a fixed-arity tuple, whose
+    /// index no member names.
+    ///
+    /// Resolved the way serde resolves it: a field's own
+    /// `rename`/`rename(deserialize = …)` first, then the container's
+    /// `rename_all`, then the identifier. A `.mindmap.json` route is
+    /// recorded against the shape that was *read*, so a
+    /// `rename(serialize = …)` deliberately does not count.
+    pub member: Option<String>,
+    /// Whether [`Self::member`] is a field name or a variant name.
+    pub kind: MemberKind,
+    /// Every additional spelling `#[serde(alias = "…")]` makes
+    /// acceptable. A file may use any of them, so a route may cross
+    /// any of them.
+    pub aliases: Vec<String>,
+    /// The declared type, kept verbatim: whether it is an array is a
+    /// question only the whole index can answer.
+    pub ty: DeclaredType,
+    /// `Owner.member`, for a message that names a place in the model.
+    pub site: String,
+}
+
 /// One indexed type: where it lives, what serde does with it, and
 /// which other type names its fields mention.
 #[derive(Debug, Clone)]
@@ -119,8 +188,9 @@ pub struct TypeInfo {
     /// least one struct variant. Tuple and unit shapes have no field
     /// names for a stray key to hide in.
     pub has_named_fields: bool,
-    /// Every variant name an enum declares, in source order; empty
-    /// for a struct or an alias.
+    /// Every spelling an enum's variants can be written under, in
+    /// source order and **under the names the file uses**; empty for
+    /// a struct or an alias.
     ///
     /// An externally tagged enum writes its variant as the single
     /// member of a wrapper object, which is a JSON level serde's
@@ -128,24 +198,50 @@ pub struct TypeInfo {
     /// `mindmap::unknown_keys::expand_route` has to put it back. The
     /// names are here so a test can drive that over **every** variant
     /// the model can meet rather than the two somebody thought of.
+    ///
+    /// Because these are JSON member names, they are resolved the way
+    /// serde resolves them — a variant's own `rename`, then the
+    /// container's `rename_all` — and not read off the identifier.
+    /// They were read off the identifier until #122, which would have
+    /// driven `expand_route` over a level no document contains the
+    /// moment anything renamed a variant.
+    ///
+    /// A variant that carries `#[serde(alias = "…")]` contributes
+    /// **every** spelling, sorted, in place of the one — which is
+    /// exactly the shape of the `VARIANTS` list `serde_derive` hands
+    /// `deserialize_enum`, per variant in source order and sorted
+    /// inside each variant's group. Publishing the alias is the same
+    /// decision [`Self::fields`] carries for a field's: a file may
+    /// write it, so a route may cross it.
     pub variants: Vec<String>,
     /// Every type name mentioned by a deserializable field, in
     /// source order and de-duplicated by the walk rather than here.
     pub referenced: Vec<String>,
-    /// Every deserializable field whose type mentions `Vec`, as
-    /// `(JSON member name, the type names the field's type mentions)`.
+    /// Every place a deserializer can put on-disk data into this
+    /// type, with the JSON member it is read under and the type it
+    /// reads into.
     ///
-    /// An array is the one container a captured key's route crosses
-    /// **positionally**: above one, a route names a node by its id or
-    /// a palette by its name and is stable across any edit; below
-    /// one, it is an index, and an edit to the array can slide it
-    /// onto a different element. `format/schema.md` publishes the set
-    /// of places that happens, and the resolution of which element
-    /// types can actually hold a key needs the whole index — so what
-    /// is recorded here is the raw pair and
-    /// [`TypeGraph::key_bearing_sequences_from`] answers the
-    /// question.
-    pub sequence_fields: Vec<(String, Vec<String>)>,
+    /// The raw material for two questions the index alone can
+    /// answer. **Which arrays a captured key's route crosses
+    /// positionally** — above an array a route names a node by its id
+    /// or a palette by its name and is stable across any edit; below
+    /// one it is an index, and an edit can slide it onto a different
+    /// element. And **what those arrays are called on disk**, which
+    /// is not what they are called in Rust.
+    ///
+    /// Deciding whether a field's type *is* an array needs the whole
+    /// index — `type Leaves = Vec<Leaf>` is one and says so nowhere
+    /// in the field — so the type is kept verbatim here and
+    /// [`TypeGraph::key_bearing_sequences_from`] resolves it.
+    pub fields: Vec<SerdeField>,
+    /// The type this name is a pass-through to: the right-hand side
+    /// of a `type X = …;`, or the one unnamed field of a newtype
+    /// struct, which serde writes as its inner value with no wrapper
+    /// of its own.
+    ///
+    /// What makes `pub type Leaves = Vec<Leaf>;` resolvable as an
+    /// array rather than as the unknown name `Leaves`.
+    pub transparent_target: Option<DeclaredType>,
     /// Every predicate named by a field's
     /// `#[serde(skip_serializing_if = "...")]`, in source order.
     ///
@@ -412,18 +508,167 @@ impl TypeGraph {
     /// deliberately opaque, so nothing inside one is ever captured
     /// and no route ever crosses their indexes.
     ///
-    /// Cost: one walk from `root` plus one index lookup per element
-    /// type named; no I/O.
+    /// **Every alias a field accepts is published too.** A route is
+    /// recorded against the spelling the *file* used, and
+    /// `#[serde(alias = "…")]` makes more than one spelling reach the
+    /// same array.
+    ///
+    /// Cost: one walk from `root`, one structural classification per
+    /// field, and one index lookup per element type named; no I/O.
     pub fn key_bearing_sequences_from(&self, root: &str) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
+        for (field, element) in self.sequence_fields_from(root) {
+            let mut mentioned = Vec::new();
+            collect_type_names(element, &mut mentioned);
+            if !mentioned.iter().any(|name| self.carries_named_keys(name)) {
+                continue;
+            }
+            if let Some(member) = &field.member {
+                out.insert(member.clone());
+            }
+            out.extend(field.aliases.iter().cloned());
+        }
+        out
+    }
+
+    /// Growable arrays reachable from `root` that sit at a place with
+    /// **no JSON member name** — a position inside a fixed-arity
+    /// tuple, or a tuple variant's payload slot.
+    ///
+    /// Such an array is a positional route the published list cannot
+    /// express: there is no member name to write down. Empty for the
+    /// model today, and reported rather than dropped because the
+    /// alternative is a route nothing warns anybody about — the same
+    /// posture [`Self::unresolved_from`] takes toward a name it
+    /// cannot resolve. The first one to appear is a decision about
+    /// what `format/schema.md` should say, not a bug in this walk.
+    ///
+    /// **An empty answer here is not evidence that the model has
+    /// none.** This walk classifies *fields*, and a `Vec<Vec<T>>` is
+    /// one field: it sees the outer array, names it, and never asks
+    /// what the element is. Nesting is a third way to be unnamed and
+    /// only [`crate::util::serde_probe::DerivedShape::unnamed_sequences`]
+    /// can see it, which is why the test that consumes both requires
+    /// both to be empty rather than either.
+    ///
+    /// Cost: the same walk as [`Self::key_bearing_sequences_from`].
+    pub fn unnamed_sequences_from(&self, root: &str) -> BTreeSet<String> {
+        self.sequence_fields_from(root)
+            .into_iter()
+            .filter(|(field, _)| field.member.is_none())
+            .map(|(field, _)| field.site.clone())
+            .collect()
+    }
+
+    /// Every JSON member name a struct or struct variant reachable
+    /// from `root` declares, keyed by the type that declares it.
+    ///
+    /// The walk's answer to "what is this field called on disk",
+    /// separated from the array question so it can be held against
+    /// the **compiler's** answer —
+    /// [`crate::util::serde_probe::DerivedShape::members_of`] reads
+    /// the same names out of the generated `Deserialize` impls.
+    /// Variant payload names are deliberately excluded: they are
+    /// variant names, and comparing them against a `FIELDS` list
+    /// would be comparing two different things.
+    ///
+    /// **Every alias is here**, for the same reason
+    /// [`Self::key_bearing_sequences_from`] publishes them: a name a
+    /// file may write is a name this walk is answering about. The
+    /// derive agrees — `serde_derive` puts a field's aliases straight
+    /// into the `FIELDS` list it hands `deserialize_struct` — so the
+    /// two surfaces would otherwise disagree about `alias` in
+    /// opposite directions, which they did until #122's review.
+    ///
+    /// Cost: one walk from `root`; no I/O.
+    pub fn member_names_from(&self, root: &str) -> BTreeMap<String, BTreeSet<String>> {
+        let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for info in self.reachable_from(root) {
-            for (member, mentioned) in &info.sequence_fields {
-                if mentioned.iter().any(|name| self.carries_named_keys(name)) {
-                    out.insert(member.clone());
+            let entry = out.entry(info.name.clone()).or_default();
+            for field in &info.fields {
+                if field.kind != MemberKind::Field {
+                    continue;
+                }
+                entry.extend(field.member.iter().cloned());
+                entry.extend(field.aliases.iter().cloned());
+            }
+        }
+        out
+    }
+
+    /// Every field reachable from `root` whose type is a growable
+    /// array, paired with the element type a route crosses into.
+    fn sequence_fields_from(&self, root: &str) -> Vec<(&SerdeField, &Type)> {
+        let mut out = Vec::new();
+        for info in self.reachable_from(root) {
+            for field in &info.fields {
+                if let Some(element) = self.sequence_element(&field.ty.0) {
+                    out.push((field, element));
                 }
             }
         }
         out
+    }
+
+    /// The element type of `ty` when `ty` is a growable JSON array,
+    /// `None` otherwise.
+    ///
+    /// **Resolved through the index rather than matched against the
+    /// token `Vec`.** That token match is what this replaces: it read
+    /// `BTreeSet<ColorFontRegion>` as a scalar and left `regions` off
+    /// a list `format/schema.md` publishes, and it would have done
+    /// the same to a `Vec` behind a `type` alias. A name the index
+    /// holds as an alias or as a newtype struct is followed to what
+    /// it stands for, which is the only way `type Leaves =
+    /// Vec<Leaf>;` can be seen for what it is.
+    ///
+    /// A name that is neither a known container nor something the
+    /// index holds answers `None`, and that is safe because it is not
+    /// the last word: every such name is a walk terminator, and
+    /// `tests::test_every_walk_terminator_is_an_expected_one` makes a
+    /// reader vet it. The independent check against the derived
+    /// `Deserialize` impls is the second net under the same case.
+    fn sequence_element<'g>(&'g self, ty: &'g Type) -> Option<&'g Type> {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut current = ty;
+        loop {
+            match current {
+                Type::Paren(inner) => current = &inner.elem,
+                Type::Group(inner) => current = &inner.elem,
+                Type::Reference(inner) => current = &inner.elem,
+                // `[T]` is not a name, so no entry in
+                // [`SEQUENCE_CONTAINERS`] can catch it, and it is the
+                // shape every owning slice wrapper bottoms out on:
+                // `Cow<'a, [T]>`, `Box<[T]>`, `Rc<[T]>`, `Arc<[T]>`
+                // all deserialize by collecting a JSON array whose
+                // length the file decides. `[T; N]` is `Type::Array`
+                // and deliberately keeps falling through — its arity
+                // is the format's, not the document's.
+                Type::Slice(slice) => return Some(&slice.elem),
+                Type::Path(path) => {
+                    let segment = path.path.segments.last()?;
+                    let name = segment.ident.to_string();
+                    let argument = first_type_argument(&segment.arguments);
+                    if SEQUENCE_CONTAINERS.contains(&name.as_str()) {
+                        return Some(argument.unwrap_or(current));
+                    }
+                    if TRANSPARENT_WRAPPERS.contains(&name.as_str()) {
+                        current = argument?;
+                        continue;
+                    }
+                    // A pass-through the index holds: `type Leaves =
+                    // Vec<Leaf>;`, or a newtype struct serde writes as
+                    // its inner value. Guarded against a cycle, which
+                    // rustc would reject but this walk would not
+                    // survive.
+                    if !seen.insert(name.clone()) {
+                        return None;
+                    }
+                    current = &self.items.get(&name)?.transparent_target.as_ref()?.0;
+                }
+                _ => return None,
+            }
+        }
     }
 
     /// Whether an unrecognized key can be captured *at or below* a
@@ -559,8 +804,12 @@ impl TypeGraph {
             match item {
                 Item::Struct(item) => {
                     let serde = SerdeAttrs::read(&item.attrs);
+                    let names = SerdeNames::read(&item.attrs);
+                    let owner = item.ident.to_string();
                     self.insert(TypeInfo {
-                        name: item.ident.to_string(),
+                        transparent_target: newtype_target(&item.fields),
+                        fields: serde_fields(&owner, names.rule(&owner), None, &item.fields),
+                        name: owner.clone(),
                         file: file.to_path_buf(),
                         kind: TypeKind::Struct,
                         derives_deserialize: derives_deserialize(&item.attrs),
@@ -574,31 +823,61 @@ impl TypeGraph {
                         variants: Vec::new(),
                         referenced: referenced_types(&item.fields),
                         omit_predicates: omit_predicates(&item.fields),
-                        sequence_fields: sequence_fields(&item.fields),
                         unread_serde: unread_serde_attrs_with_fields(&item.attrs, &item.fields),
                         has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
                 }
                 Item::Enum(item) => {
                     let serde = SerdeAttrs::read(&item.attrs);
+                    let names = SerdeNames::read(&item.attrs);
+                    let owner = item.ident.to_string();
                     let mut referenced = Vec::new();
                     let mut predicates = Vec::new();
                     let mut flattened = Vec::new();
                     let mut has_named_fields = false;
                     let mut variants = Vec::new();
-                    let mut sequences = Vec::new();
+                    let mut fields = Vec::new();
                     let mut unread = unread_serde_attrs(&item.attrs);
                     for variant in &item.variants {
-                        variants.push(variant.ident.to_string());
                         has_named_fields |= matches!(variant.fields, Fields::Named(_));
                         referenced.extend(referenced_types(&variant.fields));
                         predicates.extend(omit_predicates(&variant.fields));
-                        sequences.extend(sequence_fields(&variant.fields));
                         flattened.extend(flattened_fields(&variant.fields));
                         unread.extend(unread_serde_attrs_with_fields(&variant.attrs, &variant.fields));
+                        // A variant renames two separate things, under
+                        // two separate options: its own JSON name (its
+                        // `rename`, else the container's `rename_all`),
+                        // and the names of the fields inside it (its
+                        // own `rename_all`, else the container's
+                        // `rename_all_fields`).
+                        let variant_names = SerdeNames::read(&variant.attrs);
+                        let variant_member = variant_names.rename.clone().unwrap_or_else(|| {
+                            let ident = variant.ident.to_string();
+                            names
+                                .rule(&owner)
+                                .map_or(ident.clone(), |rule| rule.apply_to_variant(&ident))
+                        });
+                        let inner_rule = variant_names.rule(&owner).or_else(|| names.field_rule(&owner));
+                        fields.extend(serde_fields(
+                            &format!("{owner}::{variant_member}"),
+                            inner_rule,
+                            Some((variant_member.as_str(), variant_names.aliases.as_slice())),
+                            &variant.fields,
+                        ));
+                        // Sorted inside the variant's own group and
+                        // appended in source order, which is how
+                        // `serde_derive` lays out `VARIANTS`: it
+                        // flat-maps a `BTreeSet` per variant, and the
+                        // set holds the resolved name alongside every
+                        // alias.
+                        let mut group: BTreeSet<String> = variant_names.aliases.into_iter().collect();
+                        group.insert(variant_member);
+                        variants.extend(group);
                     }
                     self.insert(TypeInfo {
-                        name: item.ident.to_string(),
+                        transparent_target: None,
+                        fields,
+                        name: owner,
                         file: file.to_path_buf(),
                         kind: TypeKind::Enum,
                         derives_deserialize: derives_deserialize(&item.attrs),
@@ -612,7 +891,6 @@ impl TypeGraph {
                         variants,
                         referenced,
                         omit_predicates: predicates,
-                        sequence_fields: sequences,
                         unread_serde: unread,
                         has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
@@ -621,6 +899,8 @@ impl TypeGraph {
                     let mut referenced = Vec::new();
                     collect_type_names(&item.ty, &mut referenced);
                     self.insert(TypeInfo {
+                        transparent_target: Some(DeclaredType((*item.ty).clone())),
+                        fields: Vec::new(),
                         name: item.ident.to_string(),
                         file: file.to_path_buf(),
                         kind: TypeKind::Alias,
@@ -635,7 +915,6 @@ impl TypeGraph {
                         variants: Vec::new(),
                         referenced,
                         omit_predicates: Vec::new(),
-                        sequence_fields: Vec::new(),
                         unread_serde: unread_serde_attrs(&item.attrs),
                         has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
@@ -881,53 +1160,393 @@ fn referenced_types(fields: &Fields) -> Vec<String> {
     out
 }
 
-/// Every non-skipped field whose type mentions `Vec`, paired with
-/// the type names that type mentions. See
-/// [`TypeInfo::sequence_fields`].
+/// Container spellings serde writes as a JSON array whose **length
+/// an edit can change** — the property that makes an index inside one
+/// unstable and a route through it positional.
 ///
-/// A tuple field is not reported: it has no JSON member name for a
-/// route to be published under, and serde writes the struct as an
-/// array whose positions no document names.
-fn sequence_fields(fields: &Fields) -> Vec<(String, Vec<String>)> {
-    let mut out = Vec::new();
-    for field in fields {
-        if is_skipped(&field.attrs) {
-            continue;
+/// A `BTreeSet` is on the list and is the reason the list exists:
+/// `ColorFontRegions::regions` is one, it holds objects that can
+/// carry an unrecognized key, and matching the token `Vec` read it as
+/// a scalar. A set is if anything *worse* than a `Vec` here, since the
+/// save re-sorts it.
+///
+/// Fixed-arity shapes — a tuple, `[T; N]` — are deliberately absent.
+/// They are arrays on disk and a route does cross their indexes, but
+/// no edit can move one without changing the format itself.
+///
+/// The list is *names*, so the one growable array spelled without one
+/// — the slice `[T]` that `Cow<'a, [T]>` and `Box<[T]>` bottom out on
+/// — cannot be a member of it; [`TypeGraph::sequence_element`] answers
+/// that shape structurally instead.
+const SEQUENCE_CONTAINERS: &[&str] = &[
+    "ArrayVec",
+    "BTreeSet",
+    "BinaryHeap",
+    "FxHashSet",
+    "HashSet",
+    "IndexSet",
+    "LinkedList",
+    "SmallVec",
+    "TinyVec",
+    "Vec",
+    "VecDeque",
+];
+
+/// Container spellings that serde writes as their inner value, so
+/// whatever is inside sits at the same JSON member.
+///
+/// `Option<Vec<T>>` is the live case: the member holds `null` or an
+/// array, and a route crosses the array's indexes either way.
+const TRANSPARENT_WRAPPERS: &[&str] = &["Arc", "Box", "Cow", "Option", "Rc"];
+
+/// The first type inside `<…>`, or `None` for a path segment with no
+/// type arguments.
+fn first_type_argument(arguments: &PathArguments) -> Option<&Type> {
+    let PathArguments::AngleBracketed(bracketed) = arguments else {
+        return None;
+    };
+    bracketed.args.iter().find_map(|argument| match argument {
+        GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    })
+}
+
+/// The inner type of a newtype struct — one unnamed field — which
+/// serde writes with no wrapper of its own. `None` for every other
+/// shape.
+fn newtype_target(fields: &Fields) -> Option<DeclaredType> {
+    let Fields::Unnamed(unnamed) = fields else {
+        return None;
+    };
+    match unnamed.unnamed.len() {
+        1 => unnamed
+            .unnamed
+            .first()
+            .map(|field| DeclaredType(field.ty.clone())),
+        _ => None,
+    }
+}
+
+/// The `#[serde(rename_all = "…")]` spellings, and what each does to
+/// an identifier.
+///
+/// Serde applies a rule differently to a field and to a variant
+/// because their conventional casings differ — `snake_case` is a
+/// no-op on a field and a real transform on a variant, and
+/// `PascalCase` is the reverse. Both directions are here because both
+/// produce member names: a field's, and — for a newtype variant
+/// whose payload is an array — the variant's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenameRule {
+    /// `"lowercase"`.
+    Lower,
+    /// `"UPPERCASE"`.
+    Upper,
+    /// `"PascalCase"`.
+    Pascal,
+    /// `"camelCase"`.
+    Camel,
+    /// `"snake_case"`.
+    Snake,
+    /// `"SCREAMING_SNAKE_CASE"`.
+    ScreamingSnake,
+    /// `"kebab-case"`.
+    Kebab,
+    /// `"SCREAMING-KEBAB-CASE"`.
+    ScreamingKebab,
+}
+
+impl RenameRule {
+    /// The rule serde knows by that name, or `None` when nothing
+    /// here matches — which [`SerdeNames::rule`] turns into a stopped
+    /// run rather than a shrug.
+    fn parse(spelling: &str) -> Option<RenameRule> {
+        match spelling {
+            "lowercase" => Some(RenameRule::Lower),
+            "UPPERCASE" => Some(RenameRule::Upper),
+            "PascalCase" => Some(RenameRule::Pascal),
+            "camelCase" => Some(RenameRule::Camel),
+            "snake_case" => Some(RenameRule::Snake),
+            "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnake),
+            "kebab-case" => Some(RenameRule::Kebab),
+            "SCREAMING-KEBAB-CASE" => Some(RenameRule::ScreamingKebab),
+            _ => None,
         }
-        let Some(ident) = field.ident.as_ref() else {
-            continue;
-        };
-        let mut mentioned = Vec::new();
-        collect_type_names(&field.ty, &mut mentioned);
-        if !mentioned.iter().any(|name| name == "Vec") {
-            continue;
+    }
+
+    /// The rule applied to a field identifier, which serde assumes is
+    /// already `snake_case`.
+    fn apply_to_field(self, ident: &str) -> String {
+        match self {
+            RenameRule::Lower | RenameRule::Snake => ident.to_string(),
+            RenameRule::Upper | RenameRule::ScreamingSnake => ident.to_ascii_uppercase(),
+            RenameRule::Pascal => snake_to_pascal(ident),
+            RenameRule::Camel => lower_first(&snake_to_pascal(ident)),
+            RenameRule::Kebab => ident.replace('_', "-"),
+            RenameRule::ScreamingKebab => ident.to_ascii_uppercase().replace('_', "-"),
         }
-        out.push((json_member_name(field, ident), mentioned));
+    }
+
+    /// The rule applied to a variant identifier, which serde assumes
+    /// is already `PascalCase`.
+    fn apply_to_variant(self, ident: &str) -> String {
+        match self {
+            RenameRule::Lower => ident.to_ascii_lowercase(),
+            RenameRule::Upper => ident.to_ascii_uppercase(),
+            RenameRule::Pascal => ident.to_string(),
+            RenameRule::Camel => lower_first(ident),
+            RenameRule::Snake => pascal_to_snake(ident),
+            RenameRule::ScreamingSnake => pascal_to_snake(ident).to_ascii_uppercase(),
+            RenameRule::Kebab => pascal_to_snake(ident).replace('_', "-"),
+            RenameRule::ScreamingKebab => pascal_to_snake(ident).to_ascii_uppercase().replace('_', "-"),
+        }
+    }
+}
+
+/// `"control_points"` → `"ControlPoints"`.
+///
+/// **ASCII case, deliberately**, here and in the two helpers below.
+/// Serde's own rule reaches for `to_ascii_uppercase` throughout, so
+/// `ß_thing` stays `ßThing` for it while Unicode case would make it
+/// `SSThing` — a name the loader will never match, produced silently,
+/// which is the exact failure #122 is about. What the case *decides*
+/// stays Unicode-aware where serde's does: `pascal_to_snake` asks
+/// `char::is_uppercase`, not `is_ascii_uppercase`.
+fn snake_to_pascal(ident: &str) -> String {
+    let mut out = String::with_capacity(ident.len());
+    let mut capitalize = true;
+    for character in ident.chars() {
+        if character == '_' {
+            capitalize = true;
+        } else if capitalize {
+            out.push(character.to_ascii_uppercase());
+            capitalize = false;
+        } else {
+            out.push(character);
+        }
     }
     out
 }
 
-/// The name a field is written under on disk: its
-/// `#[serde(rename = "...")]` when it has one, its identifier
-/// otherwise. `MindEdge::edge_type` is written `"type"`, and a
-/// published list of member names has to say what the file says.
-fn json_member_name(field: &syn::Field, ident: &syn::Ident) -> String {
-    let mut renamed = None;
-    for attr in &field.attrs {
-        if !attr.path().is_ident("serde") {
+/// `"ControlPoints"` → `"control_points"`. Serde's own rule inserts a
+/// separator before every uppercase letter but the first, so a run of
+/// capitals becomes one underscore per letter — matching it matters
+/// more than reading well.
+fn pascal_to_snake(ident: &str) -> String {
+    let mut out = String::with_capacity(ident.len());
+    for (at, character) in ident.chars().enumerate() {
+        if character.is_uppercase() && at > 0 {
+            out.push('_');
+        }
+        out.push(character.to_ascii_lowercase());
+    }
+    out
+}
+
+/// `"ControlPoints"` → `"controlPoints"`, lowercasing the first
+/// character only.
+///
+/// Serde slices the first *byte* rather than the first character, so
+/// on an identifier starting outside ASCII its own macro panics
+/// before this walk could disagree with it. Taking the character is
+/// the same answer everywhere the two can both produce one.
+fn lower_first(ident: &str) -> String {
+    let mut chars = ident.chars();
+    match chars.next() {
+        Some(first) => std::iter::once(first.to_ascii_lowercase()).chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// The `rename` / `rename_all` / `alias` names a `#[serde(...)]` list
+/// carries, read for the **deserialize** side.
+///
+/// A captured route is recorded against the shape that was read, so
+/// where serde lets the two sides differ — `rename(serialize = "a",
+/// deserialize = "b")` — only the `deserialize` arm is a member name
+/// this walk has any business publishing.
+#[derive(Debug, Default)]
+struct SerdeNames {
+    /// `#[serde(rename = "…")]` or the `deserialize` arm of
+    /// `#[serde(rename(…))]`.
+    rename: Option<String>,
+    /// `#[serde(rename_all = "…")]`, or its `deserialize` arm, as
+    /// written — resolved to a [`RenameRule`] by the caller so an
+    /// unknown spelling stays visible.
+    rename_all: Option<String>,
+    /// `#[serde(rename_all_fields = "…")]` on an enum, which renames
+    /// the fields of its struct variants rather than its variants.
+    rename_all_fields: Option<String>,
+    /// Every `#[serde(alias = "…")]`, in source order.
+    aliases: Vec<String>,
+}
+
+impl SerdeNames {
+    /// Read the naming options out of `attrs`.
+    ///
+    /// The `deserialize` arm of a list-form option is picked out
+    /// rather than the list being skipped whole — reading only
+    /// `rename = "…"` is what published `control` for a field the
+    /// file calls `points`. Everything else is consumed by
+    /// [`skip_unmodeled_option`] so the options written after it are
+    /// still seen, and an attribute this cannot finish is reported by
+    /// [`unread_serde_attrs`] exactly as before.
+    fn read(attrs: &[Attribute]) -> Self {
+        let mut out = SerdeNames::default();
+        for attr in attrs {
+            if !attr.path().is_ident("serde") {
+                continue;
+            }
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("rename") {
+                    out.rename = read_deserialize_arm(&meta)?;
+                } else if meta.path.is_ident("rename_all") {
+                    out.rename_all = read_deserialize_arm(&meta)?;
+                } else if meta.path.is_ident("rename_all_fields") {
+                    out.rename_all_fields = read_deserialize_arm(&meta)?;
+                } else if meta.path.is_ident("alias") {
+                    let literal: syn::LitStr = meta.value()?.parse()?;
+                    out.aliases.push(literal.value());
+                } else {
+                    skip_unmodeled_option(&meta)?;
+                }
+                Ok(())
+            });
+        }
+        out
+    }
+
+    /// The [`RenameRule`] named by `rename_all`, or `None` when the
+    /// container names none.
+    ///
+    /// **Panics on a spelling this walk does not know**, naming
+    /// `context`. Returning `None` there would look like "no rename"
+    /// and publish the Rust identifier under a name no file
+    /// contains — a silent wrong answer, which is the whole subject
+    /// of #122. Serde has eight rules and a ninth would be a
+    /// dependency bump somebody is already reading a changelog for;
+    /// stopping by name is the same posture
+    /// [`crate::util::source_scan`] takes toward a `mod` it cannot
+    /// follow.
+    fn rule(&self, context: &str) -> Option<RenameRule> {
+        Self::resolve(self.rename_all.as_deref(), "rename_all", context)
+    }
+
+    /// The [`RenameRule`] named by `rename_all_fields`; see
+    /// [`Self::rule`], including the panic.
+    fn field_rule(&self, context: &str) -> Option<RenameRule> {
+        Self::resolve(self.rename_all_fields.as_deref(), "rename_all_fields", context)
+    }
+
+    fn resolve(spelling: Option<&str>, option: &str, context: &str) -> Option<RenameRule> {
+        let spelling = spelling?;
+        Some(RenameRule::parse(spelling).unwrap_or_else(|| {
+            panic!(
+                "{context}: `#[serde({option} = \"{spelling}\")]` names a rule this walk \
+                 does not know, so it cannot say what the fields are called on disk. \
+                 Teach `RenameRule` the spelling — answering \"no rename\" here would \
+                 publish the Rust identifiers under names no document contains."
+            )
+        }))
+    }
+}
+
+/// The value of an option written either as `name = "x"` or as
+/// `name(serialize = "x", deserialize = "y")`, taking the
+/// `deserialize` arm of the list form and nothing else.
+fn read_deserialize_arm(meta: &syn::meta::ParseNestedMeta) -> syn::Result<Option<String>> {
+    if meta.input.peek(syn::Token![=]) {
+        let literal: syn::LitStr = meta.value()?.parse()?;
+        return Ok(Some(literal.value()));
+    }
+    if !meta.input.peek(syn::token::Paren) {
+        return Ok(None);
+    }
+    let mut read = None;
+    meta.parse_nested_meta(|nested| {
+        if nested.path.is_ident("deserialize") {
+            let literal: syn::LitStr = nested.value()?.parse()?;
+            read = Some(literal.value());
+        } else {
+            skip_unmodeled_option(&nested)?;
+        }
+        Ok(())
+    })?;
+    Ok(read)
+}
+
+/// Every place a deserializer can put on-disk data into a struct's
+/// fields, or into one variant's.
+///
+/// `owner` names the type for the site string; `rule` is the
+/// container's `rename_all` as it applies to *these* fields;
+/// `payload` is the JSON name of the variant that wraps them together
+/// with every alias spelling that variant accepts, present only for
+/// an enum variant.
+fn serde_fields(
+    owner: &str,
+    rule: Option<RenameRule>,
+    payload: Option<(&str, &[String])>,
+    fields: &Fields,
+) -> Vec<SerdeField> {
+    let mut out = Vec::new();
+    let unnamed_arity = match fields {
+        Fields::Unnamed(unnamed) => unnamed.unnamed.len(),
+        _ => 0,
+    };
+    for field in fields {
+        if is_skipped(&field.attrs) {
             continue;
         }
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename") && meta.input.peek(syn::Token![=]) {
-                let literal: syn::LitStr = meta.value()?.parse()?;
-                renamed = Some(literal.value());
-            } else {
-                skip_unmodeled_option(&meta)?;
-            }
-            Ok(())
+        let names = SerdeNames::read(&field.attrs);
+        let member = match field.ident.as_ref() {
+            Some(ident) => Some(names.rename.clone().unwrap_or_else(|| {
+                let ident = ident.to_string();
+                rule.map_or(ident.clone(), |rule| rule.apply_to_field(&ident))
+            })),
+            // A newtype's single unnamed field carries no name of its
+            // own: a newtype *variant* is written as the one member
+            // of a wrapper object and takes the variant's name, and a
+            // newtype *struct* is written as its inner value with no
+            // wrapper at all, so it is reached through
+            // `transparent_target` from whatever names it. Anything
+            // wider is a fixed-arity array whose positions no member
+            // names.
+            None if unnamed_arity == 1 => payload.map(|(member, _)| member.to_string()),
+            None => None,
+        };
+        let kind = if field.ident.is_some() {
+            MemberKind::Field
+        } else {
+            MemberKind::VariantPayload
+        };
+        // A newtype variant's payload is published under the
+        // *variant's* names, so the extra spellings that reach it are
+        // the variant's aliases and not the unnamed field's — which
+        // serde would have nothing to do with anyway.
+        let aliases = match kind {
+            MemberKind::Field => names.aliases,
+            MemberKind::VariantPayload => payload.map(|(_, aliases)| aliases.to_vec()).unwrap_or_default(),
+        };
+        // A newtype struct is reached through its parent; emitting it
+        // here as well would report the same array twice under two
+        // different answers.
+        if member.is_none() && field.ident.is_none() && unnamed_arity == 1 {
+            continue;
+        }
+        let site = match &member {
+            Some(name) => format!("{owner}.{name}"),
+            None => format!("{owner} (a tuple position, which no member names)"),
+        };
+        out.push(SerdeField {
+            member,
+            kind,
+            aliases,
+            ty: DeclaredType(field.ty.clone()),
+            site,
         });
     }
-    renamed.unwrap_or_else(|| ident.to_string())
+    out
 }
 
 /// The `#[serde(skip_serializing_if = "...")]` predicate of every
@@ -1009,16 +1628,20 @@ fn is_skipped(attrs: &[Attribute]) -> bool {
     skipped
 }
 
-/// Stand-in names for the three `Type` forms [`collect_type_names`]
-/// cannot read the inner types out of. Angle-bracketed so they can
-/// never be confused with a Rust identifier, and deliberately absent
-/// from [`EXPECTED_TERMINATORS`] so the first one to appear on the
-/// load graph goes red rather than quiet.
+/// Stand-in names for the `Type` forms [`collect_type_names`] cannot
+/// read the inner types out of. Angle-bracketed so they can never be
+/// confused with a Rust identifier, and deliberately absent from
+/// [`EXPECTED_TERMINATORS`] so the first one to appear on the load
+/// graph goes red rather than quiet.
 const UNREADABLE_DYN: &str = "<dyn Trait>";
 /// See [`UNREADABLE_DYN`].
 const UNREADABLE_IMPL: &str = "<impl Trait>";
 /// See [`UNREADABLE_DYN`].
 const UNREADABLE_MACRO: &str = "<macro-generated type>";
+/// See [`UNREADABLE_DYN`]. The catch-all: three forms were named and
+/// the arm under them still swallowed everything else `syn::Type` can
+/// be, which is the shape of the defect the other three close.
+const UNREADABLE_OTHER: &str = "<unreadable type form>";
 
 /// Every identifier appearing in `ty`, including generic arguments.
 /// Module qualifiers come along harmlessly — a name only matters when
@@ -1078,7 +1701,7 @@ fn collect_type_names(ty: &Type, out: &mut Vec<String>) {
         Type::TraitObject(_) => out.push(UNREADABLE_DYN.to_string()),
         Type::ImplTrait(_) => out.push(UNREADABLE_IMPL.to_string()),
         Type::Macro(_) => out.push(UNREADABLE_MACRO.to_string()),
-        _ => {}
+        _ => out.push(UNREADABLE_OTHER.to_string()),
     }
 }
 
@@ -1294,11 +1917,14 @@ mod tests {
     /// indexed as model types while this test passed on the strength
     /// of the one case it did check.
     ///
-    /// The four named here are this module's own and the recording
-    /// logger's, chosen because a rename that emptied the check would
-    /// be a rename of something a reader of this file is already
-    /// looking at. The planted case that depends on nothing in the
-    /// crate is
+    /// The five named here are this module's own, the recording
+    /// logger's, and its independent counterpart's, chosen because a
+    /// rename that emptied the check would be a rename of something a
+    /// reader of this file is already looking at. `serde_probe`'s own
+    /// `Fields` and `Variant` would collide with nothing today and
+    /// everything tomorrow, which is the case `DerivedShape` stands
+    /// in for. The planted case that depends on nothing in the crate
+    /// is
     /// `source_scan::tests::test_an_out_of_line_test_module_and_its_subtree_are_excluded`.
     #[test]
     fn test_type_graph_excludes_test_sources() {
@@ -1307,7 +1933,7 @@ mod tests {
             graph.get("StubCtx").is_none(),
             "a struct declared inside an inline test module must not be indexed"
         );
-        for test_only in ["TypeGraph", "TypeInfo", "Recorder", "Manifest"] {
+        for test_only in ["TypeGraph", "TypeInfo", "Recorder", "Manifest", "DerivedShape"] {
             assert!(
                 graph.get(test_only).is_none(),
                 "`{test_only}` is declared in a file that `util/mod.rs` gates with an \
@@ -1580,6 +2206,608 @@ mod tests {
             !names.contains("hidden"),
             "a `#[serde(skip)]` field never receives on-disk data, so no captured \
              route crosses it: {names:?}"
+        );
+    }
+
+    /// **`rename = "…"` is one of four spellings, and reading only
+    /// that one publishes the identifier for the other three.**
+    ///
+    /// Each case below is legal, compiling serde that the file
+    /// spells differently from the model:
+    ///
+    /// - the list form of `rename`, whose `deserialize` arm is the
+    ///   name a captured route is recorded against — a
+    ///   `serialize`-only arm deliberately changes nothing here,
+    ///   since it is not what the load reads;
+    /// - a container `rename_all`, which renames every field that did
+    ///   not rename itself;
+    /// - `alias`, which does not replace a name but *adds* one, so a
+    ///   route can cross either spelling and the list has to carry
+    ///   both.
+    #[test]
+    fn test_every_spelling_of_rename_reaches_the_published_member_name() {
+        let listed = graph_of(
+            "#[derive(Deserialize)] pub struct Root { \
+               #[serde(rename(serialize = \"pts\", deserialize = \"points\"))] \
+               pub control: Vec<Leaf> }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let names = listed.key_bearing_sequences_from("Root");
+        assert!(
+            names.contains("points") && !names.contains("control"),
+            "the `deserialize` arm of a list-form rename is the name the load reads: \
+             {names:?}"
+        );
+
+        let serialize_only = graph_of(
+            "#[derive(Deserialize)] pub struct Root { \
+               #[serde(rename(serialize = \"pts\"))] pub control: Vec<Leaf> }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let names = serialize_only.key_bearing_sequences_from("Root");
+        assert!(
+            names.contains("control") && !names.contains("pts"),
+            "a rename that only names the write side leaves the read name alone, and \
+             the read name is the one a captured route carries: {names:?}"
+        );
+
+        let all = graph_of(
+            "#[derive(Deserialize)] #[serde(rename_all = \"camelCase\")] \
+             pub struct Root { pub control_points: Vec<Leaf>, \
+               #[serde(rename = \"kept\")] pub own_name: Vec<Leaf> }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let names = all.key_bearing_sequences_from("Root");
+        assert!(
+            names.contains("controlPoints"),
+            "a container `rename_all` renames every field that did not rename itself: \
+             {names:?}"
+        );
+        assert!(
+            names.contains("kept"),
+            "and a field's own rename wins over it: {names:?}"
+        );
+
+        let aliased = graph_of(
+            "#[derive(Deserialize)] pub struct Root { \
+               #[serde(alias = \"pts\")] pub control: Vec<Leaf> }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let names = aliased.key_bearing_sequences_from("Root");
+        assert!(
+            names.contains("control") && names.contains("pts"),
+            "an alias adds a spelling rather than replacing one, so a file may write \
+             either and a route may cross either: {names:?}"
+        );
+    }
+
+    /// A `rename_all` spelling the walk does not know stops the run
+    /// rather than answering "no rename".
+    ///
+    /// The quiet answer is the dangerous one: it publishes the Rust
+    /// identifiers under names no document contains, which is exactly
+    /// the failure mode #122 is about, and it does it while every
+    /// other check stays green. Serde's eight rules are enumerated in
+    /// [`RenameRule`]; a ninth arrives with a dependency bump
+    /// somebody is already reading a changelog for.
+    #[test]
+    #[should_panic(expected = "names a rule this walk does not know")]
+    fn test_an_unknown_rename_all_spelling_stops_the_run() {
+        let _ = graph_of(
+            "#[derive(Deserialize)] #[serde(rename_all = \"SpongeCase\")] \
+             pub struct Planted { pub control_points: Vec<Leaf> }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+    }
+
+    /// **The three shapes that were arrays and were not published,
+    /// and the two that look like arrays and are not.**
+    ///
+    /// A `Vec` behind a `type` alias and a `BTreeSet` are arrays a
+    /// token match for `Vec` cannot see; the second of those was live
+    /// in this crate (`ColorFontRegions::regions`) while
+    /// `format/schema.md` said the list was derived from the model.
+    /// A newtype variant's payload is the third: it has no field name,
+    /// so the walk skipped it, and its JSON member is the variant's
+    /// name.
+    ///
+    /// The controls matter as much. A tuple variant and a
+    /// fixed-arity array are arrays on disk too — a route does cross
+    /// their indexes — but no edit can change their length, so they
+    /// are not places a route can be *moved*, and publishing them
+    /// would tell a reader to worry about something that cannot
+    /// happen.
+    ///
+    /// `borrowed` is the one growable array that no *name* can catch.
+    /// `Cow` is a transparent wrapper, so the walk unwraps it and
+    /// lands on the slice `[Leaf]` — a `syn::Type::Slice`, not a path
+    /// with an identifier to match — and a list of container
+    /// spellings has nowhere to put it. It sits beside `fixed`
+    /// deliberately: the two look alike in source and only one of
+    /// them has a length the document decides.
+    #[test]
+    fn test_a_sequence_is_what_serde_writes_as_an_array_not_what_spells_vec() {
+        let graph = graph_of(
+            "pub type Leaves = Vec<Leaf>;\n\
+             #[derive(Deserialize)] pub struct Root<'a> { \
+               pub aliased: Leaves, \
+               pub ordered: BTreeSet<Leaf>, \
+               pub queued: VecDeque<Leaf>, \
+               pub optional: Option<Vec<Leaf>>, \
+               pub borrowed: Cow<'a, [Leaf]>, \
+               pub keyed: HashMap<String, Leaf>, \
+               pub fixed: [Leaf; 2], \
+               pub payload: Payload }\n\
+             #[derive(Deserialize)] pub enum Payload { \
+               Literal(Vec<Leaf>), Pair(f64, Leaf) }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let names = graph.key_bearing_sequences_from("Root");
+        for array in ["aliased", "ordered", "queued", "optional", "borrowed", "Literal"] {
+            assert!(
+                names.contains(array),
+                "`{array}` is written as an array whose length an edit can change, so a \
+                 captured key's route through it is positional: {names:?}"
+            );
+        }
+        for not_an_array in ["keyed", "fixed", "Pair", "payload"] {
+            assert!(
+                !names.contains(not_an_array),
+                "`{not_an_array}` is not an array a route can be moved inside — a keyed \
+                 object, or a shape whose arity the format fixes: {names:?}"
+            );
+        }
+        assert!(
+            graph.unnamed_sequences_from("Root").is_empty(),
+            "and nothing here is an array with no member name: {:?}",
+            graph.unnamed_sequences_from("Root")
+        );
+    }
+
+    /// An array at a place with **no** JSON member name is reported,
+    /// not dropped.
+    ///
+    /// Position 0 of a tuple variant is an array a captured route
+    /// crosses and that `format/schema.md`'s one-name-per-line block
+    /// has no way to name. Reporting it hands a reader a decision
+    /// about what the document should say; dropping it would leave a
+    /// positional route nothing warns anybody about, which is the
+    /// same silence [`TypeGraph::unresolved_from`] exists to break.
+    #[test]
+    fn test_an_array_with_no_member_name_is_reported_rather_than_dropped() {
+        let graph = graph_of(
+            "#[derive(Deserialize)] pub struct Root { pub payload: Payload }\n\
+             #[derive(Deserialize)] pub enum Payload { Both(Vec<Leaf>, f64) }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
+        );
+        let unnamed = graph.unnamed_sequences_from("Root");
+        assert_eq!(
+            unnamed.len(),
+            1,
+            "the tuple variant's first position is an array nothing names: {unnamed:?}"
+        );
+        assert!(
+            graph.key_bearing_sequences_from("Root").is_empty(),
+            "and it must not be published under a name it does not have: {:?}",
+            graph.key_bearing_sequences_from("Root")
+        );
+    }
+
+    /// **The scan and the compiler, over the same declarations.**
+    ///
+    /// Every other test here asserts the walk against a name written
+    /// by hand, which proves the walk does what its author believed
+    /// and nothing about whether the belief matches serde. Here the
+    /// planted source is a *copy* of types the test module really
+    /// declares, so the answer it is held to comes out of
+    /// `serde_derive`'s own expansion — the two derivations share no
+    /// code, and the shapes chosen are the ones each derivation gets
+    /// wrong differently.
+    ///
+    /// The copy is deliberate and is the point: if the text and the
+    /// types drift apart the two answers stop matching and this
+    /// fails, which is exactly the alarm a `format/schema.md` that
+    /// has drifted from the model should raise.
+    #[test]
+    fn test_the_scan_and_the_derived_impls_agree_on_a_planted_shape() {
+        use crate::util::serde_probe::derived_shape;
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Planted {
+            #[allow(dead_code)]
+            control_points: PlantedLeaves,
+            #[serde(rename(deserialize = "points"))]
+            #[allow(dead_code)]
+            spare: std::collections::BTreeSet<PlantedLeaf>,
+            #[allow(dead_code)]
+            payload: PlantedPayload,
+            #[allow(dead_code)]
+            opaque: Vec<f64>,
+        }
+
+        /// Kept identical to `SOURCE` below.
+        type PlantedLeaves = Vec<PlantedLeaf>;
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+        struct PlantedLeaf {
+            #[allow(dead_code)]
+            x: i64,
+        }
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        enum PlantedPayload {
+            #[allow(dead_code)]
+            Literal(Vec<PlantedLeaf>),
+            #[allow(dead_code)]
+            Bare,
+        }
+
+        /// The declarations above, as text for the source walk.
+        const SOURCE: &str = "\
+pub type PlantedLeaves = Vec<PlantedLeaf>;
+#[derive(Deserialize)]
+#[serde(rename_all = \"camelCase\")]
+pub struct Planted {
+    pub control_points: PlantedLeaves,
+    #[serde(rename(deserialize = \"points\"))]
+    pub spare: BTreeSet<PlantedLeaf>,
+    pub payload: PlantedPayload,
+    pub opaque: Vec<f64>,
+}
+#[derive(Deserialize)]
+pub enum PlantedPayload {
+    Literal(Vec<PlantedLeaf>),
+    Bare,
+}
+#[derive(Deserialize)]
+pub struct PlantedLeaf {
+    pub x: i64,
+}
+";
+
+        let scanned = graph_of(SOURCE).key_bearing_sequences_from("Planted");
+        let derived = derived_shape::<Planted>().key_bearing_sequences();
+        assert_eq!(
+            scanned, derived,
+            "the source walk and the generated `Deserialize` impls must name the same \
+             arrays. They are two readings of one declaration, and the whole reason the \
+             published list can be trusted is that they have to agree"
+        );
+        assert!(
+            scanned.contains("controlPoints") && scanned.contains("points") && scanned.contains("Literal"),
+            "and the agreement has to be about something — a renamed alias, a renamed \
+             set, and a variant payload are the three the old walk got wrong: {scanned:?}"
+        );
+    }
+
+    /// **Sixteen rule × direction paths, none of which the model
+    /// exercises.**
+    ///
+    /// `RenameRule` is a *published* derivation: what it says a field
+    /// or a variant is called is what `format/schema.md` prints and
+    /// what `expand_route` is driven over. Nothing in this crate
+    /// carries a `rename_all` today, so replacing
+    /// `apply_to_variant`'s body with `format!("MUTANT_{ident}")`
+    /// left all 1354 tests green, as did seven of the eight
+    /// `apply_to_field` arms — an unexercised branch of a published
+    /// derivation is a wrong doc waiting for the first field that
+    /// uses it, which is a sentence this module already contained.
+    ///
+    /// So all sixteen are planted, and held against `serde_derive`'s
+    /// own expansion of a copy of the same declarations rather than
+    /// against names written out by hand. Three identifiers do the
+    /// work no plain one can:
+    ///
+    /// - `ABCd`, because serde's variant snake rule inserts a
+    ///   separator before *every* capital after the first, so a run
+    ///   of them becomes one underscore per letter (`a_b_cd`) rather
+    ///   than the `ab_cd` a reader would write;
+    /// - `thing_ß` and `NaÏve`, because serde's rules are
+    ///   `to_ascii_uppercase` and `to_ascii_lowercase` throughout.
+    ///   Unicode case maps `ß` to `SS` and `Ï` to `ï`, so a walk that
+    ///   reached for `str::to_uppercase` publishes `THING_SS` and
+    ///   `naïve` — names no loader will ever match, produced in
+    ///   silence.
+    #[test]
+    fn test_every_rename_all_rule_is_the_one_serde_applies() {
+        use crate::util::serde_probe::derived_shape;
+
+        /// One planted container per rule per direction, emitted
+        /// twice from one list: as declarations the compiler derives
+        /// `Deserialize` for, and as the source text the walk parses.
+        ///
+        /// The two are the same characters by construction. Every
+        /// other planted check in this module keeps a hand-written
+        /// copy and relies on the comparison failing when the two
+        /// drift; with sixteen containers that copy is where the
+        /// mistakes would live, and a generated one cannot drift at
+        /// all.
+        macro_rules! planted {
+            (
+                fields $field_body:tt
+                variants $variant_body:tt
+                $($rule:literal => $fields:ident / $variants:ident,)*
+            ) => {
+                $(
+                    #[derive(serde::Deserialize)]
+                    #[serde(rename_all = $rule)]
+                    #[allow(dead_code, non_snake_case)]
+                    struct $fields $field_body
+
+                    #[derive(serde::Deserialize)]
+                    #[serde(rename_all = $rule)]
+                    #[allow(dead_code)]
+                    enum $variants $variant_body
+                )*
+
+                /// Reaches every one of them, so the probe's sweep
+                /// does too.
+                #[derive(serde::Deserialize)]
+                #[allow(dead_code, non_snake_case)]
+                struct Rules {
+                    $(
+                        $fields: $fields,
+                        $variants: $variants,
+                    )*
+                }
+
+                // The declarations above, as text for the source
+                // walk — built from the *same* token trees the
+                // declarations used, so the two halves cannot drift.
+                // `concat!` takes only literals, so this is assembled
+                // at run time; it is a test, and a contract that
+                // cannot drift beats a `const`.
+                // An item, not a `let`: `macro_rules!` bindings are
+                // hygienic and would not be visible to the caller,
+                // whereas the items above (`Rules`) already are.
+                fn planted_source() -> String {
+                    // `stringify!` on the whole braced group, so the
+                    // text and the declaration are the same tokens.
+                    let field_body = stringify!($field_body);
+                    let variant_body = stringify!($variant_body);
+                    let mut s = String::new();
+                    $(
+                        s.push_str(&format!(
+                            "#[derive(Deserialize)]\n#[serde(rename_all = \"{}\")]\npub struct {} {}\n",
+                            $rule,
+                            stringify!($fields),
+                            field_body,
+                        ));
+                        s.push_str(&format!(
+                            "#[derive(Deserialize)]\n#[serde(rename_all = \"{}\")]\npub enum {} {}\n",
+                            $rule,
+                            stringify!($variants),
+                            variant_body,
+                        ));
+                    )*
+                    s.push_str("#[derive(Deserialize)] pub struct Rules {");
+                    $(
+                        s.push_str(&format!(" pub {}: {},", stringify!($fields), stringify!($fields)));
+                        s.push_str(&format!(" pub {}: {},", stringify!($variants), stringify!($variants)));
+                    )*
+                    s.push_str(" }\n");
+                    s
+                }
+            };
+        }
+
+        planted! {
+            // `wayPoint` is load-bearing, not decoration. `lowercase`
+            // and `snake_case` are *identity* on fields — `case.rs`
+            // reads `None | LowerCase | SnakeCase => field.to_owned()`
+            // — so a field that is already lowercase cannot tell the
+            // real rule from a plausible-looking
+            // `ident.to_ascii_lowercase()`. Only an identifier with an
+            // ASCII uppercase letter makes serde's leaving it alone
+            // observable, and without one those two arms have no true
+            // positive available.
+            fields { pub control_points: f64, pub thing_ß: f64, pub wayPoint: f64, }
+            variants { ControlPoints, ABCd, NaÏve, }
+            "lowercase" => LowerFields / LowerVariants,
+            "UPPERCASE" => UpperFields / UpperVariants,
+            "PascalCase" => PascalFields / PascalVariants,
+            "camelCase" => CamelFields / CamelVariants,
+            "snake_case" => SnakeFields / SnakeVariants,
+            "SCREAMING_SNAKE_CASE" => ScreamingSnakeFields / ScreamingSnakeVariants,
+            "kebab-case" => KebabFields / KebabVariants,
+            "SCREAMING-KEBAB-CASE" => ScreamingKebabFields / ScreamingKebabVariants,
+        }
+
+        let graph = graph_of(&planted_source());
+        let derived = derived_shape::<Rules>();
+        let walked = graph.member_names_from("Rules");
+
+        let mut compared = 0usize;
+        for (fields_of, variants_of) in [
+            ("LowerFields", "LowerVariants"),
+            ("UpperFields", "UpperVariants"),
+            ("PascalFields", "PascalVariants"),
+            ("CamelFields", "CamelVariants"),
+            ("SnakeFields", "SnakeVariants"),
+            ("ScreamingSnakeFields", "ScreamingSnakeVariants"),
+            ("KebabFields", "KebabVariants"),
+            ("ScreamingKebabFields", "ScreamingKebabVariants"),
+        ] {
+            let fields = walked.get(fields_of);
+            assert!(
+                fields.is_some_and(|fields| fields.len() == 3),
+                "`{fields_of}`'s three fields have to reach the walk before their names can \
+                 be compared: {fields:?}"
+            );
+            assert_eq!(
+                fields,
+                derived.members_of(fields_of),
+                "`{fields_of}`: the walk and `serde_derive` disagree about what \
+                 `rename_all` makes these fields called on disk"
+            );
+            let variants = graph.get(variants_of).map(|info| info.variants.as_slice());
+            assert!(
+                variants.is_some_and(|variants| variants.len() == 3),
+                "`{variants_of}`'s three variants have to reach the walk too: {variants:?}"
+            );
+            assert_eq!(
+                variants,
+                derived.variants_of(variants_of),
+                "`{variants_of}`: the walk and `serde_derive` disagree about what \
+                 `rename_all` makes these variants called on disk"
+            );
+            compared += 2;
+        }
+        assert_eq!(
+            compared, 16,
+            "one rule × direction path each, and there are sixteen"
+        );
+
+        // Named as well as compared, because an agreement is only
+        // worth as much as the transform it agrees about. Each of
+        // these is a name a reader would get wrong writing it by
+        // hand, and the first three are the whole reason `ABCd`,
+        // `thing_ß` and `NaÏve` are in the plant.
+        for (container, expected) in [
+            ("SnakeVariants", "a_b_cd"),
+            ("ScreamingKebabVariants", "A-B-CD"),
+            ("UpperFields", "THING_ß"),
+            ("LowerVariants", "naÏve"),
+            ("CamelFields", "controlPoints"),
+            ("PascalFields", "ControlPoints"),
+            ("KebabFields", "control-points"),
+            ("ScreamingSnakeFields", "CONTROL_POINTS"),
+        ] {
+            let names: Vec<&str> = walked
+                .get(container)
+                .into_iter()
+                .flatten()
+                .chain(
+                    graph
+                        .get(container)
+                        .into_iter()
+                        .flat_map(|info| info.variants.iter()),
+                )
+                .map(String::as_str)
+                .collect();
+            assert!(
+                names.contains(&expected),
+                "`{container}` must publish `{expected}`, which is what serde's rule \
+                 produces and not what the identifier reads as: {names:?}"
+            );
+        }
+    }
+
+    /// **`#[serde(alias = "…")]` is in the published contract, and it
+    /// has to be in *both* published surfaces.**
+    ///
+    /// The decision is not arbitrary and it is not the walk's to make
+    /// alone. `serde_derive` puts a field's aliases into the same
+    /// `FIELDS` list it hands `deserialize_struct` and a variant's
+    /// into `VARIANTS`, so the compiler already publishes them; a
+    /// file may write any of them, and a captured route is recorded
+    /// against whichever it wrote. `key_bearing_sequences_from` said
+    /// so from the start. `member_names_from` dropped them and the
+    /// variant reader discarded them, which made one walk answer
+    /// "alias is a name" and two answer "alias is nothing" — and it
+    /// put the variant surface in *direct* conflict with the probe,
+    /// which sees a variant alias whether or not the walk does.
+    ///
+    /// Held against `serde_probe` in the same test for the same
+    /// reason the planted-shape check exists: an expectation written
+    /// by hand proves the walk does what its author believed and
+    /// nothing about whether serde agrees. Sorted-inside-the-group
+    /// ordering is checked explicitly — `VARIANTS` flat-maps a
+    /// `BTreeSet` per variant, so `lit` follows `Literal` rather than
+    /// preceding it.
+    #[test]
+    fn test_every_alias_reaches_both_published_surfaces() {
+        use crate::util::serde_probe::derived_shape;
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        struct AliasRoot {
+            #[serde(alias = "waypoints")]
+            #[allow(dead_code)]
+            control_points: Vec<AliasLeaf>,
+            #[allow(dead_code)]
+            payload: AliasPayload,
+        }
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        enum AliasPayload {
+            #[serde(alias = "lit")]
+            #[allow(dead_code)]
+            Literal(Vec<AliasLeaf>),
+            #[allow(dead_code)]
+            Bare,
+        }
+
+        /// Kept identical to `SOURCE` below.
+        #[derive(serde::Deserialize)]
+        struct AliasLeaf {
+            #[allow(dead_code)]
+            x: f64,
+        }
+
+        /// The declarations above, as text for the source walk.
+        const SOURCE: &str = "\
+#[derive(Deserialize)]
+pub struct AliasRoot {
+    #[serde(alias = \"waypoints\")]
+    pub control_points: Vec<AliasLeaf>,
+    pub payload: AliasPayload,
+}
+#[derive(Deserialize)]
+pub enum AliasPayload {
+    #[serde(alias = \"lit\")]
+    Literal(Vec<AliasLeaf>),
+    Bare,
+}
+#[derive(Deserialize)]
+pub struct AliasLeaf {
+    pub x: f64,
+}
+";
+
+        let graph = graph_of(SOURCE);
+        let derived = derived_shape::<AliasRoot>();
+
+        let arrays = graph.key_bearing_sequences_from("AliasRoot");
+        assert_eq!(
+            arrays,
+            derived.key_bearing_sequences(),
+            "both derivations publish every spelling an array can be reached under: \
+             {arrays:?}"
+        );
+        for spelling in ["control_points", "waypoints", "Literal", "lit"] {
+            assert!(
+                arrays.contains(spelling),
+                "and the agreement has to be about something — a field alias and a \
+                 variant alias are the two the surfaces disagreed on: {arrays:?}"
+            );
+        }
+
+        let members = graph.member_names_from("AliasRoot");
+        assert_eq!(
+            members.get("AliasRoot"),
+            derived.members_of("AliasRoot"),
+            "the member-name surface carries the field's alias too, which is what the \
+             derive's `FIELDS` list says"
+        );
+
+        let variants = graph.get("AliasPayload").map(|info| info.variants.as_slice());
+        assert_eq!(
+            variants,
+            derived.variants_of("AliasPayload"),
+            "and the variant surface carries the variant's, in `VARIANTS` order — \
+             sorted inside each variant's group, groups in source order"
+        );
+        assert_eq!(
+            variants,
+            Some(["Literal".to_string(), "lit".to_string(), "Bare".to_string()].as_slice()),
+            "which is not the same as sorting the whole list, and is what \
+             `mindmap::unknown_keys::expand_route` is driven over"
         );
     }
 

@@ -1022,6 +1022,48 @@ with `syn` and
 `loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`
 fails the moment one appears.
 
+**A derivation is a reading, and a reading can be wrong in a way the
+document it feeds is wrong in too.** The same walk produces the list
+of arrays `format/schema.md` publishes — the places a captured key's
+route stops naming a node by its id and starts naming an element by
+its index — and for a long time it produced that list by matching the
+token `Vec` and one spelling of `#[serde(rename …)]`. Three live
+arrays were missing as a result: `ColorFontRegions::regions` is a
+`BTreeSet`, and `MutationListSrc::Literal` and
+`GlyphModelField::GlyphLines` are newtype-variant payloads with no
+field name. The document said the same three things, because it was
+written by reading the walk, so nothing disagreed
+([#122](https://github.com/Svendsys/mandala/issues/122)).
+
+The walk now resolves a field's type through the index — a `type`
+alias, a newtype struct, any of the eleven container spellings serde
+writes as a growable array, and the bare slice `[T]` that `Cow<'a,
+[T]>` bottoms out on. Four of those eleven do not keep the order the
+file was written in at all: `HashSet` and `FxHashSet` iterate by hash,
+`BTreeSet` by the element, `BinaryHeap` by its heap. That is a
+*stronger* reason to publish them than a `Vec`, not a weaker one — a
+save re-sorts them, so an index into one can move without anybody
+having edited anything. The walk also reads every spelling serde
+accepts for a member name, including the `deserialize` arm of a
+list-form `rename`, a container `rename_all`, and the extra spellings
+an `alias` admits. But the fix that matters is that the
+walk is no longer the only witness.
+`lib/baumhard/src/util/serde_probe.rs` asks the **generated**
+`Deserialize` impls the same questions by handing them a
+`Deserializer` that answers every request with the emptiest value
+that satisfies it and records what was asked — no source text, no
+`syn`, no list, and `serde_derive`'s own expansion as the authority
+on both member names and array-ness.
+`unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
+and its member-name sibling fail when the two disagree. Neither is a
+replacement for the other: the probe cannot see a serialize-only
+proxy, and the walk cannot see through a generic instantiation. Their
+disagreement is the signal. Both see `#[serde(alias = "…")]` and both
+publish it — the derive writes a field's aliases into the same
+`FIELDS` list as its name and a variant's into `VARIANTS` — because a
+file may write any accepted spelling and a captured route is recorded
+against whichever it wrote.
+
 Openness is about **keys, not meanings**. An `edge_type` the renderer
 does not know still loads — open vocabularies stay open — and semantic
 violations (an edge pointing at no node, a `color_schema` naming a
@@ -1034,7 +1076,8 @@ model means something else by, and each has a `maptool convert` verb.
 
 `lib/baumhard/src/mindmap/unknown_keys.rs`,
 `lib/baumhard/src/mindmap/loader.rs`,
-`lib/baumhard/src/util/serde_coverage.rs`. See
+`lib/baumhard/src/util/serde_coverage.rs`,
+`lib/baumhard/src/util/serde_probe.rs`. See
 [`format/schema.md`](./format/schema.md) §"Unknown keys are kept" for
 the policy as authors read it, and
 [`format/validation.md`](./format/validation.md) for the split between
