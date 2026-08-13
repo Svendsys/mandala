@@ -51,13 +51,34 @@
 //! appears in both literals. That closes the two *instances* and
 //! deliberately not the *mechanism*: the assertion is itself a
 //! per-verb copy, so the nine other `KEYS`-bearing verbs have
-//! neither the check nor any reason they would not need it. A
-//! `Command` cannot be walked for this — `KEYS` is a free const
-//! per module with no field on the struct to reach it through —
-//! and giving it one is the declarative-grammar work #27 tracks,
-//! where `usage` stops being written at all. Until then: a key
-//! added to any verb's `KEYS` is added to that verb's `usage` and
-//! `tags` by hand, in the same edit.
+//! neither the check nor any reason they would not need it.
+//!
+//! What holds the generalization up is not reach. `KEYS` is a free
+//! const per module with no field on [`Command`] to read it
+//! through, but [`Command::complete`] *is* a field, and driving
+//! each registry entry's own completer at a kv-key slot and
+//! collecting the rows it emits ending in `=` recovers the same
+//! vocabulary for all eleven — no new field, and no need to parse
+//! anything. (`baumhard::util::source_scan` is the `syn`-backed
+//! machinery this class of repository check already uses, and its
+//! `RUST_ROOTS` covers `src`, so the source-reading route is open
+//! too.)
+//!
+//! What holds it up is that the answer such a walk returns is not
+//! yet a rule. It reports `canvas` offering `top= bottom= left=
+//! right= tl= tr= bl= br=` and `section` offering `font= color=
+//! palette= field= padding= top= …`, and neither verb names one of
+//! those in its `usage` or `tags` — correctly, because neither
+//! owns them: both borrow the whole `border` keyset and say so as
+//! `<key>=<value>`, pointing at the vocabulary documented under
+//! `border` rather than transcribing it. A check that fails those
+//! two is wrong; a check that exempts them by name is a list
+//! rather than a rule. The missing piece is therefore a per-verb
+//! policy — spells its keys out, versus delegates to a documented
+//! keyset — and that decision belongs with the declarative-grammar
+//! work #27 tracks, where `usage` stops being hand-written at all.
+//! Until then: a key added to any verb's `KEYS` is added to that
+//! verb's `usage` and `tags` by hand, in the same edit.
 
 use super::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::console::completion::{Completion, CompletionState};
