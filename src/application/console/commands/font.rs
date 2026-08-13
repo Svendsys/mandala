@@ -51,14 +51,12 @@ use crate::application::document::SelectionState;
 /// it was parseable but invisible: `font ra<TAB>` offered nothing
 /// and the usage line did not mention it.
 ///
-/// That *instance* is closed; the drift that produced it is not.
-/// `usage` and `tags` below are hand-written literals — `help`
-/// prints them verbatim (`commands/help.rs::help_for`) and nothing
-/// reads this list — so adding a key here still offers it in the
-/// popup while leaving `help font` silent, with every test green.
-/// Deriving the three from one declaration is the verb-framework
-/// work tracked by #27; until then a key added here is added to
-/// `usage` and `tags` by hand, in the same edit.
+/// That *instance* is closed —
+/// `test_font_completion_offers_the_range_key` holds every key
+/// here against both literals below. The drift that produced it
+/// is not; see [`super`]'s § Usage and tags are hand-written for
+/// what is and is not closed, and for the rule that follows from
+/// it.
 pub const KEYS: &[&str] = &["size", "min", "max", "section", "range"];
 /// Positional subverbs surfaced as token-0 completions alongside
 /// the kv keys.

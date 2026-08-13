@@ -30,6 +30,15 @@ use crate::application::document::{SectionSel, SelectionState};
 /// it was parseable but invisible — the same gap `font` carried
 /// for the same key. `section` was in the list but missing from
 /// the usage line, which is the other half of the same drift.
+///
+/// Both *instances* are closed —
+/// `test_color_completion_offers_the_range_key` holds every key
+/// here against both literals below, the same assertion `font`
+/// grew in the same commit. The drift that produced them is not;
+/// see [`super`]'s § Usage and tags are hand-written for what is
+/// and is not closed, and for the rule that follows from it. The
+/// caveat reached `font::KEYS` alone at the time, which left this
+/// list reading as though its check were an invariant.
 pub const KEYS: &[&str] = &["bg", "text", "border", "section", "range"];
 pub const VALUE_PRESETS: &[&str] = &["accent", "edge", "fg", "reset"];
 
@@ -576,6 +585,11 @@ mod tests {
     /// `font` — accepted, named in the rejection the user gets for
     /// omitting `section=`, and offered by nothing. `section=` was
     /// the mirror gap: in `KEYS`, absent from the usage line.
+    ///
+    /// The `usage` / `tags` half is a per-verb copy of a check,
+    /// not an invariant over the registry — see the `KEYS` doc
+    /// comment, and `commands/mod.rs` § Usage and tags are
+    /// hand-written, for why it stops at this verb and `font`.
     #[test]
     fn test_color_completion_offers_the_range_key() {
         let doc = load_test_doc();

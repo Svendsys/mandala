@@ -32,6 +32,29 @@
 //! is [`super::tests::oracle_corpus`]: every verb whose subverb
 //! dispatch normalizes carries an upper-case corpus row beside its
 //! lower-case one.
+//!
+//! # Usage and tags are hand-written
+//!
+//! [`Command::usage`] and [`Command::tags`] are `&'static str`
+//! literals and `help` prints them verbatim (`help.rs::help_for`).
+//! Nothing derives them from the verb's own `KEYS` list, so the
+//! three declarations can disagree: a key added to `KEYS` is
+//! offered by the popup on the next keystroke and stays absent
+//! from `help <verb>` until somebody writes it in by hand. `font`
+//! and `color` each carried that drift for `range=` — parseable,
+//! named in the verb's own rejection, and documented nowhere.
+//!
+//! Those two verbs now assert that every key in their `KEYS`
+//! appears in both literals. That closes the two *instances* and
+//! deliberately not the *mechanism*: the assertion is itself a
+//! per-verb copy, so the nine other `KEYS`-bearing verbs have
+//! neither the check nor any reason they would not need it. A
+//! `Command` cannot be walked for this — `KEYS` is a free const
+//! per module with no field on the struct to reach it through —
+//! and giving it one is the declarative-grammar work #27 tracks,
+//! where `usage` stops being written at all. Until then: a key
+//! added to any verb's `KEYS` is added to that verb's `usage` and
+//! `tags` by hand, in the same edit.
 
 use super::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::console::completion::{Completion, CompletionState};
