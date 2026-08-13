@@ -871,8 +871,10 @@ mod tests {
     fn set_node_border_config_signals_preset_auto_promotion() {
         let mut doc = fixture_doc();
         let id = first_node_id(&doc);
-        let mut edits = BorderConfigEdits::default();
-        edits.preset = OptionEdit::Set("heavy".into());
+        let mut edits = BorderConfigEdits {
+            preset: OptionEdit::Set("heavy".into()),
+            ..BorderConfigEdits::default()
+        };
         edits
             .with_side_pattern(BorderSide::Top, "###(*)###")
             .expect("pattern parses");
@@ -905,8 +907,10 @@ mod tests {
         let mut doc = fixture_doc();
         let id = first_node_id(&doc);
         let before_border = doc.mindmap.nodes.get(&id).unwrap().style.border.clone();
-        let mut edits = BorderConfigEdits::default();
-        edits.preset = OptionEdit::Set("double".into());
+        let edits = BorderConfigEdits {
+            preset: OptionEdit::Set("double".into()),
+            ..BorderConfigEdits::default()
+        };
         let outcome = doc.set_node_border_config(&id, edits);
         assert!(outcome.changed);
         // Sanity: the edit landed.
@@ -943,8 +947,10 @@ mod tests {
         doc.mindmap.nodes.get_mut(&id).unwrap().style.border = None;
         doc.dirty = false;
         let undo_len_before = doc.undo_stack.len();
-        let mut edits = BorderConfigEdits::default();
-        edits.clear = true;
+        let edits = BorderConfigEdits {
+            clear: true,
+            ..BorderConfigEdits::default()
+        };
         let outcome = doc.set_node_border_config(&id, edits);
         assert!(!outcome.changed);
         assert!(!doc.dirty, "no-op clear must not mark the document dirty");
