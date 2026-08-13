@@ -216,10 +216,24 @@ fn test_console_oracle_completions_are_unchanged() {
     }
 }
 
-/// The two vocabularies the pinned tables deliberately leave out —
-/// they enumerate the *host's* installed fonts, so a byte-pin would
-/// assert something about the machine rather than about the
-/// console. Pinned structurally instead.
+/// The three vocabularies the pinned tables deliberately leave
+/// out — they enumerate the *host's* installed fonts, so a
+/// byte-pin would assert something about the machine rather than
+/// about the console. Pinned structurally instead.
+///
+/// There are three because there are two completers: `font.rs`
+/// answers `font set <TAB>` and `border/complete.rs` answers
+/// `border font <TAB>` / `border font=<TAB>`, from separate
+/// bodies over the same iterator. This test drove only the second
+/// of them for a while and said "the two vocabularies" — so a
+/// sentinel planted in `font.rs` alone was invisible here, and
+/// `font set <TAB>` was absent from `COMPLETION_CORPUS`, absent
+/// from `EXEC_PREFIX_CORPUS`, and absent from the fallback that
+/// exists for exactly the rows those two leave out. The
+/// per-verb test in `font.rs` did catch it, so the suite was
+/// never actually blind; the hole was in the oracle's own account
+/// of what it covers, which is the thing a reader trusts when
+/// deciding a change is safe.
 #[test]
 fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
     let families: Vec<&str> = baumhard::font::fonts::loaded_families_iter().collect();
@@ -230,26 +244,30 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
 
     let doc = doc_for(Sel::Node);
     let ctx = ConsoleContext::from_document(&doc);
-    let rows = complete("border font ", "border font ".len(), &ctx);
-    assert_eq!(
-        rows.iter().map(|c| c.display.as_str()).collect::<Vec<_>>(),
-        families,
-        "`border font <TAB>` offers one row per loaded family"
-    );
-    // The shaped face is the fourth channel `completion_signature`
-    // renders, and the only one no pinned row exercises — every
-    // corpus line whose popup carries a family is a font
-    // vocabulary, and those are excluded from the byte-pins for the
-    // host-dependence reason above. `is_some()` alone left the
-    // channel effectively unchecked: replacing every family tag
-    // with one constant sentinel kept all four oracle tests green.
-    // The row must name *its own* family, not merely some family.
-    for c in &rows {
+    for line in ["border font ", "font set "] {
+        let rows = complete(line, line.len(), &ctx);
         assert_eq!(
-            c.font_family.as_deref(),
-            Some(c.display.as_str()),
-            "each family row shapes its own label"
+            rows.iter().map(|c| c.display.as_str()).collect::<Vec<_>>(),
+            families,
+            "`{line}<TAB>` offers one row per loaded family"
         );
+        // The shaped face is the fourth channel
+        // `completion_signature` renders, and the only one no
+        // pinned row exercises — every corpus line whose popup
+        // carries a family is a font vocabulary, and those are
+        // excluded from the byte-pins for the host-dependence
+        // reason above. `is_some()` alone left the channel
+        // effectively unchecked: replacing every family tag with
+        // one constant sentinel kept all four oracle tests green.
+        // The row must name *its own* family, not merely some
+        // family.
+        for c in &rows {
+            assert_eq!(
+                c.font_family.as_deref(),
+                Some(c.display.as_str()),
+                "each family row of `{line}<TAB>` shapes its own label"
+            );
+        }
     }
 
     match exec_signature("font list", Sel::Node).strip_prefix("LINES ") {
