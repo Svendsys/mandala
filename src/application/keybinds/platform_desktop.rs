@@ -38,12 +38,62 @@ mod tests {
 
     use baumhard::util::test_temp::TempDir;
 
+    use crate::application::user_config::test_env::{with_env, with_no_user_config};
     use crate::application::user_config::MAX_USER_PAYLOAD_BYTES;
 
     #[test]
+    fn test_a_users_own_xdg_keybinds_do_not_reach_the_fallback_assertions() {
+        // The positive control for the isolation the three tests
+        // below depend on. Both halves matter: without the first,
+        // `with_no_user_config` could be doing nothing and the second
+        // half would still pass on this machine.
+        let home = TempDir::new("xdg-keybinds-present");
+        let dir = home.join("mandala");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("keybinds.json"), r#"{ "undo": ["Ctrl+Alt+Shift+F11"] }"#).unwrap();
+        let root = home.path().display().to_string();
+        let missing = Path::new("/nonexistent/keybinds.json");
+
+        // The leak itself: an explicit layer that resolves to nothing
+        // falls through to the *user's* file, which is not the
+        // built-in default and is not anything a test wrote.
+        with_env(Some(&root), None, || {
+            let cfg = KeybindConfig::load_for_desktop(Some(missing));
+            assert_eq!(
+                cfg.undo,
+                vec!["Ctrl+Alt+Shift+F11".to_string()],
+                "the XDG layer is supposed to answer here — if it does not, this control is \
+                 no longer controlling anything",
+            );
+        });
+
+        // And the isolation, against the same config on disk.
+        with_no_user_config(|| {
+            let cfg = KeybindConfig::load_for_desktop(Some(missing));
+            assert_eq!(
+                cfg.undo,
+                KeybindConfig::default().undo,
+                "with_no_user_config left a real XDG keybinds.json reachable",
+            );
+        });
+    }
+
+    // The three tests below assert that a rejected explicit layer
+    // falls back to the *built-in defaults*, and `load_desktop_layered`
+    // has one more layer under it: on a machine with a real
+    // `~/.config/mandala/keybinds.json`, the fallback lands there and
+    // the assertion is about a file nobody wrote for the test.
+    // `with_no_user_config` points the XDG layer at an empty scratch
+    // directory so "the defaults" means the defaults. The two tests
+    // after them need no isolation: their explicit layer *succeeds*,
+    // so no lower layer is ever consulted.
+
+    #[test]
     fn test_load_for_desktop_missing_explicit_path_falls_back_to_defaults() {
-        let cfg = KeybindConfig::load_for_desktop(Some(Path::new("/nonexistent/keybinds.json")));
-        assert_eq!(cfg.undo, KeybindConfig::default().undo);
+        with_no_user_config(|| {
+            let cfg = KeybindConfig::load_for_desktop(Some(Path::new("/nonexistent/keybinds.json")));
+            assert_eq!(cfg.undo, KeybindConfig::default().undo);
+        });
     }
 
     #[test]
@@ -51,8 +101,10 @@ mod tests {
         let scratch = TempDir::new("oversized-keybinds");
         let tmp = scratch.join("keybinds.json");
         std::fs::write(&tmp, vec![b' '; MAX_USER_PAYLOAD_BYTES + 1]).unwrap();
-        let cfg = KeybindConfig::load_for_desktop(Some(&tmp));
-        assert_eq!(cfg.undo, KeybindConfig::default().undo);
+        with_no_user_config(|| {
+            let cfg = KeybindConfig::load_for_desktop(Some(&tmp));
+            assert_eq!(cfg.undo, KeybindConfig::default().undo);
+        });
     }
 
     #[test]
@@ -60,8 +112,10 @@ mod tests {
         let scratch = TempDir::new("bad-keybinds");
         let tmp = scratch.join("keybinds.json");
         std::fs::write(&tmp, "{ this is not json").unwrap();
-        let cfg = KeybindConfig::load_for_desktop(Some(&tmp));
-        assert_eq!(cfg.undo, KeybindConfig::default().undo);
+        with_no_user_config(|| {
+            let cfg = KeybindConfig::load_for_desktop(Some(&tmp));
+            assert_eq!(cfg.undo, KeybindConfig::default().undo);
+        });
     }
 
     #[test]

@@ -1898,20 +1898,29 @@ fn test_clear_zoom_rejects_the_parametric_binding_shape() {
     // The blast radius, through the real desktop loader and a real
     // file: the two well-formed bindings beside the stale one are
     // gone too.
+    //
+    // Under `with_no_user_config` because the claim is that the
+    // bindings fall back to the *built-in defaults*, and the loader
+    // has one more layer beneath the explicit path: on a machine
+    // carrying a real `~/.config/mandala/keybinds.json`, the fallback
+    // lands on that file and this asserts something about its
+    // contents instead.
     let scratch = baumhard::util::test_temp::TempDir::new("stale-clear-zoom-keybinds");
     let path = scratch.join("keybinds.json");
     std::fs::write(&path, json).unwrap();
-    let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
-    let defaults = KeybindConfig::default();
-    assert_eq!(
-        cfg.undo, defaults.undo,
-        "the stale `clear_zoom` entry took `undo` down with it — the whole layer is discarded, \
-         not the one key",
-    );
-    assert_eq!(
-        cfg.select_all, defaults.select_all,
-        "the stale `clear_zoom` entry took `select_all` down with it too",
-    );
+    crate::application::user_config::test_env::with_no_user_config(|| {
+        let cfg = KeybindConfig::load_for_desktop(Some(path.as_path()));
+        let defaults = KeybindConfig::default();
+        assert_eq!(
+            cfg.undo, defaults.undo,
+            "the stale `clear_zoom` entry took `undo` down with it — the whole layer is \
+             discarded, not the one key",
+        );
+        assert_eq!(
+            cfg.select_all, defaults.select_all,
+            "the stale `clear_zoom` entry took `select_all` down with it too",
+        );
+    });
 }
 
 #[test]
