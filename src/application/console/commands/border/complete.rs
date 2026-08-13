@@ -56,7 +56,7 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
             Some("preset") => preset_value_completions(state.partial),
             Some("color") => prefix_filter(super::COLOR_PRESETS, state.partial),
             Some("palette") => palette_value_completions(state.partial, ctx),
-            Some("font") => font_family_completions(state.partial),
+            Some("font") => font_value_completions(state.partial),
             Some("side") => prefix_filter(SIDE_VALUES, state.partial),
             Some("corner") => prefix_filter(CORNER_VALUES, state.partial),
             Some("show") => show_arg_completions(state.partial),
@@ -245,9 +245,36 @@ pub fn kv_value_completions(key: &str, partial: &str, ctx: &ConsoleContext) -> V
         "field" => prefix_filter(super::FIELDS, partial),
         "color" => prefix_filter(super::COLOR_PRESETS, partial),
         "palette" => palette_value_completions(partial, ctx),
-        "font" => font_family_completions(partial),
+        "font" => font_value_completions(partial),
         _ => Vec::new(),
     }
+}
+
+/// `border font <TAB>` / `border font=<TAB>` and every canvas and
+/// section-frame mirror of them: the loaded families, plus the
+/// `off` sentinel that drops the override.
+///
+/// The families come from the `font` verb's own completer, which is
+/// the console's single font-family vocabulary. `off` is appended
+/// here rather than there because it belongs to the *border* font
+/// slot: `font set off` names a family, and there is no such
+/// family. This surface's own usage line has always read `font
+/// <family|off>` while no completer offered the second half of it,
+/// which is how a word no user guesses came to be documented only
+/// in a rejection message.
+fn font_value_completions(partial: &str) -> Vec<Completion> {
+    let mut out = font_family_completions(partial);
+    // Matched the way `stage_font` reads it — `eq_ignore_ascii_case`
+    // — so `font=OF<TAB>` finds the row that `font=OFF` runs.
+    if "off".starts_with(&partial.to_ascii_lowercase()) {
+        out.push(Completion {
+            text: "off".to_string(),
+            display: "off".to_string(),
+            hint: Some("clear the font override".to_string()),
+            font_family: None,
+        });
+    }
+    out
 }
 
 /// The token-0 popup: the subverbs `execute_border` can reach
@@ -500,13 +527,17 @@ mod tests {
     }
 
     /// `border font=<TAB>` reuses the font-family completer:
-    /// every popup row carries `font_family = Some(<name>)` so
+    /// every family row carries `font_family = Some(<name>)` so
     /// the renderer shapes the candidate label in that face, and
     /// the inserted `text` quotes a whitespace-bearing name so
     /// tab-accept yields one token rather than two. This asserted
     /// `font_family == text` while the border side ran its own
     /// unquoting copy of the completer, which made the quoting
     /// omission look like the invariant.
+    ///
+    /// The one row that is not a family is `off`, this slot's
+    /// override-clearing sentinel — untagged, because there is no
+    /// face to shape it in.
     /// Mirrors `font.rs::tests::completion_after_set_returns_loaded_families_in_their_face`.
     #[test]
     fn complete_font_value_rows_carry_family_tag() {
@@ -523,7 +554,15 @@ mod tests {
         );
         let out = complete_border(&s, &ctx);
         assert!(!out.is_empty(), "loaded fonts list must not be empty");
-        for c in &out {
+        let (families, sentinels): (Vec<_>, Vec<_>) =
+            out.into_iter().partition(|c| c.font_family.is_some());
+        assert_eq!(
+            sentinels.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+            ["off"],
+            "the only untagged row is the `off` sentinel"
+        );
+        assert!(!families.is_empty(), "loaded fonts list must not be empty");
+        for c in &families {
             assert_eq!(
                 c.font_family.as_deref(),
                 Some(c.display.as_str()),

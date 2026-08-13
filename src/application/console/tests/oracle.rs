@@ -246,8 +246,22 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
 
     let doc = doc_for(Sel::Node);
     let ctx = ConsoleContext::from_document(&doc);
-    for line in ["border font ", "border font=", "font set "] {
-        let rows = complete(line, line.len(), &ctx);
+    // The border slots carry one row the `font` verb's does not:
+    // the `off` sentinel that drops the override, which `font set`
+    // has no equivalent of. Everything else about the three is the
+    // same body.
+    for (line, sentinels) in [
+        ("border font ", &["off"][..]),
+        ("border font=", &["off"][..]),
+        ("font set ", &[][..]),
+    ] {
+        let all = complete(line, line.len(), &ctx);
+        let (rows, extra): (Vec<_>, Vec<_>) = all.into_iter().partition(|c| c.font_family.is_some());
+        assert_eq!(
+            extra.iter().map(|c| c.display.as_str()).collect::<Vec<_>>(),
+            sentinels,
+            "`{line}<TAB>` offers exactly its non-family rows"
+        );
         assert_eq!(
             rows.iter().map(|c| c.display.as_str()).collect::<Vec<_>>(),
             families,

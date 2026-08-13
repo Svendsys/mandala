@@ -52,6 +52,12 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border palette off"),
     (Sel::Node, "border palette"),
     (Sel::Node, "border font off"),
+    // `stage_font` compared this sentinel exactly while its two
+    // siblings on the same verb — `stage_palette`, `stage_field` —
+    // read theirs through `eq_ignore_ascii_case`, so `border
+    // palette OFF` cleared and `border font OFF` answered "font
+    // 'OFF' is not a loaded font".
+    (Sel::Node, "border font OFF"),
     (Sel::Node, "border font"),
     (Sel::Node, "border side top reset"),
     (Sel::Node, "border side nope reset"),
@@ -525,6 +531,11 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border PRE"),
     (Sel::Node, "border preset=H"),
     (Sel::Node, "border palette=CO"),
+    // The `off` sentinel this slot's usage line has always
+    // documented and no completer offered. Filtered the way
+    // `stage_font` reads it, which is the way its two siblings on
+    // this verb already read theirs.
+    (Sel::Node, "border font=OF"),
     (Sel::Node, "border side top RE"),
     (Sel::Node, "border show VER"),
     (Sel::Node, "border preview CO"),

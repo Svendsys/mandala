@@ -615,7 +615,14 @@ fn stage_preset(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String
 }
 
 fn stage_font(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
-    if value == "off" || value.is_empty() {
+    // `eq_ignore_ascii_case`, as `stage_palette` and `stage_field`
+    // read their own `off` — three sibling sentinels on one verb had
+    // no business obeying two rules, and the exact compare answered
+    // `border font OFF` with "font 'OFF' is not a loaded font" while
+    // `border palette OFF` cleared. A loaded family named `off` is
+    // unreachable either way; the sentinel is documented in this
+    // subverb's usage line and a family is not.
+    if value.eq_ignore_ascii_case("off") || value.is_empty() {
         edits.font = OptionEdit::Clear;
         return Ok(());
     }
