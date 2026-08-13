@@ -511,6 +511,22 @@ impl MindMapDocument {
     /// the graphemes rejoin the cascade instead of being re-pinned
     /// one tier down — which is the same trap `DEFAULT_RUN_COLOR`
     /// exists to avoid.
+    ///
+    /// **The un-bake alone is a change, so a clear can report
+    /// `true` while nothing on screen moves.** On an unthemed node
+    /// already sitting at
+    /// [`DEFAULT_NODE_TEXT_COLOR`] the `style` half of the write
+    /// is a genuine no-op, but a run carrying that same hex is
+    /// opted *out* of the cascade and clearing it opts the
+    /// graphemes back in: identical pixels today, and the next
+    /// `color text=` or retheme carries them along instead of
+    /// stranding them. Undo has to be able to put the bake back,
+    /// which is why the entry is pushed rather than suppressed —
+    /// "changed nothing on screen" is not the test, "changed
+    /// nothing in the model" is, and the caller is told the truth
+    /// about the model. A second clear finds nothing left to
+    /// un-bake and is the no-op, so the gesture converges rather
+    /// than growing the stack.
     pub fn set_node_text_color(&mut self, node_id: &str, color: Option<&str>) -> bool {
         self.set_node_color_channel(node_id, NodeColorChannel::Text, color)
     }

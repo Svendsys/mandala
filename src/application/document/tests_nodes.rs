@@ -3469,6 +3469,10 @@ fn test_node_setters_push_exactly_one_undo_entry_and_round_trip() {
             Box::new(|doc: &mut MindMapDocument, nid: &str| doc.set_node_text_color(nid, Some("#0b0b0b"))),
         ),
         (
+            "set_node_border_color",
+            Box::new(|doc: &mut MindMapDocument, nid: &str| doc.set_node_border_color(nid, Some("#0b0b0b"))),
+        ),
+        (
             "set_node_text",
             Box::new(|doc: &mut MindMapDocument, nid: &str| {
                 doc.set_node_text(nid, "a wholly different string".into())
@@ -5054,6 +5058,82 @@ fn test_reset_text_color_unbakes_the_runs_that_followed_the_default() {
     assert_eq!(
         node.sections[0].text_runs[1].color, "#abcdef",
         "a hand-picked run is not the node's business"
+    );
+}
+
+/// …and the un-bake alone is enough to be a change, which is why
+/// a `reset` of the text channel on an unthemed node **already**
+/// sitting at the authoring default still reports `true` and still
+/// pushes an undo entry.
+///
+/// Nothing on screen moves: the run rendered `#ffffff` before and
+/// renders the node's `#ffffff` after. The model moves, though —
+/// those graphemes were opted out of the cascade and are now back
+/// in it, so the next `color text=` carries them along instead of
+/// stranding them, and undo has to be able to put the bake back.
+/// "Changed nothing on screen" is not the test the setters answer;
+/// "changed nothing in the model" is. The second call finds
+/// nothing left to un-bake and is the no-op, so the gesture
+/// converges instead of growing the stack.
+#[test]
+fn test_reset_text_color_at_the_default_unbakes_once_and_then_settles() {
+    use super::defaults::{default_text_run, DEFAULT_NODE_TEXT_COLOR};
+
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.color_schema = None;
+        node.style.text_color = DEFAULT_NODE_TEXT_COLOR.into();
+        node.sections[0].text = "abcdef".into();
+        node.sections[0].text_runs = vec![
+            TextRun {
+                start: 0,
+                end: 3,
+                color: DEFAULT_NODE_TEXT_COLOR.into(),
+                ..default_text_run(3)
+            },
+            TextRun {
+                start: 3,
+                end: 6,
+                color: "#abcdef".into(),
+                ..default_text_run(6)
+            },
+        ];
+    }
+    doc.undo_stack.clear();
+
+    assert!(
+        doc.set_node_text_color(&nid, None),
+        "the baked run still has to be un-baked, so this is not a no-op"
+    );
+    assert_eq!(
+        doc.undo_stack.len(),
+        1,
+        "and undo must be able to put the bake back"
+    );
+    {
+        let node = &doc.mindmap.nodes[&nid];
+        assert_eq!(node.style.text_color, DEFAULT_NODE_TEXT_COLOR);
+        assert_eq!(node.sections[0].text_runs[0].color, "");
+        assert_eq!(node.sections[0].text_runs[1].color, "#abcdef");
+        assert_eq!(
+            doc.mindmap.node_text_color(node),
+            DEFAULT_NODE_TEXT_COLOR,
+            "the graphemes render exactly as they did before"
+        );
+    }
+
+    assert!(
+        !doc.set_node_text_color(&nid, None),
+        "with nothing left to un-bake the gesture converges"
+    );
+    assert_eq!(doc.undo_stack.len(), 1, "and pushes no second entry");
+
+    assert!(doc.undo());
+    assert_eq!(
+        doc.mindmap.nodes[&nid].sections[0].text_runs[0].color, DEFAULT_NODE_TEXT_COLOR,
+        "undo restores the bake it removed"
     );
 }
 

@@ -161,6 +161,16 @@ written. A run's channel spells the same absence differently: a
 rather than clearing anything on the node
 ([text-runs.md](./text-runs.md)).
 
+`color text=reset` on the *node* empties them too, for the runs
+that were carrying a baked copy of the color being cleared — and
+that half of the clear is a real edit even when the other half is
+not. On a node already sitting at the color `reset` would write,
+the value does not move but those runs rejoin the cascade, so the
+verb reports success and pushes one undo entry while the canvas
+looks identical. What changed is which graphemes the *next*
+recolor or retheme will carry along. A second `reset` finds
+nothing left to un-bake and does nothing.
+
 Everything below the node level is *more* specific and wins over the
 theme:
 
