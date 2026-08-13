@@ -34,9 +34,11 @@ use baumhard::util::test_temp::TempDir;
 
 /// Process-wide mutex serializing tests that mutate `std::env::*`.
 ///
-/// Poisoning is tolerated — if a previous test panicked while holding
-/// the guard the environment may be slightly off, but taking the lock
-/// anyway beats deadlocking the rest of the suite behind it.
+/// Poisoning is tolerated: a panicking test still restores the
+/// environment on its way out (see `EnvRestore`), so the only thing a
+/// poisoned guard tells us is that some test failed — not that the
+/// environment is dirty. Taking the lock anyway beats deadlocking the
+/// rest of the suite behind it.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Run `body` with `XDG_CONFIG_HOME` and `HOME` overridden, then
@@ -51,24 +53,51 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 /// the other instead.
 pub fn with_env<F: FnOnce()>(xdg: Option<&str>, home: Option<&str>, body: F) {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
-    let prev_home = std::env::var_os("HOME");
-    match xdg {
-        Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-        None => std::env::remove_var("XDG_CONFIG_HOME"),
-    }
-    match home {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
-    }
+    // Restoration is a `Drop`, not a statement after `body()`. A
+    // failing assertion inside `body` unwinds, and a restore written
+    // as a trailing statement is simply skipped — leaving `HOME` and
+    // `XDG_CONFIG_HOME` pointing at a `TempDir` that the same unwind
+    // just deleted, for every later test in the process. One red test
+    // would become a run whose remaining results cannot be trusted,
+    // which is the class this harness exists to close.
+    //
+    // Declared after `_guard` so it drops *before* the lock is
+    // released: no other test can observe the intermediate state.
+    let _restore = EnvRestore {
+        xdg: std::env::var_os("XDG_CONFIG_HOME"),
+        home: std::env::var_os("HOME"),
+    };
+    set_or_clear("XDG_CONFIG_HOME", xdg);
+    set_or_clear("HOME", home);
     body();
-    match prev_xdg {
-        Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-        None => std::env::remove_var("XDG_CONFIG_HOME"),
+}
+
+/// Put `key` back the way [`EnvRestore`] found it, or remove it if it
+/// was unset.
+fn set_or_clear(key: &str, value: Option<&str>) {
+    match value {
+        Some(v) => std::env::set_var(key, v),
+        None => std::env::remove_var(key),
     }
-    match prev_home {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
+}
+
+/// Restores the two variables [`with_env`] overrides, on the way out
+/// of the scope — normal return or unwind alike.
+struct EnvRestore {
+    xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match self.xdg.take() {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match self.home.take() {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
     }
 }
 
@@ -88,4 +117,52 @@ pub fn with_no_user_config<F: FnOnce()>(body: F) {
     let empty = TempDir::new("no-user-config");
     let root = empty.path().display().to_string();
     with_env(Some(&root), Some(&root), body);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The restore is a `Drop`, so it has to survive an unwind — the
+    /// case it exists for. Written as a test rather than trusted from
+    /// the type, because the failure mode is silent: a leaked `HOME`
+    /// points at a `TempDir` the same unwind deleted, and every later
+    /// test in the process reads it.
+    #[test]
+    fn test_with_env_restores_the_environment_when_the_body_panics() {
+        // Snapshot through the lock, so a concurrently-running
+        // `with_env` cannot be observed mid-override.
+        let (before_xdg, before_home) = {
+            let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            (std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+        };
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_env(
+                Some("/nonexistent-xdg-probe"),
+                Some("/nonexistent-home-probe"),
+                || {
+                    assert_eq!(
+                        std::env::var_os("HOME"),
+                        Some(std::ffi::OsString::from("/nonexistent-home-probe")),
+                        "the override must be in effect before we unwind out of it"
+                    );
+                    panic!("deliberate: the restore has to run anyway");
+                },
+            );
+        }));
+        assert!(panicked.is_err(), "the body must really have panicked");
+
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            before_xdg,
+            "XDG_CONFIG_HOME leaked out of a panicking with_env"
+        );
+        assert_eq!(
+            std::env::var_os("HOME"),
+            before_home,
+            "HOME leaked out of a panicking with_env"
+        );
+    }
 }

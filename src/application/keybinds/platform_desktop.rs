@@ -85,8 +85,12 @@ mod tests {
     // the assertion is about a file nobody wrote for the test.
     // `with_no_user_config` points the XDG layer at an empty scratch
     // directory so "the defaults" means the defaults. The two tests
-    // after them need no isolation: their explicit layer *succeeds*,
-    // so no lower layer is ever consulted.
+    // after them need no isolation: their explicit layer *wins*, so
+    // no lower layer's contents are ever read. Note the XDG *path* is
+    // still computed unconditionally — `load_desktop_layered` calls
+    // `xdg_mandala_path` as its first statement — so the reason these
+    // are safe is that the explicit layer answers, not that the XDG
+    // layer goes untouched.
 
     #[test]
     fn test_load_for_desktop_missing_explicit_path_falls_back_to_defaults() {

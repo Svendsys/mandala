@@ -2633,7 +2633,7 @@ const SHIPPED_TEMPLATE: &str = include_str!(concat!(
 /// combos it walked against a count summed from the same template,
 /// and both sides moved together. Cutting the shipped file down to
 /// `{ "_comment": …, "exit_mode": ["Escape"] }` left the whole suite
-/// green — the onboarding surface could lose twelve of its thirteen
+/// green — the onboarding surface could lose eleven of its thirteen
 /// keys in silence.
 ///
 /// A pin is tripped in both directions. A key that vanishes from the
