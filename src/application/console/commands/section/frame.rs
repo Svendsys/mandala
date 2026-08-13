@@ -149,6 +149,8 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
                 if !positional_form {
                     return ExecResult::err(super::super::border::unquoted_multiword_hint(
                         "section frame",
+                        args.tokens(),
+                        /* verb_pos */ 1,
                         verb,
                     ));
                 }

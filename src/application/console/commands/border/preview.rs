@@ -92,7 +92,12 @@ where
             // an upper-case row for each.
             other if !other.contains('=') => {
                 if !positional_form {
-                    return ExecResult::err(super::unquoted_multiword_hint(verb_label, verb));
+                    return ExecResult::err(super::unquoted_multiword_hint(
+                        verb_label,
+                        args.tokens(),
+                        subverb_pos,
+                        verb,
+                    ));
                 }
                 return ExecResult::err(format!(
                     "{}: unknown subverb '{}'; use 'commit', 'cancel', or kv form",

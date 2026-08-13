@@ -107,6 +107,14 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // that now reach it through the shared wording rather than a
     // near-copy of it.
     (Sel::Node, "border preview palette=My Palette"),
+    // The hint suggests the line the *user* meant, rebuilt from
+    // their own tokens. It used to hardcode `palette` as the key
+    // and quote the trailing token as the value, so this line —
+    // the single most likely way to hit it, since 43 of this
+    // host's 77 families carry a space — answered
+    // ``border palette="Sans"``. Host-independent: the
+    // discriminator refuses the line before any font lookup.
+    (Sel::Node, "border font=DejaVu Sans"),
     // canvas
     (Sel::Node, "canvas"),
     (Sel::Node, "canvas nope"),

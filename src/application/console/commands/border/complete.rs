@@ -554,8 +554,7 @@ mod tests {
         );
         let out = complete_border(&s, &ctx);
         assert!(!out.is_empty(), "loaded fonts list must not be empty");
-        let (families, sentinels): (Vec<_>, Vec<_>) =
-            out.into_iter().partition(|c| c.font_family.is_some());
+        let (families, sentinels): (Vec<_>, Vec<_>) = out.into_iter().partition(|c| c.font_family.is_some());
         assert_eq!(
             sentinels.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
             ["off"],

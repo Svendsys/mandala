@@ -290,6 +290,8 @@ fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             other if !other.contains('=') => {
                 return ExecResult::err(super::border::unquoted_multiword_hint(
                     BorderSurface::CanvasDefault.label(),
+                    args.tokens(),
+                    /* verb_pos */ 1,
                     verb,
                 ));
             }
@@ -378,7 +380,12 @@ fn execute_section_frame_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecR
                 return apply_positional(verb, args, verb_pos, surface, eff);
             }
             other if !other.contains('=') => {
-                return ExecResult::err(super::border::unquoted_multiword_hint(surface.label(), verb));
+                return ExecResult::err(super::border::unquoted_multiword_hint(
+                    surface.label(),
+                    args.tokens(),
+                    verb_pos,
+                    verb,
+                ));
             }
             _ => {}
         }

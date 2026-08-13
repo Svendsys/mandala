@@ -80,6 +80,8 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 if !first_token_is_positional {
                     return ExecResult::err(super::unquoted_multiword_hint(
                         BorderSurface::Selection.label(),
+                        args.tokens(),
+                        0,
                         verb,
                     ));
                 }

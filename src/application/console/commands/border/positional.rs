@@ -193,14 +193,64 @@ pub(crate) fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> 
 /// [`super::preview::dispatch_border_preview`] alike. `label` is
 /// the surface prefix (`border`, `canvas border`, `section frame
 /// preview`, …) so the suggested line is copy-pasteable for the
-/// verb that printed it.
-pub(crate) fn unquoted_multiword_hint(label: &str, verb: &str) -> String {
+/// verb that printed it, and `tokens` / `verb_pos` are the same
+/// pair [`subverb_slot_is_positional`] was asked, so the suggestion
+/// is built from the line that actually reached here.
+///
+/// It used to be built from neither: the key was the literal
+/// `palette` and the value was `verb`, so `border font=DejaVu Sans`
+/// — a real instance of the mistake this message exists for —
+/// suggested ``border palette="Sans"``, naming a key the user had
+/// not typed and quoting the tail of the value rather than the
+/// value. This round spread that wording to five surfaces, which is
+/// what makes it worth reconstructing properly.
+pub(crate) fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb: &str) -> String {
+    let suggestion = split_kv_suggestion(tokens, verb_pos).unwrap_or_else(|| format!("<key>=\"{}\"", verb));
     format!(
         "{}: unexpected positional '{}' alongside a kv pair — \
          did you mean to quote a multi-word value? \
-         e.g. `{} palette=\"{}\"`",
-        label, verb, label, verb
+         e.g. `{} {}`",
+        label, verb, label, suggestion
     )
+}
+
+/// Rebuild the kv the tokenizer is presumed to have split, as
+/// `key="value words"`.
+///
+/// The offending positional sits at positional index `verb_pos`;
+/// the kv that made that slot kv-form is the last kv token ahead of
+/// it, and everything between the two is what a quote would have
+/// held together. So `border palette=My Palette` — tokens
+/// `["palette=My", "Palette"]` — rebuilds as `palette="My Palette"`,
+/// which is exactly the line the user meant.
+///
+/// A line that reaches the hint for some *other* reason still gets
+/// a suggestion made only of words it contains: `border color=#fff
+/// preset heavy` rebuilds as `color="#fff preset"`, which is what
+/// the message's hypothesis implies rather than a good guess at the
+/// user's intent. That is the honest limit of a single wording
+/// serving both shapes, and it beats inventing a key.
+///
+/// `None` only if no kv precedes the positional — impossible at
+/// every call site, since the hint fires precisely when one does.
+fn split_kv_suggestion(tokens: &[String], verb_pos: usize) -> Option<String> {
+    use crate::application::console::parser::{is_kv_token, split_kv};
+    let end = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| !is_kv_token(t))
+        .map(|(i, _)| i)
+        .nth(verb_pos)?;
+    let kv_at = tokens[..end].iter().rposition(|t| is_kv_token(t))?;
+    let (key, head) = split_kv(&tokens[kv_at])?;
+    // `kv_at` is the *last* kv before `end`, so the tail is all
+    // positional — the run one pair of quotes would have kept whole.
+    let mut value = String::from(head);
+    for t in &tokens[kv_at + 1..=end] {
+        value.push(' ');
+        value.push_str(t);
+    }
+    Some(format!("{}=\"{}\"", key, value))
 }
 
 /// A staged positional edit plus the one piece of presentation

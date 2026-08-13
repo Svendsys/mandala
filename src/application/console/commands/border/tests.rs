@@ -270,12 +270,18 @@ fn border_unknown_subverb_errors_clearly() {
     assert_exec_err_contains(run("border frobnicate", &mut doc), "unknown subverb");
 }
 
-/// `border palette=My Palette` (unquoted multi-word value) tokenises
+/// `border palette=My Palette` (unquoted multi-word value) tokenizes
 /// as `["palette=My", "Palette"]` because the parser splits on
 /// whitespace. The verb sees a bare positional alongside a kv and
 /// surfaces a quoting hint rather than the generic "unknown subverb"
 /// message — the latter is technically correct but unhelpful when
 /// the user obviously meant a single multi-word value.
+///
+/// The suggested line is the *whole* line the user meant, rebuilt
+/// from their own tokens. This asserted `palette="Palette"` while
+/// the hint hardcoded the key and quoted only the trailing token,
+/// which made a message wrong in two ways read as the pinned
+/// behavior.
 #[test]
 fn border_unquoted_multi_word_value_hints_at_quoting() {
     let mut doc = fixture_doc();
@@ -287,10 +293,9 @@ fn border_unquoted_multi_word_value_hints_at_quoting() {
                 "expected quoting hint, got: {}",
                 s
             );
-            // The hint should suggest the correct quoted form.
             assert!(
-                s.contains("palette=\"Palette\""),
-                "expected the hint to show the quoted form, got: {}",
+                s.contains("`border palette=\"My Palette\"`"),
+                "expected the hint to show the line the user meant, got: {}",
                 s
             );
         }
