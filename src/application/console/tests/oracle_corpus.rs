@@ -40,6 +40,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border show side=top"),
     (Sel::Node, "border reset"),
     (Sel::Node, "border nope"),
+    (Sel::Node, "border NOPE"),
     (Sel::Node, "border preset heavy"),
     (Sel::Node, "border preset nope"),
     (Sel::Node, "border preset cycle"),
@@ -118,6 +119,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // canvas
     (Sel::Node, "canvas"),
     (Sel::Node, "canvas nope"),
+    (Sel::Node, "canvas NOPE"),
     (Sel::Node, "canvas border"),
     (Sel::Node, "canvas border show"),
     (Sel::Node, "canvas border reset"),
@@ -314,6 +316,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Section, "section frame show"),
     (Sel::Section, "section frame reset"),
     (Sel::Section, "section frame nope"),
+    (Sel::Section, "section frame NOPE"),
     (Sel::Section, "section frame nope palette=coral"),
     (Sel::Section, "section frame palette=My Palette"),
     (Sel::Section, "section frame preset=heavy"),

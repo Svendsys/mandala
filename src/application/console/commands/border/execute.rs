@@ -680,10 +680,13 @@ fn stage_field(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String>
         "background" => PaletteField::Background,
         "text" => PaletteField::Text,
         "title" => PaletteField::Title,
-        other => {
+        _ => {
+            // Echo `value`, not the lowercased copy: the user reads
+            // this back looking for their own typo. Its sibling
+            // `stage_preset` nine lines up already does.
             return Err(format!(
                 "field '{}' unknown; pick one of {}",
-                other,
+                value,
                 super::FIELDS.join(" | ")
             ));
         }
