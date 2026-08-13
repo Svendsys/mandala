@@ -156,17 +156,24 @@ pub(crate) const POSITIONAL_SUBVERBS: &[&str] =
 /// [`crate::application::console::completion::CompletionState::arg_tokens`]
 /// on the completion path.
 ///
-/// Both sides ask this at *every* slot that reads a subverb — the
-/// per-node verb's token-0 popup, both canvas subjects' subverb
-/// popups, and all five execute dispatchers (`border`, `canvas
-/// border`, `canvas section-frame [focused]`, `section frame`, and
-/// the shared [`super::preview::dispatch_border_preview`] that
-/// serves the four `… preview …` verbs) — so neither side can read
-/// a slot the other reads the other way. It reached three of the
-/// execute sides and one completion slot per verb for a while,
-/// missing the slot where the vocabulary is actually emitted,
-/// which is how `border color=#fff <TAB>` came to offer thirteen
-/// subverbs seven of which that line rejects.
+/// Every execute dispatcher asks this at the slot it reads a
+/// subverb from — all five of them (`border`, `canvas border`,
+/// `canvas section-frame [focused]`, `section frame`, and the
+/// shared [`super::preview::dispatch_border_preview`] that serves
+/// the four `… preview …` verbs). On the completion side the ask
+/// is narrower on purpose, and the paragraph above is why:
+/// [`POSITIONAL_SUBVERBS`] is the only vocabulary the
+/// discriminator gates, so the slots that have to ask are the
+/// slots that *emit* those seven words — the per-node verb's
+/// token-0 popup and both canvas subjects' subverb popups. A
+/// completion slot offering none of the seven has nothing to
+/// withhold, which is why `section frame`'s subverb popup (`show`
+/// / `reset` / `preview`) and the four `… preview …` popups
+/// (`commit` / `cancel`) read a subverb slot without asking. The
+/// ask reached three of the execute sides and one completion slot
+/// per verb for a while, missing the slot where the vocabulary is
+/// actually emitted, which is how `border color=#fff <TAB>` came
+/// to offer thirteen subverbs seven of which that line rejects.
 ///
 /// The three stragglers each asked `args.kvs().next().is_some()`
 /// instead — "is there a kv *anywhere* on the line", which is a
