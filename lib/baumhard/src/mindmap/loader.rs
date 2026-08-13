@@ -2414,12 +2414,17 @@ mod tests {
         // `ColorSchema.overrides`: an object whose four channels are
         // all absent or `null` carries no override, which is what
         // every node that has never been recolored by hand holds.
+        // A bare `null` in the field's place says the same thing —
+        // the field's custom deserializer reads it as the default,
+        // so a fixture spelling it that way is dropped on save for
+        // the same reason and is not authored-key loss either.
         ("ColorOverrides::is_empty", |v| {
-            v.as_object().is_some_and(|o| {
-                ["background", "frame", "text", "title"]
-                    .iter()
-                    .all(|k| o.get(*k).is_none_or(serde_json::Value::is_null))
-            })
+            v.is_null()
+                || v.as_object().is_some_and(|o| {
+                    ["background", "frame", "text", "title"]
+                        .iter()
+                        .all(|k| o.get(*k).is_none_or(serde_json::Value::is_null))
+                })
         }),
     ];
 
@@ -3921,6 +3926,62 @@ mod tests {
         let reloaded = load_from_str(&saved).expect("resaved map loads");
         assert_eq!(reloaded.nodes["0"].min_zoom_to_render, Some(0.25));
         assert_eq!(reloaded.nodes["0"].max_zoom_to_render, Some(4.0));
+    }
+
+    /// [`OMITTABLE_WHEN`] has to account for **every spelling the
+    /// loader accepts** for an omitted key, not only the ones some
+    /// fixture happens to use — the whole point of hand-modeling
+    /// the predicates is that the indexed pass can then be strict.
+    ///
+    /// `ColorOverrides::is_empty`'s entry tested `as_object()`
+    /// alone, which is `false` for `Value::Null`, one commit after
+    /// `"overrides": null` became legal input that the writer drops.
+    /// The first round-trip fixture to carry that spelling would
+    /// have been reported as authored-key loss on a file that is
+    /// correct in both directions.
+    ///
+    /// Each spelling is put through the real load and the real save
+    /// first, so the test proves the model matches the code rather
+    /// than restating the predicate against itself.
+    #[test]
+    fn test_the_omission_model_accounts_for_every_empty_overrides_spelling() {
+        let (_, omits) = OMITTABLE_WHEN
+            .iter()
+            .find(|(name, _)| *name == "ColorOverrides::is_empty")
+            .expect("the overrides predicate is modeled");
+
+        for spelling in [
+            "null",
+            "{}",
+            r#"{"background": null, "frame": null, "text": null, "title": null}"#,
+        ] {
+            let json = map_json_with_nodes(&node_json_with(
+                "0",
+                "null",
+                &format!(
+                    r#", "color_schema": {{"palette": "coral", "level": 0,
+                         "starts_at_root": true, "connections_colored": true,
+                         "overrides": {spelling}}}"#
+                ),
+            ));
+            let map = load_from_str(&json).unwrap_or_else(|e| panic!("`{spelling}` must load: {e}"));
+            let saved: Value =
+                serde_json::from_str(&saved_json(&map, "overrides-omission")).expect("valid JSON");
+            assert!(
+                saved["nodes"]["0"]["color_schema"].get("overrides").is_none(),
+                "`{spelling}` carries no override, so the writer omits the key"
+            );
+            assert!(
+                omits(&serde_json::from_str::<Value>(spelling).expect("valid JSON")),
+                "…and the omission model has to forgive `{spelling}`, or the next \
+                 round-trip fixture spelling it that way reports data loss"
+            );
+        }
+
+        assert!(
+            !omits(&serde_json::json!({"frame": "#020202"})),
+            "a channel the author named is not an omission the model forgives"
+        );
     }
 
     /// **The screen that used to false-positive.** `"text_runs":`
