@@ -774,10 +774,13 @@ pub struct ColorSchema {
     /// transparent — it keeps its `style` colors — and its children,
     /// at `level: 1`, take `groups[0]`.
     pub starts_at_root: bool,
-    /// When `true`, connections *leaving* this node inherit the
-    /// palette's `frame` color at this node's level instead of the
+    /// When `true`, connections *leaving* this node inherit this
+    /// node's frame tier — its `overrides.frame`, else the
+    /// palette's `frame` at this node's level — instead of the
     /// edge's own `color`. Read through
-    /// [`super::MindMap::edge_theme_stroke_color`].
+    /// [`super::MindMap::edge_theme_stroke_color`], which shares
+    /// that tier with the node's own border cascade so a per-node
+    /// frame override cannot move one without the other.
     pub connections_colored: bool,
     /// This node's exceptions to the group above — see
     /// [`ColorOverrides`]. Absent from the JSON when empty, which is

@@ -71,8 +71,9 @@ Highest priority wins:
 
 1. `portal_from` / `portal_to.color` — per-endpoint override.
 2. `edge.glyph_connection.color` — edge-level override.
-3. The source node's palette `frame`, when its `color_schema` sets
-   `connections_colored` — see [palettes.md](./palettes.md).
+3. The source node's frame tier — its `overrides.frame`, else its
+   palette group's `frame` — when its `color_schema` sets
+   `connections_colored`; see [palettes.md](./palettes.md).
 4. `canvas.default_connection.color`, when the edge has not forked a
    connection config of its own — map-wide, so it ranks below the
    per-node theme above it.

@@ -213,8 +213,9 @@ Inherited from miMind.
 
 **`connections_colored`** controls whether edges inherit the palette
 stroke. When the flag is set on a node's schema, every edge *leaving*
-that node (its `from_id`) takes the resolved group's `frame` as its
-stroke color, ahead of the edge's own `color`. The source node governs,
+that node (its `from_id`) takes that node's **frame tier** — its
+`overrides.frame`, else the resolved group's `frame` — as its stroke
+color, ahead of the edge's own `color`. The source node governs,
 not the target: an edge is drawn in its parent's branch color. A cross
 link follows the same rule, so the direction it was authored in is the
 direction it takes its color from.
@@ -223,8 +224,9 @@ The edge color cascade, highest priority first, is therefore:
 
 1. `edge.glyph_connection.color` — a stroke this edge names for
    itself, which a theme must not overrule
-2. the source node's palette `frame`, when `connections_colored` is set
-   and the schema resolves
+2. the source node's frame tier — its `overrides.frame`, else its
+   palette group's `frame` — when `connections_colored` is set and
+   one of the two produces a color
 3. `canvas.default_connection.color`, when the edge has not forked a
    connection config of its own
 4. `edge.color`
@@ -242,9 +244,23 @@ drops out of the cascade entirely, including for fields the fork left
 unset.
 
 The **node border** channel has the same shape and the same order: an
-explicit `style.border.color` on the node, then the node's palette
-`frame` (or its `overrides.frame`), then `canvas.default_border.color`,
-then `style.frame_color` as the floor.
+explicit `style.border.color` on the node, then that same frame tier —
+`overrides.frame`, else the palette group's `frame` — then
+`canvas.default_border.color`, then `style.frame_color` as the floor.
+
+**Tier 2 is literally the same tier in both ladders**, not two
+readings of one channel: `MindMap::node_frame_theme_tier` answers it
+once and both `edge_theme_stroke_color` and the border resolver call
+it. That is why the override reaches the connections at all. Read the
+other way — the group for the branch color, the override for the
+border — `color border=#ff0000` on a themed node would repaint its
+frame and leave the edges leaving it on the palette's, a split with
+nothing on screen to explain it and no verb to undo it. The override
+tier exists because a per-node write is more specific than the theme
+it excepts; a frame is a frame whether it is drawn around the node or
+away from it. An **empty** frame is a hole on this tier too, in the
+override as much as the group, so the edge falls through to tier 3
+rather than stroking the empty string's opaque black.
 
 The label and portal-marker channels hang off the edge cascade: each
 takes its own override when it has one, and otherwise follows the edge

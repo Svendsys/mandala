@@ -455,7 +455,7 @@ node-level `text_runs` after the section refactor.
 | `palette` | string | Key into `map.palettes` |
 | `level` | non-negative integer | Depth from schema root; indexes `palette.groups`, clamped to the last group |
 | `starts_at_root` | bool | `false` leaves the schema root on its own `style` and shifts the index down one |
-| `connections_colored` | bool | Whether edges *leaving* this node take the group's `frame` as their stroke |
+| `connections_colored` | bool | Whether edges *leaving* this node take this node's frame tier — `overrides.frame`, else the group's `frame` — as their stroke |
 
 `level` is a `usize`: a negative value is not a deep subtree, it is a
 typo, and the loader rejects the file rather than silently clamping it

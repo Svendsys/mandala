@@ -149,6 +149,14 @@ impl MindMap {
     /// every palette-derived frame in the document with no
     /// per-node recovery.
     ///
+    /// It is also the whole of what a themed node contributes to
+    /// the **edges leaving it** —
+    /// [`Self::edge_theme_stroke_color`] calls this rather than
+    /// reaching for the group's `frame` itself, so the frame
+    /// channel is read at one tier by both ladders and a per-node
+    /// override cannot move a node's border while leaving its
+    /// branch strokes behind.
+    ///
     /// Cost: one [`Self::resolve_theme_colors`]. No allocation.
     pub fn node_frame_theme_tier<'a>(&'a self, node: &'a MindNode) -> Option<&'a str> {
         if let Some(own) = channel_override(node, |o| o.frame.as_deref()).and_then(non_empty) {
@@ -289,12 +297,28 @@ impl MindMap {
     /// the author drew it in is the direction it takes its color
     /// from.
     ///
-    /// The group's `frame` is the channel used, not `background`: a
+    /// The **frame** channel is the one used, not `background`: a
     /// connection is a stroke, and the frame is the palette's
-    /// stroke color for that depth.
+    /// stroke color for that depth. It is
+    /// [`Self::node_frame_theme_tier`] — the same reader the node's
+    /// own border cascade sits on — so the source node's
+    /// `overrides.frame` reaches the edges leaving it, exactly as it
+    /// reaches the node's border. The two ladders read one channel;
+    /// they must not read it at different tiers. Ordered the other
+    /// way round, `color border=#ff0000` on a themed node would
+    /// repaint its frame and silently leave its branch strokes on
+    /// the palette's, with nothing on screen to explain the split —
+    /// and the override tier exists precisely because a per-node
+    /// write is more specific than the theme it excepts.
+    ///
+    /// Sharing the reader also shares its `non_empty` skip: a group
+    /// (or override) whose `frame` is empty is a hole rather than a
+    /// color, so the edge falls through to the canvas default and
+    /// then to `edge.color` instead of handing the empty string to
+    /// `hex_to_rgba_safe` and stroking opaque black.
     ///
     /// Cost: one node lookup plus one
-    /// [`Self::resolve_theme_colors`]. No allocation.
+    /// [`Self::node_frame_theme_tier`]. No allocation.
     pub fn edge_theme_stroke_color<'a>(&'a self, edge: &'a MindEdge) -> Option<&'a str> {
         let from = self.nodes.get(&edge.from_id)?;
         if !from
@@ -304,7 +328,7 @@ impl MindMap {
         {
             return None;
         }
-        Some(self.resolve_theme_colors(from)?.frame.as_str())
+        self.node_frame_theme_tier(from)
     }
 
     /// [`MindEdge::body_color`] with this map's theme tier already
@@ -380,6 +404,18 @@ mod tests {
             starts_at_root,
             connections_colored,
             overrides: ColorOverrides::default(),
+        }
+    }
+
+    /// [`schema`] with this node's own exceptions to the group
+    /// attached. `starts_at_root` is always `true` here — the
+    /// override tier sits above the group lookup and does not
+    /// interact with the level shift, which
+    /// `test_starts_at_root_*` already covers.
+    fn schema_overriding(level: usize, connections_colored: bool, overrides: ColorOverrides) -> ColorSchema {
+        ColorSchema {
+            overrides,
+            ..schema(level, true, connections_colored)
         }
     }
 
@@ -533,6 +569,167 @@ mod tests {
         );
     }
 
+    /// The top tier of all four ladders: a channel this node names
+    /// for itself beats the group it excepts, because a theme is
+    /// inherited and a per-node edit is specific.
+    #[test]
+    fn test_node_color_roles_prefer_this_nodes_own_override() {
+        let mut map = probe_map();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema_overriding(
+            0,
+            false,
+            ColorOverrides {
+                background: Some("#010101".into()),
+                frame: Some("#020202".into()),
+                text: Some("#030303".into()),
+                title: Some("#040404".into()),
+            },
+        ));
+        let node = map.nodes.get("a").unwrap();
+        assert_eq!(map.node_background_color(node), "#010101");
+        assert_eq!(map.node_frame_color(node), "#020202");
+        assert_eq!(map.node_text_color(node), "#030303");
+        assert_eq!(map.node_title_color(node), "#040404");
+        assert_eq!(
+            map.node_frame_theme_tier(node),
+            Some("#020202"),
+            "and the border cascade sees the override as the node's theme tier"
+        );
+    }
+
+    /// The override is per *channel*, not per node: the three
+    /// channels this node says nothing about stay on the group, so
+    /// a later palette edit still reaches them.
+    #[test]
+    fn test_an_override_leaves_the_channels_it_does_not_name_on_the_group() {
+        let mut map = probe_map();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema_overriding(
+            0,
+            false,
+            ColorOverrides {
+                background: Some("#010101".into()),
+                ..ColorOverrides::default()
+            },
+        ));
+        let node = map.nodes.get("a").unwrap();
+        assert_eq!(map.node_background_color(node), "#010101");
+        assert_eq!(map.node_frame_color(node), "#a20000");
+        assert_eq!(map.node_text_color(node), "#a30000");
+        assert_eq!(map.node_title_color(node), "#a40000");
+    }
+
+    /// An override stands even when the schema it excepts is
+    /// broken — "I painted this node green" does not stop being
+    /// true when the palette the theme names goes missing.
+    #[test]
+    fn test_an_override_survives_a_palette_that_does_not_resolve() {
+        let mut map = probe_map();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(ColorSchema {
+            palette: "no-such-palette".into(),
+            level: 0,
+            starts_at_root: true,
+            connections_colored: true,
+            overrides: ColorOverrides {
+                background: Some("#010101".into()),
+                frame: Some("#020202".into()),
+                text: Some("#030303".into()),
+                title: Some("#040404".into()),
+            },
+        });
+        let node = map.nodes.get("a").unwrap();
+        assert!(map.resolve_theme_colors(node).is_none());
+        assert_eq!(map.node_background_color(node), "#010101");
+        assert_eq!(map.node_frame_color(node), "#020202");
+        assert_eq!(map.node_text_color(node), "#030303");
+        assert_eq!(map.node_title_color(node), "#040404");
+        assert_eq!(
+            map.edge_theme_stroke_color(&map.edges[0]),
+            Some("#020202"),
+            "and the edges leaving it take the override, not the palette that is not there"
+        );
+    }
+
+    /// `title` is the one override channel no interactive setter
+    /// writes — a hand-authored file is the only way it arrives —
+    /// and it moves the first line without disturbing the rest of
+    /// the section's text.
+    #[test]
+    fn test_a_title_override_moves_the_first_line_alone() {
+        let mut map = probe_map();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema_overriding(
+            0,
+            false,
+            ColorOverrides {
+                title: Some("#040404".into()),
+                ..ColorOverrides::default()
+            },
+        ));
+        let node = map.nodes.get("a").unwrap();
+        assert_eq!(map.node_title_color(node), "#040404");
+        assert_eq!(
+            map.node_text_color(node),
+            "#a30000",
+            "the rest of the section stays on the group's text channel"
+        );
+    }
+
+    /// …including where the group leaves `title` empty, the case
+    /// the title role otherwise answers by following `text`. The
+    /// override outranks that fallthrough, so a palette with no
+    /// title channel can still have one node divide its first line.
+    #[test]
+    fn test_a_title_override_outranks_the_fallthrough_to_text() {
+        let mut map = probe_map();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema_overriding(
+            2,
+            false,
+            ColorOverrides {
+                title: Some("#040404".into()),
+                ..ColorOverrides::default()
+            },
+        ));
+        let node = map.nodes.get("a").unwrap();
+        assert_eq!(map.node_title_color(node), "#040404");
+        assert_eq!(map.node_text_color(node), "#c30000");
+    }
+
+    /// The `non_empty` skip on the **override** tier. No setter
+    /// writes an empty override — they clear the channel instead —
+    /// but `format/palettes.md` says a hand-authored file may carry
+    /// one, and there it is a hole rather than a color for exactly
+    /// the same three channels as in the group: `frame`, `text` and
+    /// `title` fall through to the group underneath, while an empty
+    /// `background` is the format's `transparent` and is passed
+    /// along.
+    #[test]
+    fn test_an_empty_override_channel_falls_through_except_for_background() {
+        let mut map = probe_map();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema_overriding(
+            0,
+            true,
+            ColorOverrides {
+                background: Some(String::new()),
+                frame: Some(String::new()),
+                text: Some(String::new()),
+                title: Some(String::new()),
+            },
+        ));
+        let node = map.nodes.get("a").unwrap();
+        assert_eq!(map.node_frame_color(node), "#a20000");
+        assert_eq!(map.node_text_color(node), "#a30000");
+        assert_eq!(map.node_title_color(node), "#a40000");
+        assert_eq!(
+            map.node_background_color(node),
+            "",
+            "an empty background is a value on the override tier as much as on the group"
+        );
+        assert_eq!(
+            map.edge_theme_stroke_color(&map.edges[0]),
+            Some("#a20000"),
+            "and the edge ladder skips the hole with the border ladder"
+        );
+    }
+
     /// An empty channel is a *hole*, not a color — for every
     /// channel except `background`, where empty spells
     /// "transparent". A group leaving `text` or `frame` empty used
@@ -618,6 +815,87 @@ mod tests {
             Some("#a20000"),
             "the edge takes its from_id node's group, not its to_id node's"
         );
+    }
+
+    /// The frame channel is read at **one** tier by both ladders.
+    /// `edge_theme_stroke_color` used to reach for the palette
+    /// group's `frame` directly, so `color border=#020202` on a
+    /// themed node repainted its border and left every edge leaving
+    /// it stroking the group's color, with nothing on screen to
+    /// explain the split.
+    #[test]
+    fn test_a_frame_override_reaches_the_edges_leaving_the_node() {
+        let mut map = probe_map();
+        map.edges[0].color = "#edge00".into();
+        map.nodes.get_mut("a").unwrap().color_schema = Some(schema_overriding(
+            0,
+            true,
+            ColorOverrides {
+                frame: Some("#020202".into()),
+                ..ColorOverrides::default()
+            },
+        ));
+        assert_eq!(map.edge_theme_stroke_color(&map.edges[0]), Some("#020202"));
+        assert_eq!(map.edge_body_color(&map.edges[0]), "#020202");
+    }
+
+    /// …and they agree tier for tier, not just on that one case:
+    /// whatever the node's border cascade is handed as its theme
+    /// tier is what the edges leaving it stroke with.
+    #[test]
+    fn test_the_border_and_connection_ladders_read_the_frame_channel_alike() {
+        let mut map = probe_map();
+        let overrides = [
+            ColorOverrides::default(),
+            ColorOverrides {
+                frame: Some("#020202".into()),
+                ..ColorOverrides::default()
+            },
+            ColorOverrides {
+                frame: Some(String::new()),
+                ..ColorOverrides::default()
+            },
+            ColorOverrides {
+                background: Some("#010101".into()),
+                text: Some("#030303".into()),
+                ..ColorOverrides::default()
+            },
+        ];
+        for (index, overrides) in overrides.into_iter().enumerate() {
+            for level in [0usize, 1, 2, 7] {
+                map.nodes.get_mut("a").unwrap().color_schema =
+                    Some(schema_overriding(level, true, overrides.clone()));
+                let node = map.nodes.get("a").unwrap();
+                assert_eq!(
+                    map.node_frame_theme_tier(node),
+                    map.edge_theme_stroke_color(&map.edges[0]),
+                    "overrides #{index} at level {level}: the border and connection \
+                     ladders must read the frame channel at the same tier"
+                );
+            }
+        }
+    }
+
+    /// A group whose `frame` is empty is a hole for the edge ladder
+    /// too, so the stroke falls through to the tiers underneath
+    /// rather than handing the empty string to `hex_to_rgba_safe`
+    /// and painting opaque black.
+    #[test]
+    fn test_an_empty_frame_is_not_a_stroke_color_for_the_edges_leaving_it() {
+        let mut map = probe_map();
+        map.edges[0].color = "#edge00".into();
+        map.palettes.insert(
+            "holes".into(),
+            Palette {
+                groups: vec![group("", "", "", "")],
+            },
+        );
+        map.nodes.get_mut("a").unwrap().color_schema = Some(ColorSchema {
+            palette: "holes".into(),
+            ..schema(0, true, true)
+        });
+        assert!(map.edge_theme_stroke_color(&map.edges[0]).is_none());
+        assert_eq!(map.edge_body_color(&map.edges[0]), "#edge00");
     }
 
     #[test]
