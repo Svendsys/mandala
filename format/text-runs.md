@@ -26,9 +26,10 @@ optional `hyperlink`.
 
 `text_runs` defaults to an empty array when absent. A section with
 empty runs renders its entire text using the owning node's base
-style — the node's *effective* text color (the palette group's
-`text` when the node is themed, `style.text_color` otherwise; see
-[palettes](./palettes.md)), a default font, a default size.
+style — the node's *effective* text color (its
+`color_schema.overrides.text` when it names one, else the palette
+group's `text` when the node is themed, else `style.text_color`;
+see [palettes](./palettes.md)), a default font, a default size.
 
 This matters for hand-authoring. A simple node becomes:
 

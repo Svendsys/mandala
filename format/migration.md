@@ -204,8 +204,13 @@ path and move the result into place yourself.
    it would use if the schema were removed. A converted map whose
    `style` values were hand-edited away from the palette after
    conversion will therefore render from the palette, not from the
-   edits — the fix is to edit the palette, or to drop the
-   `color_schema` from the nodes that were deliberately detached.
+   edits. Three fixes, most specific first: move the edit into that
+   node's `color_schema.overrides`, which excepts one channel on one
+   node and is where `color bg=…`, the glyph-wheel picker and every
+   other interactive setter already write; edit the palette, when
+   what drifted was the theme rather than the one node; or drop the
+   `color_schema` from the nodes that were deliberately detached,
+   which returns them to their `style` colors wholesale.
 5. **Removes `index`** from each node (sibling order derives from the new
    Dewey ID).
 6. **Adds `channel: 0`** to each node (the default).
