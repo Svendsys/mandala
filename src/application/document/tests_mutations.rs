@@ -391,7 +391,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
     use baumhard::mindmap::model::MindSection;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    // Materialise a multi-section node so the SectionsOnly path
+    // Materialize a multi-section node so the SectionsOnly path
     // has more than one section to walk.
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
@@ -481,7 +481,7 @@ fn test_sync_node_from_tree_writes_back_section_run_color() {
     let nid = first_testament_node_id(&doc);
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
-        // Materialise a section with an explicit run carrying
+        // Materialize a section with an explicit run carrying
         // bold=true so we can verify the merge-with-prior path
         // preserves the field across the lossy round-trip.
         node.sections[0].text = "hello".into();

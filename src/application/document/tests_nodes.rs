@@ -45,7 +45,7 @@ fn test_set_section_text_targets_specific_section() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
-    // Materialise a multi-section node by appending a second
+    // Materialize a multi-section node by appending a second
     // section to the existing testament root.
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
@@ -1434,7 +1434,7 @@ fn test_set_node_border_color_writes_frame_color() {
 /// use `padding=` because it's a leaf field with no other
 /// behavior entanglement.
 #[test]
-fn test_default_border_config_first_edit_materialises_light_preset() {
+fn test_default_border_config_first_edit_materializes_light_preset() {
     use crate::application::document::{BorderConfigEdits, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -1454,7 +1454,7 @@ fn test_default_border_config_first_edit_materialises_light_preset() {
         .style
         .border
         .as_ref()
-        .expect("first-edit materialised the per-node config");
+        .expect("first-edit materialized the per-node config");
     assert_eq!(cfg.preset, "light");
 }
 
@@ -2640,8 +2640,8 @@ fn test_border_preview_drift_clears_on_selection_change() {
 
     // A subsequent cancel observes the drift and clears the slot,
     // returning false (nothing was actively rendering anyway).
-    let cancelled = doc.cancel_border_preview();
-    assert!(!cancelled, "drifted preview is treated as already-cleared");
+    let canceled = doc.cancel_border_preview();
+    assert!(!canceled, "drifted preview is treated as already-cleared");
     assert!(doc.border_preview.is_none());
 }
 
@@ -2649,7 +2649,7 @@ fn test_border_preview_drift_clears_on_selection_change() {
 /// preview. Without this rule, typing `border preset=double`
 /// after `border preview preset=heavy` would render the heavy
 /// preview *over* the just-committed double border — visibly
-/// stale until the user manually cancelled. The implicit-cancel
+/// stale until the user manually canceled. The implicit-cancel
 /// fires on every committing setter:
 /// `set_node_border_config`, `set_section_frame_border_config`,
 /// `set_canvas_default_border`,
@@ -3447,7 +3447,7 @@ fn test_section_setters_no_op_on_out_of_range_section_index() {
     assert!(!doc.dirty);
 }
 
-/// One labelled node setter in a table-driven battery: the name
+/// One labeled node setter in a table-driven battery: the name
 /// to report on failure, and a boxed call taking the document and
 /// a node id. Aliased because the bare tuple trips
 /// `clippy::type_complexity`.
@@ -4846,7 +4846,7 @@ fn test_widest_lines_keeps_blank_lines_separate() {
 
     // Blank first *and* the widest line after it, with a budget that
     // forces a choice: the blank still cannot merge with its
-    // neighbour.
+    // neighbor.
     let picked = widest_lines("\nlonger\nxy", 2);
     assert_eq!(
         picked.lines().count(),

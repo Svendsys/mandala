@@ -217,7 +217,7 @@ impl MindMapDocument {
     /// [`baumhard::mindmap::model::GlyphConnectionConfig::effective_font_size_pt`]'s
     /// `clamp` call (interactive-path invariant per §9). The
     /// console `font` command re-checks up-front so the user gets
-    /// a clear error message; this boundary check is defence in
+    /// a clear error message; this boundary check is defense in
     /// depth for any other caller.
     ///
     /// A single `EditEdge` undo entry covers the whole triple, so

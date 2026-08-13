@@ -225,7 +225,7 @@ fn layout_keeps_preview_clear_of_adjacent_arm_cells() {
     let min_clearance = preview_radius + layout.font_size * padding_scale;
 
     let center = layout.center;
-    let neighbours = [
+    let neighbors = [
         (
             "val[CENTER - 1]",
             layout.val_cell_positions[CROSSHAIR_CENTER_CELL - 1],
@@ -244,7 +244,7 @@ fn layout_keeps_preview_clear_of_adjacent_arm_cells() {
         ),
     ];
     let slack = 0.5;
-    for (label, (px, py)) in neighbours {
+    for (label, (px, py)) in neighbors {
         let dx = px - center.0;
         let dy = py - center.1;
         let dist = (dx * dx + dy * dy).sqrt();

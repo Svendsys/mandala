@@ -891,7 +891,7 @@ mod tests {
             .style
             .border
             .as_ref()
-            .expect("config materialised");
+            .expect("config materialized");
         assert_eq!(cfg.preset, "custom");
     }
 

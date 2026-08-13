@@ -500,7 +500,7 @@ pub fn build_connection_elements(
 /// destroyed by opening a file.
 ///
 /// A uniform hash grid, because the query is "does any AABB contain
-/// this point" rather than a range or a nearest-neighbour search: the
+/// this point" rather than a range or a nearest-neighbor search: the
 /// point falls in exactly one cell, and only that cell's occupants can
 /// contain it. Occupied cells only, so an empty region of a
 /// `MAX_CANVAS_COORD`-wide canvas costs nothing.

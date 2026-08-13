@@ -93,7 +93,7 @@ A multi-cluster fill works the same way:
 
 ## Escapes
 
-Three escape sequences are recognised everywhere:
+Three escape sequences are recognized everywhere:
 
 | Sequence | Meaning |
 |---|---|
@@ -187,7 +187,7 @@ subverb of the [`section`
 command](../src/application/console/commands/section/frame.rs):
 
 ```
-section frame show               # readout of the resolved config (cascade source labelled)
+section frame show               # readout of the resolved config (cascade source labeled)
 section frame reset              # drop the per-section override
 section frame preset=heavy color=#ff8800
 section frame top="###(*)###" tl="◆" tr="◆" bl="◆" br="◆"

@@ -28,7 +28,7 @@ use crate::application::document::SelectionState;
 /// `verbose` is a bare positional that surfaces the dual color
 /// surface (`style.frame_color` set via `color border=…` vs
 /// `style.border.color` set via `border color`) so the user can
-/// see why their border colour doesn't match —calls
+/// see why their border color doesn't match —calls
 /// this out as a UX bug bake-in.
 pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let id = match first_selected_node_id(&eff.document.selection) {
@@ -212,7 +212,7 @@ fn format_border_readout(
     )));
     if verbose {
         // Surface every color surface the border sits on, so the
-        // user can see why their border colour doesn't match what
+        // user can see why their border color doesn't match what
         // they expected. Three of them now: the node's *effective*
         // frame color and where it came from, the raw
         // `style.frame_color` the palette may be shadowing, and

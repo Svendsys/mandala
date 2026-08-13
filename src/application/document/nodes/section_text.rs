@@ -266,7 +266,7 @@ impl MindMapDocument {
     /// partially or wholly cross uncovered gaps fill the gap
     /// with a fresh run inheriting the section / node cascade
     /// defaults plus the new color, so the user's "make these
-    /// graphemes red" intent is honoured even where no run
+    /// graphemes red" intent is honored even where no run
     /// exists today.
     ///
     /// `range_end` is clamped to the section's grapheme count;

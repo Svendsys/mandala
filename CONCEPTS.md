@@ -1142,7 +1142,7 @@ field reference in [`format/schema.md`](./format/schema.md). Author
 owns non-overlap of node AABBs; the model does no collision
 checking. The tree builder excludes folded subtrees from the
 display tree; the underlying data persists either way. The node
-container materialises as a chrome-only `GfxElement::GlyphArea`
+container materializes as a chrome-only `GfxElement::GlyphArea`
 in the runtime tree, with the section subtree appended as
 children — see [tree builder](#tree-builder).
 
@@ -1581,7 +1581,7 @@ walks the parent chain at O(depth) per call.
 
 Projects a `MindMap` into a Baumhard
 `Tree<GfxElement, GfxMutator>` mirroring the parent-child
-structure, with each `MindNode` materialising as a three-deep
+structure, with each `MindNode` materializing as a three-deep
 subtree (container + section-areas + section-models).
 
 Mutations need a `Tree` to walk against. The

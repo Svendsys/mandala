@@ -21,7 +21,7 @@ MindMap
 ```
 
 In the runtime [Baumhard tree](../CONCEPTS.md#tree-t-m), a `MindNode`
-materialises as a three-deep subtree:
+materializes as a three-deep subtree:
 
 - one **container** `GlyphArea` (chrome only — background, frame
   padding, shape, zoom window),
@@ -44,7 +44,7 @@ multiplicity is the only thing the renderer notices.
 | `text_runs` | array | `[]` | Per-grapheme run table — see [text-runs.md](./text-runs.md). Empty means "render in the section/node defaults". Non-empty means "only the covered ranges render", same coverage trap as the pre-section single-runs vector. |
 | `offset.x`, `offset.y` | number | `0.0` | Top-left of the section's AABB *relative to the owning node's `position`*, in canvas units. `(0, 0)` puts the section flush against the node's top-left. |
 | `size` | object\|null | `null` | Section AABB. `null` means "fill the parent node" — the typical migration-default shape, where every node has one section that occupies its whole AABB. An explicit `{width, height}` lets a section occupy only part of the parent node, leaving room for siblings. |
-| `channel` | integer\|null | `null` (falls through to section's index) | Mutation channel inside the parent node-area. `null` lets the tree builder substitute the section's index — a three-section node with no authored channels gets channels `[0, 1, 2]`. `Some(0)` is honoured even at idx > 0, so an author can deliberately collide with a sibling mind-node on channel 0 to broadcast. |
+| `channel` | integer\|null | `null` (falls through to section's index) | Mutation channel inside the parent node-area. `null` lets the tree builder substitute the section's index — a three-section node with no authored channels gets channels `[0, 1, 2]`. `Some(0)` is honored even at idx > 0, so an author can deliberately collide with a sibling mind-node on channel 0 to broadcast. |
 | `trigger_bindings` | array | `[]` | Per-section [`TriggerBinding`s](./mutations.md). The click dispatcher fires section-level bindings *before* the whole-node bindings on `MindNode.trigger_bindings` — a section-targeted override (e.g. a different `OnClick` mutation per stratum of a multi-section node) takes precedence over catch-all node bindings. |
 | `frame_border` | object\|null | `null` | Per-section override of the cyan-rectangle frame drawn around the section in NodeEdit mode. Same shape as `MindNode.style.border` (preset / font / size / color / palette / glyphs / padding). `null` falls through to `Canvas.default_section_frame_border` (or `default_focused_section_frame_border` for the actively-edited section). The console verb `section frame …` authors this field; see [border-patterns.md](./border-patterns.md) for the full grammar. |
 
@@ -168,7 +168,7 @@ verb-rejected edit and a `verify` violation read identically.
 
 ### Effective size for AABB containment
 
-`Some(sz)` honours the explicit pin; `None` (fill-parent —
+`Some(sz)` honors the explicit pin; `None` (fill-parent —
 the migration default) falls back to `node.size` for the
 containment check. A `None`-sized section's effective AABB
 is therefore `(offset, node.size)`, so any non-zero `offset`
@@ -298,7 +298,7 @@ on `(hue_deg, sat, val)` is the "did the user touch it?" signal:
 an open-and-close cycle with no interaction commits the original
 `var(--accent)` literal back; any cell click or keyboard nudge
 flips the commit to the new HSV's hex (the new color was
-explicitly chosen, so honouring the old reference would silently
+explicitly chosen, so honoring the old reference would silently
 discard it). Custom-mutation writes still collapse var refs to
 hex on round-trip (`FloatRgba` carries no record of the variable);
 that constraint is unchanged.
@@ -437,7 +437,7 @@ both authoring shapes.
 
 The `MindSection.channel` field is `Option<usize>` (post Tier-E):
 `None` falls through to the section's index, `Some(0)` is
-honoured even at idx > 0. Pre-`Option`, the bare `usize`
+honored even at idx > 0. Pre-`Option`, the bare `usize`
 silently overrode an author's explicit `channel: 0` on sections
 beyond the first.
 
