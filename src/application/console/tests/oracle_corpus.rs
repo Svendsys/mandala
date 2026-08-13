@@ -31,6 +31,13 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border off"),
     (Sel::Node, "border toggle"),
     (Sel::Node, "border show side=nope"),
+    // The three readouts, pinned whole. They spent a while in
+    // `EXEC_PREFIX_CORPUS` on the belief that their bodies were
+    // measured off the host's fonts — see the reason recorded
+    // there for why they are not, and what a prefix let through.
+    (Sel::Node, "border show"),
+    (Sel::Node, "border show verbose"),
+    (Sel::Node, "border show side=top"),
     (Sel::Node, "border reset"),
     (Sel::Node, "border nope"),
     (Sel::Node, "border preset heavy"),
@@ -507,25 +514,32 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border TOP"),
 ];
 
-/// Outcomes whose tail this machine chose rather than the console
-/// — pinned as a prefix, with the host-dependent bytes left off
-/// the end. Two reasons qualify a row:
+/// The one outcome whose tail this machine chose rather than the
+/// console — pinned as a prefix, with the host-dependent bytes
+/// left off the end.
 ///
-/// - **Measured layout.** `border show`'s body quotes glyph
-///   cluster counts and rendered side runs, which depend on which
-///   fonts the host has installed.
-/// - **An `io::Error` in the message.** Rust's `Display` for
-///   `io::Error` goes through `strerror_r`, so the words after the
-///   path are glibc's and are `LC_MESSAGES`-sensitive: the same
-///   `open` of the same missing file reads "No such file or
-///   directory" under `LC_ALL=C` and something else under a
-///   translated locale. Pinning through the errno string would
-///   assert the tester's locale, not the console's behavior — the
-///   part that *is* the console's is the prefix it wraps around
-///   the loader's message, and that is what is pinned.
-pub const EXEC_PREFIX_CORPUS: &[(Sel, &str)] = &[
-    (Sel::Node, "border show"),
-    (Sel::Node, "border show verbose"),
-    (Sel::Node, "border show side=top"),
-    (Sel::Node, "open /nonexistent-dir-xyz/x.mindmap.json"),
-];
+/// Rust's `Display` for `io::Error` goes through `strerror_r`, so
+/// the words after the path are glibc's and are
+/// `LC_MESSAGES`-sensitive: the same `open` of the same missing
+/// file reads "No such file or directory" under `LC_ALL=C` and
+/// something else under a translated locale. Pinning through the
+/// errno string would assert the tester's locale, not the
+/// console's behavior. The prefix that stops short of it is not
+/// vacuous — it is every byte the console itself contributes, so
+/// it pins `open.rs`'s `"open {path}: {e}"` wrapper and the
+/// loader's own `"Failed to read file {path}: "` inside it, and a
+/// change to either fails this row.
+///
+/// **Prefix matching is the weaker check, so exactly one row gets
+/// it.** The three `border show` readouts sat here too, under a
+/// "measured layout" heading claiming their bodies depend on the
+/// host's installed fonts. They do not: the cluster count is
+/// `node.size.x / (14.0 * BORDER_APPROX_CHAR_WIDTH_FRAC)` — a
+/// constant fraction of a constant floor, never a font metric —
+/// and the side runs are `SidePattern::render`'s string
+/// repetition. Nothing there is measured off a face, so all three
+/// are pinned whole in [`EXEC_CORPUS`] instead. Under a prefix
+/// they were not merely weaker but *silently* weaker: inserting a
+/// whole new line into the readout between `padding:` and `size:`
+/// passed every test in the workspace.
+pub const EXEC_PREFIX_CORPUS: &[(Sel, &str)] = &[(Sel::Node, "open /nonexistent-dir-xyz/x.mindmap.json")];

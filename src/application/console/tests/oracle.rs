@@ -173,13 +173,17 @@ fn test_console_oracle_execution_outcomes_are_unchanged() {
     }
 }
 
-/// The host-dependent readouts still *open* the way they were
-/// pinned — the pinned string is a prefix of the signature rather
-/// than the whole of it, because each of these rows ends in bytes
-/// this machine chose. See
-/// [`super::oracle_corpus::EXEC_PREFIX_CORPUS`].
+/// The one outcome that ends in bytes this machine chose still
+/// *opens* the way it was pinned — the pinned string is a prefix
+/// of the signature rather than the whole of it, and stops where
+/// the console stops and `strerror_r` begins. See
+/// [`super::oracle_corpus::EXEC_PREFIX_CORPUS`], which also
+/// records why the three `border show` rows that used to sit
+/// beside it are pinned whole instead: a prefix is the weaker
+/// check, so it is spent on the row that needs it and on no
+/// other.
 #[test]
-fn test_console_oracle_measured_readouts_open_unchanged() {
+fn test_console_oracle_locale_bearing_readout_opens_unchanged() {
     let corpus = super::oracle_corpus::EXEC_PREFIX_CORPUS;
     let expected = super::oracle_expected::EXEC_PREFIX_EXPECTED;
     assert_eq!(corpus.len(), expected.len());
