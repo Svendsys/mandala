@@ -3,7 +3,7 @@
 //! Per-cell position computations for the picker layout — step 4
 //! of the canonical formula, after `compute_sizing` has settled the
 //! font_size / ring_r / step. Produces the 24 hue-ring anchors, the
-//! 17-cell sat/val arrays with per-glyph ink offsets, the centre
+//! 17-cell sat/val arrays with per-glyph ink offsets, the center
 //! preview anchor, the backdrop rect, and the title / hint / hex
 //! anchors.
 
@@ -55,7 +55,7 @@ pub(super) fn compute_positions(
     /// Apply a per-cell ink offset to a base canvas position.
     /// `before_arm` covers cells in `0..CROSSHAIR_CENTER_CELL`;
     /// `after_arm` covers `CROSSHAIR_CENTER_CELL+1..N`. The
-    /// crosshair-centre cell is the preview slot — drawn elsewhere
+    /// crosshair-center cell is the preview slot — drawn elsewhere
     /// — so its offset is `(0, 0)`.
     fn apply_ink(base: (f32, f32), before_arm: &[(f32, f32)], after_arm: &[(f32, f32)], i: usize, fs: f32) -> (f32, f32) {
         let ink_ratio = if i < CROSSHAIR_CENTER_CELL {
@@ -91,7 +91,7 @@ pub(super) fn compute_positions(
         );
     }
 
-    // ---- Centre preview ࿕ ----
+    // ---- Center preview ࿕ ----
     let preview_size = font_size * g.preview_size_scale;
     let preview_ink_px = (
         geometry.preview_ink_offset.0 * preview_size,

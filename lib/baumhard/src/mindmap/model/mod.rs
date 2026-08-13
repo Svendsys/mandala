@@ -28,6 +28,7 @@ pub mod edge;
 pub mod node;
 pub mod palette;
 pub mod text_run_ops;
+pub mod theme;
 pub mod validate;
 
 pub use canvas::Canvas;
@@ -37,8 +38,8 @@ pub use edge::{
     DISPLAY_MODE_PORTAL, PORTAL_GLYPH_PRESETS,
 };
 pub use node::{
-    ColorGroup, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, MindSection, NodeLayout,
-    NodeStyle, Position, Size, TextRun, MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE,
+    ColorGroup, ColorOverrides, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, MindSection,
+    NodeLayout, NodeStyle, Position, Size, TextRun, MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE,
 };
 pub use palette::Palette;
 
@@ -353,19 +354,6 @@ impl MindMap {
             current = self.nodes.get(pid).and_then(|n| n.parent_id.as_deref());
         }
         false
-    }
-
-    /// Resolves the effective colors for a themed node by looking up
-    /// the palette from the top-level palettes map.
-    pub fn resolve_theme_colors<'a>(&'a self, node: &'a MindNode) -> Option<&'a ColorGroup> {
-        let schema = node.color_schema.as_ref()?;
-        let palette = self.palettes.get(&schema.palette)?;
-        let level = schema.level as usize;
-        if level < palette.groups.len() {
-            Some(&palette.groups[level])
-        } else {
-            palette.groups.last()
-        }
     }
 
     /// Build a one-pass parent → sorted-children index for tree-shape

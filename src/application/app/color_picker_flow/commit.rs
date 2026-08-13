@@ -146,14 +146,18 @@ pub(in crate::application::app) fn commit_color_picker(
             let targets = node_commit_targets(&doc.selection, &id);
             for nid in &targets {
                 match axis {
+                    // The wheel always commits a concrete value —
+                    // a hex or the seed's `var(--name)` — so every
+                    // axis passes `Some`. Clearing a channel is a
+                    // `color …=reset`, not a picker gesture.
                     NodeColorAxis::Bg => {
-                        doc.set_node_bg_color(nid, to_write.clone());
+                        doc.set_node_bg_color(nid, Some(&to_write));
                     }
                     NodeColorAxis::Text => {
-                        doc.set_node_text_color(nid, to_write.clone());
+                        doc.set_node_text_color(nid, Some(&to_write));
                     }
                     NodeColorAxis::Border => {
-                        doc.set_node_border_color(nid, to_write.clone());
+                        doc.set_node_border_color(nid, Some(&to_write));
                     }
                 }
             }

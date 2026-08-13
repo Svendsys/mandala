@@ -541,6 +541,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("find_nth_line_grapheme_indices", |b| {
         b.iter(do_find_nth_line_grapheme_indices)
     });
+    c.bench_function("line_model_is_coherent", |b| b.iter(do_line_model_is_coherent));
     c.bench_function("remove_prefix_unicode", |b| b.iter(do_remove_prefix_unicode));
     c.bench_function("insert_new_lines", |b| b.iter(do_insert_new_lines));
     c.bench_function("push_spaces", |b| b.iter(do_push_spaces));
@@ -778,6 +779,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("insert_regions_at_empty_returns_false", |b| {
         b.iter(do_insert_regions_at_empty_returns_false)
     });
+    c.bench_function("same_content_separates_a_recolor_from_equality", |b| {
+        b.iter(do_same_content_separates_a_recolor_from_equality)
+    });
+    c.bench_function("same_content_compares_whole_tables", |b| {
+        b.iter(do_same_content_compares_whole_tables)
+    });
     // font / ink-bounds //
     c.bench_function("measure_glyph_ink_bounds_latin_has_positive_advance", |b| {
         b.iter(do_measure_glyph_ink_bounds_latin_has_positive_advance)
@@ -861,6 +868,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("rich_text_spans_empty_text_with_region_yields_no_spans", |b| {
         b.iter(do_rich_text_spans_empty_text_with_region_yields_no_spans)
+    });
+    c.bench_function("rich_text_spans_into_refills_rather_than_appends", |b| {
+        b.iter(do_rich_text_spans_into_refills_rather_than_appends)
+    });
+    c.bench_function("rich_text_spans_into_keeps_the_no_region_whole_text_span", |b| {
+        b.iter(do_rich_text_spans_into_keeps_the_no_region_whole_text_span)
     });
     // font family enumeration / lookup //
     c.bench_function("list_loaded_families_is_nonempty_sorted_unique", |b| {

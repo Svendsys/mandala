@@ -880,8 +880,12 @@ fn test_apply_section_resize_to_tree_writes_position_and_bounds() {
     let mut tree = doc.build_tree();
     let new_pos = Vec2::new(100.0, 50.0);
     let new_size = Vec2::new(40.0, 20.0);
-    apply_section_resize_to_tree(&mut tree, &id, 1, new_pos, new_size);
+    let written = apply_section_resize_to_tree(&mut tree, &id, 1, new_pos, new_size);
     let arena_id = tree.section_arena_id(&id, 1).unwrap();
+    // The returned id is what the resize drain re-shapes; if it
+    // named anything but the section it just wrote, the drag would
+    // refresh the wrong element and leave this one stale on screen.
+    assert_eq!(written, Some(arena_id));
     let area = tree
         .tree
         .arena
@@ -912,7 +916,12 @@ fn test_apply_section_resize_to_tree_unknown_section_no_op() {
         .and_then(|n| n.get().glyph_area())
         .map(|a| (a.position.x.0, a.position.y.0))
         .unwrap();
-    apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let written =
+        apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    assert_eq!(
+        written, None,
+        "a write that did not happen must not name an element to re-shape"
+    );
     let area_after = tree
         .tree
         .arena
@@ -1534,8 +1543,14 @@ fn test_apply_node_resize_to_tree_writes_position_and_bounds() {
     let mut tree = doc.build_tree();
     let new_pos = Vec2::new(500.0, 200.0);
     let new_size = Vec2::new(150.0, 70.0);
-    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, Vec2::ZERO);
+    let mut patches = Vec::new();
+    let written = apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, Vec2::ZERO, &mut patches);
     let arena_id = tree.arena_id_for(&id).unwrap();
+    assert_eq!(written, Some(arena_id));
+    assert!(
+        patches.is_empty(),
+        "a zero position delta moves no section, so nothing needs a position patch"
+    );
     let area = tree
         .tree
         .arena
@@ -1583,7 +1598,8 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
     let new_pos = Vec2::new(500.0, 200.0);
     let new_size = Vec2::new(150.0, 70.0);
     let position_delta = Vec2::new(50.0, 25.0);
-    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, position_delta);
+    let mut patches = Vec::new();
+    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, position_delta, &mut patches);
 
     // Child mind-node should be untouched — even when it's not
     // a descendant of `id`, the helper should never have walked
@@ -1613,6 +1629,150 @@ fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
     assert!((resized_pos.1 - 200.0).abs() < 0.001);
 }
 
+/// The node-resize drag no longer re-shapes the whole arena per
+/// frame: it re-shapes the container this call returns and patches
+/// the positions this call reports. That split is only safe while
+/// those two outputs *between them name every element the call
+/// touched* — and the two halves fail differently. An element moved
+/// but unreported keeps a stale buffer position for the rest of the
+/// drag; an element whose *shaping* inputs changed (bounds, text,
+/// styled runs) but which is only reported as a patch keeps a stale
+/// buffer, full stop, because `patch_drag_positions` rewrites a
+/// position and shapes nothing. Neither is visible to any pixel
+/// assertion in this repo (§T8).
+///
+/// So this walks the whole arena and snapshots every element's whole
+/// `GlyphArea`, then asserts both halves across the call:
+///
+/// - the set of elements whose area changed at all is exactly
+///   `{container} ∪ patched`, so nothing is touched unreported;
+/// - every *patched* element changed its `position` and **nothing
+///   else**, so a position patch is a sufficient refresh for it.
+///
+/// A future edit that shifts one more element without emitting its
+/// patch fails the first; one that reshapes an element it only
+/// patches fails the second.
+#[test]
+fn test_node_resize_reports_every_element_it_moved() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use baumhard::gfx_structs::area::GlyphArea;
+    use glam::Vec2;
+    use std::collections::{HashMap, HashSet};
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+
+    // Every input the renderer's shaper reads off an element is its
+    // `GlyphArea` (see `shape_one_element_into_buffers`), so the
+    // whole area is the snapshot. Compared through derived `Debug`
+    // rather than `PartialEq`: the latter is deliberately blind to a
+    // region recolor, which is exactly the class of silent reshape
+    // this is here to catch.
+    let described = |area: &GlyphArea| format!("{area:?}");
+    let areas = |tree: &baumhard::mindmap::tree_builder::MindMapTree| {
+        let mut out: HashMap<usize, GlyphArea> = HashMap::new();
+        for arena_id in tree.tree.root().descendants(&tree.tree.arena) {
+            let Some(element) = tree.tree.arena.get(arena_id).map(|n| n.get()) else {
+                continue;
+            };
+            if let Some(area) = element.glyph_area() {
+                out.insert(element.unique_id(), area.clone());
+            }
+        }
+        out
+    };
+    let positions = |tree: &baumhard::mindmap::tree_builder::MindMapTree| {
+        areas(tree)
+            .into_iter()
+            .map(|(uid, area)| (uid, (area.position.x.0, area.position.y.0)))
+            .collect::<HashMap<usize, (f32, f32)>>()
+    };
+
+    let before_areas = areas(&tree);
+    let container_uid = tree
+        .tree
+        .arena
+        .get(tree.arena_id_for(&id).unwrap())
+        .map(|n| n.get().unique_id())
+        .unwrap();
+
+    let mut patches = Vec::new();
+    let written = apply_node_resize_to_tree(
+        &mut tree,
+        &id,
+        Vec2::new(500.0, 200.0),
+        Vec2::new(150.0, 70.0),
+        Vec2::new(50.0, 25.0),
+        &mut patches,
+    );
+    assert_eq!(written, Some(tree.arena_id_for(&id).unwrap()));
+
+    let after_areas = areas(&tree);
+    let after = positions(&tree);
+    // Union both key sets rather than walking `after_areas` alone, so an
+    // element the call *removed* counts as touched. Resize removes nothing
+    // today; the union is here so the next edit that does cannot slip past.
+    let touched: HashSet<usize> = before_areas
+        .keys()
+        .chain(after_areas.keys())
+        .copied()
+        .filter(|uid| before_areas.get(uid).map(&described) != after_areas.get(uid).map(&described))
+        .collect();
+    let patched: HashSet<usize> = patches.iter().map(|(uid, _)| *uid).collect();
+
+    assert!(
+        !patched.is_empty(),
+        "the fixture must have sections to move, or this test proves nothing"
+    );
+    assert!(
+        !touched.contains(&container_uid) || touched.len() > 1,
+        "the fixture must touch more than the container, or this test proves nothing"
+    );
+
+    let mut reported = patched.clone();
+    reported.insert(container_uid);
+    assert_eq!(
+        touched, reported,
+        "every element the resize wrote to must be either the returned container \
+         or a reported patch — an unreported write leaves a stale buffer"
+    );
+
+    // The reported position has to be the one actually written, not
+    // merely the right element: the caller writes it straight into
+    // the buffer without re-reading the arena.
+    for (uid, pos) in &patches {
+        assert_eq!(
+            after.get(uid),
+            Some(pos),
+            "patch for {uid} names the wrong position"
+        );
+    }
+
+    // The reshape half. `patch_drag_positions` moves an existing
+    // buffer and shapes nothing, so a patched element must have
+    // changed its position and nothing else: rewinding the position
+    // to its pre-call value has to make the whole area identical
+    // again. An element that also grew, re-wrapped or restyled needs
+    // a `reshape_buffer_for`, not a patch, and lands here.
+    for uid in &patched {
+        let before_area = before_areas
+            .get(uid)
+            .expect("patched element existed before the call");
+        let mut rewound = after_areas
+            .get(uid)
+            .expect("patched element still exists")
+            .clone();
+        rewound.set_position((before_area.position.x.0, before_area.position.y.0));
+        assert_eq!(
+            described(&rewound),
+            described(before_area),
+            "element {uid} is reported as a position patch, but the resize changed more than its \
+             position — a patch cannot refresh that, only a re-shape can"
+        );
+    }
+}
+
 #[test]
 fn test_apply_node_resize_to_tree_unknown_node_no_op() {
     use crate::application::document::apply_node_resize_to_tree;
@@ -1621,8 +1781,21 @@ fn test_apply_node_resize_to_tree_unknown_node_no_op() {
 
     let (doc, _id) = pinned_two_section_node();
     let mut tree = doc.build_tree();
-    // No panic; tree untouched.
-    apply_node_resize_to_tree(&mut tree, "nope", Vec2::ZERO, Vec2::new(10.0, 10.0), Vec2::ZERO);
+    // No panic; tree untouched. A stale entry left in `patches`
+    // would make the caller patch a buffer this call never moved,
+    // so the clear-on-entry contract is asserted with a non-empty
+    // input rather than a fresh `Vec`.
+    let mut patches = vec![(usize::MAX, (1.0, 2.0))];
+    let written = apply_node_resize_to_tree(
+        &mut tree,
+        "nope",
+        Vec2::ZERO,
+        Vec2::new(10.0, 10.0),
+        Vec2::ZERO,
+        &mut patches,
+    );
+    assert_eq!(written, None);
+    assert!(patches.is_empty());
 }
 
 /// A long `parent_id` chain is legal and acyclic, so the loader

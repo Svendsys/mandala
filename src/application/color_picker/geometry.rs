@@ -55,7 +55,7 @@ pub struct ColorPickerOverlayGeometry {
     /// [`baumhard::font::fonts::InkBounds::y_offset_from_box_center`]
     /// at the picker's `1.5` line-height multiplier.
     ///
-    /// One entry per arm cell (8 per arm, excluding the centre
+    /// One entry per arm cell (8 per arm, excluding the center
     /// slot which renders the preview glyph instead).
     pub arm_top_ink_offsets: [(f32, f32); CROSSHAIR_CENTER_CELL],
     pub arm_bottom_ink_offsets: [(f32, f32); CROSSHAIR_CENTER_CELL],

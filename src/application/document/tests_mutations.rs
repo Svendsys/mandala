@@ -391,7 +391,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
     use baumhard::mindmap::model::MindSection;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    // Materialise a multi-section node so the SectionsOnly path
+    // Materialize a multi-section node so the SectionsOnly path
     // has more than one section to walk.
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
@@ -481,7 +481,7 @@ fn test_sync_node_from_tree_writes_back_section_run_color() {
     let nid = first_testament_node_id(&doc);
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
-        // Materialise a section with an explicit run carrying
+        // Materialize a section with an explicit run carrying
         // bold=true so we can verify the merge-with-prior path
         // preserves the field across the lossy round-trip.
         node.sections[0].text = "hello".into();
@@ -2300,8 +2300,14 @@ fn test_grow_font_clamps_to_maximum() {
 /// A `grow-font` mutation on a **runless** section synthesizes a
 /// single run to carry the new size — the change would otherwise
 /// have nowhere to live and evaporate on the next rebuild. The
-/// synthesized run spans the whole text and inherits the node's
-/// default text color so rendering is unchanged except for size.
+/// synthesized run spans the whole text and leaves `color` empty,
+/// which is the model's spelling for "take the node's text color",
+/// so rendering is unchanged except for size.
+///
+/// The node's `color_schema` is cleared first so `style.text_color`
+/// really is the effective default here; the themed half of that
+/// cascade is
+/// `test_grow_font_on_runless_section_of_themed_node_keeps_deferring`.
 #[test]
 fn test_grow_font_on_runless_section_synthesizes_run() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
@@ -2310,6 +2316,7 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
     let nid = first_testament_node_id(&doc);
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.color_schema = None;
         node.style.text_color = "#abcdef".into();
         // A section with text but no runs (size defaults to 14pt).
         node.sections
@@ -2334,8 +2341,215 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
         baumhard::util::grapheme_chad::count_grapheme_clusters("runless")
     );
     assert_eq!(
-        run.color, "#abcdef",
-        "synthesized run inherits the node's default text color"
+        run.color, "",
+        "the synthesized run defers its color rather than baking one — a font-size \
+         mutation must not decide the section's color"
+    );
+    // ...and the deferral still resolves to the node's default, so
+    // nothing on screen moved but the size.
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(
+        doc.mindmap.node_text_rgba(node),
+        baumhard::util::color::hex_to_rgba_safe("#abcdef", [0.0, 0.0, 0.0, 1.0]),
+        "the empty color projects to style.text_color on an unthemed node"
+    );
+}
+
+/// The themed half of the previous test: when the node carries a
+/// `color_schema`, the effective default text color is the palette
+/// group's, not `style.text_color` — and the synthesized run must
+/// keep *deferring* to it rather than baking it in. Baking would
+/// render identically today and permanently convert a themed
+/// section into a hardcoded one: the next palette edit would move
+/// every sibling section and leave this one behind.
+#[test]
+fn test_grow_font_on_runless_section_of_themed_node_keeps_deferring() {
+    use super::tests_common::theme_node_with_probe_palette;
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::mindmap::model::{ColorGroup, MindSection};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    theme_node_with_probe_palette(
+        &mut doc,
+        &nid,
+        "grow-probe",
+        ColorGroup {
+            background: "#101010".into(),
+            frame: "#202020".into(),
+            text: "#30ff30".into(),
+            title: String::new(),
+        },
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.style.text_color = "#abcdef".into();
+        node.sections
+            .push(MindSection::new_default("runless".into(), Vec::new()));
+    }
+    let runless_idx = doc.mindmap.nodes.get(&nid).unwrap().sections.len() - 1;
+    let cm = make_font_scale_mutation("grow-themed", GlyphAreaCommand::GrowFont(2.0), TS::SelfOnly);
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[runless_idx];
+    assert_eq!(section.text_runs.len(), 1, "a run must be synthesized");
+    assert_eq!(
+        section.text_runs[0].color, "",
+        "the model keeps the deferral — baking the palette hex here severs the cascade"
+    );
+    // The projection is where the palette color shows up, and it
+    // is the palette's, not `style.text_color`.
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(
+        doc.mindmap.node_text_rgba(node),
+        baumhard::util::color::hex_to_rgba_safe("#30ff30", [0.0, 0.0, 0.0, 1.0]),
+        "the deferral resolves through the palette, not style.text_color"
+    );
+
+    // And the palette really is still in charge: edit the group and
+    // the section follows, which is the property the bake destroys.
+    doc.mindmap
+        .palettes
+        .get_mut("grow-probe")
+        .expect("palette inserted above")
+        .groups[0]
+        .text = "#0000ff".into();
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(
+        doc.mindmap.node_text_rgba(node),
+        baumhard::util::color::hex_to_rgba_safe("#0000ff", [0.0, 0.0, 0.0, 1.0]),
+        "a palette edit must still reach a section a font mutation has touched"
+    );
+}
+
+/// F1's headline: a themed node whose section carries a run with
+/// an **empty** color reads as unchanged across an apply that
+/// moves nothing. Before the empty-color arm in
+/// `sync::model_regions_match`, the tree-side region (painted the
+/// palette hex) never matched the model's empty string, so every
+/// apply ran the lossy round trip, baked the hex into the run and
+/// pushed an undo entry for a no-op.
+#[test]
+fn test_no_op_mutation_leaves_a_colorless_run_on_a_themed_node_alone() {
+    use super::tests_common::theme_node_with_probe_palette;
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::mindmap::model::{ColorGroup, TextRun};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    theme_node_with_probe_palette(
+        &mut doc,
+        &nid,
+        "colorless-probe",
+        ColorGroup {
+            background: "#101010".into(),
+            frame: "#202020".into(),
+            text: "#30ff30".into(),
+            title: String::new(),
+        },
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.style.text_color = "#abcdef".into();
+        let section = node.sections.first_mut().expect("testament node 0 has a section");
+        section.text = "abcdef".into();
+        section.text_runs = vec![TextRun {
+            start: 0,
+            end: 6,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: String::new(),
+            size_pt: 14,
+            color: String::new(),
+            hyperlink: None,
+        }];
+    }
+    let undo_depth_before = doc.undo_stack.len();
+    // `GrowFont(0.0)` is a mutation that moves nothing: it is the
+    // control that isolates the reverse gate from any real edit.
+    let cm = make_font_scale_mutation("no-op", GlyphAreaCommand::GrowFont(0.0), TS::SelfOnly);
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[0];
+    assert_eq!(
+        section.text_runs[0].color, "",
+        "a no-op apply must not bake the palette hex into a colorless run"
+    );
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_depth_before,
+        "a mutation that moved nothing must not push an undo entry"
+    );
+}
+
+/// The other direction of the same gate: a mutation that really
+/// does change the text still round-trips, and the colorless run
+/// *keeps* its deferral through it. This is the inline-editor and
+/// text-mutation path, which reaches `region_to_text_run` rather
+/// than the comparison gate.
+#[test]
+fn test_text_edit_keeps_a_colorless_run_deferring_on_a_themed_node() {
+    use super::tests_common::theme_node_with_probe_palette;
+    use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
+    use baumhard::mindmap::model::{ColorGroup, TextRun};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    theme_node_with_probe_palette(
+        &mut doc,
+        &nid,
+        "editor-probe",
+        ColorGroup {
+            background: "#101010".into(),
+            frame: "#202020".into(),
+            text: "#30ff30".into(),
+            title: String::new(),
+        },
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        let section = node.sections.first_mut().expect("testament node 0 has a section");
+        section.text = "abcdef".into();
+        section.text_runs = vec![TextRun {
+            start: 0,
+            end: 6,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: String::new(),
+            size_pt: 14,
+            color: String::new(),
+            hyperlink: None,
+        }];
+    }
+    // What the inline editor hands back after one keystroke: the
+    // same span, painted the color the forward path resolved.
+    let theme_rgba = {
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        doc.mindmap.node_text_rgba(node)
+    };
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new(Range::new(0, 7), None, Some(theme_rgba)));
+    assert!(doc.set_section_text_and_runs(&nid, 0, "abcdefg".into(), &regions));
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[0];
+    assert_eq!(section.text, "abcdefg");
+    assert_eq!(
+        section.text_runs[0].color, "",
+        "typing a character must not opt the run out of the palette"
+    );
+
+    // A genuine recolor through the same converter still lands.
+    let mut recolored = ColorFontRegions::new_empty();
+    recolored.submit_region(ColorFontRegion::new(
+        Range::new(0, 7),
+        None,
+        Some([1.0, 0.0, 0.0, 1.0]),
+    ));
+    assert!(doc.set_section_text_and_runs(&nid, 0, "abcdefg".into(), &recolored));
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[0];
+    assert_eq!(
+        section.text_runs[0].color, "#ff0000",
+        "a deliberate recolor is not swallowed by the deferral rule"
     );
 }
 

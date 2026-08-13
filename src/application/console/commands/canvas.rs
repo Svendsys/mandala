@@ -529,7 +529,7 @@ fn execute_show_border(eff: &mut ConsoleEffects) -> ExecResult {
     let map = &eff.document.mindmap;
     let cfg: Option<&GlyphBorderConfig> = map.canvas.default_border.as_ref();
     let lines = if let Some(cfg) = cfg {
-        let resolved = resolve_border_style(Some(cfg), None, "#cccace");
+        let resolved = resolve_border_style(Some(cfg), None, None, "#cccace");
         format_resolved_with_source(
             "canvas border",
             "canvas default",
@@ -570,7 +570,7 @@ fn execute_show_section_frame(eff: &mut ConsoleEffects, focused: bool) -> ExecRe
         }
     };
     let lines = if let Some(cfg) = cfg {
-        let resolved = resolve_border_style(Some(cfg), None, "#00E5FF");
+        let resolved = resolve_border_style(Some(cfg), None, None, "#00E5FF");
         format_resolved_with_source(
             label,
             source,

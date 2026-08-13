@@ -269,7 +269,7 @@ fn portal_edge_delete_and_undo_restore_index() {
 /// selection too — otherwise `SelectionState::Edge(er)` lingers
 /// pointing at an edge the map no longer contains, and scene
 /// builds + the color picker open against a dangling ref.
-/// Mirrors the long-standing `CreateNode` undo behaviour.
+/// Mirrors the long-standing `CreateNode` undo behavior.
 #[test]
 fn undo_create_edge_clears_matching_selection() {
     let mut doc = load_test_doc();

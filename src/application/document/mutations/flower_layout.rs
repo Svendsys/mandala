@@ -74,7 +74,7 @@ pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
             );
             continue;
         }
-        // Position is the top-left corner; centre the child on the
+        // Position is the top-left corner; center the child on the
         // computed point.
         // Clamped for the same reason as the cascade: the result is
         // computed from a parent position plus a radius, so it can
@@ -149,7 +149,7 @@ mod tests {
         let cx = parent.position.x + parent.size.width / 2.0;
         let cy = parent.position.y + parent.size.height / 2.0;
         apply(&mut doc, &target_id);
-        // Centroid of child centres should be near the parent's centre
+        // Centroid of child centers should be near the parent's center
         // (within one padding-radius — the layout is rotationally
         // symmetric around the parent so this holds as a sanity check).
         let (mut sx, mut sy) = (0.0_f64, 0.0_f64);
@@ -162,13 +162,13 @@ mod tests {
         let (mx, my) = (sx / n, sy / n);
         assert!(
             (mx - cx).abs() < 2.0 * RADIAL_PADDING,
-            "centroid x {} drifted from parent centre {}",
+            "centroid x {} drifted from parent center {}",
             mx,
             cx
         );
         assert!(
             (my - cy).abs() < 2.0 * RADIAL_PADDING,
-            "centroid y {} drifted from parent centre {}",
+            "centroid y {} drifted from parent center {}",
             my,
             cy
         );

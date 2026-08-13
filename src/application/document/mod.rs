@@ -557,11 +557,17 @@ pub(super) fn grow_one_node_to_fit_border(
     if !node.style.show_frame {
         return;
     }
-    let style = resolve_border_style(
-        node.style.border.as_ref(),
-        canvas_default,
-        &node.style.frame_color,
-    );
+    // **This function is deliberately color-blind.** It reads
+    // `font_size_pt`, `corner_clusters()` and `side_patterns` and
+    // nothing else, and `resolve_border_style`'s own contract says
+    // the last two arguments feed `BorderStyle::color` alone — the
+    // size and preset cascades are independent of both. So the
+    // theme tier is `None` and the floor is `""`: threading a
+    // resolved frame color in here would be an `FxHashMap` and two
+    // `String`s per node on the load pass, plus one `String` per
+    // committed edit, to compute a field this function never
+    // looks at.
+    let style = resolve_border_style(node.style.border.as_ref(), canvas_default, None, "");
     let approx_char_width = style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let corners = style.corner_clusters();
 
@@ -867,18 +873,12 @@ impl MindMapDocument {
 /// Commit writes `style.show_frame = true` through the normal
 /// setter when the user wants the visibility flip persisted (today
 /// via `border on`); the force flag never reaches the model.
-fn build_border_preview_scene_view<'a>(
-    bp: &'a BorderPreview,
-) -> tree_builder::BorderPreview<'a> {
+fn build_border_preview_scene_view<'a>(bp: &'a BorderPreview) -> tree_builder::BorderPreview<'a> {
     let target = match &bp.target {
         BorderPreviewTarget::Nodes(ids) => tree_builder::BorderPreviewTargetRef::Nodes(ids.as_slice()),
-        BorderPreviewTarget::Sections(ts) => {
-            tree_builder::BorderPreviewTargetRef::Sections(ts.as_slice())
-        }
+        BorderPreviewTarget::Sections(ts) => tree_builder::BorderPreviewTargetRef::Sections(ts.as_slice()),
         BorderPreviewTarget::CanvasDefault => tree_builder::BorderPreviewTargetRef::CanvasDefault,
-        BorderPreviewTarget::CanvasSectionFrame => {
-            tree_builder::BorderPreviewTargetRef::CanvasSectionFrame
-        }
+        BorderPreviewTarget::CanvasSectionFrame => tree_builder::BorderPreviewTargetRef::CanvasSectionFrame,
         BorderPreviewTarget::CanvasSectionFrameFocused => {
             tree_builder::BorderPreviewTargetRef::CanvasSectionFrameFocused
         }

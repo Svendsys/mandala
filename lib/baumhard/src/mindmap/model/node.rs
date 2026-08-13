@@ -44,6 +44,22 @@ pub const MAX_NODE_AXIS: f64 = 1_000_000.0;
 /// memory rather than parsed, and `maptool verify` still reports it.
 pub const MAX_SECTIONS_PER_NODE: usize = 1024;
 
+/// Read an absent-or-`null` value as `T::default()`.
+///
+/// `#[serde(default)]` covers the *missing key* and nothing else, so
+/// a field that is conceptually optional still refuses an explicit
+/// `null`. Pair the two on any optional object whose absence and
+/// whose `null` mean the same thing.
+///
+/// Cost: one `Option<T>` deserialize, no allocation of its own.
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + serde::Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// Deserialize `sections`, refusing at the first element past
 /// [`MAX_SECTIONS_PER_NODE`] rather than after the allocation.
 ///
@@ -722,33 +738,125 @@ pub struct NodeLayout {
 
 /// Links a node to one entry in a named [`super::Palette`] keyed by
 /// depth. `level` is the index into the palette's `groups`; clamped
-/// at theme-resolve time (`resolve_theme_colors`) so a schema
-/// referencing a level beyond the palette's length falls back to
-/// the last group rather than erroring.
+/// at theme-resolve time ([`super::MindMap::resolve_theme_colors`])
+/// so a schema referencing a level beyond the palette's length falls
+/// back to the last group rather than erroring.
 /// `starts_at_root` and `connections_colored` are round-tripped
-/// miMind-compat flags that the renderer interprets when resolving
-/// effective colors. Plain data; no runtime cost.
+/// miMind-compat flags that the projection passes interpret when
+/// resolving effective colors — see
+/// [`crate::mindmap::model::theme`] for the whole cascade.
+///
+/// `overrides` is the one field that is not a miMind inheritance:
+/// it carries this node's own exceptions to the group, and it lives
+/// here rather than in [`NodeStyle`] because `style` is the tier the
+/// palette shadows. See [`ColorOverrides`].
+///
+/// Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorSchema {
     /// Named palette to bind this node's colors to — keys into
     /// [`super::MindMap::palettes`].
     pub palette: String,
-    /// Index into the palette's `groups` for this node's depth.
-    /// Clamped against the palette's length at resolve time so a
-    /// level past the end falls back to the last group.
-    pub level: i32,
+    /// Depth from the schema root, and the index into the palette's
+    /// `groups` it produces. Clamped against the palette's length at
+    /// resolve time so a level past the end falls back to the last
+    /// group.
+    ///
+    /// `usize` rather than a signed type because depth cannot be
+    /// negative and this value is only ever used as a slice index —
+    /// the `as usize` this field used to need turned an authored
+    /// `-1` into a huge index that then clamped silently to the last
+    /// group. A negative `level` is now refused by the loader with
+    /// serde's own message instead.
+    pub level: usize,
     /// `true` when depth indexing begins at the root (level 0 is the
     /// root itself); `false` shifts the indexing so the root is
-    /// transparent and children start at level 0.
+    /// transparent — it keeps its `style` colors — and its children,
+    /// at `level: 1`, take `groups[0]`.
     pub starts_at_root: bool,
-    /// When `true`, outgoing connections inherit the palette's
-    /// color at this node's level instead of the edge's own color.
+    /// When `true`, connections *leaving* this node inherit this
+    /// node's frame tier — its `overrides.frame`, else the
+    /// palette's `frame` at this node's level — instead of the
+    /// edge's own `color`. Read through
+    /// [`super::MindMap::edge_theme_stroke_color`], which shares
+    /// that tier with the node's own border cascade so a per-node
+    /// frame override cannot move one without the other.
     pub connections_colored: bool,
+    /// This node's exceptions to the group above — see
+    /// [`ColorOverrides`]. Absent from the JSON when empty, which is
+    /// the ordinary case.
+    ///
+    /// An explicit `null` reads the same as a missing key.
+    /// `#[serde(default)]` alone fires only on the missing key, so
+    /// without the custom deserializer `"overrides": null` — the
+    /// spelling every other optional object in this format accepts,
+    /// and the one a generator emitting a fixed key set naturally
+    /// produces — failed the whole load with
+    /// `invalid type: null, expected struct ColorOverrides`.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_null_as_default",
+        skip_serializing_if = "ColorOverrides::is_empty"
+    )]
+    pub overrides: ColorOverrides,
+}
+
+/// Per-node exceptions to a [`ColorSchema`]'s palette group — the
+/// tier a direct "make *this* node green" edit lands in.
+///
+/// A theme is an inherited value and a per-node edit is a specific
+/// one, so the edit has to win; the format already spells that rule
+/// out below the node level (a [`TextRun`] naming its own `color`,
+/// a [`GlyphBorderConfig::color`] on the node's border) and this is
+/// the same rule at the node's own level. It cannot be expressed by
+/// writing [`NodeStyle`] instead, because `style` is the tier the
+/// palette *shadows*: every migrated node carries baked `style`
+/// colors that are stale copies of its theme, so letting `style`
+/// win would un-theme the whole corpus. Hence a channel that says
+/// "overridden" by existing.
+///
+/// One `Option` per [`ColorGroup`] channel, `None` meaning "this
+/// node has no opinion; take the group's". `title` is here for
+/// completeness of the group it shadows — the interactive setters
+/// cover the three channels [`NodeStyle`] also has.
+///
+/// Plain data; no runtime cost. Serialized only where non-empty, so
+/// an untouched map round-trips byte-identically.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ColorOverrides {
+    /// Replaces the group's `background` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
+    /// Replaces the group's `frame` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<String>,
+    /// Replaces the group's `text` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Replaces the group's `title` for this node alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl ColorOverrides {
+    /// `true` when no channel is overridden — the state a themed
+    /// node has until somebody recolors it by hand, and the
+    /// condition that keeps the key out of the serialized JSON.
+    ///
+    /// Cost: four `Option` discriminant reads.
+    pub fn is_empty(&self) -> bool {
+        self.background.is_none() && self.frame.is_none() && self.text.is_none() && self.title.is_none()
+    }
 }
 
 /// One palette entry — the four colors a themed node inherits at a
 /// given depth level. Referenced from [`ColorSchema::level`] via
-/// [`super::Palette::groups`]. Plain data; no runtime cost.
+/// [`super::Palette::groups`], resolved by
+/// [`super::MindMap::resolve_theme_colors`], and also the source of
+/// the per-glyph cycle a [`GlyphBorderConfig::color_palette`] border
+/// draws from (which channel it cycles is
+/// [`GlyphBorderConfig::color_palette_field`]). Plain data; no
+/// runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorGroup {
     /// Background-fill color for a node at this level.
@@ -757,8 +865,15 @@ pub struct ColorGroup {
     pub frame: String,
     /// Text color for a node at this level.
     pub text: String,
-    /// First-line / title color — overrides `text` for the first
-    /// line of a node's text when present.
+    /// First-line / title color — stands in for `text` on the first
+    /// hard-newline-delimited line of the node's first
+    /// [`MindSection`], the stratum miMind called the node title.
+    /// Empty means "no distinct title color"; the whole section then
+    /// takes `text`.
+    ///
+    /// Like `text`, it is a *section default*: a [`TextRun`] naming
+    /// its own color keeps it, so a node whose runs all carry
+    /// explicit colors shows neither channel.
     pub title: String,
 }
 

@@ -3,7 +3,7 @@
 //! Default constructors for `MindEdge` and `MindNode` values —
 //! the shapes new orphan nodes, new parent→child edges, and new
 //! cross-link edges inherit when the user creates them. Keeps the
-//! field lists in one place so visual defaults (colour, font,
+//! field lists in one place so visual defaults (color, font,
 //! cap glyphs) don't drift across call sites.
 
 use glam::Vec2;
@@ -15,6 +15,33 @@ use baumhard::mindmap::model::{
 /// Font family a freshly-authored [`TextRun`] carries when
 /// nothing else in the cascade supplies one.
 pub(in crate::application) const DEFAULT_RUN_FONT_FAMILY: &str = "LiberationSans";
+
+/// Fill color of a node nothing has said anything about — what
+/// [`default_orphan_node`] writes into `style.background_color`.
+///
+/// Also what a `color bg=reset` writes on an **unthemed** node.
+/// The two are one constant on purpose: "reset" means *the
+/// natural default*, and the only defensible reading of that on a
+/// node with no theme to fall back to is the fill every node this
+/// application creates already has. A themed node resets to its
+/// palette instead and never reaches this value — see
+/// `MindMapDocument::set_node_bg_color`.
+pub(in crate::application) const DEFAULT_NODE_BACKGROUND_COLOR: &str = "#141414";
+
+/// Frame color of a node nothing has said anything about, and the
+/// unthemed `color frame=reset` target. Same reasoning as
+/// [`DEFAULT_NODE_BACKGROUND_COLOR`].
+pub(in crate::application) const DEFAULT_NODE_FRAME_COLOR: &str = "#30b082";
+
+/// Text color of a node nothing has said anything about, and the
+/// unthemed `color text=reset` target. Same reasoning as
+/// [`DEFAULT_NODE_BACKGROUND_COLOR`].
+///
+/// Distinct from [`DEFAULT_RUN_COLOR`], which is the *run* tier's
+/// answer to the same question: a run has a node underneath it to
+/// defer to and says so with the empty string, while
+/// `style.text_color` is the floor and has to name a color.
+pub(in crate::application) const DEFAULT_NODE_TEXT_COLOR: &str = "#ffffff";
 
 /// Point size a freshly-authored [`TextRun`] carries.
 ///
@@ -29,10 +56,23 @@ pub(in crate::application) const DEFAULT_RUN_FONT_FAMILY: &str = "LiberationSans
 /// run onto it.
 pub(in crate::application) const DEFAULT_RUN_SIZE_PT: u32 = 24;
 
-/// Color a freshly-authored [`TextRun`] carries — the same
-/// fall-through-to-white floor the renderer applies to a node
-/// with no explicit `style.text_color`.
-pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "#ffffff";
+/// Color a freshly-authored [`TextRun`] carries: **none**.
+///
+/// The empty string is the model's spelling for "take the node's
+/// section-level text color" — the palette group's `text` on a
+/// themed node, `style.text_color` otherwise
+/// (`format/palettes.md`, `format/text-runs.md`). That is what an
+/// authoring path with nothing to inherit from actually means, and
+/// it is the only value that keeps working after a retheme: a run
+/// created with a literal hex is a per-slice override the theme is
+/// then forbidden to repaint, so every new run would silently opt
+/// its graphemes out of the palette.
+///
+/// It changes nothing for an untouched new node, whose
+/// [`default_orphan_node`] `style.text_color` is `#ffffff` — the same
+/// white the constant used to spell out. It changes everything for
+/// a run authored onto a themed node.
+pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "";
 
 /// One unstyled [`TextRun`] covering `[0, end)` graphemes, in the
 /// authoring defaults above.
@@ -40,9 +80,11 @@ pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "#ffffff";
 /// The single template every "this section has no run to inherit
 /// from" path reaches for — node/section text setters, the
 /// range-setter gap filler, the clipboard cut/paste splice
-/// templates. Callers that need one field different use struct
-/// update syntax, e.g.
-/// `TextRun { color: node.style.text_color.clone(), ..default_text_run(0) }`.
+/// templates. Every one of those wants the color cascade left
+/// intact, which is why [`DEFAULT_RUN_COLOR`] is empty and none of
+/// them overrides it; a caller that needs some *other* field
+/// different uses struct update syntax, e.g.
+/// `TextRun { size_pt: 12, ..default_text_run(0) }`.
 ///
 /// `end == 0` is legal here because most callers use the result
 /// purely as a *template* (they overwrite `start` / `end` from
@@ -110,9 +152,9 @@ pub(in crate::application) fn default_orphan_node(id: &str, position: Vec2) -> M
         // (offset 0, fill the node, channel 0) shape.
         sections: vec![MindSection::new_default(text, text_runs)],
         style: NodeStyle {
-            background_color: "#141414".to_string(),
-            frame_color: "#30b082".to_string(),
-            text_color: "#ffffff".to_string(),
+            background_color: DEFAULT_NODE_BACKGROUND_COLOR.to_string(),
+            frame_color: DEFAULT_NODE_FRAME_COLOR.to_string(),
+            text_color: DEFAULT_NODE_TEXT_COLOR.to_string(),
             shape: "rectangle".to_string(),
             corner_radius_percent: 10.0,
             frame_thickness: 4.0,

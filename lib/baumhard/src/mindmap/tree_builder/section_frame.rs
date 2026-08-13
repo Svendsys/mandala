@@ -320,7 +320,7 @@ fn resolve_section_frame_border_with_overrides(
     frame_color_fallback: &str,
 ) -> BorderStyle {
     if let Some(cfg) = section_slot {
-        return crate::mindmap::border::resolve_border_style(Some(cfg), None, frame_color_fallback);
+        return crate::mindmap::border::resolve_border_style(Some(cfg), None, None, frame_color_fallback);
     }
     let canvas_chosen = if focused {
         canvas_focused_default.or(canvas_unfocused_default)
@@ -328,11 +328,11 @@ fn resolve_section_frame_border_with_overrides(
         canvas_unfocused_default
     };
     if let Some(cfg) = canvas_chosen {
-        return crate::mindmap::border::resolve_border_style(Some(cfg), None, frame_color_fallback);
+        return crate::mindmap::border::resolve_border_style(Some(cfg), None, None, frame_color_fallback);
     }
     // Floor — same shape `resolve_section_frame_border` synthesizes.
     let floor = crate::mindmap::border::section_frame_floor_config(focused);
-    crate::mindmap::border::resolve_border_style(Some(floor), None, frame_color_fallback)
+    crate::mindmap::border::resolve_border_style(Some(floor), None, None, frame_color_fallback)
 }
 
 /// Compute a stable structural-signature seed for a section-frame

@@ -179,7 +179,7 @@ impl MindMapDocument {
     /// **text** color override on a portal-mode edge. Sibling of
     /// [`Self::set_portal_label_color`], which targets the icon
     /// cascade; this setter targets `PortalEndpointState.text_color`
-    /// so a coloured badge can host a differently-coloured
+    /// so a colored badge can host a differently-colored
     /// annotation. Returns `true` if the value changed. Rolls back
     /// a newly-installed empty `PortalEndpointState` when clearing
     /// a text color would leave the state entirely default, so an
@@ -222,7 +222,7 @@ impl MindMapDocument {
     pub fn resolve_portal_label_color(&self, edge_ref: &EdgeRef, endpoint_node_id: &str) -> Option<String> {
         let edge = self.mindmap.edges.iter().find(|e| edge_ref.matches(e))?;
         let endpoint_state = baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);
-        let raw = edge.portal_endpoint_color(&self.mindmap.canvas, endpoint_state);
+        let raw = self.mindmap.edge_portal_endpoint_color(edge, endpoint_state);
         Some(baumhard::util::color::resolve_var(raw, &self.mindmap.canvas.theme_variables).to_string())
     }
 }

@@ -1373,6 +1373,169 @@ mod tests {
         assert_eq!(node.sections[0].text, "ok");
     }
 
+    /// `ColorSchema.level` is a `usize`, and the loader is where
+    /// that stops being a claim. It used to be an `i32` the
+    /// resolver cast with `as usize`, which turned an authored
+    /// `-1` into 18446744073709551615 and clamped it silently to
+    /// the last group — a themed node quietly wearing the wrong
+    /// color with nothing in the output to say so. Three shapes,
+    /// three verdicts, and none of them was pinned by anything:
+    /// the converter's floor is tested, the loader's refusal was
+    /// not.
+    fn map_with_level(level: &str) -> String {
+        format!(
+            r##"{{
+            "version": "1.0",
+            "name": "leveled",
+            "canvas": {{"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {{}},
+                       "theme_variants": {{}}}},
+            "palettes": {{"p": {{"groups": [
+                {{"background":"#100000","frame":"#200000","text":"#300000","title":""}},
+                {{"background":"#110000","frame":"#210000","text":"#310000","title":""}}
+            ]}}}},
+            "nodes": {{"0": {{
+                "id": "0", "parent_id": null,
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{{"text": "ok"}}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": "",
+                "color_schema": {{"palette":"p","level":{level},
+                                  "starts_at_root":true,"connections_colored":false}}
+            }}}},
+            "edges": []
+        }}"##
+        )
+    }
+
+    /// One themed node whose `color_schema.overrides` is spelled
+    /// `overrides_json` — used to pin what the loader accepts in
+    /// that slot.
+    fn map_with_overrides(overrides_json: &str) -> String {
+        format!(
+            r##"{{
+            "version": "1.0",
+            "name": "overridden",
+            "canvas": {{"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {{}},
+                       "theme_variants": {{}}}},
+            "palettes": {{"p": {{"groups": [
+                {{"background":"#a9decb","frame":"#30b082","text":"#000000","title":""}}
+            ]}}}},
+            "nodes": {{"0": {{
+                "id": "0", "parent_id": null,
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{{"text": "ok"}}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": "",
+                "color_schema": {{"palette":"p","level":0,
+                                  "starts_at_root":true,"connections_colored":false,
+                                  "overrides":{overrides_json}}}
+            }}}},
+            "edges": []
+        }}"##
+        )
+    }
+
+    /// `"overrides": null` loads, and reads exactly as the missing
+    /// key does.
+    ///
+    /// `#[serde(default)]` fires on an absent key and not on an
+    /// explicit `null`, so the field refused a spelling every other
+    /// optional object in the format accepts and
+    /// `format/schema.md` calls "an optional object" — with a whole
+    /// load failure (`invalid type: null, expected struct
+    /// ColorOverrides`), not a degrade.
+    #[test]
+    fn test_null_color_overrides_reads_as_no_overrides() {
+        for spelling in ["null", "{}"] {
+            let map = load_from_str(&map_with_overrides(spelling))
+                .unwrap_or_else(|e| panic!("`\"overrides\": {spelling}` must load: {e}"));
+            let node = map.nodes.get("0").expect("node 0 loads");
+            let schema = node.color_schema.as_ref().expect("themed");
+            assert!(
+                schema.overrides.is_empty(),
+                "`{spelling}` must read as no overrides at all"
+            );
+            // And the node is on its palette, which is the whole
+            // observable consequence of "no overrides".
+            assert_eq!(map.node_background_color(node), "#a9decb");
+            assert_eq!(map.node_frame_color(node), "#30b082");
+        }
+    }
+
+    /// The `null` acceptance is per-channel too: a channel spelled
+    /// `null` is a channel with no opinion, not a channel holding
+    /// the string `"null"`. Already true by `Option`'s own
+    /// deserializer — pinned because the outer `null` needed a
+    /// custom one and the two must not diverge.
+    #[test]
+    fn test_null_color_override_channel_reads_as_no_opinion() {
+        let map = load_from_str(&map_with_overrides(
+            r##"{"background":"#00ff00","frame":null,"text":null,"title":null}"##,
+        ))
+        .expect("per-channel nulls must load");
+        let node = map.nodes.get("0").expect("node 0 loads");
+        let overrides = &node.color_schema.as_ref().expect("themed").overrides;
+        assert_eq!(overrides.background.as_deref(), Some("#00ff00"));
+        assert_eq!(overrides.frame, None);
+        assert_eq!(map.node_background_color(node), "#00ff00");
+        assert_eq!(map.node_frame_color(node), "#30b082");
+    }
+
+    #[test]
+    fn test_negative_color_schema_level_is_refused_by_the_loader() {
+        let err = load_from_str(&map_with_level("-1")).expect_err("a negative level must not load");
+        assert!(
+            err.contains("invalid value") && err.contains("expected usize"),
+            "serde's own type message is the diagnostic; got: {err}"
+        );
+        assert!(
+            err.contains("\"0\""),
+            "the message must name the node it came from: {err}"
+        );
+    }
+
+    #[test]
+    fn test_fractional_color_schema_level_is_refused_by_the_loader() {
+        let err = load_from_str(&map_with_level("1.5")).expect_err("a fractional level must not load");
+        assert!(
+            err.contains("invalid type") && err.contains("expected usize"),
+            "serde's own type message is the diagnostic; got: {err}"
+        );
+    }
+
+    /// The other end: a level far past the palette's last group is
+    /// **legal** and clamps. Nothing about a deep subtree is
+    /// malformed, so the loader has no business refusing it — the
+    /// resolver degrades it to the last group instead (see
+    /// `format/palettes.md`).
+    #[test]
+    fn test_an_enormous_color_schema_level_loads_and_clamps() {
+        let map = load_from_str(&map_with_level("1000000000000000000"))
+            .expect("a level past the palette's end is legal");
+        let node = map.nodes.get("0").expect("node 0 loads");
+        assert_eq!(
+            node.color_schema.as_ref().unwrap().level,
+            1_000_000_000_000_000_000
+        );
+        let group = map
+            .resolve_theme_colors(node)
+            .expect("an out-of-range level clamps rather than failing");
+        assert_eq!(group.frame, "#210000", "clamped to the last group");
+        assert_eq!(map.node_frame_color(node), "#210000");
+    }
+
     /// A node with `sections: []` is rejected — every renderable
     /// node needs at least one section, and the loader catches this
     /// at parse time so the tree builder's recursion never sees a
@@ -2248,6 +2411,21 @@ mod tests {
             })
         }),
         ("is_zero_u32", |v| v.as_u64() == Some(0)),
+        // `ColorSchema.overrides`: an object whose four channels are
+        // all absent or `null` carries no override, which is what
+        // every node that has never been recolored by hand holds.
+        // A bare `null` in the field's place says the same thing —
+        // the field's custom deserializer reads it as the default,
+        // so a fixture spelling it that way is dropped on save for
+        // the same reason and is not authored-key loss either.
+        ("ColorOverrides::is_empty", |v| {
+            v.is_null()
+                || v.as_object().is_some_and(|o| {
+                    ["background", "frame", "text", "title"]
+                        .iter()
+                        .all(|k| o.get(*k).is_none_or(serde_json::Value::is_null))
+                })
+        }),
     ];
 
     /// Assert that saving `source` as `saved` lost nothing an author
@@ -3748,6 +3926,62 @@ mod tests {
         let reloaded = load_from_str(&saved).expect("resaved map loads");
         assert_eq!(reloaded.nodes["0"].min_zoom_to_render, Some(0.25));
         assert_eq!(reloaded.nodes["0"].max_zoom_to_render, Some(4.0));
+    }
+
+    /// [`OMITTABLE_WHEN`] has to account for **every spelling the
+    /// loader accepts** for an omitted key, not only the ones some
+    /// fixture happens to use — the whole point of hand-modeling
+    /// the predicates is that the indexed pass can then be strict.
+    ///
+    /// `ColorOverrides::is_empty`'s entry tested `as_object()`
+    /// alone, which is `false` for `Value::Null`, one commit after
+    /// `"overrides": null` became legal input that the writer drops.
+    /// The first round-trip fixture to carry that spelling would
+    /// have been reported as authored-key loss on a file that is
+    /// correct in both directions.
+    ///
+    /// Each spelling is put through the real load and the real save
+    /// first, so the test proves the model matches the code rather
+    /// than restating the predicate against itself.
+    #[test]
+    fn test_the_omission_model_accounts_for_every_empty_overrides_spelling() {
+        let (_, omits) = OMITTABLE_WHEN
+            .iter()
+            .find(|(name, _)| *name == "ColorOverrides::is_empty")
+            .expect("the overrides predicate is modeled");
+
+        for spelling in [
+            "null",
+            "{}",
+            r#"{"background": null, "frame": null, "text": null, "title": null}"#,
+        ] {
+            let json = map_json_with_nodes(&node_json_with(
+                "0",
+                "null",
+                &format!(
+                    r#", "color_schema": {{"palette": "coral", "level": 0,
+                         "starts_at_root": true, "connections_colored": true,
+                         "overrides": {spelling}}}"#
+                ),
+            ));
+            let map = load_from_str(&json).unwrap_or_else(|e| panic!("`{spelling}` must load: {e}"));
+            let saved: Value =
+                serde_json::from_str(&saved_json(&map, "overrides-omission")).expect("valid JSON");
+            assert!(
+                saved["nodes"]["0"]["color_schema"].get("overrides").is_none(),
+                "`{spelling}` carries no override, so the writer omits the key"
+            );
+            assert!(
+                omits(&serde_json::from_str::<Value>(spelling).expect("valid JSON")),
+                "…and the omission model has to forgive `{spelling}`, or the next \
+                 round-trip fixture spelling it that way reports data loss"
+            );
+        }
+
+        assert!(
+            !omits(&serde_json::json!({"frame": "#020202"})),
+            "a channel the author named is not an omission the model forgives"
+        );
     }
 
     /// **The screen that used to false-positive.** `"text_runs":`
