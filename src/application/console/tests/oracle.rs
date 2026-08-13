@@ -221,19 +221,21 @@ fn test_console_oracle_completions_are_unchanged() {
 /// byte-pin would assert something about the machine rather than
 /// about the console. Pinned structurally instead.
 ///
-/// There are three because there are two completers: `font.rs`
-/// answers `font set <TAB>` and `border/complete.rs` answers
-/// `border font <TAB>` / `border font=<TAB>`, from separate
-/// bodies over the same iterator. This test drove only the second
-/// of them for a while and said "the two vocabularies" — so a
-/// sentinel planted in `font.rs` alone was invisible here, and
-/// `font set <TAB>` was absent from `COMPLETION_CORPUS`, absent
-/// from `EXEC_PREFIX_CORPUS`, and absent from the fallback that
-/// exists for exactly the rows those two leave out. The
-/// per-verb test in `font.rs` did catch it, so the suite was
-/// never actually blind; the hole was in the oracle's own account
-/// of what it covers, which is the thing a reader trusts when
-/// deciding a change is safe.
+/// There are three slots — `font set <TAB>`, `border font <TAB>`
+/// and `border font=<TAB>` — and this loop drives all three. It
+/// drove one of them for a while and said "the two vocabularies",
+/// so a sentinel planted in `font.rs` alone was invisible here,
+/// and `font set <TAB>` was absent from `COMPLETION_CORPUS`,
+/// absent from `EXEC_PREFIX_CORPUS`, and absent from the fallback
+/// that exists for exactly the rows those two leave out. Then it
+/// drove two while the doc claimed three, `border font=<TAB>`
+/// being covered by a per-verb test rather than structurally.
+///
+/// There is now one body behind all three (`font.rs`'s
+/// [`crate::application::console::commands::font::font_family_completions`]);
+/// there were two, and the quoting assertion below is what the
+/// second one lacked, so 43 of this host's 77 families tab-accepted
+/// into a line `border font` refused.
 #[test]
 fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
     let families: Vec<&str> = baumhard::font::fonts::loaded_families_iter().collect();
@@ -244,7 +246,7 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
 
     let doc = doc_for(Sel::Node);
     let ctx = ConsoleContext::from_document(&doc);
-    for line in ["border font ", "font set "] {
+    for line in ["border font ", "border font=", "font set "] {
         let rows = complete(line, line.len(), &ctx);
         assert_eq!(
             rows.iter().map(|c| c.display.as_str()).collect::<Vec<_>>(),
@@ -266,6 +268,20 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
                 c.font_family.as_deref(),
                 Some(c.display.as_str()),
                 "each family row of `{line}<TAB>` shapes its own label"
+            );
+            // Tab-accept has to produce a line the verb accepts.
+            // A family whose name carries whitespace is one token
+            // only when quoted, so the inserted text quotes it and
+            // the displayed label does not.
+            let want = if c.display.chars().any(char::is_whitespace) {
+                format!("\"{}\"", c.display)
+            } else {
+                c.display.clone()
+            };
+            assert_eq!(
+                c.text, want,
+                "`{line}<TAB>` must insert a parseable token for {:?}",
+                c.display
             );
         }
     }

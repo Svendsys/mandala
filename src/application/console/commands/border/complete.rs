@@ -11,6 +11,11 @@ use crate::application::console::completion::{
 };
 use crate::application::console::ConsoleContext;
 
+// The `font` verb owns the console's font-family vocabulary; every
+// border surface borrows it rather than re-deriving one. See that
+// function's doc for the quoting rule the copy here used to omit.
+use super::super::font::font_family_completions;
+
 pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     // The engine's `Token { index: N }` indexes positionals
     // *after* the verb name (`border`), which is exactly what
@@ -356,19 +361,6 @@ fn palette_value_completions(partial: &str, ctx: &ConsoleContext) -> Vec<Complet
     out
 }
 
-fn font_family_completions(partial: &str) -> Vec<Completion> {
-    let lower = partial.to_ascii_lowercase();
-    baumhard::font::fonts::loaded_families_iter()
-        .filter(|f| f.to_ascii_lowercase().starts_with(&lower))
-        .map(|family| Completion {
-            text: family.to_string(),
-            display: family.to_string(),
-            hint: None,
-            font_family: Some(family.to_string()),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,7 +501,12 @@ mod tests {
 
     /// `border font=<TAB>` reuses the font-family completer:
     /// every popup row carries `font_family = Some(<name>)` so
-    /// the renderer shapes the candidate label in that face.
+    /// the renderer shapes the candidate label in that face, and
+    /// the inserted `text` quotes a whitespace-bearing name so
+    /// tab-accept yields one token rather than two. This asserted
+    /// `font_family == text` while the border side ran its own
+    /// unquoting copy of the completer, which made the quoting
+    /// omission look like the invariant.
     /// Mirrors `font.rs::tests::completion_after_set_returns_loaded_families_in_their_face`.
     #[test]
     fn complete_font_value_rows_carry_family_tag() {
@@ -529,8 +526,18 @@ mod tests {
         for c in &out {
             assert_eq!(
                 c.font_family.as_deref(),
-                Some(c.text.as_str()),
+                Some(c.display.as_str()),
                 "every font-completion row must tag its display family"
+            );
+            let want = if c.display.chars().any(char::is_whitespace) {
+                format!("\"{}\"", c.display)
+            } else {
+                c.display.clone()
+            };
+            assert_eq!(
+                c.text, want,
+                "tab-accepting {:?} must insert one parseable token",
+                c.display
             );
         }
     }

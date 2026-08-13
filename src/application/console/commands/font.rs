@@ -169,7 +169,18 @@ fn kv_hint(key: &str) -> Option<&'static str> {
 /// quoted token, so a user mid-typing `font set "Nor` lands here
 /// with `partial = "Nor"`, not `"\"Nor"`. No leading-quote
 /// stripping is needed.
-fn font_family_completions(partial: &str) -> Vec<Completion> {
+///
+/// `pub(crate)` because this is the console's *only* font-family
+/// vocabulary, and the border family reaches it from seven slots:
+/// `border font <TAB>` / `font=<TAB>`, `canvas border font` in both
+/// forms, `canvas section-frame font=`, `section frame font=`, and
+/// `border preview font=`. Those ran on a byte-near copy in
+/// `border/complete.rs` that omitted the quoting above, so
+/// tab-accepting any of the whitespace-bearing families — 43 of the
+/// 77 this host loads — produced a line the verb then refused with
+/// "'DejaVu' is not a loaded font". One body, so the two cannot
+/// disagree about it again.
+pub(crate) fn font_family_completions(partial: &str) -> Vec<Completion> {
     let partial_lc = partial.to_ascii_lowercase();
     baumhard::font::fonts::loaded_families_iter()
         .filter(|f| f.to_ascii_lowercase().starts_with(&partial_lc))
