@@ -29,9 +29,12 @@
 //!   does, and the oracle corpus pins the pair.
 //!
 //! What makes the first bullet checkable rather than aspirational
-//! is [`super::tests::oracle_corpus`]: every verb whose subverb
+//! is `console::tests::oracle_corpus`: every verb whose subverb
 //! dispatch normalizes carries an upper-case corpus row beside its
-//! lower-case one.
+//! lower-case one. (Named rather than linked — the module is
+//! `#[cfg(test)]`, so rustdoc cannot see it even under
+//! `--document-private-items`, and an intra-doc link to it fails
+//! the `-D warnings` doc gate.)
 //!
 //! # Usage and tags are hand-written
 //!
