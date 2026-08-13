@@ -240,9 +240,10 @@ pub struct SidePatternQuad {
 /// Which `ColorGroup` channel the border cycles through when a
 /// `color_palette` is bound. Defaults to [`PaletteField::Frame`]
 /// because frame is the channel whose meaning matches the border
-/// today (`resolve_theme_colors` writes the same field into the
-/// resolved colors). Open seam — adding a new variant here is a
-/// localized change.
+/// today — the same channel
+/// [`MindMap::node_frame_color`](crate::mindmap::model::MindMap::node_frame_color)
+/// hands the single-color path as its cascade base. Open seam —
+/// adding a new variant here is a localized change.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum PaletteField {
     /// Cycle the border across each `ColorGroup`'s `frame`
@@ -1149,7 +1150,22 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 /// 1. Per-node `GlyphBorderConfig` (the `cfg` arg).
 /// 2. Canvas-level default (the `canvas_default` arg).
 /// 3. Hardcoded preset / font / size defaults (light, system,
-///    14 pt, the resolved `frame_color`).
+///    14 pt, the resolved frame color).
+///
+/// **The `color` field has one more tier than the others**, and it
+/// sits between 1 and 2. A node's *own* frame color — its palette
+/// group's `frame`, or a per-node override of it, passed as
+/// `themed` — is per-node, and a map-wide `canvas.default_border`
+/// is not, so the theme wins. Without that placement a single
+/// `canvas border color=#888888` flattens every palette-derived
+/// frame in the document and no per-node edit short of an explicit
+/// `border color` can recover one. `style_frame_color` is the
+/// floor beneath all of it, which is why it is a plain `&str`:
+/// `NodeStyle` always carries one, so a tier under it could never
+/// win. Resolve `themed` with
+/// [`MindMap::node_frame_theme_tier`](crate::mindmap::model::MindMap::node_frame_theme_tier)
+/// — passing `None` by hand means "this node has no theme", which
+/// is a claim rather than a default.
 ///
 /// Pattern parse errors on a configured side fall back to the
 /// preset's side glyph for that side and emit a `log::warn!` —
@@ -1158,7 +1174,8 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 pub fn resolve_border_style(
     cfg: Option<&GlyphBorderConfig>,
     canvas_default: Option<&GlyphBorderConfig>,
-    frame_color_resolved: &str,
+    themed: Option<&str>,
+    style_frame_color: &str,
 ) -> BorderStyle {
     // Field-by-field cascade. `cfg` takes precedence; if a key
     // sits at a meaningful default in `cfg` (e.g. the
@@ -1188,9 +1205,17 @@ pub fn resolve_border_style(
 
     let font_name = chosen.and_then(|c| c.font.clone());
     let font_size_pt = chosen.map(|c| c.font_size_pt).unwrap_or(14.0);
-    let color = chosen
+    // The one field whose cascade is not `chosen`-shaped. An
+    // explicit per-node `border.color` still wins; below it the
+    // node's own theme outranks the map-wide default, and
+    // `style_frame_color` is the floor. `chosen` cannot express
+    // that, because it has already collapsed the per-node and
+    // canvas tiers into one.
+    let color = cfg
         .and_then(|c| c.color.clone())
-        .unwrap_or_else(|| frame_color_resolved.to_string());
+        .or_else(|| themed.map(str::to_string))
+        .or_else(|| canvas_default.and_then(|c| c.color.clone()))
+        .unwrap_or_else(|| style_frame_color.to_string());
     let color_palette = chosen.and_then(|c| c.color_palette.clone());
     let palette_field =
         PaletteField::from_str_or_default(chosen.and_then(|c| c.color_palette_field.as_deref()));
@@ -1291,7 +1316,10 @@ pub fn resolve_section_frame_border(
         .as_ref()
         .or(canvas_default)
         .unwrap_or_else(|| section_frame_floor_config(focused));
-    resolve_border_style(Some(chosen), None, frame_color_resolved)
+    // `None` for the theme tier: `chosen` has already collapsed
+    // the per-section and canvas-section-frame tiers, and there is
+    // no canvas default left for a theme to outrank.
+    resolve_border_style(Some(chosen), None, None, frame_color_resolved)
 }
 
 /// Hardcoded fallback `GlyphBorderConfig` for section frames when

@@ -192,7 +192,25 @@ path and move the result into place yourself.
    defined once; per-node `color_schema` becomes a lightweight reference.
    The `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
-   `"coral-v3"`).
+   `"coral-v3"`). A negative `level` is floored to 0 with a message —
+   the model types it `usize`, so emitting one would produce a file
+   this tool could not read back.
+
+   **The hoisted palette is authoritative at render time.** The
+   converter leaves each node's `style` colors where it found them,
+   but they are now the *fallback*: a node carrying a `color_schema`
+   draws its fill, frame and text from the palette group
+   (see [palettes.md](./palettes.md)), and its `style` colors are what
+   it would use if the schema were removed. A converted map whose
+   `style` values were hand-edited away from the palette after
+   conversion will therefore render from the palette, not from the
+   edits. Three fixes, most specific first: move the edit into that
+   node's `color_schema.overrides`, which excepts one channel on one
+   node and is where `color bg=…`, the glyph-wheel picker and every
+   other interactive setter already write; edit the palette, when
+   what drifted was the theme rather than the one node; or drop the
+   `color_schema` from the nodes that were deliberately detached,
+   which returns them to their `style` colors wholesale.
 5. **Removes `index`** from each node (sibling order derives from the new
    Dewey ID).
 6. **Adds `channel: 0`** to each node (the default).

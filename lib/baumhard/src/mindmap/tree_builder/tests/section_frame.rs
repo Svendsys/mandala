@@ -32,7 +32,7 @@ fn floor_style(focused: bool) -> BorderStyle {
         color_palette: None,
         color_palette_field: None,
     };
-    resolve_border_style(Some(&cfg), None, "#00E5FF")
+    resolve_border_style(Some(&cfg), None, None, "#00E5FF")
 }
 
 fn frame(node_id: &str, idx: usize, focused: bool) -> SectionFrameElement {
@@ -140,7 +140,7 @@ fn test_section_frame_tree_custom_preset_renders_author_glyphs() {
         color_palette: None,
         color_palette_field: None,
     };
-    let style = resolve_border_style(Some(&cfg), None, "#00E5FF");
+    let style = resolve_border_style(Some(&cfg), None, None, "#00E5FF");
     let elem = SectionFrameElement {
         node_id: "n".into(),
         section_idx: 0,
@@ -220,7 +220,7 @@ fn test_section_frame_tree_supports_prefix_fill_suffix_pattern() {
         color_palette: None,
         color_palette_field: None,
     };
-    let style = resolve_border_style(Some(&cfg), None, "#00E5FF");
+    let style = resolve_border_style(Some(&cfg), None, None, "#00E5FF");
     let elem = SectionFrameElement {
         node_id: "n".into(),
         section_idx: 0,
@@ -343,8 +343,8 @@ fn test_section_frame_identity_sequence_changes_on_pattern_change() {
     if let Some(g) = cfg_b.glyphs.as_mut() {
         g.top = "B".into();
     }
-    let style_a = resolve_border_style(Some(&cfg_a), None, "#00E5FF");
-    let style_b = resolve_border_style(Some(&cfg_b), None, "#00E5FF");
+    let style_a = resolve_border_style(Some(&cfg_a), None, None, "#00E5FF");
+    let style_b = resolve_border_style(Some(&cfg_b), None, None, "#00E5FF");
     let a = SectionFrameElement {
         border_style: style_a,
         ..frame("n", 0, false)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Section text / colour / font / runs / payload setters. Every
+//! Section text / color / font / runs / payload setters. Every
 //! setter in this file routes through the shared envelope in
 //! `undo_envelope.rs` — `mutate_section_with_style_undo` for the
 //! formatting-only edits, `mutate_section_with_text_undo` for the
@@ -41,6 +41,12 @@ impl MindMapDocument {
         if new_regions.all_regions().is_empty() {
             return self.set_section_text(node_id, section_idx, new_text);
         }
+        // The pixel value a colorless run is painted in, so the
+        // converter can tell "this run still defers to the node's
+        // text color" from "this run was deliberately recolored".
+        // Without it a single keystroke in the inline editor bakes
+        // every theme-following run on the node into a literal hex.
+        let theme_text_rgba = self.mindmap.node_text_rgba(node);
         let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
         let new_runs: Vec<TextRun> = new_regions
             .all_regions()
@@ -51,7 +57,7 @@ impl MindMapDocument {
                     region.range.start,
                     region.range.end,
                 );
-                super::super::custom::sync::region_to_text_run(region, prior)
+                super::super::custom::sync::region_to_text_run(region, prior, theme_text_rgba)
             })
             .collect();
         self.mutate_section_with_text_undo(node_id, section_idx, NodeEditTail::Grow, move |s| {
@@ -155,18 +161,26 @@ impl MindMapDocument {
     }
 
     /// Rewrite every run on the section that matches the cascade
-    /// predicate (unanimous run colour, or the node's
-    /// `style.text_color` default) to `color`. Mixed-colour
-    /// sections preserve their non-predicate runs. The node's own
-    /// `style.text_color` is never touched.
+    /// predicate (unanimous run color, or the node's effective
+    /// text color) to `color`. Mixed-color sections preserve
+    /// their non-predicate runs. The node's own text color — its
+    /// palette override or its `style.text_color` — is never
+    /// touched: this setter is section-scoped, and its siblings
+    /// must keep following the node.
     pub fn set_section_text_color(&mut self, node_id: &str, section_idx: usize, color: String) -> bool {
-        // The predicate's fallback is the *node's*
-        // `style.text_color`, so this one reaches for the
-        // node-scoped envelope rather than the section wrapper.
+        // The predicate's fallback is the *node's* effective text
+        // color, so this one reaches for the node-scoped envelope
+        // rather than the section wrapper. Read through the
+        // cascade, not off `style`: on a themed node
+        // `style.text_color` is a value the palette shadows, and
+        // runs baked from the palette would never match it.
         // `NodeEditTail::None`: color never shifts a glyph
         // advance.
+        let Some(read_node) = self.mindmap.nodes.get(node_id) else {
+            return false;
+        };
+        let node_default = self.mindmap.node_text_color(read_node).to_string();
         self.mutate_node_with_style_undo(node_id, NodeEditTail::None, move |node| {
-            let node_default = node.style.text_color.clone();
             let section = node.sections.get_mut(section_idx)?;
             let predicate_color = section
                 .text_runs
@@ -245,14 +259,14 @@ impl MindMapDocument {
     // Range-aware mirrors of the uniform setters above; route
     // through `text_run_ops::mutate_in_range`.
 
-    /// Set the text colour on a sub-range of one section's text.
+    /// Set the text color on a sub-range of one section's text.
     /// Bounded sibling of [`Self::set_section_text_color`] — that
     /// setter rewrites every run uniformly, this one targets
     /// `[range_start, range_end)` graphemes only. Ranges that
     /// partially or wholly cross uncovered gaps fill the gap
     /// with a fresh run inheriting the section / node cascade
-    /// defaults plus the new colour, so the user's "make these
-    /// graphemes red" intent is honoured even where no run
+    /// defaults plus the new color, so the user's "make these
+    /// graphemes red" intent is honored even where no run
     /// exists today.
     ///
     /// `range_end` is clamped to the section's grapheme count;
@@ -268,7 +282,7 @@ impl MindMapDocument {
         range_end: usize,
         color: String,
     ) -> bool {
-        // Text colour doesn't affect glyph advance — no grow.
+        // Text color doesn't affect glyph advance — no grow.
         self.mutate_section_runs_in_range(
             node_id,
             section_idx,
@@ -381,9 +395,13 @@ impl MindMapDocument {
     /// Range-setter pre-flight: clamps `range_end` to the
     /// section's grapheme count and builds the gap-fill
     /// template from the section's first run (cascade source)
-    /// or the authoring defaults recolored to the node's
-    /// `style.text_color` when the section has no runs. Caller
-    /// overwrites the one attribute it's setting.
+    /// or the authoring defaults when the section has no runs.
+    /// Caller overwrites the one attribute it's setting.
+    ///
+    /// The defaults leave `color` empty on purpose — a `bold` over
+    /// a range must not decide the color of the graphemes it
+    /// fills, and empty is the spelling that leaves the node's
+    /// text color (palette or `style`) in charge.
     fn clamp_range_and_build_template(
         &self,
         node_id: &str,
@@ -394,10 +412,11 @@ impl MindMapDocument {
         let section = node.sections.get(section_idx)?;
         let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
         let clamped_end = range_end.min(total);
-        let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
-            color: node.style.text_color.clone(),
-            ..default_text_run(0)
-        });
+        let template = section
+            .text_runs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| default_text_run(0));
         Some((clamped_end, template))
     }
 

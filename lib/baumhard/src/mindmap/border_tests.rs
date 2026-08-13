@@ -405,7 +405,7 @@ mod tests {
     /// explicit border config.
     #[test]
     fn resolve_border_style_with_no_overrides_uses_light_preset() {
-        let style = resolve_border_style(None, None, "#abcdef");
+        let style = resolve_border_style(None, None, None, "#abcdef");
         let expected = BorderGlyphSet::box_drawing_light();
         assert_eq!(style.corners.top_left, expected.top_left.to_string());
         assert_eq!(style.corners.top_right, expected.top_right.to_string());
@@ -495,7 +495,7 @@ mod tests {
         // resolver doesn't take one.
         for frame_color in ["#ffffff", "#123456", ""] {
             for (per_node, canvas_default) in cases {
-                let full = resolve_border_style(per_node, canvas_default, frame_color).font_size_pt;
+                let full = resolve_border_style(per_node, canvas_default, None, frame_color).font_size_pt;
                 let cheap = resolve_border_font_size_pt(per_node, canvas_default);
                 assert!(
                     (full - cheap).abs() < f32::EPSILON,

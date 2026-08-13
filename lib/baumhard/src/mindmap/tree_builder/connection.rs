@@ -401,7 +401,7 @@ pub fn build_connection_elements(
             // The color we STORE in the cache is the resolved-but-unselected
             // color. Selection overrides are applied at read time above so
             // selection changes don't invalidate the cache.
-            resolve_var(edge.body_color(&map.canvas), vars).to_string()
+            resolve_var(map.edge_body_color(edge), vars).to_string()
         };
         let color = if let Some(p) = preview_for_this_edge {
             resolve_var(p, vars).to_string()
@@ -500,7 +500,7 @@ pub fn build_connection_elements(
 /// destroyed by opening a file.
 ///
 /// A uniform hash grid, because the query is "does any AABB contain
-/// this point" rather than a range or a nearest-neighbour search: the
+/// this point" rather than a range or a nearest-neighbor search: the
 /// point falls in exactly one cell, and only that cell's occupants can
 /// contain it. Occupied cells only, so an empty region of a
 /// `MAX_CANVAS_COORD`-wide canvas costs nothing.

@@ -103,7 +103,8 @@ pub struct ResolvedPortalTextStyle {
 
 /// Resolve the per-endpoint portal marker style. Merges the color
 /// cascade (preview > whole-edge-select > per-label-select >
-/// per-endpoint override > edge-level override > edge.color),
+/// per-endpoint override > edge-level override > source-node
+/// palette stroke > edge.color),
 /// picks a visible glyph, and produces a **canvas-space**
 /// font size already compensated for camera zoom the same way
 /// line-mode connections do (see
@@ -118,11 +119,15 @@ pub struct ResolvedPortalTextStyle {
 ///
 /// `raw_color_override` is the preview / selection hex already
 /// resolved by the caller; `None` means "no transient override".
+/// `themed` is the palette tier of the edge color cascade —
+/// resolve it with
+/// [`MindMap::edge_theme_stroke_color`](crate::mindmap::model::MindMap::edge_theme_stroke_color).
 pub fn resolve_portal_endpoint_style(
     edge: &MindEdge,
     endpoint_state: Option<&PortalEndpointState>,
     canvas: &Canvas,
     raw_color_override: Option<&str>,
+    themed: Option<&str>,
     camera_zoom: f32,
 ) -> ResolvedPortalStyle {
     let cfg = GlyphConnectionConfig::resolved_for(edge, canvas);
@@ -168,7 +173,7 @@ pub fn resolve_portal_endpoint_style(
     // visible; the committed cascade below them is
     // `MindEdge::portal_endpoint_color`'s.
     let raw_color: &str =
-        raw_color_override.unwrap_or_else(|| edge.portal_endpoint_color(canvas, endpoint_state));
+        raw_color_override.unwrap_or_else(|| edge.portal_endpoint_color(canvas, endpoint_state, themed));
 
     ResolvedPortalStyle {
         glyph,

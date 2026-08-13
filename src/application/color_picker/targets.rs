@@ -23,7 +23,7 @@ pub enum NodeColorAxis {
 }
 
 /// Which visual axis on a section the picker should write to. Today
-/// sections only have a text colour axis (no bg/border chrome by
+/// sections only have a text color axis (no bg/border chrome by
 /// spec — see `format/sections.md` and the `HasBgColor` /
 /// `HasBorderColor` trait arms in `console/traits/view.rs`).
 /// Single-variant on purpose so adding `Bg` / `Border` later (only
@@ -136,10 +136,33 @@ impl ColorTarget {
     }
 }
 
+/// One node axis read through the palette cascade — the same
+/// funnel the renderer projects from, so the picker seeds on the
+/// color the node is actually drawn in.
+fn node_axis_color<'a>(
+    doc: &'a MindMapDocument,
+    node: &'a baumhard::mindmap::model::MindNode,
+    axis: NodeColorAxis,
+) -> &'a str {
+    match axis {
+        NodeColorAxis::Bg => doc.mindmap.node_background_color(node),
+        NodeColorAxis::Text => doc.mindmap.node_text_color(node),
+        NodeColorAxis::Border => doc.mindmap.node_frame_color(node),
+    }
+}
+
 /// Read the current color string for a handle. Used to seed picker
 /// HSV at open time and to read the effective color for the
 /// preview after a chip action. Returns `None` if the index / id
 /// no longer resolves.
+///
+/// **Effective**, not authored: every node / section arm reads
+/// through the palette cascade
+/// (`MindMap::node_background_color` and its three siblings)
+/// rather than off `node.style`. On a themed node those differ —
+/// `style` is the tier the palette shadows — and seeding the
+/// picker from `style` opens the wheel on a color the node is not
+/// drawn in, so the user's first hover is a jump.
 pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<String> {
     match handle {
         PickerHandle::Edge(index) => {
@@ -153,11 +176,7 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
         }
         PickerHandle::Node { id, axis } => {
             let n = doc.mindmap.nodes.get(id)?;
-            Some(match axis {
-                NodeColorAxis::Bg => n.style.background_color.clone(),
-                NodeColorAxis::Text => n.style.text_color.clone(),
-                NodeColorAxis::Border => n.style.frame_color.clone(),
-            })
+            Some(node_axis_color(doc, n, *axis).to_string())
         }
         PickerHandle::Section {
             node_id,
@@ -180,13 +199,13 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
                         // span the entire `[rs, re)` with no gaps
                         // for "unanimous" to be meaningful — a
                         // partially-covered range mixes the
-                        // covered run's colour with the gap's
+                        // covered run's color with the gap's
                         // node-default fall-through, so the
-                        // user's effective colour in the range
+                        // user's effective color in the range
                         // is *not* unanimous. Without this
                         // check, a single in-range run would
                         // pass the trivial `iter().all` and
-                        // seed the picker with the wrong colour.
+                        // seed the picker with the wrong color.
                         let fully_covered = in_range
                             .first()
                             .is_some_and(|first| first.start == *rs)
@@ -203,18 +222,20 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
                         if unanimous {
                             in_range
                                 .first()
+                                .filter(|r| !r.color.is_empty())
                                 .map(|r| r.color.clone())
-                                .unwrap_or_else(|| n.style.text_color.clone())
+                                .unwrap_or_else(|| doc.mindmap.node_text_color(n).to_string())
                         } else {
-                            n.style.text_color.clone()
+                            doc.mindmap.node_text_color(n).to_string()
                         }
                     }
                     None => section
                         .text_runs
                         .first()
                         .filter(|first| section.text_runs.iter().all(|r| r.color == first.color))
+                        .filter(|first| !first.color.is_empty())
                         .map(|r| r.color.clone())
-                        .unwrap_or_else(|| n.style.text_color.clone()),
+                        .unwrap_or_else(|| doc.mindmap.node_text_color(n).to_string()),
                 },
             };
             Some(resolved)

@@ -360,7 +360,7 @@ untouched and never reported as unrecognized. See
 | `layout` | object | How this node's *children* are arranged |
 | `folded` | bool | If `true`, hide the subtree below this node |
 | `notes` | string | Free-form notes; empty string when none |
-| `color_schema` | object\|null | Palette reference — see [palettes.md](./palettes.md) |
+| `color_schema` | object\|null | Palette reference plus this node's own exceptions to it (`overrides`) — see [palettes.md](./palettes.md) |
 | `channel` | integer | Mutation channel — see [channels.md](./channels.md); defaults to 0 |
 | `trigger_bindings` | array | Event→mutation bindings attached to this node |
 | `inline_mutations` | array | Node-local custom mutation definitions |
@@ -388,13 +388,22 @@ untouched and never reported as unrecognized. See
 |---|---|---|
 | `background_color` | string | `#RRGGBB`, empty (`""` for transparent), or `var(--name)` |
 | `frame_color` | string | Border color |
-| `text_color` | string | Base text color |
+| `text_color` | string | Base text color — the section default, which a `TextRun`'s own `color` overrides |
 | `shape` | string | See [enums.md](./enums.md) |
 | `corner_radius_percent` | number | 0–100 |
 | `frame_thickness` | number | Border width in pixels |
 | `show_frame` | bool | Whether to render the border |
 | `show_shadow` | bool | Whether to render a drop shadow |
 | `border` | object\|null | `GlyphBorderConfig`; optional per-node override |
+
+The three color fields are the **fallback** tier. A node carrying a
+`color_schema` takes its fill, frame and text from the referenced
+palette group instead — or from `color_schema.overrides` where that
+node has excepted a channel by hand — and these values are what it
+would fall back to if the schema were removed. They are *not* where
+a per-node recolor lands on a themed node; that is
+`color_schema.overrides`, because the read path never consults
+`style` while a theme is bound. See [palettes.md](./palettes.md).
 
 ## NodeLayout
 
@@ -469,9 +478,28 @@ node-level `text_runs` after the section refactor.
 | Field | Type | Notes |
 |---|---|---|
 | `palette` | string | Key into `map.palettes` |
-| `level` | integer | Depth from schema root; indexes `palette.groups` |
-| `starts_at_root` | bool | Whether level-0 applies to the root or its children |
-| `connections_colored` | bool | Whether edges inherit palette colors |
+| `level` | non-negative integer | Depth from schema root; indexes `palette.groups`, clamped to the last group |
+| `starts_at_root` | bool | `false` leaves the schema root on its own `style` and shifts the index down one |
+| `connections_colored` | bool | Whether edges *leaving* this node take this node's frame tier — `overrides.frame`, else the group's `frame` — as their stroke |
+
+`level` is a `usize`: a negative value is not a deep subtree, it is a
+typo, and the loader rejects the file rather than silently clamping it
+to the palette's last group (which is what the previous signed field
+did, by way of an `as usize` wrap).
+
+`overrides` is an optional object with the same four channel names
+as a `ColorGroup` (`background`, `frame`, `text`, `title`), each an
+optional `#RRGGBB` / `var(--name)` string. A channel present here is
+this node's own color and outranks the group; the key is omitted
+entirely when nothing is overridden, and an explicit `null` reads
+the same as omitting it. It is where the interactive color setters
+write on a themed node, and a `reset` on one of them drops the
+channel back out.
+
+An **empty** string is a hole rather than a color on `frame`,
+`text` and `title`, exactly as it is in a `ColorGroup`: the reader
+skips the tier. Only `background` carries one as a value, where it
+means "no fill".
 
 See [palettes.md](./palettes.md) for resolution semantics.
 
@@ -487,7 +515,23 @@ See [palettes.md](./palettes.md) for resolution semantics.
 ```
 
 Each `ColorGroup` is `{ background, frame, text, title }` as `#RRGGBB`
-strings. The `groups` array is indexed by the node's `color_schema.level`.
+strings. The `groups` array is indexed by the node's
+`color_schema.level`. `background`, `frame` and `text` stand in for the
+node's `style.background_color` / `frame_color` / `text_color`;
+`title` stands in for `text` on the first line of the node's first
+section.
+
+An empty string means **"no palette value here"** in three of the four
+channels — `frame`, `text` and `title` — and the node falls through to
+the tier below (`style.frame_color`, `style.text_color`, and the text
+role respectively). `background` is the exception and passes its empty
+string through verbatim, because there empty is the format's "no fill,
+let the canvas show through" spelling. The asymmetry is the point: a
+transparent fill is a thing an author can want, while a transparent
+frame is spelled `show_frame: false` and transparent text is not a
+thing at all — an empty value in those channels reaches the color
+parser and paints opaque black, discarding the `style` value it was
+supposed to be shadowing.
 
 ## Edge
 

@@ -106,6 +106,7 @@ impl MindMapDocument {
                 UndoAction::EditNodeStyle {
                     node_id,
                     before_style,
+                    before_color_schema,
                     before_sections,
                     before_position,
                     before_size,
@@ -113,6 +114,7 @@ impl MindMapDocument {
                 } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.style = before_style;
+                        node.color_schema = before_color_schema;
                         node.sections = before_sections;
                         node.position = before_position;
                         node.size = before_size;

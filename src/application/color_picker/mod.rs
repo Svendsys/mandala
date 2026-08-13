@@ -12,7 +12,7 @@
 //! commits, Esc cancels.
 //!
 //! The picker wires to `MindEdge.color` (via `set_edge_color`) and the
-//! three node colour axes. Portal-mode edges flow through the same
+//! three node color axes. Portal-mode edges flow through the same
 //! `set_edge_color` sink as line-mode edges — portals are a render mode
 //! on the same entity, so there's no separate portal setter. Node
 //! colors and theme-variable editing become a follow-up session.

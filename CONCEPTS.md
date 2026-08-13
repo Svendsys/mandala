@@ -1185,7 +1185,7 @@ field reference in [`format/schema.md`](./format/schema.md). Author
 owns non-overlap of node AABBs; the model does no collision
 checking. The tree builder excludes folded subtrees from the
 display tree; the underlying data persists either way. The node
-container materialises as a chrome-only `GfxElement::GlyphArea`
+container materializes as a chrome-only `GfxElement::GlyphArea`
 in the runtime tree, with the section subtree appended as
 children — see [tree builder](#tree-builder).
 
@@ -1304,17 +1304,61 @@ whole map" into a single edit. Each palette is an array of
 it pulls from. Level-clamping (last group when out of range) makes
 deep subtrees degrade gracefully.
 
-`lib/baumhard/src/mindmap/model/palette.rs`. A node's binding
-lives in its optional `color_schema` field, a `ColorSchema`
-record with `palette: String` (the key into `map.palettes`),
-`level: usize` (which `ColorGroup` to pull from), and two
+`lib/baumhard/src/mindmap/model/palette.rs`, with the cascade
+itself in `model/theme.rs`. A node's binding lives in its
+optional `color_schema` field, a `ColorSchema` record with
+`palette: String` (the key into `map.palettes`),
+`level: usize` (which `ColorGroup` to pull from), two
 flags — `starts_at_root` (does level 0 apply to the schema
 root or to its children?) and `connections_colored` (do edges
-inherit the palette stroke color?). `resolve_theme_colors` on
-`MindMap` does the lookup; out-of-range `level` clamps to the
-last group rather than failing. Validation requires every
-referenced palette to exist with at least one group. Full
-reference: [`format/palettes.md`](./format/palettes.md).
+leaving this node inherit the palette stroke color?) — and
+`overrides`, a `ColorOverrides` record of four optional strings
+naming this node's own exceptions to the group.
+`resolve_theme_colors` on `MindMap` does the lookup;
+out-of-range `level` clamps to the last group rather than
+failing, and `starts_at_root: false` leaves the schema root
+itself unresolved so its own `style` stands. Validation
+requires every referenced palette to exist with at least one
+group.
+
+The cascade is **override first, palette second, `style`
+third**, and the
+projection passes read it through four sibling helpers —
+`node_background_color`, `node_frame_color`,
+`node_text_color`, `node_title_color` — plus
+`edge_theme_stroke_color`, which supplies the themed tier of
+[`MindEdge`](#mindedge)'s color cascade for an edge whose
+source node sets `connections_colored`. That helper reads
+`node_frame_theme_tier` — the same one the border ladder
+reads — so an `overrides.frame` reaches an edge exactly as it
+reaches the node's own frame, and an empty frame is a hole on
+both. Anything more specific
+than the node still wins: a `TextRun` naming its own color, a
+`border.color` override, a per-edge `glyph_connection.color`.
+
+The `overrides` tier is what makes the theme *editable per
+node*. A direct "make this one green" is more specific than an
+inherited theme and has to win, and it cannot land in `style`:
+`style` is the tier the palette shadows, and every migrated
+node carries baked `style` colors that are stale copies of its
+own theme, so a `style` write would report success and change
+nothing on screen. `set_node_bg_color` /
+`set_node_border_color` / `set_node_text_color` therefore write
+`color_schema.overrides` on a themed node and `style` on an
+unthemed one, through one shared
+`set_node_color_channel`; `UndoAction::EditNodeStyle` carries
+`before_color_schema` so undo puts the node back on its
+palette.
+
+A tier you can write is only half a tier: each of the three
+setters takes an `Option`, and `None` — what `color bg=reset`
+and the empty string on a non-fill channel both resolve to —
+*drops* the override so the group shows through again, rather
+than storing the authoring literal that would pin the node off
+its theme forever. On an unthemed node there is nothing below
+`style`, so the same `None` names the authoring default
+instead. Full reference:
+[`format/palettes.md`](./format/palettes.md).
 
 Animated palette transitions are the seam — the data
 shape is already mutation-friendly; the runtime would need to
@@ -1446,7 +1490,13 @@ Fields: `body: String` (default mid-dot `·`), `cap_start` /
 `cap_end: Option<String>`, `font: Option<String>`, `font_size_pt:
 f32`, `min_font_size_pt` / `max_font_size_pt: Option<f32>`,
 `color: Option<String>`. Color cascade priority (highest
-first): edge-label → `glyph_connection.color` → `edge.color`.
+first): edge-label → `glyph_connection.color` → the source
+node's frame tier (`overrides.frame`, else its palette group's
+`frame`) → `canvas.default_connection.color` → `edge.color`.
+The theme sits above the canvas default because it is per-node
+and the default is map-wide, and the frame tier is the one
+`MindMap::node_frame_theme_tier` also hands the node's border
+resolver, so a per-node frame override moves both.
 `effective_font_size_pt(zoom)` is the helper callers reach for
 to derive the clamped screen-space size.
 
@@ -1578,7 +1628,7 @@ walks the parent chain at O(depth) per call.
 
 Projects a `MindMap` into a Baumhard
 `Tree<GfxElement, GfxMutator>` mirroring the parent-child
-structure, with each `MindNode` materialising as a three-deep
+structure, with each `MindNode` materializing as a three-deep
 subtree (container + section-areas + section-models).
 
 Mutations need a `Tree` to walk against. The
@@ -2954,7 +3004,7 @@ styling, settings, and document operations.
 Power-user operations that don't have a
 keybind. The console covers the long tail: zoom-bound
 authoring, font-size clamps, palette swaps, mutation listing
-and application, FPS toggle. Tokenised shell-style
+and application, FPS toggle. Tokenized shell-style
 (whitespace-split, `"quoted"` preserves spaces, `key=value`
 first-class). Tab-completion is contextual and prefix-matched;
 scrollback shows command history with dimmed older lines.
@@ -3009,7 +3059,7 @@ param + `localStorage`. Partial configs merge via serde
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
-parameterised console verbs so a user can bind e.g. `Ctrl+B` →
+parameterized console verbs so a user can bind e.g. `Ctrl+B` →
 `SetBorderField { field: "preset", value: "rounded" }` directly
 in `keybinds.json` without authoring a macro. Bindings use a
 sibling `ParametricBinding` shape:

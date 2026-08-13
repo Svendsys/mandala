@@ -43,6 +43,7 @@ use crate::gfx_structs::tree::Tree;
 use crate::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
 use crate::mindmap::model::{ChildIndex, MindMap, MindNode, MindSection};
 use crate::util::color::{self, Color as BaumhardColor};
+use crate::util::grapheme_chad;
 use glam::Vec2;
 
 /// Nominal font scale, in points, for a mindmap `GlyphArea` with
@@ -76,16 +77,19 @@ pub const DEFAULT_SECTION_FONT_SCALE: f32 = 14.0;
 /// and zero shaped buffers — the historical visual cost of an
 /// untextured node.
 ///
-/// `canvas_default_border` cascades into `background_padding` so
+/// The canvas default border cascades into `background_padding` so
 /// the fill extends out to the surrounding border glyphs (drawn
 /// by the per-role border subtree). Same math as before the
 /// section refactor; only the *target* of the math moved from
 /// the text-bearing area to the chrome-only container.
-pub(super) fn mindnode_container_area(
-    node: &MindNode,
-    vars: &HashMap<String, String>,
-    canvas_default_border: Option<&crate::mindmap::model::GlyphBorderConfig>,
-) -> GlyphArea {
+///
+/// Takes the whole `map` rather than the two canvas fields it
+/// reads because fill and frame both resolve through the palette
+/// cascade ([`MindMap::node_background_color`],
+/// [`MindMap::node_frame_color`]), which needs `map.palettes`.
+pub(super) fn mindnode_container_area(map: &MindMap, node: &MindNode) -> GlyphArea {
+    let vars = &map.canvas.theme_variables;
+    let canvas_default_border = map.canvas.default_border.as_ref();
     // Container metrics: scale and line_height are nominal — no
     // glyphs render here, but the area still needs valid metrics
     // so the subtree-AABB cache stays well-defined.
@@ -112,11 +116,15 @@ pub(super) fn mindnode_container_area(
     // is the natural carrier because a section sits *inside* the
     // node AABB and never touches the surrounding border.
     if node.style.show_frame && shape == NodeShape::Rectangle {
-        let frame_color_resolved = color::resolve_var(&node.style.frame_color, vars);
+        let themed_frame = map
+            .node_frame_theme_tier(node)
+            .map(|c| color::resolve_var(c, vars));
+        let style_frame = color::resolve_var(&node.style.frame_color, vars);
         let border_style = resolve_border_style(
             node.style.border.as_ref(),
             canvas_default_border,
-            frame_color_resolved,
+            themed_frame,
+            style_frame,
         );
         let fs = border_style.font_size_pt;
         let acw = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
@@ -134,7 +142,7 @@ pub(super) fn mindnode_container_area(
     // empty / parse-fail / fully-transparent → `None` (canvas
     // shows through); otherwise pack as u8 RGBA.
     area.background_color = {
-        let raw = &node.style.background_color;
+        let raw = map.node_background_color(node);
         if raw.is_empty() {
             None
         } else {
@@ -159,11 +167,17 @@ pub(super) fn mindnode_container_area(
 /// directly into a cosmic-text buffer keyed by the area's
 /// `unique_id`. Inherits the owning node's zoom window so a
 /// section never outlives its node at any zoom level.
+///
+/// `section_idx` is the section's position in
+/// [`MindNode::sections`] — index 0 is the node's title stratum,
+/// the only one the palette's `title` channel reaches.
 pub(super) fn mindnode_section_area(
+    map: &MindMap,
     node: &MindNode,
     section: &MindSection,
-    vars: &HashMap<String, String>,
+    section_idx: usize,
 ) -> GlyphArea {
+    let vars = &map.canvas.theme_variables;
     // Effective scale: pick the *largest* run size so a multi-run
     // section with a small first run and a 96pt later run gets a
     // line-height tall enough to keep the larger glyphs from
@@ -204,13 +218,21 @@ pub(super) fn mindnode_section_area(
     // family resolves to `None` (cosmic-text picks; warns at
     // attrs-build time).
     //
-    // A section without runs keeps its `regions` empty, which the
-    // renderer interprets as "use defaults" — `node.style.text_color`
-    // never enters the region table.
+    // A run that names no color of its own inherits the node's
+    // section-level default — the palette group's `text` when the
+    // node is themed, `style.text_color` otherwise. That is the
+    // contract `MindSection` and `TextRun` have always documented;
+    // before the palette cascade was wired it was `hex_to_rgba_safe`
+    // that answered, and it answered black.
+    let node_text_rgba = map.node_text_rgba(node);
     let mut regions = ColorFontRegions::new_empty();
     for run in &section.text_runs {
-        let resolved = color::resolve_var(&run.color, vars);
-        let rgba = color::hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 1.0]);
+        let rgba = if run.color.is_empty() {
+            node_text_rgba
+        } else {
+            let resolved = color::resolve_var(&run.color, vars);
+            color::hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 1.0])
+        };
         let font = if run.font.is_empty() {
             None
         } else {
@@ -222,8 +244,99 @@ pub(super) fn mindnode_section_area(
             Some(rgba),
         ));
     }
+    if section.text_runs.is_empty() {
+        for region in section_default_regions(map, node, section, section_idx) {
+            regions.submit_region(region);
+        }
+    }
     area.regions = regions;
     area
+}
+
+/// The region table a section with **no** `text_runs` gets: the
+/// node's section-level color defaults, made explicit so they reach
+/// the renderer.
+///
+/// One region normally, two when this is the node's title stratum
+/// (`section_idx == 0`) and the palette gives it a distinct `title`
+/// color: `[0, first_line_end)` in the title color and the rest in
+/// the text color. "First line" is the first hard newline in the
+/// section's own text — the only line boundary that exists before
+/// cosmic-text has wrapped anything, and the one the miMind
+/// title/body split came in on.
+///
+/// **Only the run-less case**, which is why the caller checks and
+/// this function does not. A section that carries runs has an
+/// authored coverage map, and `rich_text_spans_from_regions` renders
+/// exactly the covered clusters: filling its gaps would make text
+/// appear that the author's runs deliberately left out.
+///
+/// `pub` because it is half of a round trip. The document layer's
+/// reverse sync
+/// (`application::document::custom::sync`) has to know what the
+/// forward path *would* have produced for a run-less section, so it
+/// can tell "the mutation recolored this section" from "this is the
+/// default the builder always emits". Projecting the model through
+/// this same function is what keeps the two ends from drifting into
+/// synthesizing a phantom `TextRun` on every apply.
+///
+/// Cost: one grapheme walk of the section text (for the cluster
+/// count, plus the newline's cluster index when the title channel
+/// applies), two color parses. Returns at most two regions.
+pub fn section_default_regions(
+    map: &MindMap,
+    node: &MindNode,
+    section: &MindSection,
+    section_idx: usize,
+) -> Vec<ColorFontRegion> {
+    let clusters = grapheme_chad::count_grapheme_clusters(&section.text);
+    if clusters == 0 {
+        return Vec::new();
+    }
+    let text_rgba = map.node_text_rgba(node);
+    let title_split = if section_idx == 0 {
+        let vars = &map.canvas.theme_variables;
+        let title = color::resolve_var(map.node_title_color(node), vars);
+        let title_rgba = color::hex_to_rgba_safe(title, text_rgba);
+        // Nothing to split when the title color is the text color —
+        // one region says the same thing with less work.
+        if title_rgba == text_rgba {
+            None
+        } else {
+            first_line_cluster_end(&section.text, clusters).map(|end| (end, title_rgba))
+        }
+    } else {
+        None
+    };
+    match title_split {
+        Some((end, title_rgba)) => vec![
+            ColorFontRegion::new(Range::new(0, end), None, Some(title_rgba)),
+            ColorFontRegion::new(Range::new(end, clusters), None, Some(text_rgba)),
+        ],
+        None => vec![ColorFontRegion::new(
+            Range::new(0, clusters),
+            None,
+            Some(text_rgba),
+        )],
+    }
+}
+
+/// Grapheme-cluster index just past the first line of `text` — the
+/// index of the first `\n`, counted in clusters.
+///
+/// `None` when the text has no newline, or when the newline is the
+/// last cluster: in both cases the "first line" is the whole
+/// section and a two-region split would emit an empty tail.
+///
+/// Cost: one grapheme walk over `text`.
+fn first_line_cluster_end(text: &str, clusters: usize) -> Option<usize> {
+    let byte = text.find('\n')?;
+    let end = grapheme_chad::count_grapheme_clusters(&text[..byte]);
+    if end == 0 || end >= clusters {
+        None
+    } else {
+        Some(end)
+    }
 }
 
 /// Build a structural `GlyphModel` mirroring a section's text +
@@ -316,9 +429,9 @@ pub(super) fn renderable_section(section: &MindSection) -> bool {
 /// `Predicate::IsSection` / `TargetScope::SectionsOnly` named-seam
 /// note in CONCEPTS.md.
 pub(super) fn append_node_sections(
+    map: &MindMap,
     node: &MindNode,
     parent_node_id: NodeId,
-    vars: &HashMap<String, String>,
     tree: &mut Tree<GfxElement, GfxMutator>,
     section_map: &mut HashMap<(String, usize), NodeId>,
     id_counter: &mut usize,
@@ -336,7 +449,7 @@ pub(super) fn append_node_sections(
         // had no way to override.
         let channel = section.channel.unwrap_or(section_idx);
 
-        let section_area = mindnode_section_area(node, section, vars);
+        let section_area = mindnode_section_area(map, node, section, section_idx);
         let section_model = mindnode_section_model(section, &section_area);
 
         let mut section_element =
@@ -413,9 +526,6 @@ pub(super) fn build_descendants<'a>(
     if parent_folded {
         return;
     }
-    let vars = &map.canvas.theme_variables;
-    let canvas_default_border = map.canvas.default_border.as_ref();
-
     let mut pending: Vec<(&'a MindNode, NodeId)> = index
         .children_of(parent_mind_id)
         .iter()
@@ -424,14 +534,14 @@ pub(super) fn build_descendants<'a>(
         .collect();
 
     while let Some((child, arena_parent)) = pending.pop() {
-        let area = mindnode_container_area(child, vars, canvas_default_border);
+        let area = mindnode_container_area(map, child);
         let element = GfxElement::new_area_non_indexed_with_id(area, child.channel, *id_counter);
         *id_counter += 1;
 
         let child_node_id = arena_parent.append_value(element, &mut tree.arena);
         node_map.insert(child.id.clone(), child_node_id);
 
-        append_node_sections(child, child_node_id, vars, tree, section_map, id_counter);
+        append_node_sections(map, child, child_node_id, tree, section_map, id_counter);
 
         if !child.folded {
             for grandchild in index.children_of(&child.id).iter().rev() {

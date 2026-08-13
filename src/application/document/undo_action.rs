@@ -6,7 +6,9 @@
 //! variants.
 
 use super::types::SelectionState;
-use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, MindSection, NodeStyle, Position, Size};
+use baumhard::mindmap::model::{
+    Canvas, ColorSchema, MindEdge, MindNode, MindSection, NodeStyle, Position, Size,
+};
 
 /// An undoable action that can be reversed.
 #[derive(Clone, Debug)]
@@ -69,10 +71,10 @@ pub enum UndoAction {
         before_selection: SelectionState,
     },
     /// A node's visual style was edited in place (bg / border / text
-    /// color / font size). Captures the pre-edit `NodeStyle` plus the
-    /// full `sections` snapshot — `set_node_text_color`,
+    /// color / font size). Captures the pre-edit `NodeStyle` and
+    /// `color_schema` plus the full `sections` snapshot — `set_node_text_color`,
     /// `set_node_font_size`, and `set_node_font_family` rewrite per-
-    /// run colours / sizes / fonts on top of the style change, and
+    /// run colors / sizes / fonts on top of the style change, and
     /// the section-resident runs need to come back wholesale on undo.
     /// Separate from `EditNodeText` because the round-trip contract
     /// is different (text is untouched here; only the section
@@ -80,6 +82,15 @@ pub enum UndoAction {
     EditNodeStyle {
         node_id: String,
         before_style: NodeStyle,
+        /// Pre-mutation `node.color_schema`. The three per-node
+        /// color setters write the node's own
+        /// [`ColorOverrides`](baumhard::mindmap::model::ColorOverrides)
+        /// when the node is themed — that is where the read path
+        /// looks, so it is where the write has to land — and the
+        /// override lives on the schema rather than in `NodeStyle`.
+        /// Without this field a `color bg=` on a themed node would
+        /// be unundoable.
+        before_color_schema: Option<ColorSchema>,
         before_sections: Vec<MindSection>,
         /// Pre-mutation `node.position`. Captured because some
         /// style setters (and the structural section mutators
