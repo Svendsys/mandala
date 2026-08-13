@@ -75,17 +75,24 @@ where
         match verb.to_ascii_lowercase().as_str() {
             "commit" => return commit_border_preview_verb(eff, verb_label),
             "cancel" => return cancel_border_preview_verb(eff, verb_label),
+            // `other` is the *normalized* spelling the match arms
+            // above needed; every message quotes `verb`, which is
+            // what the user actually typed. Echoing `other` here
+            // answered `border preview NOPE` with `unknown subverb
+            // 'nope'` — a word the user never wrote, and the one
+            // wording of the four border surfaces that did not
+            // read back their own input.
             other if !other.contains('=') => {
                 if args.kvs().next().is_some() {
                     return ExecResult::err(format!(
                         "{}: unexpected positional '{}' alongside a kv pair — \
                          did you mean to quote a multi-word value?",
-                        verb_label, other
+                        verb_label, verb
                     ));
                 }
                 return ExecResult::err(format!(
                     "{}: unknown subverb '{}'; use 'commit', 'cancel', or kv form",
-                    verb_label, other
+                    verb_label, verb
                 ));
             }
             _ => {}

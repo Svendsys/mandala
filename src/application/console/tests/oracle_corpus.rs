@@ -62,6 +62,12 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border preview commit"),
     (Sel::Node, "border preview cancel"),
     (Sel::Node, "border preview nope"),
+    // The shared preview dispatcher normalizes the subverb to
+    // match on it and used to quote the *normalized* spelling
+    // back, so this line answered `unknown subverb 'nope'`. One
+    // row per label the dispatcher wears, because the wording is
+    // the only thing the four verbs do not each own.
+    (Sel::Node, "border preview NOPE"),
     (Sel::Node, "border preview"),
     (Sel::Edge, "border on"),
     // The per-node twin of the canvas kv-form row below: seven of
@@ -112,6 +118,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas border preview commit"),
     (Sel::Node, "canvas border preview cancel"),
     (Sel::Node, "canvas border preview nope"),
+    (Sel::Node, "canvas border preview NOPE"),
     // cap
     (Sel::Edge, "cap"),
     (Sel::Edge, "cap from=arrow"),
@@ -257,6 +264,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Section, "section frame preview commit"),
     (Sel::Section, "section frame preview cancel"),
     (Sel::Section, "section frame preview nope"),
+    (Sel::Section, "section frame preview NOPE"),
     (Sel::TwoSectionNode, "section frame section=1 preset=heavy"),
     (Sel::TwoSectionNode, "section frame section=abc preset=heavy"),
     (Sel::Node, "section show"),
