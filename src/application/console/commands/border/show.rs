@@ -118,19 +118,33 @@ fn frame_color_source(map: &MindMap, node: &MindNode) -> String {
     let Some(schema) = node.color_schema.as_ref() else {
         return "style.frame_color".to_string();
     };
-    if schema.overrides.frame.is_some() {
+    // Ask the reader whether a themed tier applies at all, rather
+    // than re-deciding here. `node_frame_theme_tier` skips an
+    // **empty** frame in both slots — an empty string is a hole, not
+    // a color — so `overrides.frame == Some("")` and a resolved group
+    // whose `frame` is empty both fall through to `style`. Deciding
+    // it twice is how this readout came to name a tier the renderer
+    // had already skipped, which is the one thing this verb exists
+    // not to do.
+    if map.node_frame_theme_tier(node).is_none() {
+        return match map.resolve_theme_colors(node) {
+            Some(_) => format!(
+                "style.frame_color (palette `{}` sets no frame at level {})",
+                schema.palette, schema.level
+            ),
+            None => format!(
+                "style.frame_color (palette `{}` does not resolve)",
+                schema.palette
+            ),
+        };
+    }
+    if schema.overrides.frame.as_deref().is_some_and(|f| !f.is_empty()) {
         return format!(
             "color_schema.overrides.frame (excepting palette `{}`)",
             schema.palette
         );
     }
-    match map.resolve_theme_colors(node) {
-        Some(_) => format!("palette `{}` at level {}", schema.palette, schema.level),
-        None => format!(
-            "style.frame_color (palette `{}` does not resolve)",
-            schema.palette
-        ),
-    }
+    format!("palette `{}` at level {}", schema.palette, schema.level)
 }
 
 fn format_border_readout(
@@ -403,6 +417,100 @@ mod tests {
         assert!(
             blob.contains("#00ff00"),
             "...and the effective color must be the one just set: {blob}"
+        );
+    }
+
+    /// An **empty** frame is a hole, not a color. The readout has
+    /// to name the tier the renderer actually used, and the two
+    /// slots fail differently:
+    ///
+    /// - an empty **override** is skipped and the *group* wins, so
+    ///   the answer is the palette — the old code answered
+    ///   `overrides.frame` because it only asked `is_some()`;
+    /// - an empty **group** with no override leaves no themed tier
+    ///   at all, so the answer is `style.frame_color` — the old
+    ///   code answered `palette` because it only asked whether
+    ///   `resolve_theme_colors` returned `Some`.
+    ///
+    /// Both came from deciding the tier a second time here instead
+    /// of asking the reader, which is the one thing this verb
+    /// exists not to do. No setter can write an empty override, so
+    /// only a hand-authored file reaches it — which is why nothing
+    /// caught it.
+    #[test]
+    fn test_border_show_verbose_does_not_name_a_tier_the_renderer_skipped() {
+        fn empty_the_group(map: &mut MindMap, id: &str) {
+            let schema = map
+                .nodes
+                .get(id)
+                .and_then(|n| n.color_schema.as_ref())
+                .expect("testament nodes are themed");
+            let palette: String = schema.palette.clone();
+            let level: usize = schema.level;
+            if let Some(entry) = map.palettes.get_mut(&palette) {
+                let idx = level.min(entry.groups.len().saturating_sub(1));
+                if let Some(group) = entry.groups.get_mut(idx) {
+                    group.frame = String::new();
+                }
+            }
+        }
+
+        // An empty override falls through to a live group: the
+        // palette is the winning tier, not the override.
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        let palette = {
+            let node = doc.mindmap.nodes.get_mut(&id).expect("testament node");
+            let schema = node.color_schema.as_mut().expect("themed");
+            schema.overrides.frame = Some(String::new());
+            schema.palette.clone()
+        };
+        let node = doc.mindmap.nodes.get(&id).expect("testament node");
+        assert!(
+            doc.mindmap.node_frame_theme_tier(node).is_some(),
+            "this case needs a live group frame or it proves nothing"
+        );
+        let blob = readout_blob(&doc.mindmap, node, true);
+        assert!(
+            !blob.contains("color_schema.overrides.frame"),
+            "an empty override is skipped by the reader and must not be named: {blob}"
+        );
+        assert!(
+            blob.contains(&format!("palette `{palette}`")),
+            "the group is what the renderer used, so the readout must say so: {blob}"
+        );
+
+        // Empty the group too: now no themed tier survives at all.
+        empty_the_group(&mut doc.mindmap, &id);
+        let node = doc.mindmap.nodes.get(&id).expect("testament node");
+        assert!(
+            doc.mindmap.node_frame_theme_tier(node).is_none(),
+            "both slots are empty, so there is no themed tier"
+        );
+        let blob = readout_blob(&doc.mindmap, node, true);
+        assert!(
+            blob.contains("style.frame_color"),
+            "with both slots empty the border comes from style: {blob}"
+        );
+
+        // An empty group with no override at all: same answer, and
+        // the tier that resolved must still not be claimed.
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        empty_the_group(&mut doc.mindmap, &id);
+        let node = doc.mindmap.nodes.get(&id).expect("testament node");
+        assert!(
+            doc.mindmap.resolve_theme_colors(node).is_some(),
+            "the group still resolves"
+        );
+        assert!(
+            doc.mindmap.node_frame_theme_tier(node).is_none(),
+            "...but its frame is empty, so the themed tier is a hole"
+        );
+        let blob = readout_blob(&doc.mindmap, node, true);
+        assert!(
+            blob.contains("style.frame_color"),
+            "a resolved group with an empty frame still falls through to style: {blob}"
         );
     }
 }

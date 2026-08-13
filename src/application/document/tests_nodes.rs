@@ -2423,7 +2423,7 @@ fn test_border_preview_does_not_push_undo_or_dirty() {
     assert!(doc.border_preview.is_some(), "preview slot populated");
 }
 
-/// Cancelling a preview returns to the pre-preview model state
+/// Canceling a preview returns to the pre-preview model state
 /// without writing anything. Mirrors
 /// `test_color_picker_preview_cleared_returns_to_committed`.
 #[test]

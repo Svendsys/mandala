@@ -1283,9 +1283,13 @@ third**, and the
 projection passes read it through four sibling helpers —
 `node_background_color`, `node_frame_color`,
 `node_text_color`, `node_title_color` — plus
-`edge_theme_stroke_color`, which supplies the palette tier of
+`edge_theme_stroke_color`, which supplies the themed tier of
 [`MindEdge`](#mindedge)'s color cascade for an edge whose
-source node sets `connections_colored`. Anything more specific
+source node sets `connections_colored`. That helper reads
+`node_frame_theme_tier` — the same one the border ladder
+reads — so an `overrides.frame` reaches an edge exactly as it
+reaches the node's own frame, and an empty frame is a hole on
+both. Anything more specific
 than the node still wins: a `TextRun` naming its own color, a
 `border.color` override, a per-edge `glyph_connection.color`.
 
@@ -2957,7 +2961,7 @@ styling, settings, and document operations.
 Power-user operations that don't have a
 keybind. The console covers the long tail: zoom-bound
 authoring, font-size clamps, palette swaps, mutation listing
-and application, FPS toggle. Tokenised shell-style
+and application, FPS toggle. Tokenized shell-style
 (whitespace-split, `"quoted"` preserves spaces, `key=value`
 first-class). Tab-completion is contextual and prefix-matched;
 scrollback shows command history with dimmed older lines.
@@ -3012,7 +3016,7 @@ param + `localStorage`. Partial configs merge via serde
 
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
-parameterised console verbs so a user can bind e.g. `Ctrl+B` →
+parameterized console verbs so a user can bind e.g. `Ctrl+B` →
 `SetBorderField { field: "preset", value: "rounded" }` directly
 in `keybinds.json` without authoring a macro. Bindings use a
 sibling `ParametricBinding` shape:

@@ -395,7 +395,7 @@ use (animation-aware via `cm.timing`, always invokes
 
 **User-tier-only.** Re-parse the given line through the console
 parser and run it as if typed. Lets macros leverage every
-parameterised verb (`border preset=triple`, `color bg=#fafafa`,
+parameterized verb (`border preset=triple`, `color bg=#fafafa`,
 etc.) without needing a bespoke step kind.
 
 ```json
