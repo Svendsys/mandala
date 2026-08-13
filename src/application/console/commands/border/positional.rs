@@ -156,15 +156,23 @@ pub(crate) const POSITIONAL_SUBVERBS: &[&str] =
 /// [`crate::application::console::completion::CompletionState::arg_tokens`]
 /// on the completion path.
 ///
-/// Both sides ask this at *every* slot that emits
-/// [`POSITIONAL_SUBVERBS`] — the per-node verb's token-0 popup,
-/// both canvas subjects' subverb popups, and the three execute
-/// dispatchers — so the popup cannot offer a positional
-/// vocabulary at a slot the verb will read as kv form. It reached
-/// the execute sides and one completion slot per verb for a
-/// while, missing the slot where the vocabulary is actually
-/// emitted, which is how `border color=#fff <TAB>` came to offer
-/// thirteen subverbs seven of which that line rejects.
+/// Both sides ask this at *every* slot that reads a subverb — the
+/// per-node verb's token-0 popup, both canvas subjects' subverb
+/// popups, and all five execute dispatchers (`border`, `canvas
+/// border`, `canvas section-frame [focused]`, `section frame`, and
+/// the shared [`super::preview::dispatch_border_preview`] that
+/// serves the four `… preview …` verbs) — so neither side can read
+/// a slot the other reads the other way. It reached three of the
+/// execute sides and one completion slot per verb for a while,
+/// missing the slot where the vocabulary is actually emitted,
+/// which is how `border color=#fff <TAB>` came to offer thirteen
+/// subverbs seven of which that line rejects.
+///
+/// The three stragglers each asked `args.kvs().next().is_some()`
+/// instead — "is there a kv *anywhere* on the line", which is a
+/// different question and answers `border nope palette=coral`
+/// with the quoting hint even though nothing about that line is
+/// kv-form at the subverb slot.
 pub(crate) fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> bool {
     tokens
         .iter()
@@ -173,8 +181,12 @@ pub(crate) fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> 
 }
 
 /// The "you probably meant to quote this" rejection every border
-/// surface shares. `label` is the surface prefix (`border`,
-/// `canvas border`, …) so the suggested line is copy-pasteable.
+/// surface shares — the committing five and the four `… preview
+/// …` verbs behind
+/// [`super::preview::dispatch_border_preview`] alike. `label` is
+/// the surface prefix (`border`, `canvas border`, `section frame
+/// preview`, …) so the suggested line is copy-pasteable for the
+/// verb that printed it.
 pub(crate) fn unquoted_multiword_hint(label: &str, verb: &str) -> String {
     format!(
         "{}: unexpected positional '{}' alongside a kv pair — \

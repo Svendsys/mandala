@@ -79,6 +79,18 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border color=#fff preview"),
     (Sel::Node, "border color=#fff show side=nope"),
     (Sel::Node, "border color=#fff on"),
+    // The discriminator reads *position*, and three surfaces asked
+    // "is there a kv anywhere" instead. A kv past the subverb slot
+    // leaves the slot positional, so each of these is an unknown
+    // subverb; each used to answer with the quoting hint naming a
+    // word that is not a palette.
+    (Sel::Node, "border nope palette=coral"),
+    (Sel::Node, "border preview nope palette=coral"),
+    (Sel::Node, "canvas border preview nope palette=coral"),
+    // …and the lines the hint is actually for, on the two surfaces
+    // that now reach it through the shared wording rather than a
+    // near-copy of it.
+    (Sel::Node, "border preview palette=My Palette"),
     // canvas
     (Sel::Node, "canvas"),
     (Sel::Node, "canvas nope"),
@@ -258,6 +270,8 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Section, "section frame show"),
     (Sel::Section, "section frame reset"),
     (Sel::Section, "section frame nope"),
+    (Sel::Section, "section frame nope palette=coral"),
+    (Sel::Section, "section frame palette=My Palette"),
     (Sel::Section, "section frame preset=heavy"),
     (Sel::Section, "section frame bogus=1"),
     (Sel::Section, "section frame preview preset=heavy"),

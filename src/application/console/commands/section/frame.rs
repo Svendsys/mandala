@@ -132,6 +132,10 @@ fn kv_hint(key: &str) -> Option<&'static str> {
 /// optional `show` / `reset` subverb.
 pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Some(verb) = args.positional(1) {
+        // The same discriminator the `border …` and `canvas …`
+        // surfaces apply, read one slot right because the `frame`
+        // token still sits at positional(0).
+        let positional_form = super::super::border::subverb_slot_is_positional(args.tokens(), 1);
         // C14: case-insensitive match — same posture as `border
         // preview commit` / `cancel` already use, and as the
         // committing `border …` verb arms. Without normalizing
@@ -142,12 +146,10 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
             "reset" => return apply_reset(args, eff),
             "preview" => return execute_section_frame_preview(args, eff),
             other if !other.contains('=') => {
-                if args.kvs().next().is_some() {
-                    return ExecResult::err(format!(
-                        "section frame: unexpected positional '{}' alongside a kv pair — \
-                         did you mean to quote a multi-word value? \
-                         e.g. `section frame palette=\"{}\"`",
-                        verb, verb
+                if !positional_form {
+                    return ExecResult::err(super::super::border::unquoted_multiword_hint(
+                        "section frame",
+                        verb,
                     ));
                 }
                 return ExecResult::err(format!(

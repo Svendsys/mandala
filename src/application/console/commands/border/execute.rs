@@ -62,15 +62,26 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 return apply_positional(verb, args, eff);
             }
             other if !other.contains('=') => {
-                // A bare positional alongside a recognized kv almost
-                // always means the user typed an unquoted multi-word
-                // value (`border palette=My Palette` → tokens are
-                // `["palette=My", "Palette"]` because the tokenizer
-                // splits on whitespace). Hint at quoting rather than
-                // the generic "unknown subverb" message — the latter
-                // is technically correct but unhelpful.
-                if args.kvs().next().is_some() {
-                    return ExecResult::err(super::unquoted_multiword_hint("border", verb));
+                // A bare positional at a slot a kv already made
+                // kv-form almost always means the user typed an
+                // unquoted multi-word value (`border palette=My
+                // Palette` → tokens are `["palette=My", "Palette"]`
+                // because the tokenizer splits on whitespace). Hint
+                // at quoting rather than the generic "unknown
+                // subverb" message — the latter is technically
+                // correct but unhelpful.
+                //
+                // The condition is the discriminator, not "is there
+                // a kv anywhere on the line": a kv *past* the
+                // subverb slot leaves the slot positional, so
+                // `border nope palette=coral` is an unknown subverb
+                // and asking `args.kvs()` answered it with the
+                // nonsense hint ``border palette="nope"`` instead.
+                if !first_token_is_positional {
+                    return ExecResult::err(super::unquoted_multiword_hint(
+                        BorderSurface::Selection.label(),
+                        verb,
+                    ));
                 }
                 return ExecResult::err(unknown_subverb_message(verb));
             }

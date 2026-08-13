@@ -72,6 +72,10 @@ where
     // Subverb dispatch: `commit` / `cancel` are case-insensitive
     // terminators; everything else is the kv-form path.
     if let Some(verb) = args.positional(subverb_pos) {
+        // The same discriminator the committing surfaces apply,
+        // read at *this* verb's subverb slot — which is why
+        // `subverb_pos` is a parameter rather than a constant.
+        let positional_form = super::subverb_slot_is_positional(args.tokens(), subverb_pos);
         match verb.to_ascii_lowercase().as_str() {
             "commit" => return commit_border_preview_verb(eff, verb_label),
             "cancel" => return cancel_border_preview_verb(eff, verb_label),
@@ -83,12 +87,8 @@ where
             // wording of the four border surfaces that did not
             // read back their own input.
             other if !other.contains('=') => {
-                if args.kvs().next().is_some() {
-                    return ExecResult::err(format!(
-                        "{}: unexpected positional '{}' alongside a kv pair — \
-                         did you mean to quote a multi-word value?",
-                        verb_label, verb
-                    ));
+                if !positional_form {
+                    return ExecResult::err(super::unquoted_multiword_hint(verb_label, verb));
                 }
                 return ExecResult::err(format!(
                     "{}: unknown subverb '{}'; use 'commit', 'cancel', or kv form",
