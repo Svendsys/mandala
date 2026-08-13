@@ -72,8 +72,11 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // The shared preview dispatcher normalizes the subverb to
     // match on it and used to quote the *normalized* spelling
     // back, so this line answered `unknown subverb 'nope'`. One
-    // row per label the dispatcher wears, because the wording is
-    // the only thing the four verbs do not each own.
+    // row per label the dispatcher wears — five, not the three
+    // this comment claimed while `canvas section-frame preview`
+    // and `canvas section-frame focused preview` had no execute
+    // row of any kind — because the wording is the only thing the
+    // five verbs do not each own.
     (Sel::Node, "border preview NOPE"),
     (Sel::Node, "border preview"),
     (Sel::Edge, "border on"),
@@ -107,6 +110,14 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas border preset heavy"),
     (Sel::Node, "canvas border preset nope"),
     (Sel::Node, "canvas border nope"),
+    // The two canvas subjects handed the *lowercased* subverb to
+    // `apply_positional`, and `unknown_canvas_subverb_message`
+    // quotes whatever it is handed — so these three answered with
+    // a word the user never typed, the same defect
+    // `dispatch_border_preview` was fixed for one commit earlier.
+    // Every subverb rejection in the border family reads the
+    // user's own spelling back now.
+    (Sel::Node, "canvas border NOPE"),
     (Sel::Node, "canvas border bogus=1"),
     (Sel::Node, "canvas border preset=heavy"),
     (Sel::Node, "canvas border padding abc"),
@@ -129,15 +140,23 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas section-frame show"),
     (Sel::Node, "canvas section-frame reset"),
     (Sel::Node, "canvas section-frame nope"),
+    (Sel::Node, "canvas section-frame NOPE"),
     (Sel::Node, "canvas section-frame focused show"),
     (Sel::Node, "canvas section-frame focused reset"),
     (Sel::Node, "canvas section-frame focused nope"),
+    (Sel::Node, "canvas section-frame focused NOPE"),
     (Sel::Node, "canvas section-frame side top reset"),
     (Sel::Node, "canvas section-frame focused side top reset"),
     (Sel::Node, "canvas border preview commit"),
     (Sel::Node, "canvas border preview cancel"),
     (Sel::Node, "canvas border preview nope"),
     (Sel::Node, "canvas border preview NOPE"),
+    // The shared preview dispatcher's remaining two labels. Both
+    // behave correctly and always did; neither had an execute row
+    // of any kind, which is how the comment above came to claim
+    // three rows "one per label" for a dispatcher wearing five.
+    (Sel::Node, "canvas section-frame preview NOPE"),
+    (Sel::Node, "canvas section-frame focused preview NOPE"),
     // cap
     (Sel::Edge, "cap"),
     (Sel::Edge, "cap from=arrow"),

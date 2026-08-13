@@ -83,9 +83,13 @@ where
             // above needed; every message quotes `verb`, which is
             // what the user actually typed. Echoing `other` here
             // answered `border preview NOPE` with `unknown subverb
-            // 'nope'` — a word the user never wrote, and the one
-            // wording of the four border surfaces that did not
-            // read back their own input.
+            // 'nope'` — a word the user never wrote. The two canvas
+            // subjects had the same defect one call deeper, handing
+            // the lowercased token to `apply_positional` for
+            // `unknown_canvas_subverb_message` to quote; all six
+            // subverb rejections across the border family read the
+            // user's own spelling back now, and the corpus carries
+            // an upper-case row for each.
             other if !other.contains('=') => {
                 if !positional_form {
                     return ExecResult::err(super::unquoted_multiword_hint(verb_label, verb));

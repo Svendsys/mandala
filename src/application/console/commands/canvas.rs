@@ -271,9 +271,16 @@ fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "show" => return execute_show_border(eff),
             "reset" => return apply_canvas_edits(eff, BorderSurface::CanvasDefault, clear_edits()),
             "preview" => return execute_canvas_border_preview(args, eff),
+            // `verb`, not `other`: `other` is the normalized
+            // spelling this match needed, and the unknown-subverb
+            // message on the far side of `apply_positional` quotes
+            // whatever it is handed. The parser lowercases the
+            // subverb itself (`positional_subverb_to_edits`), so
+            // passing the raw token changes nothing but the wording
+            // — and the wording is the user's own.
             other if !other.contains('=') && positional_form => {
                 return apply_positional(
-                    other,
+                    verb,
                     args,
                     /* verb_pos */ 1,
                     BorderSurface::CanvasDefault,
@@ -364,8 +371,11 @@ fn execute_section_frame_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecR
             "show" => return execute_show_section_frame(eff, focused),
             "reset" => return apply_canvas_edits(eff, surface, clear_edits()),
             "preview" => return execute_canvas_section_frame_preview(args, eff, focused),
+            // Raw `verb` for the same reason as the sibling subject
+            // above — the message on the `Ok(None)` path echoes what
+            // it is given.
             other if !other.contains('=') && positional_form => {
-                return apply_positional(other, args, verb_pos, surface, eff);
+                return apply_positional(verb, args, verb_pos, surface, eff);
             }
             other if !other.contains('=') => {
                 return ExecResult::err(super::border::unquoted_multiword_hint(surface.label(), verb));
