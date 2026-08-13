@@ -228,6 +228,10 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "mutation inspect"),
     (Sel::Node, "mutation inspect no-such-mutation"),
     (Sel::Node, "mutation nope"),
+    // A kv ahead of the sub-command slot leaves the slot
+    // positional, so this has always run — the popup is what
+    // did not know it (see `complete_mutation`).
+    (Sel::Node, "mutation x=1 list"),
     // node
     (Sel::Node, "node"),
     (Sel::Node, "node fit"),
@@ -456,6 +460,15 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "mutation "),
     (Sel::Node, "mutation list "),
     (Sel::Node, "mutation apply "),
+    // The two lines the positional-slot switch moved on this
+    // verb, and the two it moved on `help`. All four are the
+    // popup agreeing with the verb where it used not to; the
+    // comment that called the switch a no-op is corrected at
+    // both sites.
+    (Sel::Node, "mutation x=1 "),
+    (Sel::Node, "mutation ap=li"),
+    (Sel::Node, "help bg=x "),
+    (Sel::Node, "help x="),
     (Sel::Node, "node "),
     (Sel::Node, "node r"),
     (Sel::Node, "open "),

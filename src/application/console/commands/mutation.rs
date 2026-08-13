@@ -33,9 +33,28 @@ pub const COMMAND: Command = Command {
 fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     // Slot-counted through the same positional view the execute
     // path reads (`Args::positional`), rather than through raw
-    // token offsets — this verb takes no kv form today, so the two
-    // agree on every line, and keeping the one idiom is what stops
-    // them from parting company when one does arrive.
+    // token offsets.
+    //
+    // This comment used to claim the two agree on every line, so
+    // the switch changed nothing. They do not, and it did — twice
+    // here, each time the popup catching up with a line the verb
+    // already accepted or already refused:
+    //
+    // - `mutation x=1 <TAB>` offered nothing. The raw offset read
+    //   `x=1` as the sub-command slot and found no sub-command
+    //   there. It offers the four sub-commands now, which is what
+    //   the verb reads: `Args::positional` skips the kv, so
+    //   `mutation x=1 list` has run all along.
+    // - `mutation ap=li` offered `list`. The raw offset put the
+    //   cursor at the sub-command slot while the engine had
+    //   already split the token and handed over `li` as the value
+    //   of a key `ap`. It offers nothing now, which is right —
+    //   this verb has no kv form, so a value of a key it does not
+    //   have has no vocabulary.
+    //
+    // Both are pinned in `tests::oracle_corpus`. `help` took the
+    // same switch and moved two lines of its own; see
+    // `help.rs::complete_help`.
     let index = match state.context {
         CompletionContext::Token { index } => index,
         _ => return Vec::new(),

@@ -29,6 +29,17 @@ pub const COMMAND: Command = Command {
 fn complete_help(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     // Only complete the single command-name arg — the first
     // positional past the verb.
+    //
+    // Keyed on the positional slot rather than on a raw token
+    // offset, which moved two lines. `help bg=x ` offered nothing
+    // and now offers the full list: a kv is not a positional, so
+    // the cursor is at the one argument slot `execute_help` reads,
+    // and `help bg=x color` has always printed the color usage.
+    // `help x=` offered the full list and now offers nothing: the
+    // cursor is on a kv *value*, and this verb has no keys for a
+    // value to belong to. Both are pinned in
+    // `tests::oracle_corpus`; the sibling half of the same switch
+    // is described at `mutation.rs::complete_mutation`.
     if !matches!(state.context, CompletionContext::Token { index: 0 }) {
         return Vec::new();
     }
