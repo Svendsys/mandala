@@ -107,10 +107,7 @@ pub(in crate::application::app) fn apply_edge_handle_drag(
         EdgeHandleKind::AnchorTo => {
             // Same per-cursor-move reasoning as `AnchorFrom` above.
             let Some(to_node) = doc.mindmap.nodes.get(&edge.to_id) else {
-                log::debug!(
-                    "edge drag: AnchorTo to_id {} disappeared mid-drag",
-                    edge.to_id
-                );
+                log::debug!("edge drag: AnchorTo to_id {} disappeared mid-drag", edge.to_id);
                 return handle;
             };
             let node_pos = to_node.pos_vec2();

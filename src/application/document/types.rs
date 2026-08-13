@@ -227,7 +227,10 @@ pub enum SelectionState {
     /// real and the missing piece is one producer; reported out of
     /// #41 rather than fixed there.
     #[allow(dead_code)]
-    SectionRange { sel: SectionSel, range: (usize, usize) },
+    SectionRange {
+        sel: SectionSel,
+        range: (usize, usize),
+    },
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
     /// along the connection path and is selected independently
@@ -450,8 +453,7 @@ impl SelectionState {
     /// variants return their natural single owner (or empty).
     pub fn dedup_owning_node_ids(&self) -> Vec<String> {
         let ids = self.selected_ids();
-        let mut seen: std::collections::HashSet<&str> =
-            std::collections::HashSet::with_capacity(ids.len());
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::with_capacity(ids.len());
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             if seen.insert(id) {

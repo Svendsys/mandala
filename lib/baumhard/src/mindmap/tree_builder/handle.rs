@@ -86,10 +86,7 @@ pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> Tree<GfxElement, Gf
         let (channel, area) = handle_layout(elem);
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
         unique_id += 1;
-        tree.root.append_value(
-            element_node,
-            &mut tree.arena,
-        );
+        tree.root.append_value(element_node, &mut tree.arena);
     }
 
     tree

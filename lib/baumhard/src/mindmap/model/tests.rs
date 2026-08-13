@@ -516,8 +516,7 @@ fn display_mode_portal_round_trips_through_json() {
 #[test]
 fn test_documented_portal_edge_example_deserializes() {
     let doc = crate::util::doc_fixtures::format_doc_path("schema.md");
-    let published =
-        crate::util::doc_fixtures::documented_json_block(&doc, "### Portal-mode edges", 0);
+    let published = crate::util::doc_fixtures::documented_json_block(&doc, "### Portal-mode edges", 0);
 
     let edge: MindEdge = serde_json::from_str(&published).unwrap_or_else(|e| {
         panic!("format/schema.md's portal-edge example must deserialize: {e}\n{published}")

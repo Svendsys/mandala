@@ -145,10 +145,16 @@ mod loader_parity_tests {
     fn test_every_loader_invariant_has_a_verify_counterpart() {
         // (the rule as `check_invariants` calls it, its counterpart here)
         let registry: &[(&str, &str)] = &[
-            ("detect_zero_section_node", "sections::check via validate::zero_section_node"),
+            (
+                "detect_zero_section_node",
+                "sections::check via validate::zero_section_node",
+            ),
             ("detect_id_key_mismatch", "ids::check"),
             ("detect_parent_cycle", "tree::check"),
-            ("detect_section_count_cap", "sections::check via validate::section_count"),
+            (
+                "detect_section_count_cap",
+                "sections::check via validate::section_count",
+            ),
             ("map_numeric_domain", "numeric::check"),
             // Warns rather than refuses, and belongs here for the same
             // reason the refusals do: a load-time warning goes to a log

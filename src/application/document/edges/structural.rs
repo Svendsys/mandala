@@ -51,8 +51,7 @@ impl MindMapDocument {
         let to_size = to_node.size_vec2();
 
         let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(edge);
-        let handles =
-            tree_builder::build_edge_handles(edge, &edge_key, from_pos, from_size, to_pos, to_size);
+        let handles = tree_builder::build_edge_handles(edge, &edge_key, from_pos, from_size, to_pos, to_size);
 
         let mut best: Option<(tree_builder::EdgeHandleKind, Vec2, f32)> = None;
         for h in handles {

@@ -748,9 +748,8 @@ pub fn deserialize_capturing<'de, T: Deserialize<'de>>(
 ) -> Result<(T, Vec<Vec<Step>>), serde_json::Error> {
     let mut routes: Vec<Vec<Step>> = Vec::new();
     let mut deserializer = serde_json::Deserializer::from_str(json);
-    let value: T = serde_ignored::deserialize(&mut deserializer, |path| {
-        push_route_capped(&mut routes, &path)
-    })?;
+    let value: T =
+        serde_ignored::deserialize(&mut deserializer, |path| push_route_capped(&mut routes, &path))?;
     // `serde_json::from_str` does this for us; a hand-driven
     // `Deserializer` has to, or trailing garbage after the closing
     // brace parses clean. `loader::tests::test_trailing_content_after_the_document_is_rejected`
@@ -903,9 +902,7 @@ pub fn deserialize_value_capturing<T: serde::de::DeserializeOwned>(
     document: &Value,
 ) -> Result<(T, Vec<Vec<Step>>), serde_json::Error> {
     let mut routes: Vec<Vec<Step>> = Vec::new();
-    let value: T = serde_ignored::deserialize(document, |path| {
-        push_route_capped(&mut routes, &path)
-    })?;
+    let value: T = serde_ignored::deserialize(document, |path| push_route_capped(&mut routes, &path))?;
     Ok((value, routes))
 }
 
@@ -2219,7 +2216,13 @@ mod tests {
             "list": (0..ELEMENTS).map(|i| serde_json::json!({ "known": i })).collect::<Vec<_>>()
         });
         let routes: Vec<Vec<Step>> = (0..ELEMENTS)
-            .map(|i| vec![Step::Key("list".into()), Step::Index(i), Step::Key(format!("u{i}"))])
+            .map(|i| {
+                vec![
+                    Step::Key("list".into()),
+                    Step::Index(i),
+                    Step::Key(format!("u{i}")),
+                ]
+            })
             .collect();
 
         let captured = take_from(&mut document, Some(&probe), routes);
@@ -2277,7 +2280,13 @@ mod tests {
             "list": (0..N).map(|i| serde_json::json!({ "known": i })).collect::<Vec<_>>()
         });
         let routes: Vec<Vec<Step>> = (0..N)
-            .map(|i| vec![Step::Key("list".into()), Step::Index(i), Step::Key(format!("u{i}"))])
+            .map(|i| {
+                vec![
+                    Step::Key("list".into()),
+                    Step::Index(i),
+                    Step::Key(format!("u{i}")),
+                ]
+            })
             .collect();
         let captured = take_from(&mut document, Some(&probe), routes);
         assert_eq!(captured.entries.len(), N, "every key must be captured");

@@ -436,7 +436,10 @@ impl WasmApp {
                 // Conservative: redraw on every CursorMoved that
                 // arrived while a click is pending.
                 redraw_after = !matches!(
-                    self.input.borrow().as_ref().map(|s| matches!(s.pending_click, PendingClick::None)),
+                    self.input
+                        .borrow()
+                        .as_ref()
+                        .map(|s| matches!(s.pending_click, PendingClick::None)),
                     Some(true) | None,
                 );
             }
@@ -579,8 +582,8 @@ pub(super) fn run(mut app: Application) {
     // shipped right-button binding, so the convention doesn't
     // collide with anything.
     {
-        let pd_cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
-            move |evt: web_sys::Event| {
+        let pd_cb =
+            wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
                 use wasm_bindgen::JsCast;
                 let allow_default = evt
                     .dyn_ref::<web_sys::MouseEvent>()
@@ -589,8 +592,7 @@ pub(super) fn run(mut app: Application) {
                 if !allow_default {
                     evt.prevent_default();
                 }
-            },
-        );
+            });
         canvas
             .add_event_listener_with_callback("contextmenu", pd_cb.as_ref().unchecked_ref())
             .ok();

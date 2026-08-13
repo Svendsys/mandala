@@ -78,7 +78,14 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     if selection_change_touches_tree(prev_selection, &doc.selection) {
-        rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
+        rebuild_all(
+            doc,
+            interaction_mode,
+            mindmap_tree,
+            app_scene,
+            renderer,
+            scene_cache,
+        );
     } else {
         rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
     }
@@ -177,11 +184,7 @@ pub(in crate::application::app) fn rebuild_all(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    let new_tree = build_overlaid_tree(
-        doc,
-        interaction_mode,
-        selection_highlight_entries(&doc.selection),
-    );
+    let new_tree = build_overlaid_tree(doc, interaction_mode, selection_highlight_entries(&doc.selection));
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
@@ -252,10 +255,7 @@ pub(in crate::application::app) fn mode_status_line(
                     format!("{}[{}]", node_id, section_idx)
                 }
             };
-            Some(format!(
-                "resize: {} \u{2014} drag a corner or edge",
-                target_label
-            ))
+            Some(format!("resize: {} \u{2014} drag a corner or edge", target_label))
         }
         InteractionMode::Reparent { sources } => {
             let count = sources.len();
@@ -266,10 +266,7 @@ pub(in crate::application::app) fn mode_status_line(
             ))
         }
         InteractionMode::Connect { source } => {
-            Some(format!(
-                "connect: {} \u{2014} click a target node",
-                source
-            ))
+            Some(format!("connect: {} \u{2014} click a target node", source))
         }
     }
 }
@@ -664,13 +661,17 @@ impl<'a> CanvasFrame<'a> {
             portal_pair_data,
         };
 
-        let portal_text_edit = self.doc.portal_text_edit_preview.as_ref().map(
-            |(key, endpoint, buffer)| baumhard::mindmap::tree_builder::PortalTextEditOverride {
-                edge_key: key,
-                endpoint_node_id: endpoint.as_str(),
-                buffer: buffer.as_str(),
-            },
-        );
+        let portal_text_edit = self
+            .doc
+            .portal_text_edit_preview
+            .as_ref()
+            .map(
+                |(key, endpoint, buffer)| baumhard::mindmap::tree_builder::PortalTextEditOverride {
+                    edge_key: key,
+                    endpoint_node_id: endpoint.as_str(),
+                    buffer: buffer.as_str(),
+                },
+            );
 
         let pairs = portal_pair_data(
             &self.doc.mindmap,
@@ -728,17 +729,12 @@ impl<'a> CanvasFrame<'a> {
         // reads the same way on every sub-part of an edge — so the
         // label pass takes either the label sub-selection or the
         // whole-edge selection, whichever is set.
-        let highlight_key: Option<EdgeKey> = self
-            .overrides
-            .selection
-            .edge_label
-            .clone()
-            .or_else(|| {
-                self.overrides
-                    .selection
-                    .edge
-                    .map(|(f, t, ty)| EdgeKey::new(f, t, ty))
-            });
+        let highlight_key: Option<EdgeKey> = self.overrides.selection.edge_label.clone().or_else(|| {
+            self.overrides
+                .selection
+                .edge
+                .map(|(f, t, ty)| EdgeKey::new(f, t, ty))
+        });
         let elements = build_label_elements(
             &self.doc.mindmap,
             self.offsets,
@@ -995,11 +991,11 @@ pub(in crate::application::app) fn flush_canvas_scene_buffers(
 pub(in crate::application::app) fn warm_handle_tree_arenas(
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
+    use baumhard::mindmap::scene_cache::EdgeKey;
     use baumhard::mindmap::tree_builder::{
         EdgeHandleElement, EdgeHandleKind, NodeResizeHandleElement, ResizeHandleSide,
         SectionResizeHandleElement,
     };
-    use baumhard::mindmap::scene_cache::EdgeKey;
 
     let sides = [
         ResizeHandleSide::NW,
@@ -1227,7 +1223,11 @@ mod tests {
         let line = super::mode_status_line(&mode, &doc).expect("text expected");
         assert!(line.starts_with("editing: "), "got {:?}", line);
         assert!(line.contains(&id), "got {:?}", line);
-        assert!(!line.contains("section ["), "single-section must skip the [N of M] suffix; got {:?}", line);
+        assert!(
+            !line.contains("section ["),
+            "single-section must skip the [N of M] suffix; got {:?}",
+            line
+        );
     }
 
     /// NodeEdit on a multi-section node renders `editing: <id> — section [N of M]`
@@ -1269,7 +1269,10 @@ mod tests {
         use crate::application::document::tests_common::pinned_two_section_node;
         let (doc, id) = pinned_two_section_node();
         let mode = InteractionMode::Resize {
-            target: ResizeTarget::Section { node_id: id.clone(), section_idx: 1 },
+            target: ResizeTarget::Section {
+                node_id: id.clone(),
+                section_idx: 1,
+            },
         };
         let line = super::mode_status_line(&mode, &doc).expect("text expected");
         assert!(line.contains(&format!("{}[1]", id)), "got {:?}", line);
@@ -1323,7 +1326,11 @@ mod tests {
         };
         let line = super::mode_status_line(&mode, &doc).expect("text expected");
         assert!(line.contains("1 source "), "got {:?}", line);
-        assert!(!line.contains("1 sources"), "singular form must not pluralize: {:?}", line);
+        assert!(
+            !line.contains("1 sources"),
+            "singular form must not pluralize: {:?}",
+            line
+        );
     }
 
     /// Reparent mode with two+ sources renders the plural form.
@@ -1367,7 +1374,15 @@ mod tests {
     /// Alpha of the first region on a node's first section area.
     fn first_alpha(tree: &baumhard::mindmap::tree_builder::MindMapTree, mind_id: &str) -> f32 {
         let sid = tree.section_arena_id(mind_id, 0).expect("section area");
-        tree.tree.arena.get(sid).unwrap().get().glyph_area().unwrap().regions.all_regions()[0]
+        tree.tree
+            .arena
+            .get(sid)
+            .unwrap()
+            .get()
+            .glyph_area()
+            .unwrap()
+            .regions
+            .all_regions()[0]
             .color
             .unwrap()[3]
     }
@@ -1407,11 +1422,14 @@ mod tests {
     fn test_build_overlaid_tree_node_edit_dims_inactive_nodes() {
         let doc = load_test_doc();
         let other = some_other_node_than(&doc, "0");
-        let before = first_alpha(&super::build_overlaid_tree(
-            &doc,
-            &crate::application::app::InteractionMode::Default,
-            std::iter::empty(),
-        ), &other);
+        let before = first_alpha(
+            &super::build_overlaid_tree(
+                &doc,
+                &crate::application::app::InteractionMode::Default,
+                std::iter::empty(),
+            ),
+            &other,
+        );
         let tree = super::build_overlaid_tree(
             &doc,
             &crate::application::app::InteractionMode::NodeEdit { node_id: "0".into() },

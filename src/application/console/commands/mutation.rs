@@ -399,10 +399,7 @@ mod tests {
     /// through the process-wide cache in
     /// `document::tests_common::load_test_doc` — see that helper
     /// for the FONT_SYSTEM-lock-contention rationale.
-    fn fixture_doc(
-        reg: Vec<(&str, CustomMutation)>,
-        sources: Vec<(&str, SourceTier)>,
-    ) -> MindMapDocument {
+    fn fixture_doc(reg: Vec<(&str, CustomMutation)>, sources: Vec<(&str, SourceTier)>) -> MindMapDocument {
         let mut doc = crate::application::document::tests_common::load_test_doc();
         doc.mutation_registry = reg.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         doc.mutation_sources = sources.into_iter().map(|(k, v)| (k.to_string(), v)).collect();

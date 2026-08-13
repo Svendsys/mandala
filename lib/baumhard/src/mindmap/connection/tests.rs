@@ -1000,7 +1000,10 @@ fn test_sample_path_caps_hostile_geometry() {
         control2: Vec2::new(2.0e8, -1.0e8),
         end: Vec2::new(1.0e9, 0.0),
     };
-    assert_eq!(sample_path(&curved, 0.001, super::MAX_PATH_SAMPLES).len(), MAX_PATH_SAMPLES);
+    assert_eq!(
+        sample_path(&curved, 0.001, super::MAX_PATH_SAMPLES).len(),
+        MAX_PATH_SAMPLES
+    );
 }
 
 /// A non-finite length or spacing must not reach the allocation
@@ -1121,7 +1124,11 @@ fn test_the_scene_wide_glyph_budget_is_shared_equally_and_never_zero() {
 
     // Few edges: the per-path cap still governs, unchanged behavior.
     assert_eq!(per_path_sample_budget(1), MAX_PATH_SAMPLES);
-    assert_eq!(per_path_sample_budget(0), MAX_PATH_SAMPLES, "no edges must not divide by zero");
+    assert_eq!(
+        per_path_sample_budget(0),
+        MAX_PATH_SAMPLES,
+        "no edges must not divide by zero"
+    );
     assert_eq!(
         per_path_sample_budget(MAX_TOTAL_PATH_SAMPLES / MAX_PATH_SAMPLES),
         MAX_PATH_SAMPLES,
@@ -1132,7 +1139,10 @@ fn test_the_scene_wide_glyph_budget_is_shared_equally_and_never_zero() {
     // the budget — which is the whole property.
     for edges in [200usize, 1_000, 50_000, 5_000_000] {
         let each = per_path_sample_budget(edges);
-        assert!(each >= 1, "{edges} edges: an edge that renders nothing looks like a missing edge");
+        assert!(
+            each >= 1,
+            "{edges} edges: an edge that renders nothing looks like a missing edge"
+        );
         assert!(
             each <= MAX_PATH_SAMPLES,
             "{edges} edges: the per-path cap must still apply"

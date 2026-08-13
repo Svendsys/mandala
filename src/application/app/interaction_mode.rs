@@ -44,18 +44,14 @@ pub enum InteractionMode {
     // entered from native-gated handlers, so nothing on wasm32
     // constructs either.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    Reparent {
-        sources: Vec<String>,
-    },
+    Reparent { sources: Vec<String> },
 
     /// User is drawing a new cross_link edge from `source`. The next
     /// left-click on a target node creates the edge; left-click on empty
     /// canvas cancels. Esc also cancels. Direct migration from
     /// `AppMode::Connect`.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    Connect {
-        source: String,
-    },
+    Connect { source: String },
 
     /// Editing the contents of `node_id`. Section-area clicks select the
     /// hit section (per `SelectionState::Section`); section drags move
@@ -64,9 +60,7 @@ pub enum InteractionMode {
     /// Out-of-AABB click exits to `Default`.
     ///
     /// Wired in Batch 3 of the plan.
-    NodeEdit {
-        node_id: String,
-    },
+    NodeEdit { node_id: String },
 
     /// Resize anchors are visible on `target`. Anchor drag transitions
     /// `DragState` through the existing `Throttled(NodeResize)` /
@@ -74,9 +68,7 @@ pub enum InteractionMode {
     /// an anchor) exits to `Default`. Esc also exits.
     ///
     /// Wired in Batch 2 of the plan.
-    Resize {
-        target: ResizeTarget,
-    },
+    Resize { target: ResizeTarget },
 }
 
 /// What a `Resize` mode targets — a whole node or one section of one node.
@@ -144,7 +136,10 @@ impl InteractionMode {
     // Native-driver-only: gates the native target-picker overlay.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn is_target_picker(&self) -> bool {
-        matches!(self, InteractionMode::Reparent { .. } | InteractionMode::Connect { .. })
+        matches!(
+            self,
+            InteractionMode::Reparent { .. } | InteractionMode::Connect { .. }
+        )
     }
 
     /// The active NodeEdit target, or `None` for any non-NodeEdit
@@ -167,9 +162,7 @@ impl InteractionMode {
     /// mode-driven chrome should this frame emit?" — every
     /// scene-rebuild call site reads through this method rather
     /// than reaching for the per-field predicates separately.
-    pub fn resize_handle_overrides(
-        &self,
-    ) -> baumhard::mindmap::tree_builder::InteractionModeOverrides<'_> {
+    pub fn resize_handle_overrides(&self) -> baumhard::mindmap::tree_builder::InteractionModeOverrides<'_> {
         baumhard::mindmap::tree_builder::InteractionModeOverrides {
             node: self.resize_handle_node(),
             section: self.resize_handle_section(),
@@ -196,10 +189,7 @@ pub enum ResizeTargetError {
     MultiTarget,
     /// Section selected, but `section.size == None` (fill-parent) —
     /// no own AABB to stretch.
-    SectionFillParent {
-        node_id: String,
-        section_idx: usize,
-    },
+    SectionFillParent { node_id: String, section_idx: usize },
     /// Edge / label / portal selection — not resizable surface.
     EdgeOrPortal,
 }
@@ -291,7 +281,9 @@ mod tests {
 
     #[test]
     fn node_edit_routes_clicks_to_section_for_matching_node_only() {
-        let m = InteractionMode::NodeEdit { node_id: "0.1".into() };
+        let m = InteractionMode::NodeEdit {
+            node_id: "0.1".into(),
+        };
         assert!(m.click_resolves_to_section("0.1"));
         assert!(!m.click_resolves_to_section("0"));
         assert!(!m.click_resolves_to_section("0.2"));
@@ -326,7 +318,10 @@ mod tests {
     #[test]
     fn resize_target_node_and_section_are_distinct() {
         let n = ResizeTarget::Node("0".into());
-        let s = ResizeTarget::Section { node_id: "0".into(), section_idx: 0 };
+        let s = ResizeTarget::Section {
+            node_id: "0".into(),
+            section_idx: 0,
+        };
         assert_ne!(n, s);
     }
 }

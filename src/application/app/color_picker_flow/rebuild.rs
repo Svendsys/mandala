@@ -88,4 +88,3 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
         *last_dynamic_apply = Some(apply_key);
     }
 }
-

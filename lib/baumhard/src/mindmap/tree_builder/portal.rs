@@ -317,9 +317,8 @@ pub fn portal_pair_data(
         }
 
         let edge_key = EdgeKey::from_edge(edge);
-        let is_edge_selected = selected_edge.is_some_and(|(f, t, ty)| {
-            f == edge.from_id && t == edge.to_id && ty == edge.edge_type
-        });
+        let is_edge_selected = selected_edge
+            .is_some_and(|(f, t, ty)| f == edge.from_id && t == edge.to_id && ty == edge.edge_type);
         let preview_for_this_edge: Option<&str> = color_preview.and_then(|p| {
             if *p.edge_key == edge_key {
                 Some(p.color)
@@ -503,13 +502,13 @@ pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
             unique_id += 1;
 
             endpoint_void.append_value(
-                GfxElement::new_area_non_indexed_with_id( ep.icon.clone(), ICON_SLOT, unique_id, ),
+                GfxElement::new_area_non_indexed_with_id(ep.icon.clone(), ICON_SLOT, unique_id),
                 &mut tree.arena,
             );
             unique_id += 1;
 
             endpoint_void.append_value(
-                GfxElement::new_area_non_indexed_with_id( ep.text.clone(), TEXT_SLOT, unique_id, ),
+                GfxElement::new_area_non_indexed_with_id(ep.text.clone(), TEXT_SLOT, unique_id),
                 &mut tree.arena,
             );
             unique_id += 1;
@@ -568,17 +567,13 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
 
     for pair in pairs {
-        let pair_node = mt.root.append_value(
-            GfxMutator::new_void(pair.pair_channel),
-            &mut mt.arena,
-        );
+        let pair_node = mt
+            .root
+            .append_value(GfxMutator::new_void(pair.pair_channel), &mut mt.arena);
 
         for (endpoint_idx, ep) in pair.endpoints.iter().enumerate() {
             let endpoint_channel = endpoint_idx + 1;
-            let endpoint_void = pair_node.append_value(
-                GfxMutator::new_void(endpoint_channel),
-                &mut mt.arena,
-            );
+            let endpoint_void = pair_node.append_value(GfxMutator::new_void(endpoint_channel), &mut mt.arena);
 
             for (slot, area) in [(ICON_SLOT, &ep.icon), (TEXT_SLOT, &ep.text)] {
                 let delta = DeltaGlyphArea::full_assign_from(area);

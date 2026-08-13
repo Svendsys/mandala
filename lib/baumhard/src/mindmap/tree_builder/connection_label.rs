@@ -443,10 +443,7 @@ pub fn build_connection_label_tree(elements: &[ConnectionLabelElement]) -> Conne
         let (channel, area) = connection_label_layout(idx + 1, elem);
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
         unique_id += 1;
-        tree.root.append_value(
-            element_node,
-            &mut tree.arena,
-        );
+        tree.root.append_value(element_node, &mut tree.arena);
     }
 
     ConnectionLabelTree {

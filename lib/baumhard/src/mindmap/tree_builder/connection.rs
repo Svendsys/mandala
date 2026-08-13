@@ -555,8 +555,7 @@ impl NodeClipIndex {
         let mut oversized = Vec::new();
         for aabb in aabbs {
             let (pos, size) = *aabb;
-            if !pos.x.is_finite() || !pos.y.is_finite() || !size.x.is_finite() || !size.y.is_finite()
-            {
+            if !pos.x.is_finite() || !pos.y.is_finite() || !size.x.is_finite() || !size.y.is_finite() {
                 // Nothing can be strictly inside a non-finite box, but
                 // keeping it out of the grid rather than reasoning
                 // about it is cheaper than being clever.
@@ -760,10 +759,7 @@ pub fn build_connection_tree(elements: &[ConnectionElement]) -> Tree<GfxElement,
         for (channel, area) in children {
             let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
             unique_id += 1;
-            edge_root.append_value(
-                element,
-                &mut tree.arena,
-            );
+            edge_root.append_value(element, &mut tree.arena);
         }
     }
 
@@ -788,10 +784,9 @@ pub fn build_connection_mutator_tree(
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
     for (idx, elem) in elements.iter().enumerate() {
         let (edge_channel, children) = connection_edge_layout(idx, elem);
-        let edge_node = mt.root.append_value(
-            GfxMutator::new_void(edge_channel),
-            &mut mt.arena,
-        );
+        let edge_node = mt
+            .root
+            .append_value(GfxMutator::new_void(edge_channel), &mut mt.arena);
 
         for (channel, area) in children {
             let delta = DeltaGlyphArea::full_assign_from(&area);
@@ -815,7 +810,10 @@ mod clip_index_tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 11
         }
         fn f32_in(&mut self, lo: f32, hi: f32) -> f32 {

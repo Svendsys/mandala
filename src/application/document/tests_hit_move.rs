@@ -8,8 +8,8 @@ use super::tests_common::{load_test_doc, load_test_tree, TestNudgeMutation};
 use super::*;
 
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
-use baumhard::mindmap::tree_builder::INACTIVE_NODE_ALPHA_MULTIPLIER;
 use baumhard::mindmap::custom_mutation::{CustomMutation as CM, TargetScope as TS};
+use baumhard::mindmap::tree_builder::INACTIVE_NODE_ALPHA_MULTIPLIER;
 use glam::Vec2;
 
 #[test]
@@ -229,7 +229,10 @@ fn test_selection_highlight_wins_over_dimming_when_applied_after() {
         .expect("fixture must have more than one node");
 
     apply_inactive_node_dimming(&mut tree, Some("0"));
-    apply_tree_highlights(&mut tree, std::iter::once((other.as_str(), None, HIGHLIGHT_COLOR)));
+    apply_tree_highlights(
+        &mut tree,
+        std::iter::once((other.as_str(), None, HIGHLIGHT_COLOR)),
+    );
 
     let section_id = tree.section_arena_id(&other, 0).unwrap();
     let color = tree
@@ -245,7 +248,10 @@ fn test_selection_highlight_wins_over_dimming_when_applied_after() {
         .color
         .unwrap();
     assert!((color[0] - HIGHLIGHT_COLOR[0]).abs() < 0.01);
-    assert!((color[3] - HIGHLIGHT_COLOR[3]).abs() < 0.01, "highlight alpha survives the dim");
+    assert!(
+        (color[3] - HIGHLIGHT_COLOR[3]).abs() < 0.01,
+        "highlight alpha survives the dim"
+    );
 }
 
 #[test]
