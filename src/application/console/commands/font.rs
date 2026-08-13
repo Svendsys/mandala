@@ -767,7 +767,8 @@ fn execute_font_list(_args: &Args) -> ExecResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::tests::fixtures::{assert_exec_ok, join_lines, run};
+    use crate::application::console::parser::{parse, ParseResult};
+    use crate::application::console::tests::fixtures::{assert_exec_ok, first_node_id, join_lines, run};
     use crate::application::document::tests_common::load_test_doc as fixture_doc;
     use crate::application::document::{EdgeRef, SelectionState};
 
@@ -1104,34 +1105,68 @@ mod tests {
         }
     }
 
-    /// Multi-word family names get the inserted `text` wrapped in
-    /// double quotes so the tokenizer doesn't split them into
-    /// separate positionals — `font set Norse Bold` would tokenize
-    /// to `["font", "set", "Norse", "Bold"]` whereas
-    /// `font set "Norse Bold"` is one quoted token. The display
-    /// stays bare for readability.
+    /// Tab-accepting a multi-word family produces a line the verbs
+    /// *run*. That is what the quoting in
+    /// [`font_family_completions`] is for, and it is a stronger
+    /// claim than the shape check in
+    /// `completion_after_set_returns_loaded_families_in_their_face`,
+    /// because it runs the inserted text back through the parser
+    /// and the two verbs instead of comparing it to a formula.
+    ///
+    /// The bare spelling is the contrast, and it is checked as a
+    /// token count rather than as a rejection: `border font Unifont
+    /// CSUR` unquoted reaches `stage_font` as `Unifont`, which is
+    /// itself a loaded family, so it succeeds while setting a font
+    /// the user did not pick. Refusal is the *better* of the two
+    /// failures an unquoted insert produces.
+    ///
+    /// This test used to build a `Completion` literal by hand and
+    /// assert that same formula against it, exercising no
+    /// production code at all: it passed unchanged while
+    /// `border/complete.rs` served 43 of this host's 77 families
+    /// from a completer that did not quote.
     #[test]
-    fn completion_quotes_family_names_with_spaces() {
+    fn completion_of_a_multi_word_family_round_trips_through_both_verbs() {
         baumhard::font::fonts::init();
-        let cand = Completion {
-            text: "\"Multi Word\"".into(),
-            display: "Multi Word".into(),
-            hint: None,
-            font_family: Some("Multi Word".into()),
-        };
-        // Sanity: a family name with whitespace should land as the
-        // shape above. We can't guarantee any bundled family has a
-        // space in its name, so just assert the formatter directly.
-        let needs_quoting: bool = "Multi Word".chars().any(char::is_whitespace);
-        assert!(needs_quoting);
-        assert_eq!(
-            if needs_quoting {
-                format!("\"{}\"", cand.display)
-            } else {
-                cand.display.clone()
-            },
-            cand.text,
-        );
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single(first_node_id(&doc));
+        let multi_word: Vec<Completion> = font_family_completions("")
+            .into_iter()
+            .filter(|c| c.display.chars().any(char::is_whitespace))
+            .collect();
+        if multi_word.is_empty() {
+            // Nothing to prove on a host whose fonts are all
+            // single-word; say so rather than passing silently.
+            eprintln!("no loaded family carries whitespace on this host — round-trip not exercised");
+            return;
+        }
+        for c in &multi_word {
+            // One token carrying the whole name — the property
+            // quoting buys, read off the tokenizer rather than
+            // inferred from the string's shape.
+            match parse(&format!("border font {}", c.text)) {
+                ParseResult::Ok { args, .. } => assert_eq!(
+                    args,
+                    vec!["font".to_string(), c.display.clone()],
+                    "tab-accepting {:?} must reach the verb as one token",
+                    c.display
+                ),
+                _ => panic!("`border font {}` should parse as a known command", c.text),
+            }
+            // …and the bare spelling, which is what the border
+            // completer inserted until both surfaces shared one
+            // body, does not.
+            match parse(&format!("border font {}", c.display)) {
+                ParseResult::Ok { args, .. } => assert!(
+                    args.len() > 2,
+                    "unquoted {:?} should split into several tokens",
+                    c.display
+                ),
+                _ => panic!("`border font {}` should parse as a known command", c.display),
+            }
+            assert_exec_ok(run(&format!("font set {}", c.text), &mut doc));
+            assert_exec_ok(run(&format!("border font {}", c.text), &mut doc));
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
