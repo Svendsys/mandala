@@ -46,15 +46,16 @@ use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionE
 
 /// Subverbs surfaced as token-0 completions.
 pub const VERBS: &[&str] = &["border", "section-frame"];
-/// Subverbs surfaced under `border` / `section-frame`.
-pub const SUBVERBS: &[&str] = &[
-    "show", "reset", "preview",
-    // Per-field positional subverbs — same vocabulary the per-node
-    // `border` verb surfaces. Pre-fix this list omitted them so
-    // tab-completion silently hid `canvas border preset heavy` etc.
-    // even though `execute_border_subject` accepts them.
-    "preset", "color", "padding", "palette", "font", "side", "corner",
-];
+/// Subverbs both canvas subjects match *ahead* of the
+/// positional-vs-kv discriminator, so they stay on offer at a
+/// kv-form slot: `canvas border color=#fff show` prints the
+/// readout and `canvas border color=#fff preview commit`
+/// terminates a preview. The per-field positional subverbs the
+/// discriminator does gate are
+/// [`super::border::POSITIONAL_SUBVERBS`] — the same seven the
+/// per-node `border` verb surfaces, offered here only when the
+/// slot is positional.
+pub const UNGATED_SUBVERBS: &[&str] = &["show", "reset", "preview"];
 /// Modifier under `section-frame` (followed by show|reset|kv).
 pub const SECTION_FRAME_MODIFIERS: &[&str] = &["focused"];
 
@@ -92,74 +93,75 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
     // subject (`border` / `section-frame`) lives at index 1. The
     // engine's `Token { index: 0 }` counts past the command, so it
     // represents the first positional after `canvas`.
-    let subject = state.tokens.get(1).map(String::as_str);
-    // `preview` can sit at tokens[2] (after `border` or
-    // `section-frame`) or at tokens[3] (after `section-frame
-    // focused`). C12: surface commit/cancel hints instead of
-    // hint-less rows when the cursor is past `preview`.
-    let after_canvas_preview = state.tokens.get(2).map(String::as_str) == Some("preview");
-    let after_focused_preview = state.tokens.get(2).map(String::as_str) == Some("focused")
-        && state.tokens.get(3).map(String::as_str) == Some("preview");
+    //
+    // Every name is lowercased before it is matched, because
+    // `execute_canvas` and both of its subject arms dispatch on
+    // `to_ascii_lowercase` — `canvas Border Preset <TAB>` reaches
+    // the arm that `canvas Border Preset heavy` will run.
+    let lower = |s: Option<&str>| s.map(str::to_ascii_lowercase);
+    let subject = lower(state.positional(0));
+    let subject = subject.as_deref();
+    // The `focused` modifier shifts the whole subverb tree one
+    // positional right. Every slot below is expressed relative to
+    // `verb_at`, the positional index the subverb occupies, so the
+    // shift is handled once instead of being re-derived per arm.
+    // Re-deriving it is what left `canvas border side top <TAB>`
+    // and its two `section-frame` twins on the kv-key catch-all
+    // while the per-node `border side top <TAB>` answered: each
+    // arm was written for one depth and the next depth had none.
+    let focused =
+        subject == Some("section-frame") && lower(state.positional(1)).as_deref() == Some("focused");
+    let verb_at = if focused { 2 } else { 1 };
+    // The same discriminator `execute_border_subject` applies: a
+    // kv at or ahead of the subverb slot means the line is kv
+    // form, so the positional vocabulary is not what runs. It
+    // gates the lookahead below *and* both slots that emit the
+    // vocabulary — gating only the lookahead is how `canvas
+    // color=#fff border <TAB>` came to offer ten subverbs of
+    // which that line rejects seven.
+    let positional_form = super::border::subverb_slot_is_positional(state.arg_tokens(), verb_at);
+    let verb = lower(positional_form.then(|| state.positional(verb_at)).flatten());
+    let verb = verb.as_deref();
     match &state.context {
         // First positional after `canvas`: offer the subjects.
         CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
         // Second positional, branched on subject:
         //   - after `border`: show/reset/preview + kv keys
         //   - after `section-frame`: `focused`, show/reset/preview, kv keys
+        //
+        // Sits ahead of the `verb_at` arms because when the user is
+        // still *typing* `focused` the cursor is at this slot while
+        // `focused` already reads as present one token ahead.
         CompletionContext::Token { index: 1 } => match subject {
             Some("border") => {
-                let mut out = prefix_filter(SUBVERBS, state.partial);
-                out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
-                out
+                subverb_completions(state.partial, /* modifiers */ false, positional_form)
             }
-            Some("section-frame") => {
-                let mut out = prefix_filter(SECTION_FRAME_MODIFIERS, state.partial);
-                out.extend(prefix_filter(SUBVERBS, state.partial));
-                out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
-                out
-            }
+            Some("section-frame") => subverb_completions(state.partial, true, positional_form),
             _ => Vec::new(),
         },
-        // Index 2: after `canvas border preview` or `canvas
-        // section-frame preview` or `canvas section-frame focused`.
-        CompletionContext::Token { index: 2 } if after_canvas_preview => {
-            let mut out = super::border::preview_subverb_completions(state.partial);
-            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
-            out
+        // The subverb slot itself, reachable here only past the
+        // `focused` modifier (without it the arm above answers).
+        CompletionContext::Token { index } if *index == verb_at => {
+            subverb_completions(state.partial, false, positional_form)
         }
-        // Per-field positional value completion for `canvas border <verb>`:
-        // mirror the per-node `border` verb'swork. Without
-        // this, `canvas border preset <TAB>` returned kv keys (the
-        // wrong vocabulary).
-        CompletionContext::Token { index: 2 } if subject == Some("border") => {
-            let verb = state.tokens.get(2).map(|s| s.to_ascii_lowercase());
-            canvas_value_completions(verb.as_deref(), state.partial, ctx)
+        // The subverb's first argument: `preview`'s commit/cancel
+        // pair, or the per-field vocabulary of `preset` / `color` /
+        // `palette` / `font` / `side` / `corner`.
+        CompletionContext::Token { index } if *index == verb_at + 1 => match verb {
+            Some("preview") => {
+                let mut out = super::border::preview_subverb_completions(state.partial);
+                out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
+                out
+            }
+            other => canvas_value_completions(other, state.partial, ctx),
+        },
+        // The subverb's second argument — the pattern after `side
+        // <which>`, the glyph after `corner <which>`. Same slot,
+        // same vocabulary as the per-node verb's.
+        CompletionContext::Token { index } if *index == verb_at + 2 => {
+            super::border::second_positional_completions(verb, state.partial)
         }
-        // Same for `canvas section-frame <verb>` (one positional later
-        // when the `focused` modifier is absent).
-        CompletionContext::Token { index: 2 }
-            if subject == Some("section-frame")
-                && state.tokens.get(2).map(String::as_str) != Some("focused") =>
-        {
-            let verb = state.tokens.get(2).map(|s| s.to_ascii_lowercase());
-            canvas_value_completions(verb.as_deref(), state.partial, ctx)
-        }
-        // Index 3: after `canvas section-frame focused preview`.
-        CompletionContext::Token { index: 3 } if after_focused_preview => {
-            let mut out = super::border::preview_subverb_completions(state.partial);
-            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
-            out
-        }
-        // `canvas section-frame focused <verb> <value>` — value position
-        // for the per-field verbs after the `focused` modifier.
-        CompletionContext::Token { index: 3 }
-            if subject == Some("section-frame")
-                && state.tokens.get(2).map(String::as_str) == Some("focused") =>
-        {
-            let verb = state.tokens.get(3).map(|s| s.to_ascii_lowercase());
-            canvas_value_completions(verb.as_deref(), state.partial, ctx)
-        }
-        // Anything else past index 1 is always kv-form.
+        // Anything past a subverb's arguments is kv-form.
         CompletionContext::Token { .. } => kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint),
         // Per-key value completions (preset/palette/font/color/field)
         // mirror the top-level `border …` popup vocabulary so the
@@ -172,26 +174,57 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
     }
 }
 
-/// Per-key hint table — delegates to the shared
-/// [`super::border::kv_hint`] so `border …`, `section frame …`, and
-/// `canvas …` surface identical hints.
+/// The subverb slot's rows: `show` / `reset` / `preview` and —
+/// when `positional_form` says the slot is one the verb will read
+/// positionally — the per-field positional subverbs; then the kv
+/// keys that are the other way to say the same thing, and, at the
+/// one slot where it is still ahead of the user, the `focused`
+/// modifier.
+///
+/// `focused` is ungated with the readout subverbs and for the same
+/// reason: `execute_section_frame_subject` reads it off
+/// `positional(1)` before the discriminator runs, so `canvas
+/// section-frame color=#fff focused show` still reaches the
+/// focused slot's readout.
+fn subverb_completions(partial: &str, with_modifiers: bool, positional_form: bool) -> Vec<Completion> {
+    let mut out = if with_modifiers {
+        prefix_filter(SECTION_FRAME_MODIFIERS, partial)
+    } else {
+        Vec::new()
+    };
+    out.extend(prefix_filter(UNGATED_SUBVERBS, partial));
+    if positional_form {
+        out.extend(prefix_filter(super::border::POSITIONAL_SUBVERBS, partial));
+    }
+    out.extend(kv_key_completions_with_hints(BORDER_KEYS, partial, kv_hint));
+    out
+}
+
 /// Per-field positional-value completion for `canvas border <verb>
 /// <TAB>` and `canvas section-frame [focused] <verb> <TAB>`.
-/// Routes through the same per-node `border::kv_value_completions`
-/// vocabulary so canvas users see the same preset / palette / font
-/// rows the per-node verb surfaces.
+/// Routes through the same per-node `border` vocabularies so canvas
+/// users see the same preset / palette / font / side / corner rows
+/// the per-node verb surfaces.
+///
+/// `show` deliberately offers nothing: `execute_show_border` and
+/// `execute_show_section_frame` take no arguments, so the
+/// `side=` / `verbose` rows the per-node `border show <TAB>`
+/// offers would name flags this surface silently drops.
 fn canvas_value_completions(verb: Option<&str>, partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
     match verb {
         Some("preset") | Some("color") | Some("palette") | Some("font") => {
-            super::border::kv_value_completions(verb.unwrap(), partial, ctx)
+            super::border::kv_value_completions(verb.unwrap_or_default(), partial, ctx)
         }
-        Some("side") => prefix_filter(&["top", "bottom", "left", "right", "all"], partial),
-        Some("corner") => prefix_filter(&["tl", "tr", "bl", "br", "all"], partial),
+        Some("side") => prefix_filter(super::border::SIDE_VALUES, partial),
+        Some("corner") => prefix_filter(super::border::CORNER_VALUES, partial),
         // `padding` takes a number — no candidate vocabulary.
         _ => Vec::new(),
     }
 }
 
+/// Per-key hint table — delegates to the shared
+/// [`super::border::kv_hint`] so `border …`, `section frame …`, and
+/// `canvas …` surface identical hints.
 fn kv_hint(key: &str) -> Option<&'static str> {
     super::border::kv_hint(key)
 }
@@ -227,18 +260,40 @@ fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // `canvas border preset=heavy` still works (alias for
     // keybinds, per).
     if let Some(verb) = args.positional(1) {
+        // Same discriminator the per-node `border …` verb applies:
+        // a kv ahead of the subverb slot means the line is kv form
+        // and the later positional is an unquoted multi-word value,
+        // not a subverb. Without it `canvas border color=#fff
+        // preset heavy` dispatched positionally and dropped
+        // `color=#fff` on the floor without a word.
+        let positional_form = super::border::subverb_slot_is_positional(args.tokens(), 1);
         match verb.to_ascii_lowercase().as_str() {
             "show" => return execute_show_border(eff),
             "reset" => return apply_canvas_edits(eff, BorderSurface::CanvasDefault, clear_edits()),
             "preview" => return execute_canvas_border_preview(args, eff),
-            other if !other.contains('=') => {
+            // `verb`, not `other`: `other` is the normalized
+            // spelling this match needed, and the unknown-subverb
+            // message on the far side of `apply_positional` quotes
+            // whatever it is handed. The parser lowercases the
+            // subverb itself (`positional_subverb_to_edits`), so
+            // passing the raw token changes nothing but the wording
+            // — and the wording is the user's own.
+            other if !other.contains('=') && positional_form => {
                 return apply_positional(
-                    other,
+                    verb,
                     args,
                     /* verb_pos */ 1,
                     BorderSurface::CanvasDefault,
                     eff,
                 );
+            }
+            other if !other.contains('=') => {
+                return ExecResult::err(super::border::unquoted_multiword_hint(
+                    BorderSurface::CanvasDefault.label(),
+                    args.tokens(),
+                    /* verb_pos */ 1,
+                    verb,
+                ));
             }
             _ => {}
         }
@@ -311,12 +366,26 @@ fn execute_section_frame_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecR
     };
 
     if let Some(verb) = args.positional(verb_pos) {
+        // See `execute_border_subject` — same discriminator, one
+        // slot further right when the `focused` modifier is in play.
+        let positional_form = super::border::subverb_slot_is_positional(args.tokens(), verb_pos);
         match verb.to_ascii_lowercase().as_str() {
             "show" => return execute_show_section_frame(eff, focused),
             "reset" => return apply_canvas_edits(eff, surface, clear_edits()),
             "preview" => return execute_canvas_section_frame_preview(args, eff, focused),
+            // Raw `verb` for the same reason as the sibling subject
+            // above — the message on the `Ok(None)` path echoes what
+            // it is given.
+            other if !other.contains('=') && positional_form => {
+                return apply_positional(verb, args, verb_pos, surface, eff);
+            }
             other if !other.contains('=') => {
-                return apply_positional(other, args, verb_pos, surface, eff);
+                return ExecResult::err(super::border::unquoted_multiword_hint(
+                    surface.label(),
+                    args.tokens(),
+                    verb_pos,
+                    verb,
+                ));
             }
             _ => {}
         }
@@ -583,6 +652,106 @@ mod tests {
     use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
     use crate::application::console::ExecResult;
     use crate::application::document::tests_common::load_test_doc;
+
+    /// The `focused` modifier shifts `canvas section-frame`'s whole
+    /// subverb tree one positional to the right. Completion did not
+    /// follow it, so past `focused` the popup offered kv keys only —
+    /// hiding `show`, `reset`, `preview` and every per-field subverb
+    /// that `execute_canvas` accepts in exactly that position.
+    #[test]
+    fn test_canvas_focused_section_frame_completion_offers_subverbs() {
+        let doc = load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let line = "canvas section-frame focused ";
+        let rows: Vec<String> = crate::application::console::completion::complete(line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect();
+        let offered = super::UNGATED_SUBVERBS
+            .iter()
+            .chain(super::super::border::POSITIONAL_SUBVERBS);
+        for expected in offered {
+            assert!(
+                rows.iter().any(|r| r == expected),
+                "`{line}<TAB>` should offer '{expected}'; got {rows:?}"
+            );
+        }
+        // The kv keys stay — `canvas section-frame focused
+        // preset=heavy` is a real form.
+        assert!(rows.iter().any(|r| r == "preset="));
+    }
+
+    /// The popup rows for `line` with the cursor at its end.
+    fn popup(line: &str, doc: &crate::application::document::MindMapDocument) -> Vec<String> {
+        let ctx = crate::application::console::ConsoleContext::from_document(doc);
+        crate::application::console::completion::complete(line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect()
+    }
+
+    /// One positional deeper than the `focused` gap above: the
+    /// value slot *after* a `side` / `corner` which-arg. Every arm
+    /// stopped at the first value slot, so `canvas border side top
+    /// <TAB>` fell to the kv-key catch-all and answered `preset=`
+    /// … `br=` while `border side top <TAB>` answered `reset` —
+    /// even though `canvas border side top reset` has been pinned
+    /// as working since the oracle landed.
+    #[test]
+    fn test_canvas_side_and_corner_second_value_slot_offers_reset() {
+        let doc = load_test_doc();
+        for line in [
+            "canvas border side top ",
+            "canvas border corner tl ",
+            "canvas section-frame side top ",
+            "canvas section-frame corner tl ",
+            "canvas section-frame focused side top ",
+            "canvas section-frame focused corner tl ",
+        ] {
+            assert_eq!(
+                popup(line, &doc),
+                vec!["reset"],
+                "`{line}<TAB>` must offer the same row `border side top <TAB>` does"
+            );
+        }
+        // The which-arg slot itself keeps its five words, at both
+        // depths.
+        assert_eq!(
+            popup("canvas border side ", &doc),
+            super::super::border::SIDE_VALUES.to_vec()
+        );
+        assert_eq!(
+            popup("canvas section-frame focused corner ", &doc),
+            super::super::border::CORNER_VALUES.to_vec()
+        );
+    }
+
+    /// A kv ahead of the subverb slot puts the line in kv form —
+    /// the discriminator the per-node `border …` verb has always
+    /// applied, so an unquoted `palette=My Palette` is not read as
+    /// a `Palette` subverb. The canvas surfaces had no such gate:
+    /// they dispatched positionally and dropped the kv in silence.
+    #[test]
+    fn test_canvas_kv_before_subverb_is_kv_form_not_a_positional() {
+        let mut doc = load_test_doc();
+        assert_exec_err_contains(
+            run("canvas border color=#ffffff preset heavy", &mut doc),
+            "unexpected positional",
+        );
+        assert_exec_err_contains(
+            run(
+                "canvas section-frame focused color=#ffffff preset heavy",
+                &mut doc,
+            ),
+            "unexpected positional",
+        );
+        // Nothing was written — the rejection is total, not partial.
+        assert!(doc.mindmap.canvas.default_border.is_none());
+        assert!(doc.mindmap.canvas.default_focused_section_frame_border.is_none());
+        // The popup agrees with the verb: no positional vocabulary
+        // at a slot the verb reads as kv form.
+        assert!(popup("canvas border color=#ffffff side ", &doc).is_empty());
+    }
 
     #[test]
     fn canvas_border_preset_writes_canvas_default() {
@@ -1123,7 +1292,6 @@ mod completion_pins {
     fn at_token<'a>(index: usize, partial: &'a str, tokens: &'a [String]) -> CompletionState<'a> {
         CompletionState {
             tokens,
-            cursor_token: index,
             partial,
             context: CompletionContext::Token { index },
         }

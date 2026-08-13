@@ -77,12 +77,17 @@ pub const COMMAND: Command = Command {
 };
 
 fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    // `state.tokens[0]` is the command name ("section"); the first
-    // arg (`move`, `resize`, or `frame`) lives at index 1. The
-    // engine's `Token { index }` already counts past the command,
-    // so `index: 0` means "the user is typing the first positional
-    // after `section`."
-    let first_arg = state.tokens.get(1).map(String::as_str);
+    // The engine's `Token { index }` already counts past the
+    // command, so `index: 0` means "the user is typing the first
+    // positional after `section`" — and `positional(0)` is the
+    // subverb sitting in that slot, the same one `execute_section`
+    // reads through `Args::positional(0)`.
+    // Lowercased once, because `execute_section` dispatches on
+    // `verb.to_ascii_lowercase()` (see `commands/mod.rs`
+    // § Casing) — `section FRAME <TAB>` has to open the same
+    // sub-verb tree `section FRAME show` runs.
+    let first_arg = state.positional(0).map(str::to_ascii_lowercase);
+    let first_arg = first_arg.as_deref();
     // `frame` opens a sub-verb tree — once the user has typed
     // `section frame …` we delegate every later token to the
     // frame-specific completer (which surfaces the same kv keys
@@ -123,7 +128,7 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
         // showing `0..node.sections.len()` with each row's
         // hint surfacing the section's preview text.
         CompletionContext::KvValue { key } if key == "section" => {
-            section_idx_value_completions(ctx, state.partial)
+            super::range_kv::section_idx_completions(ctx, state.partial)
         }
         // `runs=preserve|clear` — static two-value enum.
         CompletionContext::KvValue { key } if key == "runs" => {
@@ -138,6 +143,7 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
 /// (`border` / `font` / `color` already do this; section was
 /// the outlier shipping hint-less verb rows).
 fn verb_completions(partial: &str) -> Vec<Completion> {
+    let partial = &partial.to_ascii_lowercase();
     VERBS
         .iter()
         .filter(|v| v.starts_with(partial))
@@ -165,50 +171,8 @@ fn verb_hint(v: &str) -> &'static str {
     }
 }
 
-/// Selection-aware integer completer for `section=<TAB>`.
-/// Surfaces `0..node.sections.len()` for the selection's
-/// primary node, with each row's hint showing a short text
-/// preview so the user can tell which section is which.
-fn section_idx_value_completions(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
-    use baumhard::util::grapheme_chad::take_graphemes;
-    let Some(primary_id) = ctx.document.selection.primary_node_id() else {
-        return Vec::new();
-    };
-    let Some(node) = ctx.document.mindmap.nodes.get(primary_id) else {
-        return Vec::new();
-    };
-    node.sections
-        .iter()
-        .enumerate()
-        .filter(|(idx, _)| idx.to_string().starts_with(partial))
-        .map(|(idx, section)| {
-            // Short text preview (≤20 graphemes, grapheme-aware so
-            // a multi-codepoint emoji doesn't slice mid-cluster).
-            // Empty sections render `(empty)` so the row isn't
-            // a bare bullet. One walk, no prefix allocation —
-            // `take_graphemes` returns the borrowed prefix and the
-            // overflow flag together.
-            let (preview, overflow) = take_graphemes(&section.text, 20);
-            let hint = if preview.is_empty() {
-                "(empty)".to_string()
-            } else if overflow {
-                format!("\"{}…\"", preview)
-            } else {
-                format!("\"{}\"", preview)
-            };
-            Completion {
-                text: idx.to_string(),
-                display: idx.to_string(),
-                hint: Some(hint),
-                font_family: None,
-            }
-        })
-        .collect()
-}
-
 fn kv_hint(key: &str) -> Option<&'static str> {
     match key {
-        "section" => Some("target section index inside a multi-section node"),
         "dx" => Some("relative move along x axis (canvas units)"),
         "dy" => Some("relative move along y axis (canvas units)"),
         "x" => Some("absolute x offset within parent node"),
@@ -218,7 +182,8 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "text" => Some("section text payload (quote multi-word values)"),
         "runs" => Some("preserve|clear — keep or drop per-grapheme styling"),
         "at" => Some("insertion / split index"),
-        _ => None,
+        // `section` is the shared targeting vocabulary.
+        other => super::range_kv::kv_hint(other),
     }
 }
 
@@ -231,11 +196,15 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             )
         }
     };
+    // Subverb names are case-insensitive console-wide — see
+    // `commands/mod.rs` § Casing. `verb` itself stays as the user
+    // typed it so the unknown-subverb message echoes their spelling.
+    let verb_lc = verb.to_ascii_lowercase();
     // `frame` is a kv-form subverb whose own selection rules differ
     // from move/resize (it tolerates Single + section=K, walks
     // multiple nodes, doesn't require a positional dx/dy). Hand
     // off before move/resize's resolver runs.
-    if verb == "frame" {
+    if verb_lc == "frame" {
         return frame::execute_section_frame(args, eff);
     }
     // `add` resolves its own target — the `at=` kv supplies the
@@ -244,7 +213,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // resolver so a Single(node) selection (no section pre-
     // selected) doesn't trip the "select a specific section"
     // error.
-    if verb == "add" {
+    if verb_lc == "add" {
         let node_id = match resolve_node_id(&eff.document.selection) {
             Ok(id) => id,
             Err(msg) => return ExecResult::err(msg),
@@ -262,7 +231,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     const KNOWN_VERBS: &[&str] = &[
         "move", "resize", "show", "text", "edit", "delete", "split", "frame", "add",
     ];
-    if !KNOWN_VERBS.iter().any(|v| *v == verb) {
+    if !KNOWN_VERBS.iter().any(|v| *v == verb_lc) {
         return ExecResult::err(format!(
             "section: unknown subverb '{}'\n  \
              readout:   show\n  \
@@ -332,7 +301,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if target_idx >= section_count {
         return ExecResult::err(format!("section[{}] not found on node '{}'", target_idx, node_id));
     }
-    match verb {
+    match verb_lc.as_str() {
         "move" => execute_move(args, eff.document, &node_id, target_idx),
         "resize" => execute_resize(args, eff.document, &node_id, target_idx),
         "show" => execute_show(args, eff.document, &node_id, target_idx),
@@ -346,7 +315,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             log::error!("section add reached the per-section dispatcher; expected upstream routing");
             ExecResult::err("internal: section add routing miss")
         }
-        other => ExecResult::err(format!("section: unknown subverb '{}'", other)),
+        _ => ExecResult::err(format!("section: unknown subverb '{}'", verb)),
     }
 }
 
@@ -411,11 +380,11 @@ fn execute_show(args: &Args, doc: &MindMapDocument, node_id: &str, idx: usize) -
     // doesn't overflow the readout. Stay grapheme-aware so we
     // don't slice mid-cluster. `take_graphemes` is the single-pass
     // primitive for that: it borrows the prefix (no `String` to
-    // build) and reports overflow from the same walk. This file
-    // used to carry two different hand-rolled truncations — the
-    // other one, in `section_idx_value_completions`, walked the
-    // iterator twice, and the completion popup hits that path on
-    // every key press in some flows.
+    // build) and reports overflow from the same walk. The sibling
+    // truncation — the one behind `section=<TAB>` — now lives in
+    // `commands::range_kv` with the rest of the shared
+    // section-targeting vocabulary, so `color` and `font` reach
+    // the same popup this readout's preview mirrors.
     use baumhard::util::grapheme_chad::take_graphemes;
     let (preview, overflow) = take_graphemes(&section.text, 40);
     let text_display = if overflow {
@@ -1818,7 +1787,6 @@ mod tests {
         let tokens = vec!["section".to_string()];
         let state = CompletionState {
             tokens: &tokens,
-            cursor_token: 0,
             partial: "",
             context: CompletionContext::Token { index: 0 },
         };
@@ -1862,7 +1830,6 @@ mod tests {
         let tokens = vec!["section".to_string(), "show".to_string()];
         let state = CompletionState {
             tokens: &tokens,
-            cursor_token: 0,
             partial: "",
             context: CompletionContext::KvValue {
                 key: "section".to_string(),
@@ -1898,7 +1865,6 @@ mod tests {
         let tokens = vec!["section".to_string(), "text".to_string()];
         let state = CompletionState {
             tokens: &tokens,
-            cursor_token: 0,
             partial: "",
             context: CompletionContext::KvValue {
                 key: "runs".to_string(),

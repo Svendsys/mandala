@@ -32,7 +32,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // subverb name (e.g. "Palette") is coincidental and should
         // route to the quoting-hint branch below, not the
         // positional dispatcher.
-        let first_token_is_positional = args.tokens().first().map(|t| !t.contains('=')).unwrap_or(false);
+        let first_token_is_positional = super::subverb_slot_is_positional(args.tokens(), 0);
         // C14: case-insensitive subverb match — same posture as
         // `border preview` already uses, and as `canvas …` and
         // top-level command lookup. Without normalizing here,
@@ -62,19 +62,27 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 return apply_positional(verb, args, eff);
             }
             other if !other.contains('=') => {
-                // A bare positional alongside a recognized kv almost
-                // always means the user typed an unquoted multi-word
-                // value (`border palette=My Palette` → tokens are
-                // `["palette=My", "Palette"]` because the tokenizer
-                // splits on whitespace). Hint at quoting rather than
-                // the generic "unknown subverb" message — the latter
-                // is technically correct but unhelpful.
-                if args.kvs().next().is_some() {
-                    return ExecResult::err(format!(
-                        "border: unexpected positional '{}' alongside a kv pair — \
-                         did you mean to quote a multi-word value? \
-                         e.g. `border palette=\"{}\"`",
-                        verb, verb
+                // A bare positional at a slot a kv already made
+                // kv-form almost always means the user typed an
+                // unquoted multi-word value (`border palette=My
+                // Palette` → tokens are `["palette=My", "Palette"]`
+                // because the tokenizer splits on whitespace). Hint
+                // at quoting rather than the generic "unknown
+                // subverb" message — the latter is technically
+                // correct but unhelpful.
+                //
+                // The condition is the discriminator, not "is there
+                // a kv anywhere on the line": a kv *past* the
+                // subverb slot leaves the slot positional, so
+                // `border nope palette=coral` is an unknown subverb
+                // and asking `args.kvs()` answered it with the
+                // nonsense hint ``border palette="nope"`` instead.
+                if !first_token_is_positional {
+                    return ExecResult::err(super::unquoted_multiword_hint(
+                        BorderSurface::Selection.label(),
+                        args.tokens(),
+                        0,
+                        verb,
                     ));
                 }
                 return ExecResult::err(unknown_subverb_message(verb));
@@ -609,7 +617,14 @@ fn stage_preset(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String
 }
 
 fn stage_font(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
-    if value == "off" || value.is_empty() {
+    // `eq_ignore_ascii_case`, as `stage_palette` and `stage_field`
+    // read their own `off` — three sibling sentinels on one verb had
+    // no business obeying two rules, and the exact compare answered
+    // `border font OFF` with "font 'OFF' is not a loaded font" while
+    // `border palette OFF` cleared. A loaded family named `off` is
+    // unreachable either way; the sentinel is documented in this
+    // subverb's usage line and a family is not.
+    if value.eq_ignore_ascii_case("off") || value.is_empty() {
         edits.font = OptionEdit::Clear;
         return Ok(());
     }
@@ -665,10 +680,13 @@ fn stage_field(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String>
         "background" => PaletteField::Background,
         "text" => PaletteField::Text,
         "title" => PaletteField::Title,
-        other => {
+        _ => {
+            // Echo `value`, not the lowercased copy: the user reads
+            // this back looking for their own typo. Its sibling
+            // `stage_preset` nine lines up already does.
             return Err(format!(
                 "field '{}' unknown; pick one of {}",
-                other,
+                value,
                 super::FIELDS.join(" | ")
             ));
         }

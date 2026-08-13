@@ -1,16 +1,39 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Shared `range=A..B` kv parser used by `color` and `font`
-//! verbs (and any future range-targeted console verb). Lifts the
-//! Rust-style `start..end` half-open form into `(usize, usize)`
-//! grapheme indices that the range-aware document setters
-//! (`set_section_text_color_range`, `_font_size_range`,
-//! `_font_family_range`) consume directly.
+//! The shared `section=N` / `range=A..B` targeting vocabulary —
+//! both halves of it.
 //!
-//! Lives next to the verb modules rather than inside one of them
-//! because both call sites need the same parser — the per-call-
-//! site copy would be the kind of duplication CODE_CONVENTIONS §5
-//! forbids.
+//! `range=A..B` lifts the Rust-style half-open form into
+//! `(usize, usize)` grapheme indices that the range-aware document
+//! setters (`set_section_text_color_range`, `_font_size_range`,
+//! `_font_family_range`) consume directly; `section=N` lifts a
+//! non-negative integer.
+//!
+//! Alongside the parsers sit [`section_idx_completions`] — the
+//! popup those same verbs offer on the value side of `section=` —
+//! and [`kv_hint`], the one sentence each of the two keys is
+//! described by wherever it is offered.
+//!
+//! They live here for the same reason the parsers do: `color`,
+//! `font`, `section` and `section frame` all speak these two kvs.
+//! What went wrong was not a copied value list but a *missing*
+//! one: each verb's `KvValue` arm matched against its whole `KEYS`
+//! list and answered with the single vocabulary it happened to
+//! know, so `font section=<TAB>` offered point sizes — the
+//! vocabulary of a different key on the same verb — while `color
+//! section=<TAB>` offered color presets. Neither verb was wrong
+//! about itself; neither had an arm for the key under the cursor.
+//! Giving a shared kv one shared answer is what retires the class.
+
+use crate::application::console::completion::Completion;
+use crate::application::console::ConsoleContext;
+
+/// The `section=<idx>` key as a one-entry keyset, for the verbs
+/// that splice it into a keyset they do not own — `section frame
+/// …`, whose other keys belong to the `border` verb. A verb with
+/// a `KEYS` list of its own spells `"section"` into that list
+/// instead and reaches here only for the hint.
+pub(super) const SECTION_KEY: &[&str] = &["section"];
 
 /// Parse a `range=A..B` kv value into `(start, end)` grapheme
 /// indices. Accepts the Rust-style `usize..usize` half-open
@@ -48,6 +71,61 @@ pub(super) fn parse_section_kv(verb: &str, value: &str) -> Result<usize, String>
     value
         .parse::<usize>()
         .map_err(|_| format!("{}: section='{}' is not a non-negative integer", verb, value))
+}
+
+/// The sentence each shared key is described by, wherever it is
+/// offered. Every verb that accepts `section=` / `range=` falls
+/// back to this from its own `kv_hint`, so the four popups that
+/// surface `section=` cannot come to describe it four ways.
+/// `None` for anything else — the caller's own table answers for
+/// the keys it owns.
+pub(super) fn kv_hint(key: &str) -> Option<&'static str> {
+    match key {
+        "section" => Some("target section index inside a multi-section node"),
+        "range" => Some("grapheme range A..B inside the targeted section"),
+        _ => None,
+    }
+}
+
+/// The popup for `section=<TAB>`: one row per section on the
+/// selection's primary node, each hinted with a short preview of
+/// that section's text so the user can tell which is which.
+///
+/// Grapheme-aware truncation via `take_graphemes` — a preview cut
+/// at 20 *bytes* would slice a multi-codepoint emoji in half.
+pub(super) fn section_idx_completions(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
+    use baumhard::util::grapheme_chad::take_graphemes;
+    let Some(primary_id) = ctx.document.selection.primary_node_id() else {
+        return Vec::new();
+    };
+    let Some(node) = ctx.document.mindmap.nodes.get(primary_id) else {
+        return Vec::new();
+    };
+    node.sections
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| idx.to_string().starts_with(partial))
+        .map(|(idx, section)| {
+            // One walk, no prefix allocation — `take_graphemes`
+            // returns the borrowed prefix and the overflow flag
+            // together. Empty sections render `(empty)` so the row
+            // isn't a bare bullet.
+            let (preview, overflow) = take_graphemes(&section.text, 20);
+            let hint = if preview.is_empty() {
+                "(empty)".to_string()
+            } else if overflow {
+                format!("\"{}…\"", preview)
+            } else {
+                format!("\"{}\"", preview)
+            };
+            Completion {
+                text: idx.to_string(),
+                display: idx.to_string(),
+                hint: Some(hint),
+                font_family: None,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

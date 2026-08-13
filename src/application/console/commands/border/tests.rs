@@ -270,12 +270,18 @@ fn border_unknown_subverb_errors_clearly() {
     assert_exec_err_contains(run("border frobnicate", &mut doc), "unknown subverb");
 }
 
-/// `border palette=My Palette` (unquoted multi-word value) tokenises
+/// `border palette=My Palette` (unquoted multi-word value) tokenizes
 /// as `["palette=My", "Palette"]` because the parser splits on
 /// whitespace. The verb sees a bare positional alongside a kv and
 /// surfaces a quoting hint rather than the generic "unknown subverb"
 /// message — the latter is technically correct but unhelpful when
 /// the user obviously meant a single multi-word value.
+///
+/// The suggested line is the *whole* line the user meant, rebuilt
+/// from their own tokens. This asserted `palette="Palette"` while
+/// the hint hardcoded the key and quoted only the trailing token,
+/// which made a message wrong in two ways read as the pinned
+/// behavior.
 #[test]
 fn border_unquoted_multi_word_value_hints_at_quoting() {
     let mut doc = fixture_doc();
@@ -287,10 +293,9 @@ fn border_unquoted_multi_word_value_hints_at_quoting() {
                 "expected quoting hint, got: {}",
                 s
             );
-            // The hint should suggest the correct quoted form.
             assert!(
-                s.contains("palette=\"Palette\""),
-                "expected the hint to show the quoted form, got: {}",
+                s.contains("`border palette=\"My Palette\"`"),
+                "expected the hint to show the line the user meant, got: {}",
                 s
             );
         }
@@ -1300,16 +1305,25 @@ fn border_preset_cycle_falls_through_to_canvas_default() {
     );
 }
 
-/// **Verb-strict vs macro-permissive contract** (Plan §5.4 #3
+/// **Verb-strict vs Action-permissive contract** (Plan §5.4 #3
 /// + Architecture A5 from the Batch-6 opus review): the verb
 /// path (`border side`/`corner`) errors with the explicit
 /// "preset custom first" hint when the resolved preset isn't
-/// custom. The macro path (`Action::SetBorderField { field:
-/// "top", value: "..." }` → `apply_border_field_to_selection`
+/// custom. The keybind / macro path (`Action::SetBorderField {
+/// field: "top", value: "..." }` → `apply_border_field_to_selection`
 /// → `set_node_border_config` → data-layer auto-promote) still
 /// silently promotes the preset to "custom" — by design, for
 /// kv-form back-compat. Pin both legs so a future contributor
 /// who tightens one without the other trips this test.
+///
+/// "Macro path" alone is the wrong name for the second leg and
+/// was the name used here: `SetBorderField` is a parametric
+/// `Action`, reachable from a `keybinds.json` binding exactly as
+/// from a `MacroStep::Action`, and it is not on
+/// `SourceTier::allows_action`'s gated list, so no tier is
+/// required for it either. `cross_dispatch/style.rs` calls the
+/// same leg "the keybind / macro path", and that is the whole of
+/// it.
 #[test]
 fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
     let mut doc = fixture_doc();
@@ -1329,11 +1343,12 @@ fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
         Some("heavy"),
         "fixture: preset should be heavy before the side write"
     );
-    // Macro-tier write — bypasses the verb-layer gate. Auto-promotes.
+    // Keybind / macro write — bypasses the verb-layer gate.
+    // Auto-promotes.
     let changed = super::apply_border_field_to_selection(&mut doc, "top", "###(*)###");
     assert!(
         changed,
-        "macro write must succeed (verb-strict gate is verb-layer-only)"
+        "keybind / macro write must succeed (verb-strict gate is verb-layer-only)"
     );
     assert_eq!(
         doc.mindmap
@@ -1345,8 +1360,8 @@ fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
             .as_ref()
             .map(|c| c.preset.as_str()),
         Some("custom"),
-        "macro path should auto-promote preset to 'custom' silently \
-         (kv-form back-compat — verb path errors instead, see \
+        "keybind / macro path should auto-promote preset to 'custom' \
+         silently (kv-form back-compat — verb path errors instead, see \
          border_side_on_non_custom_preset_errors_with_hint)"
     );
 }

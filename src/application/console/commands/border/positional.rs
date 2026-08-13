@@ -119,6 +119,140 @@ impl BorderSurface {
     }
 }
 
+/// The per-field positional subverbs
+/// [`positional_subverb_to_edits`] parses, in the order every
+/// border popup offers them.
+///
+/// This is *the* vocabulary [`subverb_slot_is_positional`] gates,
+/// and naming it once is what lets the popup withhold exactly what
+/// the verb will refuse. Every other subverb a border surface
+/// accepts — `on` / `off` / `toggle` / `show` / `reset` /
+/// `preview` on the per-node verb, `show` / `reset` / `preview` on
+/// the canvas ones — is matched *ahead* of the discriminator on
+/// the execute side, so those stay on offer at a kv-form slot and
+/// the two sides still agree.
+///
+/// `test_every_positional_subverb_is_parsed` holds this list
+/// against the parser below, so a subverb added to one and not the
+/// other fails rather than going quietly missing from a popup.
+pub(crate) const POSITIONAL_SUBVERBS: &[&str] =
+    &["preset", "color", "padding", "palette", "font", "side", "corner"];
+
+/// Whether the subverb slot at positional index `verb_pos` is
+/// genuinely positional — no kv token sits at or before it on the
+/// line.
+///
+/// The discriminator exists because the tokenizer splits an
+/// unquoted multi-word value: `border palette=My Palette` becomes
+/// `["palette=My", "Palette"]`, so `Args::positional(0)` reads
+/// `"Palette"` and coincidentally matches a subverb name. A kv
+/// ahead of the subverb slot means the user is writing kv form,
+/// whatever the later positional happens to spell — so the caller
+/// routes to [`unquoted_multiword_hint`] instead of dispatching
+/// the positional grammar with the wrong value.
+///
+/// `tokens` is the verb's own token list with the command name
+/// already stripped — [`Args::tokens`] on the execute path,
+/// [`crate::application::console::completion::CompletionState::arg_tokens`]
+/// on the completion path.
+///
+/// Every execute dispatcher asks this at the slot it reads a
+/// subverb from — all five of them (`border`, `canvas border`,
+/// `canvas section-frame [focused]`, `section frame`, and the
+/// shared [`super::preview::dispatch_border_preview`] that serves
+/// the four `… preview …` verbs). On the completion side the ask
+/// is narrower on purpose, and the paragraph above is why:
+/// [`POSITIONAL_SUBVERBS`] is the only vocabulary the
+/// discriminator gates, so the slots that have to ask are the
+/// slots that *emit* those seven words — the per-node verb's
+/// token-0 popup and both canvas subjects' subverb popups. A
+/// completion slot offering none of the seven has nothing to
+/// withhold, which is why `section frame`'s subverb popup (`show`
+/// / `reset` / `preview`) and the four `… preview …` popups
+/// (`commit` / `cancel`) read a subverb slot without asking. The
+/// ask reached three of the execute sides and one completion slot
+/// per verb for a while, missing the slot where the vocabulary is
+/// actually emitted, which is how `border color=#fff <TAB>` came
+/// to offer thirteen subverbs seven of which that line rejects.
+///
+/// The three stragglers each asked `args.kvs().next().is_some()`
+/// instead — "is there a kv *anywhere* on the line", which is a
+/// different question and answers `border nope palette=coral`
+/// with the quoting hint even though nothing about that line is
+/// kv-form at the subverb slot.
+pub(crate) fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> bool {
+    tokens
+        .iter()
+        .take(verb_pos + 1)
+        .all(|t| !crate::application::console::parser::is_kv_token(t))
+}
+
+/// The "you probably meant to quote this" rejection every border
+/// surface shares — the committing five and the four `… preview
+/// …` verbs behind
+/// [`super::preview::dispatch_border_preview`] alike. `label` is
+/// the surface prefix (`border`, `canvas border`, `section frame
+/// preview`, …) so the suggested line is copy-pasteable for the
+/// verb that printed it, and `tokens` / `verb_pos` are the same
+/// pair [`subverb_slot_is_positional`] was asked, so the suggestion
+/// is built from the line that actually reached here.
+///
+/// It used to be built from neither: the key was the literal
+/// `palette` and the value was `verb`, so `border font=DejaVu Sans`
+/// — a real instance of the mistake this message exists for —
+/// suggested ``border palette="Sans"``, naming a key the user had
+/// not typed and quoting the tail of the value rather than the
+/// value. This round spread that wording to five surfaces, which is
+/// what makes it worth reconstructing properly.
+pub(crate) fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb: &str) -> String {
+    let suggestion = split_kv_suggestion(tokens, verb_pos).unwrap_or_else(|| format!("<key>=\"{}\"", verb));
+    format!(
+        "{}: unexpected positional '{}' alongside a kv pair — \
+         did you mean to quote a multi-word value? \
+         e.g. `{} {}`",
+        label, verb, label, suggestion
+    )
+}
+
+/// Rebuild the kv the tokenizer is presumed to have split, as
+/// `key="value words"`.
+///
+/// The offending positional sits at positional index `verb_pos`;
+/// the kv that made that slot kv-form is the last kv token ahead of
+/// it, and everything between the two is what a quote would have
+/// held together. So `border palette=My Palette` — tokens
+/// `["palette=My", "Palette"]` — rebuilds as `palette="My Palette"`,
+/// which is exactly the line the user meant.
+///
+/// A line that reaches the hint for some *other* reason still gets
+/// a suggestion made only of words it contains: `border color=#fff
+/// preset heavy` rebuilds as `color="#fff preset"`, which is what
+/// the message's hypothesis implies rather than a good guess at the
+/// user's intent. That is the honest limit of a single wording
+/// serving both shapes, and it beats inventing a key.
+///
+/// `None` only if no kv precedes the positional — impossible at
+/// every call site, since the hint fires precisely when one does.
+fn split_kv_suggestion(tokens: &[String], verb_pos: usize) -> Option<String> {
+    use crate::application::console::parser::{is_kv_token, split_kv};
+    let end = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| !is_kv_token(t))
+        .map(|(i, _)| i)
+        .nth(verb_pos)?;
+    let kv_at = tokens[..end].iter().rposition(|t| is_kv_token(t))?;
+    let (key, head) = split_kv(&tokens[kv_at])?;
+    // `kv_at` is the *last* kv before `end`, so the tail is all
+    // positional — the run one pair of quotes would have kept whole.
+    let mut value = String::from(head);
+    for t in &tokens[kv_at + 1..=end] {
+        value.push(' ');
+        value.push_str(t);
+    }
+    Some(format!("{}=\"{}\"", key, value))
+}
+
 /// A staged positional edit plus the one piece of presentation
 /// state the caller needs back: the preset a `cycle` resolved to,
 /// so the surface can prepend its `→ 'heavy' (cycle)` header.
@@ -420,5 +554,53 @@ fn reject_extra_positional(
             subject, extra, label, kv_example, label
         )),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::load_test_doc;
+
+    /// Every name in [`POSITIONAL_SUBVERBS`] is one
+    /// [`positional_subverb_to_edits`] actually parses, and a name
+    /// outside it is not. The constant is what both popups
+    /// withhold at a kv-form slot and what all three execute
+    /// dispatchers gate, so a subverb added to the parser and
+    /// forgotten here would be silently unreachable from every
+    /// border popup — with every other test still green.
+    #[test]
+    fn test_every_positional_subverb_is_parsed() {
+        let doc = load_test_doc();
+        let tokens: Vec<String> = Vec::new();
+        let args = Args::new(&tokens);
+        for verb in POSITIONAL_SUBVERBS {
+            // No value token follows, so each recognized subverb
+            // answers with its own usage error — the one answer
+            // that is neither "not mine" nor a staged edit.
+            assert!(
+                positional_subverb_to_edits(verb, &args, 0, BorderSurface::Selection, &doc).is_err(),
+                "'{verb}' is offered as a positional subverb but the parser does not claim it"
+            );
+        }
+        assert!(matches!(
+            positional_subverb_to_edits("show", &args, 0, BorderSurface::Selection, &doc),
+            Ok(None)
+        ));
+    }
+
+    /// The discriminator is about *position*, not about whether a
+    /// kv appears anywhere: a kv past the subverb slot leaves the
+    /// line positional (`border nope palette=coral` is an unknown
+    /// subverb, not an unquoted multi-word value), while one at or
+    /// before it does not.
+    #[test]
+    fn test_subverb_slot_is_positional_reads_position_not_presence() {
+        let toks = |line: &str| crate::application::console::parser::tokenize(line);
+        assert!(subverb_slot_is_positional(&toks("nope palette=coral"), 0));
+        assert!(!subverb_slot_is_positional(&toks("palette=My Palette"), 0));
+        // `canvas border …` reads its subverb one slot right.
+        assert!(subverb_slot_is_positional(&toks("border preset heavy"), 1));
+        assert!(!subverb_slot_is_positional(&toks("border color=#fff preset"), 1));
     }
 }

@@ -10,7 +10,7 @@
 //! error color.
 
 use super::{command_by_name, Command, COMMANDS};
-use crate::application::console::completion::{Completion, CompletionState};
+use crate::application::console::completion::{Completion, CompletionContext, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -27,12 +27,24 @@ pub const COMMAND: Command = Command {
 };
 
 fn complete_help(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    // Only complete at position 1 (the command-name arg).
-    if state.cursor_token != 1 {
+    // Only complete the single command-name arg — the first
+    // positional past the verb.
+    //
+    // Keyed on the positional slot rather than on a raw token
+    // offset, which moved two lines. `help bg=x ` offered nothing
+    // and now offers the full list: a kv is not a positional, so
+    // the cursor is at the one argument slot `execute_help` reads,
+    // and `help bg=x color` has always printed the color usage.
+    // `help x=` offered the full list and now offers nothing: the
+    // cursor is on a kv *value*, and this verb has no keys for a
+    // value to belong to. Both are pinned in
+    // `tests::oracle_corpus`; the sibling half of the same switch
+    // is described at `mutation.rs::complete_mutation`.
+    if !matches!(state.context, CompletionContext::Token { index: 0 }) {
         return Vec::new();
     }
     let partial = state.partial.to_ascii_lowercase();
-    COMMANDS
+    let mut out: Vec<Completion> = COMMANDS
         .iter()
         .filter(|c| c.name.to_ascii_lowercase().starts_with(&partial))
         .map(|c| Completion {
@@ -41,13 +53,32 @@ fn complete_help(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
             hint: Some(c.summary.to_string()),
             font_family: None,
         })
-        .collect()
+        .collect();
+    // `all` is not a command, which is why the loop above never
+    // reached it — but `execute_help` dispatches on it and the
+    // verb's own usage line names it, so it belongs in the popup
+    // alongside the names it sits among.
+    if "all".starts_with(&partial) {
+        out.push(Completion {
+            text: "all".to_string(),
+            display: "all".to_string(),
+            hint: Some("include commands the current selection can't use".to_string()),
+            font_family: None,
+        });
+    }
+    out
 }
 
 fn execute_help(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let ctx = ConsoleContext::from_document(eff.document);
     match args.positional(0) {
-        Some("all") => help_listing(&ctx, true),
+        // `all` is the one argument that is not a command name, and
+        // it was the one matched exactly while `command_by_name`
+        // beside it is case-insensitive — so `help BORDER` printed
+        // the border usage and `help ALL` answered "unknown
+        // command: ALL". Same rule for both now (see
+        // `commands/mod.rs` § Casing).
+        Some(name) if name.eq_ignore_ascii_case("all") => help_listing(&ctx, true),
         Some(name) => help_for(name, &ctx),
         None => help_listing(&ctx, false),
     }
@@ -144,17 +175,21 @@ mod tests {
         tokenize(line)
     }
 
+    /// `help` completes its one argument slot and no other — the
+    /// verb takes a single command name (or `all`), so a second
+    /// positional has no vocabulary to offer.
     #[test]
     fn test_complete_help_takes_one_arg() {
-        use crate::application::console::completion::CompletionContext;
         let toks: Vec<String> = args_from("help a");
-        let state = CompletionState {
+        let at = |index: usize| CompletionState {
             tokens: &toks,
-            cursor_token: 1,
             partial: "a",
-            context: CompletionContext::Token { index: 0 },
+            context: CompletionContext::Token { index },
         };
-        assert_eq!(state.cursor_token, 1);
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        assert!(!complete_help(&at(0), &ctx).is_empty());
+        assert!(complete_help(&at(1), &ctx).is_empty());
     }
 
     #[test]
@@ -367,7 +402,7 @@ mod tests {
         assert!(
             color_lines
                 .iter()
-                .any(|l| l == "tags: color, bg, text, border, pick, wheel"),
+                .any(|l| l == "tags: color, bg, text, border, section, range, pick, picker, wheel"),
             "color's tags must be published verbatim; got {:?}",
             color_lines
         );
@@ -376,5 +411,26 @@ mod tests {
             "a verb with no aliases must not emit an empty aliases line; got {:?}",
             color_lines
         );
+    }
+
+    /// `help all` is dispatched by `execute_help` and named in the
+    /// verb's own usage line, but the completer only ever walked
+    /// `COMMANDS` — and `all` is not a command, so the popup was
+    /// silent about the one argument `help` documents.
+    #[test]
+    fn test_help_completion_offers_the_all_argument() {
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let popup = |line: &str| -> Vec<String> {
+            crate::application::console::completion::complete(line, line.len(), &ctx)
+                .into_iter()
+                .map(|c| c.text)
+                .collect()
+        };
+        assert!(popup("help ").iter().any(|r| r == "all"));
+        assert_eq!(popup("help al"), vec!["all"]);
+        // The command names it sits among are untouched.
+        assert!(popup("help ").iter().any(|r| r == "color"));
+        assert!(COMMAND.usage.contains("all"));
     }
 }

@@ -42,7 +42,9 @@ fn complete_fps(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completio
 }
 
 fn execute_fps(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let mode = match args.positional(0) {
+    // Subverb names are case-insensitive console-wide — see
+    // `commands/mod.rs` § Casing.
+    let mode = match args.positional(0).map(str::to_ascii_lowercase).as_deref() {
         Some("on") => FpsDisplayMode::Snapshot,
         Some("off") => FpsDisplayMode::Off,
         Some("debug") => FpsDisplayMode::Debug,

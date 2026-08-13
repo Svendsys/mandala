@@ -42,11 +42,13 @@ fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Some(v) => v,
         None => return ExecResult::err("usage: node resize <w> <h> | node fit | node edit"),
     };
-    match verb {
+    // Subverb names are case-insensitive console-wide — see
+    // `commands/mod.rs` § Casing.
+    match verb.to_ascii_lowercase().as_str() {
         "resize" => execute_resize(args, eff),
         "fit" => execute_fit(eff),
         "edit" => execute_edit(eff),
-        other => ExecResult::err(format!("node: unknown subverb '{}'", other)),
+        _ => ExecResult::err(format!("node: unknown subverb '{}'", verb)),
     }
 }
 

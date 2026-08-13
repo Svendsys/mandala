@@ -13,7 +13,7 @@
 //!   scope, behavior, and source layer.
 
 use super::Command;
-use crate::application::console::completion::{Completion, CompletionState};
+use crate::application::console::completion::{Completion, CompletionContext, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -31,8 +31,36 @@ pub const COMMAND: Command = Command {
 };
 
 fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    match state.cursor_token {
-        1 => {
+    // Slot-counted through the same positional view the execute
+    // path reads (`Args::positional`), rather than through raw
+    // token offsets.
+    //
+    // This comment used to claim the two agree on every line, so
+    // the switch changed nothing. They do not, and it did — twice
+    // here, each time the popup catching up with a line the verb
+    // already accepted or already refused:
+    //
+    // - `mutation x=1 <TAB>` offered nothing. The raw offset read
+    //   `x=1` as the sub-command slot and found no sub-command
+    //   there. It offers the four sub-commands now, which is what
+    //   the verb reads: `Args::positional` skips the kv, so
+    //   `mutation x=1 list` has run all along.
+    // - `mutation ap=li` offered `list`. The raw offset put the
+    //   cursor at the sub-command slot while the engine had
+    //   already split the token and handed over `li` as the value
+    //   of a key `ap`. It offers nothing now, which is right —
+    //   this verb has no kv form, so a value of a key it does not
+    //   have has no vocabulary.
+    //
+    // Both are pinned in `tests::oracle_corpus`. `help` took the
+    // same switch and moved two lines of its own; see
+    // `help.rs::complete_help`.
+    let index = match state.context {
+        CompletionContext::Token { index } => index,
+        _ => return Vec::new(),
+    };
+    match index {
+        0 => {
             // Sub-command slot.
             let partial = state.partial.to_ascii_lowercase();
             ["list", "apply", "help", "inspect"]
@@ -46,8 +74,8 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
                 })
                 .collect()
         }
-        2 if matches!(
-            state.tokens.get(1).map(String::as_str),
+        1 if matches!(
+            state.positional(0).map(str::to_ascii_lowercase).as_deref(),
             Some("apply") | Some("help") | Some("inspect")
         ) =>
         {
@@ -77,14 +105,19 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
 }
 
 fn execute_mutation(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    match args.positional(0) {
+    // Sub-command names are case-insensitive console-wide — see
+    // `commands/mod.rs` § Casing. The mutation *id* at
+    // positional(1) is not: it is a registry key, matched as
+    // written.
+    let sub = args.positional(0);
+    match sub.map(str::to_ascii_lowercase).as_deref() {
         Some("list") => list(args, eff),
         Some("apply") => apply(args, eff),
         Some("help") => help(args, eff),
         Some("inspect") => inspect(args, eff),
-        Some(other) => ExecResult::err(format!(
+        Some(_) => ExecResult::err(format!(
             "unknown mutation sub-command: {} (try list / apply / help / inspect)",
-            other
+            sub.unwrap_or_default()
         )),
         None => ExecResult::err("mutation needs a sub-command (list / apply / help / inspect)"),
     }

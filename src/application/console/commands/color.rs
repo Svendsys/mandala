@@ -25,22 +25,49 @@ use crate::application::console::traits::{
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{SectionSel, SelectionState};
 
-pub const KEYS: &[&str] = &["bg", "text", "border", "section"];
+/// kv keys the verb accepts. `range` reached `execute_color` and
+/// the verb's own error text without ever reaching this list, so
+/// it was parseable but invisible — the same gap `font` carried
+/// for the same key. `section` was in the list but missing from
+/// the usage line, which is the other half of the same drift.
+///
+/// Both *instances* are closed —
+/// `test_color_completion_offers_the_range_key` holds every key
+/// here against both literals below, the same assertion `font`
+/// grew in the same commit. The drift that produced them is not;
+/// see [`super`]'s § Usage and tags are hand-written for what is
+/// and is not closed, and for the rule that follows from it. The
+/// caveat reached `font::KEYS` alone at the time, which left this
+/// list reading as though its check were an invariant.
+pub const KEYS: &[&str] = &["bg", "text", "border", "section", "range"];
 pub const VALUE_PRESETS: &[&str] = &["accent", "edge", "fg", "reset"];
 
 pub const COMMAND: Command = Command {
     name: "color",
     aliases: &[],
     summary: "Set bg/text/border color, or pick via the glyph wheel",
-    usage: "color bg=<color> text=<color> border=<color>   |   color bg|text|border|pick",
-    tags: &["color", "bg", "text", "border", "pick", "wheel"],
+    usage: "color bg=<color> text=<color> border=<color> [section=<N>] [range=<A..B>] | color bg|text|border|pick | color picker on|off",
+    tags: &[
+        "color", "bg", "text", "border", "section", "range", "pick", "picker", "wheel",
+    ],
     applicable: always,
     complete: complete_color,
     execute: execute_color,
 };
 
-fn complete_color(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
+fn complete_color(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
+        // `color picker` takes `on` / `off` and nothing else — not
+        // the kv keys, which `execute_color` rejects there. The arm
+        // sits ahead of the general one so the popup offers only
+        // what the verb accepts.
+        CompletionContext::Token { index: 1 }
+            if state
+                .positional(0)
+                .is_some_and(|v| v.eq_ignore_ascii_case("picker")) =>
+        {
+            prefix_filter(&["on", "off"], state.partial)
+        }
         CompletionContext::Token { index } => {
             let mut out = kv_key_completions_with_hints(KEYS, state.partial, kv_hint);
             // At token 0 the bare verbs — `pick` plus the axis
@@ -50,15 +77,19 @@ fn complete_color(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
             if *index == 0 {
                 out.extend(prefix_filter(&["pick", "picker"], state.partial));
             }
-            // `color picker` expects `on` / `off` as the next token.
-            if *index == 1 && matches!(state.tokens.first().map(String::as_str), Some("picker")) {
-                out.extend(prefix_filter(&["on", "off"], state.partial));
-            }
             out
         }
-        CompletionContext::KvValue { key } if KEYS.iter().any(|k| k == key) => {
+        // Per-key value vocabularies. `section=` is an index, not a
+        // color; matching the whole `KEYS` list offered it the
+        // color presets, which nothing would accept.
+        CompletionContext::KvValue { key } if matches!(key.as_str(), "bg" | "text" | "border") => {
             prefix_filter(VALUE_PRESETS, state.partial)
         }
+        CompletionContext::KvValue { key } if key == "section" => {
+            super::range_kv::section_idx_completions(ctx, state.partial)
+        }
+        // `range=A..B` is free-form — grapheme indices into the
+        // targeted section, with no list to offer.
         _ => Vec::new(),
     }
 }
@@ -68,8 +99,8 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "bg" => Some("fill / background color"),
         "text" => Some("text / label color"),
         "border" => Some("frame / line color"),
-        "section" => Some("target section index inside a multi-section node"),
-        _ => None,
+        // `section` / `range` are the shared targeting vocabulary.
+        other => super::range_kv::kv_hint(other),
     }
 }
 
@@ -232,8 +263,11 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     //    standalone palette (no target; commit applies to selection)
     //  - `color picker off` — close any open picker
     if let Some(verb) = args.positional(0) {
-        if verb == "picker" {
-            match args.positional(1) {
+        // Subverb names are case-insensitive console-wide — see
+        // `commands/mod.rs` § Casing.
+        let verb_lc = verb.to_ascii_lowercase();
+        if verb_lc == "picker" {
+            match args.positional(1).map(str::to_ascii_lowercase).as_deref() {
                 Some("on") => {
                     eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPickerStandalone);
                     eff.close_console = true;
@@ -247,7 +281,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 _ => return ExecResult::err("usage: color picker on | color picker off"),
             }
         }
-        match picker_target_for(verb, &eff.document.selection) {
+        match picker_target_for(&verb_lc, &eff.document.selection) {
             PickerTargetOutcome::Open(target) => {
                 eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPicker(target));
                 eff.close_console = true;
@@ -258,7 +292,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             PickerTargetOutcome::Unknown => {}
         }
-        if matches!(verb, "pick" | "bg" | "text" | "border") {
+        if matches!(verb_lc.as_str(), "pick" | "bg" | "text" | "border") {
             return ExecResult::err(format!("color {}: nothing to pick for this selection", verb));
         }
     }
@@ -523,6 +557,82 @@ mod tests {
     use super::*;
     use crate::application::console::parser::{parse, ParseResult};
     use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
+
+    /// The popup rows for `line` with the cursor at its end.
+    fn popup(line: &str, doc: &crate::application::document::MindMapDocument) -> Vec<String> {
+        let ctx = ConsoleContext::from_document(doc);
+        crate::application::console::completion::complete(line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect()
+    }
+
+    /// `color picker` accepts `on` and `off` and rejects every kv
+    /// pair. The popup used to offer the kv keys and neither of the
+    /// two words, because its guard asked `tokens.first()` — the
+    /// verb name — whether it was `picker`.
+    #[test]
+    fn test_color_picker_completion_offers_on_and_off_only() {
+        let doc = load_test_doc();
+        assert_eq!(popup("color picker ", &doc), vec!["on", "off"]);
+        assert_eq!(popup("color picker o", &doc), vec!["on", "off"]);
+    }
+
+    /// `section=` takes an index, not a color name.
+    #[test]
+    fn test_color_section_value_completion_offers_section_indices() {
+        let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        assert_eq!(popup("color section=", &doc), vec!["0", "1"]);
+        assert_eq!(popup("color bg=", &doc), VALUE_PRESETS.to_vec());
+    }
+
+    /// `range=` reached `execute_color` and the verb's own error
+    /// text without ever reaching `KEYS`, exactly as it had on
+    /// `font` — accepted, named in the rejection the user gets for
+    /// omitting `section=`, and offered by nothing. `section=` was
+    /// the mirror gap: in `KEYS`, absent from the usage line.
+    ///
+    /// The `usage` / `tags` half is a per-verb copy of a check,
+    /// not an invariant over the registry — see the `KEYS` doc
+    /// comment, and `commands/mod.rs` § Usage and tags are
+    /// hand-written, for why it stops at this verb and `font`.
+    #[test]
+    fn test_color_completion_offers_the_range_key() {
+        let doc = load_test_doc();
+        assert!(popup("color ", &doc).iter().any(|t| t == "range="));
+        assert_eq!(popup("color ra", &doc), vec!["range="]);
+        for key in KEYS {
+            assert!(
+                COMMAND.usage.contains(&format!("{}=", key)),
+                "`color` accepts `{key}=` but its usage line never says so: {}",
+                COMMAND.usage
+            );
+            assert!(
+                COMMAND.tags.contains(key),
+                "`color` accepts `{key}=` but it is not a search tag: {:?}",
+                COMMAND.tags
+            );
+        }
+    }
+
+    /// `color range=A..B` without `section=` is a usage error, and
+    /// the message names the key the popup now offers — the two
+    /// halves the drift had apart.
+    #[test]
+    fn test_color_range_without_section_is_rejected_by_name() {
+        let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        use crate::application::console::tests::fixtures::run;
+        match run("color range=0..2 text=accent", &mut doc) {
+            ExecResult::Err(m) => assert!(m.contains("range=A..B requires section=N"), "{}", m),
+            other => panic!("expected Err, got {:?}", other),
+        }
+        match run("color section=0 range=0..2 text=accent", &mut doc) {
+            ExecResult::Ok(m) => assert!(m.contains("range 0..2"), "{}", m),
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
 
     /// Read back through the palette cascade rather than off
     /// `style`: every testament node is themed, so its fill comes

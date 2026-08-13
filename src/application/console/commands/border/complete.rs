@@ -11,16 +11,37 @@ use crate::application::console::completion::{
 };
 use crate::application::console::ConsoleContext;
 
+// The `font` verb owns the console's font-family vocabulary; every
+// border surface borrows it rather than re-deriving one. See that
+// function's doc for the quoting rule the copy here used to omit.
+use super::super::font::font_family_completions;
+
 pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     // The engine's `Token { index: N }` indexes positionals
-    // *after* the verb name (`border`). The dispatch reads
-    // tokens[1..] (tokens[0] is "border" itself); first
-    // positional after the verb name is at engine index 0.
-    let token1 = state.tokens.get(1).map(String::as_str);
-    let token2 = state.tokens.get(2).map(String::as_str);
+    // *after* the verb name (`border`), which is exactly what
+    // `CompletionState::positional` returns — so the lookahead
+    // below and the arms it feeds count the same slots the
+    // execute path's `Args::positional` does.
+    //
+    // Gated on the same discriminator `execute_border` applies: a
+    // kv ahead of the subverb slot means the line is kv form and
+    // the positional grammar is not what will run, so the popup
+    // must not offer its vocabulary — at the slot that *emits*
+    // that vocabulary (`Token { index: 0 }`, below) as much as at
+    // the lookahead this binding feeds.
+    //
+    // Lowercased once, because `execute_border` dispatches on
+    // `verb.to_ascii_lowercase()` — `border Preset <TAB>` reaches
+    // the arm that `border Preset heavy` will run.
+    let positional_form = super::subverb_slot_is_positional(state.arg_tokens(), 0);
+    let subverb = positional_form
+        .then(|| state.positional(0))
+        .flatten()
+        .map(str::to_ascii_lowercase);
+    let token1 = subverb.as_deref();
     let after_preview = token1 == Some("preview");
     match &state.context {
-        CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
+        CompletionContext::Token { index: 0 } => verb_or_key(state.partial, positional_form),
         //positional-subverb value completion. When
         // tokens[1] is a known positional subverb, the next
         // positional is its value — surface a typed vocabulary
@@ -31,11 +52,11 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
             out.extend(key_completions(state.partial));
             out
         }
-        CompletionContext::Token { index: 1 } => match token1.map(str::to_ascii_lowercase).as_deref() {
+        CompletionContext::Token { index: 1 } => match token1 {
             Some("preset") => preset_value_completions(state.partial),
             Some("color") => prefix_filter(super::COLOR_PRESETS, state.partial),
             Some("palette") => palette_value_completions(state.partial, ctx),
-            Some("font") => font_family_completions(state.partial),
+            Some("font") => font_value_completions(state.partial),
             Some("side") => prefix_filter(SIDE_VALUES, state.partial),
             Some("corner") => prefix_filter(CORNER_VALUES, state.partial),
             Some("show") => show_arg_completions(state.partial),
@@ -46,19 +67,78 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
         //second-positional value: side <TAB> takes
         // pattern (free-form) or `reset`; corner <TAB> takes a
         // single glyph (free-form) or `reset`.
-        CompletionContext::Token { index: 2 } => match token1.map(str::to_ascii_lowercase).as_deref() {
-            Some("side") => side_pattern_completions(state.partial, token2),
-            Some("corner") => corner_glyph_completions(state.partial),
-            _ => Vec::new(),
-        },
+        CompletionContext::Token { index: 2 } => second_positional_completions(token1, state.partial),
         CompletionContext::Token { .. } => key_completions(state.partial),
+        // `border show side=<TAB>`. The `side=` filter is a kv of
+        // the `show` subverb, not of the border vocabulary — it is
+        // absent from `KEYS`, so the shared value completer below
+        // has no arm for it and the popup went quiet on a closed
+        // five-word vocabulary `execute_border_show` validates
+        // against by name. Scoped to `show`: the canvas and
+        // section-frame readouts take no arguments at all.
+        CompletionContext::KvValue { key } if key == "side" && token1 == Some("show") => {
+            prefix_filter(SIDE_VALUES, state.partial)
+        }
         CompletionContext::KvValue { key } => kv_value_completions(key.as_str(), state.partial, ctx),
         _ => Vec::new(),
     }
 }
 
-const SIDE_VALUES: &[&str] = &["top", "bottom", "left", "right", "all"];
-const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
+/// The `side` / `corner` argument vocabularies. `pub(crate)` so
+/// the canvas mirrors of those subverbs offer the same five words
+/// rather than re-listing them — `canvas.rs` held its own copy of
+/// both until the depth-2 gap below was closed.
+pub(crate) const SIDE_VALUES: &[&str] = &["top", "bottom", "left", "right", "all"];
+pub(crate) const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
+
+/// The slot *two* positionals past a border subverb — the pattern
+/// after `side <which>`, the glyph after `corner <which>`. Every
+/// other subverb's second argument is free-form or absent, so the
+/// vocabulary is just the `reset` sentinel users would not guess.
+///
+/// The two arms answer identically on purpose, and share one body:
+/// a side pattern and a corner glyph are both free-form, so
+/// neither has a catalogue to offer and both accept the same
+/// sentinel. `stage_side` and `stage_corner` each read it through
+/// `eq_ignore_ascii_case`, so the row is matched that way too.
+///
+/// There is deliberately no `which` parameter. One was carried
+/// here and into `side_pattern_completions` and then ignored at
+/// the bottom — the caller in `canvas.rs` computed
+/// `positional(verb_at + 1)` purely to throw it away. Nothing
+/// about `top` versus `all` changes what can be typed next, and a
+/// parameter a function does not read is a claim its signature
+/// cannot honor (#41 removed the crate-wide `dead_code` allow for
+/// the same reason). If a per-side glyph catalogue ever arrives,
+/// it arrives with the parameter.
+///
+/// `pub(crate)` for the same reason [`SIDE_VALUES`] is: `canvas
+/// border side top <TAB>` and `canvas section-frame [focused]
+/// side top <TAB>` reach exactly this slot, and answered with kv
+/// keys until they were routed here.
+pub(crate) fn second_positional_completions(verb: Option<&str>, partial: &str) -> Vec<Completion> {
+    match verb.map(str::to_ascii_lowercase).as_deref() {
+        Some("side") | Some("corner") => reset_sentinel_completion(partial),
+        _ => Vec::new(),
+    }
+}
+
+/// The lone row [`second_positional_completions`] can offer:
+/// `reset`, which restores the surface's current preset's default
+/// glyph. Templates and glyphs themselves are free-form, so there
+/// is no catalogue to surface beside it — but `reset` is the word
+/// no user guesses without seeing it.
+fn reset_sentinel_completion(partial: &str) -> Vec<Completion> {
+    if !"reset".starts_with(&partial.to_ascii_lowercase()) {
+        return Vec::new();
+    }
+    vec![Completion {
+        text: "reset".to_string(),
+        display: "reset".to_string(),
+        hint: Some("restore the slot's preset's default glyph".to_string()),
+        font_family: None,
+    }]
+}
 
 /// `border preset <TAB>` and `border preset=<TAB>` value
 /// completion: every entry from `BORDER_PRESETS` plus `cycle`.
@@ -68,6 +148,12 @@ const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
 /// — a preset added to the table arrives here already described,
 /// instead of completing with a blank hint.
 fn preset_value_completions(partial: &str) -> Vec<Completion> {
+    // Case-insensitive because both consumers are:
+    // `positional_subverb_to_edits` lowercases before checking
+    // `PRESETS`, and `stage_kv`'s `preset=` arm does the same, so
+    // `border preset=HEAVY` is accepted and `border preset=H<TAB>`
+    // must not go quiet on it.
+    let partial = &partial.to_ascii_lowercase();
     let mut out: Vec<Completion> = super::PRESETS
         .iter()
         .filter(|p| p.starts_with(partial))
@@ -93,6 +179,9 @@ fn preset_value_completions(partial: &str) -> Vec<Completion> {
 /// kv and the `verbose` positional flag (/ B6.8).
 /// Pre-fix neither was discoverable from completion.
 fn show_arg_completions(partial: &str) -> Vec<Completion> {
+    // `execute_border_show` reads `verbose` through
+    // `eq_ignore_ascii_case`, so the popup matches the same way.
+    let partial = &partial.to_ascii_lowercase();
     let mut out = Vec::new();
     if "side=".starts_with(partial) || "side".starts_with(partial) {
         out.push(Completion {
@@ -113,36 +202,6 @@ fn show_arg_completions(partial: &str) -> Vec<Completion> {
     out
 }
 
-/// `border side WHICH <TAB>` — pattern templates plus `reset`.
-/// Templates are free-form so we don't surface a glyph
-/// catalogue, but `reset` is the discoverability gap (users
-/// won't guess "reset" without seeing it).
-fn side_pattern_completions(partial: &str, _which: Option<&str>) -> Vec<Completion> {
-    let mut out = Vec::new();
-    if "reset".starts_with(partial) {
-        out.push(Completion {
-            text: "reset".to_string(),
-            display: "reset".to_string(),
-            hint: Some("restore the slot's preset's default glyph".to_string()),
-            font_family: None,
-        });
-    }
-    out
-}
-
-fn corner_glyph_completions(partial: &str) -> Vec<Completion> {
-    let mut out = Vec::new();
-    if "reset".starts_with(partial) {
-        out.push(Completion {
-            text: "reset".to_string(),
-            display: "reset".to_string(),
-            hint: Some("restore the slot's preset's default glyph".to_string()),
-            font_family: None,
-        });
-    }
-    out
-}
-
 /// `border preview <TAB>` → `commit` / `cancel` rows with hints.
 /// C12 fix: the prior shape used `prefix_filter(PREVIEW_SUBVERBS, …)`
 /// which yields hint-less rows; users couldn't tell which subverb
@@ -150,6 +209,10 @@ fn corner_glyph_completions(partial: &str) -> Vec<Completion> {
 /// section-frame and canvas verbs so all four preview surfaces
 /// share the same hint vocabulary.
 pub(crate) fn preview_subverb_completions(partial: &str) -> Vec<Completion> {
+    // `dispatch_border_preview` lowercases the terminator before
+    // matching, so `border preview CO<TAB>` reaches the arm
+    // `border preview COMMIT` runs.
+    let partial = &partial.to_ascii_lowercase();
     super::PREVIEW_SUBVERBS
         .iter()
         .filter(|s| s.starts_with(partial))
@@ -182,25 +245,73 @@ pub fn kv_value_completions(key: &str, partial: &str, ctx: &ConsoleContext) -> V
         "field" => prefix_filter(super::FIELDS, partial),
         "color" => prefix_filter(super::COLOR_PRESETS, partial),
         "palette" => palette_value_completions(partial, ctx),
-        "font" => font_family_completions(partial),
+        "font" => font_value_completions(partial),
         _ => Vec::new(),
     }
 }
 
-fn verb_or_key(partial: &str) -> Vec<Completion> {
-    let mut out: Vec<Completion> = Vec::new();
-    for v in super::VERBS {
-        if v.starts_with(partial) {
-            out.push(Completion {
-                text: v.to_string(),
-                display: v.to_string(),
-                hint: Some(verb_hint(v).to_string()),
-                font_family: None,
-            });
-        }
+/// `border font <TAB>` / `border font=<TAB>` and every canvas and
+/// section-frame mirror of them: the loaded families, plus the
+/// `off` sentinel that drops the override.
+///
+/// The families come from the `font` verb's own completer, which is
+/// the console's single font-family vocabulary. `off` is appended
+/// here rather than there because it belongs to the *border* font
+/// slot: `font set off` names a family, and there is no such
+/// family. This surface's own usage line has always read `font
+/// <family|off>` while no completer offered the second half of it,
+/// which is how a word no user guesses came to be documented only
+/// in a rejection message.
+fn font_value_completions(partial: &str) -> Vec<Completion> {
+    let mut out = font_family_completions(partial);
+    // Matched the way `stage_font` reads it — `eq_ignore_ascii_case`
+    // — so `font=OF<TAB>` finds the row that `font=OFF` runs.
+    if "off".starts_with(&partial.to_ascii_lowercase()) {
+        out.push(Completion {
+            text: "off".to_string(),
+            display: "off".to_string(),
+            hint: Some("clear the font override".to_string()),
+            font_family: None,
+        });
+    }
+    out
+}
+
+/// The token-0 popup: the subverbs `execute_border` can reach
+/// from this slot, then the kv keys that are the other way to say
+/// the same thing.
+///
+/// `positional_form` is [`super::subverb_slot_is_positional`]'s
+/// answer for slot 0. When it is false a kv already sits ahead of
+/// the subverb, so `execute_border` will read the line as kv form
+/// and refuse the seven per-field subverbs by name — the popup
+/// withholds exactly those seven and keeps the rest, which the
+/// verb still honors there.
+fn verb_or_key(partial: &str, positional_form: bool) -> Vec<Completion> {
+    let mut out: Vec<Completion> = verb_rows(super::UNGATED_VERBS, partial);
+    if positional_form {
+        out.extend(verb_rows(super::POSITIONAL_SUBVERBS, partial));
     }
     out.extend(key_completions(partial));
     out
+}
+
+/// One hinted row per subverb in `verbs` whose name starts with
+/// `partial`, case-insensitively — `execute_border` dispatches on
+/// `verb.to_ascii_lowercase()`, so `border PRE<TAB>` must reach
+/// the same arm `border PRESET heavy` runs.
+fn verb_rows(verbs: &[&'static str], partial: &str) -> Vec<Completion> {
+    let partial_lc = partial.to_ascii_lowercase();
+    verbs
+        .iter()
+        .filter(|v| v.starts_with(&partial_lc))
+        .map(|v| Completion {
+            text: v.to_string(),
+            display: v.to_string(),
+            hint: Some(verb_hint(v).to_string()),
+            font_family: None,
+        })
+        .collect()
 }
 
 fn key_completions(partial: &str) -> Vec<Completion> {
@@ -244,12 +355,21 @@ fn key_hint(k: &str) -> &'static str {
     super::kv_hint(k).unwrap_or("")
 }
 
+/// `border palette=<TAB>` — the document's palette names plus the
+/// `off` sentinel.
+///
+/// Matched case-insensitively while inserting the palette's own
+/// spelling, so `palette=CO<TAB>` finds `coral` and tab-accept
+/// still writes the name the map stores. `off` is compared the
+/// same way because `stage_palette` reads it through
+/// `eq_ignore_ascii_case`.
 fn palette_value_completions(partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
+    let partial = &partial.to_ascii_lowercase();
     let mut names: Vec<&str> = ctx.document.mindmap.palettes.keys().map(String::as_str).collect();
     names.sort();
     let mut out: Vec<Completion> = names
         .into_iter()
-        .filter(|n| n.starts_with(partial))
+        .filter(|n| n.to_ascii_lowercase().starts_with(partial))
         .map(|n| Completion {
             text: n.to_string(),
             display: n.to_string(),
@@ -266,19 +386,6 @@ fn palette_value_completions(partial: &str, ctx: &ConsoleContext) -> Vec<Complet
         });
     }
     out
-}
-
-fn font_family_completions(partial: &str) -> Vec<Completion> {
-    let lower = partial.to_ascii_lowercase();
-    baumhard::font::fonts::loaded_families_iter()
-        .filter(|f| f.to_ascii_lowercase().starts_with(&lower))
-        .map(|family| Completion {
-            text: family.to_string(),
-            display: family.to_string(),
-            hint: None,
-            font_family: Some(family.to_string()),
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -298,7 +405,6 @@ mod tests {
     ) -> CompletionState<'a> {
         CompletionState {
             tokens: tokens_owned,
-            cursor_token: 0,
             partial,
             context: ctx,
         }
@@ -421,8 +527,17 @@ mod tests {
     }
 
     /// `border font=<TAB>` reuses the font-family completer:
-    /// every popup row carries `font_family = Some(<name>)` so
-    /// the renderer shapes the candidate label in that face.
+    /// every family row carries `font_family = Some(<name>)` so
+    /// the renderer shapes the candidate label in that face, and
+    /// the inserted `text` quotes a whitespace-bearing name so
+    /// tab-accept yields one token rather than two. This asserted
+    /// `font_family == text` while the border side ran its own
+    /// unquoting copy of the completer, which made the quoting
+    /// omission look like the invariant.
+    ///
+    /// The one row that is not a family is `off`, this slot's
+    /// override-clearing sentinel — untagged, because there is no
+    /// face to shape it in.
     /// Mirrors `font.rs::tests::completion_after_set_returns_loaded_families_in_their_face`.
     #[test]
     fn complete_font_value_rows_carry_family_tag() {
@@ -439,11 +554,28 @@ mod tests {
         );
         let out = complete_border(&s, &ctx);
         assert!(!out.is_empty(), "loaded fonts list must not be empty");
-        for c in &out {
+        let (families, sentinels): (Vec<_>, Vec<_>) = out.into_iter().partition(|c| c.font_family.is_some());
+        assert_eq!(
+            sentinels.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+            ["off"],
+            "the only untagged row is the `off` sentinel"
+        );
+        assert!(!families.is_empty(), "loaded fonts list must not be empty");
+        for c in &families {
             assert_eq!(
                 c.font_family.as_deref(),
-                Some(c.text.as_str()),
+                Some(c.display.as_str()),
                 "every font-completion row must tag its display family"
+            );
+            let want = if c.display.chars().any(char::is_whitespace) {
+                format!("\"{}\"", c.display)
+            } else {
+                c.display.clone()
+            };
+            assert_eq!(
+                c.text, want,
+                "tab-accepting {:?} must insert one parseable token",
+                c.display
             );
         }
     }
@@ -463,25 +595,17 @@ mod plan_5_9_tests {
         crate::application::document::tests_common::load_test_doc()
     }
 
-    fn at_token1<'a>(
-        partial: &'a str,
-        tokens: &'a [String],
-    ) -> CompletionState<'a> {
+    fn at_token1<'a>(partial: &'a str, tokens: &'a [String]) -> CompletionState<'a> {
         CompletionState {
             tokens,
-            cursor_token: 1,
             partial,
             context: CompletionContext::Token { index: 1 },
         }
     }
 
-    fn at_token2<'a>(
-        partial: &'a str,
-        tokens: &'a [String],
-    ) -> CompletionState<'a> {
+    fn at_token2<'a>(partial: &'a str, tokens: &'a [String]) -> CompletionState<'a> {
         CompletionState {
             tokens,
-            cursor_token: 2,
             partial,
             context: CompletionContext::Token { index: 2 },
         }
@@ -537,7 +661,6 @@ mod plan_5_9_tests {
         let tokens = vec!["border".to_string()];
         let s = CompletionState {
             tokens: &tokens,
-            cursor_token: 1,
             partial: "",
             context: CompletionContext::KvValue {
                 key: "preset".to_string(),
@@ -618,6 +741,28 @@ mod plan_5_9_tests {
             .map(|c| c.display)
             .collect();
         assert!(labels.iter().any(|l| l == "reset"));
+    }
+
+    /// `border show <TAB>` has offered the `side=` key since B6.8,
+    /// but `border show side=<TAB>` offered nothing — `side` is
+    /// not in `KEYS`, so the shared per-key value completer had no
+    /// arm for it, while `execute_border_show` validates the value
+    /// against a closed five-word list and names all five in its
+    /// rejection.
+    #[test]
+    fn show_side_kv_value_completion_lists_the_five_sides() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "show".to_string()];
+        let s = CompletionState {
+            tokens: &tokens,
+            partial: "",
+            context: CompletionContext::KvValue {
+                key: "side".to_string(),
+            },
+        };
+        let labels: Vec<String> = complete_border(&s, &ctx).into_iter().map(|c| c.display).collect();
+        assert_eq!(labels, SIDE_VALUES.to_vec());
     }
 
     #[test]

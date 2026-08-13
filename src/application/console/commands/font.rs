@@ -46,7 +46,18 @@ use crate::application::console::traits::{apply_to_targets, AcceptsFontFamily};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
 
-pub const KEYS: &[&str] = &["size", "min", "max", "section"];
+/// kv keys the verb accepts. `range` sat in `parse_font_args` and
+/// in the verb's own error text without ever reaching this list, so
+/// it was parseable but invisible: `font ra<TAB>` offered nothing
+/// and the usage line did not mention it.
+///
+/// That *instance* is closed —
+/// `test_font_completion_offers_the_range_key` holds every key
+/// here against both literals below. The drift that produced it
+/// is not; see [`super`]'s § Usage and tags are hand-written for
+/// what is and is not closed, and for the rule that follows from
+/// it.
+pub const KEYS: &[&str] = &["size", "min", "max", "section", "range"];
 /// Positional subverbs surfaced as token-0 completions alongside
 /// the kv keys.
 pub const VERBS: &[&str] = &["set", "list"];
@@ -58,22 +69,24 @@ pub const COMMAND: Command = Command {
     name: "font",
     aliases: &[],
     summary: "Set font family / size / clamps on the selection, or list fonts",
-    usage: "font set <family> | font list | font size=<pt> [min=<pt>] [max=<pt>]",
+    usage: "font set <family> [section=<N>] [range=<A..B>] | font list | font size=<pt> [min=<pt>] [max=<pt>] [section=<N>] [range=<A..B>]",
     tags: &[
         "font", "family", "set", "list", "size", "min", "max", "clamp", "pt", "smaller", "larger",
+        "section", "range",
     ],
     applicable: always,
     complete: complete_font,
     execute: execute_font,
 };
 
-fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
+fn complete_font(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
         // Token 0: positional verbs (`set`, `list`) + kv keys.
         CompletionContext::Token { index: 0 } => {
             let mut out: Vec<Completion> = Vec::new();
+            let verb_partial = state.partial.to_ascii_lowercase();
             for v in VERBS {
-                if v.starts_with(state.partial) {
+                if v.starts_with(&verb_partial) {
                     out.push(Completion {
                         text: match *v {
                             "set" => "set ".to_string(),
@@ -91,16 +104,28 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
         // Token 1 after `set`: every loaded font family, each
         // pre-shaped in its own face so the user sees the look
         // before committing.
-        CompletionContext::Token { index: 1 } if state.tokens.get(1).map(String::as_str) == Some("set") => {
+        CompletionContext::Token { index: 1 }
+            if state.positional(0).is_some_and(|v| v.eq_ignore_ascii_case("set")) =>
+        {
             font_family_completions(state.partial)
         }
         // Bare-token slots past index 0 with no preceding `set`
         // fall back to the kv keys (parity with the pre-existing
         // shape).
         CompletionContext::Token { .. } => kv_key_completions_with_hints(KEYS, state.partial, kv_hint),
-        CompletionContext::KvValue { key } if KEYS.contains(&key.as_str()) => {
+        // Per-key value vocabularies. Matching the whole `KEYS`
+        // list here is what made `font section=<TAB>` offer point
+        // sizes: `section` is a key of this verb, so the arm fired,
+        // and the only vocabulary it knew was the one belonging to
+        // `size`. Each key answers for itself now.
+        CompletionContext::KvValue { key } if matches!(key.as_str(), "size" | "min" | "max") => {
             prefix_filter(SIZE_PRESETS, state.partial)
         }
+        CompletionContext::KvValue { key } if key == "section" => {
+            super::range_kv::section_idx_completions(ctx, state.partial)
+        }
+        // `range=A..B` is free-form — grapheme indices into the
+        // targeted section, with no list to offer.
         _ => Vec::new(),
     }
 }
@@ -118,8 +143,8 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "size" => Some("target on-screen size in points"),
         "min" => Some("lower screen-space clamp in points"),
         "max" => Some("upper screen-space clamp in points"),
-        "section" => Some("target section index inside a multi-section node"),
-        _ => None,
+        // `section` / `range` are the shared targeting vocabulary.
+        other => super::range_kv::kv_hint(other),
     }
 }
 
@@ -144,7 +169,18 @@ fn kv_hint(key: &str) -> Option<&'static str> {
 /// quoted token, so a user mid-typing `font set "Nor` lands here
 /// with `partial = "Nor"`, not `"\"Nor"`. No leading-quote
 /// stripping is needed.
-fn font_family_completions(partial: &str) -> Vec<Completion> {
+///
+/// `pub(crate)` because this is the console's *only* font-family
+/// vocabulary, and the border family reaches it from seven slots:
+/// `border font <TAB>` / `font=<TAB>`, `canvas border font` in both
+/// forms, `canvas section-frame font=`, `section frame font=`, and
+/// `border preview font=`. Those ran on a byte-near copy in
+/// `border/complete.rs` that omitted the quoting above, so
+/// tab-accepting any of the whitespace-bearing families — 43 of the
+/// 77 this host loads — produced a line the verb then refused with
+/// "'DejaVu' is not a loaded font". One body, so the two cannot
+/// disagree about it again.
+pub(crate) fn font_family_completions(partial: &str) -> Vec<Completion> {
     let partial_lc = partial.to_ascii_lowercase();
     baumhard::font::fonts::loaded_families_iter()
         .filter(|f| f.to_ascii_lowercase().starts_with(&partial_lc))
@@ -228,7 +264,11 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Positional subverbs are checked first — they're channel-less
     // operations and don't share parse state with the kv triple.
     if let Some(verb) = args.positional(0) {
-        return match verb {
+        // Subverb names are case-insensitive console-wide — see
+        // `commands/mod.rs` § Casing. The *family* at
+        // positional(1) is not: `font set Norse` names a loaded
+        // face, and the loaded-family lookup owns that comparison.
+        return match verb.to_ascii_lowercase().as_str() {
             "set" => execute_font_set(args, eff),
             "list" => execute_font_list(args),
             _ => ExecResult::err(format!(
@@ -727,9 +767,62 @@ fn execute_font_list(_args: &Args) -> ExecResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::tests::fixtures::{assert_exec_ok, join_lines, run};
+    use crate::application::console::parser::{parse, ParseResult};
+    use crate::application::console::tests::fixtures::{assert_exec_ok, first_node_id, join_lines, run};
     use crate::application::document::tests_common::load_test_doc as fixture_doc;
     use crate::application::document::{EdgeRef, SelectionState};
+
+    /// The popup rows for `line` with the cursor at its end.
+    fn popup(line: &str, doc: &crate::application::document::MindMapDocument) -> Vec<String> {
+        let ctx = ConsoleContext::from_document(doc);
+        crate::application::console::completion::complete(line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect()
+    }
+
+    /// `section=` is an index into the selected node's sections, so
+    /// its popup must be those indices. It offered `SIZE_PRESETS`
+    /// instead — the vocabulary of `size=`, a different key of the
+    /// same verb — because the value-side arm matched the whole
+    /// `KEYS` list and knew only one list to answer with.
+    #[test]
+    fn test_font_section_value_completion_offers_section_indices() {
+        let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        assert_eq!(popup("font section=", &doc), vec!["0", "1"]);
+        assert_eq!(popup("font size=", &doc), SIZE_PRESETS.to_vec());
+    }
+
+    /// `range=` was accepted by `parse_font_args` and named in the
+    /// verb's own error text, but absent from `KEYS` — so it
+    /// completed to nothing and `help font` never mentioned it.
+    ///
+    /// The `usage` half of this is a check on one key, not an
+    /// invariant: `usage` is a hand-written literal (see the
+    /// `KEYS` doc comment), so this catches `range=` being dropped
+    /// from it and nothing else. Every key `KEYS` names is
+    /// documented, though, so assert that much rather than the one
+    /// key this test was written for — a key added to `KEYS` and
+    /// forgotten in `usage` is the drift, and it is the drift that
+    /// should fail.
+    #[test]
+    fn test_font_completion_offers_the_range_key() {
+        let doc = fixture_doc();
+        assert!(popup("font ", &doc).iter().any(|t| t == "range="));
+        for key in KEYS {
+            assert!(
+                COMMAND.usage.contains(&format!("{}=", key)),
+                "`font` accepts `{key}=` but its usage line never says so: {}",
+                COMMAND.usage
+            );
+            assert!(
+                COMMAND.tags.contains(key),
+                "`font` accepts `{key}=` but it is not a search tag: {:?}",
+                COMMAND.tags
+            );
+        }
+    }
 
     fn first_loaded_family() -> String {
         baumhard::font::fonts::init();
@@ -1012,34 +1105,68 @@ mod tests {
         }
     }
 
-    /// Multi-word family names get the inserted `text` wrapped in
-    /// double quotes so the tokenizer doesn't split them into
-    /// separate positionals — `font set Norse Bold` would tokenize
-    /// to `["font", "set", "Norse", "Bold"]` whereas
-    /// `font set "Norse Bold"` is one quoted token. The display
-    /// stays bare for readability.
+    /// Tab-accepting a multi-word family produces a line the verbs
+    /// *run*. That is what the quoting in
+    /// [`font_family_completions`] is for, and it is a stronger
+    /// claim than the shape check in
+    /// `completion_after_set_returns_loaded_families_in_their_face`,
+    /// because it runs the inserted text back through the parser
+    /// and the two verbs instead of comparing it to a formula.
+    ///
+    /// The bare spelling is the contrast, and it is checked as a
+    /// token count rather than as a rejection: `border font Unifont
+    /// CSUR` unquoted reaches `stage_font` as `Unifont`, which is
+    /// itself a loaded family, so it succeeds while setting a font
+    /// the user did not pick. Refusal is the *better* of the two
+    /// failures an unquoted insert produces.
+    ///
+    /// This test used to build a `Completion` literal by hand and
+    /// assert that same formula against it, exercising no
+    /// production code at all: it passed unchanged while
+    /// `border/complete.rs` served 43 of this host's 77 families
+    /// from a completer that did not quote.
     #[test]
-    fn completion_quotes_family_names_with_spaces() {
+    fn completion_of_a_multi_word_family_round_trips_through_both_verbs() {
         baumhard::font::fonts::init();
-        let cand = Completion {
-            text: "\"Multi Word\"".into(),
-            display: "Multi Word".into(),
-            hint: None,
-            font_family: Some("Multi Word".into()),
-        };
-        // Sanity: a family name with whitespace should land as the
-        // shape above. We can't guarantee any bundled family has a
-        // space in its name, so just assert the formatter directly.
-        let needs_quoting: bool = "Multi Word".chars().any(char::is_whitespace);
-        assert!(needs_quoting);
-        assert_eq!(
-            if needs_quoting {
-                format!("\"{}\"", cand.display)
-            } else {
-                cand.display.clone()
-            },
-            cand.text,
-        );
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single(first_node_id(&doc));
+        let multi_word: Vec<Completion> = font_family_completions("")
+            .into_iter()
+            .filter(|c| c.display.chars().any(char::is_whitespace))
+            .collect();
+        if multi_word.is_empty() {
+            // Nothing to prove on a host whose fonts are all
+            // single-word; say so rather than passing silently.
+            eprintln!("no loaded family carries whitespace on this host — round-trip not exercised");
+            return;
+        }
+        for c in &multi_word {
+            // One token carrying the whole name — the property
+            // quoting buys, read off the tokenizer rather than
+            // inferred from the string's shape.
+            match parse(&format!("border font {}", c.text)) {
+                ParseResult::Ok { args, .. } => assert_eq!(
+                    args,
+                    vec!["font".to_string(), c.display.clone()],
+                    "tab-accepting {:?} must reach the verb as one token",
+                    c.display
+                ),
+                _ => panic!("`border font {}` should parse as a known command", c.text),
+            }
+            // …and the bare spelling, which is what the border
+            // completer inserted until both surfaces shared one
+            // body, does not.
+            match parse(&format!("border font {}", c.display)) {
+                ParseResult::Ok { args, .. } => assert!(
+                    args.len() > 2,
+                    "unquoted {:?} should split into several tokens",
+                    c.display
+                ),
+                _ => panic!("`border font {}` should parse as a known command", c.display),
+            }
+            assert_exec_ok(run(&format!("font set {}", c.text), &mut doc));
+            assert_exec_ok(run(&format!("border font {}", c.text), &mut doc));
+        }
     }
 
     // ─────────────────────────────────────────────────────────────

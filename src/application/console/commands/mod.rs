@@ -7,6 +7,78 @@
 //! matching the `const PALETTE_ACTIONS` pattern — zero-cost startup,
 //! no HashMap construction, and `action_by_id`-style lookup is a
 //! linear scan over a dozen entries.
+//!
+//! # Casing
+//!
+//! One rule, and it is the one every completer already assumes:
+//!
+//! - **Command names, aliases and positional subverbs are matched
+//!   case-insensitively.** `mode DEFAULT`, `font SET Norse` and
+//!   `border PRESET heavy` all run. Every subverb popup filters
+//!   its partial case-insensitively and inserts the canonical
+//!   spelling, so this is what the popup has always promised; five
+//!   verbs honored it and the rest did not, which meant a word the
+//!   popup listed could still be refused when typed out in full.
+//! - **Kv *keys* are exact.** `border TOP=x` is `unknown key
+//!   'TOP'`, and `kv_key_completions` filters case-sensitively to
+//!   say so. A key is a field name, not a word the user picks.
+//! - **Kv *values* belong to the key's own parser.** Most are
+//!   case-insensitive (`preset=HEAVY`, `color=ACCENT`,
+//!   `side=TOP`); a palette name is stored verbatim and compared
+//!   as written. Each value completer matches the way its parser
+//!   does, and the oracle corpus pins the pair.
+//!
+//! What makes the first bullet checkable rather than aspirational
+//! is `console::tests::oracle_corpus`: every verb whose subverb
+//! dispatch normalizes carries an upper-case corpus row beside its
+//! lower-case one. (Named rather than linked — the module is
+//! `#[cfg(test)]`, so rustdoc cannot see it even under
+//! `--document-private-items`, and an intra-doc link to it fails
+//! the `-D warnings` doc gate.)
+//!
+//! # Usage and tags are hand-written
+//!
+//! [`Command::usage`] and [`Command::tags`] are `&'static str`
+//! literals and `help` prints them verbatim (`help.rs::help_for`).
+//! Nothing derives them from the verb's own `KEYS` list, so the
+//! three declarations can disagree: a key added to `KEYS` is
+//! offered by the popup on the next keystroke and stays absent
+//! from `help <verb>` until somebody writes it in by hand. `font`
+//! and `color` each carried that drift for `range=` — parseable,
+//! named in the verb's own rejection, and documented nowhere.
+//!
+//! Those two verbs now assert that every key in their `KEYS`
+//! appears in both literals. That closes the two *instances* and
+//! deliberately not the *mechanism*: the assertion is itself a
+//! per-verb copy, so the nine other `KEYS`-bearing verbs have
+//! neither the check nor any reason they would not need it.
+//!
+//! What holds the generalization up is not reach. `KEYS` is a free
+//! const per module with no field on [`Command`] to read it
+//! through, but [`Command::complete`] *is* a field, and driving
+//! each registry entry's own completer at a kv-key slot and
+//! collecting the rows it emits ending in `=` recovers the same
+//! vocabulary for all eleven — no new field, and no need to parse
+//! anything. (`baumhard::util::source_scan` is the `syn`-backed
+//! machinery this class of repository check already uses, and its
+//! `RUST_ROOTS` covers `src`, so the source-reading route is open
+//! too.)
+//!
+//! What holds it up is that the answer such a walk returns is not
+//! yet a rule. It reports `canvas` offering `top= bottom= left=
+//! right= tl= tr= bl= br=` and `section` offering `font= color=
+//! palette= field= padding= top= …`, and neither verb names one of
+//! those in its `usage` or `tags` — correctly, because neither
+//! owns them: both borrow the whole `border` keyset and say so as
+//! `<key>=<value>`, pointing at the vocabulary documented under
+//! `border` rather than transcribing it. A check that fails those
+//! two is wrong; a check that exempts them by name is a list
+//! rather than a rule. The missing piece is therefore a per-verb
+//! policy — spells its keys out, versus delegates to a documented
+//! keyset — and that decision belongs with the declarative-grammar
+//! work #27 tracks, where `usage` stops being hand-written at all.
+//! Until then: a key added to any verb's `KEYS` is added to that
+//! verb's `usage` and `tags` by hand, in the same edit.
 
 use super::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::console::completion::{Completion, CompletionState};

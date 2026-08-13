@@ -116,12 +116,16 @@ fn parse_bound(key: &str, value: &str) -> Result<OptionEdit<f32>, ExecResult> {
 
 fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Positional `clear` verb: treat as `min=unset max=unset`.
-    let (min_edit, max_edit) = match args.positional(0) {
+    // Case-insensitive console-wide — see `commands/mod.rs`
+    // § Casing.
+    let verb = args.positional(0);
+    let (min_edit, max_edit) = match verb.map(str::to_ascii_lowercase).as_deref() {
         Some("clear") => (OptionEdit::Clear, OptionEdit::Clear),
-        Some(other) => {
+        Some(_) => {
+            let other = verb.unwrap_or_default();
             return ExecResult::err(format!(
                 "unknown verb '{other}' — usage: zoom [min=<zoom|unset>] [max=<zoom|unset>]   |   zoom clear"
-            ))
+            ));
         }
         None => {
             let mut min = OptionEdit::Keep;

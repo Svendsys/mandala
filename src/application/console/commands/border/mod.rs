@@ -36,7 +36,10 @@ mod show;
 mod tests;
 
 pub use complete::complete_border;
-pub(crate) use complete::{kv_value_completions, preview_subverb_completions};
+pub(crate) use complete::{
+    kv_value_completions, preview_subverb_completions, second_positional_completions, CORNER_VALUES,
+    SIDE_VALUES,
+};
 pub use execute::execute_border;
 pub(crate) use execute::{
     apply_border_field_to_selection, cycle_border_preset_on_selection, prepend_line,
@@ -63,7 +66,10 @@ pub(crate) use execute::{custom_preset_hint, edits_has_glyph_field, kv_hint, nod
 // `palette` / `font` / `side` / `corner`) is surface-agnostic:
 // `canvas border …` and `canvas section-frame [focused] …` speak
 // exactly the same one. `canvas.rs` used to carry a second copy.
-pub(crate) use positional::{positional_subverb_to_edits, BorderSurface};
+pub(crate) use positional::{
+    positional_subverb_to_edits, subverb_slot_is_positional, unquoted_multiword_hint, BorderSurface,
+    POSITIONAL_SUBVERBS,
+};
 
 /// kv keys recognized on the kv-form path.
 pub const KEYS: &[&str] = &[
@@ -71,14 +77,15 @@ pub const KEYS: &[&str] = &[
     "tr", "bl", "br",
 ];
 
-/// Positional verbs surfaced as token-0 completions alongside kv
-/// keys.added the per-field positional subverbs
-/// (`preset` / `color` / `padding` / `palette` / `font` /
-/// `side` / `corner`) and `toggle`.
-pub const VERBS: &[&str] = &[
-    "on", "off", "toggle", "show", "reset", "preview", "preset", "color", "padding", "palette", "font",
-    "side", "corner",
-];
+/// The per-node verb's subverbs that [`execute_border`] matches
+/// *ahead* of the positional-vs-kv discriminator, so they stay on
+/// offer at a kv-form slot: `border color=#fff preview` really
+/// does stage a preview carrying that color, and `border
+/// color=#fff on` is refused by `on`'s own "takes no arguments"
+/// message rather than by the discriminator. The seven the
+/// discriminator does gate are [`POSITIONAL_SUBVERBS`], offered
+/// beside these only when the slot is positional.
+pub const UNGATED_VERBS: &[&str] = &["on", "off", "toggle", "show", "reset", "preview"];
 
 /// Subverbs surfaced under `border preview` — the
 /// commit/cancel terminator pair plus the kv keys (handled
