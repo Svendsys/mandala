@@ -47,6 +47,17 @@
 //! compile, which is the seam a new typed payload extends —
 //! `impl_arg_value_via_from_str!` takes the type name and nothing
 //! else.
+//!
+//! ## Payload field order
+//!
+//! *Which* field each arg reaches is the row's field order, and the
+//! generated constructor cannot enforce it: a struct expression is
+//! order-free, so a transposed row compiles and swaps the user's
+//! arguments. [`keybind_field_order_check!`] closes that at build
+//! time by comparing the row's names against the `Action`
+//! declaration's own — published by
+//! `mandala_derive::PayloadFieldNames` — so a transposition is
+//! `error[E0080]` on the row rather than a runtime surprise.
 
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -230,6 +241,100 @@ macro_rules! keybind_build_action {
 macro_rules! keybind_arg_names {
     ( { $($field:ident),+ $(,)? } ) => { &[$(stringify!($field)),+] };
     ( ( $($field:ident),+ $(,)? ) ) => { &[$(stringify!($field)),+] };
+}
+
+/// `&str` equality usable in a `const` context, where `==` is not.
+///
+/// Inputs: two string slices. Cost: one length comparison and at
+/// most `len` byte comparisons, all at compile time — nothing of
+/// this survives into the binary. Byte-wise rather than
+/// grapheme-aware on purpose: both operands are Rust identifiers
+/// rendered by `stringify!`, so they are ASCII by the grammar that
+/// produced them, and `baumhard::util::grapheme_chad` is not
+/// `const`.
+pub const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Whether two field-name lists are equal *and in the same order* —
+/// the comparison [`keybind_field_order_check!`] runs at compile
+/// time. Cost: as [`str_eq`], summed over the shorter list; compile
+/// time only.
+pub const fn field_names_eq(a: &[&str], b: &[&str]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if !str_eq(a[i], b[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Assert, at compile time, that one parametric row lists its
+/// payload fields in the order the `Action` variant declares them.
+///
+/// ## The defect this closes
+///
+/// For a named-field variant the field order in the row *is* the
+/// positional `args` contract: `SetColor { axis, value }` means
+/// `args[0]` fills `axis`. But the row expands into a struct
+/// expression, and a struct expression is order-free — so writing
+/// the row `{ value, axis }` compiles, resolves, and hands the
+/// user's first argument to the second field. A typed field trips
+/// over the swap by accident (`"#fafafa"` is not a `ColorAxis`); an
+/// all-`String` payload does not, and `AddSection { at, text }`
+/// written `{ text, at }` passed the entire test suite.
+///
+/// The sentinel table in the keybinds tests pins the *payload
+/// values* a row must produce, which catches the same defect — but
+/// only once a human has written that row's sentinel entry. This
+/// check needs nothing written: it compares the row's field names
+/// against `action_payload_fields`, which
+/// `mandala_derive::PayloadFieldNames` reads off the `Action`
+/// declaration. Two independent sources, so it is not a mirror, and
+/// a brand-new transposed row fails to compile before any test
+/// exists for it.
+///
+/// ## Why tuple variants expand to nothing
+///
+/// The second rule is deliberately empty. A tuple row's names
+/// (`SetEdgeBodyGlyph(glyph)`) are local bindings invented by the
+/// table, not declared anywhere, and the pattern that binds them and
+/// the constructor that consumes them are the *same* macro
+/// repetition — so there is no second order for them to disagree
+/// with. There is nothing to check, rather than a check omitted.
+macro_rules! keybind_field_order_check {
+    ( $Variant:ident { $($field:ident),+ $(,)? } ) => {
+        const _: () = assert!(
+            $crate::application::keybinds::surface::field_names_eq(
+                $crate::application::keybinds::surface::keybind_arg_names!({ $($field),+ }),
+                $crate::application::keybinds::action::action_payload_fields::$Variant,
+            ),
+            concat!(
+                "keybind_surface!: the `",
+                stringify!($Variant),
+                "` row lists its payload fields in an order the `Action` declaration does not \
+                 have. Every binding for it would hand the user's positional `args` to the wrong \
+                 fields. Reorder the row to match the variant.",
+            ),
+        );
+    };
+    ( $Variant:ident ( $($field:ident),+ $(,)? ) ) => {};
 }
 
 /// Declare the entire `keybinds.json` surface from one table.
@@ -432,9 +537,19 @@ macro_rules! keybind_surface {
         /// binding maps. The Action-derived half of the recognized
         /// set comes from [`bind_surface`].
         const EXTRA_KEYS: &[&str] = &[ $( stringify!($extra_field) ),* ];
+
+        // One compile-time assertion per named-field parametric row:
+        // the row's field order against the `Action` declaration's.
+        // See `keybind_field_order_check!` for what a failure means.
+        $(
+            $crate::application::keybinds::surface::keybind_field_order_check!(
+                $ParamVariant $param_payload
+            );
+        )*
     };
 }
 
 pub(super) use keybind_arg_names;
 pub(super) use keybind_build_action;
+pub(super) use keybind_field_order_check;
 pub(super) use keybind_surface;

@@ -3036,17 +3036,38 @@ Each variant names its arg shape in the table row that declares
 it — the payload field names there are both the arity and the
 list quoted back at the user when a binding's `args` array is
 the wrong length. **Their order is the positional `args`
-contract**, and nothing in the language enforces that: the
+contract**, and the language does not enforce it on its own: the
 generated constructor is a struct expression, which does not
 care what order its fields are written in, so a row whose names
-are transposed compiles and hands the user's arguments to the
-wrong fields. What holds the line is a test — the sentinel table
-in `keybinds/tests.rs` carries the `Action` each row's args must
-produce, and cannot omit a row, so every parametric variant has
-a payload assertion written independently of the row it checks.
-Three skips are possible and all three are logged, never
-panicked: an unparseable combo, the wrong number of args, and an
-arg that is not a valid value for its field.
+are transposed would compile and hand the user's arguments to
+the wrong fields.
+
+Two mechanisms hold that line, pinning different halves of it.
+The build holds the *names*:
+`mandala_derive::PayloadFieldNames` publishes each variant's
+field names in declaration order into `action_payload_fields`,
+`surface::keybind_field_order_check!` compares the row's names
+against them under `const _: () = assert!(…)`, and a
+transposition is an `error[E0080]` naming the row. Two
+independent sources — the declaration and the table — so it is
+not a mirror agreeing with itself, and a brand-new row is
+covered with nothing written by hand. The tests hold the
+*values*: the sentinel table in `keybinds/tests.rs` carries the
+`Action` each row's args must produce, cannot omit a row, and
+drives the args end to end through the JSON, the `ArgValue`
+conversion and `resolve()` — which is where "`set_color`'s first
+arg has to be a real `ColorAxis`" lives, and which the const
+check, reading two lists of identifiers, cannot see.
+
+Tuple rows (`SetEdgeBodyGlyph(glyph)`) sit outside the const
+check by construction rather than by omission: their names are
+local bindings the table invents, and the pattern that binds
+them and the constructor that consumes them are the same macro
+repetition, so there is no second order to disagree with.
+
+Three skips are possible at resolve time and all three are
+logged, never panicked: an unparseable combo, the wrong number
+of args, and an arg that is not a valid value for its field.
 The dispatch arms call `pub(crate)` mutation cores extracted
 from each console verb, so the same setter path runs whether
 the user types the verb or fires the bound key — including

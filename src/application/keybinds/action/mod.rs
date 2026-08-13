@@ -108,6 +108,15 @@ pub enum ZoomBound {
 /// `Serialize` / `Deserialize` are derived so macros can carry actions
 /// in their JSON payload — see `crate::application::macros::MacroStep`.
 ///
+/// `PayloadFieldNames` publishes each payload variant's field names,
+/// in the order written below, into `action_payload_fields`. The
+/// `keybind_surface!` table restates those names to define the
+/// positional `args` contract of a `keybinds.json` binding, and the
+/// two lists are compared at compile time — so the field order in
+/// this declaration is load-bearing, and reordering a variant's
+/// fields without reordering its table row is `error[E0080]` rather
+/// than a user's arguments arriving in the wrong slots.
+///
 /// `#[non_exhaustive]` because new variants need to be reviewed
 /// against the macro privilege gate
 /// (`SourceTier::allows_action`) before they ship — the gate uses
@@ -136,6 +145,7 @@ pub enum ZoomBound {
     Deserialize,
     EnumDiscriminants,
     mandala_derive::ActionClassify,
+    mandala_derive::PayloadFieldNames,
 )]
 #[strum_discriminants(
     name(ActionKind),

@@ -2071,20 +2071,26 @@ const SENTINEL_COMBO: &str = "Ctrl+Shift+Alt+F9";
 /// section name exactly the same fields, so a new parametric row
 /// fails until its row lands here.
 ///
-/// **The expected `Action` is why the third column exists.** For a
-/// named-field variant the field order in the `keybind_surface!`
-/// row *is* the positional `args` contract, and a struct expression
-/// is order-free — so writing a row's fields in the wrong order
-/// compiles, resolves, and hands the user's first argument to the
-/// second field. A typed field catches that for free (`"#fafafa"`
-/// is not a `ColorAxis`); an all-`String` payload does not, and
-/// `AddSection { at, text }` written `{ text, at }` passed the
-/// entire suite. This column is the independent statement the
-/// table cannot make about itself: it is written here, by hand,
-/// against the args in the column beside it. The `unbindable`
-/// section already forces a *reason* per row; this forces a
-/// *payload assertion* per parametric row, which is the same
-/// discipline on the half the compiler cannot reach.
+/// **The expected `Action` is why the third column exists.** It is
+/// the independent statement the table cannot make about itself:
+/// written here, by hand, against the args in the column beside it.
+/// The `unbindable` section already forces a *reason* per row; this
+/// forces a *payload assertion* per parametric row, which is the
+/// same discipline on the half the compiler cannot reach.
+///
+/// Field *order* — the defect that motivated the column, since a
+/// struct expression is order-free and `AddSection { at, text }`
+/// written `{ text, at }` once passed the entire suite — is no
+/// longer this table's to catch alone:
+/// `surface::keybind_field_order_check!` compares each row's field
+/// names against the `Action` declaration's at compile time, so a
+/// transposition is `error[E0080]` before any test runs. Both
+/// mechanisms stay, because they pin different things. The const
+/// check sees *names* and needs nothing written by hand, which is
+/// what covers a brand-new row; this table sees *values* — that
+/// `set_color`'s first arg has to be a real [`ColorAxis`], and that
+/// the whole path from JSON through `resolve()` produces the
+/// payload — which the const check cannot look at.
 ///
 /// Every args list is positionally discriminating — no row repeats
 /// a value across two fields — or the assertion could not tell a
@@ -2377,6 +2383,15 @@ fn test_every_parametric_row_hands_its_args_to_the_fields_in_declared_order() {
     // `AddSection { at, text }` rewritten `{ text, at }` passed the
     // whole suite before this existed.
     //
+    // The transposition itself no longer reaches this far —
+    // `surface::keybind_field_order_check!` fails the build on it —
+    // but this test is not made redundant by that, because it is
+    // about the *values*: the args in the table are carried end to
+    // end, through the JSON, the parse, the `ArgValue` conversion
+    // and `resolve()`, and compared against a payload written by
+    // hand. The const check reads two lists of names and never runs
+    // any of that.
+    //
     // Coverage cannot be partial: `sentinel_parametric_rows()` is
     // held against the table's parametric section by the test above,
     // so a new row has to appear here with an expected payload
@@ -2418,6 +2433,41 @@ fn test_every_parametric_row_hands_its_args_to_the_fields_in_declared_order() {
              most likely cause is the field order in its `keybind_surface!` row",
         );
     }
+}
+
+#[test]
+fn test_field_names_eq_is_order_sensitive() {
+    // The comparison the compile-time field-order guard rests on.
+    // `keybind_field_order_check!` runs it in a `const` context
+    // where a failure is `error[E0080]` and no test can observe it,
+    // so the function's own behavior is pinned here instead — an
+    // order-*insensitive* `field_names_eq` would leave the guard
+    // emitting a passing assertion for every transposed row.
+    use super::surface::{field_names_eq, str_eq};
+
+    assert!(field_names_eq(&["at", "text"], &["at", "text"]));
+    assert!(!field_names_eq(&["at", "text"], &["text", "at"]));
+    assert!(!field_names_eq(
+        &["target_kind", "field", "value"],
+        &["field", "value", "target_kind"],
+    ));
+    // Arity, and the two degenerate ends of it.
+    assert!(!field_names_eq(&["at"], &["at", "text"]));
+    assert!(!field_names_eq(&["at", "text"], &["at"]));
+    assert!(field_names_eq(&[], &[]));
+
+    // A prefix is not a match: `str_eq` compares lengths first, so
+    // `at` against `at_grapheme` must not read as equal.
+    assert!(!str_eq("at", "at_grapheme"));
+    assert!(str_eq("at", "at"));
+    assert!(!str_eq("dx", "dy"));
+
+    // And the guard is usable where it is actually used — a `const`
+    // context. If this stops compiling, the guard has stopped being
+    // a compile-time check.
+    const ORDERED: bool = field_names_eq(&["from", "to"], &["from", "to"]);
+    const SWAPPED: bool = field_names_eq(&["from", "to"], &["to", "from"]);
+    assert!(ORDERED && !SWAPPED);
 }
 
 #[test]
