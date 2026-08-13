@@ -2088,7 +2088,10 @@ const SENTINEL_COMBO: &str = "Ctrl+Shift+Alt+F9";
 ///
 /// Every args list is positionally discriminating — no row repeats
 /// a value across two fields — or the assertion could not tell a
-/// swap from a match.
+/// swap from a match. That is a precondition of the mechanism rather
+/// than a convention, so
+/// [`test_every_parametric_row_hands_its_args_to_the_fields_in_declared_order`]
+/// asserts it per row before using the row.
 fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Action)> {
     vec![
         (
@@ -2384,6 +2387,20 @@ fn test_every_parametric_row_hands_its_args_to_the_fields_in_declared_order() {
     // Document context.
     let sentinel = KeyBind::parse(SENTINEL_COMBO).unwrap();
     for (field, args, expected) in sentinel_parametric_rows() {
+        // The precondition `sentinel_parametric_rows()` states and
+        // nothing used to enforce. A row written `&["1", "1"]` makes
+        // the assertion below unable to tell a transposition from a
+        // match, and it would do so silently, for that row alone,
+        // with every other guard in this file still green — which is
+        // exactly the decorative-mechanism failure #32 exists to
+        // close.
+        let mut seen = std::collections::HashSet::new();
+        assert!(
+            args.iter().all(|arg| seen.insert(*arg)),
+            "`{field}`'s sentinel args {args:?} repeat a value across two fields, so this test \
+             cannot tell a transposed `keybind_surface!` row from a correct one — give each \
+             field a distinct value",
+        );
         let json = serde_json::Value::Object(
             [(
                 field.to_string(),
@@ -2545,6 +2562,86 @@ const SHIPPED_TEMPLATE: &str = include_str!(concat!(
     "/config/default_keybinds.json"
 ));
 
+/// The action keys `config/default_keybinds.json` ships, pinned by
+/// hand.
+///
+/// **Nothing here is derivable.** The template is a curated subset —
+/// nine of the schema's ~139 action keys, chosen for what a
+/// first-time user needs to see — so a test that asks the template
+/// which keys it has is asking the thing under test. That was the
+/// defect this list replaces: the check below used to compare the
+/// combos it walked against a count summed from the same template,
+/// and both sides moved together. Cutting the shipped file down to
+/// `{ "_comment": …, "exit_mode": ["Escape"] }` left the whole suite
+/// green — the onboarding surface could lose twelve of its thirteen
+/// keys in silence.
+///
+/// A pin is tripped in both directions. A key that vanishes from the
+/// template fails because the loop never verifies it; a key that
+/// appears fails until it is added here, which is the deliberate act
+/// the template's contents deserve.
+const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &[
+    "create_orphan_node",
+    "delete_selection",
+    "enter_connect_mode",
+    "enter_reparent_mode",
+    "exit_mode",
+    "open_console",
+    "orphan_selection",
+    "save_document",
+    "undo",
+];
+
+/// The rest of the template's top-level keys: the `_comment` the
+/// file carries its instructions in, and the non-Action schema keys
+/// it demonstrates. Pinned for the same reason as
+/// [`SHIPPED_TEMPLATE_ACTION_KEYS`] — losing the `_comment` would
+/// strip the file's entire explanation of itself, and no assertion
+/// about *bindings* can see that.
+const SHIPPED_TEMPLATE_OTHER_KEYS: &[&str] = &[
+    "_comment",
+    "console_font",
+    "console_font_size",
+    "custom_mutation_bindings",
+];
+
+#[test]
+fn test_the_shipped_template_ships_exactly_the_keys_it_is_pinned_to() {
+    // The template's inventory, held against a hand-written list.
+    // `test_shipped_keybinds_template_binds_every_key_it_names`
+    // pins the action half by exercising it; this is the half no
+    // binding assertion can reach.
+    let template: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(SHIPPED_TEMPLATE).unwrap();
+    let shipped: std::collections::BTreeSet<&str> = template.keys().map(String::as_str).collect();
+    let pinned: std::collections::BTreeSet<&str> = SHIPPED_TEMPLATE_ACTION_KEYS
+        .iter()
+        .chain(SHIPPED_TEMPLATE_OTHER_KEYS)
+        .copied()
+        .collect();
+    assert_eq!(
+        pinned.len(),
+        SHIPPED_TEMPLATE_ACTION_KEYS.len() + SHIPPED_TEMPLATE_OTHER_KEYS.len(),
+        "the pinned lists name the same key twice, so one of them is not pinning what it looks \
+         like it pins",
+    );
+
+    let dropped: Vec<&str> = pinned.difference(&shipped).copied().collect();
+    assert!(
+        dropped.is_empty(),
+        "config/default_keybinds.json no longer ships these keys: {dropped:?} — a user copying \
+         the template gets a smaller starting point than the one this list records. Restore them, \
+         or drop them from the pin on purpose.",
+    );
+    let added: Vec<&str> = shipped.difference(&pinned).copied().collect();
+    assert!(
+        added.is_empty(),
+        "config/default_keybinds.json ships keys the pin does not name: {added:?} — add them to \
+         SHIPPED_TEMPLATE_ACTION_KEYS or SHIPPED_TEMPLATE_OTHER_KEYS so the template's contents \
+         stay something a reviewer signed off on.",
+    );
+}
+
 #[test]
 fn test_shipped_keybinds_template_has_no_unrecognized_keys() {
     assert_eq!(
@@ -2571,28 +2668,22 @@ fn test_shipped_keybinds_template_binds_every_key_it_names() {
         serde_json::from_str(SHIPPED_TEMPLATE).unwrap();
     let resolved = KeybindConfig::from_json(SHIPPED_TEMPLATE).unwrap().resolve();
 
-    // Every combo the template holds under a key the schema knows as
-    // an action key. Derived from the template rather than pinned as
-    // a literal: a floor equal to today's count is tripped by the
-    // next dropped key and by nothing after that, so five keys added
-    // later could go quiet inside the same floor.
-    let expected_checks: usize = template
-        .iter()
-        .filter(|(key, _)| field_to_kind.contains_key(key.as_str()))
-        .map(|(_, value)| value.as_array().map_or(0, |combos| combos.len()))
-        .sum();
-    // …and the other half of "every one contributes": a template key
-    // that is neither a comment nor a declared non-Action key has to
-    // be an action key. Without this, a key renamed onto the extra
-    // side of the schema would leave the loop below silently
-    // shorter, and `expected_checks` would shrink to match.
+    // A template key that is neither a comment nor a declared
+    // non-Action key has to be an action key: without this, a key
+    // renamed onto the extra side of the schema would quietly stop
+    // being verified while still sitting in the file.
     let action_keys: std::collections::HashSet<&str> = field_to_kind.keys().copied().collect();
     let extra_keys: std::collections::HashSet<&str> = KeybindConfig::known_keys()
         .into_iter()
         .filter(|key| !action_keys.contains(key))
         .collect();
 
-    let mut checked = 0;
+    // The keys this loop actually put through the resolver, held at
+    // the end against `SHIPPED_TEMPLATE_ACTION_KEYS`. A key is only
+    // recorded from inside the combo loop, so `"undo": []` — present
+    // in the file, verifying nothing — fails the same way a deleted
+    // key does.
+    let mut verified: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     let mut skipped: Vec<&str> = Vec::new();
     for (key, value) in &template {
         let Some(&kind) = field_to_kind.get(key.as_str()) else {
@@ -2614,7 +2705,7 @@ fn test_shipped_keybinds_template_binds_every_key_it_names() {
                 kind,
                 "template key {key:?} → {combo:?}"
             );
-            checked += 1;
+            verified.insert(key.as_str());
         }
     }
     assert!(
@@ -2622,15 +2713,17 @@ fn test_shipped_keybinds_template_binds_every_key_it_names() {
         "template keys the schema recognizes as neither an action key nor one of its non-Action \
          keys, so the loop above never checked them: {skipped:?}",
     );
+    // The independent statement, and the whole reason the pin
+    // exists: what the loop verified, against what the template is
+    // supposed to hold. Comparing the loop's work against a total
+    // summed from the same template proves only that a loop ran.
+    let pinned: std::collections::BTreeSet<&str> = SHIPPED_TEMPLATE_ACTION_KEYS.iter().copied().collect();
     assert_eq!(
-        checked, expected_checks,
-        "the loop checked {checked} of the template's {expected_checks} action-key combos",
-    );
-    // The template is a template: an empty one would satisfy both
-    // assertions above by having nothing to check.
-    assert!(
-        expected_checks > 0,
-        "the shipped template names no action keys at all",
+        verified, pinned,
+        "the template's action keys are not the ones SHIPPED_TEMPLATE_ACTION_KEYS pins — a key \
+         missing on the left was deleted from the file, left bound to an empty list, or stopped \
+         being an action key in the schema; a key missing on the right is new and wants adding to \
+         the pin",
     );
 }
 
