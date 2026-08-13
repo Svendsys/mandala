@@ -1300,16 +1300,25 @@ fn border_preset_cycle_falls_through_to_canvas_default() {
     );
 }
 
-/// **Verb-strict vs macro-permissive contract** (Plan §5.4 #3
+/// **Verb-strict vs Action-permissive contract** (Plan §5.4 #3
 /// + Architecture A5 from the Batch-6 opus review): the verb
 /// path (`border side`/`corner`) errors with the explicit
 /// "preset custom first" hint when the resolved preset isn't
-/// custom. The macro path (`Action::SetBorderField { field:
-/// "top", value: "..." }` → `apply_border_field_to_selection`
+/// custom. The keybind / macro path (`Action::SetBorderField {
+/// field: "top", value: "..." }` → `apply_border_field_to_selection`
 /// → `set_node_border_config` → data-layer auto-promote) still
 /// silently promotes the preset to "custom" — by design, for
 /// kv-form back-compat. Pin both legs so a future contributor
 /// who tightens one without the other trips this test.
+///
+/// "Macro path" alone is the wrong name for the second leg and
+/// was the name used here: `SetBorderField` is a parametric
+/// `Action`, reachable from a `keybinds.json` binding exactly as
+/// from a `MacroStep::Action`, and it is not on
+/// `SourceTier::allows_action`'s gated list, so no tier is
+/// required for it either. `cross_dispatch/style.rs` calls the
+/// same leg "the keybind / macro path", and that is the whole of
+/// it.
 #[test]
 fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
     let mut doc = fixture_doc();
@@ -1329,11 +1338,12 @@ fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
         Some("heavy"),
         "fixture: preset should be heavy before the side write"
     );
-    // Macro-tier write — bypasses the verb-layer gate. Auto-promotes.
+    // Keybind / macro write — bypasses the verb-layer gate.
+    // Auto-promotes.
     let changed = super::apply_border_field_to_selection(&mut doc, "top", "###(*)###");
     assert!(
         changed,
-        "macro write must succeed (verb-strict gate is verb-layer-only)"
+        "keybind / macro write must succeed (verb-strict gate is verb-layer-only)"
     );
     assert_eq!(
         doc.mindmap
@@ -1345,8 +1355,8 @@ fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
             .as_ref()
             .map(|c| c.preset.as_str()),
         Some("custom"),
-        "macro path should auto-promote preset to 'custom' silently \
-         (kv-form back-compat — verb path errors instead, see \
+        "keybind / macro path should auto-promote preset to 'custom' \
+         silently (kv-form back-compat — verb path errors instead, see \
          border_side_on_non_custom_preset_errors_with_hint)"
     );
 }
