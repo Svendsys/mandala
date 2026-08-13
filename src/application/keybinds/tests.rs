@@ -2471,12 +2471,13 @@ fn test_field_names_eq_is_order_sensitive() {
     assert!(str_eq("at", "at"));
     assert!(!str_eq("dx", "dy"));
 
-    // And the guard is usable where it is actually used — a `const`
-    // context. If this stops compiling, the guard has stopped being
-    // a compile-time check.
-    const ORDERED: bool = field_names_eq(&["from", "to"], &["from", "to"]);
-    const SWAPPED: bool = field_names_eq(&["from", "to"], &["to", "from"]);
-    assert!(ORDERED && !SWAPPED);
+    // And the same two answers where the guard actually runs — a
+    // `const` context, evaluated by the compiler rather than by this
+    // test. A wrong answer here is a build failure; there is nothing
+    // for the runtime to assert, which is exactly the property the
+    // guard has and this test cannot otherwise show.
+    const _: () = assert!(field_names_eq(&["from", "to"], &["from", "to"]));
+    const _: () = assert!(!field_names_eq(&["from", "to"], &["to", "from"]));
 }
 
 #[test]
