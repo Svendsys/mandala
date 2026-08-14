@@ -144,8 +144,12 @@ the parity trajectory (or why none is owed):
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
   cross-platform drift can pass a green run. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
-  `target/llvm-cov/html/index.html`), `--lint` (advisory
-  `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt` runs
+  `target/llvm-cov/html/index.html`), `--lint` (runs
+  `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt` and both
+  `doc` legs are **hard gates** — their baselines are zero
+  (#130, #134), a regression prints a `FAILED:` line and the run
+  exits non-zero at the end, after every other gate has reported;
+  `clippy` is advisory until its warning baseline is zero. `fmt` runs
   **once** — rustfmt parses rather than compiles, so it is
   target-independent and there is no wasm32 leg for it. `clippy` and
   `doc` run **twice**, on the host target and on
@@ -154,11 +158,12 @@ the parity trajectory (or why none is owed):
   browser half of the app — its lints and its intra-doc links alike —
   is invisible. The wasm32 clippy leg is `--workspace` so baumhard is
   covered too, minus `--all-targets` (criterion and rayon refuse to
-  build for wasm32); the wasm32 doc leg is `-p mandala`, the same
-  invocation as the host one with only the target changed, because
+  build for wasm32); the host doc leg is `--workspace` with private
+  items, while the wasm32 doc leg narrows to `-p mandala`, because
   baumhard cannot be documented standalone for wasm32 — its `rand` →
   `getrandom` edge needs the `wasm_js` feature that only the root
-  manifest declares. Both wasm32 legs are skipped with a note when the
+  manifest declares — and maptool and mandala_derive have no wasm32
+  half to document. Both wasm32 legs are skipped with a note when the
   target isn't installed), `--bench` (runs the criterion
   benches after tests — **maintainers only**; §7 and `AGENTS.md`
   forbid it to agents, who need the type-check above and nothing

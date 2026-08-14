@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Typed AST for the mutator-tree DSL. The variants here are what
-//! [`mutator_builder::build`](super::build) walks to produce a
+//! [`mutator_builder::build`](super::build()) walks to produce a
 //! [`MutatorTree<GfxMutator>`](crate::gfx_structs::tree::MutatorTree)
 //! ready for `apply_to`. Every JSON-loaded mutator (custom mutations,
 //! procedural animation defs in `lib/baumhard/src/mindmap/`) round-trips

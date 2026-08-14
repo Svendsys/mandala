@@ -92,7 +92,7 @@ pub enum Step {
 /// element again after the model has been edited around it.
 ///
 /// `Value`'s object member order is `BTreeMap` order, so
-/// [`Value::to_string`] is canonical and two structurally equal values
+/// `Value::to_string` is canonical and two structurally equal values
 /// always hash alike. The hash is compared only between two values
 /// produced inside **one process run** (the load-time probe and the
 /// save-time document), which is what makes `DefaultHasher` — whose
