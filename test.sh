@@ -21,7 +21,8 @@ Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
                neither can rot silently between merges.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
   --lint       Also run cargo fmt --check, cargo clippy and cargo doc.
-               fmt and the three doc legs are hard gates: their
+               fmt and both doc legs (host: --workspace with private
+               items; wasm32: -p mandala) are hard gates: their
                baselines are zero (#130, #134), so a regression prints
                a FAILED: line and the run exits non-zero at the end,
                after every other gate has reported. clippy is advisory
@@ -59,7 +60,7 @@ if [ "$LINT" -eq 1 ]; then
   # host compile drops everything under #[cfg(target_arch = "wasm32")].
   echo "== fmt (hard) =="
   cargo fmt --all -- --check \
-    || { echo "FAILED (exit $?): cargo fmt --all -- --check — the tree stays formatted (#130)"; LINT_FAILED=1; }
+    || { echo "FAILED (exit $?): cargo fmt --all -- --check (#130) — formatting diffs, or rustfmt itself failed"; LINT_FAILED=1; }
   echo "== clippy, host target (advisory) =="
   cargo clippy --workspace --all-targets 2>&1 || echo "(clippy issues present — not failing the run)"
   # The doc gates hold a zero-warning baseline, which makes them the
@@ -74,11 +75,19 @@ if [ "$LINT" -eq 1 ]; then
   # CODE_CONVENTIONS.md §8 — rustdoc never compiles the stripped
   # half, so the link breaks from live code and goes unchecked from
   # stripped code.
+  #
+  # `--workspace`, not a hand-written crate list, for the same reason
+  # the test run below is `--workspace`: a list of members is a copy
+  # of the `[workspace]` table and copies go stale. The pair of `-p`
+  # legs this replaces silently omitted maptool and mandala_derive,
+  # and maptool's doc build was red on the very day the gate was
+  # hardened — a red no gate could see. `--document-private-items`
+  # closes the same shape of hole one level down: private-item links
+  # were checked in mandala and nowhere else, and baumhard was
+  # carrying seven broken ones.
   echo "== doc, host target (hard) =="
-  RUSTDOCFLAGS="-D warnings" cargo doc -p baumhard --no-deps 2>&1 \
-    || { echo "FAILED (exit $?): cargo doc -p baumhard, host — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
-  RUSTDOCFLAGS="-D warnings" cargo doc -p mandala --no-deps --document-private-items 2>&1 \
-    || { echo "FAILED (exit $?): cargo doc -p mandala, host — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
+  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items 2>&1 \
+    || { echo "FAILED (exit $?): cargo doc --workspace, host — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
 
   # The host-target runs above compile nothing gated behind
   # #[cfg(target_arch = "wasm32")], so every lint and every broken
@@ -114,15 +123,14 @@ if [ "$LINT" -eq 1 ]; then
     # form that resolves on both targets), so the expected count is 0
     # and this leg is as hard as the host legs above (#134).
     #
-    # `-p mandala`, i.e. the host invocation with only the target
-    # changed, rather than `--workspace`: baumhard cannot be
-    # documented standalone for wasm32, because its `rand` ->
-    # `getrandom` edge needs the `wasm_js` feature that only the root
-    # manifest declares (see the getrandom note in Cargo.toml), and
-    # `--workspace --document-private-items` additionally surfaces
-    # baumhard's private-item links, which the host baumhard gate
-    # does not document either. mandala is the crate that carries the
-    # #[cfg(target_arch = "wasm32")] modules.
+    # `-p mandala`, not `--workspace`: baumhard cannot be documented
+    # standalone for wasm32 — its `rand` -> `getrandom` edge needs
+    # the `wasm_js` feature that only the root manifest declares (see
+    # the getrandom note in Cargo.toml) — and maptool and
+    # mandala_derive are native-only tools with no wasm32 half to
+    # document. mandala is the crate that carries the
+    # #[cfg(target_arch = "wasm32")] modules. Stated honestly: if
+    # baumhard ever grows a wasm32-gated doc link, no leg checks it.
     echo "== doc, wasm32-unknown-unknown (hard) =="
     RUSTDOCFLAGS="-D warnings" cargo doc -p mandala --no-deps --document-private-items \
       --target wasm32-unknown-unknown 2>&1 \
@@ -131,6 +139,8 @@ if [ "$LINT" -eq 1 ]; then
     echo "== clippy + doc, wasm32-unknown-unknown =="
     echo "(wasm32-unknown-unknown target not installed — skipping. Install with:"
     echo "    rustup target add wasm32-unknown-unknown)"
+    echo "(until it is, wasm32-gated code goes unchecked in this run — its clippy"
+    echo "lints and its doc links alike)"
   fi
 fi
 

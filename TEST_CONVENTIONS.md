@@ -291,10 +291,11 @@ re-litigate them without a strong reason.
 - `./test.sh --lint` — also runs `cargo fmt --all -- --check`
   (hard: the tree stays formatted, #130), clippy on the host target
   and on wasm32-unknown-unknown (advisory until the warning baseline
-  is zero), and three `cargo doc` legs — baumhard host, mandala
-  host, mandala wasm32 — each hard at a zero-warning baseline
-  (#134). A hard-gate failure prints a `FAILED:` line inline and the
-  run exits non-zero at the end, after every gate has reported.
+  is zero), and two `cargo doc` legs — the whole workspace with
+  private items on the host, and mandala on wasm32 — each hard at a
+  zero-warning baseline (#134). A hard-gate failure prints a
+  `FAILED:` line inline and the run exits non-zero at the end, after
+  every gate has reported.
 - `./test.sh --bench` — also *runs* `cargo bench` after tests pass.
   Maintainers only: `AGENTS.md` forbids automated agents this flag,
   `./bench.sh`, and `cargo bench` alike, along with any performance
