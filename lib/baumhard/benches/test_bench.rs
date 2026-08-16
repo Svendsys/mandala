@@ -810,11 +810,21 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("insert_spaces", |b| b.iter(do_insert_spaces));
     c.bench_function("split_graphemes_owned", |b| b.iter(do_split_graphemes_owned));
     c.bench_function("join_graphemes", |b| b.iter(do_join_graphemes));
-    // rust_source // (the five pure scanners; `production_code` and
-    // the tree-wide sweep have no entry because they are file reads
-    // — see the module docs)
+    // rust_source // — every `do_*()` the module exports, which is
+    // the whole rule this file follows: an entry per body, and a
+    // body that should not be measured is a plain `#[test]` rather
+    // than a `do_*()` with an exemption. The tree-wide sweep is the
+    // one that took that opt-out; `production_code` did not, and
+    // reads one file per iteration like the two `shape_*` entries
+    // above.
     c.bench_function("strip_comments", |b| {
         b.iter(do_strip_comments_removes_only_comments)
+    });
+    c.bench_function("strip_comments_preserves_line_count", |b| {
+        b.iter(do_strip_comments_preserves_line_count)
+    });
+    c.bench_function("strip_comments_survives_unterminated_input", |b| {
+        b.iter(do_strip_comments_survives_unterminated_input)
     });
     c.bench_function("above_test_modules", |b| {
         b.iter(do_above_test_modules_cuts_at_the_module_only)
@@ -826,6 +836,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_string_literals_returns_every_literal)
     });
     c.bench_function("statements", |b| b.iter(do_statements_split_at_the_right_places));
+    c.bench_function("production_code_returns_code_without_prose", |b| {
+        b.iter(do_production_code_returns_code_without_prose)
+    });
     // geometry //
     c.bench_function("90_deg_rotation", |b| b.iter(do_90_deg_rotation));
     c.bench_function("180_deg_rotation", |b| b.iter(do_180_deg_rotation));
@@ -840,6 +853,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("is_non_negative_finite_f64", |b| {
         b.iter(do_is_non_negative_finite_f64)
     });
+    c.bench_function("option_almost_equal", |b| b.iter(do_option_almost_equal));
     // font / metrics //
     c.bench_function("monospace_advance_scales_linearly", |b| {
         b.iter(do_monospace_advance_scales_linearly)
@@ -1246,6 +1260,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("rich_text_spans_into_keeps_the_no_region_whole_text_span", |b| {
         b.iter(do_rich_text_spans_into_keeps_the_no_region_whole_text_span)
     });
+    // The grapheme-boundary slicing paths on both bridges: a region
+    // range that lands mid-cluster is the input that turns a byte
+    // slice into a panic, and the ZWJ cases are the widest clusters
+    // the app actually renders.
+    c.bench_function("attrs_list_slice_at_zwj_grapheme_boundary", |b| {
+        b.iter(do_attrs_list_slice_at_zwj_grapheme_boundary)
+    });
+    c.bench_function("rich_text_spans_slice_at_grapheme_boundary", |b| {
+        b.iter(do_rich_text_spans_slice_at_grapheme_boundary)
+    });
+    c.bench_function("rich_text_spans_slice_at_zwj_grapheme_boundary", |b| {
+        b.iter(do_rich_text_spans_slice_at_zwj_grapheme_boundary)
+    });
     // font family enumeration / lookup //
     c.bench_function("list_loaded_families_is_nonempty_sorted_unique", |b| {
         b.iter(do_list_loaded_families_is_nonempty_sorted_unique)
@@ -1258,6 +1285,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("loaded_families_iter_matches_owned_list", |b| {
         b.iter(do_loaded_families_iter_matches_owned_list)
+    });
+    c.bench_function("family_name_of_round_trips", |b| {
+        b.iter(do_family_name_of_round_trips)
     });
     // scene + hit-test //
     c.bench_function("descendant_at_hits_single_area", |b| {
