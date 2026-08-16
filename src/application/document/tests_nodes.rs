@@ -1346,20 +1346,20 @@ fn test_set_node_text_inherits_first_run_formatting() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".to_string(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#ffffff".to_string(),
                 hyperlink: None,
             });
         }
         node.sections[0].text_runs[0].bold = true;
         node.sections[0].text_runs[0].color = "#abcdef".to_string();
-        node.sections[0].text_runs[0].size_pt = 33;
+        node.sections[0].text_runs[0].size_pt = 33.0;
     }
     assert!(doc.set_node_text(&nid, "rewritten".to_string()));
     let run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
     assert!(run.bold);
     assert_eq!(run.color, "#abcdef");
-    assert_eq!(run.size_pt, 33);
+    assert_eq!(run.size_pt, 33.0);
 }
 
 // -----------------------------------------------------------------
@@ -1427,7 +1427,7 @@ fn test_set_node_border_color_writes_frame_color() {
 }
 
 /// First-edit materialization of `node.style.border` uses
-/// `default_glyph_border_config()` (private to `nodes/border.rs`).
+/// `GlyphBorderConfig::default()`.
 /// Pin the resulting `preset` to `"light"` so a regression to
 /// `"rounded"` — the previous default — surfaces here. The
 /// trigger is any kv edit that *touches a config field*; we
@@ -1440,7 +1440,7 @@ fn test_default_border_config_first_edit_materializes_light_preset() {
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     // Strip any pre-existing per-node border so we exercise the
-    // `get_or_insert_with(default_glyph_border_config)` path.
+    // `get_or_insert_with(GlyphBorderConfig::default)` path.
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
     let mut edits = BorderConfigEdits::default();
     edits.padding = OptionEdit::Set(8.0);
@@ -1492,7 +1492,7 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#dddddd".into(), // matches default
                 hyperlink: None,
             },
@@ -1503,7 +1503,7 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#abcdef".into(), // user override
                 hyperlink: None,
             },
@@ -1591,7 +1591,7 @@ fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#303030".into(), // baked copy of the palette default
                 hyperlink: None,
             },
@@ -1602,7 +1602,7 @@ fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#abcdef".into(), // hand-colored
                 hyperlink: None,
             },
@@ -1613,7 +1613,7 @@ fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: String::new(), // defers to the node
                 hyperlink: None,
             },
@@ -1803,16 +1803,16 @@ fn test_set_node_font_size_writes_all_runs_and_round_trips() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
-    let before_sizes: Vec<u32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
+    let before_sizes: Vec<f32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.size_pt)
         .collect();
     assert!(doc.set_node_font_size(&nid, 48.0));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 48));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 48.0));
     assert!(doc.undo());
-    let after_sizes: Vec<u32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
+    let after_sizes: Vec<f32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.size_pt)
@@ -1827,7 +1827,7 @@ fn test_set_node_font_size_clamps_below_one() {
     doc.selection = SelectionState::Single(nid.clone());
     assert!(doc.set_node_font_size(&nid, 0.5));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 1));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 1.0));
 }
 
 #[test]
@@ -2153,12 +2153,7 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
         name: "fixture".into(),
         canvas: Canvas {
             background_color: "#000".into(),
-            default_border: None,
-            default_connection: None,
-            default_section_frame_border: None,
-            default_focused_section_frame_border: None,
-            theme_variables: HashMap::new(),
-            theme_variants: HashMap::new(),
+            ..Canvas::default()
         },
         palettes: HashMap::new(),
         nodes,
@@ -2368,7 +2363,7 @@ fn set_section_zero_text_and_single_run(doc: &mut MindMapDocument, node_id: &str
         italic: false,
         underline: false,
         font: font.to_string(),
-        size_pt: 14,
+        size_pt: 14.0,
         color: "#ffffff".to_string(),
         hyperlink: None,
     });
@@ -3038,12 +3033,16 @@ fn test_border_preview_commit_fans_out_to_section_range() {
     for i in 0..=last_section_idx {
         doc.mindmap.nodes.get_mut(&node_id).unwrap().sections[i].frame_border = None;
     }
+    // The span carries the fan-out meaning here: sections
+    // 0..=last_section_idx of the owning node. The grapheme range
+    // is incidental to this test (border commits never read it).
     doc.selection = SelectionState::SectionRange {
         sel: SectionSel {
             node_id: node_id.clone(),
             section_idx: 0,
         },
-        range: (0, last_section_idx),
+        section_span: SectionSpan::new(0, last_section_idx),
+        grapheme_range: GraphemeRange::new(0, 1),
     };
     doc.undo_stack.clear();
     doc.dirty = false;
@@ -3781,6 +3780,76 @@ fn test_delete_section_repairs_stranded_selection_and_undo_restores_it() {
     );
 }
 
+/// `SectionRange` structural cleanup repairs each field per its
+/// own meaning (#47 part C): the **section span** clamps against
+/// the shortened `sections` vec, while the **grapheme range**
+/// stays as authored — it addresses text inside the surviving
+/// anchor section, which the delete did not touch. When the
+/// anchor section itself is gone, the whole variant demotes and
+/// the grapheme range dies with it.
+#[test]
+fn test_delete_section_clamps_section_range_span_and_keeps_grapheme_range() {
+    use crate::application::document::{GraphemeRange, SectionSpan};
+    use baumhard::mindmap::model::MindSection;
+
+    let (mut doc, nid) = super::tests_common::pinned_two_section_node();
+    doc.mindmap
+        .nodes
+        .get_mut(&nid)
+        .unwrap()
+        .sections
+        .push(MindSection::new_default("third".into(), Vec::new()));
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel {
+            node_id: nid.clone(),
+            section_idx: 0,
+        },
+        section_span: SectionSpan::new(0, 2),
+        grapheme_range: GraphemeRange::new(1, 3),
+    };
+
+    doc.delete_section(&nid, 2).expect("delete ok");
+    match &doc.selection {
+        SelectionState::SectionRange {
+            sel,
+            section_span,
+            grapheme_range,
+        } => {
+            assert_eq!(sel.section_idx, 0, "the surviving anchor stays");
+            assert_eq!(
+                *section_span,
+                SectionSpan::new(0, 1),
+                "the span must clamp to the shortened section count"
+            );
+            assert_eq!(
+                *grapheme_range,
+                GraphemeRange::new(1, 3),
+                "the grapheme range addresses the anchor section's text and must not be clamped \
+                 by a section-count change"
+            );
+        }
+        other => panic!("a clamped range with a live anchor stays a SectionRange, got {other:?}"),
+    }
+
+    // Anchor gone: the variant demotes to the closest surviving
+    // section — no stale grapheme range survives onto text it was
+    // never swept over.
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel {
+            node_id: nid.clone(),
+            section_idx: 1,
+        },
+        section_span: SectionSpan::single(1),
+        grapheme_range: GraphemeRange::new(0, 2),
+    };
+    doc.delete_section(&nid, 1).expect("delete ok");
+    assert!(
+        matches!(&doc.selection, SelectionState::Section(s) if s.section_idx == 0),
+        "a dead anchor demotes to the closest surviving section, got {:?}",
+        doc.selection
+    );
+}
+
 /// **The load-time text floor must not lay out an unbounded number
 /// of lines.** Section text arrives from an untrusted file, and this
 /// measurement runs on every section at load, before a frame is
@@ -4004,7 +4073,7 @@ fn test_extreme_editor_writes_still_reload() {
     // The edge and border font channels were clamped in an earlier
     // pass and these were missed, which left `font size=5000` — the
     // plainest thing to type — writing a map that would not reopen.
-    let max_run_pt = baumhard::font::fonts::MAX_FONT_SIZE_PT as u32;
+    let max_run_pt = baumhard::font::fonts::MAX_FONT_SIZE_PT;
 
     let id = node_id.clone();
     let reloaded = round_trip("node-font-size", &move |doc| {
@@ -4047,8 +4116,9 @@ fn test_extreme_editor_writes_still_reload() {
     }
 
     // An ordinary size still round-trips exactly — the clamp bounds
-    // the extremes, it does not perturb normal edits. Rounding
-    // happens before the clamp, so 12.7 is still 13 rather than 12.
+    // the extremes, it does not perturb normal edits. Fractional
+    // sizes are first-class now that `size_pt` is an `f32`, so 12.7
+    // is stored and reloaded as 12.7, not rounded.
     let id = node_id.clone();
     let reloaded = round_trip("node-font-ordinary", &move |doc| {
         doc.set_node_font_size(&id, 12.7);
@@ -4058,8 +4128,8 @@ fn test_extreme_editor_writes_still_reload() {
             .sections
             .iter()
             .flat_map(|s| s.text_runs.iter())
-            .all(|r| r.size_pt == 13),
-        "an ordinary size must round to 13 and survive unchanged"
+            .all(|r| r.size_pt == 12.7),
+        "an ordinary fractional size must survive the round trip unchanged"
     );
 
     // The eight border glyphs. The loader *rejects* these rather
@@ -5335,7 +5405,7 @@ fn test_node_and_section_color_writes_stay_in_their_tiers_on_a_themed_node() {
         "#aaaaaa",
         ["#aaaaaa", "#aaaaaa"],
         "LiberationSans",
-        14,
+        14.0,
         ColorGroup {
             background: "#101010".into(),
             frame: "#202020".into(),

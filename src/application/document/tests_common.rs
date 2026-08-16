@@ -172,7 +172,7 @@ pub(in crate::application) fn make_two_section_node_with_pinned_runs(
     text_color_default: &str,
     section_run_colors: [&str; 2],
     font: &str,
-    size_pt: u32,
+    size_pt: f32,
 ) {
     use baumhard::mindmap::model::{MindSection, TextRun};
     let node = doc.mindmap.nodes.get_mut(node_id).expect("node id exists in doc");
@@ -253,7 +253,7 @@ pub(in crate::application) fn make_two_section_node_with_pinned_runs_themed(
     text_color_default: &str,
     section_run_colors: [&str; 2],
     font: &str,
-    size_pt: u32,
+    size_pt: f32,
     group: baumhard::mindmap::model::ColorGroup,
 ) -> baumhard::mindmap::model::ColorGroup {
     make_two_section_node_with_pinned_runs(
@@ -281,7 +281,7 @@ pub(in crate::application) fn pinned_two_section_node() -> (MindMapDocument, Str
         "#ffffff",
         ["#ffffff", "#ffffff"],
         "LiberationSans",
-        14,
+        14.0,
     );
     {
         let node = doc.mindmap.nodes.get_mut(&id).unwrap();

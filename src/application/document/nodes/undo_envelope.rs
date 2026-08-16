@@ -77,7 +77,7 @@ use baumhard::mindmap::model::{MindNode, MindSection};
 
 use super::super::undo_action::UndoAction;
 use super::super::{grow_one_node_to_fit_border, grow_one_node_to_fit_text};
-use super::super::{MindMapDocument, SectionSel, SelectionState};
+use super::super::{MindMapDocument, SectionSel, SectionSpan, SelectionState};
 use super::BorderPreviewTarget;
 
 /// The fields [`UndoAction::EditNodeStyle`] restores, and so the
@@ -520,24 +520,34 @@ fn cleanup_after_structural_mutation(doc: &mut MindMapDocument, node_id: &str) {
 
     // Clamp the selection's section_idx to the new count. A
     // `Section` selection past the end demotes to `Single(node)`
-    // (the natural "section is gone" lift). `SectionRange`
-    // clamps both ends; if the range collapses to nothing,
-    // demote. `MultiSection` filters out the dead pairs; if
-    // none survive, demote.
+    // (the natural "section is gone" lift). `SectionRange` clamps
+    // both ends of its **section span**; if the anchor section is
+    // gone, demote. The grapheme range is left as authored — it
+    // addresses text inside the surviving anchor section, and the
+    // range-aware setters clamp against the live grapheme count on
+    // every use, which a structural section mutation does not
+    // change for sections it did not touch. `MultiSection` filters
+    // out the dead pairs; if none survive, demote.
     match &doc.selection {
         SelectionState::Section(s) if s.node_id == node_id && s.section_idx >= new_count => {
             doc.selection = SelectionState::Single(node_id.to_string());
         }
-        SelectionState::SectionRange { sel, range } if sel.node_id == node_id => {
+        SelectionState::SectionRange {
+            sel,
+            section_span,
+            grapheme_range,
+        } if sel.node_id == node_id => {
             let max_idx = new_count.saturating_sub(1);
-            let lo = range.0.min(range.1).min(max_idx);
-            let hi = range.0.max(range.1).min(max_idx);
+            let lo = section_span.lo().min(max_idx);
+            let hi = section_span.hi().min(max_idx);
             if new_count == 0 {
                 doc.selection = SelectionState::Single(node_id.to_string());
             } else if sel.section_idx >= new_count {
                 // Anchor section gone — demote to a single
                 // surviving section selection at the closest
-                // remaining idx.
+                // remaining idx. The grapheme range dies with its
+                // anchor; a sub-range of deleted text is not a
+                // sub-range of whatever now sits at `lo`.
                 doc.selection = SelectionState::Section(SectionSel {
                     node_id: node_id.to_string(),
                     section_idx: lo,
@@ -545,7 +555,8 @@ fn cleanup_after_structural_mutation(doc: &mut MindMapDocument, node_id: &str) {
             } else {
                 doc.selection = SelectionState::SectionRange {
                     sel: sel.clone(),
-                    range: (lo, hi),
+                    section_span: SectionSpan::new(lo, hi),
+                    grapheme_range: *grapheme_range,
                 };
             }
         }

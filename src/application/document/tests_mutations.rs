@@ -492,7 +492,7 @@ fn test_sync_node_from_tree_writes_back_section_run_color() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: "#ffffff".into(),
             hyperlink: None,
         }];
@@ -553,7 +553,7 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: "#ffffff".into(),
             hyperlink: None,
         }];
@@ -566,7 +566,7 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
             italic: true,
             underline: true,
             font: "LiberationSans".into(),
-            size_pt: 21,
+            size_pt: 21.0,
             color: "#abcdef".into(),
             hyperlink: Some("https://example.org".into()),
         }];
@@ -624,7 +624,7 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
         .expect("section 1 must keep at least one run");
     assert!(s1_run.italic, "italic must survive on section 1");
     assert!(s1_run.underline, "underline must survive on section 1");
-    assert_eq!(s1_run.size_pt, 21, "size_pt must survive on section 1");
+    assert_eq!(s1_run.size_pt, 21.0, "size_pt must survive on section 1");
     assert_eq!(
         s1_run.hyperlink.as_deref(),
         Some("https://example.org"),
@@ -659,7 +659,7 @@ fn test_sync_node_from_tree_var_color_preserved_when_regions_untouched() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             // `var()` reference — not directly comparable on the
             // round-trip path; the selective gate must skip.
             color: "var(--accent)".into(),
@@ -1019,7 +1019,7 @@ fn test_sync_node_from_tree_selective_gate_preserves_unchanged_runs() {
             italic: true,
             underline: true,
             font: "LiberationSans".into(),
-            size_pt: 21, // Non-default so we can detect a stripped round-trip.
+            size_pt: 21.0, // Non-default so we can detect a stripped round-trip.
             color: "#abcdef".into(),
             hyperlink: Some("https://example.org".into()),
         }];
@@ -1035,7 +1035,7 @@ fn test_sync_node_from_tree_selective_gate_preserves_unchanged_runs() {
     let run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
     assert!(run.italic, "italic must survive a position-only mutation");
     assert!(run.underline, "underline must survive a position-only mutation");
-    assert_eq!(run.size_pt, 21, "size_pt must survive a position-only mutation");
+    assert_eq!(run.size_pt, 21.0, "size_pt must survive a position-only mutation");
     assert_eq!(
         run.hyperlink.as_deref(),
         Some("https://example.org"),
@@ -2078,13 +2078,12 @@ fn make_font_scale_mutation(id: &str, cmd: baumhard::gfx_structs::area::GlyphAre
 
 /// Largest `size_pt` across section `idx`'s runs — mirrors the
 /// forward path's `scale = max(run.size_pt)` collapse.
-fn section_max_size_pt(doc: &MindMapDocument, node_id: &str, idx: usize) -> u32 {
+fn section_max_size_pt(doc: &MindMapDocument, node_id: &str, idx: usize) -> f32 {
     doc.mindmap.nodes.get(node_id).unwrap().sections[idx]
         .text_runs
         .iter()
         .map(|r| r.size_pt)
-        .max()
-        .unwrap_or(0)
+        .fold(0.0_f32, f32::max)
 }
 
 /// Tree-side font scale of section `idx`'s area.
@@ -2113,20 +2112,20 @@ fn test_grow_font_persists_survives_rebuild_and_undo_reverses() {
     let nid = first_testament_node_id(&doc);
 
     let size_before = section_max_size_pt(&doc, &nid, 0);
-    assert!(size_before > 0, "fixture node must have a run with a size");
+    assert!(size_before > 0.0, "fixture node must have a run with a size");
     let undo_len_before = doc.undo_stack.len();
 
     let cm = make_font_scale_mutation("grow-font-test", GlyphAreaCommand::GrowFont(2.0), TS::SelfOnly);
     let mut tree = doc.build_tree();
     // Tree-side scale starts at the model's largest run size.
-    assert!((section_tree_scale(&tree, &nid, 0) - size_before as f32).abs() < 1e-3);
+    assert!((section_tree_scale(&tree, &nid, 0) - size_before).abs() < 1e-3);
 
     doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
 
     // (1) Model changed: the run size grew by exactly 2pt.
     assert_eq!(
         section_max_size_pt(&doc, &nid, 0),
-        size_before + 2,
+        size_before + 2.0,
         "grow-font must write the +2pt back to the model run"
     );
     // (2) Exactly one undo entry, and dirty is set.
@@ -2140,7 +2139,7 @@ fn test_grow_font_persists_survives_rebuild_and_undo_reverses() {
     // (3) Survives rebuild_all's model→tree rebuild.
     let tree2 = doc.build_tree();
     assert!(
-        (section_tree_scale(&tree2, &nid, 0) - (size_before + 2) as f32).abs() < 1e-3,
+        (section_tree_scale(&tree2, &nid, 0) - (size_before + 2.0)).abs() < 1e-3,
         "grown font size must survive the rebuild-from-model"
     );
 
@@ -2177,7 +2176,7 @@ fn test_grow_font_preserves_relative_run_sizes() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 14,
+                size_pt: 14.0,
                 color: "#ffffff".into(),
                 hyperlink: None,
             },
@@ -2188,7 +2187,7 @@ fn test_grow_font_preserves_relative_run_sizes() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 40,
+                size_pt: 40.0,
                 color: "#ffffff".into(),
                 hyperlink: None,
             },
@@ -2199,8 +2198,8 @@ fn test_grow_font_preserves_relative_run_sizes() {
     doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
 
     let runs = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs;
-    assert_eq!(runs[0].size_pt, 17, "small run grows by the same +3 delta");
-    assert_eq!(runs[1].size_pt, 43, "large run grows by the same +3 delta");
+    assert_eq!(runs[0].size_pt, 17.0, "small run grows by the same +3 delta");
+    assert_eq!(runs[1].size_pt, 43.0, "large run grows by the same +3 delta");
 }
 
 /// `shrink-font` past the floor clamps `size_pt` to
@@ -2222,7 +2221,7 @@ fn test_shrink_font_clamps_to_minimum() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 8,
+            size_pt: 8.0,
             color: "#ffffff".into(),
             hyperlink: None,
         }];
@@ -2238,7 +2237,7 @@ fn test_shrink_font_clamps_to_minimum() {
 
     assert_eq!(
         doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].size_pt,
-        1,
+        1.0,
         "shrink past the floor clamps to 1pt, never 0"
     );
 }
@@ -2271,7 +2270,7 @@ fn test_grow_font_clamps_to_maximum() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 12,
+            size_pt: 12.0,
             color: "#ffffff".into(),
             hyperlink: None,
         }];
@@ -2284,7 +2283,7 @@ fn test_grow_font_clamps_to_maximum() {
     let grown = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].size_pt;
     assert_eq!(
         grown,
-        baumhard::font::fonts::MAX_FONT_SIZE_PT as u32,
+        baumhard::font::fonts::MAX_FONT_SIZE_PT,
         "grow past the ceiling clamps to the shaper's maximum, got {grown}"
     );
 
@@ -2334,7 +2333,10 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
         "a run must be synthesized to hold the size"
     );
     let run = &section.text_runs[0];
-    assert_eq!(run.size_pt, 16, "synthesized run carries the grown size (14 + 2)");
+    assert_eq!(
+        run.size_pt, 16.0,
+        "synthesized run carries the grown size (14 + 2)"
+    );
     assert_eq!(run.start, 0);
     assert_eq!(
         run.end,
@@ -2459,7 +2461,7 @@ fn test_no_op_mutation_leaves_a_colorless_run_on_a_themed_node_alone() {
             italic: false,
             underline: false,
             font: String::new(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: String::new(),
             hyperlink: None,
         }];
@@ -2517,7 +2519,7 @@ fn test_text_edit_keeps_a_colorless_run_deferring_on_a_themed_node() {
             italic: false,
             underline: false,
             font: String::new(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: String::new(),
             hyperlink: None,
         }];
@@ -2822,7 +2824,7 @@ fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 14,
+                size_pt: 14.0,
                 color: "#ffffff".into(),
                 hyperlink: None,
             },
@@ -2833,7 +2835,7 @@ fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 40,
+                size_pt: 40.0,
                 color: "#ff0000".into(),
                 hyperlink: None,
             },
@@ -2861,7 +2863,7 @@ fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
 
     let runs = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs;
     assert!(
-        runs.iter().all(|r| r.size_pt == 14),
+        runs.iter().all(|r| r.size_pt == 14.0),
         "surviving run(s) must keep their authored 14pt, not inflate to the stale 40pt scale; got {:?}",
         runs.iter().map(|r| r.size_pt).collect::<Vec<_>>()
     );
@@ -2950,12 +2952,13 @@ fn test_active_toggles_replay_in_activation_order() {
 fn test_clamp_run_size_pt_bounds_both_ends() {
     use crate::application::document::custom::sync::{clamp_run_size_pt, MIN_TEXT_RUN_SIZE_PT};
 
-    let max = baumhard::font::fonts::MAX_FONT_SIZE_PT as u32;
+    let max = baumhard::font::fonts::MAX_FONT_SIZE_PT;
 
-    // Ordinary sizes pass through, truncating rather than rounding —
-    // callers that want rounding do it before calling.
-    assert_eq!(clamp_run_size_pt(12.0), 12);
-    assert_eq!(clamp_run_size_pt(12.9), 12);
+    // Ordinary sizes pass through unchanged — fractional sizes are
+    // first-class now that `size_pt` is an `f32`, so nothing is
+    // truncated or rounded on the way through.
+    assert_eq!(clamp_run_size_pt(12.0), 12.0);
+    assert_eq!(clamp_run_size_pt(12.9), 12.9);
 
     // The ceiling: the loader rejects anything above it.
     assert_eq!(clamp_run_size_pt(1.0e6), max);

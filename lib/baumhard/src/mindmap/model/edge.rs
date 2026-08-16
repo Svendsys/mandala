@@ -41,6 +41,9 @@ pub struct MindEdge {
     /// False hides the edge without removing it from the model.
     pub visible: bool,
     /// Optional label text rendered along the connection path.
+    /// Omitted from the JSON when unset — an unlabeled edge does
+    /// not serialize `"label": null`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Per-edge label rendering overrides — position, color,
     /// font-size clamps. `None` means "inherit everything": the

@@ -221,7 +221,7 @@ fn make_node(id: String, parent_id: Option<String>, x: f64, y: f64, depth: usize
         italic: false,
         underline: false,
         font: "LiberationSans".to_string(),
-        size_pt: 18,
+        size_pt: 18.0,
         color: "#ffffff".to_string(),
         hyperlink: None,
     }];
@@ -502,12 +502,7 @@ fn assemble_mindmap(name: &str, nodes: Vec<MindNode>, edges: Vec<MindEdge>) -> M
         name: name.to_string(),
         canvas: Canvas {
             background_color: "#0a0a0a".to_string(),
-            default_border: None,
-            default_connection: None,
-            default_section_frame_border: None,
-            default_focused_section_frame_border: None,
-            theme_variables: HashMap::new(),
-            theme_variants: HashMap::new(),
+            ..Canvas::default()
         },
         palettes: HashMap::new(),
         nodes: node_map,

@@ -219,7 +219,7 @@ fn test_an_authored_run_color_survives_the_theme() {
             italic: false,
             underline: false,
             font: String::new(),
-            size_pt: 24,
+            size_pt: 24.0,
             color: "#123456".into(),
             hyperlink: None,
         }];
@@ -245,7 +245,7 @@ fn test_a_colorless_run_inherits_the_palette_text() {
             italic: false,
             underline: false,
             font: String::new(),
-            size_pt: 24,
+            size_pt: 24.0,
             color: String::new(),
             hyperlink: None,
         }];

@@ -411,8 +411,9 @@ pub struct Size {
 /// **Defaults / inheritance.** A section without `text_runs`
 /// renders at cosmic-text's defaults clamped by `node.style`:
 /// the section's effective color falls through to
-/// `node.style.text_color`, and the size to `14.0pt`. Per-grapheme
-/// styling layers via `text_runs`.
+/// `node.style.text_color`, and the size to
+/// [`DEFAULT_TEXT_RUN_SIZE_PT`]. Per-grapheme styling layers via
+/// `text_runs`.
 ///
 /// Plain data; no runtime cost beyond the `String` allocations
 /// serde performs on deserialize.
@@ -538,12 +539,46 @@ impl MindSection {
     }
 }
 
+/// Font size in points a [`TextRun`] renders at when it does not
+/// name one, and the scale a section with no runs at all is
+/// measured and shaped at
+/// ([`crate::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE`]
+/// is this constant by definition). One number on purpose: a run
+/// that says nothing about size must render exactly like the
+/// uncovered text around it, the same way a run whose `color` is
+/// empty takes the color the uncovered text has.
+///
+/// Distinct from the *authoring* default the application writes
+/// into a freshly-created run (24 pt, in the app crate's
+/// `document::defaults`) — that answers "what size should new
+/// text be", this answers "what size is a run that never said".
+pub const DEFAULT_TEXT_RUN_SIZE_PT: f32 = 14.0;
+
+fn default_text_run_size_pt() -> f32 {
+    DEFAULT_TEXT_RUN_SIZE_PT
+}
+fn is_default_text_run_size_pt(v: &f32) -> bool {
+    *v == DEFAULT_TEXT_RUN_SIZE_PT
+}
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 /// A styled slice of a section's `text`, matching miMind's text-run
 /// concept: `[start, end)` grapheme indices carry one font / size /
 /// color / style combination, with optional hyperlink target.
 /// Multiple runs describe a single multi-style string; gaps in
 /// coverage render with section-level defaults (which themselves
 /// fall through to the owning node's defaults).
+///
+/// **Only `start` and `end` are required on disk.** Every styling
+/// field defaults to the value that renders like uncovered text —
+/// false flags, unpinned font, inherited color, and
+/// [`DEFAULT_TEXT_RUN_SIZE_PT`] — so `{"start": 0, "end": 5,
+/// "bold": true}` is a complete run. The saver omits fields
+/// sitting at those defaults, per the omission policy in
+/// `format/schema.md` ("a key written out at its own default value
+/// may be omitted"); reloading restores the same model.
 ///
 /// Plain data; no runtime cost beyond the string allocations.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -552,21 +587,40 @@ pub struct TextRun {
     pub start: usize,
     /// Grapheme-cluster index where this run ends (exclusive).
     pub end: usize,
-    /// Bold weight flag.
+    /// Bold weight flag. Defaults to `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
     pub bold: bool,
-    /// Italic style flag.
+    /// Italic style flag. Defaults to `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
     pub italic: bool,
-    /// Underline decoration flag.
+    /// Underline decoration flag. Defaults to `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
     pub underline: bool,
     /// Font-family name; matched against `AppFont` at layout time
-    /// with a fallback for unrecognized families.
+    /// with a fallback for unrecognized families. Empty (the
+    /// default) means **no pin** — the run uses the document
+    /// default face, per `format/fonts.md`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub font: String,
-    /// Font size in points.
-    pub size_pt: u32,
-    /// `#RRGGBB` or `var(--name)` text color.
+    /// Font size in points. Fractional sizes are first-class —
+    /// the schema types this "number". Defaults to
+    /// [`DEFAULT_TEXT_RUN_SIZE_PT`], the same scale run-less text
+    /// renders at, so omitting it changes nothing visually.
+    #[serde(
+        default = "default_text_run_size_pt",
+        skip_serializing_if = "is_default_text_run_size_pt"
+    )]
+    pub size_pt: f32,
+    /// `#RRGGBB` or `var(--name)` text color. Empty (the default)
+    /// declines to name one: the covered graphemes take the node's
+    /// effective text color exactly as uncovered graphemes do, and
+    /// keep tracking it through a retheme — see
+    /// `format/text-runs.md` § "Leaving `color` empty".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color: String,
     /// Optional hyperlink target URL; the renderer decorates the
-    /// run's underline when set.
+    /// run's underline when set. Omitted from the JSON when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hyperlink: Option<String>,
 }
 
@@ -649,6 +703,27 @@ pub struct GlyphBorderConfig {
     pub color_palette_field: Option<String>,
 }
 
+/// A [`GlyphBorderConfig`] with every field at its serde default —
+/// the exact config a `"border": {}` in a `.mindmap.json`
+/// deserializes to. The application's committing border setters
+/// materialize this on first edit, and the border resolver's
+/// unset-field floors are these same values by construction (see
+/// [`crate::mindmap::border::resolve_border_style`]).
+impl Default for GlyphBorderConfig {
+    fn default() -> Self {
+        GlyphBorderConfig {
+            preset: default_border_preset(),
+            font: None,
+            font_size_pt: default_border_font_size(),
+            color: None,
+            glyphs: None,
+            padding: default_border_padding(),
+            color_palette: None,
+            color_palette_field: None,
+        }
+    }
+}
+
 fn default_shape() -> String {
     "rectangle".to_string()
 }
@@ -660,7 +735,14 @@ fn default_shape() -> String {
 fn default_border_preset() -> String {
     "light".to_string()
 }
-fn default_border_font_size() -> f32 {
+/// Font size in points a border renders at when neither the
+/// per-node config nor the canvas default names one — both the
+/// serde default for [`GlyphBorderConfig::font_size_pt`] and the
+/// floor of the border resolvers' size cascade
+/// (`resolve_border_style` / `resolve_border_font_size_pt` in
+/// `crate::mindmap::border`), which repeated the literal at three
+/// sites before #47. O(1), no allocation.
+pub fn default_border_font_size() -> f32 {
     14.0
 }
 fn default_border_padding() -> f32 {

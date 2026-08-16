@@ -139,15 +139,7 @@ mod tests {
         MindMap {
             version: "1.0".to_string(),
             name: "test".to_string(),
-            canvas: Canvas {
-                background_color: "#000000".to_string(),
-                default_border: None,
-                default_connection: None,
-                default_section_frame_border: None,
-                default_focused_section_frame_border: None,
-                theme_variables: HashMap::new(),
-                theme_variants: HashMap::new(),
-            },
+            canvas: Canvas::default(),
             palettes: HashMap::new(),
             nodes: map_nodes,
             edges: Vec::new(),
@@ -215,7 +207,7 @@ mod tests {
             italic: true,
             underline: true,
             font: "HIDDEN_FONT_NAME".to_string(),
-            size_pt: 42,
+            size_pt: 42.0,
             color: "#ff0000".to_string(),
             hyperlink: Some("HIDDEN_URL".to_string()),
         }];

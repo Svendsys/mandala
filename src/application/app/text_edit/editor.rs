@@ -260,22 +260,19 @@ pub(in crate::application::app) fn revert_node_text_on_tree(
 /// contract can be unit-tested without the full renderer / tree /
 /// scene plumbing.
 ///
-/// The name is a misnomer kept deliberately: it promotes to
-/// `Section`, **not** to `SelectionState::SectionRange`, for the
-/// reason spelled out below.
-///
-/// Lift the editor's `(anchor, cursor)` shift-select pair into a
-/// `Section(SectionSel)` selection on commit — when the anchor
-/// is set AND differs from the cursor (i.e. the user actually
-/// shift-selected text). The grapheme range itself is discarded:
-/// every `SectionRange` consumer in the codebase interprets the
-/// `range` field as section indices, not grapheme positions, so
-/// writing grapheme positions there silently breaks downstream
-/// fan-out (`border preview`, `cleanup_after_structural_mutation`,
-/// `commit_border_preview`'s `Sections` target). Lifting to
-/// `Section` keeps the post-commit selection at the section the
-/// user was editing — the right anchor for follow-up per-section
-/// verbs without the grapheme/section type confusion.
+/// Lifts a real shift-select — anchor set AND different from the
+/// cursor — into `SelectionState::SectionRange`, carrying both of
+/// that variant's meanings explicitly: the anchor section as the
+/// single-section `SectionSpan` (a grapheme selection lives inside
+/// exactly one section), and the normalized `(anchor, cursor)`
+/// pair as the `GraphemeRange`, so follow-up per-section verbs
+/// (`color text`, `font size=`, range-aware cut / paste) land on
+/// exactly the graphemes the user swept. The two fields are
+/// distinct newtypes, so the span fan-out consumers and the
+/// grapheme consumers each read the field they mean — the
+/// grapheme-versus-section confusion that made this function
+/// discard the range and demote to `Section` is closed by type
+/// (issue #47 part C).
 ///
 /// Returns `None` when no shift-select happened (anchor unset or
 /// coincides with cursor) — caller leaves the selection alone.
@@ -285,16 +282,19 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
     node_id: &str,
     section_idx: usize,
 ) -> Option<crate::application::document::SelectionState> {
+    use crate::application::document::{GraphemeRange, SectionSel, SectionSpan, SelectionState};
     let anchor = selection_anchor?;
     if anchor == cursor_grapheme_pos {
         return None;
     }
-    Some(crate::application::document::SelectionState::Section(
-        crate::application::document::SectionSel {
+    Some(SelectionState::SectionRange {
+        sel: SectionSel {
             node_id: node_id.to_string(),
             section_idx,
         },
-    ))
+        section_span: SectionSpan::single(section_idx),
+        grapheme_range: GraphemeRange::new(anchor, cursor_grapheme_pos),
+    })
 }
 
 /// Commit or cancel the open text editor. Commit writes the
@@ -302,11 +302,10 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
 /// reverts only the edited section's transient text/regions to
 /// the pre-edit snapshot (model was untouched during editing, so
 /// the rest of the tree stays in sync). Commit also lifts a
-/// non-empty shift-select anchor to `SelectionState::Section` via
-/// `lift_anchor_to_section_range` — which, despite its name, does
-/// not produce `SelectionState::SectionRange`; see that function's
-/// docs for why, and `SelectionState::SectionRange`'s for the
-/// producer gap that leaves.
+/// non-empty shift-select anchor to
+/// `SelectionState::SectionRange` via
+/// `lift_anchor_to_section_range`, carrying the swept grapheme
+/// range so follow-up per-section verbs can target it.
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,
@@ -365,12 +364,9 @@ pub(in crate::application::app) fn close_text_edit(
         *interaction_mode = super::super::InteractionMode::Default;
     }
     // Editor close lifts a non-empty shift-select anchor to
-    // `SelectionState::Section`, so per-section verbs (color
-    // text, font size, font family) land on the section the user
-    // was editing. It does *not* reach
-    // `SelectionState::SectionRange` — the grapheme range is
-    // dropped, because that variant's `range` field is read as
-    // section indices everywhere downstream; see
+    // `SelectionState::SectionRange`, so per-section verbs (color
+    // text, font size, font family) land on the exact graphemes
+    // the user swept in the section they were editing; see
     // `lift_anchor_to_section_range`. **Commit only** — on cancel
     // the model reverts to `original_text`, which may have fewer
     // graphemes than the (anchor, cursor) pair was selected over,

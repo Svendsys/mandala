@@ -2232,23 +2232,30 @@ to the right element.
   move` / `section resize` verbs target the single-section
   selected (or take an explicit `section=K` kv); `MultiSection`
   is fan-out-only at the trait dispatch layer.
-- `SectionRange { sel, range }` — one section with a sub-range
-  of its grapheme indices. Produced by the inline text editor's
-  shift-select anchor on close: when the user shifts-arrow /
-  shift-click inside a section, the editor lifts the (cursor,
-  anchor) pair into this variant's `range = (start, end)` and
-  per-section verbs route range-aware setters
-  (`set_section_text_color_range`, `set_section_font_size_range`,
-  `set_section_font_family_range`) through it. Accessors that
-  only care about the owning section (`selected_section`,
+- `SectionRange { sel, section_span, grapheme_range }` — one
+  anchor section plus the two range meanings a section-scoped
+  selection can carry, each in its own newtype so they can never
+  share a slot again (#47 part C): `section_span: SectionSpan` is
+  an inclusive span of **section indices** on the owning node
+  (what border / style verbs fan out over, and what
+  `cleanup_after_structural_mutation` clamps), and
+  `grapheme_range: GraphemeRange` is a half-open sub-range of the
+  anchor section's **grapheme clusters** (what the range-aware
+  setters `set_section_text_color_range`,
+  `set_section_font_size_range`, `set_section_font_family_range`
+  and the range-aware clipboard cut / paste consume). Produced by
+  the inline text editor's shift-select anchor on close: the
+  editor lifts the (anchor, cursor) pair into `grapheme_range`
+  with `section_span` covering just the anchor section. Accessors
+  that only care about the owning section (`selected_section`,
   `is_selected`, `selected_ids`) treat it identically to
-  `Section`. **Clipboard contract:** `Cut` and `Paste` return
-  `NotApplicable` rather than silently destroy out-of-range
-  graphemes — the action arm logs `log::warn!` to surface the
-  skip; `Copy` falls through to whole-section copy because it's
-  non-destructive. Range-aware clipboard is deferred to a future
-  tier. **Picker contract:** `ColorTarget::Section` and
-  `PickerHandle::Section` carry the sub-range, so commit calls
+  `Section`. **Clipboard contract:** `Cut` and `Paste` are
+  range-aware — cut removes the in-range graphemes and returns
+  them as text; paste splices into the range; `Copy` falls
+  through to whole-section copy because the structured payload's
+  geometry belongs to the whole section. **Picker contract:**
+  `ColorTarget::Section` and `PickerHandle::Section` carry the
+  grapheme sub-range, so commit calls
   `set_section_text_color_range` directly (bypassing the
   `MultiSection` fan-out — different sections' lengths make
   cross-section sub-range semantics incoherent).

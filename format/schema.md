@@ -460,9 +460,21 @@ See [sections.md](./sections.md) for the section concept and
 }
 ```
 
-See [text-runs.md](./text-runs.md) for coverage rules. Runs are
-addressed *relative to the owning section's `text`* — there is no
-node-level `text_runs` after the section refactor.
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `start` | integer | yes | First covered grapheme cluster (inclusive) |
+| `end` | integer | yes | One past the last covered cluster (exclusive) |
+| `bold` / `italic` / `underline` | bool | no | Default `false` |
+| `font` | string | no | Family name; empty (the default) = no pin |
+| `size_pt` | number | no | Fractional sizes valid; defaults to `14`, the run-less section scale |
+| `color` | string | no | `#RRGGBB` or `var(--name)`; empty (the default) defers to the node's effective text color |
+| `hyperlink` | string\|null | no | Absent / `null` = no link |
+
+See [text-runs.md](./text-runs.md) for coverage rules and the default
+semantics. Runs are addressed *relative to the owning section's
+`text`* — there is no node-level `text_runs` after the section
+refactor. Fields sitting at their defaults may be omitted when the
+map is saved, per the omission policy above.
 
 ## ColorSchema (on a node)
 
@@ -544,7 +556,7 @@ supposed to be shadowing.
   "width": 4,
   "line_style": "solid",
   "visible": true,
-  "label": null,
+  "label": "optional label text",
   "anchor_from": "auto",
   "anchor_to": "auto",
   "control_points": []
@@ -560,7 +572,7 @@ supposed to be shadowing.
 | `width` | integer | Stroke width in pixels |
 | `line_style` | string | See [enums.md](./enums.md) |
 | `visible` | bool | Whether to render the edge |
-| `label` | string\|null | Optional label text |
+| `label` | string\|null | Optional label text; omitted on save when unset |
 | `label_config` | object\|null | Per-edge label position, color, and size-clamp overrides — see [`EdgeLabelConfig`](#edgelabelconfig) |
 | `anchor_from` | string | Which side of the source node — see [enums.md](./enums.md) |
 | `anchor_to` | string | Which side of the target node |
@@ -587,7 +599,6 @@ rendered differently.
   "width": 3,
   "line_style": "solid",
   "visible": true,
-  "label": null,
   "anchor_from": "auto",
   "anchor_to": "auto",
   "control_points": [],

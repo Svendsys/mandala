@@ -38,8 +38,9 @@ pub use edge::{
     DISPLAY_MODE_PORTAL, PORTAL_GLYPH_PRESETS,
 };
 pub use node::{
-    ColorGroup, ColorOverrides, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, MindSection,
-    NodeLayout, NodeStyle, Position, Size, TextRun, MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE,
+    default_border_font_size, ColorGroup, ColorOverrides, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig,
+    MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun, DEFAULT_TEXT_RUN_SIZE_PT,
+    MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE,
 };
 pub use palette::Palette;
 
@@ -126,15 +127,7 @@ impl MindMap {
         MindMap {
             version: "1.0".to_string(),
             name: name.into(),
-            canvas: Canvas {
-                background_color: "#000000".to_string(),
-                default_border: None,
-                default_connection: None,
-                default_section_frame_border: None,
-                default_focused_section_frame_border: None,
-                theme_variables: HashMap::new(),
-                theme_variants: HashMap::new(),
-            },
+            canvas: Canvas::default(),
             palettes: HashMap::new(),
             nodes: HashMap::new(),
             edges: Vec::new(),

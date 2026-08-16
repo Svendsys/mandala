@@ -155,7 +155,9 @@ mod tests {
     use crate::application::console::parser::ParseResult;
     use crate::application::console::Args;
     use crate::application::document::tests_common::load_test_doc;
-    use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState};
+    use crate::application::document::{
+        EdgeLabelSel, EdgeRef, GraphemeRange, PortalLabelSel, SectionSel, SectionSpan, SelectionState,
+    };
     use baumhard::mindmap::scene_cache::EdgeKey;
 
     /// Parse `line` and run the `mode` verb body against `doc`,
@@ -235,7 +237,8 @@ mod tests {
                 node_id: id.clone(),
                 section_idx: 1,
             },
-            range: (0, 1),
+            section_span: SectionSpan::single(1),
+            grapheme_range: GraphemeRange::new(0, 1),
         };
         let (result, side, _close) = run_mode("mode resize", &mut doc);
         assert!(matches!(result, ExecResult::Ok { .. }));

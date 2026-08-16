@@ -1632,7 +1632,7 @@ mod tests {
         assert!(run.bold);
         assert!(run.underline);
         assert_eq!(run.font, "LiberationSans");
-        assert_eq!(run.size_pt, 74);
+        assert_eq!(run.size_pt, 74.0);
         assert_eq!(run.color, "#ffffff");
     }
 
@@ -2180,15 +2180,7 @@ mod tests {
         let map = MindMap {
             version: "1.0".to_string(),
             name: "inline-rt".to_string(),
-            canvas: Canvas {
-                background_color: "#000000".to_string(),
-                default_border: None,
-                default_connection: None,
-                default_section_frame_border: None,
-                default_focused_section_frame_border: None,
-                theme_variables: HashMap::new(),
-                theme_variants: HashMap::new(),
-            },
+            canvas: Canvas::default(),
             palettes: HashMap::new(),
             nodes,
             edges: Vec::new(),
@@ -2297,7 +2289,7 @@ mod tests {
             r##"{{
                 "from_id": "a", "to_id": "b", "type": "parent_child",
                 "color": "#fff", "width": 1, "line_style": "solid",
-                "visible": true, "label": null,
+                "visible": true,
                 "anchor_from": "auto", "anchor_to": "auto",
                 "control_points": []{extra}
             }}"##
@@ -2411,6 +2403,20 @@ mod tests {
             })
         }),
         ("is_zero_u32", |v| v.as_u64() == Some(0)),
+        // `TextRun`'s style flags: `false` is the field's default,
+        // so an authored `"bold": false` carries nothing a reload
+        // would not recover.
+        ("is_false", |v| v.as_bool() == Some(false)),
+        // `TextRun.size_pt` at the render-neutral default — the
+        // scale run-less text is measured at, and what a run that
+        // omits the key deserializes to. `14` and `14.0` are the
+        // same JSON number.
+        ("is_default_text_run_size_pt", |v| {
+            v.as_f64() == Some(f64::from(crate::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT))
+        }),
+        // `CustomMutation.behavior` at its `Persistent` default —
+        // the reader's `#[serde(default)]` restores it (#47 part B).
+        ("behavior_is_default", |v| v.as_str() == Some("Persistent")),
         // `ColorSchema.overrides`: an object whose four channels are
         // all absent or `null` carries no override, which is what
         // every node that has never been recolored by hand holds.
@@ -2831,6 +2837,71 @@ mod tests {
         let saved = std::fs::read_to_string(&saved_path).expect("read resaved");
 
         assert_load_save_loses_no_authored_key(&source, &saved);
+    }
+
+    /// **Every canonical fixture is in canonical form.** Loading a
+    /// `maps/*.mindmap.json` fixture and rendering it back through
+    /// the editor's own writer must reproduce the file byte for
+    /// byte — issue #47's acceptance criterion for the serde
+    /// hygiene work, and CODE_CONVENTIONS §10's "fixtures update in
+    /// the same commit as the data-model shift" made mechanical: a
+    /// serialization change without a fixture refresh fails here,
+    /// naming the file.
+    ///
+    /// Byte-exact is available because the writer is deterministic
+    /// (`test_save_to_file_is_deterministic`) and the
+    /// fixtures are themselves written by it. This is deliberately
+    /// stricter than the key-path round-trip above: that one allows
+    /// re-spelling, this one pins the fixtures to the writer's
+    /// current spelling.
+    #[test]
+    fn test_canonical_fixtures_resave_byte_identically() {
+        let maps_dir = crate::util::doc_fixtures::repo_path("maps");
+        let mut checked: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&maps_dir).expect("maps/ exists") {
+            let path = entry.expect("dir entry").path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".mindmap.json") {
+                continue;
+            }
+            let source =
+                std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: unreadable fixture: {e}"));
+            let map = load_from_str(&source).unwrap_or_else(|e| panic!("{name}: fixture does not load: {e}"));
+            let resaved =
+                serde_json::to_string_pretty(&to_json_value(&map).expect("serialize")).expect("render");
+            if resaved != source {
+                let at = source
+                    .lines()
+                    .zip(resaved.lines())
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(0);
+                panic!(
+                    "{name} is no longer in the writer's canonical form (first divergence \
+                     around line {}). The model's serialization changed — re-save the \
+                     fixtures in the same commit (CODE_CONVENTIONS §10).\n  on disk:  {}\n  \
+                     writer:   {}",
+                    at + 1,
+                    source.lines().nth(at).unwrap_or("<past end>"),
+                    resaved.lines().nth(at).unwrap_or("<past end>"),
+                );
+            }
+
+            // Control: the comparison must be able to fail — an
+            // edited map renders differently, so a green run above
+            // is agreement rather than a comparison that cannot
+            // fire.
+            let mut edited = map;
+            edited.name = format!("{}-edited", edited.name);
+            let edited_out =
+                serde_json::to_string_pretty(&to_json_value(&edited).expect("serialize")).expect("render");
+            assert_ne!(edited_out, source, "{name}: an edit must move the rendered bytes");
+
+            checked.push(name);
+        }
+        assert!(
+            checked.iter().any(|n| n == "testament.mindmap.json"),
+            "the canonical fixture must be among the files checked, found only: {checked:?}"
+        );
     }
 
     /// The file
@@ -3263,13 +3334,21 @@ mod tests {
                 ),
             ),
             (
+                // Every styling field deliberately holds a
+                // non-default value: the collapsed key-path pass
+                // has no omission model, and a run field sitting
+                // at its default (`"bold": false`, `"hyperlink":
+                // null`) is legitimately dropped by the saver per
+                // the `skip_serializing_if` policy — which would
+                // read as loss here while testing nothing about
+                // the unknown key this shape exists for.
                 "a key inside a section's text run",
                 shape_map(
                     "",
                     &node_with_sections(
-                        r##"{"text": "n", "text_runs": [{"start":0,"end":1,"bold":false,
-                            "italic":false,"underline":false,"font":"","size_pt":12,
-                            "color":"#fff","hyperlink":null,"tracking":2}]}"##,
+                        r##"{"text": "n", "text_runs": [{"start":0,"end":1,"bold":true,
+                            "italic":true,"underline":true,"font":"LiberationSans","size_pt":12,
+                            "color":"#fff","hyperlink":"https://example.com","tracking":2}]}"##,
                     ),
                     "",
                     "",

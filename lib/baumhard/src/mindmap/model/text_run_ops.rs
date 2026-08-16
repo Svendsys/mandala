@@ -261,7 +261,7 @@ mod tests {
             italic: false,
             underline: false,
             font: String::new(),
-            size_pt: 12,
+            size_pt: 12.0,
             color: color.into(),
             hyperlink: None,
         }
@@ -755,7 +755,7 @@ mod tests {
                 italic: false,
                 underline: false,
                 font: String::new(),
-                size_pt: 12,
+                size_pt: 12.0,
                 color: "blue".into(),
                 hyperlink: None,
             },

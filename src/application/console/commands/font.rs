@@ -219,7 +219,7 @@ struct FontSizeEdit {
     min: Option<f32>,
     max: Option<f32>,
     section_target: Option<usize>,
-    range_target: Option<(usize, usize)>,
+    range_target: Option<crate::application::document::GraphemeRange>,
 }
 
 /// Which surface a font edit landed on — the shape the verb needs
@@ -230,7 +230,7 @@ enum FontApplyScope {
     /// One section, optionally narrowed to a grapheme range.
     Section {
         idx: usize,
-        range: Option<(usize, usize)>,
+        range: Option<crate::application::document::GraphemeRange>,
     },
     /// A fan-out across `kind`-shaped targets (`"node"` /
     /// `"section"`), reported as a count.
@@ -366,11 +366,14 @@ fn apply_font_edit_to_selection(
     // Nodes and sections carry a font size but no screen-space
     // clamp pair — only the edge-adjacent channels do.
     let clamps_asked = a.min.is_some() || a.max.is_some();
-    let section_report = |changed: usize, idx: usize, range: Option<(usize, usize)>| FontApplyReport {
-        changed,
-        scope: FontApplyScope::Section { idx, range },
-        clamps_rejected: clamps_asked.then_some("section"),
-    };
+    let section_report =
+        |changed: usize, idx: usize, range: Option<crate::application::document::GraphemeRange>| {
+            FontApplyReport {
+                changed,
+                scope: FontApplyScope::Section { idx, range },
+                clamps_rejected: clamps_asked.then_some("section"),
+            }
+        };
     let channel_report = |changed: bool, kind: &'static str| FontApplyReport {
         changed: usize::from(changed),
         scope: FontApplyScope::Channel { kind },
@@ -399,11 +402,13 @@ fn apply_font_edit_to_selection(
             Ok(section_report(changed, idx, a.range_target))
         }
         // SectionRange: layer an explicit `range=A..B` on top of
-        // the selection's own range when both are set (kv wins —
-        // explicit user input).
-        SelectionState::SectionRange { sel, range } => {
+        // the selection's own grapheme range when both are set (kv
+        // wins — explicit user input).
+        SelectionState::SectionRange {
+            sel, grapheme_range, ..
+        } => {
             let idx = a.section_target.unwrap_or(sel.section_idx);
-            let effective_range = a.range_target.or(Some(range));
+            let effective_range = a.range_target.or(Some(grapheme_range));
             let changed = write_section_font(doc, &sel.node_id, idx, a.size, effective_range)?;
             Ok(section_report(changed, idx, effective_range))
         }
@@ -463,12 +468,12 @@ fn write_section_font(
     node_id: &str,
     section_idx: usize,
     size: Option<f32>,
-    range: Option<(usize, usize)>,
+    range: Option<crate::application::document::GraphemeRange>,
 ) -> Result<usize, String> {
     // Pre-flight the range so an out-of-bounds start surfaces as a
     // clear error instead of the setter's silent no-op (which is
     // indistinguishable from "already that size").
-    if let Some((rs, _re)) = range {
+    if let Some(rs) = range.map(|r| r.start()) {
         if let Some(section) = doc
             .mindmap
             .nodes
@@ -488,7 +493,8 @@ fn write_section_font(
         return Ok(0);
     };
     let applied = match range {
-        Some((rs, re)) => {
+        Some(r) => {
+            let (rs, re) = (r.start(), r.end());
             let ok = doc.set_section_font_size_range(node_id, section_idx, rs, re, pt);
             if !ok {
                 // Mirror the picker path's stale-range diagnostic
@@ -531,7 +537,7 @@ fn font_report_to_exec(report: FontApplyReport) -> ExecResult {
         FontApplyScope::Node => single_target_result(report.changed, clamp_msg, "font applied"),
         FontApplyScope::Section { idx, range } => {
             let scope = match range {
-                Some((rs, re)) => format!("section {} range {}..{}", idx, rs, re),
+                Some(r) => format!("section {} range {}..{}", idx, r.start(), r.end()),
                 None => format!("section {}", idx),
             };
             single_target_result(report.changed, clamp_msg, &format!("font applied to {}", scope))
@@ -609,7 +615,7 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // carry per-section / per-range routing today (deferred to
     // N4-C alongside `SelectionState::SectionRange`).
     let mut section_target: Option<usize> = None;
-    let mut range_target: Option<(usize, usize)> = None;
+    let mut range_target: Option<crate::application::document::GraphemeRange> = None;
     for (k, v) in args.kvs() {
         match k {
             "section" => match super::range_kv::parse_section_kv("font", v) {
@@ -617,7 +623,7 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 Err(msg) => return ExecResult::err(msg),
             },
             "range" => match super::range_kv::parse_range_kv(v) {
-                Ok(pair) => range_target = Some(pair),
+                Ok(range) => range_target = Some(range),
                 Err(msg) => return ExecResult::err(format!("font: range='{}' — {}", v, msg)),
             },
             other => return ExecResult::err(format!("font set: unknown key '{}'", other)),
@@ -628,7 +634,8 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
         );
     }
-    if let (Some(idx), Some((rs, re))) = (section_target, range_target) {
+    if let (Some(idx), Some(range)) = (section_target, range_target) {
+        let (rs, re) = (range.start(), range.end());
         let node_id = match eff.document.selection.clone() {
             SelectionState::Single(id) => id,
             SelectionState::Section(s) => s.node_id,
@@ -1226,7 +1233,7 @@ mod tests {
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(!node.sections[0].text_runs.is_empty());
         for run in &node.sections[0].text_runs {
-            assert_eq!(run.size_pt, 18);
+            assert_eq!(run.size_pt, 18.0);
         }
     }
 
@@ -1303,7 +1310,7 @@ mod tests {
         assert!(super::apply_font_kv_to_selection(&mut doc, "size", 21.0));
         let node = doc.mindmap.nodes.get(&id).expect("pinned node");
         for run in &node.sections[1].text_runs {
-            assert_eq!(run.size_pt, 21, "Action write lands on the selected section");
+            assert_eq!(run.size_pt, 21.0, "Action write lands on the selected section");
         }
         // The verb reaches the same state, so re-running it is a
         // no-op rather than a second write.
@@ -1367,16 +1374,16 @@ mod tests {
     /// size, sections at other indices stay untouched.
     #[test]
     fn font_size_section_kv_targets_specific_section() {
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Single("0".into());
         assert_exec_ok(run("font size=22 section=1", &mut doc));
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(
-            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14),
+            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14.0),
             "section 0 must NOT receive the size change"
         );
         assert!(
-            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
+            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22.0),
             "section 1 must receive the new size"
         );
     }
@@ -1387,7 +1394,7 @@ mod tests {
     /// `make_two_section_node_with_pinned_runs` helper.
     fn doc_with_two_sections_for_font(
         font: &str,
-        size: u32,
+        size: f32,
     ) -> crate::application::document::MindMapDocument {
         use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
         let mut doc = fixture_doc();
@@ -1404,7 +1411,7 @@ mod tests {
     fn font_family_section_collapse_writes_only_section() {
         use crate::application::document::SectionSel;
         let family = first_loaded_family();
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Section(SectionSel {
             node_id: "0".into(),
             section_idx: 1,
@@ -1434,7 +1441,7 @@ mod tests {
     #[test]
     fn font_size_action_section_writes_through_section_setter() {
         use crate::application::document::SectionSel;
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Section(SectionSel {
             node_id: "0".into(),
             section_idx: 1,
@@ -1442,11 +1449,11 @@ mod tests {
         assert!(super::apply_font_kv_to_selection(&mut doc, "size", 22.0));
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(
-            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14),
+            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14.0),
             "section 0 (sibling) must NOT change size"
         );
         assert!(
-            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
+            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22.0),
             "section 1 (selected) must receive the new size"
         );
     }
@@ -1463,7 +1470,7 @@ mod tests {
     fn font_family_action_section_writes_through_section_setter() {
         use crate::application::document::SectionSel;
         let family = first_loaded_family();
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Section(SectionSel {
             node_id: "0".into(),
             section_idx: 1,

@@ -102,7 +102,7 @@ fn wheel_color_section_writes_through_text_color() {
         "#aaaaaa",
         ["#aaaaaa", "#aaaaaa"],
         "LiberationSans",
-        14,
+        14.0,
     );
     let tid = TargetId::Section {
         range: None,

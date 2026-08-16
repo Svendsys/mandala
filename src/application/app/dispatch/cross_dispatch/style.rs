@@ -97,10 +97,9 @@ pub(in crate::application::app) fn apply_set_border_preview(
                     crate::application::document::SelectionState::Section(s) => {
                         vec![(s.node_id.clone(), s.section_idx)]
                     }
-                    crate::application::document::SelectionState::SectionRange { sel, range } => {
-                        let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
-                        (lo..=hi).map(|i| (sel.node_id.clone(), i)).collect()
-                    }
+                    crate::application::document::SelectionState::SectionRange {
+                        sel, section_span, ..
+                    } => section_span.indices().map(|i| (sel.node_id.clone(), i)).collect(),
                     crate::application::document::SelectionState::MultiSection(sels) => {
                         sels.iter().map(|s| (s.node_id.clone(), s.section_idx)).collect()
                     }

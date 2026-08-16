@@ -797,16 +797,13 @@ fn text_run_violations(section_idx: usize, section: &MindSection) -> Vec<String>
 
     for (run_idx, run) in section.text_runs.iter().enumerate() {
         let label = format!("section[{section_idx}].text_runs[{run_idx}]");
-        if run.size_pt == 0 {
-            out.push(format!(
-                "{label}.size_pt is zero — the text shaper asserts on a zero line height"
-            ));
-        } else if (run.size_pt as f32) > MAX_FONT_SIZE_PT {
-            out.push(format!(
-                "{label}.size_pt ({}) is over the {MAX_FONT_SIZE_PT}pt ceiling",
-                run.size_pt
-            ));
-        }
+        // Same domain as every other size the shaper receives —
+        // finite, over the sub-point floor, under the atlas
+        // ceiling. `size_pt` went through this check with its own
+        // integer wording while it was a `u32`; as an `f32` it
+        // shares the helper so the floor (0.5pt) and the message
+        // cannot drift from the border / connection sizes.
+        out.extend(font_size(&label, "size_pt", run.size_pt));
         // `>=`, not `>`: a zero-length run is as malformed as an
         // inverted one. `text_run_ops` calls the pair "zero-length
         // or inverted" and the document layer carries a
