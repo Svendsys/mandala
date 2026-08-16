@@ -4,6 +4,7 @@ use baumhard::core::tests::primitives_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::fonts_tests::*;
 use baumhard::font::tests::hex_tests::*;
+use baumhard::font::tests::metric_cache_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::font::tests::name_rules_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
@@ -609,6 +610,28 @@ fn criterion_benchmark(c: &mut Criterion) {
     // font / metrics //
     c.bench_function("monospace_advance_scales_linearly", |b| {
         b.iter(do_monospace_advance_scales_linearly)
+    });
+    // font / metric cache //
+    c.bench_function("glyph_advance_cache_hit_matches_miss", |b| {
+        b.iter(do_glyph_advance_cache_hit_matches_miss)
+    });
+    c.bench_function("glyph_advance_distinct_per_grapheme", |b| {
+        b.iter(do_glyph_advance_distinct_per_grapheme)
+    });
+    c.bench_function("cluster_width_sums_per_grapheme", |b| {
+        b.iter(do_cluster_width_sums_per_grapheme)
+    });
+    c.bench_function("glyph_advance_scales_with_size", |b| {
+        b.iter(do_glyph_advance_scales_with_size)
+    });
+    c.bench_function("glyph_ink_distinct_per_size", |b| {
+        b.iter(do_glyph_ink_distinct_per_size)
+    });
+    c.bench_function("glyph_advance_with_shapes_cold_key_under_held_guard", |b| {
+        b.iter(do_glyph_advance_with_shapes_cold_key_under_held_guard)
+    });
+    c.bench_function("glyph_ink_with_cold_key_under_held_guard", |b| {
+        b.iter(do_glyph_ink_with_cold_key_under_held_guard)
     });
     // font / name rules //
     c.bench_function("decode_name_record_utf16_be_ascii", |b| {
