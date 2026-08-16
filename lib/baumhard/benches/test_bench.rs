@@ -176,21 +176,21 @@ fn do_subtree_drag_slow_path(
 
 fn criterion_benchmark(c: &mut Criterion) {
     // glyph_model //
-    c.bench_function("matrix_place_in_1", |b| b.iter(matrix_place_in_1));
-    c.bench_function("matrix_place_in_2", |b| b.iter(matrix_place_in_2));
-    c.bench_function("matrix_place_in_3", |b| b.iter(matrix_place_in_3));
+    c.bench_function("matrix_place_in_1", |b| b.iter(do_matrix_place_in_1));
+    c.bench_function("matrix_place_in_2", |b| b.iter(do_matrix_place_in_2));
+    c.bench_function("matrix_place_in_3", |b| b.iter(do_matrix_place_in_3));
     c.bench_function("matrix_place_in_multiline_component", |b| {
-        b.iter(matrix_place_in_multiline_component)
+        b.iter(do_matrix_place_in_multiline_component)
     });
     c.bench_function("matrix_place_in_fusing_component", |b| {
-        b.iter(matrix_place_in_fusing_component)
+        b.iter(do_matrix_place_in_fusing_component)
     });
-    c.bench_function("matrix_add_assign_1", |b| b.iter(matrix_add_assign_1));
-    c.bench_function("matrix_add_assign_2", |b| b.iter(matrix_add_assign_2));
-    c.bench_function("line_add_assign_1", |b| b.iter(line_add_assign_1));
-    c.bench_function("line_add_assign_2", |b| b.iter(line_add_assign_2));
-    c.bench_function("line_add_assign_3", |b| b.iter(line_add_assign_3));
-    c.bench_function("line_add_assign_4", |b| b.iter(line_add_assign_4));
+    c.bench_function("matrix_add_assign_1", |b| b.iter(do_matrix_add_assign_1));
+    c.bench_function("matrix_add_assign_2", |b| b.iter(do_matrix_add_assign_2));
+    c.bench_function("line_add_assign_1", |b| b.iter(do_line_add_assign_1));
+    c.bench_function("line_add_assign_2", |b| b.iter(do_line_add_assign_2));
+    c.bench_function("line_add_assign_3", |b| b.iter(do_line_add_assign_3));
+    c.bench_function("line_add_assign_4", |b| b.iter(do_line_add_assign_4));
     c.bench_function("line_ignore_initial_space_multibyte_indent", |b| {
         b.iter(do_line_ignore_initial_space_multibyte_indent)
     });
@@ -229,28 +229,28 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("overriding_insert_is_partition_independent", |b| {
         b.iter(do_overriding_insert_is_partition_independent)
     });
-    c.bench_function("component_of_index", |b| b.iter(component_of_index));
-    c.bench_function("index_of_component", |b| b.iter(index_of_component));
-    c.bench_function("expanding_insert_1", |b| b.iter(expanding_insert_1));
-    c.bench_function("expanding_insert_2", |b| b.iter(expanding_insert_2));
-    c.bench_function("expanding_insert_3", |b| b.iter(expanding_insert_3));
-    c.bench_function("expanding_insert_4", |b| b.iter(expanding_insert_4));
-    c.bench_function("expanding_insert_5", |b| b.iter(expanding_insert_5));
-    c.bench_function("expanding_insert_6", |b| b.iter(expanding_insert_6));
-    c.bench_function("expanding_insert_7", |b| b.iter(expanding_insert_7));
-    c.bench_function("overriding_insert_1", |b| b.iter(overriding_insert_1));
-    c.bench_function("overriding_insert_2", |b| b.iter(overriding_insert_2));
-    c.bench_function("overriding_insert_3", |b| b.iter(overriding_insert_3));
-    c.bench_function("overriding_insert_4", |b| b.iter(overriding_insert_4));
-    c.bench_function("overriding_insert_5", |b| b.iter(overriding_insert_5));
-    c.bench_function("overriding_insert_6", |b| b.iter(overriding_insert_6));
-    c.bench_function("overriding_insert_7", |b| b.iter(overriding_insert_7));
-    c.bench_function("overriding_insert_8", |b| b.iter(overriding_insert_8));
-    c.bench_function("overriding_insert_9", |b| b.iter(overriding_insert_9));
-    c.bench_function("overriding_insert_10", |b| b.iter(overriding_insert_10));
-    c.bench_function("overriding_insert_11", |b| b.iter(overriding_insert_11));
-    c.bench_function("overriding_insert_12", |b| b.iter(overriding_insert_12));
-    c.bench_function("overriding_insert_13", |b| b.iter(overriding_insert_13));
+    c.bench_function("component_of_index", |b| b.iter(do_component_of_index));
+    c.bench_function("index_of_component", |b| b.iter(do_index_of_component));
+    c.bench_function("expanding_insert_1", |b| b.iter(do_expanding_insert_1));
+    c.bench_function("expanding_insert_2", |b| b.iter(do_expanding_insert_2));
+    c.bench_function("expanding_insert_3", |b| b.iter(do_expanding_insert_3));
+    c.bench_function("expanding_insert_4", |b| b.iter(do_expanding_insert_4));
+    c.bench_function("expanding_insert_5", |b| b.iter(do_expanding_insert_5));
+    c.bench_function("expanding_insert_6", |b| b.iter(do_expanding_insert_6));
+    c.bench_function("expanding_insert_7", |b| b.iter(do_expanding_insert_7));
+    c.bench_function("overriding_insert_1", |b| b.iter(do_overriding_insert_1));
+    c.bench_function("overriding_insert_2", |b| b.iter(do_overriding_insert_2));
+    c.bench_function("overriding_insert_3", |b| b.iter(do_overriding_insert_3));
+    c.bench_function("overriding_insert_4", |b| b.iter(do_overriding_insert_4));
+    c.bench_function("overriding_insert_5", |b| b.iter(do_overriding_insert_5));
+    c.bench_function("overriding_insert_6", |b| b.iter(do_overriding_insert_6));
+    c.bench_function("overriding_insert_7", |b| b.iter(do_overriding_insert_7));
+    c.bench_function("overriding_insert_8", |b| b.iter(do_overriding_insert_8));
+    c.bench_function("overriding_insert_9", |b| b.iter(do_overriding_insert_9));
+    c.bench_function("overriding_insert_10", |b| b.iter(do_overriding_insert_10));
+    c.bench_function("overriding_insert_11", |b| b.iter(do_overriding_insert_11));
+    c.bench_function("overriding_insert_12", |b| b.iter(do_overriding_insert_12));
+    c.bench_function("overriding_insert_13", |b| b.iter(do_overriding_insert_13));
     c.bench_function("delta_glyph_line_assign_applies_through_apply_to", |b| {
         b.iter(do_delta_glyph_line_assign_applies_through_apply_to)
     });
@@ -477,19 +477,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_shape_shader_ids_are_stable)
     });
     // glyph_tree //
-    c.bench_function("basics_solo_mutation", |b| b.iter(basics_solo_mutation));
-    c.bench_function("model_block_commands", |b| b.iter(model_block_commands));
-    c.bench_function("area_block_commands", |b| b.iter(area_block_commands));
-    c.bench_function("complex_tree_mutation", |b| b.iter(complex_tree_mutation));
-    c.bench_function("simple_tree_mutation", |b| b.iter(simple_tree_mutation));
-    c.bench_function("repeat_while_skip_while", |b| b.iter(repeat_while_skip_while));
+    c.bench_function("basics_solo_mutation", |b| b.iter(do_basics_solo_mutation));
+    c.bench_function("model_block_commands", |b| b.iter(do_model_block_commands));
+    c.bench_function("area_block_commands", |b| b.iter(do_area_block_commands));
+    c.bench_function("complex_tree_mutation", |b| b.iter(do_complex_tree_mutation));
+    c.bench_function("simple_tree_mutation", |b| b.iter(do_simple_tree_mutation));
+    c.bench_function("repeat_while_skip_while", |b| b.iter(do_repeat_while_skip_while));
     c.bench_function("repeat_while_without_children_is_noop", |b| {
-        b.iter(repeat_while_without_children_is_noop)
+        b.iter(do_repeat_while_without_children_is_noop)
     });
-    c.bench_function("event_propagation_complex", |b| {
-        b.iter(event_propagation_complex_symmetric)
+    c.bench_function("event_propagation_complex_symmetric", |b| {
+        b.iter(do_event_propagation_complex_symmetric)
     });
-    c.bench_function("event_propagation_simple", |b| b.iter(event_propagation_simple));
+    c.bench_function("event_propagation_simple", |b| {
+        b.iter(do_event_propagation_simple)
+    });
     c.bench_function("mutator_macro_applies_all_mutations_in_order", |b| {
         b.iter(do_mutator_macro_applies_all_mutations_in_order)
     });
