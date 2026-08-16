@@ -3033,12 +3033,16 @@ fn test_border_preview_commit_fans_out_to_section_range() {
     for i in 0..=last_section_idx {
         doc.mindmap.nodes.get_mut(&node_id).unwrap().sections[i].frame_border = None;
     }
+    // The span carries the fan-out meaning here: sections
+    // 0..=last_section_idx of the owning node. The grapheme range
+    // is incidental to this test (border commits never read it).
     doc.selection = SelectionState::SectionRange {
         sel: SectionSel {
             node_id: node_id.clone(),
             section_idx: 0,
         },
-        range: (0, last_section_idx),
+        section_span: SectionSpan::new(0, last_section_idx),
+        grapheme_range: GraphemeRange::new(0, 1),
     };
     doc.undo_stack.clear();
     doc.dirty = false;
@@ -3772,6 +3776,76 @@ fn test_delete_section_repairs_stranded_selection_and_undo_restores_it() {
     assert!(
         matches!(&doc.selection, SelectionState::Section(s) if s.section_idx == 1),
         "undo must restore the pre-mutation selection, got {:?}",
+        doc.selection
+    );
+}
+
+/// `SectionRange` structural cleanup repairs each field per its
+/// own meaning (#47 part C): the **section span** clamps against
+/// the shortened `sections` vec, while the **grapheme range**
+/// stays as authored — it addresses text inside the surviving
+/// anchor section, which the delete did not touch. When the
+/// anchor section itself is gone, the whole variant demotes and
+/// the grapheme range dies with it.
+#[test]
+fn test_delete_section_clamps_section_range_span_and_keeps_grapheme_range() {
+    use crate::application::document::{GraphemeRange, SectionSpan};
+    use baumhard::mindmap::model::MindSection;
+
+    let (mut doc, nid) = super::tests_common::pinned_two_section_node();
+    doc.mindmap
+        .nodes
+        .get_mut(&nid)
+        .unwrap()
+        .sections
+        .push(MindSection::new_default("third".into(), Vec::new()));
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel {
+            node_id: nid.clone(),
+            section_idx: 0,
+        },
+        section_span: SectionSpan::new(0, 2),
+        grapheme_range: GraphemeRange::new(1, 3),
+    };
+
+    doc.delete_section(&nid, 2).expect("delete ok");
+    match &doc.selection {
+        SelectionState::SectionRange {
+            sel,
+            section_span,
+            grapheme_range,
+        } => {
+            assert_eq!(sel.section_idx, 0, "the surviving anchor stays");
+            assert_eq!(
+                *section_span,
+                SectionSpan::new(0, 1),
+                "the span must clamp to the shortened section count"
+            );
+            assert_eq!(
+                *grapheme_range,
+                GraphemeRange::new(1, 3),
+                "the grapheme range addresses the anchor section's text and must not be clamped \
+                 by a section-count change"
+            );
+        }
+        other => panic!("a clamped range with a live anchor stays a SectionRange, got {other:?}"),
+    }
+
+    // Anchor gone: the variant demotes to the closest surviving
+    // section — no stale grapheme range survives onto text it was
+    // never swept over.
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel {
+            node_id: nid.clone(),
+            section_idx: 1,
+        },
+        section_span: SectionSpan::single(1),
+        grapheme_range: GraphemeRange::new(0, 2),
+    };
+    doc.delete_section(&nid, 1).expect("delete ok");
+    assert!(
+        matches!(&doc.selection, SelectionState::Section(s) if s.section_idx == 0),
+        "a dead anchor demotes to the closest surviving section, got {:?}",
         doc.selection
     );
 }

@@ -10,7 +10,7 @@
 
 use baumhard::util::color::{hex_to_hsv_safe, resolve_var};
 
-use crate::application::document::{EdgeRef, MindMapDocument};
+use crate::application::document::{EdgeRef, GraphemeRange, MindMapDocument};
 
 /// Which visual axis on a node the picker should write to when the
 /// target is a node. Edges don't need this — they have one color
@@ -54,11 +54,11 @@ pub enum ColorTarget {
         section_idx: usize,
         axis: SectionColorAxis,
         /// Optional sub-range over the section's grapheme
-        /// indices. Set when the active selection is
+        /// clusters. Set when the active selection is
         /// `SelectionState::SectionRange`; unset for whole-section
         /// `Section`. The picker's commit path routes through
         /// `set_section_text_color_range` when present.
-        range: Option<(usize, usize)>,
+        range: Option<GraphemeRange>,
     },
 }
 
@@ -77,7 +77,7 @@ pub enum PickerHandle {
     /// resolve step verifies the node and the section index still
     /// exist; the index is captured at open time and held until
     /// commit (mirrors the Edge variant's stale-index defensive
-    /// pattern). `range` carries the sub-range from a
+    /// pattern). `range` carries the grapheme sub-range from a
     /// `SelectionState::SectionRange` selection at open time;
     /// the commit routes through `set_section_text_color_range`
     /// when present.
@@ -85,7 +85,7 @@ pub enum PickerHandle {
         node_id: String,
         section_idx: usize,
         axis: SectionColorAxis,
-        range: Option<(usize, usize)>,
+        range: Option<GraphemeRange>,
     },
 }
 
@@ -188,9 +188,10 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
             let section = n.sections.get(*section_idx)?;
             let resolved = match axis {
                 SectionColorAxis::Text => match range {
-                    Some((rs, re)) => {
+                    Some(r) => {
+                        let (rs, re) = (r.start(), r.end());
                         let in_range =
-                            baumhard::mindmap::model::text_run_ops::slice(&section.text_runs, *rs, *re);
+                            baumhard::mindmap::model::text_run_ops::slice(&section.text_runs, rs, re);
                         // Coverage check: the in-range slice must
                         // span the entire `[rs, re)` with no gaps
                         // for "unanimous" to be meaningful — a
@@ -202,8 +203,8 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
                         // check, a single in-range run would
                         // pass the trivial `iter().all` and
                         // seed the picker with the wrong color.
-                        let fully_covered = in_range.first().is_some_and(|first| first.start == *rs)
-                            && in_range.last().is_some_and(|last| last.end == *re)
+                        let fully_covered = in_range.first().is_some_and(|first| first.start == rs)
+                            && in_range.last().is_some_and(|last| last.end == re)
                             && in_range.windows(2).all(|w| w[0].end == w[1].start);
                         let unanimous = fully_covered
                             && in_range

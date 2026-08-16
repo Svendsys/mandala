@@ -582,6 +582,7 @@ mod tests {
     };
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{EdgeRef, SectionPayload, SectionSel, SelectionState};
+    use crate::application::document::{GraphemeRange, SectionSpan};
 
     // ── EnterNodeEdit plan resolution ────────────────────────────
 
@@ -623,7 +624,8 @@ mod tests {
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::SectionRange {
             sel: SectionSel::new(&id, 1),
-            range: (0, 3),
+            section_span: SectionSpan::single(1),
+            grapheme_range: GraphemeRange::new(0, 3),
         };
         let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
         assert_eq!(plan, EnterNodeEditPlan::EnterMultiSection { node_id: id });

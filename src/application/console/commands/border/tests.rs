@@ -924,7 +924,7 @@ fn border_show_works_on_section_selection() {
 
 #[test]
 fn border_show_works_on_section_range_selection() {
-    use crate::application::document::SectionSel;
+    use crate::application::document::{GraphemeRange, SectionSel, SectionSpan};
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::SectionRange {
@@ -932,7 +932,8 @@ fn border_show_works_on_section_range_selection() {
             node_id: id.clone(),
             section_idx: 0,
         },
-        range: (0, 0),
+        section_span: SectionSpan::single(0),
+        grapheme_range: GraphemeRange::new(0, 1),
     };
     assert!(
         matches!(run("border show", &mut doc), ExecResult::Lines(_)),

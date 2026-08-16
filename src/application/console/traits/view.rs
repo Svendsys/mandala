@@ -11,7 +11,7 @@ use super::capabilities::{
 use super::color_value::ColorValue;
 use super::outcome::{ClipboardContent, Outcome};
 use crate::application::document::defaults::default_text_run;
-use crate::application::document::{EdgeRef, MindMapDocument, SectionPayload, SelectionState};
+use crate::application::document::{EdgeRef, GraphemeRange, MindMapDocument, SectionPayload, SelectionState};
 
 /// A mutable view into one selected component, holding the doc ref
 /// plus enough identity to find the component each time. Built fresh
@@ -36,14 +36,12 @@ pub enum TargetView<'a> {
         doc: &'a mut MindMapDocument,
         id: String,
         section_idx: usize,
-        /// Optional sub-range `[start, end)` over the section's
-        /// grapheme indices. `Some(range)` routes per-section
-        /// style dispatch (color text, font size, font family)
-        /// to the range-aware setter; clipboard ops fall back
-        /// to whole-section semantics (range-aware paste is
-        /// deferred to N4-D). `None` = whole-section, the
-        /// pre-N4-C semantic.
-        range: Option<(usize, usize)>,
+        /// Optional sub-range over the section's grapheme
+        /// clusters. `Some(range)` routes per-section style
+        /// dispatch (color text, font family) and clipboard
+        /// cut / paste to the range-aware setter; `None` =
+        /// whole-section.
+        range: Option<GraphemeRange>,
     },
     /// Line-mode edge body target. Color operations write the
     /// edge's `color` / `glyph_connection.color`; clipboard
@@ -205,7 +203,9 @@ impl<'a> HasTextColor for TargetView<'a> {
             } => {
                 let color_str = color_as_override(&c).unwrap_or_default();
                 let applied = match range {
-                    Some((rs, re)) => doc.set_section_text_color_range(id, *section_idx, *rs, *re, color_str),
+                    Some(r) => {
+                        doc.set_section_text_color_range(id, *section_idx, r.start(), r.end(), color_str)
+                    }
                     None => doc.set_section_text_color(id, *section_idx, color_str),
                 };
                 Outcome::applied(applied)
@@ -289,7 +289,9 @@ impl<'a> AcceptsFontFamily for TargetView<'a> {
                 range,
             } => {
                 let applied = match range {
-                    Some((rs, re)) => doc.set_section_font_family_range(id, *section_idx, *rs, *re, family),
+                    Some(r) => {
+                        doc.set_section_font_family_range(id, *section_idx, r.start(), r.end(), family)
+                    }
                     None => doc.set_section_font_family(id, *section_idx, family),
                 };
                 Outcome::applied(applied)
@@ -432,8 +434,8 @@ impl<'a> HandlesPaste for TargetView<'a> {
                 section_idx,
                 range,
             } => {
-                if let Some((rs, re)) = *range {
-                    return paste_section_range(doc, id, *section_idx, rs, re, content);
+                if let Some(r) = *range {
+                    return paste_section_range(doc, id, *section_idx, r.start(), r.end(), content);
                 }
                 let section_count = doc
                     .mindmap
@@ -487,8 +489,8 @@ impl<'a> HandlesCut for TargetView<'a> {
                 section_idx,
                 range,
             } => {
-                if let Some((rs, re)) = *range {
-                    return cut_section_range(doc, id, *section_idx, rs, re);
+                if let Some(r) = *range {
+                    return cut_section_range(doc, id, *section_idx, r.start(), r.end());
                 }
                 let (text, payload) = match doc
                     .mindmap
@@ -618,12 +620,12 @@ pub enum TargetId {
     Section {
         node_id: String,
         section_idx: usize,
-        /// Optional sub-range `[start, end)` over the section's
-        /// grapheme indices — emitted when `selection_targets`
-        /// fans `SelectionState::SectionRange` out. The trait
+        /// Optional sub-range over the section's grapheme
+        /// clusters — emitted when `selection_targets` fans
+        /// `SelectionState::SectionRange` out. The trait
         /// dispatcher's `TargetView::Section { range, .. }`
         /// arm consults it.
-        range: Option<(usize, usize)>,
+        range: Option<GraphemeRange>,
     },
     Edge(EdgeRef),
     EdgeLabel(EdgeRef),
@@ -668,12 +670,17 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
             .collect(),
         // SectionRange routes through the same `Section`
         // target so per-section verbs reuse one dispatch arm;
-        // the carried range threads to range-aware setters
-        // inside the dispatcher.
-        SelectionState::SectionRange { sel, range } => vec![TargetId::Section {
+        // the carried grapheme range threads to range-aware
+        // setters inside the dispatcher. The section span is a
+        // fan-out concern for the border / style consumers, not
+        // a per-target one — this dispatch targets the anchor
+        // section the grapheme range lives in.
+        SelectionState::SectionRange {
+            sel, grapheme_range, ..
+        } => vec![TargetId::Section {
             node_id: sel.node_id.clone(),
             section_idx: sel.section_idx,
-            range: Some(*range),
+            range: Some(*grapheme_range),
         }],
         SelectionState::Edge(er) => vec![TargetId::Edge(er.clone())],
         SelectionState::EdgeLabel(s) => vec![TargetId::EdgeLabel(s.edge_ref.clone())],

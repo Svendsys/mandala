@@ -200,36 +200,40 @@ pub enum SelectionState {
     // native click router.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     MultiSection(Vec<SectionSel>),
-    /// `range` is a `(lo, hi)` pair of **section indices** on
-    /// the owning node, `[lo, hi]` inclusive. Fanned out by
-    /// `border` / `style` verbs through
-    /// `border.rs::expand_section_pairs` and
-    /// `cross_dispatch/style.rs::commit_border_preview`. Clamped
-    /// by `cleanup_after_structural_mutation` on add/delete/split
-    /// against `sections.len()`. Per-section verbs see the
-    /// range and route to the range-aware setter; accessors that
-    /// only care about the owning section (`selected_section`,
-    /// `selected_ids`, `is_selected`) treat it identically to
-    /// [`Self::Section`].
+    /// One anchor section plus the two range meanings a
+    /// section-scoped selection can carry, each in its own
+    /// distinctly-typed field so they can never again share a slot
+    /// (issue #47 part C — the single `range` pair this variant
+    /// used to carry was read as section indices by one consumer
+    /// class and as grapheme offsets by the other).
     ///
-    /// **No producer today, and that is a defect rather than a
-    /// seam.** Every consumer listed above is wired and tested, and
-    /// [`format/sections.md`](https://github.com/Svendsys/mandala/blob/main/format/sections.md)
-    /// names two producers — a `range=A..B` console kv and the
-    /// editor's shift-select lift — but neither reaches this
-    /// variant: the verbs call the range-aware setters directly
-    /// without changing the selection, and
-    /// `text_edit::editor::lift_anchor_to_section_range` returns
-    /// [`Self::Section`] despite its name, deliberately, to dodge a
-    /// grapheme-index-versus-section-index confusion that
-    /// `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` books as its own
-    /// follow-up. Kept rather than deleted because the consumers are
-    /// real and the missing piece is one producer; reported out of
-    /// #41 rather than fixed there.
-    #[allow(dead_code)]
+    /// - [`SectionSpan`] (`section_span`) — inclusive **section
+    ///   indices** on the owning node. Fanned out by `border` /
+    ///   `style` verbs through
+    ///   `border.rs::live_selection_section_pairs` and the border
+    ///   preview's `Sections` target; clamped by
+    ///   `cleanup_after_structural_mutation` on add/delete/split
+    ///   against `sections.len()`.
+    /// - [`GraphemeRange`] (`grapheme_range`) — half-open
+    ///   **grapheme-cluster** sub-range inside the anchor section
+    ///   (`sel.section_idx`)'s text. Routed by per-section verbs to
+    ///   the range-aware setters (`set_section_text_color_range`,
+    ///   `set_section_font_size_range`,
+    ///   `set_section_font_family_range`), by the color picker
+    ///   through `ColorTarget::Section { range }`, and by the
+    ///   clipboard's range-aware cut / paste.
+    ///
+    /// Produced by the inline text editor's shift-select lift on
+    /// commit (`text_edit::editor::lift_anchor_to_section_range`):
+    /// the anchor section becomes `sel`, the span is that single
+    /// section, and the `(anchor, cursor)` pair becomes the
+    /// grapheme range. Accessors that only care about the owning
+    /// section (`selected_section`, `selected_ids`, `is_selected`)
+    /// treat the variant identically to [`Self::Section`].
     SectionRange {
         sel: SectionSel,
-        range: (usize, usize),
+        section_span: SectionSpan,
+        grapheme_range: GraphemeRange,
     },
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
@@ -270,6 +274,96 @@ impl SectionSel {
             node_id: node_id.into(),
             section_idx,
         }
+    }
+}
+
+/// Inclusive span of **section indices** on one node — the
+/// "sections `lo` through `hi`" half of
+/// [`SelectionState::SectionRange`]. Not a grapheme range: the
+/// units are entries in `MindNode.sections`, and the distinct type
+/// is the point — a span can no longer be handed to a consumer
+/// expecting grapheme offsets ([`GraphemeRange`]), which is the
+/// crossing issue #47 existed to end.
+///
+/// `lo <= hi` holds by construction: [`Self::new`] normalizes the
+/// order and the fields are private so no other writer exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SectionSpan {
+    lo: usize,
+    hi: usize,
+}
+
+impl SectionSpan {
+    /// Span covering `a` and `b` inclusive, whichever order they
+    /// arrive in.
+    pub fn new(a: usize, b: usize) -> Self {
+        SectionSpan {
+            lo: a.min(b),
+            hi: a.max(b),
+        }
+    }
+
+    /// The one-section span — what the text editor's shift-select
+    /// lift emits, since a grapheme selection lives inside exactly
+    /// one section.
+    pub fn single(idx: usize) -> Self {
+        SectionSpan { lo: idx, hi: idx }
+    }
+
+    /// Smallest covered section index.
+    pub fn lo(&self) -> usize {
+        self.lo
+    }
+
+    /// Largest covered section index (inclusive).
+    pub fn hi(&self) -> usize {
+        self.hi
+    }
+
+    /// Every covered section index, ascending — the fan-out shape
+    /// the border / style consumers iterate.
+    pub fn indices(&self) -> std::ops::RangeInclusive<usize> {
+        self.lo..=self.hi
+    }
+}
+
+/// Half-open range of **grapheme clusters** inside one section's
+/// text — the "these characters" half of
+/// [`SelectionState::SectionRange`], always relative to the anchor
+/// section (`sel.section_idx`). Not a section span: the units are
+/// what the user sees as characters, matching baumhard's text
+/// primitives and `TextRun.start` / `end`, and the distinct type
+/// keeps it out of every consumer expecting section indices
+/// ([`SectionSpan`]).
+///
+/// `start <= end` holds by construction: [`Self::new`] normalizes
+/// the order (the editor's anchor may sit on either side of the
+/// cursor) and the fields are private.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GraphemeRange {
+    start: usize,
+    end: usize,
+}
+
+impl GraphemeRange {
+    /// Range covering `[min(a, b), max(a, b))`, so an
+    /// `(anchor, cursor)` pair converts directly whichever way the
+    /// user swept the selection.
+    pub fn new(a: usize, b: usize) -> Self {
+        GraphemeRange {
+            start: a.min(b),
+            end: a.max(b),
+        }
+    }
+
+    /// First covered grapheme cluster (inclusive).
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// One past the last covered cluster (exclusive).
+    pub fn end(&self) -> usize {
+        self.end
     }
 }
 
@@ -428,17 +522,16 @@ impl SelectionState {
         }
     }
 
-    /// Sub-range carried by [`Self::SectionRange`], or `None`
-    /// for every other variant. Per-section verbs route
-    /// range-targeted setters through this when the user has
-    /// shift-selected a sub-range inside a section.
-    ///
-    /// Test-gated for as long as [`Self::SectionRange`] has no
-    /// producer — see the note on that variant.
+    /// Grapheme sub-range carried by [`Self::SectionRange`], or
+    /// `None` for every other variant — the shift-selected span
+    /// inside the anchor section. Test-gated: the live consumers
+    /// (font / color / clipboard range routing) match the variant
+    /// inline, usually alongside `sel`, so a per-field borrow has
+    /// no production caller.
     #[cfg(test)]
-    pub fn selected_range(&self) -> Option<(usize, usize)> {
+    pub fn selected_grapheme_range(&self) -> Option<GraphemeRange> {
         match self {
-            SelectionState::SectionRange { range, .. } => Some(*range),
+            SelectionState::SectionRange { grapheme_range, .. } => Some(*grapheme_range),
             _ => None,
         }
     }

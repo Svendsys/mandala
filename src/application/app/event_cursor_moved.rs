@@ -848,7 +848,7 @@ mod tests {
     };
     use crate::application::app::InteractionMode;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
-    use crate::application::document::{SectionSel, SelectionState};
+    use crate::application::document::{GraphemeRange, SectionSel, SectionSpan, SelectionState};
     use crate::application::platform::window::CursorIcon;
     use baumhard::mindmap::tree_builder::ResizeHandleSide;
 
@@ -1118,7 +1118,8 @@ mod tests {
     fn test_node_drag_press_demotes_section_range_to_single() {
         let prev = SelectionState::SectionRange {
             sel: SectionSel::new("a", 1),
-            range: (3, 7),
+            section_span: SectionSpan::single(1),
+            grapheme_range: GraphemeRange::new(3, 7),
         };
         let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
         assert!(matches!(new, SelectionState::Single(id) if id == "a"));

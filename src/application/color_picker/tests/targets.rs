@@ -7,6 +7,7 @@ use crate::application::color_picker::{current_color_at, ColorTarget, PickerHand
 use crate::application::document::tests_common::{
     first_testament_node_id, load_test_doc, make_two_section_node_with_pinned_runs,
 };
+use crate::application::document::GraphemeRange;
 
 /// Build a node with two sections, each carrying a distinct
 /// uniform run color so the cascade-primary read on either
@@ -162,7 +163,7 @@ fn current_color_at_section_range_reads_in_range_runs() {
         node_id: id.clone(),
         section_idx: 1,
         axis: SectionColorAxis::Text,
-        range: Some((3, 7)),
+        range: Some(GraphemeRange::new(3, 7)),
     };
     assert_eq!(
         current_color_at(&doc, &handle_in_range).as_deref(),
@@ -176,7 +177,7 @@ fn current_color_at_section_range_reads_in_range_runs() {
         node_id: id,
         section_idx: 1,
         axis: SectionColorAxis::Text,
-        range: Some((0, 7)),
+        range: Some(GraphemeRange::new(0, 7)),
     };
     assert_eq!(
         current_color_at(&doc, &handle_disagree).as_deref(),
@@ -219,7 +220,7 @@ fn current_color_at_section_range_falls_back_when_range_crosses_gap() {
         node_id: id,
         section_idx: 1,
         axis: SectionColorAxis::Text,
-        range: Some((0, 8)),
+        range: Some(GraphemeRange::new(0, 8)),
     };
     assert_eq!(
         current_color_at(&doc, &handle).as_deref(),
@@ -256,7 +257,7 @@ fn current_color_at_section_range_falls_back_when_range_in_pure_gap() {
         node_id: id,
         section_idx: 1,
         axis: SectionColorAxis::Text,
-        range: Some((0, 3)),
+        range: Some(GraphemeRange::new(0, 3)),
     };
     assert_eq!(
         current_color_at(&doc, &handle).as_deref(),
@@ -297,7 +298,7 @@ fn current_color_at_section_range_unanimous_across_multiple_adjacent_runs() {
         node_id: id,
         section_idx: 1,
         axis: SectionColorAxis::Text,
-        range: Some((0, 6)),
+        range: Some(GraphemeRange::new(0, 6)),
     };
     assert_eq!(
         current_color_at(&doc, &handle).as_deref(),

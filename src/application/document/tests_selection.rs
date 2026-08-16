@@ -8,7 +8,9 @@
 //! pins the narrow-vs-wide semantics so a future refactor can't
 //! quietly make one variant report through another's accessor.
 
-use super::types::{EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState};
+use super::types::{
+    EdgeLabelSel, EdgeRef, GraphemeRange, PortalLabelSel, SectionSel, SectionSpan, SelectionState,
+};
 use baumhard::mindmap::scene_cache::EdgeKey;
 
 fn edge_ref() -> EdgeRef {
@@ -404,29 +406,32 @@ fn test_section_range_accessors_route_to_owning_section() {
     let target = SectionSel::new("a", 1);
     let sel = SelectionState::SectionRange {
         sel: target.clone(),
-        range: (3, 7),
+        section_span: SectionSpan::single(1),
+        grapheme_range: GraphemeRange::new(3, 7),
     };
     assert!(sel.is_selected("a"));
     assert!(!sel.is_selected("b"));
     assert_eq!(sel.selected_ids(), vec!["a"]);
     assert_eq!(sel.selected_sections(), &[target]);
     assert_eq!(sel.dedup_owning_node_ids(), vec!["a".to_string()]);
-    assert_eq!(sel.selected_range(), Some((3, 7)));
+    assert_eq!(sel.selected_grapheme_range(), Some(GraphemeRange::new(3, 7)));
     let s = sel.selected_section().expect("inner SectionSel");
     assert_eq!(s.node_id, "a");
     assert_eq!(s.section_idx, 1);
 }
 
 #[test]
-fn test_other_variants_selected_range_is_none() {
-    assert!(SelectionState::None.selected_range().is_none());
-    assert!(SelectionState::Single("a".into()).selected_range().is_none());
+fn test_other_variants_selected_grapheme_range_is_none() {
+    assert!(SelectionState::None.selected_grapheme_range().is_none());
+    assert!(SelectionState::Single("a".into())
+        .selected_grapheme_range()
+        .is_none());
     assert!(SelectionState::Section(SectionSel::new("a", 0))
-        .selected_range()
+        .selected_grapheme_range()
         .is_none());
     assert!(
         SelectionState::MultiSection(vec![SectionSel::new("a", 0), SectionSel::new("b", 0)])
-            .selected_range()
+            .selected_grapheme_range()
             .is_none()
     );
 }

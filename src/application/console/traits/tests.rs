@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::application::console::constants::{VAR_ACCENT, VAR_EDGE, VAR_FG};
-use crate::application::document::{SectionSel, SelectionState};
+use crate::application::document::{GraphemeRange, SectionSel, SectionSpan, SelectionState};
 
 #[test]
 fn test_parse_hex_ok() {
@@ -96,7 +96,8 @@ fn test_selection_targets_multisection_fans_out_per_entry() {
 fn test_selection_targets_section_range_carries_range() {
     let sel = SelectionState::SectionRange {
         sel: SectionSel::new("a", 1),
-        range: (3, 7),
+        section_span: SectionSpan::single(1),
+        grapheme_range: GraphemeRange::new(3, 7),
     };
     let out = selection_targets(&sel);
     assert_eq!(out.len(), 1);
@@ -108,7 +109,7 @@ fn test_selection_targets_section_range_carries_range() {
         } => {
             assert_eq!(node_id, "a");
             assert_eq!(*section_idx, 1);
-            assert_eq!(*range, Some((3, 7)));
+            assert_eq!(*range, Some(GraphemeRange::new(3, 7)));
         }
         _ => panic!("expected TargetId::Section"),
     }
@@ -140,7 +141,7 @@ fn test_section_range_cut_returns_in_range_text_and_shrinks_section() {
         doc: &mut doc,
         id: id.clone(),
         section_idx: 0,
-        range: Some((2, 5)),
+        range: Some(GraphemeRange::new(2, 5)),
     };
     let outcome = view.clipboard_cut();
     let ClipboardContent::Text(text) = outcome else {
@@ -162,7 +163,7 @@ fn test_section_range_paste_replaces_in_range_text() {
         doc: &mut doc,
         id: id.clone(),
         section_idx: 0,
-        range: Some((2, 5)),
+        range: Some(GraphemeRange::new(2, 5)),
     };
     let outcome = view.clipboard_paste("XYZW");
     assert!(matches!(outcome, Outcome::Applied));
@@ -182,7 +183,7 @@ fn test_section_range_cut_handles_emoji_grapheme() {
         doc: &mut doc,
         id: id.clone(),
         section_idx: 0,
-        range: Some((1, 2)),
+        range: Some(GraphemeRange::new(1, 2)),
     };
     let outcome = view.clipboard_cut();
     let ClipboardContent::Text(text) = outcome else {
@@ -204,7 +205,7 @@ fn test_section_range_cut_empty_range_returns_empty_no_change() {
         doc: &mut doc,
         id: id.clone(),
         section_idx: 0,
-        range: Some((3, 3)),
+        range: Some(GraphemeRange::new(3, 3)),
     };
     let outcome = view.clipboard_cut();
     assert!(matches!(outcome, ClipboardContent::Empty));
@@ -221,7 +222,7 @@ fn test_section_range_paste_clamps_end_past_total() {
         doc: &mut doc,
         id: id.clone(),
         section_idx: 0,
-        range: Some((3, 999)),
+        range: Some(GraphemeRange::new(3, 999)),
     };
     let outcome = view.clipboard_paste("XY");
     assert!(matches!(outcome, Outcome::Applied));
@@ -261,7 +262,8 @@ fn test_section_range_dispatches_to_range_aware_color_setter() {
     }
     doc.selection = SelectionState::SectionRange {
         sel: SectionSel::new(&id, 0),
-        range: (3, 7),
+        section_span: SectionSpan::single(0),
+        grapheme_range: GraphemeRange::new(3, 7),
     };
 
     let targets = selection_targets(&doc.selection);

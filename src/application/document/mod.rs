@@ -85,7 +85,8 @@ pub use nodes::{
     SectionPayload,
 };
 pub use types::{
-    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
+    AnimationInstance, EdgeLabelSel, EdgeRef, GraphemeRange, PortalLabelSel, SectionSel, SectionSpan,
+    SelectionState, HIGHLIGHT_COLOR,
 };
 // `InteractionModeOverrides` lives in baumhard (next to the
 // `SceneSelectionContext` it composes into). Re-exported here so

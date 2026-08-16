@@ -334,51 +334,50 @@ extends with shift+clicks.
 
 ### Section sub-range selection
 
-A section can also be selected with a grapheme-level sub-range
-via `SelectionState::SectionRange { sel, range: (start, end) }`.
-The half-open `[start, end)` range targets a contiguous run of
-graphemes inside one section's text; per-section verbs route to
-range-aware setters (`set_section_text_color_range`,
-`set_section_font_size_range`, `set_section_font_family_range`).
+A section can also be selected with a grapheme-level sub-range via
+`SelectionState::SectionRange { sel, section_span, grapheme_range }`.
+The variant carries its two range meanings in distinctly-typed
+fields (#47 part C — they used to share a single `range` pair that
+one consumer class read as section indices and the other as
+grapheme offsets):
 
-**`SectionRange` has no producer today.** Its consumers are all
-wired and tested, but nothing in the running application ever
-constructs the variant. This section previously named two
-producers; #41's inventory found that neither reaches it, and
-that is recorded as a defect rather than as a seam:
+- `section_span: SectionSpan` — an inclusive span of **section
+  indices** on the owning node; the border / style verbs fan out
+  over it, and structural-mutation cleanup clamps it against
+  `sections.len()`.
+- `grapheme_range: GraphemeRange` — a half-open range of
+  **grapheme clusters** inside the anchor section
+  (`sel.section_idx`)'s text; per-section verbs route it to the
+  range-aware setters (`set_section_text_color_range`,
+  `set_section_font_size_range`, `set_section_font_family_range`).
 
-- **Console verbs** with `range=A..B` kv:
-  `color text=#abc section=N range=2..7` /
+**Producers.**
+
+- **Editor shift-select anchor** — the one live producer: the
+  inline text editor's `Shift+Arrow*` / `Shift+Home` /
+  `Shift+End` keystrokes seed an anchor at the pre-action cursor
+  position; subsequent shift-cursor moves extend the cursor while
+  preserving the anchor. On commit, `lift_anchor_to_section_range`
+  promotes a non-empty `(anchor, cursor)` pair into the variant:
+  the anchor section as a single-section `section_span`, the
+  normalized pair as `grapheme_range`. Non-shift cursor moves and
+  any text edit (typing / delete) clear the anchor — range-aware
+  editing (typing-replaces-selection) is deferred.
+- **Console verbs** with `range=A..B` kv
+  (`color text=#abc section=N range=2..7` /
   `font size=14 section=N range=2..7` /
-  `font set <family> section=N range=2..7`. The verb path
-  bypasses the trait dispatcher and calls the range setter
-  directly; `range=A..B` requires `section=N` and rejects
-  empty / inverted / non-numeric input with a clear error. It
-  applies the range to the *setter call* and leaves
-  `SelectionState` untouched — so the range never becomes a
-  selection.
-- **Editor shift-select anchor**: the inline text editor's
-  `Shift+Arrow*` / `Shift+Home` / `Shift+End` keystrokes seed an
-  anchor at the pre-action cursor position; subsequent shift-cursor
-  moves extend the cursor while preserving the anchor. On commit,
-  `lift_anchor_to_section_range` promotes a non-empty
-  `(anchor, cursor)` pair to `SelectionState::Section` — despite
-  its name it discards the grapheme range, deliberately, because
-  every `SectionRange` consumer reads `range` as *section*
-  indices rather than grapheme positions. Resolving that
-  grapheme-versus-section confusion is booked as its own
-  follow-up in `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`.
-  Non-shift cursor moves and any text edit (typing / delete)
-  clear the anchor — range-aware editing
-  (typing-replaces-selection) is deferred.
+  `font set <family> section=N range=2..7`) apply the range to
+  the *setter call* and leave `SelectionState` untouched — the kv
+  never becomes a selection. On an active `SectionRange`
+  selection an explicit `range=` kv wins over the selection's own
+  grapheme range.
 
-**Clipboard contract.** `Cut` and `Paste` return
-`Outcome::NotApplicable` rather than silently destroy
-out-of-range graphemes; the action arm logs a `log::warn!`
-line surfacing the skip. `Copy` falls through to whole-section
-copy because it's non-destructive. Range-aware clipboard
-semantics (sub-range cut, splice-paste) are deferred to a
-future tier.
+**Clipboard contract.** `Cut` and `Paste` are range-aware: cut
+removes the in-range graphemes, returns them as plain text, and
+shifts later runs left; paste replaces the in-range graphemes
+with the clipboard text. `Copy` falls through to whole-section
+copy — the structured payload's geometry / channel / bindings
+belong to the whole section, not a sub-range.
 
 **Picker contract.** `color text` (no value) on a `SectionRange`
 selection opens the picker with the sub-range plumbed through

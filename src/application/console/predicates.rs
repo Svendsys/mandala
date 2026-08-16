@@ -95,7 +95,7 @@ pub fn edge_or_portal_label_selected(ctx: &ConsoleContext) -> bool {
 #[cfg(test)]
 mod predicate_divergence_tests {
     use super::*;
-    use crate::application::document::{SectionSel, SelectionState};
+    use crate::application::document::{GraphemeRange, SectionSel, SectionSpan, SelectionState};
 
     fn ctx_with_selection(sel: SelectionState) -> ConsoleContext<'static> {
         // Leak a fixture document — predicate tests just need
@@ -142,7 +142,8 @@ mod predicate_divergence_tests {
                     node_id: "a".into(),
                     section_idx: 0,
                 },
-                range: (0, 0),
+                section_span: SectionSpan::single(0),
+                grapheme_range: GraphemeRange::new(0, 1),
             },
             SelectionState::MultiSection(vec![SectionSel {
                 node_id: "a".into(),

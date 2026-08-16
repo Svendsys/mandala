@@ -8,7 +8,9 @@
 
 use super::*;
 use crate::application::app::dispatch::apply_label_edit_action_to_buffer;
-use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState};
+use crate::application::document::{
+    EdgeLabelSel, EdgeRef, GraphemeRange, PortalLabelSel, SectionSel, SectionSpan, SelectionState,
+};
 use crate::application::keybinds::Action;
 use crate::application::platform::input::{Key, SmolStr};
 
@@ -70,7 +72,8 @@ fn test_resolve_single_line_target_declines_non_edge_selections() {
         SelectionState::MultiSection(vec![SectionSel::new("a", 0), SectionSel::new("b", 1)]),
         SelectionState::SectionRange {
             sel: SectionSel::new("a", 0),
-            range: (0, 2),
+            section_span: SectionSpan::single(0),
+            grapheme_range: GraphemeRange::new(0, 2),
         },
         SelectionState::Edge(EdgeRef::new("a", "b", "cross_link")),
     ] {

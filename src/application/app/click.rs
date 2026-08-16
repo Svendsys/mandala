@@ -284,7 +284,7 @@ pub(super) fn compute_node_click_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::SectionSel;
+    use crate::application::document::{GraphemeRange, SectionSel, SectionSpan};
 
     fn node_edit_for(id: &str) -> InteractionMode {
         InteractionMode::NodeEdit {
@@ -434,7 +434,8 @@ mod tests {
     fn test_shift_click_node_from_section_range_collapses_to_single() {
         let prev = SelectionState::SectionRange {
             sel: sec("n0", 0),
-            range: (1, 3),
+            section_span: SectionSpan::single(0),
+            grapheme_range: GraphemeRange::new(1, 3),
         };
         let result = compute_node_click_selection(&prev, "n1", None, true, &InteractionMode::Default);
         match result {

@@ -2836,10 +2836,12 @@ Open follow-ups deferred to a future PR (acknowledged in plan's
       depth (Security I-1/2/3 from the §4.6 review).
 - [ ] §3.9 `node edit` console subverb — sugar over `mode
       node-edit`; landed.
-- [ ] `SectionRange` grapheme-vs-section type confusion —
-      doc-comment fixed to reflect the load-bearing (section-
-      index) interpretation; the deeper fix to the editor-close
-      `lift_anchor_to_section_range` path is its own follow-up.
+- [x] `SectionRange` grapheme-vs-section type confusion —
+      resolved by #47 part C: the variant now carries
+      `section_span: SectionSpan` and `grapheme_range:
+      GraphemeRange` as distinct newtypes, and
+      `lift_anchor_to_section_range` emits the variant with both
+      fields end-to-end.
 
 Architectural follow-ups from the **whole-PR** opus review T4 —
 acknowledged honestly, deferred because each is invasive (touches
@@ -2956,12 +2958,12 @@ The remainder are deferred here:
       gates on the flag (T2 fix); LMB path doesn't. User holding
       RMB for fast-resize then fumbling LMB ends the gesture
       prematurely.
-- [ ] **`SectionRange::range` dual semantics** (correctness HIGH):
-      drift check + `border preview` + `live_selection_section_pairs`
-      treat `range` as section-index range; `color text` and
-      `font` propagate it as grapheme range. T1.1 fixed the writer
-      side (lift to Section instead of SectionRange) but didn't
-      reconcile reader-side. Either rename or split the variant.
+- [x] **`SectionRange::range` dual semantics** (correctness HIGH):
+      resolved by #47 part C — the variant was split into two
+      distinctly-typed fields (`section_span: SectionSpan`,
+      `grapheme_range: GraphemeRange`); every reader consumes the
+      field it means and the editor-close lift produces the
+      variant with both.
 - [ ] **`split_section` undo doesn't pin `text_runs`** (test coverage
       CRITICAL): `split_section_pushes_undo_and_dirty` checks
       `sections.len()` and `text` after undo, not `text_runs`.

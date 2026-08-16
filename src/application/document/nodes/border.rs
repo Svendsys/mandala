@@ -1127,10 +1127,9 @@ fn live_selection_node_ids(sel: &SelectionState) -> Vec<String> {
 fn live_selection_section_pairs(sel: &SelectionState) -> Vec<(String, usize)> {
     match sel {
         SelectionState::Section(s) => vec![(s.node_id.clone(), s.section_idx)],
-        SelectionState::SectionRange { sel, range } => {
-            let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
-            (lo..=hi).map(|i| (sel.node_id.clone(), i)).collect()
-        }
+        SelectionState::SectionRange {
+            sel, section_span, ..
+        } => section_span.indices().map(|i| (sel.node_id.clone(), i)).collect(),
         SelectionState::MultiSection(sels) => {
             sels.iter().map(|s| (s.node_id.clone(), s.section_idx)).collect()
         }

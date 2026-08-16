@@ -176,7 +176,8 @@ pub(in crate::application::app) fn commit_color_picker(
                 // (different sections have different lengths).
                 // Single-section / Section commit fans through
                 // `section_commit_targets` as before.
-                if let Some((rs, re)) = range {
+                if let Some(r) = range {
+                    let (rs, re) = (r.start(), r.end());
                     let applied =
                         doc.set_section_text_color_range(&node_id, section_idx, rs, re, to_write.clone());
                     if !applied {

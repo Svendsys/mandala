@@ -204,17 +204,18 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutc
             None => PickerTargetOutcome::Unknown,
         },
         // SectionRange: route the picker to the targeted section
-        // AND plumb the sub-range so the commit fires through
-        // `set_section_text_color_range`.
+        // AND plumb the grapheme sub-range so the commit fires
+        // through `set_section_text_color_range`.
         SelectionState::SectionRange {
             sel: SectionSel { node_id, section_idx },
-            range,
+            grapheme_range,
+            ..
         } => match axis {
             Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
                 node_id: node_id.clone(),
                 section_idx: *section_idx,
                 axis: SectionColorAxis::Text,
-                range: Some(*range),
+                range: Some(*grapheme_range),
             }),
             Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
                 "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
@@ -308,7 +309,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // grapheme indices inside one section's text, so the section
     // must be specified first.
     let mut section_target: Option<usize> = None;
-    let mut range_target: Option<(usize, usize)> = None;
+    let mut range_target: Option<crate::application::document::GraphemeRange> = None;
     let mut color_kvs: Vec<(String, String)> = Vec::new();
     for (k, v) in args.kvs() {
         if k == "section" {
@@ -318,7 +319,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
         } else if k == "range" {
             match super::range_kv::parse_range_kv(v) {
-                Ok(pair) => range_target = Some(pair),
+                Ok(range) => range_target = Some(range),
                 Err(msg) => return ExecResult::err(format!("color: range='{}' — {}", v, msg)),
             }
         } else {
@@ -380,7 +381,7 @@ fn stage_color_axis(
 fn apply_section_colors(
     doc: &mut crate::application::document::MindMapDocument,
     section_idx: usize,
-    range: Option<(usize, usize)>,
+    range: Option<crate::application::document::GraphemeRange>,
     kvs: &[(String, String)],
 ) -> ExecResult {
     let node_id = match doc.selection.primary_node_id() {
@@ -392,7 +393,7 @@ fn apply_section_colors(
     // setter silently no-ops and the verb prints "color: no
     // change", indistinguishable from "you set red on already-
     // red text".
-    if let Some((rs, _re)) = range {
+    if let Some(rs) = range.map(|r| r.start()) {
         if let Some(node) = doc.mindmap.nodes.get(&node_id) {
             if let Some(section) = node.sections.get(section_idx) {
                 let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
@@ -433,7 +434,7 @@ fn apply_section_colors(
                 };
                 let applied = view.set_text_color(color_value) == Outcome::Applied;
                 if !applied {
-                    if let Some((rs, re)) = range {
+                    if let Some(r) = range {
                         // Mirror the picker path's stale-range
                         // diagnostic: the pre-flight `rs >= total`
                         // check above already rejects ranges past
@@ -450,8 +451,8 @@ fn apply_section_colors(
                              grapheme count or section was deleted)",
                             section_idx,
                             node_id,
-                            rs,
-                            re
+                            r.start(),
+                            r.end()
                         );
                     }
                 }
@@ -470,7 +471,7 @@ fn apply_section_colors(
     }
     if any_applied && messages.is_empty() {
         let scope = match range {
-            Some((rs, re)) => format!("section {} range {}..{}", section_idx, rs, re),
+            Some(r) => format!("section {} range {}..{}", section_idx, r.start(), r.end()),
             None => format!("section {}", section_idx),
         };
         return ExecResult::ok_msg(format!("color applied to {}", scope));
@@ -1017,14 +1018,15 @@ mod tests {
     fn picker_target_for_section_range_carries_range() {
         use crate::application::color_picker::{ColorTarget, SectionColorAxis};
         use crate::application::console::tests::fixtures::assert_exec_ok;
-        use crate::application::document::SectionSel;
+        use crate::application::document::{GraphemeRange, SectionSel, SectionSpan};
         let (mut doc, id) = doc_with_two_sections();
         doc.selection = SelectionState::SectionRange {
             sel: SectionSel {
                 node_id: id.clone(),
                 section_idx: 1,
             },
-            range: (3, 7),
+            section_span: SectionSpan::single(1),
+            grapheme_range: GraphemeRange::new(3, 7),
         };
         let (cmd, toks) = match parse("color text") {
             ParseResult::Ok { cmd, args } => (cmd, args),
@@ -1042,7 +1044,7 @@ mod tests {
                 assert_eq!(node_id, id);
                 assert_eq!(section_idx, 1);
                 assert_eq!(axis, SectionColorAxis::Text);
-                assert_eq!(range, Some((3, 7)));
+                assert_eq!(range, Some(GraphemeRange::new(3, 7)));
             }
             other => panic!("expected ColorTarget::Section/Text with range, got {:?}", other),
         }

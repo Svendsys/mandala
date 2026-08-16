@@ -27,6 +27,7 @@
 
 use crate::application::console::completion::Completion;
 use crate::application::console::ConsoleContext;
+use crate::application::document::GraphemeRange;
 
 /// The `section=<idx>` key as a one-entry keyset, for the verbs
 /// that splice it into a keyset they do not own — `section frame
@@ -35,12 +36,16 @@ use crate::application::console::ConsoleContext;
 /// instead and reaches here only for the hint.
 pub(super) const SECTION_KEY: &[&str] = &["section"];
 
-/// Parse a `range=A..B` kv value into `(start, end)` grapheme
-/// indices. Accepts the Rust-style `usize..usize` half-open
-/// form. Rejects empty halves, non-numeric components, and
-/// `start >= end` (an empty or inverted range is a usage error
-/// — the verb path lifts this to an `ExecResult::err`).
-pub(super) fn parse_range_kv(value: &str) -> Result<(usize, usize), String> {
+/// Parse a `range=A..B` kv value into a [`GraphemeRange`] over a
+/// section's grapheme clusters. Accepts the Rust-style
+/// `usize..usize` half-open form. Rejects empty halves,
+/// non-numeric components, and `start >= end` (an empty or
+/// inverted range is a usage error — the verb path lifts this to
+/// an `ExecResult::err`). Returning the typed range rather than a
+/// bare pair keeps the grapheme meaning attached from the parse
+/// on, so it cannot be mistaken for section indices downstream
+/// (issue #47 part C).
+pub(super) fn parse_range_kv(value: &str) -> Result<GraphemeRange, String> {
     let (start_str, end_str) = match value.split_once("..") {
         Some(pair) => pair,
         None => return Err("expected `start..end` (e.g. `range=2..7`)".to_string()),
@@ -60,7 +65,7 @@ pub(super) fn parse_range_kv(value: &str) -> Result<(usize, usize), String> {
             start, end
         ));
     }
-    Ok((start, end))
+    Ok(GraphemeRange::new(start, end))
 }
 
 /// Parse a `section=N` kv value into a non-negative integer.
@@ -130,13 +135,13 @@ pub(super) fn section_idx_completions(ctx: &ConsoleContext, partial: &str) -> Ve
 
 #[cfg(test)]
 mod tests {
-    use super::parse_range_kv;
+    use super::{parse_range_kv, GraphemeRange};
 
     #[test]
     fn test_parse_range_kv_happy_path() {
-        assert_eq!(parse_range_kv("2..7"), Ok((2, 7)));
-        assert_eq!(parse_range_kv("0..1"), Ok((0, 1)));
-        assert_eq!(parse_range_kv("100..1000"), Ok((100, 1000)));
+        assert_eq!(parse_range_kv("2..7"), Ok(GraphemeRange::new(2, 7)));
+        assert_eq!(parse_range_kv("0..1"), Ok(GraphemeRange::new(0, 1)));
+        assert_eq!(parse_range_kv("100..1000"), Ok(GraphemeRange::new(100, 1000)));
     }
 
     #[test]

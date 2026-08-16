@@ -14,7 +14,7 @@
 
 use super::*;
 use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
-use crate::application::document::SectionSel;
+use crate::application::document::{GraphemeRange, SectionSel, SectionSpan};
 
 fn first_node_id(doc: &MindMapDocument) -> String {
     doc.mindmap
@@ -175,7 +175,8 @@ fn select_parent_in_walks_up_from_section_range() {
     let parent_id = doc.mindmap.nodes[&child_id].parent_id.clone().unwrap();
     doc.selection = SelectionState::SectionRange {
         sel: SectionSel::new(&child_id, 0),
-        range: (1, 3),
+        section_span: SectionSpan::single(0),
+        grapheme_range: GraphemeRange::new(1, 3),
     };
     assert!(select_parent_in(&mut doc));
     assert!(matches!(
@@ -372,7 +373,8 @@ fn select_sibling_in_drops_section_range_on_walk() {
     }
     doc.selection = SelectionState::SectionRange {
         sel: SectionSel::new(nid.clone(), 0),
-        range: (1, 3),
+        section_span: SectionSpan::single(0),
+        grapheme_range: GraphemeRange::new(1, 3),
     };
     assert!(select_sibling_in(&mut doc, true));
     assert!(
