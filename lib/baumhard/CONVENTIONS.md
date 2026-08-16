@@ -213,13 +213,15 @@ today.
   index drifts, and selection starts pointing at the wrong glyphs.
   Every region change is a `GlyphAreaField::ColorFontRegions(...)`
   mutator.
-- **Region math has benchmarks.** `region_indexer_initialise`,
-  `region_indexer_insert`,
-  `region_params_calculate_pixel_from_region`,
-  `region_params_calculate_region_from_pixel`, and
-  `region_params_calculate_regions_intersected_by_rectangle` in
-  `benches/test_bench.rs`. A change to the region layer ships with a
-  bench result in the commit message for any non-trivial edit.
+- **Region math has benchmarks.** `region_indexer_initialize`,
+  `region_indexer_insert_and_remove`,
+  `region_params_pixel_to_region`, `region_params_region_to_pixel`,
+  and `region_rect_exhaustive_4x4_grid` in `benches/test_bench.rs`,
+  among the other `region_*` entries there. A change to the region
+  layer keeps those entries current in the same commit (§B8's
+  two-file rule). Bench *results* are a maintainer's to produce:
+  `AGENTS.md` bars agents from running benchmarks and from
+  publishing any number without the §B7 control row.
 
 ## §B7 Hot-path rules
 

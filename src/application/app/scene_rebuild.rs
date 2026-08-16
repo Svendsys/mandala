@@ -161,8 +161,10 @@ pub(in crate::application::app) fn overlay_tree<'a, I>(
 ///
 /// # Costs
 ///
-/// One `build_mindmap_tree` — benchmarked as `do_build_mindmap_tree`
-/// and therefore hot-path by §B7 — plus [`overlay_tree`]'s walks.
+/// One `build_mindmap_tree` — benchmarked as
+/// `section_tree_build_243_single_section` /
+/// `section_tree_build_50_multi_section` and therefore hot-path by
+/// §B7 — plus [`overlay_tree`]'s walks.
 pub(in crate::application::app) fn build_overlaid_tree<'a, I>(
     doc: &MindMapDocument,
     interaction_mode: &super::InteractionMode,

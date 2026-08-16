@@ -15,7 +15,8 @@ use std::hash::{Hash, Hasher};
 /// Optional inclusive `[min, max]` window on `camera.zoom`. Each
 /// bound is independently optional: `None` = unbounded on that
 /// side. The default `{ min: None, max: None }` renders at every
-/// zoom. `Copy`; bench: `zoom_visibility_contains`.
+/// zoom. `Copy`; benched by the `zoom_visibility_*` entries in
+/// `benches/test_bench.rs`.
 ///
 /// # Example
 ///
@@ -79,7 +80,10 @@ impl ZoomVisibility {
     /// paths for the overwhelmingly common unbounded case
     /// (both bounds `None` → two predicted not-taken branches,
     /// no memory traffic). Well inside the §B7 hot-path
-    /// budget; `zoom_visibility_contains` bench pins it.
+    /// budget; the
+    /// `zoom_visibility_unbounded_contains_full_camera_range`
+    /// bench and its `zoom_visibility_*_band_*` / `_nan_zoom_*`
+    /// siblings pin it.
     ///
     /// # NaN handling
     ///
