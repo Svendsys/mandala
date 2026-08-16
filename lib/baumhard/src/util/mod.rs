@@ -7,6 +7,11 @@
 
 /// Arena-wide subtree copy helpers built on `indextree`.
 pub mod arena_utils;
+/// The §B8 bench-surface contract, checked: every `pub fn do_*()`
+/// in a tests tree has an entry in `benches/test_bench.rs`.
+/// Test-only and native-only for the same reasons `source_scan` is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod bench_surface;
 /// Core `Color` type and channel-wise arithmetic.
 pub mod color;
 /// Hex ↔ RGB ↔ HSV plus theme-variable resolution.

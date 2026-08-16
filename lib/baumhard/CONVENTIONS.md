@@ -285,6 +285,47 @@ rationale.
 - **Keep the `do_*()` / `test_*()` split intact.** The `do_*()`
   function is `pub` and benchmark-reachable; the `test_*()` wrapper is
   the thin `#[test]` entry point. Never fold them together.
+- **Every `do_*()` has exactly one `bench_function` entry, and that
+  is checked.** The `do_` prefix is not a naming habit; it is the
+  claim that the body is on the bench surface, and
+  `test_every_do_body_has_a_bench_entry`
+  (`lib/baumhard/src/util/bench_surface.rs`) holds the tree to it —
+  it collects every `pub fn do_*()` in a `pub mod tests;` tree and
+  fails naming each one `benches/test_bench.rs` does not reference.
+  The id is the body's name minus `do_`, so a criterion row leads
+  back to its source. Nothing else enforces this direction: the
+  bench file imports the test modules by glob, so a body that never
+  gets an entry upsets no compiler, and `cargo check --workspace
+  --benches` catches only the *reverse* drift — an entry whose body
+  is gone. Issue #44 recorded what discipline alone had produced by
+  the time anyone counted: 173 of 425 bodies unbenched and eight
+  whole modules the bench file never imported — seven of which the
+  issue found, all eight under a header claiming every body in them
+  was benchmark-reachable.
+- **A test with no benchmark value opts out by not being a
+  `do_*()`.** There is no allowlist and no benched subset — the
+  opt-out is a plain `#[test] fn` with its body inline, which
+  `#[test]` strips from every build without `cfg(test)` and so from
+  the surface the check scans. An exemption written in a comment is
+  invisible to the reader of the body, which is exactly how two
+  bodies once carried the prefix while their own doc comment said
+  they were not on the surface. Three shapes take the opt-out today:
+
+  1. **The enumeration is the runtime, not the primitive.**
+     `test_color_to_float_round_trips_through_new_f32` sweeps 16.7
+     million byte quads; the number would be the loop.
+  2. **The subject is the repository, not a value a function
+     returned.** `test_above_test_modules_knows_every_shape_in_this_tree`
+     reads several hundred files per call.
+  3. **The body panics by design.** Criterion iterates what it is
+     given, so a `#[should_panic]` test keeps its body inline.
+
+  **Reading a file is not by itself a reason.**
+  `do_production_code_returns_code_without_prose` and
+  `do_shape_testament_map_has_no_unknown_shapes` each read one file
+  and are benched: after the first iteration what moves is the parse,
+  not the disk. Their entries say so, so the number is read as I/O
+  rather than mistaken for a classifier's.
 - **Renaming or deleting a `do_*()` is a two-file change.**
   `benches/test_bench.rs` imports them by path. The bench file is
   not compiled under `cfg(test)`, so `cargo test` will not tell you it
