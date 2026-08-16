@@ -502,12 +502,7 @@ fn assemble_mindmap(name: &str, nodes: Vec<MindNode>, edges: Vec<MindEdge>) -> M
         name: name.to_string(),
         canvas: Canvas {
             background_color: "#0a0a0a".to_string(),
-            default_border: None,
-            default_connection: None,
-            default_section_frame_border: None,
-            default_focused_section_frame_border: None,
-            theme_variables: HashMap::new(),
-            theme_variants: HashMap::new(),
+            ..Canvas::default()
         },
         palettes: HashMap::new(),
         nodes: node_map,

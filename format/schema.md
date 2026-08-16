@@ -556,7 +556,7 @@ supposed to be shadowing.
   "width": 4,
   "line_style": "solid",
   "visible": true,
-  "label": null,
+  "label": "optional label text",
   "anchor_from": "auto",
   "anchor_to": "auto",
   "control_points": []
@@ -572,7 +572,7 @@ supposed to be shadowing.
 | `width` | integer | Stroke width in pixels |
 | `line_style` | string | See [enums.md](./enums.md) |
 | `visible` | bool | Whether to render the edge |
-| `label` | string\|null | Optional label text |
+| `label` | string\|null | Optional label text; omitted on save when unset |
 | `label_config` | object\|null | Per-edge label position, color, and size-clamp overrides — see [`EdgeLabelConfig`](#edgelabelconfig) |
 | `anchor_from` | string | Which side of the source node — see [enums.md](./enums.md) |
 | `anchor_to` | string | Which side of the target node |
@@ -599,7 +599,6 @@ rendered differently.
   "width": 3,
   "line_style": "solid",
   "visible": true,
-  "label": null,
   "anchor_from": "auto",
   "anchor_to": "auto",
   "control_points": [],

@@ -2180,15 +2180,7 @@ mod tests {
         let map = MindMap {
             version: "1.0".to_string(),
             name: "inline-rt".to_string(),
-            canvas: Canvas {
-                background_color: "#000000".to_string(),
-                default_border: None,
-                default_connection: None,
-                default_section_frame_border: None,
-                default_focused_section_frame_border: None,
-                theme_variables: HashMap::new(),
-                theme_variants: HashMap::new(),
-            },
+            canvas: Canvas::default(),
             palettes: HashMap::new(),
             nodes,
             edges: Vec::new(),
@@ -2297,7 +2289,7 @@ mod tests {
             r##"{{
                 "from_id": "a", "to_id": "b", "type": "parent_child",
                 "color": "#fff", "width": 1, "line_style": "solid",
-                "visible": true, "label": null,
+                "visible": true,
                 "anchor_from": "auto", "anchor_to": "auto",
                 "control_points": []{extra}
             }}"##
@@ -2422,6 +2414,9 @@ mod tests {
         ("is_default_text_run_size_pt", |v| {
             v.as_f64() == Some(f64::from(crate::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT))
         }),
+        // `CustomMutation.behavior` at its `Persistent` default —
+        // the reader's `#[serde(default)]` restores it (#47 part B).
+        ("behavior_is_default", |v| v.as_str() == Some("Persistent")),
         // `ColorSchema.overrides`: an object whose four channels are
         // all absent or `null` carries no override, which is what
         // every node that has never been recolored by hand holds.
@@ -2845,6 +2840,71 @@ mod tests {
     }
 
     /// The file
+    /// **Every canonical fixture is in canonical form.** Loading a
+    /// `maps/*.mindmap.json` fixture and rendering it back through
+    /// the editor's own writer must reproduce the file byte for
+    /// byte — issue #47's acceptance criterion for the serde
+    /// hygiene work, and CODE_CONVENTIONS §10's "fixtures update in
+    /// the same commit as the data-model shift" made mechanical: a
+    /// serialization change without a fixture refresh fails here,
+    /// naming the file.
+    ///
+    /// Byte-exact is available because the writer is deterministic
+    /// (`test_save_to_file_is_deterministic`) and the
+    /// fixtures are themselves written by it. This is deliberately
+    /// stricter than the key-path round-trip above: that one allows
+    /// re-spelling, this one pins the fixtures to the writer's
+    /// current spelling.
+    #[test]
+    fn test_canonical_fixtures_resave_byte_identically() {
+        let maps_dir = crate::util::doc_fixtures::repo_path("maps");
+        let mut checked: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&maps_dir).expect("maps/ exists") {
+            let path = entry.expect("dir entry").path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.ends_with(".mindmap.json") {
+                continue;
+            }
+            let source =
+                std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: unreadable fixture: {e}"));
+            let map = load_from_str(&source).unwrap_or_else(|e| panic!("{name}: fixture does not load: {e}"));
+            let resaved =
+                serde_json::to_string_pretty(&to_json_value(&map).expect("serialize")).expect("render");
+            if resaved != source {
+                let at = source
+                    .lines()
+                    .zip(resaved.lines())
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(0);
+                panic!(
+                    "{name} is no longer in the writer's canonical form (first divergence \
+                     around line {}). The model's serialization changed — re-save the \
+                     fixtures in the same commit (CODE_CONVENTIONS §10).\n  on disk:  {}\n  \
+                     writer:   {}",
+                    at + 1,
+                    source.lines().nth(at).unwrap_or("<past end>"),
+                    resaved.lines().nth(at).unwrap_or("<past end>"),
+                );
+            }
+
+            // Control: the comparison must be able to fail — an
+            // edited map renders differently, so a green run above
+            // is agreement rather than a comparison that cannot
+            // fire.
+            let mut edited = map;
+            edited.name = format!("{}-edited", edited.name);
+            let edited_out =
+                serde_json::to_string_pretty(&to_json_value(&edited).expect("serialize")).expect("render");
+            assert_ne!(edited_out, source, "{name}: an edit must move the rendered bytes");
+
+            checked.push(name);
+        }
+        assert!(
+            checked.iter().any(|n| n == "testament.mindmap.json"),
+            "the canonical fixture must be among the files checked, found only: {checked:?}"
+        );
+    }
+
     /// `test_every_mindmap_write_goes_through_the_contract` proves it
     /// can read past a test gate in: twelve `#[cfg(test)] mod
     /// tests_*;` declarations at line 35, and everything a save path

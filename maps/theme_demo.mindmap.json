@@ -30,7 +30,6 @@
   },
   "custom_mutations": [
     {
-      "behavior": "Persistent",
       "document_actions": [
         {
           "SetThemeVariant": "dark"
@@ -41,7 +40,6 @@
       "target_scope": "SelfOnly"
     },
     {
-      "behavior": "Persistent",
       "document_actions": [
         {
           "SetThemeVariant": "light"
@@ -52,7 +50,6 @@
       "target_scope": "SelfOnly"
     },
     {
-      "behavior": "Persistent",
       "document_actions": [
         {
           "SetThemeVariant": "forest"
@@ -70,7 +67,6 @@
       "color": "var(--edge)",
       "control_points": [],
       "from_id": "0",
-      "label": null,
       "line_style": "solid",
       "to_id": "0.0",
       "type": "parent_child",
@@ -83,7 +79,6 @@
       "color": "var(--edge)",
       "control_points": [],
       "from_id": "0",
-      "label": null,
       "line_style": "solid",
       "to_id": "0.1",
       "type": "parent_child",

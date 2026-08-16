@@ -105,15 +105,7 @@ fn synthetic_single_node_map(text: &str, w: f64, h: f64) -> MindMap {
     MindMap {
         version: "1.0".to_string(),
         name: "test".to_string(),
-        canvas: Canvas {
-            background_color: "#000000".to_string(),
-            default_border: None,
-            default_connection: None,
-            default_section_frame_border: None,
-            default_focused_section_frame_border: None,
-            theme_variables: HashMap::new(),
-            theme_variants: HashMap::new(),
-        },
+        canvas: Canvas::default(),
         palettes: HashMap::new(),
         nodes,
         edges: Vec::new(),

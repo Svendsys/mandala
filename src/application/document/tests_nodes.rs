@@ -1427,7 +1427,7 @@ fn test_set_node_border_color_writes_frame_color() {
 }
 
 /// First-edit materialization of `node.style.border` uses
-/// `default_glyph_border_config()` (private to `nodes/border.rs`).
+/// `GlyphBorderConfig::default()`.
 /// Pin the resulting `preset` to `"light"` so a regression to
 /// `"rounded"` — the previous default — surfaces here. The
 /// trigger is any kv edit that *touches a config field*; we
@@ -1440,7 +1440,7 @@ fn test_default_border_config_first_edit_materializes_light_preset() {
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     // Strip any pre-existing per-node border so we exercise the
-    // `get_or_insert_with(default_glyph_border_config)` path.
+    // `get_or_insert_with(GlyphBorderConfig::default)` path.
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
     let mut edits = BorderConfigEdits::default();
     edits.padding = OptionEdit::Set(8.0);
@@ -2153,12 +2153,7 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
         name: "fixture".into(),
         canvas: Canvas {
             background_color: "#000".into(),
-            default_border: None,
-            default_connection: None,
-            default_section_frame_border: None,
-            default_focused_section_frame_border: None,
-            theme_variables: HashMap::new(),
-            theme_variants: HashMap::new(),
+            ..Canvas::default()
         },
         palettes: HashMap::new(),
         nodes,

@@ -703,6 +703,27 @@ pub struct GlyphBorderConfig {
     pub color_palette_field: Option<String>,
 }
 
+/// A [`GlyphBorderConfig`] with every field at its serde default —
+/// the exact config a `"border": {}` in a `.mindmap.json`
+/// deserializes to. The application's committing border setters
+/// materialize this on first edit, and the border resolver's
+/// unset-field floors are these same values by construction (see
+/// [`crate::mindmap::border::resolve_border_style`]).
+impl Default for GlyphBorderConfig {
+    fn default() -> Self {
+        GlyphBorderConfig {
+            preset: default_border_preset(),
+            font: None,
+            font_size_pt: default_border_font_size(),
+            color: None,
+            glyphs: None,
+            padding: default_border_padding(),
+            color_palette: None,
+            color_palette_field: None,
+        }
+    }
+}
+
 fn default_shape() -> String {
     "rectangle".to_string()
 }
@@ -714,7 +735,14 @@ fn default_shape() -> String {
 fn default_border_preset() -> String {
     "light".to_string()
 }
-fn default_border_font_size() -> f32 {
+/// Font size in points a border renders at when neither the
+/// per-node config nor the canvas default names one — both the
+/// serde default for [`GlyphBorderConfig::font_size_pt`] and the
+/// floor of the border resolvers' size cascade
+/// (`resolve_border_style` / `resolve_border_font_size_pt` in
+/// `crate::mindmap::border`), which repeated the literal at three
+/// sites before #47. O(1), no allocation.
+pub fn default_border_font_size() -> f32 {
     14.0
 }
 fn default_border_padding() -> f32 {

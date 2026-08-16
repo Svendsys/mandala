@@ -450,13 +450,8 @@ fn resolved_for_falls_back_to_canvas_default() {
         ..GlyphConnectionConfig::default()
     };
     let canvas = Canvas {
-        background_color: "#000".to_string(),
-        default_border: None,
         default_connection: Some(canvas_cfg),
-        default_section_frame_border: None,
-        default_focused_section_frame_border: None,
-        theme_variables: std::collections::HashMap::new(),
-        theme_variants: std::collections::HashMap::new(),
+        ..Canvas::default()
     };
     let resolved = GlyphConnectionConfig::resolved_for(&edge, &canvas);
     assert_eq!(resolved.body, "═");
@@ -526,12 +521,15 @@ fn test_documented_portal_edge_example_deserializes() {
     assert_eq!(edge.to_id, "1.7.2");
     assert_eq!(edge.glyph_connection.as_ref().unwrap().body, "◈");
 
-    // `label` has no `skip_serializing_if`, so every serializer
-    // writes it. The spec must show it, or the two portal-edge
-    // examples in `format/` disagree about the shape on disk.
+    // `label` is omitted when unset (#47 part B) — an unlabeled
+    // edge no longer serializes `"label": null`, and the spec's
+    // example shows the shape the saver actually writes. This
+    // assertion held the opposite while the field lacked its
+    // `skip_serializing_if`.
+    assert_eq!(edge.label, None);
     assert!(
-        published.contains("\"label\""),
-        "the published portal edge must carry `label`, which is always serialized:\n{published}"
+        !published.contains("\"label\""),
+        "the published portal edge is unlabeled and the saver omits an unset `label`:\n{published}"
     );
 }
 
@@ -948,18 +946,9 @@ fn test_mindsection_frame_border_round_trip() {
 #[test]
 fn test_canvas_section_frame_defaults_round_trip() {
     use crate::mindmap::model::{Canvas, GlyphBorderConfig};
-    use std::collections::HashMap;
 
     // Empty canvas: neither field appears in JSON.
-    let plain = Canvas {
-        background_color: "#000".into(),
-        default_border: None,
-        default_connection: None,
-        default_section_frame_border: None,
-        default_focused_section_frame_border: None,
-        theme_variables: HashMap::new(),
-        theme_variants: HashMap::new(),
-    };
+    let plain = Canvas::default();
     let json = serde_json::to_string(&plain).expect("serializes");
     assert!(
         !json.contains("default_section_frame_border"),
@@ -1488,4 +1477,34 @@ fn test_documented_text_runs_example_loads_as_written() {
     assert_eq!(run.font, "LiberationSans");
     assert_eq!(run.size_pt, 14.0);
     assert_eq!(run.color, "#ffffff");
+}
+
+/// An unlabeled edge no longer serializes `"label": null` (#47
+/// part B) — one line of noise per edge, on maps that are mostly
+/// unlabeled edges. The labeled control pins the other direction,
+/// so the omission cannot be the field quietly vanishing from the
+/// format; the terse form reloads as the same unlabeled edge.
+#[test]
+fn test_unlabeled_edge_omits_label_and_labeled_edge_keeps_it() {
+    let unlabeled = synthetic_edge_with_label(None, None);
+    let json = serde_json::to_string(&unlabeled).unwrap();
+    assert!(
+        !json.contains("\"label\""),
+        "an unset label must not serialize: {json}"
+    );
+    let back: MindEdge = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.label, None, "the terse form reloads unlabeled");
+
+    let labeled = synthetic_edge_with_label(Some("named"), None);
+    let json = serde_json::to_string(&labeled).unwrap();
+    assert!(
+        json.contains(r#""label":"named""#),
+        "an authored label must always be written: {json}"
+    );
+
+    // An explicit `null` on the way in still reads as "no label",
+    // so maps saved before the omission keep loading unchanged.
+    let spelled: MindEdge =
+        serde_json::from_str(&json.replace(r#""label":"named""#, r#""label":null"#)).unwrap();
+    assert_eq!(spelled.label, None);
 }

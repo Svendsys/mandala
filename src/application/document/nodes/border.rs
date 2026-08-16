@@ -946,7 +946,7 @@ pub(crate) fn apply_glyph_border_edits_to_slot(
 
     let mut changed = false;
     let had_cfg = slot.is_some();
-    let cfg = slot.get_or_insert_with(default_glyph_border_config);
+    let cfg = slot.get_or_insert_with(GlyphBorderConfig::default);
     if !had_cfg {
         changed = true;
     }
@@ -1099,7 +1099,6 @@ fn preset_is_custom(s: &str) -> bool {
 }
 
 use baumhard::mindmap::border::default_custom_glyphs;
-use baumhard::mindmap::border::default_glyph_border_config;
 
 /// Resolve the live selection's set of node ids — the same shape
 /// `border_preview_covers_live_selection` uses to compare against

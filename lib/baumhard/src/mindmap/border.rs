@@ -16,7 +16,9 @@ use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 // nested `FONT_SYSTEM` acquire.
 use crate::font::FontSystem;
 use crate::mindmap::border_pattern::SidePattern;
-use crate::mindmap::model::{Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection};
+use crate::mindmap::model::{
+    default_border_font_size, Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection,
+};
 use crate::util::color::FloatRgba;
 use crate::util::grapheme_chad::{count_grapheme_clusters, join_graphemes};
 
@@ -367,7 +369,7 @@ impl BorderStyle {
             color_palette: None,
             palette_field: PaletteField::Frame,
             font_name: None,
-            font_size_pt: 14.0,
+            font_size_pt: default_border_font_size(),
             color: color.to_string(),
             visible: true,
         }
@@ -1204,7 +1206,9 @@ pub fn resolve_border_style(
     };
 
     let font_name = chosen.and_then(|c| c.font.clone());
-    let font_size_pt = chosen.map(|c| c.font_size_pt).unwrap_or(14.0);
+    let font_size_pt = chosen
+        .map(|c| c.font_size_pt)
+        .unwrap_or_else(default_border_font_size);
     // The one field whose cascade is not `chosen`-shaped. An
     // explicit per-node `border.color` still wins; below it the
     // node's own theme outranks the map-wide default, and
@@ -1248,7 +1252,7 @@ pub fn resolve_border_style(
 /// **Parity contract:** this must stay byte-identical to what
 /// [`resolve_border_style`] writes into
 /// [`BorderStyle::font_size_pt`] — same `cfg.or(canvas_default)`
-/// chosen-slot rule, same `14.0` floor. It deliberately takes no
+/// chosen-slot rule, same `default_border_font_size()` floor. It deliberately takes no
 /// `frame_color`: that argument feeds only `BorderStyle::color`,
 /// and the size cascade is independent of both it and the preset.
 /// `resolve_border_font_size_pt_matches_resolve_border_style` pins
@@ -1262,7 +1266,9 @@ pub fn resolve_border_font_size_pt(
     cfg: Option<&GlyphBorderConfig>,
     canvas_default: Option<&GlyphBorderConfig>,
 ) -> f32 {
-    cfg.or(canvas_default).map(|c| c.font_size_pt).unwrap_or(14.0)
+    cfg.or(canvas_default)
+        .map(|c| c.font_size_pt)
+        .unwrap_or_else(default_border_font_size)
 }
 
 /// Resolve a section-frame's [`BorderStyle`] against the same
@@ -1551,9 +1557,9 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// commit will produce — Risk #1 in the plan.
 ///
 /// `view.clear == true` empties the slot and short-circuits.
-/// Otherwise the helper materializes a fresh `GlyphBorderConfig`
-/// on first edit (mirroring the committing path's
-/// `default_glyph_border_config`) and folds each per-field
+/// Otherwise the helper materializes a fresh
+/// `GlyphBorderConfig::default()` on first edit (the same base
+/// the committing path materializes) and folds each per-field
 /// override.
 pub fn apply_view_to_slot(
     slot: &mut Option<GlyphBorderConfig>,
@@ -1569,7 +1575,7 @@ pub fn apply_view_to_slot(
     if !view.touches_any_field() {
         return;
     }
-    let cfg = slot.get_or_insert_with(default_glyph_border_config);
+    let cfg = slot.get_or_insert_with(GlyphBorderConfig::default);
     // Per-field tri-state apply. `Keep` is no-op; `Clear` drops
     // the field's `Option<String>` (or leaves a non-Option field
     // at its default for `font_size_pt` / `padding`); `Set` writes
@@ -1641,28 +1647,6 @@ pub fn apply_view_to_slot(
         if let EditView::Set(v) = view.corner_bottom_right {
             g.bottom_right = v.to_string();
         }
-    }
-}
-
-/// Default `GlyphBorderConfig` shape — light preset, 14pt, no
-/// font, 4px padding, no palette. Used by the application-side
-/// committing setters as the "first edit materializes this" base
-/// (`set_node_border_config` etc.) and by the scene-side preview
-/// apply path so the two share one constant. Mirrors the
-/// loader-time defaults in
-/// [`crate::mindmap::model::node`]; centralized here so callers
-/// don't reach into the model module's private `default_*`
-/// factories.
-pub fn default_glyph_border_config() -> GlyphBorderConfig {
-    GlyphBorderConfig {
-        preset: "light".to_string(),
-        font: None,
-        font_size_pt: 14.0,
-        color: None,
-        glyphs: None,
-        padding: 4.0,
-        color_palette: None,
-        color_palette_field: None,
     }
 }
 
