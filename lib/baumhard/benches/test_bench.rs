@@ -282,6 +282,18 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("model_rotate_moves_position_around_pivot", |b| {
         b.iter(do_model_rotate_moves_position_around_pivot)
     });
+    // The three `model_tests.rs` bodies the section above left out:
+    // the scalar multiply that has no `*_2` sibling, and the two
+    // destructive-op pins that hold `Delete`/`Subtract` to *not*
+    // growing a matrix to reach a line that is not there.
+    c.bench_function("matrix_mul_assign_1", |b| b.iter(do_matrix_mul_assign_1));
+    c.bench_function("delta_glyph_line_destructive_ops_do_not_grow_missing_line", |b| {
+        b.iter(do_delta_glyph_line_destructive_ops_do_not_grow_missing_line)
+    });
+    c.bench_function(
+        "delta_glyph_lines_destructive_ops_do_not_grow_missing_lines",
+        |b| b.iter(do_delta_glyph_lines_destructive_ops_do_not_grow_missing_lines),
+    );
     // shared delta plumbing //
     c.bench_function("area_field_tags_cover_every_field", |b| {
         b.iter(do_area_field_tags_cover_every_field)
@@ -355,6 +367,11 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("area_rotate_command_json_wire_shape", |b| {
         b.iter(do_area_rotate_command_json_wire_shape)
+    });
+    // The canonical eight-direction outline stamp — the offset
+    // table every bordered area expands through.
+    c.bench_function("outline_offsets_canonical_8_stamp", |b| {
+        b.iter(do_outline_offsets_canonical_8_stamp)
     });
     // zoom_visibility //
     c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {
@@ -504,6 +521,78 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("mutator_void_preserves_channel_alignment_in_tree_walk", |b| {
         b.iter(do_mutator_void_preserves_channel_alignment_in_tree_walk)
+    });
+    // `walk_tree` proper: channel alignment, RepeatWhile
+    // continuation, and the deep-chain / wide-fan-out shapes. §B7
+    // puts everything inside `walk_tree_from` under the hot-path
+    // rules, so these are the bodies whose numbers those rules are
+    // argued from.
+    c.bench_function("macro_applies_all_mutations_in_order", |b| {
+        b.iter(do_macro_applies_all_mutations_in_order)
+    });
+    c.bench_function("macro_with_empty_mutations_is_noop", |b| {
+        b.iter(do_macro_with_empty_mutations_is_noop)
+    });
+    c.bench_function("mutation_none_is_noop", |b| b.iter(do_mutation_none_is_noop));
+    c.bench_function("single_mutator_channel_filter_in_align_child_walks", |b| {
+        b.iter(do_single_mutator_channel_filter_in_align_child_walks)
+    });
+    c.bench_function("direct_walk_at_mismatched_channels_is_noop", |b| {
+        b.iter(do_direct_walk_at_mismatched_channels_is_noop)
+    });
+    c.bench_function("deep_chain_walk_reaches_every_node", |b| {
+        b.iter(do_deep_chain_walk_reaches_every_node)
+    });
+    c.bench_function("wide_fan_out_applies_to_all_matching_siblings", |b| {
+        b.iter(do_wide_fan_out_applies_to_all_matching_siblings)
+    });
+    c.bench_function("applying_same_delta_twice_accumulates", |b| {
+        b.iter(do_applying_same_delta_twice_accumulates)
+    });
+    c.bench_function("mutation_is_deterministic_across_tree_clones", |b| {
+        b.iter(do_mutation_is_deterministic_across_tree_clones)
+    });
+    c.bench_function("clone_preserves_unique_id_and_channel", |b| {
+        b.iter(do_clone_preserves_unique_id_and_channel)
+    });
+    c.bench_function("repeat_while_aligns_non_ascending_target_channels", |b| {
+        b.iter(do_repeat_while_aligns_non_ascending_target_channels)
+    });
+    c.bench_function(
+        "repeat_while_merge_advance_does_not_drop_mutator_without_target",
+        |b| b.iter(do_repeat_while_merge_advance_does_not_drop_mutator_without_target),
+    );
+    c.bench_function(
+        "default_terminator_resumes_over_non_ascending_after_mutators",
+        |b| b.iter(do_default_terminator_resumes_over_non_ascending_after_mutators),
+    );
+    // `Mutation` and `Instruction` at the single-node scale —
+    // AreaDelta / AreaCommand / None, both `Instruction` variants,
+    // `MutatorTree::apply_to`, and the `writes_the_same` predicate
+    // that decides whether a delta is worth walking for at all.
+    c.bench_function("mutation_area_delta_applies_field", |b| {
+        b.iter(do_mutation_area_delta_applies_field)
+    });
+    c.bench_function("mutation_area_command_nudge_right", |b| {
+        b.iter(do_mutation_area_command_nudge_right)
+    });
+    c.bench_function("mutation_noop_leaves_tree_unchanged", |b| {
+        b.iter(do_mutation_noop_leaves_tree_unchanged)
+    });
+    c.bench_function("writes_the_same_is_reflexive_where_partial_eq_is_not", |b| {
+        b.iter(do_writes_the_same_is_reflexive_where_partial_eq_is_not)
+    });
+    c.bench_function("writes_the_same_separates_values_that_write_differently", |b| {
+        b.iter(do_writes_the_same_separates_values_that_write_differently)
+    });
+    c.bench_function("instruction_repeat_while_always_true", |b| {
+        b.iter(do_instruction_repeat_while_always_true)
+    });
+    c.bench_function("instruction_rotate_while", |b| {
+        b.iter(do_instruction_rotate_while)
+    });
+    c.bench_function("mutator_tree_applies_to_target", |b| {
+        b.iter(do_mutator_tree_applies_to_target)
     });
     // regions //
     c.bench_function("region_params_new_sunny_day", |b| {
@@ -1205,6 +1294,25 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("scene_component_in_overlap_smallest_area", |b| {
         b.iter(do_scene_component_in_resolves_overlap_by_smallest_area)
+    });
+    // `Scene` bookkeeping around the hit tests above: the
+    // empty-tree miss, visibility skipping, removal, ownership
+    // hand-back, and the insertion-stable layer order the hit
+    // priority rests on.
+    c.bench_function("descendant_at_returns_none_on_empty_tree", |b| {
+        b.iter(do_descendant_at_returns_none_on_empty_tree)
+    });
+    c.bench_function("scene_invisible_trees_are_skipped", |b| {
+        b.iter(do_scene_invisible_trees_are_skipped)
+    });
+    c.bench_function("scene_remove_drops_entry", |b| {
+        b.iter(do_scene_remove_drops_entry)
+    });
+    c.bench_function("scene_entry_into_tree_returns_ownership", |b| {
+        b.iter(do_scene_entry_into_tree_returns_ownership)
+    });
+    c.bench_function("scene_ids_in_layer_order_is_stable_by_insertion", |b| {
+        b.iter(do_scene_ids_in_layer_order_is_stable_by_insertion)
     });
     // subtree AABBs (ensure/invalidate) //
     c.bench_function("subtree_aabb_leaf_equals_own_bounds", |b| {
