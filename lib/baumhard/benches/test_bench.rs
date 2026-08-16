@@ -736,6 +736,111 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("hex_to_cosmic_color_round_trip", |b| {
         b.iter(do_hex_to_cosmic_color_round_trip)
     });
+    c.bench_function("resolve_var_hit", |b| b.iter(do_resolve_var_hit));
+    c.bench_function("resolve_var_miss_returns_raw", |b| {
+        b.iter(do_resolve_var_miss_returns_raw)
+    });
+    c.bench_function("resolve_var_plain_hex_passes_through", |b| {
+        b.iter(do_resolve_var_plain_hex_passes_through)
+    });
+    c.bench_function("resolve_var_malformed_passes_through", |b| {
+        b.iter(do_resolve_var_malformed_passes_through)
+    });
+    c.bench_function("resolve_var_tolerates_whitespace_inside", |b| {
+        b.iter(do_resolve_var_tolerates_whitespace_inside)
+    });
+    c.bench_function("resolve_var_single_level_no_recursion", |b| {
+        b.iter(do_resolve_var_single_level_no_recursion)
+    });
+    c.bench_function("hex_to_rgba_safe_good_input", |b| {
+        b.iter(do_hex_to_rgba_safe_good_input)
+    });
+    c.bench_function("hex_to_rgba_safe_garbage_returns_fallback", |b| {
+        b.iter(do_hex_to_rgba_safe_garbage_returns_fallback)
+    });
+    c.bench_function("hex_with_alpha_scaled_halves_opaque_input", |b| {
+        b.iter(do_hex_with_alpha_scaled_halves_opaque_input)
+    });
+    c.bench_function("hex_with_alpha_scaled_factor_one_round_trips", |b| {
+        b.iter(do_hex_with_alpha_scaled_factor_one_round_trips)
+    });
+    c.bench_function("hex_with_alpha_scaled_factor_zero_zeros_alpha", |b| {
+        b.iter(do_hex_with_alpha_scaled_factor_zero_zeros_alpha)
+    });
+    c.bench_function(
+        "hex_with_alpha_scaled_factor_above_one_clamps_to_full_alpha",
+        |b| b.iter(do_hex_with_alpha_scaled_factor_above_one_clamps_to_full_alpha),
+    );
+    c.bench_function("hex_with_alpha_scaled_preserves_rgb_on_8_char_input", |b| {
+        b.iter(do_hex_with_alpha_scaled_preserves_rgb_on_8_char_input)
+    });
+    c.bench_function("hex_with_alpha_scaled_parse_failure_passes_through", |b| {
+        b.iter(do_hex_with_alpha_scaled_parse_failure_passes_through)
+    });
+    c.bench_function("hex_with_alpha_scaled_composes", |b| {
+        b.iter(do_hex_with_alpha_scaled_composes)
+    });
+    c.bench_function("hex_to_rgba_safe_with_alpha", |b| {
+        b.iter(do_hex_to_rgba_safe_with_alpha)
+    });
+    c.bench_function("hex_to_rgba_safe_no_panic_on_malformed_batch", |b| {
+        b.iter(do_hex_to_rgba_safe_no_panic_on_malformed_batch)
+    });
+    c.bench_function("hex_to_rgba_safe_short_hex_expands_each_nibble", |b| {
+        b.iter(do_hex_to_rgba_safe_short_hex_expands_each_nibble)
+    });
+    c.bench_function("hex_to_rgba_safe_accepts_valid_6_and_8_char_both_cases", |b| {
+        b.iter(do_hex_to_rgba_safe_accepts_valid_6_and_8_char_both_cases)
+    });
+    c.bench_function("resolve_var_large_theme_map_zero_copy_passthrough", |b| {
+        b.iter(do_resolve_var_large_theme_map_zero_copy_passthrough)
+    });
+    c.bench_function("resolve_var_passthrough_on_unknown_is_verbatim", |b| {
+        b.iter(do_resolve_var_passthrough_on_unknown_is_verbatim)
+    });
+    c.bench_function("hsv_to_rgb_primaries", |b| b.iter(do_hsv_to_rgb_primaries));
+    c.bench_function("hsv_to_rgb_grayscale_ignores_hue", |b| {
+        b.iter(do_hsv_to_rgb_grayscale_ignores_hue)
+    });
+    c.bench_function("hsv_to_rgb_wraps_hue", |b| b.iter(do_hsv_to_rgb_wraps_hue));
+    c.bench_function("rgb_to_hsv_primaries", |b| b.iter(do_rgb_to_hsv_primaries));
+    c.bench_function("hsv_hex_roundtrip_named_colors", |b| {
+        b.iter(do_hsv_hex_roundtrip_named_colors)
+    });
+    c.bench_function("hex_to_hsv_safe_rejects_garbage", |b| {
+        b.iter(do_hex_to_hsv_safe_rejects_garbage)
+    });
+    c.bench_function("hsv_to_hex_emits_six_char_format", |b| {
+        b.iter(do_hsv_to_hex_emits_six_char_format)
+    });
+    c.bench_function("rgba_to_hex_drops_alpha_only_when_saturated_opaque", |b| {
+        b.iter(do_rgba_to_hex_drops_alpha_only_when_saturated_opaque)
+    });
+    c.bench_function("color_add_wraps_per_channel_modulo_256", |b| {
+        b.iter(do_color_add_wraps_per_channel_modulo_256)
+    });
+    c.bench_function("color_sub_wraps_underflow_modulo_256", |b| {
+        b.iter(do_color_sub_wraps_underflow_modulo_256)
+    });
+    c.bench_function("color_mul_wraps_overflow_modulo_256", |b| {
+        b.iter(do_color_mul_wraps_overflow_modulo_256)
+    });
+    c.bench_function("color_div_per_channel", |b| b.iter(do_color_div_per_channel));
+    c.bench_function("color_to_float_does_not_collapse_mid_range_channels", |b| {
+        b.iter(do_color_to_float_does_not_collapse_mid_range_channels)
+    });
+    c.bench_function("color_new_f32_to_float_round_trips_within_one_byte", |b| {
+        b.iter(do_color_new_f32_to_float_round_trips_within_one_byte)
+    });
+    c.bench_function("is_valid_hex_color_matches_hex_parser", |b| {
+        b.iter(do_is_valid_hex_color_matches_hex_parser)
+    });
+    c.bench_function("parse_var_name_tolerates_inner_whitespace", |b| {
+        b.iter(do_parse_var_name_tolerates_inner_whitespace)
+    });
+    c.bench_function("parse_var_name_rejects_malformed_refs", |b| {
+        b.iter(do_parse_var_name_rejects_malformed_refs)
+    });
     // primitives //
     c.bench_function("overlaps", |b| b.iter(do_overlaps));
     c.bench_function("split_and_separate_1", |b| b.iter(do_split_and_separate_1));
