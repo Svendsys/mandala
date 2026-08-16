@@ -215,7 +215,7 @@ mod tests {
             italic: true,
             underline: true,
             font: "HIDDEN_FONT_NAME".to_string(),
-            size_pt: 42,
+            size_pt: 42.0,
             color: "#ff0000".to_string(),
             hyperlink: Some("HIDDEN_URL".to_string()),
         }];

@@ -64,7 +64,7 @@ fn synthetic_single_node_map(text: &str, w: f64, h: f64) -> MindMap {
         italic: false,
         underline: false,
         font: "LiberationSans".to_string(),
-        size_pt: 14,
+        size_pt: 14.0,
         color: "#ffffff".to_string(),
         hyperlink: None,
     }];

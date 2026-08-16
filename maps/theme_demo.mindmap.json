@@ -30,6 +30,7 @@
   },
   "custom_mutations": [
     {
+      "behavior": "Persistent",
       "document_actions": [
         {
           "SetThemeVariant": "dark"
@@ -40,6 +41,7 @@
       "target_scope": "SelfOnly"
     },
     {
+      "behavior": "Persistent",
       "document_actions": [
         {
           "SetThemeVariant": "light"
@@ -50,6 +52,7 @@
       "target_scope": "SelfOnly"
     },
     {
+      "behavior": "Persistent",
       "document_actions": [
         {
           "SetThemeVariant": "forest"
@@ -92,7 +95,6 @@
   "nodes": {
     "0": {
       "channel": 0,
-      "color_schema": null,
       "folded": false,
       "id": "0",
       "layout": {
@@ -106,6 +108,21 @@
         "x": -200.0,
         "y": -220.0
       },
+      "sections": [
+        {
+          "text": "theme variable demo",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 19,
+              "font": "LiberationSans",
+              "size_pt": 36.0,
+              "start": 0
+            }
+          ]
+        }
+      ],
       "size": {
         "height": 80.0,
         "width": 400.0
@@ -119,29 +136,10 @@
         "show_frame": true,
         "show_shadow": false,
         "text_color": "var(--fg)"
-      },
-      "sections": [
-        {
-          "text": "theme variable demo",
-          "text_runs": [
-            {
-              "bold": true,
-              "color": "var(--fg)",
-              "end": 19,
-              "font": "LiberationSans",
-              "hyperlink": null,
-              "italic": false,
-              "size_pt": 36,
-              "start": 0,
-              "underline": false
-            }
-          ]
-        }
-      ]
+      }
     },
     "0.0": {
       "channel": 0,
-      "color_schema": null,
       "folded": false,
       "id": "0.0",
       "layout": {
@@ -155,6 +153,20 @@
         "x": -280.0,
         "y": -80.0
       },
+      "sections": [
+        {
+          "text": "colors follow the theme",
+          "text_runs": [
+            {
+              "color": "var(--fg)",
+              "end": 23,
+              "font": "LiberationSans",
+              "size_pt": 22.0,
+              "start": 0
+            }
+          ]
+        }
+      ],
       "size": {
         "height": 56.0,
         "width": 240.0
@@ -168,29 +180,10 @@
         "show_frame": true,
         "show_shadow": false,
         "text_color": "var(--fg)"
-      },
-      "sections": [
-        {
-          "text": "colors follow the theme",
-          "text_runs": [
-            {
-              "bold": false,
-              "color": "var(--fg)",
-              "end": 23,
-              "font": "LiberationSans",
-              "hyperlink": null,
-              "italic": false,
-              "size_pt": 22,
-              "start": 0,
-              "underline": false
-            }
-          ]
-        }
-      ]
+      }
     },
     "0.1": {
       "channel": 0,
-      "color_schema": null,
       "folded": false,
       "id": "0.1",
       "layout": {
@@ -204,6 +197,20 @@
         "x": 40.0,
         "y": -80.0
       },
+      "sections": [
+        {
+          "text": "edges follow the theme",
+          "text_runs": [
+            {
+              "color": "var(--fg)",
+              "end": 22,
+              "font": "LiberationSans",
+              "size_pt": 22.0,
+              "start": 0
+            }
+          ]
+        }
+      ],
       "size": {
         "height": 56.0,
         "width": 240.0
@@ -217,29 +224,10 @@
         "show_frame": true,
         "show_shadow": false,
         "text_color": "var(--fg)"
-      },
-      "sections": [
-        {
-          "text": "edges follow the theme",
-          "text_runs": [
-            {
-              "bold": false,
-              "color": "var(--fg)",
-              "end": 22,
-              "font": "LiberationSans",
-              "hyperlink": null,
-              "italic": false,
-              "size_pt": 22,
-              "start": 0,
-              "underline": false
-            }
-          ]
-        }
-      ]
+      }
     },
     "1": {
       "channel": 0,
-      "color_schema": null,
       "folded": false,
       "id": "1",
       "layout": {
@@ -253,6 +241,21 @@
         "x": -280.0,
         "y": 80.0
       },
+      "sections": [
+        {
+          "text": "[ dark ]",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 8,
+              "font": "LiberationSans",
+              "size_pt": 22.0,
+              "start": 0
+            }
+          ]
+        }
+      ],
       "size": {
         "height": 48.0,
         "width": 160.0
@@ -272,29 +275,10 @@
           "mutation_id": "switch-dark",
           "trigger": "OnClick"
         }
-      ],
-      "sections": [
-        {
-          "text": "[ dark ]",
-          "text_runs": [
-            {
-              "bold": true,
-              "color": "var(--fg)",
-              "end": 8,
-              "font": "LiberationSans",
-              "hyperlink": null,
-              "italic": false,
-              "size_pt": 22,
-              "start": 0,
-              "underline": false
-            }
-          ]
-        }
       ]
     },
     "2": {
       "channel": 0,
-      "color_schema": null,
       "folded": false,
       "id": "2",
       "layout": {
@@ -308,6 +292,21 @@
         "x": -80.0,
         "y": 80.0
       },
+      "sections": [
+        {
+          "text": "[ light ]",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 9,
+              "font": "LiberationSans",
+              "size_pt": 22.0,
+              "start": 0
+            }
+          ]
+        }
+      ],
       "size": {
         "height": 48.0,
         "width": 160.0
@@ -327,29 +326,10 @@
           "mutation_id": "switch-light",
           "trigger": "OnClick"
         }
-      ],
-      "sections": [
-        {
-          "text": "[ light ]",
-          "text_runs": [
-            {
-              "bold": true,
-              "color": "var(--fg)",
-              "end": 9,
-              "font": "LiberationSans",
-              "hyperlink": null,
-              "italic": false,
-              "size_pt": 22,
-              "start": 0,
-              "underline": false
-            }
-          ]
-        }
       ]
     },
     "3": {
       "channel": 0,
-      "color_schema": null,
       "folded": false,
       "id": "3",
       "layout": {
@@ -363,6 +343,21 @@
         "x": 120.0,
         "y": 80.0
       },
+      "sections": [
+        {
+          "text": "[ forest ]",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 10,
+              "font": "LiberationSans",
+              "size_pt": 22.0,
+              "start": 0
+            }
+          ]
+        }
+      ],
       "size": {
         "height": 48.0,
         "width": 160.0
@@ -381,24 +376,6 @@
         {
           "mutation_id": "switch-forest",
           "trigger": "OnClick"
-        }
-      ],
-      "sections": [
-        {
-          "text": "[ forest ]",
-          "text_runs": [
-            {
-              "bold": true,
-              "color": "var(--fg)",
-              "end": 10,
-              "font": "LiberationSans",
-              "hyperlink": null,
-              "italic": false,
-              "size_pt": 22,
-              "start": 0,
-              "underline": false
-            }
-          ]
         }
       ]
     }

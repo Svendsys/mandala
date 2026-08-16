@@ -1346,20 +1346,20 @@ fn test_set_node_text_inherits_first_run_formatting() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".to_string(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#ffffff".to_string(),
                 hyperlink: None,
             });
         }
         node.sections[0].text_runs[0].bold = true;
         node.sections[0].text_runs[0].color = "#abcdef".to_string();
-        node.sections[0].text_runs[0].size_pt = 33;
+        node.sections[0].text_runs[0].size_pt = 33.0;
     }
     assert!(doc.set_node_text(&nid, "rewritten".to_string()));
     let run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
     assert!(run.bold);
     assert_eq!(run.color, "#abcdef");
-    assert_eq!(run.size_pt, 33);
+    assert_eq!(run.size_pt, 33.0);
 }
 
 // -----------------------------------------------------------------
@@ -1492,7 +1492,7 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#dddddd".into(), // matches default
                 hyperlink: None,
             },
@@ -1503,7 +1503,7 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#abcdef".into(), // user override
                 hyperlink: None,
             },
@@ -1591,7 +1591,7 @@ fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#303030".into(), // baked copy of the palette default
                 hyperlink: None,
             },
@@ -1602,7 +1602,7 @@ fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: "#abcdef".into(), // hand-colored
                 hyperlink: None,
             },
@@ -1613,7 +1613,7 @@ fn test_set_node_text_color_on_a_themed_node_follows_the_palette() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 24,
+                size_pt: 24.0,
                 color: String::new(), // defers to the node
                 hyperlink: None,
             },
@@ -1803,16 +1803,16 @@ fn test_set_node_font_size_writes_all_runs_and_round_trips() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
-    let before_sizes: Vec<u32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
+    let before_sizes: Vec<f32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.size_pt)
         .collect();
     assert!(doc.set_node_font_size(&nid, 48.0));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 48));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 48.0));
     assert!(doc.undo());
-    let after_sizes: Vec<u32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
+    let after_sizes: Vec<f32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.size_pt)
@@ -1827,7 +1827,7 @@ fn test_set_node_font_size_clamps_below_one() {
     doc.selection = SelectionState::Single(nid.clone());
     assert!(doc.set_node_font_size(&nid, 0.5));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 1));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 1.0));
 }
 
 #[test]
@@ -2368,7 +2368,7 @@ fn set_section_zero_text_and_single_run(doc: &mut MindMapDocument, node_id: &str
         italic: false,
         underline: false,
         font: font.to_string(),
-        size_pt: 14,
+        size_pt: 14.0,
         color: "#ffffff".to_string(),
         hyperlink: None,
     });
@@ -4004,7 +4004,7 @@ fn test_extreme_editor_writes_still_reload() {
     // The edge and border font channels were clamped in an earlier
     // pass and these were missed, which left `font size=5000` — the
     // plainest thing to type — writing a map that would not reopen.
-    let max_run_pt = baumhard::font::fonts::MAX_FONT_SIZE_PT as u32;
+    let max_run_pt = baumhard::font::fonts::MAX_FONT_SIZE_PT;
 
     let id = node_id.clone();
     let reloaded = round_trip("node-font-size", &move |doc| {
@@ -4047,8 +4047,9 @@ fn test_extreme_editor_writes_still_reload() {
     }
 
     // An ordinary size still round-trips exactly — the clamp bounds
-    // the extremes, it does not perturb normal edits. Rounding
-    // happens before the clamp, so 12.7 is still 13 rather than 12.
+    // the extremes, it does not perturb normal edits. Fractional
+    // sizes are first-class now that `size_pt` is an `f32`, so 12.7
+    // is stored and reloaded as 12.7, not rounded.
     let id = node_id.clone();
     let reloaded = round_trip("node-font-ordinary", &move |doc| {
         doc.set_node_font_size(&id, 12.7);
@@ -4058,8 +4059,8 @@ fn test_extreme_editor_writes_still_reload() {
             .sections
             .iter()
             .flat_map(|s| s.text_runs.iter())
-            .all(|r| r.size_pt == 13),
-        "an ordinary size must round to 13 and survive unchanged"
+            .all(|r| r.size_pt == 12.7),
+        "an ordinary fractional size must survive the round trip unchanged"
     );
 
     // The eight border glyphs. The loader *rejects* these rather
@@ -5335,7 +5336,7 @@ fn test_node_and_section_color_writes_stay_in_their_tiers_on_a_themed_node() {
         "#aaaaaa",
         ["#aaaaaa", "#aaaaaa"],
         "LiberationSans",
-        14,
+        14.0,
         ColorGroup {
             background: "#101010".into(),
             frame: "#202020".into(),

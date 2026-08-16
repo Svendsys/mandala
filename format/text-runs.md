@@ -18,9 +18,29 @@ they live on the section, not on the node directly — every
 }
 ```
 
-Each run covers a character range `[start, end)` and carries formatting
-metadata: `bold`, `italic`, `underline`, `font`, `size_pt`, `color`, and
-optional `hyperlink`.
+Each run covers a grapheme-cluster range `[start, end)` and carries
+formatting metadata: `bold`, `italic`, `underline`, `font`, `size_pt`,
+`color`, and `hyperlink`.
+
+**Only `start` and `end` are required.** Every styling field defaults
+to the value that renders like the uncovered text around it, so
+`{ "start": 0, "end": 5, "bold": true }` is a complete run:
+
+- `bold` / `italic` / `underline` default to `false`.
+- `font` defaults to the empty string — no pin; the run uses the
+  document default face (see [fonts.md](./fonts.md)).
+- `size_pt` is a number (fractional sizes like `14.5` are valid) and
+  defaults to `14`, the same scale a section with no runs at all
+  renders at — omitting it changes nothing visually.
+- `color` defaults to the empty string — the run declines to name a
+  color and takes the node's effective text color; see
+  ["Leaving `color` empty"](#leaving-color-empty) below.
+- `hyperlink` defaults to absent.
+
+The saver omits fields still sitting at their defaults, per the
+omission policy in [schema.md](./schema.md) ("a key written out at
+its own default value may be omitted when the map is saved") —
+reloading the terse form restores the same run.
 
 ## Why runs are optional
 
@@ -98,8 +118,9 @@ sibling and leave them behind.
 ## Hyperlinks
 
 A run can set `"hyperlink": "https://example.com"`. The renderer draws
-the covered text as a clickable link styled with that URL. Runs without a
-hyperlink set the field to `null` (or omit it — it's serde-optional).
+the covered text as a clickable link styled with that URL. Runs without
+a hyperlink omit the field (an explicit `null` also reads as "none";
+the saver writes neither).
 
 ## `section split` run partitioning
 

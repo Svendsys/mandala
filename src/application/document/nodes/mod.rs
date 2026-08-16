@@ -652,20 +652,21 @@ impl MindMapDocument {
     /// size runs would already have been flattened by the text
     /// editor's collapse step in `set_node_text`).
     ///
-    /// `size_pt` is rounded to the nearest integer and then clamped
-    /// into the domain the loader accepts — floor 1, ceiling
-    /// `MAX_FONT_SIZE_PT`. Both ends matter: below the floor a run
-    /// casts to an invisible 0, and above the ceiling the loader
-    /// refuses the saved file. See `custom::sync::clamp_run_size_pt`.
+    /// `size_pt` is clamped into the domain the loader accepts —
+    /// floor 1, ceiling `MAX_FONT_SIZE_PT`. Both ends matter: below
+    /// the floor a run shrinks into invisibility, and above the
+    /// ceiling the loader refuses the saved file. Fractional sizes
+    /// are stored as written — `size_pt` is an `f32` in the model.
+    /// See `custom::sync::clamp_run_size_pt`.
     pub fn set_node_font_size(&mut self, node_id: &str, size_pt: f32) -> bool {
         if !size_pt.is_finite() {
             return false;
         }
-        // Rounded first, then clamped into the loader's run domain:
-        // the console's `font size=` takes any positive finite f32,
-        // and a value past the ceiling writes a map that will not
-        // reopen. See `custom::sync::clamp_run_size_pt`.
-        let size_u = crate::application::document::custom::sync::clamp_run_size_pt(size_pt.round());
+        // Clamped into the loader's run domain: the console's
+        // `font size=` takes any positive finite f32, and a value
+        // past the ceiling writes a map that will not reopen. See
+        // `custom::sync::clamp_run_size_pt`.
+        let size = crate::application::document::custom::sync::clamp_run_size_pt(size_pt);
         // `NodeEditTail::Grow`: larger text needs a larger box.
         // Monotonic floor — grow on demand, never shrink.
         self.mutate_node_with_style_undo(node_id, NodeEditTail::Grow, |node| {
@@ -673,14 +674,14 @@ impl MindMapDocument {
                 .sections
                 .iter()
                 .flat_map(|s| s.text_runs.iter())
-                .all(|r| r.size_pt == size_u);
+                .all(|r| r.size_pt == size);
             if already {
                 return None;
             }
             for section in node.sections.iter_mut() {
                 clamp_runs_to_text(section);
                 for run in section.text_runs.iter_mut() {
-                    run.size_pt = size_u;
+                    run.size_pt = size;
                 }
             }
             Some(())

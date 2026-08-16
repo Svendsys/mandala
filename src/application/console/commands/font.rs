@@ -1226,7 +1226,7 @@ mod tests {
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(!node.sections[0].text_runs.is_empty());
         for run in &node.sections[0].text_runs {
-            assert_eq!(run.size_pt, 18);
+            assert_eq!(run.size_pt, 18.0);
         }
     }
 
@@ -1303,7 +1303,7 @@ mod tests {
         assert!(super::apply_font_kv_to_selection(&mut doc, "size", 21.0));
         let node = doc.mindmap.nodes.get(&id).expect("pinned node");
         for run in &node.sections[1].text_runs {
-            assert_eq!(run.size_pt, 21, "Action write lands on the selected section");
+            assert_eq!(run.size_pt, 21.0, "Action write lands on the selected section");
         }
         // The verb reaches the same state, so re-running it is a
         // no-op rather than a second write.
@@ -1367,16 +1367,16 @@ mod tests {
     /// size, sections at other indices stay untouched.
     #[test]
     fn font_size_section_kv_targets_specific_section() {
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Single("0".into());
         assert_exec_ok(run("font size=22 section=1", &mut doc));
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(
-            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14),
+            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14.0),
             "section 0 must NOT receive the size change"
         );
         assert!(
-            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
+            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22.0),
             "section 1 must receive the new size"
         );
     }
@@ -1387,7 +1387,7 @@ mod tests {
     /// `make_two_section_node_with_pinned_runs` helper.
     fn doc_with_two_sections_for_font(
         font: &str,
-        size: u32,
+        size: f32,
     ) -> crate::application::document::MindMapDocument {
         use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
         let mut doc = fixture_doc();
@@ -1404,7 +1404,7 @@ mod tests {
     fn font_family_section_collapse_writes_only_section() {
         use crate::application::document::SectionSel;
         let family = first_loaded_family();
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Section(SectionSel {
             node_id: "0".into(),
             section_idx: 1,
@@ -1434,7 +1434,7 @@ mod tests {
     #[test]
     fn font_size_action_section_writes_through_section_setter() {
         use crate::application::document::SectionSel;
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Section(SectionSel {
             node_id: "0".into(),
             section_idx: 1,
@@ -1442,11 +1442,11 @@ mod tests {
         assert!(super::apply_font_kv_to_selection(&mut doc, "size", 22.0));
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(
-            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14),
+            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14.0),
             "section 0 (sibling) must NOT change size"
         );
         assert!(
-            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
+            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22.0),
             "section 1 (selected) must receive the new size"
         );
     }
@@ -1463,7 +1463,7 @@ mod tests {
     fn font_family_action_section_writes_through_section_setter() {
         use crate::application::document::SectionSel;
         let family = first_loaded_family();
-        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14.0);
         doc.selection = SelectionState::Section(SectionSel {
             node_id: "0".into(),
             section_idx: 1,

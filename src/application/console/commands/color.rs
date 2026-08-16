@@ -751,7 +751,7 @@ mod tests {
                     italic: false,
                     underline: false,
                     font: "LiberationSans".into(),
-                    size_pt: 14,
+                    size_pt: 14.0,
                     color: "#aaaaaa".into(),
                     hyperlink: None,
                 }];
@@ -781,7 +781,7 @@ mod tests {
             "#aaaaaa",
             ["#aaaaaa", "#aaaaaa"],
             "LiberationSans",
-            14,
+            14.0,
         );
         (doc, id)
     }
@@ -837,7 +837,7 @@ mod tests {
             "#aaaaaa",
             ["#aaaaaa", "#abcdef"],
             "LiberationSans",
-            14,
+            14.0,
         );
         doc.selection = SelectionState::Single(id.clone());
         assert_exec_ok(run("color text=#00ff00 section=1", &mut doc));

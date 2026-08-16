@@ -1344,3 +1344,148 @@ fn test_clamp_canvas_coord_is_total() {
     assert_eq!(clamp_canvas_coord(f64::NAN), 0.0);
     assert_eq!(clamp_canvas_coord(f64::INFINITY), 0.0);
 }
+
+// ──────────────────────────────────────────────────────────
+// TextRun serde: only `start` / `end` are required. Every
+// styling field defaults to the value that renders like the
+// uncovered text around it, and the saver omits fields still
+// sitting at those defaults (issue #47 part A).
+// ──────────────────────────────────────────────────────────
+
+/// The loader-edge shape (§T1): a run carrying nothing but its
+/// range. Every default is asserted against its literal, not
+/// against the constants the deserializer reads — a drifted
+/// default fails here instead of being mirrored.
+#[test]
+fn test_text_run_minimal_shape_defaults() {
+    let run: TextRun = serde_json::from_str(r#"{"start": 0, "end": 5}"#).unwrap();
+    assert!(!run.bold && !run.italic && !run.underline);
+    assert_eq!(run.font, "", "empty font = no pin (format/fonts.md)");
+    assert_eq!(
+        run.size_pt, 14.0,
+        "the render-neutral default — the scale run-less text renders at"
+    );
+    assert_eq!(
+        run.color, "",
+        "empty color = defer to the node's effective text color"
+    );
+    assert_eq!(run.hyperlink, None);
+}
+
+/// The defaults must not blanket the whole struct: the range is
+/// the run's identity and stays required. Each case names the
+/// specific field serde must complain about, so a universal
+/// "missing field" prefix cannot satisfy the wrong case.
+#[test]
+fn test_text_run_start_and_end_stay_required() {
+    for (json, missing) in [
+        (r#"{}"#, "start"),
+        (r#"{"bold": true}"#, "start"),
+        (r#"{"start": 0}"#, "end"),
+        (r#"{"end": 5, "size_pt": 12.0}"#, "start"),
+    ] {
+        let err = serde_json::from_str::<TextRun>(json).expect_err("a range-less run must be refused");
+        assert!(
+            err.to_string().contains(&format!("missing field `{missing}`")),
+            "{json} must be refused for missing `{missing}`, got: {err}"
+        );
+    }
+}
+
+/// Negative control for the defaults (issue #138's
+/// default-shadowed shape): a run that authors every field keeps
+/// every authored value, including a fractional `size_pt` —
+/// `format/schema.md` types the field "number", and `14.5` was a
+/// parse error while the model held a `u32`.
+#[test]
+fn test_text_run_defaults_do_not_shadow_authored_values() {
+    let run: TextRun = serde_json::from_str(
+        r##"{"start": 1, "end": 4, "bold": true, "italic": true, "underline": true,
+             "font": "Vollkorn", "size_pt": 14.5, "color": "#123456",
+             "hyperlink": "https://example.com"}"##,
+    )
+    .unwrap();
+    assert_eq!((run.start, run.end), (1, 4));
+    assert!(run.bold && run.italic && run.underline);
+    assert_eq!(run.font, "Vollkorn");
+    assert_eq!(run.size_pt, 14.5);
+    assert_eq!(run.color, "#123456");
+    assert_eq!(run.hyperlink.as_deref(), Some("https://example.com"));
+}
+
+/// The save side of the contract: a run holding nothing but
+/// defaults serializes as bare `{"start", "end"}`, and the same
+/// fields reappear the moment they hold anything else — so the
+/// omission cannot be the whole struct quietly disappearing.
+/// Reloading the terse form restores the identical run.
+#[test]
+fn test_text_run_save_omits_exactly_the_default_valued_fields() {
+    let minimal: TextRun = serde_json::from_str(r#"{"start": 0, "end": 5}"#).unwrap();
+    let value = serde_json::to_value(&minimal).unwrap();
+    let keys: Vec<&str> = value.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        ["end", "start"],
+        "every styling field sits at its default and must be omitted"
+    );
+    let back: TextRun = serde_json::from_value(value).unwrap();
+    assert_eq!(back, minimal, "the terse form must reload as the same run");
+
+    // Control: flip each omitted field off its default and its key
+    // must come back — the omission is per-value, not per-field.
+    let authored: TextRun = serde_json::from_str(
+        r##"{"start": 0, "end": 5, "bold": true, "italic": true, "underline": true,
+             "font": "Vollkorn", "size_pt": 22.0, "color": "#123456",
+             "hyperlink": "https://example.com"}"##,
+    )
+    .unwrap();
+    let value = serde_json::to_value(&authored).unwrap();
+    let keys: Vec<&str> = value.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        [
+            "bold",
+            "color",
+            "end",
+            "font",
+            "hyperlink",
+            "italic",
+            "size_pt",
+            "start",
+            "underline"
+        ],
+        "a non-default value must always be written"
+    );
+}
+
+/// `format/text-runs.md`'s opening example, loaded as written —
+/// issue #47's acceptance criterion. The example omits `italic`,
+/// `underline` and `hyperlink`, which failed the typed loader
+/// while every `TextRun` field was required. Read out of the spec
+/// rather than restated, per `util::doc_fixtures` (a hard-copied
+/// literal would keep passing after the doc drifted).
+#[test]
+fn test_documented_text_runs_example_loads_as_written() {
+    let doc = crate::util::doc_fixtures::format_doc_path("text-runs.md");
+    let published = crate::util::doc_fixtures::documented_json_block(&doc, "# Text Runs", 0);
+
+    #[derive(serde::Deserialize)]
+    struct SectionsFragment {
+        sections: Vec<MindSection>,
+    }
+    let fragment: SectionsFragment = serde_json::from_str(&published).unwrap_or_else(|e| {
+        panic!("format/text-runs.md's own example must load as written: {e}\n{published}")
+    });
+    let section = &fragment.sections[0];
+    assert_eq!(section.text, "Hello world");
+    let run = &section.text_runs[0];
+    assert_eq!((run.start, run.end), (0, 5));
+    assert!(run.bold, "the example authors bold");
+    assert!(
+        !run.italic && !run.underline,
+        "the fields the example omits default to false"
+    );
+    assert_eq!(run.font, "LiberationSans");
+    assert_eq!(run.size_pt, 14.0);
+    assert_eq!(run.color, "#ffffff");
+}

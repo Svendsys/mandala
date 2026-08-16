@@ -128,7 +128,7 @@ pub const PLACARD_HEADLINE: &str = "This map did not load.";
 pub const PLACARD_FOOTER: &str = "Nothing was opened; the file on disk is unchanged.";
 
 /// Point size of the placard's text run.
-const PLACARD_FONT_SIZE_PT: u32 = 24;
+const PLACARD_FONT_SIZE_PT: f32 = 24.0;
 
 /// Font family of the placard's text run: **empty, meaning no pin**.
 ///

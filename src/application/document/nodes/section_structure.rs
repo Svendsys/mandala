@@ -495,7 +495,7 @@ mod tests {
                 italic: false,
                 underline: false,
                 font: String::new(),
-                size_pt: 12,
+                size_pt: 12.0,
                 color: "#ff0000".into(),
                 hyperlink: None,
             }];
@@ -531,7 +531,7 @@ mod tests {
                 italic: true,
                 underline: false,
                 font: String::new(),
-                size_pt: 12,
+                size_pt: 12.0,
                 color: "#00ff00".into(),
                 hyperlink: None,
             }];
@@ -696,7 +696,7 @@ mod tests {
                 italic: false,
                 underline: false,
                 font: String::new(),
-                size_pt: 12,
+                size_pt: 12.0,
                 color: "#0000ff".into(),
                 hyperlink: None,
             }];

@@ -120,7 +120,7 @@ mod tests {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: "#ffffff".into(),
             hyperlink: None,
         };

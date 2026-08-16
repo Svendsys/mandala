@@ -1632,7 +1632,7 @@ mod tests {
         assert!(run.bold);
         assert!(run.underline);
         assert_eq!(run.font, "LiberationSans");
-        assert_eq!(run.size_pt, 74);
+        assert_eq!(run.size_pt, 74.0);
         assert_eq!(run.color, "#ffffff");
     }
 
@@ -2411,6 +2411,17 @@ mod tests {
             })
         }),
         ("is_zero_u32", |v| v.as_u64() == Some(0)),
+        // `TextRun`'s style flags: `false` is the field's default,
+        // so an authored `"bold": false` carries nothing a reload
+        // would not recover.
+        ("is_false", |v| v.as_bool() == Some(false)),
+        // `TextRun.size_pt` at the render-neutral default — the
+        // scale run-less text is measured at, and what a run that
+        // omits the key deserializes to. `14` and `14.0` are the
+        // same JSON number.
+        ("is_default_text_run_size_pt", |v| {
+            v.as_f64() == Some(f64::from(crate::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT))
+        }),
         // `ColorSchema.overrides`: an object whose four channels are
         // all absent or `null` carries no override, which is what
         // every node that has never been recolored by hand holds.
@@ -3263,13 +3274,21 @@ mod tests {
                 ),
             ),
             (
+                // Every styling field deliberately holds a
+                // non-default value: the collapsed key-path pass
+                // has no omission model, and a run field sitting
+                // at its default (`"bold": false`, `"hyperlink":
+                // null`) is legitimately dropped by the saver per
+                // the `skip_serializing_if` policy — which would
+                // read as loss here while testing nothing about
+                // the unknown key this shape exists for.
                 "a key inside a section's text run",
                 shape_map(
                     "",
                     &node_with_sections(
-                        r##"{"text": "n", "text_runs": [{"start":0,"end":1,"bold":false,
-                            "italic":false,"underline":false,"font":"","size_pt":12,
-                            "color":"#fff","hyperlink":null,"tracking":2}]}"##,
+                        r##"{"text": "n", "text_runs": [{"start":0,"end":1,"bold":true,
+                            "italic":true,"underline":true,"font":"LiberationSans","size_pt":12,
+                            "color":"#fff","hyperlink":"https://example.com","tracking":2}]}"##,
                     ),
                     "",
                     "",

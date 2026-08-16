@@ -216,15 +216,15 @@ impl MindMapDocument {
         if !size_pt.is_finite() {
             return false;
         }
-        // Same clamp as the whole-node setter — rounded first,
-        // then bounded into the loader's run domain.
-        let size_u = crate::application::document::custom::sync::clamp_run_size_pt(size_pt.round());
+        // Same clamp as the whole-node setter — bounded into the
+        // loader's run domain, fractional sizes kept as written.
+        let size = crate::application::document::custom::sync::clamp_run_size_pt(size_pt);
         self.mutate_section_with_style_undo(node_id, section_idx, NodeEditTail::Grow, move |s| {
-            if s.text_runs.iter().all(|r| r.size_pt == size_u) {
+            if s.text_runs.iter().all(|r| r.size_pt == size) {
                 return false;
             }
             for run in s.text_runs.iter_mut() {
-                run.size_pt = size_u;
+                run.size_pt = size;
             }
             true
         })
@@ -307,16 +307,16 @@ impl MindMapDocument {
         if !size_pt.is_finite() {
             return false;
         }
-        // Same clamp as the whole-node setter — rounded first,
-        // then bounded into the loader's run domain.
-        let size_u = crate::application::document::custom::sync::clamp_run_size_pt(size_pt.round());
+        // Same clamp as the whole-node setter — bounded into the
+        // loader's run domain, fractional sizes kept as written.
+        let size = crate::application::document::custom::sync::clamp_run_size_pt(size_pt);
         self.mutate_section_runs_in_range(
             node_id,
             section_idx,
             range_start,
             range_end,
             NodeEditTail::Grow,
-            move |r| r.size_pt = size_u,
+            move |r| r.size_pt = size,
         )
     }
 

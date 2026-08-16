@@ -254,7 +254,7 @@ fn test_section_range_dispatches_to_range_aware_color_setter() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: "#ffffff".into(),
             hyperlink: None,
         });

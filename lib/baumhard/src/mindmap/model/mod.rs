@@ -39,7 +39,8 @@ pub use edge::{
 };
 pub use node::{
     ColorGroup, ColorOverrides, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, MindSection,
-    NodeLayout, NodeStyle, Position, Size, TextRun, MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE,
+    NodeLayout, NodeStyle, Position, Size, TextRun, DEFAULT_TEXT_RUN_SIZE_PT, MAX_NODE_AXIS,
+    MAX_SECTIONS_PER_NODE,
 };
 pub use palette::Palette;
 

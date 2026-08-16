@@ -411,9 +411,15 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
         let scale = section
             .text_runs
             .iter()
-            .map(|r| r.size_pt as f32)
+            .map(|r| r.size_pt)
             .fold(0.0_f32, f32::max);
-        let scale = if scale > 0.0 { scale } else { 14.0 };
+        // Same fallback the tree builder measures a run-less
+        // section at — one constant, not a repeated 14.0.
+        let scale = if scale > 0.0 {
+            scale
+        } else {
+            baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE
+        };
         let line_height = scale * 1.2;
         let pad_x = scale * 1.5;
         let pad_y = scale * 0.5;
@@ -421,7 +427,7 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
         let measure_font = section
             .text_runs
             .iter()
-            .max_by(|a, b| a.size_pt.cmp(&b.size_pt))
+            .max_by(|a, b| a.size_pt.total_cmp(&b.size_pt))
             .and_then(|r| {
                 if r.font.is_empty() {
                     None

@@ -37,7 +37,11 @@ use super::super::MindMapDocument;
 /// pinned to the forward path's
 /// [`baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE`]
 /// so the reverse converter's delta arithmetic can never drift
-/// from the scale the forward converter actually wrote.
+/// from the scale the forward converter actually wrote. (The model
+/// re-exports the same number as
+/// `baumhard::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT` — the
+/// serde default a size-less run deserializes to — so all three
+/// readings are one constant by construction.)
 ///
 /// Deliberately **not**
 /// [`crate::application::document::defaults::DEFAULT_RUN_SIZE_PT`]
@@ -46,30 +50,17 @@ use super::super::MindMapDocument;
 /// being rendered at. Answering "what size is this section on
 /// screen right now?" with the authoring default would make every
 /// `grow-font` on a run-less section jump 10pt.
-///
-/// The `f32 → u32` narrowing is checked, not silent: model
-/// `size_pt` is integral, so a future fractional scale (`14.5`)
-/// is a real design question about how the reverse converter
-/// should round it, not something to truncate away. The `assert!`
-/// evaluates at compile time and fails the build instead.
-pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = {
-    let scale = baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE;
-    let truncated = scale as u32;
-    assert!(
-        truncated as f32 == scale,
-        "DEFAULT_SECTION_FONT_SCALE is not integral; decide how the reverse \
-         converter should round it rather than letting the cast truncate"
-    );
-    truncated
-};
+pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: f32 = baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE;
 
 /// Floor the reverse converter clamps `size_pt` to. A
 /// `shrink-font` mutation drives tree-side `scale` toward (and
-/// past) zero without a floor of its own; model `size_pt` is a
-/// `u32`, so a naive cast of a negative scale would saturate to 0
-/// and render invisible, un-regrowable text. Clamp to 1pt so a
-/// shrunk run stays legible and can be grown back.
-pub(in crate::application::document) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
+/// past) zero without a floor of its own; without one here a
+/// shrunk run would land at (or below) the loader's 0.5pt
+/// minimum and render invisible, un-regrowable text. Clamp to
+/// 1pt — deliberately above
+/// `baumhard::font::fonts::MIN_FONT_SIZE_PT` — so a shrunk run
+/// stays legible and can be grown back.
+pub(in crate::application::document) const MIN_TEXT_RUN_SIZE_PT: f32 = 1.0;
 
 /// Clamp a `size_pt` into the domain the loader would accept on the
 /// way back in.
@@ -78,28 +69,26 @@ pub(in crate::application::document) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
 /// here.** (`section_structure` writes a hardcoded `12` when it
 /// synthesizes a run; that is a constant inside the domain, not an
 /// input.) The
-/// loader rejects a run whose `size_pt` is zero or past
-/// [`validate::MAX_FONT_SIZE_PT`], so any writer that can leave that
-/// range produces a model the editor itself would refuse to
-/// reopen. The reverse converter gets there in one click, since a
-/// `grow-font` mutation adds an unbounded delta and the `as u32`
-/// cast saturates rather than wrapping; the console gets there in
-/// one line, since `parse_finite_pt` accepts any positive finite
-/// `f32` and `font size=5000` is an ordinary thing to type.
+/// loader rejects a run whose `size_pt` is under the 0.5pt floor
+/// or past [`validate::MAX_FONT_SIZE_PT`], so any writer that can
+/// leave that range produces a model the editor itself would
+/// refuse to reopen. The reverse converter gets there in one
+/// click, since a `grow-font` mutation adds an unbounded delta;
+/// the console gets there in one line, since `parse_finite_pt`
+/// accepts any positive finite `f32` and `font size=5000` is an
+/// ordinary thing to type.
 ///
 /// The floor and the ceiling are the same clamp. The floor is the
 /// older half — a shrunk run must stay legible and re-growable
-/// rather than casting to an invisible 0 — and the ceiling is what
-/// keeps the file reopenable.
+/// rather than shrinking into invisibility — and the ceiling is
+/// what keeps the file reopenable. `NaN` (never authored, but
+/// reachable from mutation arithmetic) lands on the floor.
 ///
-/// Callers that round do so **before** calling: this truncates, so
-/// rounding afterwards would silently change every ordinary edit by
-/// up to a point.
-pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> u32 {
+pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> f32 {
     if size_pt.is_nan() {
         return MIN_TEXT_RUN_SIZE_PT;
     }
-    size_pt.clamp(MIN_TEXT_RUN_SIZE_PT as f32, validate::MAX_FONT_SIZE_PT) as u32
+    size_pt.clamp(MIN_TEXT_RUN_SIZE_PT, validate::MAX_FONT_SIZE_PT)
 }
 
 /// Push the tree-side font `scale` back onto a section's model
@@ -168,11 +157,15 @@ fn sync_section_font_size(
     use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
     let delta = tree_scale - old_scale;
-    // `size_pt` is an integer point size, so a sub-half-point delta
-    // rounds to no change on every run. Treat it as "scale
-    // untouched" so a position-only or color-only mutation doesn't
-    // churn run sizes (or spuriously report a change).
-    if delta.abs() < 0.5 {
+    // Exact-zero test, not an epsilon: both operands come off the
+    // tree — `old_scale` captured before the mutation, `tree_scale`
+    // read after — so a position-only or color-only mutation leaves
+    // them bit-identical and there is no float noise to absorb.
+    // Anything else is a real size change, and fractional deltas
+    // are first-class now that `size_pt` is an `f32` (a sub-half-
+    // point delta used to be dropped because the integer field
+    // rounded it to no change on every run).
+    if delta == 0.0 {
         return false;
     }
 
@@ -183,7 +176,7 @@ fn sync_section_font_size(
             // would be dropped by `clamp_runs_to_text` anyway.
             return false;
         }
-        let size_pt = clamp_run_size_pt(tree_scale.round());
+        let size_pt = clamp_run_size_pt(tree_scale);
         section.text_runs.push(TextRun {
             start: 0,
             end,
@@ -200,7 +193,7 @@ fn sync_section_font_size(
 
     let mut changed = false;
     for run in section.text_runs.iter_mut() {
-        let new_size = clamp_run_size_pt((run.size_pt as f32 + delta).round());
+        let new_size = clamp_run_size_pt(run.size_pt + delta);
         if new_size != run.size_pt {
             run.size_pt = new_size;
             changed = true;
@@ -529,12 +522,12 @@ impl MindMapDocument {
                 let max = section
                     .text_runs
                     .iter()
-                    .map(|r| r.size_pt as f32)
+                    .map(|r| r.size_pt)
                     .fold(0.0_f32, f32::max);
                 if max > 0.0 {
                     max
                 } else {
-                    DEFAULT_TEXT_RUN_SIZE_PT as f32
+                    DEFAULT_TEXT_RUN_SIZE_PT
                 }
             };
 
@@ -801,7 +794,7 @@ mod region_converter_tests {
             italic: false,
             underline: false,
             font: font.into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: color.into(),
             hyperlink: None,
         }
@@ -815,7 +808,7 @@ mod region_converter_tests {
             italic: true,
             underline: true,
             font: "LiberationSans".into(),
-            size_pt: 21,
+            size_pt: 21.0,
             color: "#aabbcc".into(),
             hyperlink: Some("https://example.org".into()),
         }
@@ -832,7 +825,7 @@ mod region_converter_tests {
         assert!(out.bold);
         assert!(out.italic);
         assert!(out.underline);
-        assert_eq!(out.size_pt, 21);
+        assert_eq!(out.size_pt, 21.0);
         assert_eq!(out.hyperlink.as_deref(), Some("https://example.org"));
     }
 
@@ -902,7 +895,7 @@ mod region_converter_tests {
         assert_eq!(out.color, "");
         // The rest of the merge is unaffected.
         assert!(out.bold);
-        assert_eq!(out.size_pt, 21);
+        assert_eq!(out.size_pt, 21.0);
     }
 
     /// The other half of the same rule: a mutation that genuinely

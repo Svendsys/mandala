@@ -60,12 +60,15 @@ use glam::Vec2;
 /// the *authoring* default a newly-created run gets (24pt, in the
 /// app crate's `document::defaults`). A run-less legacy section
 /// keeps rendering at 14pt; the moment something authors a run
-/// onto it, the authoring default applies instead. Named so the
-/// reverse converter
-/// (`document::custom::sync::DEFAULT_TEXT_RUN_SIZE_PT`) can pin
-/// itself to the forward path's number rather than repeating the
-/// literal and drifting from it.
-pub const DEFAULT_SECTION_FONT_SCALE: f32 = 14.0;
+/// onto it, the authoring default applies instead.
+///
+/// Defined as the model's
+/// [`DEFAULT_TEXT_RUN_SIZE_PT`](crate::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT)
+/// rather than repeating the literal: a run that omits `size_pt`
+/// deserializes to that constant, so "section with no runs" and
+/// "run that names no size" cannot drift apart — both render at
+/// exactly this scale by construction.
+pub const DEFAULT_SECTION_FONT_SCALE: f32 = crate::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT;
 
 /// Build the *container* `GlyphArea` for a mind node — the chrome-
 /// bearing area that owns background fill, border padding, shape,
@@ -190,7 +193,7 @@ pub(super) fn mindnode_section_area(
     let scale_max = section
         .text_runs
         .iter()
-        .map(|r| r.size_pt as f32)
+        .map(|r| r.size_pt)
         .fold(0.0_f32, f32::max);
     let scale = if scale_max > 0.0 {
         scale_max

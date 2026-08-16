@@ -221,7 +221,7 @@ fn make_node(id: String, parent_id: Option<String>, x: f64, y: f64, depth: usize
         italic: false,
         underline: false,
         font: "LiberationSans".to_string(),
-        size_pt: 18,
+        size_pt: 18.0,
         color: "#ffffff".to_string(),
         hyperlink: None,
     }];

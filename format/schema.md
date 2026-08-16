@@ -460,9 +460,21 @@ See [sections.md](./sections.md) for the section concept and
 }
 ```
 
-See [text-runs.md](./text-runs.md) for coverage rules. Runs are
-addressed *relative to the owning section's `text`* — there is no
-node-level `text_runs` after the section refactor.
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `start` | integer | yes | First covered grapheme cluster (inclusive) |
+| `end` | integer | yes | One past the last covered cluster (exclusive) |
+| `bold` / `italic` / `underline` | bool | no | Default `false` |
+| `font` | string | no | Family name; empty (the default) = no pin |
+| `size_pt` | number | no | Fractional sizes valid; defaults to `14`, the run-less section scale |
+| `color` | string | no | `#RRGGBB` or `var(--name)`; empty (the default) defers to the node's effective text color |
+| `hyperlink` | string\|null | no | Absent / `null` = no link |
+
+See [text-runs.md](./text-runs.md) for coverage rules and the default
+semantics. Runs are addressed *relative to the owning section's
+`text`* — there is no node-level `text_runs` after the section
+refactor. Fields sitting at their defaults may be omitted when the
+map is saved, per the omission policy above.
 
 ## ColorSchema (on a node)
 

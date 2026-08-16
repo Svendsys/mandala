@@ -48,13 +48,15 @@ pub(in crate::application) const DEFAULT_NODE_TEXT_COLOR: &str = "#ffffff";
 /// **Not the same number as the renderer's no-runs fallback.**
 /// [`baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE`]
 /// (14) is what the tree builder measures a section with when it
-/// has *no* runs at all; this 24 is what the authoring layer
-/// writes when it *creates* a run. The two answer different
-/// questions and are deliberately different values: a new node's
-/// text reads at 24pt, while a run-less legacy section keeps
-/// rendering at the historical 14pt until something authors a
-/// run onto it.
-pub(in crate::application) const DEFAULT_RUN_SIZE_PT: u32 = 24;
+/// has *no* runs at all — and, by definition, what a run that
+/// omits `size_pt` deserializes to
+/// ([`baumhard::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT`]);
+/// this 24 is what the authoring layer writes when it *creates* a
+/// run. The two answer different questions and are deliberately
+/// different values: a new node's text reads at 24pt, while a
+/// run-less legacy section keeps rendering at the historical 14pt
+/// until something authors a run onto it.
+pub(in crate::application) const DEFAULT_RUN_SIZE_PT: f32 = 24.0;
 
 /// Color a freshly-authored [`TextRun`] carries: **none**.
 ///

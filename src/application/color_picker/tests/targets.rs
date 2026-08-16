@@ -24,7 +24,7 @@ fn doc_with_two_uniform_sections() -> (crate::application::document::MindMapDocu
         "#abcdef",
         ["#111111", "#222222"],
         "LiberationSans",
-        14,
+        14.0,
     );
     (doc, id)
 }
@@ -68,7 +68,7 @@ fn current_color_at_section_falls_back_to_node_default_on_run_disagreement() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: "#999999".into(),
             hyperlink: None,
         });
@@ -151,7 +151,7 @@ fn current_color_at_section_range_reads_in_range_runs() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 14,
+                size_pt: 14.0,
                 color: color.into(),
                 hyperlink: None,
             });
@@ -210,7 +210,7 @@ fn current_color_at_section_range_falls_back_when_range_crosses_gap() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: "#ff0000".into(),
             hyperlink: None,
         });
@@ -247,7 +247,7 @@ fn current_color_at_section_range_falls_back_when_range_in_pure_gap() {
             italic: false,
             underline: false,
             font: "LiberationSans".into(),
-            size_pt: 14,
+            size_pt: 14.0,
             color: "#00ff00".into(),
             hyperlink: None,
         });
@@ -287,7 +287,7 @@ fn current_color_at_section_range_unanimous_across_multiple_adjacent_runs() {
                 italic: false,
                 underline: false,
                 font: "LiberationSans".into(),
-                size_pt: 14,
+                size_pt: 14.0,
                 color: "#ffff00".into(),
                 hyperlink: None,
             });
