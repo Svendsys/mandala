@@ -527,6 +527,150 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("region_rect_exhaustive_4x4_grid", |b| {
         b.iter(do_rect_exhaustive_4x4_grid)
     });
+    // `RegionParams` pixel/region math — the rest of
+    // `region_params_tests.rs`, whose four longest-standing entries
+    // are above. Every one is arithmetic over a resolution and a
+    // factor, which is what runs per pointer event once the index is
+    // wired (§B6).
+    c.bench_function("region_params_resolution_1x1", |b| {
+        b.iter(do_region_params_resolution_1x1)
+    });
+    c.bench_function("region_params_factor_one", |b| {
+        b.iter(do_region_params_factor_one)
+    });
+    c.bench_function("region_params_factor_equals_dimension", |b| {
+        b.iter(do_region_params_factor_equals_dimension)
+    });
+    c.bench_function("region_params_pixel_region_roundtrip", |b| {
+        b.iter(do_region_params_pixel_region_roundtrip)
+    });
+    c.bench_function("region_params_roundtrip_asymmetric", |b| {
+        b.iter(do_region_params_roundtrip_asymmetric)
+    });
+    c.bench_function("region_params_boundary_pixels", |b| {
+        b.iter(do_region_params_boundary_pixels)
+    });
+    c.bench_function("region_params_asymmetric", |b| {
+        b.iter(do_region_params_asymmetric)
+    });
+    c.bench_function("region_params_very_wide", |b| b.iter(do_region_params_very_wide));
+    c.bench_function("region_params_exhaustive_4x4", |b| {
+        b.iter(do_region_params_exhaustive_4x4)
+    });
+    c.bench_function("region_params_exhaustive_12x12", |b| {
+        b.iter(do_region_params_exhaustive_12x12)
+    });
+    c.bench_function("region_params_adapt_changes_resolution", |b| {
+        b.iter(do_region_params_adapt_changes_resolution)
+    });
+    c.bench_function("region_params_adapt_chained", |b| {
+        b.iter(do_region_params_adapt_chained)
+    });
+    // `RegionIndexer` insert / remove / query — the forward and
+    // reverse index that makes selection highlighting O(log n)
+    // instead of O(n) (§B6).
+    c.bench_function("region_indexer_initialize_with", |b| {
+        b.iter(do_region_indexer_initialize_with)
+    });
+    c.bench_function("region_indexer_initialize_zero", |b| {
+        b.iter(do_region_indexer_initialize_zero)
+    });
+    c.bench_function("region_indexer_reinitialize_clears_forward_index", |b| {
+        b.iter(do_region_indexer_reinitialize_clears_forward_index)
+    });
+    c.bench_function("region_indexer_multiple_elements_in_one_region", |b| {
+        b.iter(do_region_indexer_multiple_elements_in_one_region)
+    });
+    c.bench_function("region_indexer_one_element_in_multiple_regions", |b| {
+        b.iter(do_region_indexer_one_element_in_multiple_regions)
+    });
+    c.bench_function("region_indexer_empty_region_query", |b| {
+        b.iter(do_region_indexer_empty_region_query)
+    });
+    c.bench_function("region_indexer_boundary_regions", |b| {
+        b.iter(do_region_indexer_boundary_regions)
+    });
+    c.bench_function("region_indexer_duplicate_insert_is_idempotent", |b| {
+        b.iter(do_region_indexer_duplicate_insert_is_idempotent)
+    });
+    c.bench_function("region_indexer_remove_nonexistent_is_noop", |b| {
+        b.iter(do_region_indexer_remove_nonexistent_is_noop)
+    });
+    c.bench_function("region_indexer_no_reverse_index", |b| {
+        b.iter(do_region_indexer_no_reverse_index)
+    });
+    c.bench_function("region_indexer_reverse_index_unknown_element", |b| {
+        b.iter(do_region_indexer_reverse_index_unknown_element)
+    });
+    c.bench_function("region_indexer_reinitialize_stale_reverse_index", |b| {
+        b.iter(do_region_indexer_reinitialize_stale_reverse_index)
+    });
+    c.bench_function("region_indexer_default", |b| b.iter(do_region_indexer_default));
+    c.bench_function("region_indexer_element_id_zero", |b| {
+        b.iter(do_region_indexer_element_id_zero)
+    });
+    c.bench_function("region_indexer_element_id_max", |b| {
+        b.iter(do_region_indexer_element_id_max)
+    });
+    c.bench_function("region_indexer_clone_is_independent", |b| {
+        b.iter(do_region_indexer_clone_is_independent)
+    });
+    c.bench_function("region_indexer_initialize_with_zero_axis", |b| {
+        b.iter(do_region_indexer_initialize_with_zero_axis)
+    });
+    c.bench_function("region_indexer_remove_wrong_region_no_damage", |b| {
+        b.iter(do_region_indexer_remove_wrong_region_no_damage)
+    });
+    c.bench_function("region_indexer_single_region", |b| {
+        b.iter(do_region_indexer_single_region)
+    });
+    c.bench_function("region_indexer_insert_at_scale", |b| {
+        b.iter(do_region_indexer_insert_at_scale)
+    });
+    // `calculate_regions_intersected_by_rectangle` across the grid
+    // shapes: origin blocks, single cells, strips, offsets, the
+    // out-of-bounds error paths, and the 12x12 exhaustive sweep whose
+    // 4x4 sibling is above.
+    c.bench_function("rect_origin_4x4_block", |b| b.iter(do_rect_origin_4x4_block));
+    c.bench_function("rect_origin_4x5_block", |b| b.iter(do_rect_origin_4x5_block));
+    c.bench_function("rect_origin_5x4_block", |b| b.iter(do_rect_origin_5x4_block));
+    c.bench_function("rect_origin_3x2_block", |b| b.iter(do_rect_origin_3x2_block));
+    c.bench_function("rect_single_cell", |b| b.iter(do_rect_single_cell));
+    c.bench_function("rect_single_pixel_each_corner", |b| {
+        b.iter(do_rect_single_pixel_each_corner)
+    });
+    c.bench_function("rect_single_pixel_center", |b| {
+        b.iter(do_rect_single_pixel_center)
+    });
+    c.bench_function("rect_full_width_single_row", |b| {
+        b.iter(do_rect_full_width_single_row)
+    });
+    c.bench_function("rect_full_height_single_column", |b| {
+        b.iter(do_rect_full_height_single_column)
+    });
+    c.bench_function("rect_full_grid", |b| b.iter(do_rect_full_grid));
+    c.bench_function("rect_thin_vertical_strip", |b| {
+        b.iter(do_rect_thin_vertical_strip)
+    });
+    c.bench_function("rect_thin_horizontal_strip", |b| {
+        b.iter(do_rect_thin_horizontal_strip)
+    });
+    c.bench_function("rect_offset_single_row", |b| b.iter(do_rect_offset_single_row));
+    c.bench_function("rect_offset_multi_row", |b| b.iter(do_rect_offset_multi_row));
+    c.bench_function("rect_offset_last_column_multi_row", |b| {
+        b.iter(do_rect_offset_last_column_multi_row)
+    });
+    c.bench_function("rect_center_3x3", |b| b.iter(do_rect_center_3x3));
+    c.bench_function("rect_bottom_right_2x2", |b| b.iter(do_rect_bottom_right_2x2));
+    c.bench_function("rect_asymmetric_grid", |b| b.iter(do_rect_asymmetric_grid));
+    c.bench_function("rect_start_after_end", |b| b.iter(do_rect_start_after_end));
+    c.bench_function("rect_start_out_of_bounds", |b| {
+        b.iter(do_rect_start_out_of_bounds)
+    });
+    c.bench_function("rect_end_out_of_bounds", |b| b.iter(do_rect_end_out_of_bounds));
+    c.bench_function("rect_exhaustive_12x12_grid", |b| {
+        b.iter(do_rect_exhaustive_12x12_grid)
+    });
     // grapheme_chad //
     c.bench_function("slice_to_newline", |b| b.iter(do_slice_to_newline));
     c.bench_function("split_graphemes", |b| b.iter(do_split_graphemes));
