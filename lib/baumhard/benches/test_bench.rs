@@ -7,14 +7,21 @@ use baumhard::font::tests::hex_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::font::tests::name_rules_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
+use baumhard::gfx_structs::tests::bvh_descent_tests::*;
+use baumhard::gfx_structs::tests::camera_tests::*;
 use baumhard::gfx_structs::tests::delta_tests::*;
+use baumhard::gfx_structs::tests::element_tests::*;
+use baumhard::gfx_structs::tests::map_children_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
 use baumhard::gfx_structs::tests::mutator_tests::*;
+use baumhard::gfx_structs::tests::predicate_tests::*;
 use baumhard::gfx_structs::tests::region_indexer_tests::*;
 use baumhard::gfx_structs::tests::region_params_tests::*;
 use baumhard::gfx_structs::tests::region_rect_tests::*;
 use baumhard::gfx_structs::tests::scene_tests::*;
 use baumhard::gfx_structs::tests::shape_tests::*;
+use baumhard::gfx_structs::tests::spatial_descend_tests::*;
+use baumhard::gfx_structs::tests::subtree_aabb_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
@@ -22,6 +29,7 @@ use baumhard::util::tests::arena_utils_tests::*;
 use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
 use baumhard::util::tests::grapheme_chad_tests::*;
+use baumhard::util::tests::ordered_vec2_tests::*;
 use baumhard::util::tests::primes_test::do_primes;
 use baumhard::util::tests::rust_source_tests::*;
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -923,6 +931,286 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("scene_component_in_overlap_smallest_area", |b| {
         b.iter(do_scene_component_in_resolves_overlap_by_smallest_area)
+    });
+    // subtree AABBs (ensure/invalidate) //
+    c.bench_function("subtree_aabb_leaf_equals_own_bounds", |b| {
+        b.iter(do_subtree_aabb_leaf_equals_own_bounds)
+    });
+    c.bench_function("subtree_aabb_parent_encloses_children", |b| {
+        b.iter(do_subtree_aabb_parent_encloses_children)
+    });
+    c.bench_function("subtree_aabb_root_encloses_entire_tree", |b| {
+        b.iter(do_subtree_aabb_root_encloses_entire_tree)
+    });
+    c.bench_function("subtree_aabb_invalidated_by_mutation", |b| {
+        b.iter(do_subtree_aabb_invalidated_by_mutation)
+    });
+    c.bench_function("subtree_aabb_void_tree_is_none", |b| {
+        b.iter(do_subtree_aabb_void_tree_is_none)
+    });
+    c.bench_function("subtree_aabb_ensure_is_idempotent", |b| {
+        b.iter(do_subtree_aabb_ensure_is_idempotent)
+    });
+    c.bench_function("subtree_aabb_deep_chain_propagates_to_root", |b| {
+        b.iter(do_subtree_aabb_deep_chain_propagates_to_root)
+    });
+    c.bench_function("subtree_aabb_wide_tree_root_covers_all", |b| {
+        b.iter(do_subtree_aabb_wide_tree_root_covers_all)
+    });
+    c.bench_function("subtree_aabb_single_area_node", |b| {
+        b.iter(do_subtree_aabb_single_area_node)
+    });
+    c.bench_function("subtree_aabb_zero_bounds_area_ignored", |b| {
+        b.iter(do_subtree_aabb_zero_bounds_area_ignored)
+    });
+    c.bench_function("subtree_aabb_negative_position", |b| {
+        b.iter(do_subtree_aabb_negative_position)
+    });
+    c.bench_function("subtree_aabb_merge_none_base_with_child", |b| {
+        b.iter(do_subtree_aabb_merge_none_base_with_child)
+    });
+    c.bench_function("subtree_aabb_merge_two_disjoint_children", |b| {
+        b.iter(do_subtree_aabb_merge_two_disjoint_children)
+    });
+    c.bench_function("subtree_aabb_all_children_zero_bounds", |b| {
+        b.iter(do_subtree_aabb_all_children_zero_bounds)
+    });
+    // BVH-accelerated descendant_at / descendant_near //
+    c.bench_function("descendant_at_finds_leaf_via_bvh", |b| {
+        b.iter(do_descendant_at_finds_leaf_via_bvh)
+    });
+    c.bench_function("descendant_at_prunes_disjoint_subtree", |b| {
+        b.iter(do_descendant_at_prunes_disjoint_subtree)
+    });
+    c.bench_function("descendant_at_returns_none_on_miss", |b| {
+        b.iter(do_descendant_at_returns_none_on_miss)
+    });
+    c.bench_function("descendant_at_smallest_area_wins", |b| {
+        b.iter(do_descendant_at_smallest_area_wins)
+    });
+    c.bench_function("descendant_at_deep_chain_finds_leaf", |b| {
+        b.iter(do_descendant_at_deep_chain_finds_leaf)
+    });
+    c.bench_function("descendant_at_deep_chain_miss", |b| {
+        b.iter(do_descendant_at_deep_chain_miss)
+    });
+    c.bench_function("descendant_at_wide_tree_finds_correct_child", |b| {
+        b.iter(do_descendant_at_wide_tree_finds_correct_child)
+    });
+    c.bench_function("descendant_at_wide_tree_gap_is_miss", |b| {
+        b.iter(do_descendant_at_wide_tree_gap_is_miss)
+    });
+    c.bench_function("descendant_at_overlapping_siblings", |b| {
+        b.iter(do_descendant_at_overlapping_siblings)
+    });
+    c.bench_function("descendant_near_negative_coords", |b| {
+        b.iter(do_descendant_near_negative_coords)
+    });
+    c.bench_function("bvh_descend_skips_glyph_model_nodes", |b| {
+        b.iter(do_bvh_descend_skips_glyph_model_nodes)
+    });
+    c.bench_function("bvh_descend_point_on_exact_boundary", |b| {
+        b.iter(do_bvh_descend_point_on_exact_boundary)
+    });
+    c.bench_function("bvh_far_edge_hit_survives_float_rounding", |b| {
+        b.iter(do_bvh_far_edge_hit_survives_float_rounding)
+    });
+    c.bench_function("bvh_point_in_subtree_aabb_but_outside_own_area", |b| {
+        b.iter(do_bvh_point_in_subtree_aabb_but_outside_own_area)
+    });
+    c.bench_function("descendant_near_slack_expands_hit_region", |b| {
+        b.iter(do_descendant_near_slack_expands_hit_region)
+    });
+    c.bench_function("descendant_near_slack_smallest_area_still_wins", |b| {
+        b.iter(do_descendant_near_slack_smallest_area_still_wins)
+    });
+    // SpatialDescend event delivery //
+    c.bench_function("spatial_descend_delivers_event_to_leaf", |b| {
+        b.iter(do_spatial_descend_delivers_event_to_leaf)
+    });
+    c.bench_function("spatial_descend_miss_is_noop", |b| {
+        b.iter(do_spatial_descend_miss_is_noop)
+    });
+    c.bench_function("spatial_descend_finds_innermost_node", |b| {
+        b.iter(do_spatial_descend_finds_innermost_node)
+    });
+    c.bench_function("spatial_descend_deep_chain_delivers_to_leaf", |b| {
+        b.iter(do_spatial_descend_deep_chain_delivers_to_leaf)
+    });
+    c.bench_function("spatial_descend_wide_tree_hits_correct_child", |b| {
+        b.iter(do_spatial_descend_wide_tree_hits_correct_child)
+    });
+    c.bench_function("spatial_descend_no_mutation_is_noop", |b| {
+        b.iter(do_spatial_descend_no_mutation_is_noop)
+    });
+    c.bench_function("spatial_descend_ignores_channel_mismatch", |b| {
+        b.iter(do_spatial_descend_ignores_channel_mismatch)
+    });
+    c.bench_function("apply_to_redirties_subtree_aabbs_after_spatial_descend", |b| {
+        b.iter(do_apply_to_redirties_subtree_aabbs_after_spatial_descend)
+    });
+    c.bench_function("walker_redirties_subtree_aabbs_between_spatial_descends", |b| {
+        b.iter(do_walker_redirties_subtree_aabbs_between_spatial_descends)
+    });
+    c.bench_function("mouse_event_data_round_trips_constructor_inputs", |b| {
+        b.iter(do_mouse_event_data_round_trips_constructor_inputs)
+    });
+    c.bench_function("glyph_tree_event_mouse_carries_data", |b| {
+        b.iter(do_glyph_tree_event_mouse_carries_data)
+    });
+    // MapChildren zip walker //
+    c.bench_function("one_to_one_zip_applies_each_child_by_position", |b| {
+        b.iter(do_one_to_one_zip_applies_each_child_by_position)
+    });
+    c.bench_function("zip_shorter_mutator_than_target", |b| {
+        b.iter(do_zip_shorter_mutator_than_target)
+    });
+    c.bench_function("zip_shorter_target_than_mutator", |b| {
+        b.iter(do_zip_shorter_target_than_mutator)
+    });
+    c.bench_function("zip_empty_mutator_children_is_noop", |b| {
+        b.iter(do_zip_empty_mutator_children_is_noop)
+    });
+    c.bench_function("zip_empty_target_children_is_noop", |b| {
+        b.iter(do_zip_empty_target_children_is_noop)
+    });
+    c.bench_function("zip_empty_both_sides_is_noop", |b| {
+        b.iter(do_zip_empty_both_sides_is_noop)
+    });
+    c.bench_function("nested_map_children_descends_recursively", |b| {
+        b.iter(do_nested_map_children_descends_recursively)
+    });
+    c.bench_function("instruction_carrying_mutation_applies_to_current_target", |b| {
+        b.iter(do_instruction_carrying_mutation_applies_to_current_target)
+    });
+    c.bench_function("instruction_mutation_skipped_on_channel_mismatch", |b| {
+        b.iter(do_instruction_mutation_skipped_on_channel_mismatch)
+    });
+    c.bench_function("compose_repeat_inside_map_children", |b| {
+        b.iter(do_compose_repeat_inside_map_children)
+    });
+    c.bench_function("map_children_ignores_sibling_channels_when_unequal_counts", |b| {
+        b.iter(do_map_children_ignores_sibling_channels_when_unequal_counts)
+    });
+    // camera viewport math //
+    c.bench_function("canvas_to_screen_round_trips", |b| {
+        b.iter(do_canvas_to_screen_round_trips)
+    });
+    c.bench_function("screen_to_canvas_identity_at_default", |b| {
+        b.iter(do_screen_to_canvas_identity_at_default)
+    });
+    c.bench_function("zoom_at_preserves_point_under_cursor", |b| {
+        b.iter(do_zoom_at_preserves_point_under_cursor)
+    });
+    c.bench_function("pan_shifts_viewport", |b| b.iter(do_pan_shifts_viewport));
+    c.bench_function("fit_to_bounds_with_single_element", |b| {
+        b.iter(do_fit_to_bounds_with_single_element)
+    });
+    c.bench_function("fit_to_bounds_empty", |b| b.iter(do_fit_to_bounds_empty));
+    c.bench_function("camera_mutation_pan", |b| b.iter(do_camera_mutation_pan));
+    c.bench_function("camera_mutation_zoom", |b| b.iter(do_camera_mutation_zoom));
+    c.bench_function("camera_mutation_set_zoom_clamps_to_bounds", |b| {
+        b.iter(do_camera_mutation_set_zoom_clamps_to_bounds)
+    });
+    c.bench_function("camera_mutation_fit_to_bounds_matches_imperative", |b| {
+        b.iter(do_camera_mutation_fit_to_bounds_matches_imperative)
+    });
+    c.bench_function("camera_mutation_set_position_assigns_directly", |b| {
+        b.iter(do_camera_mutation_set_position_assigns_directly)
+    });
+    // predicates + comparators //
+    c.bench_function("comparator_equal_f32", |b| b.iter(do_comparator_equal_f32));
+    c.bench_function("comparator_not_equal_f32", |b| {
+        b.iter(do_comparator_not_equal_f32)
+    });
+    c.bench_function("comparator_less_than_f32", |b| {
+        b.iter(do_comparator_less_than_f32)
+    });
+    c.bench_function("comparator_greater_than_f32", |b| {
+        b.iter(do_comparator_greater_than_f32)
+    });
+    c.bench_function("comparator_greater_equal_f32", |b| {
+        b.iter(do_comparator_greater_equal_f32)
+    });
+    c.bench_function("comparator_less_equal_f32", |b| {
+        b.iter(do_comparator_less_equal_f32)
+    });
+    c.bench_function("predicate_always_true_matches_anything", |b| {
+        b.iter(do_predicate_always_true_matches_anything)
+    });
+    c.bench_function("predicate_matches_field_value", |b| {
+        b.iter(do_predicate_matches_field_value)
+    });
+    c.bench_function("predicate_text_with_greater_than_degrades_to_false", |b| {
+        b.iter(do_predicate_text_with_greater_than_degrades_to_false)
+    });
+    c.bench_function("predicate_region_this_with_equals_degrades_to_false", |b| {
+        b.iter(do_predicate_region_this_with_equals_degrades_to_false)
+    });
+    c.bench_function("predicate_region_font_with_greater_than_degrades_to_false", |b| {
+        b.iter(do_predicate_region_font_with_greater_than_degrades_to_false)
+    });
+    c.bench_function("predicate_region_color_with_less_than_degrades_to_false", |b| {
+        b.iter(do_predicate_region_color_with_less_than_degrades_to_false)
+    });
+    c.bench_function("predicate_glyph_lines_with_equals_degrades_to_false", |b| {
+        b.iter(do_predicate_glyph_lines_with_equals_degrades_to_false)
+    });
+    c.bench_function(
+        "predicate_glyph_matrix_with_greater_than_degrades_to_false",
+        |b| b.iter(do_predicate_glyph_matrix_with_greater_than_degrades_to_false),
+    );
+    c.bench_function("predicate_glyph_matrix_with_less_than_degrades_to_false", |b| {
+        b.iter(do_predicate_glyph_matrix_with_less_than_degrades_to_false)
+    });
+    c.bench_function("predicate_glyph_area_field_on_void_degrades_to_false", |b| {
+        b.iter(do_predicate_glyph_area_field_on_void_degrades_to_false)
+    });
+    c.bench_function("predicate_flag_equals_matches_set_flag", |b| {
+        b.iter(do_predicate_flag_equals_matches_set_flag)
+    });
+    c.bench_function("predicate_flag_equals_negated_matches_clear_flag", |b| {
+        b.iter(do_predicate_flag_equals_negated_matches_clear_flag)
+    });
+    c.bench_function("predicate_flag_with_greater_than_degrades_to_false", |b| {
+        b.iter(do_predicate_flag_with_greater_than_degrades_to_false)
+    });
+    c.bench_function("predicate_truth_table", |b| b.iter(do_predicate_truth_table));
+    // GfxElement constructors + accessors //
+    c.bench_function("new_area_constructs_glyph_area_variant", |b| {
+        b.iter(do_new_area_constructs_glyph_area_variant)
+    });
+    c.bench_function("new_void_constructs_void_variant", |b| {
+        b.iter(do_new_void_constructs_void_variant)
+    });
+    c.bench_function("flags_accessor_round_trips", |b| {
+        b.iter(do_flags_accessor_round_trips)
+    });
+    c.bench_function("subtree_aabb_set_and_read", |b| {
+        b.iter(do_subtree_aabb_set_and_read)
+    });
+    c.bench_function("subtree_aabb_clone_resets_cache", |b| {
+        b.iter(do_subtree_aabb_clone_resets_cache)
+    });
+    c.bench_function("event_subscribers_add_and_check", |b| {
+        b.iter(do_event_subscribers_add_and_check)
+    });
+    c.bench_function("event_subscribers_observe_dispatched_event", |b| {
+        b.iter(do_event_subscribers_observe_dispatched_event)
+    });
+    c.bench_function("event_subscriber_can_capture_rc_refcell_state", |b| {
+        b.iter(do_event_subscriber_can_capture_rc_refcell_state)
+    });
+    c.bench_function(
+        "event_subscriber_can_mutate_subscriber_list_during_delivery",
+        |b| b.iter(do_event_subscriber_can_mutate_subscriber_list_during_delivery),
+    );
+    // ordered_vec2 //
+    c.bench_function("ordered_vec2_round_trips_through_hashmap", |b| {
+        b.iter(do_ordered_vec2_round_trips_through_hashmap)
+    });
+    c.bench_function("ordered_vec2_distinguishes_close_floats_in_hashset", |b| {
+        b.iter(do_ordered_vec2_distinguishes_close_floats_in_hashset)
     });
     // arena_utils //
     c.bench_function("arena_utils_clone", |b| b.iter(do_clone));
