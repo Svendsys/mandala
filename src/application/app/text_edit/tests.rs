@@ -820,7 +820,7 @@ fn test_lift_anchor_lifts_to_section_range_when_anchor_below_cursor() {
 #[test]
 fn test_lift_anchor_lifts_normalized_range_when_anchor_above_cursor() {
     use super::editor::lift_anchor_to_section_range;
-    use crate::application::document::{GraphemeRange, SelectionState};
+    use crate::application::document::SelectionState;
     let lifted = lift_anchor_to_section_range(Some(7), 3, "node-1", 2).expect("anchor != cursor → lift");
     match lifted {
         SelectionState::SectionRange { grapheme_range, .. } => {

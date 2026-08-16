@@ -2839,7 +2839,6 @@ mod tests {
         assert_load_save_loses_no_authored_key(&source, &saved);
     }
 
-    /// The file
     /// **Every canonical fixture is in canonical form.** Loading a
     /// `maps/*.mindmap.json` fixture and rendering it back through
     /// the editor's own writer must reproduce the file byte for
@@ -2905,6 +2904,7 @@ mod tests {
         );
     }
 
+    /// The file
     /// `test_every_mindmap_write_goes_through_the_contract` proves it
     /// can read past a test gate in: twelve `#[cfg(test)] mod
     /// tests_*;` declarations at line 35, and everything a save path

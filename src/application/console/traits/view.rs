@@ -343,10 +343,11 @@ impl<'a> HandlesCopy for TargetView<'a> {
             // Section: structured payload (`text` to OS clipboard,
             // `payload` to in-process buffer). Empty text still
             // emits `Section` because chrome may carry information.
-            // Range-aware copy: when `range` is set, we fall
-            // back to whole-section copy. The semantic is
-            // safe for copy (non-destructive) but Cut+Paste below
-            // explicitly reject the range to prevent surprise.
+            // Copy deliberately ignores a grapheme `range` and
+            // takes the whole section — non-destructive, so the
+            // coarser scope is safe — while Cut and Paste below
+            // are range-aware and route to `cut_section_range` /
+            // `paste_section_range` when a range is present.
             TargetView::Section {
                 doc, id, section_idx, ..
             } => match doc

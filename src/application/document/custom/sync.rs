@@ -157,10 +157,11 @@ fn sync_section_font_size(
     use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
     let delta = tree_scale - old_scale;
-    // Exact-zero test, not an epsilon: both operands come off the
-    // tree — `old_scale` captured before the mutation, `tree_scale`
-    // read after — so a position-only or color-only mutation leaves
-    // them bit-identical and there is no float noise to absorb.
+    // Exact-zero test, not an epsilon: `old_scale` is the model's
+    // own max-run size (or the runless default), and the forward
+    // builder copies exactly that value into the tree, so a
+    // mutation that didn't touch size hands back a `tree_scale`
+    // bit-identical to it and there is no float noise to absorb.
     // Anything else is a real size change, and fractional deltas
     // are first-class now that `size_pt` is an `f32` (a sub-half-
     // point delta used to be dropped because the integer field
