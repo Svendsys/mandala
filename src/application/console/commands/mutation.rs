@@ -393,6 +393,7 @@ mod tests {
     use super::*;
     use crate::application::source_tier::SourceTier;
     use baumhard::mindmap::custom_mutation::{CustomMutation, TargetScope};
+    use baumhard::util::geometry::almost_equal_f64;
 
     /// Build a fresh doc by loading the testament map, then overwrite
     /// the registry + sources with the supplied fixtures. Routes
@@ -568,8 +569,17 @@ mod tests {
         assert_eq!(doc.undo_stack.len(), before_undo_len + 1);
         assert!(doc.dirty, "dirty flag must be set after apply");
         let after_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-        assert!(
-            (after_x - before_x - 1.0).abs() < 1e-6,
+        // Compared in `f32`, and exactly. The forward path routes the
+        // nudge through the tree, whose coordinates are `f32`, so the
+        // model gets back a widened `f32` — at this fixture's x of
+        // about −179 that is a few times 1e-7 away from the `f64`
+        // arithmetic, which is one f32 ULP of nothing and a thousand
+        // times the `f64` tolerance the undo assertion below can
+        // afford. Measuring the widening instead of the mutation is
+        // what an `f64` ruler would do here.
+        assert_eq!(
+            after_x as f32,
+            (before_x + 1.0) as f32,
             "expected position.x to grow by 1.0 (got {} → {})",
             before_x,
             after_x
@@ -580,8 +590,11 @@ mod tests {
         assert!(popped, "undo must report success");
         assert_eq!(doc.undo_stack.len(), before_undo_len);
         let restored_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+        // The undo *is* an `f64` restore — it writes back the
+        // pre-mutation snapshot rather than re-deriving through the
+        // tree — so here the tight ruler is the right one.
         assert!(
-            (restored_x - before_x).abs() < 1e-6,
+            almost_equal_f64(restored_x, before_x),
             "undo must restore the original position (got {} → {})",
             after_x,
             restored_x

@@ -325,34 +325,60 @@ fn test_factor_square_of_prime() {
 // ── prime panics ──────────────────────────────────────────────────
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "!is_prime(resolution.0)")]
 fn test_prime_x() {
     RegionParams::new(10, (251, 1000));
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "!is_prime(resolution.1)")]
 fn test_prime_y() {
     RegionParams::new(10, (1000, 251));
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "!is_prime(dimensions.0)")]
 fn test_adapt_prime_x() {
     let mut p = RegionParams::new(7, (1000, 1000));
     let _ = p.adapt(10, (241, 1000));
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "!is_prime(dimensions.1)")]
 fn test_adapt_prime_y() {
     let mut p = RegionParams::new(7, (1000, 1000));
     let _ = p.adapt(10, (1000, 251));
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "!is_prime(dimensions.0)")]
 fn test_adapt_prime_both() {
     let mut p = RegionParams::new(7, (1000, 1000));
     let _ = p.adapt(13, (241, 251));
+}
+
+/// The prime guard holds for dimensions above `PRIME_CEILING` too.
+/// A 10,007-pixel canvas is exactly the case it exists to stop — a
+/// prime dimension has only 1 and itself as divisors, so the
+/// closest-divisor search collapses to the degenerate one-region
+/// grid — and until `is_prime` learned to answer above its sieve it
+/// sailed straight through, because the guard was told 10,007 was
+/// composite.
+///
+/// `expected` rather than a bare `#[should_panic]`, on these and on
+/// their sieved-band siblings above: the panic these are about is a
+/// *specific* assertion, and a bare form passes on any panic the
+/// constructor might grow later — including a divide-by-zero in the
+/// very divisor search the guard exists to protect.
+#[test]
+#[should_panic(expected = "!is_prime(resolution.0)")]
+fn test_prime_x_above_the_sieve_ceiling() {
+    RegionParams::new(10, (10_007, 1000));
+}
+
+#[test]
+#[should_panic(expected = "!is_prime(dimensions.1)")]
+fn test_adapt_prime_y_above_the_sieve_ceiling() {
+    let mut p = RegionParams::new(7, (1000, 1000));
+    let _ = p.adapt(10, (1000, 10_007));
 }

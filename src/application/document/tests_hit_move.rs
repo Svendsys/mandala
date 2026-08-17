@@ -10,6 +10,7 @@ use super::*;
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
 use baumhard::mindmap::custom_mutation::{CustomMutation as CM, TargetScope as TS};
 use baumhard::mindmap::tree_builder::INACTIVE_NODE_ALPHA_MULTIPLIER;
+use baumhard::util::geometry::almost_equal_f64;
 use glam::Vec2;
 
 #[test]
@@ -460,13 +461,13 @@ fn test_start_animation_records_instance_without_committing() {
 
     // Model untouched at start.
     let pos_now = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-    assert!((pos_now - orig_x).abs() < 1e-6);
+    assert!(almost_equal_f64(pos_now, orig_x));
 
     // From / to snapshots reflect the nudge (test mutation is
     // NudgeRight(10.0)).
     let inst = &doc.active_animations[0];
-    assert!((inst.from_node.position.x - orig_x).abs() < 1e-6);
-    assert!((inst.to_node.position.x - orig_x - 10.0).abs() < 1e-6);
+    assert!(almost_equal_f64(inst.from_node.position.x, orig_x));
+    assert!(almost_equal_f64(inst.to_node.position.x, orig_x + 10.0));
 }
 
 /// `tick_animations` at the linear midpoint writes the mean of

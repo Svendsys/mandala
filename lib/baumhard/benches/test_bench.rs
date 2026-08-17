@@ -32,7 +32,7 @@ use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
 use baumhard::util::tests::grapheme_chad_tests::*;
 use baumhard::util::tests::ordered_vec2_tests::*;
-use baumhard::util::tests::primes_test::do_primes;
+use baumhard::util::tests::primes_test::{do_is_prime_above_the_sieve_ceiling, do_primes};
 use baumhard::util::tests::rust_source_tests::*;
 use criterion::{criterion_group, criterion_main, Criterion};
 
@@ -858,6 +858,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_aabb_contains_rejects_on_each_axis_independently)
     });
     c.bench_function("almost_equal", |b| b.iter(do_almost_equal));
+    c.bench_function("almost_equal_f64_is_tighter_than_its_f32_sibling", |b| {
+        b.iter(do_almost_equal_f64_is_tighter_than_its_f32_sibling)
+    });
     c.bench_function("almost_equal_vec2", |b| b.iter(do_almost_equal_vec2));
     c.bench_function("is_positive_finite", |b| b.iter(do_is_positive_finite));
     c.bench_function("is_non_negative_finite_f64", |b| {
@@ -1653,6 +1656,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("arena_utils_clone", |b| b.iter(do_clone));
     // primes //
     c.bench_function("primes", |b| b.iter(do_primes));
+    c.bench_function("is_prime_above_the_sieve_ceiling", |b| {
+        b.iter(do_is_prime_above_the_sieve_ceiling)
+    });
 
     // subtree-drag drain at zoom 1 and 30. Caches are warmed outside
     // `iter()` so the first-frame cold miss doesn't dominate the sample.

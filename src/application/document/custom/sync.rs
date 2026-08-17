@@ -547,35 +547,36 @@ impl MindMapDocument {
                 section.offset.y = (snapshot.tree_position.1 - node_pos_y) as f64;
                 changed = true;
             }
-            // Write `section.size` back when the model carries an
-            // explicit size. `None` size means "fill the parent
-            // node", which the tree resolves to the node's full
-            // render_bounds — *don't* eagerly materialize it as
-            // `Some(node.size)`, that would surprise authors who
-            // chose the inheriting shape. Materialize only when the
-            // tree's render_bounds diverges from the node's full
-            // size (i.e. the mutation explicitly resized the
-            // section, or the model already carried a Some).
-            let tree_size_diverges = (snapshot.tree_size.0 - node_size_x).abs() > f32::EPSILON
-                || (snapshot.tree_size.1 - node_size_y).abs() > f32::EPSILON;
-            if section.size.is_some() || tree_size_diverges {
-                // Project the model's current size to f32 (fill-parent
-                // `None` resolves to the node's size, exactly as the
-                // forward path does) and only rewrite when the tree's
-                // post-mutation bounds actually diverge — comparing the
-                // model `f64` against the tree `f32` directly would flag
-                // a phantom change for any non-`f32`-exact size.
-                let (cur_w, cur_h) = match section.size {
-                    Some(s) => (s.width as f32, s.height as f32),
-                    None => (node_size_x, node_size_y),
-                };
-                if cur_w != snapshot.tree_size.0 || cur_h != snapshot.tree_size.1 {
-                    section.size = Some(baumhard::mindmap::model::Size {
-                        width: snapshot.tree_size.0 as f64,
-                        height: snapshot.tree_size.1 as f64,
-                    });
-                    changed = true;
-                }
+            // Write `section.size` back when the tree's post-mutation
+            // bounds differ from what the model already says. `None`
+            // size means "fill the parent node", which the tree
+            // resolves to the node's full render_bounds — *don't*
+            // eagerly materialize it as `Some(node.size)`, that would
+            // surprise authors who chose the inheriting shape. So the
+            // `None` case compares against the node's own size, which
+            // is what the forward path drew, and only a mutation that
+            // actually resized the section pins one.
+            //
+            // Compare in f32 space, exactly, for the same reason the
+            // position writeback above does: the tree carries f32 and
+            // the model f64, so a raw f64 compare would flag a phantom
+            // change for any size that is not f32-exact. This used to
+            // ask the question twice — an outer guard spelling it
+            // `.abs() > f32::EPSILON` and this exact `!=` — which for
+            // a run-less `None` section are the *same* predicate in
+            // two spellings that disagree below one ULP, and which for
+            // a `Some` section short-circuited before the outer one
+            // was consulted at all. One question, asked once.
+            let (cur_w, cur_h) = match section.size {
+                Some(s) => (s.width as f32, s.height as f32),
+                None => (node_size_x, node_size_y),
+            };
+            if cur_w != snapshot.tree_size.0 || cur_h != snapshot.tree_size.1 {
+                section.size = Some(baumhard::mindmap::model::Size {
+                    width: snapshot.tree_size.0 as f64,
+                    height: snapshot.tree_size.1 as f64,
+                });
+                changed = true;
             }
 
             // Selective gate: tree-side state matches the model

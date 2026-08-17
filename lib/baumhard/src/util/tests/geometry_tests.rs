@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::util::geometry::{
-    aabb_contains, almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot,
+    aabb_contains, almost_equal, almost_equal_f64, almost_equal_vec2, clockwise_rotation_around_pivot,
     is_non_negative_finite_f64, is_positive_finite, option_almost_equal, pixel_greater_or_equal,
     pixel_greater_than, pixel_less_or_equal, pixel_lesser_than,
 };
@@ -294,4 +294,51 @@ pub fn do_aabb_contains_rejects_on_each_axis_independently() {
         !aabb_contains(Vec2::new(2.0, 8.0), max, min),
         "an inverted box contains nothing, including its own former interior"
     );
+}
+
+#[test]
+fn test_almost_equal_f64_is_tighter_than_its_f32_sibling() {
+    do_almost_equal_f64_is_tighter_than_its_f32_sibling();
+}
+
+/// [`almost_equal_f64`] exists because [`almost_equal`]'s `1e-5` is
+/// sized for `f32`'s mantissa and would call two `f64` canvas
+/// coordinates equal when they are two hundred ULPs apart. The
+/// middle assertion is the whole reason for the second predicate,
+/// and it doubles as the control: a difference of `1e-7` must be
+/// *invisible* to the f32 ruler and *visible* to this one, or one
+/// of the two is redundant.
+///
+/// The boundary is inclusive: exactly `1e-9` apart is equal, twice
+/// that is not. The input that makes the first fail is a strict
+/// `<`; the input that makes the second fail is any looser epsilon,
+/// `1e-6` included, which is what the migrated call sites used to
+/// hand-roll.
+///
+/// NaN is never equal to anything, itself included — the comparison
+/// is on `(a - b).abs()`, and every ordering against NaN is false,
+/// so this needs no guard of its own and a future rewrite that adds
+/// one has to keep the answer.
+pub fn do_almost_equal_f64_is_tighter_than_its_f32_sibling() {
+    // Written against zero so the difference is the literal itself:
+    // `1.0 + 1e-9` does not round to a number exactly `1e-9` above
+    // `1.0`, and a boundary test whose boundary is approximate is
+    // testing the rounding.
+    assert!(almost_equal_f64(0.0, 1e-9), "the tolerance is inclusive");
+    assert!(almost_equal_f64(-4096.5, -4096.5));
+    assert!(!almost_equal_f64(0.0, 2e-9));
+
+    let drift = 1e-7;
+    assert!(
+        almost_equal(1.0f32, 1.0f32 + drift as f32),
+        "the f32 ruler must not see a drift this small, or the f64 one adds nothing"
+    );
+    assert!(
+        !almost_equal_f64(1.0, 1.0 + drift),
+        "the f64 ruler must see a drift the f32 one cannot"
+    );
+
+    assert!(!almost_equal_f64(f64::NAN, f64::NAN));
+    assert!(!almost_equal_f64(f64::NAN, 0.0));
+    assert!(!almost_equal_f64(f64::INFINITY, f64::INFINITY));
 }

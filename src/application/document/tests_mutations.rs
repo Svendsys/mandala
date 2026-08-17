@@ -7,6 +7,8 @@
 use super::tests_common::{first_testament_node_id, load_test_doc, TestNudgeMutation};
 use super::*;
 
+use baumhard::util::geometry::almost_equal_f64;
+
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
 use baumhard::mindmap::custom_mutation::{
     CustomMutation as CM, DocumentAction, MutationBehavior as MB, PlatformContext as PC, TargetScope as TS,
@@ -729,6 +731,87 @@ fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
     assert!(
         (area.position.x.0 - expected).abs() < 1e-3,
         "post-rebuild section position should reflect persisted offset"
+    );
+}
+
+/// `section.size` is materialized when a `SectionsOnly` mutation
+/// actually resizes a section, and left alone when one does not.
+///
+/// Both halves matter, and they are why the writeback asks its
+/// question the way it does. `None` is the model's spelling for
+/// "fill the parent node", so a mutation that moves a section
+/// without resizing it must leave `None` in place — pinning
+/// `Some(node.size)` there would convert an inheriting section into
+/// a fixed one, and the next node resize would leave it behind. A
+/// mutation that does resize must pin the new bounds, or the change
+/// evaporates on the next rebuild-from-model.
+///
+/// The inputs that make each half fail are the two ways the
+/// condition can be got wrong: a writeback that never fires leaves
+/// the resized section at `None` (first half red), and one that
+/// fires unconditionally pins a size onto the translated section
+/// (second half red). The translate case uses the same nudge the
+/// offset-persistence test above does, so its section demonstrably
+/// *did* change — an inert mutation would satisfy the second half
+/// for the wrong reason.
+#[test]
+fn test_sync_node_from_tree_pins_section_size_only_on_a_real_resize() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
+
+    let sections_only = |id: &str, command: GlyphAreaCommand| CustomMutation {
+        id: id.into(),
+        name: id.into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(command)])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+
+    // A resize pins the new bounds.
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&nid).unwrap().sections[0].size = None;
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(
+        &sections_only("resize", GlyphAreaCommand::SetBounds(321.0, 123.0)),
+        &nid,
+        Some(&mut tree),
+    );
+    let pinned = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
+        .size
+        .clone()
+        .expect("a resized section must pin the bounds it was resized to");
+    assert!(
+        (pinned.width - 321.0).abs() < 1e-3 && (pinned.height - 123.0).abs() < 1e-3,
+        "pinned size {pinned:?} is not the size the mutation set"
+    );
+
+    // A translate leaves the fill-parent shape alone.
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&nid).unwrap().sections[0].size = None;
+    let before_offset_x = doc.mindmap.nodes.get(&nid).unwrap().sections[0].offset.x;
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(
+        &sections_only("translate", GlyphAreaCommand::NudgeRight(13.0)),
+        &nid,
+        Some(&mut tree),
+    );
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[0];
+    assert!(
+        (section.offset.x - before_offset_x - 13.0).abs() < 1e-3,
+        "the fixture must actually move the section, or the size assertion below proves nothing"
+    );
+    assert!(
+        section.size.is_none(),
+        "a translate must not pin a size onto a fill-parent section; got {:?}",
+        section.size
     );
 }
 
@@ -1857,7 +1940,7 @@ fn test_tick_completion_live_tree_relative_no_double_apply() {
     assert!(doc.undo());
     let after_undo = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
     assert!(
-        (after_undo - orig_x).abs() < 1e-6,
+        almost_equal_f64(after_undo, orig_x),
         "undo after an animated mutation must restore the exact pre-animation position; \
          got {after_undo}, expected {orig_x}",
     );
@@ -1924,7 +2007,7 @@ fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
     assert!(doc.undo());
     let after = doc.mindmap.nodes.get(&node_id).unwrap().position;
     assert!(
-        (after.x - orig.x).abs() < 1e-6 && (after.y - orig.y).abs() < 1e-6,
+        almost_equal_f64(after.x, orig.x) && almost_equal_f64(after.y, orig.y),
         "undo of an animated absolute mutation must restore the pre-animation position; \
          got ({}, {}), expected ({}, {})",
         after.x,
@@ -2041,7 +2124,7 @@ fn test_tick_completion_no_tree_noop_pushes_no_undo() {
 
     let after = doc.mindmap.nodes.get(&node_id).unwrap().position;
     assert!(
-        (after.x - orig.x).abs() < 1e-9 && (after.y - orig.y).abs() < 1e-9,
+        almost_equal_f64(after.x, orig.x) && almost_equal_f64(after.y, orig.y),
         "no-tree absolute completion is inert (to == from); got ({}, {})",
         after.x,
         after.y,

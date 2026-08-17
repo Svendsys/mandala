@@ -27,6 +27,26 @@ pub fn almost_equal(a: f32, b: f32) -> bool {
     (a - b).abs() <= ERROR_TOLERANCE_ALMOST_EQUAL
 }
 
+/// `|a - b| <= 1e-9`. The f64 counterpart of [`almost_equal`], for
+/// the model-space coordinates that are `f64` — `MindNode.position`,
+/// `MindNode.size`, `MindSection.offset` — where "did this land
+/// back where it started?" is the question and raw `==` answers it
+/// only by luck.
+///
+/// The tolerance is chosen from both ends. Below it: an f64 ULP at
+/// canvas magnitudes is around `1e-13`, so `1e-9` absorbs a few
+/// thousand roundings of accumulated translate / rotate arithmetic
+/// without ever calling two genuinely different coordinates equal.
+/// Above it: `1e-9` canvas units is nine decades below one pixel,
+/// so nothing this predicate treats as equal could be drawn apart.
+/// Deliberately tighter than [`almost_equal`]'s `1e-5`, which is
+/// sized for `f32`'s far coarser mantissa.
+///
+/// Cost: O(1).
+pub fn almost_equal_f64(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-9
+}
+
 /// `true` iff `f` is a non-NaN, non-infinite, strictly-positive
 /// `f32`. The canonical predicate for "is this a valid pixel /
 /// zoom / scale / font-size value coming from user input?" —
