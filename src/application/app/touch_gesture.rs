@@ -43,9 +43,10 @@
 //! `Idle ↔ OneFinger ↔ TwoFingers` with two emit points: the
 //! long-press timer (fires once per OneFinger episode at
 //! `started_at + LONG_PRESS_MS` if no movement past
-//! `MOVE_THRESHOLD_PX`); the two-finger-drag movement check
-//! (fires every frame while in TwoFingers and the centroid has
-//! moved past `MOVE_THRESHOLD_PX` since the last emission).
+//! `POINTER_DRAG_THRESHOLD_PX`); the two-finger-drag movement
+//! check (fires every frame while in TwoFingers and the centroid
+//! has moved past `POINTER_DRAG_THRESHOLD_PX` since the last
+//! emission).
 //!
 //! ## Why a typed-emission API rather than synthetic mouse events
 //!
@@ -65,6 +66,7 @@
 //! action_for_gesture` → `dispatch_action`. The recognition is
 //! the only new step; the dispatch chain is unchanged.
 
+use super::POINTER_DRAG_THRESHOLD_SQ_PX;
 use crate::application::keybinds::MouseGesture;
 use std::time::Duration;
 use web_time::Instant;
@@ -76,13 +78,6 @@ use web_time::Instant;
 /// longer than this and the gesture feels sluggish.
 pub const LONG_PRESS_MS: u64 = 350;
 
-/// Movement past this many logical pixels cancels the long-press
-/// candidate (the user is dragging, not holding) and serves as
-/// the emit threshold for the two-finger-drag centroid. Mirrors
-/// the existing mouse drag threshold in `event_cursor_moved.rs`
-/// (see `DRAG_THRESHOLD_SQ` there) — same value, same intent.
-pub const MOVE_THRESHOLD_PX: f64 = 4.0;
-
 /// What the recogniser's `ingest` / `tick` returns when a
 /// gesture is identified. Cursor pos is in logical pixels (the
 /// same coordinate space `WindowEvent::CursorMoved` reports), so
@@ -91,12 +86,15 @@ pub const MOVE_THRESHOLD_PX: f64 = 4.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RecognizedGesture {
     /// One finger held in place for [`LONG_PRESS_MS`]ms with
-    /// movement under [`MOVE_THRESHOLD_PX`] px. The runtime
+    /// movement under
+    /// [`POINTER_DRAG_THRESHOLD_PX`](super::POINTER_DRAG_THRESHOLD_PX) px.
+    /// The runtime
     /// dispatches the binding for [`MouseGesture::LongPress`]
     /// at `pos`.
     LongPress { pos: (f64, f64) },
     /// Two fingers down with the centroid travelling past
-    /// [`MOVE_THRESHOLD_PX`] since the last emission. Emitted
+    /// [`POINTER_DRAG_THRESHOLD_PX`](super::POINTER_DRAG_THRESHOLD_PX)
+    /// since the last emission. Emitted
     /// repeatedly while the user is moving the two fingers
     /// (one emission per "drag step"). The runtime updates
     /// `ctx.cursor_pos` to the centroid before dispatching the
@@ -155,7 +153,9 @@ struct FingerTrack {
     started_pos: (f64, f64),
     current_pos: (f64, f64),
     /// Set true on the first `Moved` event whose distance from
-    /// `started_pos` exceeds [`MOVE_THRESHOLD_PX`]. Cancels the
+    /// `started_pos` exceeds
+    /// [`POINTER_DRAG_THRESHOLD_PX`](super::POINTER_DRAG_THRESHOLD_PX).
+    /// Cancels the
     /// long-press timer; doesn't otherwise affect TwoFingers
     /// behaviour. Sticky — once true stays true for the
     /// finger's lifetime.
@@ -173,10 +173,17 @@ impl FingerTrack {
         }
     }
 
-    fn update_pos(&mut self, pos: (f64, f64)) {
+    /// `move_threshold_sq` is the *squared* travel budget — the
+    /// caller's, not the module constant's, so the recognizer's
+    /// test constructor reaches this latch as well as the centroid
+    /// check. It used to read the constant directly, which left
+    /// `TouchGestureRecognizer::with_thresholds` half-honored:
+    /// a test could loosen the two-finger step and not the
+    /// long-press cancel.
+    fn update_pos(&mut self, pos: (f64, f64), move_threshold_sq: f64) {
         self.current_pos = pos;
         let (dx, dy) = (pos.0 - self.started_pos.0, pos.1 - self.started_pos.1);
-        if (dx * dx + dy * dy).sqrt() > MOVE_THRESHOLD_PX {
+        if dx * dx + dy * dy > move_threshold_sq {
             self.has_moved = true;
         }
     }
@@ -198,7 +205,8 @@ enum State {
     },
     /// Two fingers tracked; two-finger-drag candidate. Emits one
     /// `TwoFingerDrag` per "drag step" (centroid moves more than
-    /// [`MOVE_THRESHOLD_PX`] from `last_emit_centroid`). The
+    /// [`POINTER_DRAG_THRESHOLD_PX`](super::POINTER_DRAG_THRESHOLD_PX)
+    /// from `last_emit_centroid`). The
     /// initial centroid at second-finger-down is recorded as
     /// `last_emit_centroid` so the first emission requires
     /// actual movement (not just second-finger landing).
@@ -219,9 +227,11 @@ pub struct TouchGestureRecognizer {
     /// Long-press threshold, configurable for tests. Default
     /// [`LONG_PRESS_MS`].
     long_press: Duration,
-    /// Movement threshold for both long-press cancellation and
-    /// two-finger-drag emission. Configurable for tests.
-    move_threshold: f64,
+    /// Squared movement threshold for both long-press cancellation
+    /// and two-finger-drag emission. Configurable for tests.
+    /// Squared so neither emit point pays a `sqrt` per motion
+    /// event, matching the mouse arms in `event_cursor_moved.rs`.
+    move_threshold_sq: f64,
 }
 
 impl Default for TouchGestureRecognizer {
@@ -236,18 +246,20 @@ impl TouchGestureRecognizer {
         Self {
             state: State::Idle,
             long_press: Duration::from_millis(LONG_PRESS_MS),
-            move_threshold: MOVE_THRESHOLD_PX,
+            move_threshold_sq: POINTER_DRAG_THRESHOLD_SQ_PX,
         }
     }
 
     /// Test-only constructor. Lets the state-machine tests pin
     /// timing without sleeping for 350ms per case.
+    /// `move_threshold_px` is linear (a test says "four pixels",
+    /// not "sixteen"); it is squared here, once, at construction.
     #[cfg(test)]
-    pub(crate) fn with_thresholds(long_press: Duration, move_threshold: f64) -> Self {
+    pub(crate) fn with_thresholds(long_press: Duration, move_threshold_px: f64) -> Self {
         Self {
             state: State::Idle,
             long_press,
-            move_threshold,
+            move_threshold_sq: move_threshold_px * move_threshold_px,
         }
     }
 
@@ -350,12 +362,12 @@ impl TouchGestureRecognizer {
     }
 
     fn on_moved(&mut self, id: u64, pos: (f64, f64)) -> Option<RecognizedGesture> {
-        let move_threshold = self.move_threshold;
+        let move_threshold_sq = self.move_threshold_sq;
         match &mut self.state {
             State::Idle => None,
             State::OneFinger { track, .. } => {
                 if track.id == id {
-                    track.update_pos(pos);
+                    track.update_pos(pos, move_threshold_sq);
                 }
                 None
             }
@@ -365,9 +377,9 @@ impl TouchGestureRecognizer {
                 last_emit_centroid,
             } => {
                 if primary.id == id {
-                    primary.update_pos(pos);
+                    primary.update_pos(pos, move_threshold_sq);
                 } else if secondary.id == id {
-                    secondary.update_pos(pos);
+                    secondary.update_pos(pos, move_threshold_sq);
                 } else {
                     return None;
                 }
@@ -376,7 +388,7 @@ impl TouchGestureRecognizer {
                     centroid.0 - last_emit_centroid.0,
                     centroid.1 - last_emit_centroid.1,
                 );
-                if (dx * dx + dy * dy).sqrt() > move_threshold {
+                if dx * dx + dy * dy > move_threshold_sq {
                     *last_emit_centroid = centroid;
                     return Some(RecognizedGesture::TwoFingerDrag { pos: centroid });
                 }
@@ -433,6 +445,7 @@ fn midpoint(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::app::POINTER_DRAG_THRESHOLD_PX;
 
     /// Test thresholds. Tight long-press (10ms) so tests don't
     /// sleep; same move threshold as production so distance math
@@ -440,7 +453,7 @@ mod tests {
     const TEST_LONG_PRESS: Duration = Duration::from_millis(10);
 
     fn r() -> TouchGestureRecognizer {
-        TouchGestureRecognizer::with_thresholds(TEST_LONG_PRESS, MOVE_THRESHOLD_PX)
+        TouchGestureRecognizer::with_thresholds(TEST_LONG_PRESS, POINTER_DRAG_THRESHOLD_PX)
     }
 
     fn t0() -> Instant {
@@ -471,7 +484,7 @@ mod tests {
         let mut rec = r();
         let t = t0();
         rec.ingest(Phase::Started, 1, (100.0, 200.0), t);
-        // Move 10px (well past 4px threshold).
+        // Move 10px (well past the 5px threshold).
         rec.ingest(Phase::Moved, 1, (110.0, 200.0), t + Duration::from_millis(2));
         // Tick past threshold — must not fire.
         assert!(rec.tick(t + Duration::from_millis(15)).is_none());
@@ -484,7 +497,7 @@ mod tests {
         let mut rec = r();
         let t = t0();
         rec.ingest(Phase::Started, 1, (100.0, 200.0), t);
-        // 2px move — under 4px threshold.
+        // 2px move — under the 5px threshold.
         rec.ingest(Phase::Moved, 1, (102.0, 200.0), t + Duration::from_millis(2));
         let g = rec
             .tick(t + Duration::from_millis(15))
@@ -616,7 +629,7 @@ mod tests {
         assert!(g_third.is_none(), "third-finger move must not emit");
         // Move primary; centroid moves enough to fire.
         let g_primary = rec.ingest(Phase::Moved, 1, (120.0, 100.0), t);
-        // (120 + 200) / 2 = 160; was 150 → 10px shift > 4px.
+        // (120 + 200) / 2 = 160; was 150 → 10px shift > 5px.
         assert_eq!(
             g_primary,
             Some(RecognizedGesture::TwoFingerDrag { pos: (160.0, 100.0) })
@@ -673,5 +686,85 @@ mod tests {
             .tick(t + Duration::from_millis(15))
             .expect("LongPress despite untracked Moved");
         assert_eq!(g, RecognizedGesture::LongPress { pos: (100.0, 100.0) });
+    }
+    /// A finger and a mouse promote to a drag after exactly the
+    /// same travel. The reference distance is read back out of
+    /// [`POINTER_DRAG_THRESHOLD_SQ_PX`] — the number the mouse arms
+    /// in `event_cursor_moved.rs` actually compare against — and
+    /// driven through a *production* [`TouchGestureRecognizer`], so
+    /// the assertion spans both sides of the constant rather than
+    /// restating it.
+    ///
+    /// The input that makes it fail is the shape this replaced: a
+    /// touch-local `MOVE_THRESHOLD_PX = 4.0`. A 4.99px centroid
+    /// step is inside the mouse's budget and outside that one, so
+    /// the first assertion fires. Re-inlining `25.0` on the mouse
+    /// side and leaving the linear constant at 5.0 fails the same
+    /// way from the other direction.
+    #[test]
+    fn test_pointer_drag_threshold_is_shared_by_touch_and_mouse() {
+        let budget_px = POINTER_DRAG_THRESHOLD_SQ_PX.sqrt();
+        // Centroid of two fingers moves half as far as one finger,
+        // so a `2 * d` finger step is a `d` centroid step.
+        let under = 2.0 * (budget_px - 0.01);
+        let over = 2.0 * (budget_px + 0.01);
+        let t = t0();
+
+        let mut rec = TouchGestureRecognizer::new();
+        rec.ingest(Phase::Started, 1, (0.0, 0.0), t);
+        rec.ingest(Phase::Started, 2, (100.0, 0.0), t);
+        assert!(
+            rec.ingest(Phase::Moved, 1, (under, 0.0), t).is_none(),
+            "a centroid step of {} px is inside the {budget_px}px pointer budget \
+             and must not emit a drag",
+            budget_px - 0.01
+        );
+
+        let mut rec = TouchGestureRecognizer::new();
+        rec.ingest(Phase::Started, 1, (0.0, 0.0), t);
+        rec.ingest(Phase::Started, 2, (100.0, 0.0), t);
+        assert_eq!(
+            rec.ingest(Phase::Moved, 2, (100.0 + over, 0.0), t),
+            Some(RecognizedGesture::TwoFingerDrag {
+                pos: (50.0 + budget_px + 0.01, 0.0)
+            }),
+            "a centroid step of {} px is outside the {budget_px}px pointer budget \
+             and must emit a drag",
+            budget_px + 0.01
+        );
+    }
+
+    /// The long-press cancel latch reads the recognizer's own
+    /// threshold, not the module constant. Both directions are
+    /// exercised on the one path: a loosened budget must let a
+    /// 10px drift keep the candidate alive, and a tightened one
+    /// must kill it at 2px.
+    ///
+    /// The input that makes it fail is the shape this replaced,
+    /// where `FingerTrack::update_pos` compared against the
+    /// module constant directly: the loose case then cancels at
+    /// 10px and the first assertion fires, leaving
+    /// `TouchGestureRecognizer::with_thresholds` half-honored —
+    /// it configured the two-finger step and not this one.
+    #[test]
+    fn test_long_press_cancel_honors_the_configured_move_threshold() {
+        let t = t0();
+
+        let mut loose = TouchGestureRecognizer::with_thresholds(TEST_LONG_PRESS, 40.0);
+        loose.ingest(Phase::Started, 1, (100.0, 200.0), t);
+        loose.ingest(Phase::Moved, 1, (110.0, 200.0), t + Duration::from_millis(2));
+        assert_eq!(
+            loose.tick(t + Duration::from_millis(15)),
+            Some(RecognizedGesture::LongPress { pos: (110.0, 200.0) }),
+            "a 10px drift is inside a 40px move budget; the candidate must survive it"
+        );
+
+        let mut tight = TouchGestureRecognizer::with_thresholds(TEST_LONG_PRESS, 1.0);
+        tight.ingest(Phase::Started, 1, (100.0, 200.0), t);
+        tight.ingest(Phase::Moved, 1, (102.0, 200.0), t + Duration::from_millis(2));
+        assert!(
+            tight.tick(t + Duration::from_millis(15)).is_none(),
+            "a 2px drift is outside a 1px move budget; the candidate must be cancelled"
+        );
     }
 }

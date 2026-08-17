@@ -2692,9 +2692,12 @@ Tasks (status post-Batch-7 ship):
       `src/application/app/touch_gesture.rs`. Pure state
       machine: `Idle` ↔ `OneFinger` ↔ `TwoFingers`; long-press
       timer fires from `tick(now)`; two-finger-drag emits per
-      `MOVE_THRESHOLD_PX` centroid step. `LONG_PRESS_MS = 350`
-      (matches iOS / Android conventions); `MOVE_THRESHOLD_PX
-      = 4.0` (matches the existing mouse drag threshold).
+      `POINTER_DRAG_THRESHOLD_PX` centroid step. `LONG_PRESS_MS
+      = 350` (matches iOS / Android conventions). The move
+      threshold landed as a touch-local `MOVE_THRESHOLD_PX = 4.0`
+      claiming to match the mouse drag threshold, which was 5.0;
+      #46 replaced both with the one `POINTER_DRAG_THRESHOLD_PX
+      = 5.0` in `app/mod.rs`.
       Test-only `with_thresholds` constructor for state-machine
       tests so they don't sleep 350ms per case.
 - [x] Native `WindowEvent::Touch` arm in `run_native.rs:454-462`
@@ -2911,7 +2914,7 @@ The remainder are deferred here:
       LONG_PRESS_MS)` on native or `setTimeout` on WASM.
 - [ ] **Touch coordinate-space drift** (touch deep-dive HIGH):
       `winit::Touch.location` is `PhysicalPosition<f64>` but
-      `MOVE_THRESHOLD_PX = 4.0` is doc-claimed as logical pixels.
+      `POINTER_DRAG_THRESHOLD_PX` is doc-claimed as logical pixels.
       On a 2x retina device the threshold is effectively ~2
       logical px; on iPhone ~1.3 logical px. Either divide by
       `window.scale_factor()` before ingest or rename the
@@ -2926,10 +2929,12 @@ The remainder are deferred here:
       latched OneFinger state; treat `Phase::Cancelled` (winit) as
       `reset()`-equivalent for the affected finger rather than
       collapsing into `Phase::Ended`.
-- [ ] **Touch `sqrt` on input hot path** (touch deep-dive MEDIUM
-      + CONVENTIONS violation): `update_pos` does
-      `(dx*dx+dy*dy).sqrt() > MOVE_THRESHOLD_PX`; should be
-      `dx*dx+dy*dy > MOVE_THRESHOLD_PX*MOVE_THRESHOLD_PX`.
+- [x] **Touch `sqrt` on input hot path** (touch deep-dive MEDIUM
+      + CONVENTIONS violation): `update_pos` did
+      `(dx*dx+dy*dy).sqrt() > MOVE_THRESHOLD_PX`. Both touch emit
+      points now compare squared against
+      `POINTER_DRAG_THRESHOLD_SQ_PX`, the same form the mouse arms
+      use (#46).
 - [ ] **Touch demote latch overcorrects** (touch deep-dive MEDIUM):
       "two fingers down, lift one quickly, hold survivor 350ms" is
       plausibly long-press intent but currently latches

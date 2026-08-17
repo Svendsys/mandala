@@ -165,7 +165,7 @@ pub(super) fn handle_cursor_moved(
             } = &mut **press;
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
-            if dist_x * dist_x + dist_y * dist_y > super::DRAG_THRESHOLD_SQ_PX {
+            if dist_x * dist_x + dist_y * dist_y > super::POINTER_DRAG_THRESHOLD_SQ_PX {
                 // Past threshold — promote `Pending` to the
                 // appropriate drag variant. At most one of
                 // `hit_edge_label` / `hit_portal_label` is set
@@ -611,7 +611,7 @@ pub(super) fn handle_cursor_moved(
         } => {
             // Threshold-cross arm for the right-button fast-resize
             // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
-            // Same `DRAG_THRESHOLD_SQ_PX` as the left-button arm
+            // Same `POINTER_DRAG_THRESHOLD_SQ_PX` as the left-button arm
             // above. The DispatchHit carries the **press-time**
             // canvas position and hit (not the threshold-cross
             // values) so anchor inference fires from "where the
@@ -620,7 +620,7 @@ pub(super) fn handle_cursor_moved(
             // continuously".
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
-            if dist_x * dist_x + dist_y * dist_y <= super::DRAG_THRESHOLD_SQ_PX {
+            if dist_x * dist_x + dist_y * dist_y <= super::POINTER_DRAG_THRESHOLD_SQ_PX {
                 return;
             }
             // Look up the bound action via `action_for_gesture` so a

@@ -142,18 +142,30 @@ const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 #[cfg(not(target_arch = "wasm32"))]
 const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
 
-/// Minimum cursor travel (squared screen-pixel distance) before
-/// a `Pending` / `PendingRight` press promotes to its respective
-/// drag gesture. The 5px threshold (squared = 25.0) splits "this
+/// Minimum pointer travel (logical pixels) before a press stops
+/// reading as a click and starts reading as a drag. Splits "this
 /// was a click" from "this is a drag" — small enough that
 /// intentional drags engage immediately, large enough that
-/// trembling fingers don't accidentally start a drag-to-move
-/// from a click. Used by both threshold-cross arms in
-/// `event_cursor_moved.rs` (left-button `Pending` and right-
-/// button `PendingRight`); single source so a future tweak
-/// doesn't drift between the two arms.
-#[cfg(not(target_arch = "wasm32"))]
-const DRAG_THRESHOLD_SQ_PX: f64 = 25.0;
+/// trembling fingers don't accidentally start a drag-to-move from
+/// a click.
+///
+/// **One threshold for every pointer**, mouse and finger alike:
+/// the mouse arms in `event_cursor_moved.rs` (left-button
+/// `Pending` and right-button `PendingRight`) and both emit points
+/// of [`touch_gesture::TouchGestureRecognizer`] (the long-press
+/// cancel and the two-finger centroid step) compare against
+/// [`POINTER_DRAG_THRESHOLD_SQ_PX`] below. The touch recognizer
+/// used to carry its own `MOVE_THRESHOLD_PX = 4.0` under a comment
+/// claiming it mirrored this one at the same value; it did not,
+/// and a finger consequently promoted to a drag a pixel earlier
+/// than a mouse did.
+const POINTER_DRAG_THRESHOLD_PX: f64 = 5.0;
+
+/// [`POINTER_DRAG_THRESHOLD_PX`] squared — the form every
+/// comparison actually uses, so no pointer path pays a `sqrt` per
+/// motion event. Derived rather than written out so the two cannot
+/// drift.
+const POINTER_DRAG_THRESHOLD_SQ_PX: f64 = POINTER_DRAG_THRESHOLD_PX * POINTER_DRAG_THRESHOLD_PX;
 
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)

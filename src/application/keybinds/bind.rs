@@ -94,9 +94,10 @@ pub enum MouseGesture {
     /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.6 — long-press is
     /// the touch peer of the keyboard's `r` for entering Resize
     /// mode on the selected target. The "no significant movement"
-    /// half is the cancel rule: any drag past `MOVE_THRESHOLD_PX`
-    /// (~4 logical pixels) before the timer fires aborts the
-    /// long-press candidate.
+    /// half is the cancel rule: any drag past
+    /// `POINTER_DRAG_THRESHOLD_PX` (5 logical pixels — the same
+    /// budget a mouse press gets before it promotes to a drag)
+    /// before the timer fires aborts the long-press candidate.
     #[strum(serialize = "longpress")]
     LongPress,
     /// Touch: two fingers down with the midpoint travelling past
