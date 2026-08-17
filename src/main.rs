@@ -67,3 +67,80 @@ fn main() {
     let app = Application::new(create_options());
     app.run();
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// Every `.mindmap.json` in `maps/` is named by a `copy-file`
+    /// entry in the browser shell, and nothing else in that
+    /// directory is.
+    ///
+    /// The shell used to ship the whole directory with `copy-dir
+    /// ../maps`, which put `testament.mind` — a 1 MB 7z miMind
+    /// archive no browser code can open — into every bundle. Naming
+    /// the fixtures one by one fixes that and creates the opposite
+    /// hazard: a fixture added to `maps/` and not to the shell is
+    /// simply absent from the bundle, and `?map=` on it 404s with
+    /// nothing at build time to say why. This is the check that
+    /// closes both directions at once.
+    ///
+    /// Fails when: a `.mindmap.json` is added to `maps/` and not to
+    /// `web/index.html`; when an entry names a file that is not
+    /// there; or when `copy-dir` comes back, since the directory
+    /// walk would then be shipping the archive again while every
+    /// per-file assertion still passed.
+    ///
+    /// Reads the two sides independently — the filesystem and the
+    /// HTML text — so neither can be derived from the other.
+    #[test]
+    fn test_every_shipped_map_reaches_the_browser_bundle() {
+        let shell = std::fs::read_to_string(repo_root().join("web/index.html"))
+            .expect("the browser shell must be readable");
+
+        assert!(
+            !shell.contains(r#"rel="copy-dir""#),
+            "a `copy-dir` in the shell ships whatever is in the directory, including the              1 MB `.mind` archive; name the fixtures instead"
+        );
+
+        let on_disk: BTreeSet<String> = std::fs::read_dir(repo_root().join("maps"))
+            .expect("maps/ must be readable")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".mindmap.json"))
+            .collect();
+        assert!(
+            !on_disk.is_empty(),
+            "no fixtures found in maps/, so this test would pass over an empty set"
+        );
+
+        let shipped: BTreeSet<String> = shell
+            .lines()
+            .filter(|line| line.contains(r#"rel="copy-file""#))
+            .filter_map(|line| line.split("href=\"../maps/").nth(1))
+            .filter_map(|rest| rest.split('"').next())
+            .map(|name| name.to_string())
+            .collect();
+
+        assert_eq!(
+            shipped, on_disk,
+            "web/index.html and maps/ disagree about what the browser build ships"
+        );
+
+        // The default the browser falls back to when `?map=` is
+        // absent has to be one of them, or a bare page load 404s.
+        let default_name = super::DEFAULT_MINDMAP
+            .rsplit('/')
+            .next()
+            .expect("DEFAULT_MINDMAP names a file");
+        assert!(
+            shipped.contains(default_name),
+            "the default map {default_name:?} must be in the bundle; shipped: {shipped:?}"
+        );
+    }
+}
