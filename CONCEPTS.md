@@ -2710,6 +2710,46 @@ role), and the per-role methods on
 the two resize-handle updaters — each callable on its own so a
 caller refreshes only what its interaction can change.
 
+**`RebuildTier` names the top two rather than running them.**
+`RebuildTier::{All, SceneOnly}` is the choice between the first
+two as a value, with `execute` as the only place either is
+actually called. The reason is the same one
+[`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
+the drag-release path: both tiers need `&mut Renderer`, so an
+interaction that *decides* a tier could not be tested at all
+while deciding and performing were one statement (TEST_CONVENTIONS
+§T8 keeps live wgpu out of the harness). Handing the decision back
+as a value is what lets a test ask which tier a given interaction
+picks.
+
+Two constructors carry the rules:
+
+- `for_selection_change(prev, new)` — `All` when either side is a
+  node-ish selection (`Single` / `Multi` / `Section` /
+  `MultiSection` / `SectionRange`), because section-area
+  highlights are stamped into the node tree's
+  `ColorFontRegions`; `SceneOnly` when both are edge-adjacent and
+  only the scene-level cascade moves.
+  `rebuild_after_selection_change` is this constructor plus
+  `execute`, and stays the one-liner for callers with nothing
+  else to weigh.
+- `for_click(triggers_fired, prev, new)` — the same, except a
+  fired `OnClick` trigger forces `All`, since a trigger's
+  document actions are unbounded (a theme switch repaints every
+  node). Both targets read this one function: native used to run
+  `rebuild_all` for every click outcome, and the browser used to
+  run the selection-delta tier even when a trigger had just
+  mutated the document, so §4's peers were wrong in opposite
+  directions.
+
+Interactions that decide a tier are split into a renderer-free
+core that returns one and a shell that runs it —
+`click::handle_click_core` / `click::handle_click`,
+`event_cursor_moved::arm_label_drag` /
+`event_cursor_moved::start_label_drag`. Both label promotions
+(edge-label and portal-label) go through the second pair, so they
+cannot pick different tiers again.
+
 ### Dirty flag
 
 A single `bool` on `MindMapDocument` marking

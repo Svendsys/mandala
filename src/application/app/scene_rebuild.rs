@@ -20,54 +20,134 @@ use crate::application::document::{
 use crate::application::renderer::Renderer;
 use baumhard::mindmap::tree_builder::{FrameOverrides, InteractionModeOverrides};
 
-/// Pure predicate for [`rebuild_after_selection_change`]'s
-/// dispatch. Returns `true` when transitioning from `prev` to
-/// `new` requires a full `rebuild_all` (node-tree highlights
-/// need to be applied, shifted, or cleared). Returns `false`
-/// when both selections are edge-adjacent and only the scene-
-/// level highlight cascade moves.
+/// Which of the two whole-canvas rebuild tiers a change owes,
+/// **named rather than run**.
 ///
-/// Factored out of the helper so the decision is unit-testable
-/// without renderer / scene-host setup — the full
-/// `rebuild_after_selection_change` is an integration surface
-/// over wgpu state.
-pub(in crate::application::app) fn selection_change_touches_tree(
-    prev: &SelectionState,
-    new: &SelectionState,
-) -> bool {
-    fn touches_tree(sel: &SelectionState) -> bool {
-        // `Section` joins `Single` / `Multi` because section-area
-        // highlights are stamped through the node-tree's
-        // `ColorFontRegions` (see `apply_tree_highlights`); a
-        // Section-selection transition that goes through
-        // `rebuild_scene_only` would leave the prior cyan stamp
-        // un-cleared (or never apply a fresh one), leaking a
-        // stale highlight.
-        matches!(
-            sel,
-            SelectionState::Single(_)
-                | SelectionState::Multi(_)
-                | SelectionState::Section(_)
-                | SelectionState::MultiSection(_)
-                | SelectionState::SectionRange { .. }
-        )
-    }
-    touches_tree(prev) || touches_tree(new)
+/// Same split `ReleaseRefresh` makes on the drag-release path
+/// (`throttled_interaction/release.rs`, native-only, which is why
+/// this is not an intra-doc link — the wasm32 doc leg would not
+/// resolve it), and for the same reason: both
+/// tiers need `&mut Renderer`, so a caller that *decides* a tier
+/// cannot be exercised at the same time as one that *performs* it —
+/// TEST_CONVENTIONS §T8 keeps live wgpu out of the harness. Handing
+/// the decision back as a value is what lets a test ask "which tier
+/// does a click that only moves the selection ask for?" without
+/// standing up a device.
+///
+/// `ReleaseRefresh` is deliberately not reused for this: it carries a
+/// third variant (`None`) that only a commit against a missing
+/// document produces, and it runs through a `DrainContext`, which the
+/// click path — it has no `ColorPickerState` — cannot build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum RebuildTier {
+    /// [`rebuild_all`] — node tree plus every canvas role. Needed
+    /// whenever node-tree text buffers are affected: a selection
+    /// highlight to apply, shift, or clear, or a document mutation
+    /// that could have changed anything at all.
+    All,
+    /// [`rebuild_scene_only`] — every canvas role, node tree reused.
+    /// Enough when only the scene-level highlight cascade moves.
+    SceneOnly,
 }
 
-/// Post-selection-change rebuild with the right granularity.
-/// Picks `rebuild_all` when either the previous or new selection
-/// is `Single` / `Multi` (node-tree highlights need reapplying or
-/// clearing), `rebuild_scene_only` otherwise (edge-adjacent
-/// selection changes only move scene-level highlight cascades,
-/// not node text-buffer region colors).
+impl RebuildTier {
+    /// The tier a `prev` → `new` selection transition needs.
+    ///
+    /// [`Self::All`] when either side is a node-ish selection
+    /// (node-tree highlights need to be applied, shifted, or
+    /// cleared); [`Self::SceneOnly`] when both are edge-adjacent and
+    /// only the scene-level highlight cascade moves.
+    pub(in crate::application::app) fn for_selection_change(
+        prev: &SelectionState,
+        new: &SelectionState,
+    ) -> Self {
+        fn touches_tree(sel: &SelectionState) -> bool {
+            // `Section` joins `Single` / `Multi` because section-area
+            // highlights are stamped through the node-tree's
+            // `ColorFontRegions` (see `apply_tree_highlights`); a
+            // Section-selection transition that goes through
+            // `rebuild_scene_only` would leave the prior cyan stamp
+            // un-cleared (or never apply a fresh one), leaking a
+            // stale highlight.
+            matches!(
+                sel,
+                SelectionState::Single(_)
+                    | SelectionState::Multi(_)
+                    | SelectionState::Section(_)
+                    | SelectionState::MultiSection(_)
+                    | SelectionState::SectionRange { .. }
+            )
+        }
+        if touches_tree(prev) || touches_tree(new) {
+            Self::All
+        } else {
+            Self::SceneOnly
+        }
+    }
+
+    /// The tier a click owes, on both targets.
+    ///
+    /// A click does two things that can invalidate the canvas: it
+    /// moves the selection, and — when it landed on a node carrying
+    /// an `OnClick` binding — it fires custom mutations and document
+    /// actions. The second is unbounded (a theme switch repaints
+    /// everything), so a fired trigger forces [`Self::All`] and only
+    /// a click that changed nothing but the selection gets to ask
+    /// [`Self::for_selection_change`].
+    ///
+    /// Shared by `click::handle_click_core` and the browser's
+    /// `run_wasm::event_mouse_click` release path, which had drifted
+    /// in *opposite* directions: native rebuilt everything for every
+    /// click outcome, and the browser ran the selection-delta tier
+    /// even when a trigger had just mutated the document
+    /// (CODE_CONVENTIONS §4 — the two are peers).
+    pub(in crate::application::app) fn for_click(
+        triggers_fired: bool,
+        prev: &SelectionState,
+        new: &SelectionState,
+    ) -> Self {
+        if triggers_fired {
+            Self::All
+        } else {
+            Self::for_selection_change(prev, new)
+        }
+    }
+
+    /// Run the tier against the live renderer.
+    pub(in crate::application::app) fn execute(
+        self,
+        doc: &MindMapDocument,
+        interaction_mode: &super::InteractionMode,
+        mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+        app_scene: &mut crate::application::scene_host::AppScene,
+        renderer: &mut Renderer,
+        scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    ) {
+        match self {
+            Self::All => rebuild_all(
+                doc,
+                interaction_mode,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+            ),
+            Self::SceneOnly => rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache),
+        }
+    }
+}
+
+/// Post-selection-change rebuild with the right granularity —
+/// [`RebuildTier::for_selection_change`] decided, then run.
 ///
 /// Exists for every selection-change callsite that would
 /// otherwise call `rebuild_all` unconditionally — under §4's
 /// mobile budget a full rebuild on every edge-label / portal
 /// click is wasted work on a large map. This helper makes the
 /// right choice a one-liner so callers don't have to re-derive
-/// the decision.
+/// the decision. Callers that need the tier as a *value* (because
+/// something other than the selection also moved) reach for
+/// `RebuildTier` directly instead.
 pub(in crate::application::app) fn rebuild_after_selection_change(
     prev_selection: &SelectionState,
     doc: &MindMapDocument,
@@ -77,18 +157,14 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    if selection_change_touches_tree(prev_selection, &doc.selection) {
-        rebuild_all(
-            doc,
-            interaction_mode,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-        );
-    } else {
-        rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
-    }
+    RebuildTier::for_selection_change(prev_selection, &doc.selection).execute(
+        doc,
+        interaction_mode,
+        mindmap_tree,
+        app_scene,
+        renderer,
+        scene_cache,
+    );
 }
 
 /// Stamp **every render-layer overlay** onto an already-built node
@@ -1064,7 +1140,7 @@ pub(in crate::application::app) fn warm_handle_tree_arenas(
 
 #[cfg(test)]
 mod tests {
-    use super::selection_change_touches_tree;
+    use super::RebuildTier;
     use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState};
     use baumhard::mindmap::scene_cache::EdgeKey;
 
@@ -1079,7 +1155,7 @@ mod tests {
     }
 
     #[test]
-    fn edge_adjacent_to_edge_adjacent_is_scene_only() {
+    fn test_selection_tier_edge_adjacent_to_edge_adjacent_is_scene_only() {
         // Any pair of edge-adjacent variants (Edge / EdgeLabel /
         // PortalLabel / PortalText) transitions without touching
         // node text buffers — scene-only is correct.
@@ -1091,8 +1167,9 @@ mod tests {
         ];
         for prev in &variants {
             for new in &variants {
-                assert!(
-                    !selection_change_touches_tree(prev, new),
+                assert_eq!(
+                    RebuildTier::for_selection_change(prev, new),
+                    RebuildTier::SceneOnly,
                     "{:?} -> {:?} should be scene-only",
                     prev,
                     new
@@ -1102,22 +1179,22 @@ mod tests {
     }
 
     #[test]
-    fn transition_into_node_selection_needs_full_rebuild() {
+    fn test_selection_tier_into_node_selection_needs_full_rebuild() {
         // Edge-adjacent -> Single / Multi: the new node must have
         // its highlight color region applied to its text buffer.
         let prev = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()));
-        assert!(selection_change_touches_tree(
-            &prev,
-            &SelectionState::Single("n".into())
-        ));
-        assert!(selection_change_touches_tree(
-            &prev,
-            &SelectionState::Multi(vec!["a".into(), "b".into()])
-        ));
+        assert_eq!(
+            RebuildTier::for_selection_change(&prev, &SelectionState::Single("n".into())),
+            RebuildTier::All
+        );
+        assert_eq!(
+            RebuildTier::for_selection_change(&prev, &SelectionState::Multi(vec!["a".into(), "b".into()])),
+            RebuildTier::All
+        );
     }
 
     #[test]
-    fn transition_out_of_node_selection_needs_full_rebuild() {
+    fn test_selection_tier_out_of_node_selection_needs_full_rebuild() {
         // Single / Multi -> Edge-adjacent: the previous node's
         // highlight must be CLEARED from its text buffer. Scene-
         // only would leave the stale highlight stuck.
@@ -1125,28 +1202,26 @@ mod tests {
             SelectionState::Single("n".into()),
             SelectionState::Multi(vec!["a".into(), "b".into()]),
         ] {
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::Edge(edge_ref())
-            ));
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()))
-            ));
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::PortalLabel(portal())
-            ));
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::PortalText(portal())
-            ));
-            assert!(selection_change_touches_tree(&prev, &SelectionState::None));
+            for new in [
+                SelectionState::Edge(edge_ref()),
+                SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref())),
+                SelectionState::PortalLabel(portal()),
+                SelectionState::PortalText(portal()),
+                SelectionState::None,
+            ] {
+                assert_eq!(
+                    RebuildTier::for_selection_change(&prev, &new),
+                    RebuildTier::All,
+                    "{:?} -> {:?} must clear the node highlight",
+                    prev,
+                    new
+                );
+            }
         }
     }
 
     #[test]
-    fn none_to_edge_adjacent_is_scene_only() {
+    fn test_selection_tier_none_to_edge_adjacent_is_scene_only() {
         // A fresh click on an edge label when nothing was
         // selected: no tree highlight to clear, no new one to
         // apply. Scene-only is correct.
@@ -1156,8 +1231,9 @@ mod tests {
             SelectionState::PortalLabel(portal()),
             SelectionState::PortalText(portal()),
         ] {
-            assert!(
-                !selection_change_touches_tree(&SelectionState::None, &new),
+            assert_eq!(
+                RebuildTier::for_selection_change(&SelectionState::None, &new),
+                RebuildTier::SceneOnly,
                 "None -> {:?} should be scene-only",
                 new
             );
@@ -1165,13 +1241,64 @@ mod tests {
     }
 
     #[test]
-    fn node_to_node_needs_full_rebuild() {
+    fn test_selection_tier_node_to_node_needs_full_rebuild() {
         // Node -> node: old highlight clears, new highlight
         // applies. Full rebuild in both directions.
-        assert!(selection_change_touches_tree(
-            &SelectionState::Single("a".into()),
-            &SelectionState::Single("b".into())
-        ));
+        assert_eq!(
+            RebuildTier::for_selection_change(
+                &SelectionState::Single("a".into()),
+                &SelectionState::Single("b".into())
+            ),
+            RebuildTier::All
+        );
+    }
+
+    /// A fired `OnClick` trigger forces the full tier no matter how
+    /// small the selection delta is, on both targets. The trigger
+    /// runs custom mutations and document actions — a theme switch
+    /// repaints every node — so the selection delta says nothing
+    /// about what changed.
+    ///
+    /// Fails on the input below when `for_click` stops consulting
+    /// `triggers_fired`: the pair of edge-adjacent selections is one
+    /// `for_selection_change` answers `SceneOnly` for, so the `All`
+    /// here can only come from the flag. That is the browser's
+    /// pre-fix shape — `run_wasm::event_mouse_click` fired triggers
+    /// and then called `rebuild_after_selection_change` regardless.
+    #[test]
+    fn test_click_tier_is_full_when_a_trigger_fired_however_small_the_selection_delta() {
+        let edge_adjacent = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()));
+        assert_eq!(
+            RebuildTier::for_selection_change(&edge_adjacent, &edge_adjacent),
+            RebuildTier::SceneOnly,
+            "precondition: this transition must be the cheap tier, or the row below proves nothing"
+        );
+        assert_eq!(
+            RebuildTier::for_click(true, &edge_adjacent, &edge_adjacent),
+            RebuildTier::All,
+            "a fired trigger can have changed anything"
+        );
+    }
+
+    /// The complement: with no trigger, a click is exactly its
+    /// selection delta. Without this row the fix could be "answer
+    /// `All` always", which is the native pre-fix shape — every
+    /// click ran `rebuild_all`, including an edge-label -> edge-label
+    /// selection change that cannot touch a node text buffer.
+    #[test]
+    fn test_click_tier_with_no_trigger_is_the_selection_delta_alone() {
+        let from = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()));
+        let to = SelectionState::PortalLabel(portal());
+        assert_eq!(
+            RebuildTier::for_click(false, &from, &to),
+            RebuildTier::SceneOnly,
+            "a click that only moves between edge-adjacent selections owes no node-tree rebuild"
+        );
+        assert_eq!(
+            RebuildTier::for_click(false, &from, &SelectionState::Single("n".into())),
+            RebuildTier::All,
+            "...and one that lands on a node still owes one"
+        );
     }
 
     /// Construction-side panic guard for the load-time pre-warm.

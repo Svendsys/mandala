@@ -11,42 +11,74 @@ use baumhard::mindmap::custom_mutation::PlatformContext;
 use baumhard::mindmap::tree_builder::PortalPart;
 
 use super::click_triggers::fire_onclick_triggers;
-use super::scene_rebuild::{build_overlaid_tree, rebuild_all, rebuild_scene_only};
+use super::scene_rebuild::{build_overlaid_tree, rebuild_scene_only, RebuildTier};
 use super::{now_ms, InteractionMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
     hit_test_edge, MindMapDocument, SectionSel, SelectionState, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
 
-/// Handle a click event: update selection, rebuild tree with highlight.
-/// When the node hit test misses, falls through to edge hit testing so
-/// the user can click on a connection path to select it. If the clicked
-/// node has an `OnClick` trigger binding, the bound custom mutation fires
-/// (both node mutations and any document actions) after the selection
-/// update.
+/// The renderer-free half of a click's context: everything
+/// [`handle_click_core`] reads or mutates before it names the
+/// canvas work the outcome owes.
+///
+/// `app_scene` is here rather than on the shell because the portal
+/// hit-test is part of the *selection* decision, not part of the
+/// rebuild — and `AppScene` holds no GPU state, so it stands up in
+/// a test harness (TEST_CONVENTIONS §T8 excludes wgpu, not the
+/// scene host).
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn handle_click(
+pub(super) struct ClickCore<'a> {
+    pub document: &'a mut MindMapDocument,
+    pub mindmap_tree: &'a mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    pub app_scene: &'a mut crate::application::scene_host::AppScene,
+    pub scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    pub interaction_mode: &'a InteractionMode,
+}
+
+/// Fire the click's `OnClick` triggers, resolve the new selection,
+/// and name the rebuild tier the outcome owes — all without a
+/// renderer.
+///
+/// When the node hit test misses, falls through to portal-marker
+/// hit-testing and then edge hit testing so the user can click on a
+/// connection path to select it. If the clicked node has an
+/// `OnClick` trigger binding, the bound custom mutation fires (both
+/// node mutations and any document actions) before the selection
+/// update, so document actions (theme switches etc.) take effect
+/// before the rebuild picks up the new state.
+///
+/// The two renderer-derived inputs arrive as plain values:
+/// `canvas_pos` is the press point already through
+/// `Renderer::screen_to_canvas`, and `edge_hit_tolerance` is
+/// `EDGE_HIT_TOLERANCE_PX` already scaled by
+/// `Renderer::canvas_per_pixel`. Both are pure camera math, which is
+/// why this split leaves nothing renderer-shaped behind — the same
+/// shape `ReleaseCommit` / `ReleaseRefresh` gave the drag-release
+/// path, and for the same reason: it makes "which tier does this
+/// interaction ask for?" a question the harness can ask.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn handle_click_core(
     hit: Option<String>,
     hit_section: Option<usize>,
-    cursor_pos: (f64, f64),
+    canvas_pos: glam::Vec2,
+    edge_hit_tolerance: f32,
     shift_pressed: bool,
-    document: &mut Option<MindMapDocument>,
-    interaction_mode: &InteractionMode,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-) {
-    let doc = match document.as_mut() {
-        Some(d) => d,
-        None => return,
-    };
+    ctx: ClickCore<'_>,
+) -> RebuildTier {
+    let ClickCore {
+        document: doc,
+        mindmap_tree,
+        app_scene,
+        scene_cache,
+        interaction_mode,
+    } = ctx;
 
     // OnClick triggers fire before the selection update so that
     // document actions (theme switches etc.) take effect before
-    // the scene rebuild below picks up the new state.
-    if let Some(id) = hit.as_ref() {
-        fire_onclick_triggers(
+    // the scene rebuild picks up the new state.
+    let triggers_fired = match hit.as_ref() {
+        Some(id) => fire_onclick_triggers(
             doc,
             mindmap_tree,
             scene_cache,
@@ -54,8 +86,14 @@ pub(super) fn handle_click(
             hit_section,
             PlatformContext::Desktop,
             now_ms() as u64,
-        );
-    }
+        ),
+        None => false,
+    };
+
+    // Snapshot before the write: the tier is a function of how the
+    // selection *moved*, so a post-write capture would read the new
+    // value back and answer `SceneOnly` for every transition.
+    let prev_selection = doc.selection.clone();
 
     // Update selection state
     match (&hit, shift_pressed) {
@@ -73,7 +111,7 @@ pub(super) fn handle_click(
             // that endpoint's state; double-click is handled
             // separately by the event loop and pans the camera
             // to the opposite endpoint.
-            let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
+            //
             // One BVH descent over the portal tree names both the
             // endpoint and which of its two sibling leaves — icon
             // or text — the click landed on, so the sub-part
@@ -90,8 +128,7 @@ pub(super) fn handle_click(
                     PortalPart::Icon => SelectionState::PortalLabel(sel),
                 };
             } else {
-                let tolerance = EDGE_HIT_TOLERANCE_PX * renderer.canvas_per_pixel();
-                let edge_hit = hit_test_edge(canvas_pos, &doc.mindmap, tolerance);
+                let edge_hit = hit_test_edge(canvas_pos, &doc.mindmap, edge_hit_tolerance);
                 doc.selection = match edge_hit {
                     Some(edge_ref) => SelectionState::Edge(edge_ref),
                     None => SelectionState::None,
@@ -104,8 +141,52 @@ pub(super) fn handle_click(
         }
     }
 
-    // Rebuild tree with selection highlight applied
-    rebuild_all(
+    RebuildTier::for_click(triggers_fired, &prev_selection, &doc.selection)
+}
+
+/// Handle a click event: run [`handle_click_core`], then perform the
+/// rebuild tier it named.
+///
+/// Pre-#37 this ran `rebuild_all` for every click outcome, including
+/// an edge-label → edge-label selection change that cannot touch a
+/// node text buffer. `rebuild_after_selection_change` had existed for
+/// exactly this since before the browser release path started using
+/// it — CODE_CONVENTIONS §4 makes the two targets peers, and the
+/// browser was the better-optimized one here.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn handle_click(
+    hit: Option<String>,
+    hit_section: Option<usize>,
+    cursor_pos: (f64, f64),
+    shift_pressed: bool,
+    document: &mut Option<MindMapDocument>,
+    interaction_mode: &InteractionMode,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    app_scene: &mut crate::application::scene_host::AppScene,
+    renderer: &mut Renderer,
+    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+) {
+    let doc = match document.as_mut() {
+        Some(d) => d,
+        None => return,
+    };
+    let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
+    let edge_hit_tolerance = EDGE_HIT_TOLERANCE_PX * renderer.canvas_per_pixel();
+    let tier = handle_click_core(
+        hit,
+        hit_section,
+        canvas_pos,
+        edge_hit_tolerance,
+        shift_pressed,
+        ClickCore {
+            document: doc,
+            mindmap_tree,
+            app_scene,
+            scene_cache,
+            interaction_mode,
+        },
+    );
+    tier.execute(
         doc,
         interaction_mode,
         mindmap_tree,
@@ -286,7 +367,203 @@ pub(super) fn compute_node_click_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::{GraphemeRange, SectionSel, SectionSpan};
+    use crate::application::document::tests_common::load_test_doc;
+    use crate::application::document::{EdgeRef, GraphemeRange, SectionSel, SectionSpan};
+    use crate::application::scene_host::AppScene;
+    use baumhard::mindmap::scene_cache::SceneConnectionCache;
+
+    /// Everything a click core needs besides the hit, owned by the
+    /// test so the borrows in [`ClickCore`] have somewhere to point.
+    struct CoreWorld {
+        doc: MindMapDocument,
+        mindmap_tree: Option<baumhard::mindmap::tree_builder::MindMapTree>,
+        app_scene: AppScene,
+        scene_cache: SceneConnectionCache,
+        interaction_mode: InteractionMode,
+    }
+
+    impl CoreWorld {
+        fn new() -> Self {
+            Self {
+                doc: load_test_doc(),
+                mindmap_tree: None,
+                app_scene: AppScene::new(),
+                scene_cache: SceneConnectionCache::default(),
+                interaction_mode: InteractionMode::Default,
+            }
+        }
+
+        fn core(&mut self) -> ClickCore<'_> {
+            ClickCore {
+                document: &mut self.doc,
+                mindmap_tree: &mut self.mindmap_tree,
+                app_scene: &mut self.app_scene,
+                scene_cache: &mut self.scene_cache,
+                interaction_mode: &self.interaction_mode,
+            }
+        }
+    }
+
+    /// Far outside the testament map's extent, so the edge hit-test
+    /// misses every connection at the tolerance below and the click
+    /// resolves to empty canvas. A coordinate inside the map would
+    /// make the assertions depend on which edge happens to sit there.
+    const FAR_OFF_CANVAS: glam::Vec2 = glam::Vec2::new(1.0e6, 1.0e6);
+
+    /// The tolerance a 1:1 camera hands the core
+    /// (`EDGE_HIT_TOLERANCE_PX * canvas_per_pixel()` at `zoom == 1`).
+    const UNZOOMED_EDGE_TOLERANCE: f32 = EDGE_HIT_TOLERANCE_PX;
+
+    fn first_node_id(doc: &MindMapDocument) -> String {
+        doc.mindmap
+            .nodes
+            .keys()
+            .min()
+            .cloned()
+            .expect("the testament fixture has nodes")
+    }
+
+    /// A click whose only outcome is a selection change between two
+    /// selections that live outside the node tree asks for
+    /// `SceneOnly`, not `All`.
+    ///
+    /// This is the whole of #37 item 1: `handle_click` ended with an
+    /// unconditional `rebuild_all`, so this click paid for a
+    /// `doc.build_tree()` plus a cosmic-text buffer rebuild it could
+    /// not have invalidated.
+    ///
+    /// Fails on the input below the moment the core stops consulting
+    /// the selection delta — the pre-fix shape answers `All` here.
+    /// The second half is the control that keeps the first from
+    /// being "answer `SceneOnly` always": the *same* empty-canvas
+    /// click from a node selection still has a highlight to clear
+    /// out of a text buffer, and still asks for `All`.
+    #[test]
+    fn test_click_core_selection_only_change_asks_for_the_scene_tier() {
+        let mut world = CoreWorld::new();
+        world.doc.selection = SelectionState::Edge(EdgeRef::new("a", "b", "cross_link"));
+        let tier = handle_click_core(
+            None,
+            None,
+            FAR_OFF_CANVAS,
+            UNZOOMED_EDGE_TOLERANCE,
+            false,
+            world.core(),
+        );
+        assert!(
+            matches!(world.doc.selection, SelectionState::None),
+            "precondition: the click must land on empty canvas, or this pins the wrong \
+             transition — got {:?}",
+            world.doc.selection
+        );
+        assert_eq!(
+            tier,
+            RebuildTier::SceneOnly,
+            "an Edge -> None click touches no node text buffer"
+        );
+
+        let mut from_node = CoreWorld::new();
+        let node_id = first_node_id(&from_node.doc);
+        from_node.doc.selection = SelectionState::Single(node_id);
+        let tier = handle_click_core(
+            None,
+            None,
+            FAR_OFF_CANVAS,
+            UNZOOMED_EDGE_TOLERANCE,
+            false,
+            from_node.core(),
+        );
+        assert_eq!(
+            tier,
+            RebuildTier::All,
+            "the same click from a node selection still has a highlight to clear"
+        );
+    }
+
+    /// A click that lands on a node asks for `All` — the node's
+    /// highlight has to be stamped into its text buffer.
+    ///
+    /// Fails if the core ever answers the cheap tier for a node hit,
+    /// which would leave the clicked node unhighlighted.
+    #[test]
+    fn test_click_core_on_a_node_asks_for_the_full_tier() {
+        let mut world = CoreWorld::new();
+        let node_id = first_node_id(&world.doc);
+        world.doc.selection = SelectionState::None;
+        let tier = handle_click_core(
+            Some(node_id.clone()),
+            None,
+            FAR_OFF_CANVAS,
+            UNZOOMED_EDGE_TOLERANCE,
+            false,
+            world.core(),
+        );
+        assert!(
+            matches!(&world.doc.selection, SelectionState::Single(id) if *id == node_id),
+            "precondition: the hit must have produced the node selection — got {:?}",
+            world.doc.selection
+        );
+        assert_eq!(tier, RebuildTier::All);
+    }
+
+    /// Why `RebuildTier::for_click`'s `triggers_fired` flag cannot
+    /// be observed from this path today, stated as a test rather
+    /// than as a comment nobody re-checks.
+    ///
+    /// `fire_onclick_triggers` runs only for a node hit, and every
+    /// selection a node hit can produce — `Single`, `Section`,
+    /// `Multi`, `MultiSection`, or the `None` a shift-toggle-off
+    /// leaves behind a node-ish `prev` — already answers `All` on
+    /// the selection delta alone. So the flag is redundant *here*,
+    /// and this test is what will notice when it stops being: a
+    /// future `OnClick` on an edge or a portal marker would fire a
+    /// trigger from an edge-adjacent selection, and the flag is the
+    /// only thing that would still ask for the full rebuild.
+    ///
+    /// Fails when a node-hit click starts resolving to a selection
+    /// outside the node-ish set, which is exactly the change that
+    /// would make the flag load-bearing.
+    #[test]
+    fn test_every_click_that_can_fire_a_trigger_already_needs_the_full_tier() {
+        let doc = load_test_doc();
+        let node_id = first_node_id(&doc);
+        // Every starting selection the shift and non-shift branches
+        // of `compute_node_click_selection` route differently.
+        let starts = [
+            SelectionState::None,
+            SelectionState::Single(node_id.clone()),
+            SelectionState::Single("other".to_string()),
+            SelectionState::Multi(vec![node_id.clone(), "other".to_string()]),
+            SelectionState::Edge(EdgeRef::new("a", "b", "cross_link")),
+            SelectionState::Section(SectionSel {
+                node_id: node_id.clone(),
+                section_idx: 0,
+            }),
+        ];
+        for start in &starts {
+            for shift in [false, true] {
+                for section in [None, Some(0usize)] {
+                    let new = compute_node_click_selection(
+                        start,
+                        &node_id,
+                        section,
+                        shift,
+                        &InteractionMode::NodeEdit {
+                            node_id: node_id.clone(),
+                        },
+                    );
+                    assert_eq!(
+                        RebuildTier::for_selection_change(start, &new),
+                        RebuildTier::All,
+                        "{:?} -> {:?} (shift={shift}, section={section:?}) is a node-hit outcome, \
+                         so it must already need the full tier",
+                        start,
+                        new
+                    );
+                }
+            }
+        }
+    }
 
     fn node_edit_for(id: &str) -> InteractionMode {
         InteractionMode::NodeEdit {
