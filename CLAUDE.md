@@ -212,6 +212,9 @@ the parity trajectory (or why none is owed):
   before a test runs (#148).
   `test_no_documented_command_targets_a_lib_the_package_lacks` holds
   this bullet and TEST_CONVENTIONS §T11's copy of it against the real
-  manifests, so the flag cannot be copied onto a binary crate again.
+  manifests — every code span and every fenced line in those two
+  sections — so the flag cannot come back to either of them on a
+  member that has no library target. It reads nothing else: the rest
+  of this file, and every other document, is on your own care.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.

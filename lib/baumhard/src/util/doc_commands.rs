@@ -21,6 +21,15 @@
 //! - every `--lib` sits on a member that actually has a library
 //!   target.
 //!
+//! **What this reads.** Every way those two sections can publish a
+//! command: an inline code span opened with any number of backticks,
+//! and every line of a fenced block, whether or not the fence
+//! carries a language tag. The tagged fence is called out because it
+//! was the one gap that made the reader *inconsistent* rather than
+//! narrow — the tag glued itself to the front of the command and the
+//! `cargo` filter then dropped it, so a fence opened with a `bash`
+//! tag hid a command that the same fence untagged did not.
+//!
 //! **What this does not reach**, said plainly so the silence is not
 //! read as coverage. It runs nothing: that a documented command is
 //! well-formed against the manifests is a weaker claim than that it
@@ -28,10 +37,15 @@
 //! It judges only spans carrying an explicit `-p` / `--package`,
 //! because a command without one selects whatever package the
 //! working directory holds and a code span does not carry a working
-//! directory. And it reads two named sections rather than every
-//! Markdown file, for the reason [`crate::util::doc_fixtures`]
-//! exists at all: a whole-file scan stays green after the thing it
-//! claims to pin has moved somewhere else entirely.
+//! directory. It reads a command that is *marked up* as one: a
+//! `cargo` invocation typed into running prose with no backticks
+//! around it is prose to this reader, as is one hidden inside a
+//! quoted string. Inside a fence it takes one line as one command,
+//! so a shell continuation (`\` at end of line) reads as two. And
+//! it reads two named sections rather than every Markdown file, for
+//! the reason [`crate::util::doc_fixtures`] exists at all: a
+//! whole-file scan stays green after the thing it claims to pin has
+//! moved somewhere else entirely.
 //!
 //! Test-only and native-only, for the same reasons
 //! `crate::util::manifests` — whose member list this reuses rather
@@ -92,29 +106,129 @@ pub(crate) fn documented_cargo_commands() -> Vec<DocCommand> {
     out
 }
 
-/// The inline-code spans in `text` that hold a `cargo` invocation,
-/// whitespace-normalized.
+/// The code in `text` that holds a `cargo` invocation,
+/// whitespace-normalized: every inline code span, plus every line of
+/// every fenced block, in document order.
 ///
-/// Spans are the odd pieces of a split on the backtick, which is
-/// only a valid model while the backticks pair up — so an odd count
-/// panics naming `doc` rather than silently shifting every span by
-/// one and finding nothing. That posture is
-/// `crate::util::manifests`': a shape the reader cannot handle stops
-/// the run instead of deleting itself from the checked set.
+/// A fenced block is taken line by line and its opening marker —
+/// info string and all — is dropped. Reading the fence body as prose
+/// instead is what used to make a language-tagged fence invisible:
+/// the tag ended up glued to the front of the command, and the
+/// `cargo` filter below dropped the result. A doc that publishes a
+/// command in a fence is publishing a command, and a tag is a
+/// syntax-highlighting hint, not a claim that the line is unrunnable.
+///
+/// An opening fence that is never closed, and a code span whose
+/// backtick run is never matched by a run of the same length, both
+/// panic naming `doc`: either one swallows the rest of the section
+/// into a single span, turning a section full of commands into a
+/// section holding none. That posture is `crate::util::manifests`':
+/// a shape the reader cannot handle stops the run instead of
+/// deleting itself from the checked set.
 pub(crate) fn cargo_spans(text: &str, doc: &str) -> Vec<String> {
-    let ticks = text.bytes().filter(|byte| *byte == b'`').count();
+    let mut spans = Vec::new();
+    let mut prose = String::new();
+    let mut fence: Option<String> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        match &fence {
+            Some(marker) => {
+                if is_fence_close(trimmed, marker) {
+                    fence = None;
+                } else {
+                    spans.push(normalize(line));
+                }
+            }
+            None if trimmed.starts_with("```") => {
+                spans.extend(inline_spans(&prose, doc));
+                prose.clear();
+                fence = Some(trimmed.chars().take_while(|c| *c == '`').collect());
+            }
+            None => {
+                prose.push('\n');
+                prose.push_str(line);
+            }
+        }
+    }
     assert!(
-        ticks % 2 == 0,
-        "{doc}: the audited section holds {ticks} backticks, an odd number, so its \
-         inline-code spans do not pair up and this reader would mis-slice every one \
-         of them"
+        fence.is_none(),
+        "{doc}: a fenced code block is opened and never closed, so everything below \
+         it reads as code and this reader can no longer tell a published command \
+         from prose"
     );
-    text.split('`')
-        .skip(1)
-        .step_by(2)
-        .map(|span| span.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|span| span == "cargo" || span.starts_with("cargo "))
-        .collect()
+    spans.extend(inline_spans(&prose, doc));
+    spans.retain(|span| span == "cargo" || span.starts_with("cargo "));
+    spans
+}
+
+/// Whether `trimmed` closes a fence opened with `marker` — a run of
+/// at least as many backticks as opened it, and nothing else on the
+/// line, which is what CommonMark asks of a closing fence.
+fn is_fence_close(trimmed: &str, marker: &str) -> bool {
+    let run = trimmed.chars().take_while(|c| *c == '`').count();
+    run >= marker.len() && trimmed.trim_end().len() == run
+}
+
+/// `text` with every run of whitespace — line breaks included —
+/// collapsed to one space. A code span wraps across source lines and
+/// a reader should see one line.
+fn normalize(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The inline code spans in `text`, normalized, in document order.
+///
+/// A span opens on a run of backticks and closes on the next run of
+/// exactly the same length, so the two-backtick form Markdown offers
+/// for a command that itself contains a backtick is read rather than
+/// silently skipped. An opener with no matching closer panics: it is
+/// far more often a typo that hid a command than a literal backtick
+/// somebody meant.
+fn inline_spans(text: &str, doc: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] != b'`' {
+            at += 1;
+            continue;
+        }
+        let open = backtick_run(bytes, at);
+        let Some(close) = closing_run(bytes, at + open, open) else {
+            panic!(
+                "{doc}: a code span opened with {open} backtick(s) is never closed by a run \
+                 of {open} — its backticks do not pair up, so this reader would swallow the \
+                 rest of the section into one span. It opens at: {:?}",
+                normalize(&text[at..bytes.len().min(at + 60)])
+            );
+        };
+        out.push(normalize(&text[at + open..close]));
+        at = close + open;
+    }
+    out
+}
+
+/// The length of the run of backticks starting at `at`.
+fn backtick_run(bytes: &[u8], at: usize) -> usize {
+    bytes[at..].iter().take_while(|byte| **byte == b'`').count()
+}
+
+/// The byte offset of the next run of exactly `open` backticks at or
+/// after `from`, or `None` when the text holds no such run.
+fn closing_run(bytes: &[u8], from: usize, open: usize) -> Option<usize> {
+    let mut at = from;
+    while at < bytes.len() {
+        if bytes[at] != b'`' {
+            at += 1;
+            continue;
+        }
+        let run = backtick_run(bytes, at);
+        if run == open {
+            return Some(at);
+        }
+        at += run;
+    }
+    None
 }
 
 /// Cargo's own arguments in `command` — every token up to a bare
@@ -413,14 +527,70 @@ mod tests {
         );
     }
 
-    /// An unbalanced backtick count stops the run. Every span after
-    /// the stray tick would otherwise shift by one, turning a
-    /// section full of commands into a section holding none — the
-    /// silent shape this module refuses.
+    /// A backtick run with no matching run stops the scan. The rest
+    /// of the section would otherwise read as one enormous span,
+    /// turning a section full of commands into a section holding
+    /// none — the silent shape this module refuses.
     #[test]
     #[should_panic(expected = "do not pair up")]
-    fn test_an_odd_backtick_count_stops_the_scan() {
+    fn test_an_unmatched_backtick_run_stops_the_scan() {
         cargo_spans("a `cargo test -p alib` and a stray ` tick", "fixture.md");
+    }
+
+    /// A command published in a fenced block is published, tag or no
+    /// tag. The tagged fence is the case that used to disappear: the
+    /// info string was read as the first word of the command, and
+    /// the `cargo` filter dropped what came out.
+    #[test]
+    fn test_a_fenced_block_publishes_commands_tag_or_no_tag() {
+        let tagged = "prose\n\n```bash\ncargo test -p abin --lib pattern\n```\n\nmore";
+        let untagged = "prose\n\n```\ncargo test -p abin --lib pattern\n```\n\nmore";
+        let expected = vec!["cargo test -p abin --lib pattern".to_string()];
+        assert_eq!(cargo_spans(tagged, "fixture.md"), expected);
+        assert_eq!(cargo_spans(untagged, "fixture.md"), expected);
+        assert_eq!(
+            cargo_spans(tagged, "fixture.md"),
+            cargo_spans(untagged, "fixture.md"),
+            "a fence's language tag is a highlighting hint; it cannot decide whether the \
+             command inside is checked"
+        );
+    }
+
+    /// Spans and fences are read in document order, and a fence body
+    /// is read as code rather than as prose to scan for backticks —
+    /// so a `#` comment or an unbalanced tick inside one cannot
+    /// derail the reader.
+    #[test]
+    fn test_fenced_and_inline_commands_are_read_in_document_order() {
+        let text = "`cargo test -p alib` then\n\n```sh\n# a lone ` tick in a comment\ncargo build -p abin\n```\n\nand `cargo doc -p alib`";
+        assert_eq!(
+            cargo_spans(text, "fixture.md"),
+            vec![
+                "cargo test -p alib".to_string(),
+                "cargo build -p abin".to_string(),
+                "cargo doc -p alib".to_string(),
+            ]
+        );
+    }
+
+    /// The two-backtick span Markdown offers for a command that
+    /// itself contains a backtick is a span like any other. Read as
+    /// a split on single ticks it yielded nothing at all.
+    #[test]
+    fn test_a_span_delimited_by_two_backticks_is_read() {
+        assert_eq!(
+            cargo_spans("write ``cargo test -p abin --lib `x` `` here", "fixture.md"),
+            vec!["cargo test -p abin --lib `x`".to_string()]
+        );
+    }
+
+    /// An unclosed fence stops the run: everything below it reads as
+    /// code, so the reader can no longer tell a published command
+    /// from the prose around it.
+    #[test]
+    #[should_panic(expected = "opened and never closed")]
+    fn test_an_unclosed_fence_stops_the_scan() {
+        cargo_spans("prose\n\n```bash\ncargo test -p alib\n\nmore prose", "fixture.md");
     }
 
     /// The manifests answer both ways for the real workspace, named
