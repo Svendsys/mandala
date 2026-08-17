@@ -874,20 +874,48 @@ mod tests {
     /// `TouchGestureRecognizer` against
     /// `POINTER_DRAG_THRESHOLD_SQ_PX`, which pins the *touch* side to
     /// the shared number — but its "mouse side" is that same constant,
-    /// so it is two derivations from one source. Measured: with `25.0`
-    /// re-inlined at both arms below, the `mandala` suite reports
-    /// `2042 passed; 1 failed`, and the one failure is this test. The
-    /// pair is the parity claim; neither half is on its own.
+    /// so it is two derivations from one source. The pair is the parity
+    /// claim; neither half is on its own.
     ///
-    /// The input that makes this one fail is exactly that re-inlining:
-    /// `sed -i 's/super::POINTER_DRAG_THRESHOLD_SQ_PX/25.0/g'` over
-    /// this file leaves both arms arithmetically identical and turns
-    /// this test red on the first arm it reaches.
+    /// The input that makes this one fail is that re-inlining, and the
+    /// whole-file command is enough to produce it:
+    ///
+    /// ```text
+    /// sed -i 's/super::POINTER_DRAG_THRESHOLD_SQ_PX/25.0/g' src/application/app/event_cursor_moved.rs
+    /// cargo test -p mandala
+    /// ```
+    ///
+    /// Run against this file, that reports (measured, verbatim):
+    ///
+    /// ```text
+    /// test result: FAILED. 2042 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+    /// failures:
+    ///     application::app::event_cursor_moved::tests::test_the_mouse_drag_arms_name_the_shared_pointer_threshold
+    /// a mouse drag threshold must be the shared constant, not a re-inlined literal:
+    /// if dist_x * dist_x + dist_y * dist_y > 25.0
+    /// ```
+    ///
+    /// That the whole-file form works is not free: see the fragment
+    /// note at the needle below, which is what stops the same `sed`
+    /// from rewriting this test's own oracle along with the arms.
     ///
     /// Scoped through [`production_code`] and [`braced_block_after`],
     /// so neither the comment naming the constant at the `PendingRight`
     /// arm nor this test's own body can satisfy it — only a comparison
     /// inside `handle_cursor_moved` can.
+    ///
+    /// **Conservative in one direction, by design.** The needle is the
+    /// constant's *name*, so aliasing it first — `let budget_sq =
+    /// super::POINTER_DRAG_THRESHOLD_SQ_PX;` above the arms, then
+    /// comparing against `budget_sq` — reddens this test even though
+    /// the arms still read the shared number. That is a false positive
+    /// on a legitimate refactor, and it is the direction to fail in:
+    /// the message quotes the offending comparison in full ("not a
+    /// re-inlined literal: `if dist_x * dist_x + dist_y * dist_y >
+    /// budget_sq`"), so the reader can see at a glance that it is an
+    /// alias rather than drift and extend the needle. A pin that
+    /// followed aliases would have to evaluate the file, which is the
+    /// thing `production_code` deliberately does not do.
     #[test]
     fn test_the_mouse_drag_arms_name_the_shared_pointer_threshold() {
         let code = production_code(THIS_FILE);
@@ -907,9 +935,19 @@ mod tests {
             "expected exactly the left-button `Pending` and right-button `PendingRight` \
              threshold crossings; found {compares:?}"
         );
+        // Assembled from two fragments so the constant's full path is
+        // nowhere spelled contiguously in this file outside
+        // `handle_cursor_moved` itself. Written out in one piece, the
+        // published `sed` below — which is whole-file — would rewrite
+        // this needle to `"25.0"` in the same pass that re-inlines the
+        // arms, and the test would then assert that the arms contain
+        // `25.0`, which they would. A control that mutates its own
+        // oracle is not a control (#138), and the fragments are what
+        // keep the simple whole-file command honest.
+        let shared_constant = concat!("super::POINTER_DRAG_", "THRESHOLD_SQ_PX");
         for compare in compares {
             assert!(
-                compare.contains("super::POINTER_DRAG_THRESHOLD_SQ_PX"),
+                compare.contains(shared_constant),
                 "a mouse drag threshold must be the shared constant, not a re-inlined \
                  literal: {compare}"
             );
