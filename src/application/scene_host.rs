@@ -918,9 +918,7 @@ pub(in crate::application) mod tests {
             );
             let covering: Vec<_> = rects
                 .iter()
-                .filter(|(min, max, _)| {
-                    center.x >= min.x && center.x <= max.x && center.y >= min.y && center.y <= max.y
-                })
+                .filter(|(min, max, _)| baumhard::util::geometry::aabb_contains(center, *min, *max))
                 .collect();
             let hit = app.edge_label_at(center);
             if covering.len() == 1 {

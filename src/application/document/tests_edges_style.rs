@@ -10,6 +10,7 @@ use super::*;
 use baumhard::mindmap::model::ControlPoint;
 use baumhard::mindmap::model::GlyphConnectionConfig;
 use baumhard::mindmap::tree_builder::EdgeHandleKind;
+use baumhard::util::geometry::aabb_center;
 use glam::Vec2;
 
 #[test]
@@ -23,7 +24,7 @@ fn test_hit_test_edge_handle_finds_anchor_from() {
     let from_size = from_node.size_vec2();
     let to_pos = to_node.pos_vec2();
     let to_size = to_node.size_vec2();
-    let to_center = Vec2::new(to_pos.x + to_size.x * 0.5, to_pos.y + to_size.y * 0.5);
+    let to_center = aabb_center(to_pos, to_size);
     let anchor_from_pos = baumhard::mindmap::connection::resolve_anchor_point(
         from_pos,
         from_size,
@@ -63,8 +64,8 @@ fn test_hit_test_edge_handle_finds_midpoint_on_straight_edge() {
     let from_size = from_node.size_vec2();
     let to_pos = to_node.pos_vec2();
     let to_size = to_node.size_vec2();
-    let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
-    let to_center = Vec2::new(to_pos.x + to_size.x * 0.5, to_pos.y + to_size.y * 0.5);
+    let from_center = aabb_center(from_pos, from_size);
+    let to_center = aabb_center(to_pos, to_size);
     let start = baumhard::mindmap::connection::resolve_anchor_point(
         from_pos,
         from_size,
@@ -103,7 +104,7 @@ fn test_hit_test_edge_handle_no_midpoint_on_curved_edge() {
     let from_node = doc.mindmap.nodes.get(&edge.from_id).unwrap();
     let from_pos = from_node.pos_vec2();
     let from_size = from_node.size_vec2();
-    let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
+    let from_center = aabb_center(from_pos, from_size);
 
     // The control point is at from_center + (50, 50). Hit there:
     // should get ControlPoint(0), not Midpoint.

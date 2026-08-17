@@ -114,6 +114,32 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
     pos + size * 0.5
 }
 
+/// Whether `point` lies inside the axis-aligned box `[min, max]`,
+/// **boundary included**. The one closed-interval point-in-AABB
+/// test in the project: the BVH descent prunes with it, the scene
+/// picks entries with it, the rectangle shape answers
+/// `contains_local` with it, and the app's node hit-test asks it
+/// twice per node.
+///
+/// Closed rather than half-open because every one of those callers
+/// is answering "did the user click this?", and a click landing
+/// exactly on a node's right or bottom edge has to hit the node
+/// rather than fall through to whatever is beneath it. The
+/// deliberately *strict* epsilon-inset variants — the connection
+/// path's `< f32::EPSILON` degenerate-length guards — are asking a
+/// different question and stay as they are.
+///
+/// `max` below `min` on either axis contains nothing, which is the
+/// answer a degenerate box should give and needs no separate guard.
+///
+/// Cost: four comparisons, O(1), no heap. Carries no `#[inline]`:
+/// it is a leaf of four compares in the same crate as its hot
+/// caller, so nothing a benchmark here could resolve turns on the
+/// attribute (§B7).
+pub fn aabb_contains(point: Vec2, min: Vec2, max: Vec2) -> bool {
+    point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y
+}
+
 /// Component-wise [`pretty_inequal`] on two vectors: true if either
 /// component pair is outside the `almost_equal` tolerance.
 /// Cost: O(1).

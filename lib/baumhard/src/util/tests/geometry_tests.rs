@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::util::geometry::{
-    almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot, is_non_negative_finite_f64,
-    is_positive_finite, option_almost_equal, pixel_greater_or_equal, pixel_greater_than, pixel_less_or_equal,
-    pixel_lesser_than,
+    aabb_contains, almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot,
+    is_non_negative_finite_f64, is_positive_finite, option_almost_equal, pixel_greater_or_equal,
+    pixel_greater_than, pixel_less_or_equal, pixel_lesser_than,
 };
 use glam::Vec2;
 
@@ -214,4 +214,84 @@ pub fn do_is_non_negative_finite_f64() {
     assert!(!is_non_negative_finite_f64(f64::NAN));
     assert!(!is_non_negative_finite_f64(f64::INFINITY));
     assert!(!is_non_negative_finite_f64(f64::NEG_INFINITY));
+}
+
+#[test]
+fn test_aabb_contains_includes_every_boundary() {
+    do_aabb_contains_includes_every_boundary();
+}
+
+/// The interval is closed on all four sides, and that is the whole
+/// point of the function: a click landing exactly on a node's right
+/// or bottom edge has to hit the node rather than fall through to
+/// whatever is beneath it.
+///
+/// The input that makes this fail is a half-open `<` on either
+/// upper bound — the shape a reader reaching for "width" instead of
+/// "max" writes — which drops the right and bottom edges while
+/// leaving the left and top ones working, so all four corners are
+/// checked rather than one. The degenerate box is the same claim at
+/// zero size: it must contain its single point, which a half-open
+/// test says is empty.
+pub fn do_aabb_contains_includes_every_boundary() {
+    let min = Vec2::new(-3.0, 5.0);
+    let max = Vec2::new(7.0, 11.0);
+
+    assert!(aabb_contains(Vec2::new(2.0, 8.0), min, max), "interior");
+    for corner in [
+        Vec2::new(min.x, min.y),
+        Vec2::new(max.x, min.y),
+        Vec2::new(min.x, max.y),
+        Vec2::new(max.x, max.y),
+    ] {
+        assert!(
+            aabb_contains(corner, min, max),
+            "corner {corner:?} is inside a closed box"
+        );
+    }
+    assert!(aabb_contains(Vec2::new(max.x, 8.0), min, max), "right edge");
+    assert!(aabb_contains(Vec2::new(2.0, max.y), min, max), "bottom edge");
+
+    let point = Vec2::new(4.0, -1.0);
+    assert!(
+        aabb_contains(point, point, point),
+        "a zero-size box contains its own point"
+    );
+}
+
+#[test]
+fn test_aabb_contains_rejects_on_each_axis_independently() {
+    do_aabb_contains_rejects_on_each_axis_independently();
+}
+
+/// Outside on one axis is outside, even when the other axis is
+/// comfortably inside. All four directions are checked because an
+/// implementation that drops one axis's pair of comparisons
+/// entirely still passes every case on the other axis: without the
+/// `y` clauses `(2.0, 4.999)` and `(2.0, 11.001)` both come back
+/// inside, and without the `x` clauses `(-3.001, 8.0)` does.
+///
+/// A *transposed* compare — `point.y` against `max.x` — is not this
+/// test's to catch, and could not be: every assertion here is a
+/// rejection, and a transposition only makes the predicate
+/// stricter. `test_aabb_contains_includes_every_boundary` is where
+/// it turns red, on the corners.
+///
+/// The `max < min` case is the last direction: a box whose bounds
+/// are inverted contains nothing, which the closed comparisons give
+/// without a guard of their own. An implementation that "helpfully"
+/// sorted its bounds would report the point inside.
+pub fn do_aabb_contains_rejects_on_each_axis_independently() {
+    let min = Vec2::new(-3.0, 5.0);
+    let max = Vec2::new(7.0, 11.0);
+
+    assert!(!aabb_contains(Vec2::new(-3.001, 8.0), min, max), "left of min.x");
+    assert!(!aabb_contains(Vec2::new(7.001, 8.0), min, max), "right of max.x");
+    assert!(!aabb_contains(Vec2::new(2.0, 4.999), min, max), "above min.y");
+    assert!(!aabb_contains(Vec2::new(2.0, 11.001), min, max), "below max.y");
+
+    assert!(
+        !aabb_contains(Vec2::new(2.0, 8.0), max, min),
+        "an inverted box contains nothing, including its own former interior"
+    );
 }

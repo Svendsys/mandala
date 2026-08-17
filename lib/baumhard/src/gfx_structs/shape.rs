@@ -48,6 +48,7 @@
 //! says is data a test can read rather than a shape of `if`s only a
 //! log sink could observe.
 
+use crate::util::geometry::aabb_contains;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -586,9 +587,7 @@ impl NodeShape {
             return false;
         }
         match self {
-            NodeShape::Rectangle => {
-                local.x >= 0.0 && local.x <= bounds.x && local.y >= 0.0 && local.y <= bounds.y
-            }
+            NodeShape::Rectangle => aabb_contains(local, Vec2::ZERO, bounds),
             NodeShape::Ellipse => {
                 // Normalised coordinates in [-1, 1] relative to the
                 // ellipse centre. A perfect circle is `bounds.x ==

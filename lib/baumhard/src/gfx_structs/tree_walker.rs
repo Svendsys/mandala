@@ -18,6 +18,7 @@ use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::{GfxMutator, Instruction};
 use crate::gfx_structs::predicate::Predicate;
 use crate::gfx_structs::tree::{BranchChannel, MutatorTree, Tree};
+use crate::util::geometry::aabb_contains;
 use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
 use indextree::{Arena, Node, NodeId};
@@ -682,11 +683,8 @@ pub(crate) fn bvh_find(
 
         // 1. Prune: subtree AABB must contain (slack-inflated) point.
         if let Some((st_min, st_max)) = element.subtree_aabb() {
-            if point.x < st_min.x - slack
-                || point.x > st_max.x + slack
-                || point.y < st_min.y - slack
-                || point.y > st_max.y + slack
-            {
+            let slack_vec = Vec2::splat(slack);
+            if !aabb_contains(point, st_min - slack_vec, st_max + slack_vec) {
                 continue;
             }
         } else {
@@ -698,11 +696,9 @@ pub(crate) fn bvh_find(
             let pos = area.position.to_vec2();
             let bounds = area.render_bounds.to_vec2();
             if bounds.x > 0.0 && bounds.y > 0.0 {
-                let min_x = pos.x - slack;
-                let min_y = pos.y - slack;
-                let max_x = pos.x + bounds.x + slack;
-                let max_y = pos.y + bounds.y + slack;
-                if point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y {
+                let min = Vec2::new(pos.x - slack, pos.y - slack);
+                let max = Vec2::new(pos.x + bounds.x + slack, pos.y + bounds.y + slack);
+                if aabb_contains(point, min, max) {
                     let mut hit = true;
                     if refine_with_shape {
                         // Shift into the inflated local frame so
@@ -737,8 +733,8 @@ pub(crate) fn bvh_find(
                         // accepted set is exactly the closed AABB); for an
                         // ellipse the frame shifts by at most an ULP and
                         // stays inside the unchanged AABB.
-                        let local = Vec2::new(point.x - min_x, point.y - min_y);
-                        let inflated = Vec2::new(max_x - min_x, max_y - min_y);
+                        let local = point - min;
+                        let inflated = max - min;
                         hit = area.shape.contains_local(local, inflated);
                     }
                     if hit {

@@ -22,6 +22,7 @@ use baumhard::mindmap::tree_builder::MindMapTree;
 use baumhard::mindmap::tree_builder::{
     build_node_resize_handles, build_section_resize_handles, ResizeHandleSide, INACTIVE_NODE_ALPHA_MULTIPLIER,
 };
+use baumhard::util::geometry::aabb_contains;
 
 use super::types::EdgeRef;
 
@@ -160,21 +161,15 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
         return false;
     };
 
-    let x = area.position.x.0;
-    let y = area.position.y.0;
-    let w = area.render_bounds.x.0;
-    let h = area.render_bounds.y.0;
+    let min = Vec2::new(area.position.x.0, area.position.y.0);
+    let bounds = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
 
-    let in_container_aabb =
-        canvas_pos.x >= x && canvas_pos.x <= x + w && canvas_pos.y >= y && canvas_pos.y <= y + h;
-
-    if in_container_aabb {
-        let local = Vec2::new(canvas_pos.x - x, canvas_pos.y - y);
-        return area.shape.contains_local(local, Vec2::new(w, h));
+    if aabb_contains(canvas_pos, min, min + bounds) {
+        return area.shape.contains_local(canvas_pos - min, bounds);
     }
 
     if let Some((tl, br)) = element.subtree_aabb() {
-        return canvas_pos.x >= tl.x && canvas_pos.x <= br.x && canvas_pos.y >= tl.y && canvas_pos.y <= br.y;
+        return aabb_contains(canvas_pos, tl, br);
     }
     false
 }

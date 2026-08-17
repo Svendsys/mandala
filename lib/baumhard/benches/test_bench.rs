@@ -851,6 +851,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("0_deg_rotation", |b| b.iter(do_0_deg_rotation));
     c.bench_function("pixel_functions", |b| b.iter(do_pixel_functions));
+    c.bench_function("aabb_contains_includes_every_boundary", |b| {
+        b.iter(do_aabb_contains_includes_every_boundary)
+    });
+    c.bench_function("aabb_contains_rejects_on_each_axis_independently", |b| {
+        b.iter(do_aabb_contains_rejects_on_each_axis_independently)
+    });
     c.bench_function("almost_equal", |b| b.iter(do_almost_equal));
     c.bench_function("almost_equal_vec2", |b| b.iter(do_almost_equal_vec2));
     c.bench_function("is_positive_finite", |b| b.iter(do_is_positive_finite));

@@ -16,6 +16,7 @@ use glam::Vec2;
 use crate::mindmap::connection;
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
+use crate::util::geometry::aabb_center;
 
 use super::HandleVisual;
 
@@ -144,8 +145,8 @@ pub fn build_edge_handles(
         connection::ConnectionPath::CubicBezier { start, end, .. } => (*start, *end),
     };
 
-    let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
-    let to_center = Vec2::new(to_pos.x + to_size.x * 0.5, to_pos.y + to_size.y * 0.5);
+    let from_center = aabb_center(from_pos, from_size);
+    let to_center = aabb_center(to_pos, to_size);
 
     let make = |kind: EdgeHandleKind, position: Vec2| {
         // The midpoint handle carries a distinct glyph so the
