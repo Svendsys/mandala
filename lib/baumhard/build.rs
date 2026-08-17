@@ -29,6 +29,19 @@
 //! Cargo never builds a build script under `cfg(test)`, so that is
 //! what makes the rules unit-testable.
 
+// A build script is a crate root of its own, so `lib.rs`'s
+// `#![warn(clippy::unwrap_used)]` never reaches a line written here —
+// the same gap `src/bin/generate_stress_map.rs` documents, at the
+// last root that still had it. The file is inside
+// `unwrap_posture`'s scan, so a bare `unwrap()` here was already
+// caught by the gate; what was missing is the second reader, and
+// with it the editor-time feedback every other root gets. Proven
+// rather than assumed: with an `o.unwrap()` planted below,
+// `cargo clippy --workspace --all-targets` reported nothing against
+// this file until the attribute landed.
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::ffi::OsStr;

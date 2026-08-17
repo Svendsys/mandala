@@ -418,15 +418,19 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `#[cfg(test)] mod x;` files and `#![cfg(test)]` files dropped,
   baumhard's ungated `pub mod tests;` trees and `benches/` dropped
   by path — and fails `./test.sh` naming `file:line`. Beside it,
-  all five crate roots carry `#![warn(clippy::unwrap_used)]` with
+  six of the seven cargo targets carry
+  `#![warn(clippy::unwrap_used)]` with
   `#![cfg_attr(test, allow(...))]`, so the same rule reaches an
-  editor while the code is being written. **Five, not four:**
-  `lib/baumhard/src/bin/generate_stress_map.rs` is a crate root of
-  its own, and the attribute in `lib.rs` does not reach it — a
-  planted `unwrap()` there draws nothing from `cargo clippy -p
-  baumhard --bins` until the file carries the attribute itself. That
-  is the shape of hole this bullet exists to describe, so it is
-  named rather than rounded off. The scan is the gate,
+  editor while the code is being written. The seventh is the
+  criterion bench root, which is test code by §T2.2 and which the
+  scan drops by path. **Count the targets, not the libraries:**
+  `lib/baumhard/src/bin/generate_stress_map.rs` and
+  `lib/baumhard/build.rs` are each a crate root of their own, and
+  the attribute in `lib.rs` reaches neither — a planted `unwrap()`
+  in either drew nothing from `cargo clippy` until that file carried
+  the attribute itself. Both were found by writing the count down
+  and then checking it against `cargo metadata`, which is the only
+  reason this sentence states a number at all. The scan is the gate,
   because clippy is advisory here until its warning baseline is
   zero; the lint is the faster feedback, and it reads
   post-macro-expansion code the scan cannot. Neither replaces the
