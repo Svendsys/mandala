@@ -513,9 +513,14 @@ pub(in crate::application::document) fn section_runs_all_match(
 ///
 /// A section with no text is left alone: `text_run_ops` requires
 /// `start < end` and panics in debug builds on a degenerate run,
-/// so "author a run onto empty text" is not an available
-/// outcome. Callers reach [`section_runs_all_match`] first, which
-/// reports that case as nothing-to-do.
+/// so "author a run onto empty text" is not an available outcome.
+/// That guard carries live traffic rather than standing by for a
+/// future caller. The per-section setters do ask
+/// [`section_runs_all_match`] about this section first and stop
+/// here; the whole-node pair asks it about the *node* — `all` over
+/// its sections — and then writes every section, so one section
+/// that needs a run hands its textless siblings straight to this
+/// function.
 pub(in crate::application::document) fn write_every_section_run(
     section: &mut baumhard::mindmap::model::MindSection,
     set: impl Fn(&mut TextRun),

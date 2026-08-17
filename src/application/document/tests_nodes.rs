@@ -5695,10 +5695,17 @@ fn test_uniform_font_setters_leave_a_textless_section_run_less() {
 /// The write half of the pair refuses a textless section on its
 /// own, not only because its callers ask first.
 ///
-/// `section_runs_all_match` reports a textless run-less section as
-/// nothing-to-do, so the four setters never reach the guard —
-/// which is exactly why it is worth pinning here. A future caller
-/// that writes without asking would otherwise push
+/// The *per-section* setters ask first: `section_runs_all_match`
+/// reports a textless run-less section as nothing-to-do and they
+/// return before the write. The whole-node pair does not — it asks
+/// about the node, `sections.iter().all(..)`, and then writes every
+/// section, so one section that needs a run carries its textless
+/// siblings into `write_every_section_run` with it. That live path
+/// is pinned by
+/// `test_a_whole_node_setter_carries_a_textless_section_into_the_guard`;
+/// this test is the same guard exercised directly, so a helper that
+/// no caller happened to route into a zero-length write today would
+/// still be caught. Without it, the push is
 /// `TextRun { start: 0, end: 0 }`, and `text_run_ops` panics in
 /// debug builds on the next slice or splice of it.
 ///
@@ -5727,6 +5734,69 @@ fn test_write_every_section_run_refuses_to_author_a_zero_length_run() {
     );
     assert_eq!((texted.text_runs[0].start, texted.text_runs[0].end), (0, 3));
     assert_eq!(texted.text_runs[0].size_pt, 33.0);
+}
+
+/// **The whole-node setters do reach the guard**, on a node whose
+/// sections disagree about whether there is anything to do.
+///
+/// `set_node_font_size` decides once for the node — `already =
+/// sections.iter().all(section_runs_all_match)` — and then writes
+/// *every* section. A node carrying one text-bearing run-less
+/// section and one textless one therefore hands the textless one to
+/// `write_every_section_run` even though `section_runs_all_match`
+/// had reported it as nothing-to-do, and only the emptiness guard
+/// keeps a zero-length run off it. Nothing else in the suite drives
+/// a caller into that branch, which is how it was described as
+/// unreachable.
+///
+/// Fails when: the `count == 0` guard in `write_every_section_run`
+/// goes — `sections[1]` then gains `TextRun { start: 0, end: 0 }`,
+/// the shape `text_run_ops` panics on. `sections[0]` is asserted in
+/// the same call as the control: the setter must still author the
+/// run it was asked for, so "no run on the textless section" cannot
+/// be a setter that wrote nothing at all.
+#[test]
+fn test_a_whole_node_setter_carries_a_textless_section_into_the_guard() {
+    use baumhard::mindmap::model::MindSection;
+
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let count = make_section_run_less(&mut doc, &nid, "run-less");
+    doc.mindmap
+        .nodes
+        .get_mut(&nid)
+        .expect("node")
+        .sections
+        .push(MindSection::new_default(String::new(), Vec::new()));
+
+    let sections = &doc.mindmap.nodes[&nid].sections;
+    assert_eq!(sections.len(), 2, "the fixture needs both section shapes");
+    assert!(
+        sections[0].text_runs.is_empty() && sections[1].text_runs.is_empty(),
+        "both sections start run-less, or a later assertion reads a pre-existing run"
+    );
+
+    assert!(
+        doc.set_node_font_size(&nid, 33.0),
+        "the text-bearing section needs the write, so the node is not already at 33"
+    );
+
+    let sections = &doc.mindmap.nodes[&nid].sections;
+    assert_eq!(
+        sections[0].text_runs.len(),
+        1,
+        "control: the text-bearing section is written"
+    );
+    assert_eq!(
+        (sections[0].text_runs[0].start, sections[0].text_runs[0].end),
+        (0, count)
+    );
+    assert_eq!(sections[0].text_runs[0].size_pt, 33.0);
+    assert!(
+        sections[1].text_runs.is_empty(),
+        "the textless section reached `write_every_section_run` and must come back \
+         run-less: a zero-length run is what `text_run_ops` panics on"
+    );
 }
 
 /// The authored run is undoable in one step, like every other
