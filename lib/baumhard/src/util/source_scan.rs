@@ -78,6 +78,11 @@ pub(crate) const RUST_ROOTS: &[&str] = &["lib", "src", "crates"];
 /// somebody else's prose and none of this crate's business.
 pub(crate) const MARKDOWN_ROOTS: &[&str] = &["format", "work_plans", "lib", "crates", "src", "maps"];
 
+/// Repo-relative directories that hold shell this workspace runs,
+/// alongside the scripts sitting at the root. `vendor/` is absent for
+/// the same reason it is absent from [`MARKDOWN_ROOTS`].
+pub(crate) const SHELL_ROOTS: &[&str] = &["scripts"];
+
 /// Directory names no walk here descends into: build output, vendored
 /// third-party trees, git's own storage, and the browser bundle.
 const SKIPPED_DIRS: &[&str] = &["target", "vendor", ".git", "dist", "node_modules"];
@@ -450,6 +455,18 @@ pub(crate) fn workspace_rust_sources() -> Vec<PathBuf> {
 /// `TEST_CONVENTIONS.md`, `CONCEPTS.md`, `AGENTS.md`, `README.md`.
 pub(crate) fn workspace_markdown_docs() -> Vec<PathBuf> {
     collect_by_extension(MARKDOWN_ROOTS, ".md", true)
+}
+
+/// Every `.sh` file under [`SHELL_ROOTS`] plus the ones at the
+/// repository root — `test.sh`, `bench.sh`, `build.sh`, `run.sh`,
+/// `debug_build.sh`.
+///
+/// The scripts are source too, and the one that matters most here is
+/// `test.sh`: it is where the commands the documents describe are
+/// actually run, so a rule checked in the prose and not in the script
+/// is checked in the cheaper of the two places.
+pub(crate) fn workspace_shell_scripts() -> Vec<PathBuf> {
+    collect_by_extension(SHELL_ROOTS, ".sh", true)
 }
 
 fn collect_by_extension(roots: &[&str], extension: &str, include_repo_root: bool) -> Vec<PathBuf> {

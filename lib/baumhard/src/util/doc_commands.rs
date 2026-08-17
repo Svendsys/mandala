@@ -1,25 +1,47 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The `cargo` commands the reference docs publish, held against the
+//! The `cargo` commands this repository writes down, held against the
 //! workspace they claim to drive.
 //!
 //! A command written into a doc is a claim — *run this and it does
 //! what the sentence around it says* — and nothing here checked
-//! those claims. One had been false since it was written:
+//! those claims. Two had been false since they were written, and
+//! #148 found both.
+//!
 //! `CLAUDE.md`'s "Common tasks" and `TEST_CONVENTIONS.md` §T11 both
 //! told a reader to narrow a mandala test run with `-p mandala`
 //! plus `--lib`, which exits 101 with `no library targets found in
 //! package 'mandala'` — that member is a binary crate. The flag is
 //! correct on its neighbor, since baumhard *is* a library, and had
-//! been copied across (#148).
+//! been copied across.
 //!
-//! That defect is mechanical, so it is checked mechanically. Two
-//! questions the real manifests can answer:
+//! The other was quieter and cost more. Five documents, `CLAUDE.md`
+//! §7 and `AGENTS.md` among them, published a `--benches` check as
+//! the proof that a bench target still compiles — the only proof an
+//! agent is allowed, since running the benchmarks is forbidden — and
+//! wrote it with no package selection. Cargo then takes the root
+//! package alone, which declares `autobenches = false` and owns no
+//! bench target, so it compiles nothing, prints "Finished" and exits
+//! 0 over a bench file full of type errors. A gate that cannot fail
+//! reads exactly like a gate that passes.
+//!
+//! Both defects are mechanical, so both are checked mechanically
+//! against the real manifests:
 //!
 //! - every `-p <name>` in an audited section names a workspace
 //!   member;
 //! - every `--lib` sits on a member that actually has a library
-//!   target.
+//!   target;
+//! - every `--benches` sits on a selection that owns a bench target.
+//!
+//! **The third question is asked repository-wide** — every Markdown
+//! file, every Rust comment, and the shell scripts — while the first
+//! two are asked of two named sections. The difference is not an
+//! oversight in either direction. A `--lib` is a mistake *inside* a
+//! passage about narrowing a test run, and [`AUDITED_SECTIONS`] is
+//! where those passages live; a `--benches` with no selection is a
+//! no-op wherever it is written, including in `test.sh`, which is
+//! where it is actually run rather than merely described.
 //!
 //! **What this reads.** Every way those two sections can publish a
 //! command: an inline code span opened with any number of backticks,
@@ -47,12 +69,25 @@
 //! whole-file scan stays green after the thing it claims to pin has
 //! moved somewhere else entirely.
 //!
+//! The repository-wide half has its own edge, in the other
+//! direction. It reads text rather than markup, so a command in
+//! running prose is judged too — but only where the tokens in front
+//! of the flag *are* an invocation: `cargo`, a subcommand, then
+//! nothing but flags and their values. A `--benches` in a sentence
+//! about the flag is prose, not a command, and is passed over. That
+//! is a deliberate hole with a floor under it:
+//! `assert_bench_scan_is_looking` requires the invocation to still
+//! be found in both documents that state the rule and in the script
+//! that runs it, so the shape cannot quietly empty out.
+//!
 //! Test-only and native-only, for the same reasons
 //! `crate::util::manifests` — whose member list this reuses rather
 //! than restating — is.
 
 use crate::util::doc_fixtures::{repo_path, section_text};
 use crate::util::manifests::member_manifests;
+use crate::util::rust_source::blank_string_literals;
+use crate::util::source_scan;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -275,11 +310,30 @@ pub(crate) fn package_selected(command: &str, doc: &str) -> Option<String> {
 /// Cost: one read of each member manifest plus one `stat` per
 /// member.
 pub(crate) fn library_targets() -> BTreeMap<String, bool> {
+    member_targets(has_lib_target)
+}
+
+/// Every workspace member, mapped to whether it has a **bench**
+/// target — the question `--benches` turns on.
+///
+/// Same reader, same cost, different predicate: a member owns a
+/// bench target when its manifest declares `[[bench]]`, or when
+/// nothing switched `autobenches` off and there is a `benches/*.rs`
+/// beside it for cargo to discover. Both members that set
+/// `autobenches = false` here mean it: the root package owns no
+/// bench at all, and baumhard declares its one explicitly because a
+/// criterion bench needs `harness = false`.
+pub(crate) fn bench_targets() -> BTreeMap<String, bool> {
+    member_targets(has_bench_target)
+}
+
+/// Every workspace member, mapped by `has_target`.
+fn member_targets(has_target: impl Fn(&str, &str) -> bool) -> BTreeMap<String, bool> {
     let mut out = BTreeMap::new();
     for manifest in member_manifests() {
         let text = std::fs::read_to_string(repo_path(&manifest))
             .unwrap_or_else(|e| panic!("{manifest} must be readable: {e}"));
-        out.insert(package_name(&text, &manifest), has_lib_target(&manifest, &text));
+        out.insert(package_name(&text, &manifest), has_target(&manifest, &text));
     }
     out
 }
@@ -324,11 +378,37 @@ fn has_lib_target(manifest: &str, text: &str) -> bool {
     if text.lines().any(|line| line.trim() == "[lib]") {
         return true;
     }
+    member_dir(manifest).join("src").join("lib.rs").is_file()
+}
+
+/// Whether the member at `manifest` has a bench target: a declared
+/// `[[bench]]` table, or — when `autobenches` has not switched
+/// discovery off — a `benches/*.rs` cargo would find.
+fn has_bench_target(manifest: &str, text: &str) -> bool {
+    let mut declared = false;
+    let mut autobenches = true;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        declared |= trimmed == "[[bench]]";
+        if trimmed.starts_with("autobenches") {
+            autobenches = !trimmed.split('=').nth(1).is_some_and(|v| v.trim() == "false");
+        }
+    }
+    if declared {
+        return true;
+    }
+    autobenches
+        && std::fs::read_dir(member_dir(manifest).join("benches")).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry.path().extension().is_some_and(|ext| ext == "rs") && entry.path().is_file()
+            })
+        })
+}
+
+/// The directory the member at `manifest` lives in.
+fn member_dir(manifest: &str) -> std::path::PathBuf {
     let dir = Path::new(manifest).parent().unwrap_or_else(|| Path::new(""));
     repo_path(&dir.to_string_lossy())
-        .join("src")
-        .join("lib.rs")
-        .is_file()
 }
 
 /// Every documented command that asks cargo for a library target of
@@ -370,6 +450,235 @@ pub(crate) fn unknown_package_selections(
         .collect()
 }
 
+/// How a file's lines turn into text a command can be read out of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextKind {
+    /// Markdown and shell: every non-blank line carries text and a
+    /// blank line ends a block. A command in a `#` comment and one
+    /// the shell actually runs are both just text here, which is the
+    /// point — `test.sh` is where the rule is kept or lost.
+    Prose,
+    /// Rust: only the text of a `//` comment carries a command, and
+    /// any other line ends the block, so a `cargo` in one doc comment
+    /// cannot be read as the head of a `--benches` far below it.
+    RustComment,
+}
+
+/// One `cargo … --benches` written somewhere in this repository.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct BenchCheck {
+    /// `"<repo-relative file>:<line>"` of the flag, for the message.
+    pub(crate) site: String,
+    /// The invocation the flag sits in, stripped of the markup around
+    /// it and whitespace-normalized.
+    pub(crate) invocation: String,
+}
+
+/// How far back from a `--benches` this reader looks for the `cargo`
+/// that opens its invocation. Every site in this repository is within
+/// four tokens; the slack is for a longer invocation, not for a
+/// paragraph that happens to mention cargo earlier.
+const CARGO_LOOKBACK: usize = 12;
+
+/// How far past a `--benches` the trailing run of flags may reach, so
+/// that a selection written *after* the flag is still read while an
+/// unrelated later command is not.
+const TRAILING_FLAGS: usize = 6;
+
+/// Every `--benches` this repository writes: in its Markdown, in its
+/// Rust comments, and in the shell scripts that run the command.
+///
+/// Deliberately wider than [`documented_cargo_commands`], which reads
+/// two named sections. The `--lib` defect was a mistake inside a
+/// section about narrowing a test run; this one is a rule the
+/// repository states in five documents and *executes* in `test.sh`,
+/// and the bare form is a no-op wherever it is written — so it is
+/// judged wherever it is written.
+///
+/// Cost: one read of every `.md`, `.rs` and `.sh` file in the
+/// workspace. Paid once per test that asks.
+pub(crate) fn bench_checks() -> Vec<BenchCheck> {
+    let prose = source_scan::workspace_markdown_docs()
+        .into_iter()
+        .chain(source_scan::workspace_shell_scripts())
+        .map(|file| (file, TextKind::Prose));
+    let rust = source_scan::workspace_rust_sources()
+        .into_iter()
+        .map(|file| (file, TextKind::RustComment));
+    let mut out = Vec::new();
+    for (file, kind) in prose.chain(rust) {
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        out.extend(bench_checks_in(
+            &text,
+            kind,
+            &source_scan::relative_to_repo(&file),
+        ));
+    }
+    out
+}
+
+/// Every `cargo … --benches` in `text`, with `file` naming the
+/// source for the message.
+///
+/// A Rust file has its string literals blanked first
+/// ([`blank_string_literals`], which keeps byte offsets and line
+/// breaks), because a `//` inside a literal is not a comment — and
+/// this module's own fixtures are literals holding the very command
+/// it forbids.
+pub(crate) fn bench_checks_in(text: &str, kind: TextKind, file: &str) -> Vec<BenchCheck> {
+    let blanked;
+    let text = match kind {
+        TextKind::RustComment => {
+            blanked = blank_string_literals(text);
+            blanked.as_str()
+        }
+        TextKind::Prose => text,
+    };
+    let mut out = Vec::new();
+    let mut block: Vec<(String, usize)> = Vec::new();
+    for (offset, line) in text.lines().enumerate() {
+        match command_line(line, kind) {
+            Some(line) => block.extend(tokens(&line).map(|token| (token, offset + 1))),
+            None => {
+                out.extend(bench_checks_in_block(&block, file));
+                block.clear();
+            }
+        }
+    }
+    out.extend(bench_checks_in_block(&block, file));
+    out
+}
+
+/// The part of `line` a command can be written in, or `None` when the
+/// line ends a block.
+fn command_line(line: &str, kind: TextKind) -> Option<String> {
+    match kind {
+        TextKind::Prose if line.trim().is_empty() => None,
+        TextKind::Prose => Some(line.to_string()),
+        TextKind::RustComment => line.find("//").map(|at| {
+            line[at..]
+                .trim_start_matches('/')
+                .trim_start_matches('!')
+                .to_string()
+        }),
+    }
+}
+
+/// `text` split into tokens, with the markup a command is wrapped in
+/// — code ticks, emphasis, quotes, line continuations — and the
+/// punctuation a sentence ends it with taken off.
+fn tokens(text: &str) -> impl Iterator<Item = String> {
+    text.replace(['`', '*', '"', '\'', '\\'], " ")
+        .split_whitespace()
+        .map(|token| {
+            token
+                .trim_start_matches(['(', '[', '{'])
+                .trim_end_matches([')', ']', '}', '.', ',', ';', ':', '!', '?'])
+                .to_string()
+        })
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
+/// Every `cargo … --benches` in one block of tokens.
+fn bench_checks_in_block(block: &[(String, usize)], file: &str) -> Vec<BenchCheck> {
+    block
+        .iter()
+        .enumerate()
+        .filter(|(_, (token, _))| token == "--benches")
+        .filter_map(|(at, (_, line))| {
+            Some(BenchCheck {
+                site: format!("{file}:{line}"),
+                invocation: invocation_around(block, at)?,
+            })
+        })
+        .collect()
+}
+
+/// The invocation the `--benches` at `at` belongs to: from the
+/// nearest `cargo` within [`CARGO_LOOKBACK`] through the run of flags
+/// that follows, so a selection written on either side of the flag is
+/// read.
+///
+/// `None` when the tokens in front of the flag are not an invocation
+/// — a subcommand and then nothing but flags and their values. That
+/// is the difference between a command a reader can run and a
+/// sentence about one, and this module's own prose is full of the
+/// second kind.
+fn invocation_around(block: &[(String, usize)], at: usize) -> Option<String> {
+    let start = block[..at].iter().rposition(|(token, _)| token == "cargo")?;
+    if at - start > CARGO_LOOKBACK {
+        return None;
+    }
+    let subcommand = &block.get(start + 1)?.0;
+    if subcommand.starts_with('-')
+        || !subcommand
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    for i in start + 2..at {
+        let token = &block[i].0;
+        let previous = &block[i - 1].0;
+        let is_value = previous.starts_with('-') && !previous.contains('=');
+        if !token.starts_with('-') && !is_value {
+            return None;
+        }
+    }
+    let mut end = at + 1;
+    while end < block.len() && end - at <= TRAILING_FLAGS && block[end].0.starts_with('-') {
+        let takes_value = block[end].0 == "-p" || block[end].0 == "--package";
+        end += 1;
+        if takes_value && end < block.len() {
+            end += 1;
+        }
+    }
+    Some(
+        block[start..end]
+            .iter()
+            .map(|(token, _)| token.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+/// Every `--benches` written here that compiles no bench target,
+/// rendered `"<file>:<line>: <what is wrong>"`.
+///
+/// `--workspace` (or its `--all` alias) passes because the workspace
+/// owns a bench target; the caller asserts that separately, since a
+/// workspace that owned none would make every one of these pass for
+/// the wrong reason.
+pub(crate) fn bench_selection_violations(
+    checks: &[BenchCheck],
+    targets: &BTreeMap<String, bool>,
+) -> Vec<String> {
+    checks
+        .iter()
+        .filter_map(|check| {
+            let invocation = check.invocation.as_str();
+            if cargo_arguments(invocation).any(|token| token == "--workspace" || token == "--all") {
+                return None;
+            }
+            match package_selected(invocation, &check.site) {
+                Some(name) if targets.get(&name) == Some(&true) => None,
+                Some(name) => Some(format!(
+                    "{}: `{invocation}` — `{name}` owns no bench target, so this compiles none",
+                    check.site
+                )),
+                None => Some(format!(
+                    "{}: `{invocation}` — no package selection, so cargo takes the root \
+                     package alone, which owns no bench target",
+                    check.site
+                )),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,6 +704,12 @@ mod tests {
         BTreeMap::from([("alib".to_string(), true), ("abin".to_string(), false)])
     }
 
+    /// The same shape as [`workspace_fixture`] for the other
+    /// question: one member owning a bench target, one owning none.
+    fn bench_fixture() -> BTreeMap<String, bool> {
+        BTreeMap::from([("hasbench".to_string(), true), ("nobench".to_string(), false)])
+    }
+
     /// **No documented command asks for a library target of a
     /// package that has none** — #148's defect, which lived in two
     /// documents at once because the flag was copied off a neighbor
@@ -415,6 +730,77 @@ mod tests {
              run, it fails it:\n  {}",
             violations.len(),
             violations.join("\n  ")
+        );
+    }
+
+    /// **No `--benches` written in this repository compiles zero
+    /// bench targets** — #148's other defect, and the one that cost
+    /// something. The bare form — `cargo check` with no `--workspace`
+    /// — had been the project's stated proof that a bench target
+    /// still builds, in `CLAUDE.md` §7, in `AGENTS.md` and in three
+    /// more documents, and it exits 0 on a bench file that does not
+    /// compile: the root package is the default selection, it
+    /// declares `autobenches = false`, and it owns no bench target,
+    /// so cargo checks nothing and says "Finished".
+    ///
+    /// Note what this test's own prose cannot do, and neither can any
+    /// other prose here: write the bad command out to name it. There
+    /// is no opt-out marker, deliberately — a quoted counter-example
+    /// is indistinguishable from an instruction to the next person
+    /// who copies a line out of a document.
+    ///
+    /// The fix for a failure is to name a selection that owns a bench
+    /// — `--workspace` is the one this repository uses everywhere,
+    /// `test.sh` included.
+    #[test]
+    fn test_no_bench_check_selects_a_package_that_owns_no_bench() {
+        let checks = bench_checks();
+        let targets = bench_targets();
+        assert_bench_scan_is_looking(&checks, &targets);
+        let violations = bench_selection_violations(&checks, &targets);
+        assert!(
+            violations.is_empty(),
+            "{} `--benches` invocation(s) select no package that owns a bench target, so \
+             they compile nothing and pass. Say `--workspace`:\n  {}",
+            violations.len(),
+            violations.join("\n  ")
+        );
+    }
+
+    /// The preconditions the check above rests on. A repository that
+    /// stopped writing the command anywhere, a member reader that
+    /// answers the same way for everyone, a walk that no longer
+    /// reaches the two documents stating the rule or the script
+    /// running it — each is a way to report "nothing is wrong" while
+    /// having stopped looking.
+    fn assert_bench_scan_is_looking(checks: &[BenchCheck], targets: &BTreeMap<String, bool>) {
+        for file in ["CLAUDE.md", "AGENTS.md", "test.sh"] {
+            assert!(
+                checks
+                    .iter()
+                    .any(|check| check.site.starts_with(&format!("{file}:"))),
+                "{file} writes no `--benches` any more. It is one of the three places this \
+                 rule lives — the two documents that state it and the script that runs it — \
+                 so either the walk stopped reaching it or the gate itself is gone"
+            );
+        }
+        assert!(
+            checks.len() >= 6,
+            "the walk found {} `--benches` site(s) across the whole repository; it published \
+             more than that, so it is no longer reading what it claims to check",
+            checks.len()
+        );
+        assert!(
+            targets.values().any(|has_bench| *has_bench),
+            "no workspace member owns a bench target, so `--workspace --benches` would \
+             compile nothing either and every check here passes for the wrong reason: \
+             {targets:?}"
+        );
+        assert!(
+            targets.values().any(|has_bench| !*has_bench),
+            "the member reader classified every one of {} member(s) the same way, so it \
+             cannot tell a bench owner from a member that has none: {targets:?}",
+            targets.len()
         );
     }
 
@@ -591,6 +977,149 @@ mod tests {
     #[should_panic(expected = "opened and never closed")]
     fn test_an_unclosed_fence_stops_the_scan() {
         cargo_spans("prose\n\n```bash\ncargo test -p alib\n\nmore prose", "fixture.md");
+    }
+
+    /// Positive control for the bench judgment: it fires on each way
+    /// an invocation can select nothing that owns a bench, and stays
+    /// quiet on each way one can select something that does. Without
+    /// this, a `bench_selection_violations` that returned an empty
+    /// vector unconditionally would read exactly like a clean
+    /// repository — which is what the repository had instead of this
+    /// check for the whole life of the rule.
+    #[test]
+    fn test_a_bench_check_that_compiles_no_bench_target_is_reported() {
+        let targets = bench_fixture();
+        let bare = bench_checks_in("run cargo check --benches here", TextKind::Prose, "f.md");
+        assert_eq!(
+            bench_selection_violations(&bare, &targets),
+            vec![
+                "f.md:1: `cargo check --benches` — no package selection, so cargo takes the \
+                 root package alone, which owns no bench target"
+                    .to_string()
+            ]
+        );
+        let wrong_member = bench_checks_in("cargo check -p nobench --benches", TextKind::Prose, "f.md");
+        assert_eq!(
+            bench_selection_violations(&wrong_member, &targets),
+            vec![
+                "f.md:1: `cargo check -p nobench --benches` — `nobench` owns no bench target, \
+                 so this compiles none"
+                    .to_string()
+            ]
+        );
+        for clean in [
+            "cargo check --workspace --benches",
+            "cargo check --benches --workspace",
+            "cargo check -p hasbench --benches",
+        ] {
+            let checks = bench_checks_in(clean, TextKind::Prose, "f.md");
+            assert_eq!(checks.len(), 1, "{clean} must yield one site");
+            assert!(
+                bench_selection_violations(&checks, &targets).is_empty(),
+                "{clean} selects a bench owner"
+            );
+        }
+    }
+
+    /// A sentence about the flag is not a command, and neither is a
+    /// sentence that happens to say "cargo" a few words earlier.
+    /// Both shapes are in this module's own prose, and reading them
+    /// as commands is how a checker of documented commands ends up
+    /// forbidding documentation.
+    #[test]
+    fn test_a_benches_written_into_a_sentence_is_not_a_command() {
+        for prose in [
+            "the --benches flag",
+            "cargo in one paragraph cannot be read as the head of a --benches",
+            "run cargo check, then talk about --benches",
+        ] {
+            assert!(
+                bench_checks_in(prose, TextKind::Prose, "f.md").is_empty(),
+                "{prose:?} is prose, not an invocation"
+            );
+        }
+    }
+
+    /// The markup a command is written in does not hide it: code
+    /// ticks, a bold run, a sentence's comma, a wrap across lines,
+    /// and the `//!` of a Rust doc comment all come off. Every one of
+    /// those shapes is in this repository today — `AGENTS.md` and
+    /// `bench_surface.rs` both wrap the invocation mid-command.
+    #[test]
+    fn test_the_bench_scan_reads_through_markup_and_line_wraps() {
+        let wrapped_doc = "prose `cargo check\n  --workspace --benches`, which runs nothing";
+        let checks = bench_checks_in(wrapped_doc, TextKind::Prose, "f.md");
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].invocation, "cargo check --workspace --benches");
+        assert_eq!(checks[0].site, "f.md:2", "the site is where the flag is");
+        let wrapped_comment = "//! **`cargo check\n//! --workspace --benches`** proves it.\nfn f() {}";
+        assert_eq!(
+            bench_checks_in(wrapped_comment, TextKind::RustComment, "f.rs")[0].invocation,
+            "cargo check --workspace --benches"
+        );
+    }
+
+    /// What the scan reads in Rust, pinned so the silence is not read
+    /// as coverage: comments, and not the code around them. A string
+    /// literal is not a claim about how to build this repository —
+    /// and the fixtures in this very module are literals holding the
+    /// command it forbids, so a reader that took them at face value
+    /// would fail on its own test data.
+    #[test]
+    fn test_the_bench_scan_reads_rust_comments_and_not_rust_code() {
+        for code in [
+            "let command = \"cargo check --benches\";",
+            "assert_eq!(read(\"// cargo check --benches\"), 1);",
+        ] {
+            assert!(
+                bench_checks_in(code, TextKind::RustComment, "f.rs").is_empty(),
+                "{code:?} is code, not a comment"
+            );
+        }
+        assert_eq!(
+            bench_checks_in("// cargo check --benches", TextKind::RustComment, "f.rs").len(),
+            1
+        );
+    }
+
+    /// A block ends at a blank line in prose and at any non-comment
+    /// line in Rust, so a `cargo` in one paragraph cannot be read as
+    /// the head of a `--benches` in the next.
+    #[test]
+    fn test_a_block_boundary_keeps_two_commands_apart() {
+        let split = "cargo check --workspace\n\nand then --benches";
+        assert!(
+            bench_checks_in(split, TextKind::Prose, "f.md").is_empty(),
+            "the `cargo` is in the block above"
+        );
+        let across_code = "// cargo check --workspace\nfn f() {}\n// --benches";
+        assert!(bench_checks_in(across_code, TextKind::RustComment, "f.rs").is_empty());
+    }
+
+    /// The manifests answer both ways for the real workspace, named
+    /// member by member: the reader that says "owns a bench" for
+    /// everything and the reader that says it for nothing both pass
+    /// every other assertion here.
+    #[test]
+    fn test_the_member_reader_tells_this_workspace_bench_owners_from_the_rest() {
+        let targets = bench_targets();
+        assert_eq!(
+            targets.get("baumhard"),
+            Some(&true),
+            "baumhard declares `[[bench]]`"
+        );
+        assert_eq!(
+            targets.get("mandala"),
+            Some(&false),
+            "the root package sets `autobenches = false` and owns no bench — the whole \
+             reason the bare form is a no-op"
+        );
+        assert_eq!(targets.get("maptool"), Some(&false), "maptool has no benches");
+        assert_eq!(
+            targets.get("mandala_derive"),
+            Some(&false),
+            "mandala_derive has no benches"
+        );
     }
 
     /// The manifests answer both ways for the real workspace, named

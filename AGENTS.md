@@ -26,10 +26,13 @@ in good faith:
   --workspace --benches` proves the target still compiles. `--workspace`
   is not optional: without it cargo selects only the root package, which
   declares `autobenches = false` and owns no bench target, so the bare
-  form exits 0 on a bench file that does not build. That check is
-  sufficient, and `./test.sh` runs exactly it for you, so a renamed
-  `do_*()` fails the gate rather than waiting for a benchmark run nobody
-  here is allowed to do.
+  form exits 0 on a bench file that does not build.
+  `test_no_bench_check_selects_a_package_that_owns_no_bench` holds the
+  flag to that spelling everywhere this repository writes it — this
+  file, `CLAUDE.md`, and `test.sh`, where it is run rather than
+  described. That check is sufficient, and `./test.sh` runs exactly it
+  for you, so a renamed `do_*()` fails the gate rather than waiting for
+  a benchmark run nobody here is allowed to do.
 
 - **Do not make performance claims.** `lib/baumhard/CONVENTIONS.md` §B7
   requires a main-against-main control row for any number, and you will
