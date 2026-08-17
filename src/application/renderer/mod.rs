@@ -130,7 +130,13 @@ use glam::Vec2;
 /// in lock-step, and
 /// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
 /// is what holds them there — it reads this string as text, so no
-/// GPU is involved and §T8 is untouched.
+/// GPU is involved and §T8 is untouched. That it is *this* string
+/// `Renderer::new` compiles, rather than another const beside it, is
+/// pinned by
+/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`:
+/// a const read by value can be orphaned, and a decoy handed to
+/// `create_shader_module` would leave both tests holding over a
+/// shader the GPU never sees.
 ///
 /// `shape_id` rides the vertex stream as a plain `f32` (written
 /// with `SHAPE_ID_* as f32`, read with `u32(round(id))`) rather
@@ -195,13 +201,81 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 "#;
 
 /// Bytes-per-vertex for the rect pipeline: `vec2<f32> pos +
-/// vec2<f32> uv + vec4<f32> color + u32 shape_id = 9 × 4 = 36 bytes`.
+/// vec2<f32> uv + vec4<f32> color + f32 shape_id = 9 × 4 = 36 bytes`.
 /// Used when sizing / offsetting the vertex buffer. Declared as a
 /// compile-time const so the layout math is grep-able from a single
-/// place. Keep in sync with the inline `wgpu::VertexAttribute`
-/// table in `Renderer::new` and the per-vertex push in
-/// `push_rect_ndc`.
+/// place.
+///
+/// Not kept in step by hand: it is the running sum of
+/// [`RECT_VERTEX_ATTRIBUTES`]' formats, and
+/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`
+/// adds them up and compares. The same test ties it to
+/// [`RECT_VERTEX_FLOATS`] and to the slots `push_rect_ndc` writes,
+/// and pins that this constant — not a literal beside it — is the
+/// `array_stride` `Renderer::new` gives the pipeline. wgpu asks only
+/// that a stride be a multiple of four and leave room for every
+/// attribute, so an over-large one builds cleanly and reads every
+/// vertex after the first from the wrong byte.
 const RECT_VERTEX_SIZE: u64 = 36;
+
+/// The rect pipeline's vertex-attribute table: which run of bytes in
+/// each [`RECT_VERTEX_SIZE`]-byte vertex feeds which `VsIn` field of
+/// [`RECT_SHADER_WGSL`].
+///
+/// Layout: `pos` (8 B) | `uv` (8 B) | `color` (16 B) | `shape_id`
+/// (4 B), the offsets being the running sum of the formats' sizes and
+/// the order being the order `push_rect_ndc` writes them.
+///
+/// **The names in that sentence are the shader's, not this table's.**
+/// An entry here carries a `shader_location` and nothing else; which
+/// field it lands in is decided by the `@location(N)` in `VsIn`. Two
+/// attributes of the same format — `pos` and `uv` both being
+/// `Float32x2` — differ in nothing a pipeline can validate, so
+/// swapping their `shader_location`s builds a byte-identical
+/// pipeline that draws every quad into the `[0, 1]²` corner of NDC.
+/// What holds the two sides together is
+/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`,
+/// which reads this table slot for slot against `VsIn`.
+///
+/// A module-level `const` rather than an array literal inline in
+/// `Renderer::new` for that test's sake: nothing here is a
+/// source-level property, so the test reads it as a *value* instead
+/// of re-parsing what the compiler has already parsed. What the test
+/// does read as text is the expression `Renderer::new` writes after
+/// `attributes:`, compared whole against `&RECT_VERTEX_ATTRIBUTES`.
+/// An inline array grown back alongside, a `RECT_VERTEX_ATTRIBUTES_2`
+/// beside this one, or a `&RECT_VERTEX_ATTRIBUTES[..3]` would each
+/// leave this table a decoy the GPU never sees, and the first name in
+/// that list is why the comparison is an equality rather than a
+/// substring search.
+///
+/// `shape_id` rides the stream as `Float32`, not `Uint32`: wgpu's
+/// WebGL2 backend doesn't support integer vertex attributes on every
+/// browser, and we only need a handful of discrete ids. The WGSL
+/// vertex stage rounds + casts to `u32` before flat-interpolating,
+/// so `VsIn.shape_id` is an `f32` on purpose.
+const RECT_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: 8,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32,
+        offset: 32,
+        shader_location: 3,
+    },
+];
 
 /// How many frames `FpsDisplayMode::Snapshot` waits between readout
 /// refreshes, and how many frames `FpsDisplayMode::Debug` averages
@@ -280,9 +354,18 @@ impl FrameIntervalRing {
 }
 
 /// Number of `f32`-sized slots per vertex. The CPU accumulates
-/// packed floats into `main_rect_vertices` / `console_rect_vertices`;
-/// `shape_id` is stored as an `f32` holding the `u32` bit pattern
-/// via `f32::from_bits` so the whole stream stays a single `Vec<f32>`.
+/// packed floats into `main_rect_vertices` / `console_rect_vertices`,
+/// and the draw divides their length by this to get a vertex count,
+/// so it is four bytes times this that has to equal
+/// [`RECT_VERTEX_SIZE`].
+///
+/// `shape_id` keeps the stream a single `Vec<f32>` by riding it as
+/// its own **numeric value** — `shape_id as f32` in `push_rect_ndc`,
+/// read back as `u32(round(in.shape_id))` in the vertex stage. It is
+/// not a bit pattern: this doc claimed `f32::from_bits` until #147,
+/// and nothing in the tree has ever done that. It could not — the
+/// bit pattern of `1u32` is a denormal that rounds straight back to
+/// zero, so every ellipse would draw as a rectangle.
 pub(super) const RECT_VERTEX_FLOATS: usize = 9;
 
 /// Starting capacity (in bytes) for the rect vertex buffer. Big
@@ -668,36 +751,9 @@ impl Renderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: RECT_VERTEX_SIZE,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    // Layout: pos (8B) | uv (8B) | color (16B) | shape_id (4B)
-                    //         = 36B total, must match `RECT_VERTEX_SIZE`.
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x2,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x2,
-                            offset: 8,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
-                            offset: 16,
-                            shader_location: 2,
-                        },
-                        // `shape_id` as `Float32`, not `Uint32`: wgpu's
-                        // WebGL2 backend doesn't support integer vertex
-                        // attributes on every browser, and we only need
-                        // a handful of discrete ids. The WGSL vertex
-                        // stage rounds + casts to `u32` before
-                        // flat-interpolating.
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32,
-                            offset: 32,
-                            shader_location: 3,
-                        },
-                    ],
+                    // The layout, its offsets and why `shape_id` is a
+                    // float are all documented on the table itself.
+                    attributes: &RECT_VERTEX_ATTRIBUTES,
                 }],
             },
             fragment: Some(wgpu::FragmentState {
