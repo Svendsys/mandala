@@ -11,7 +11,7 @@
 //! *and* the code around it survived.
 
 use crate::util::rust_source::{
-    above_test_modules, blank_string_literals, braced_block_after, production_code, statements,
+    above_test_modules, blank_string_literals, braced_block_after, comment_text, production_code, statements,
     string_literals, strip_comments,
 };
 // Only the tree-wide sweep at the bottom of this file walks the
@@ -556,6 +556,79 @@ pub fn do_blank_string_literals_keeps_code_and_offsets() {
     );
 }
 
+/// The prose of every comment shape survives; no byte of code does;
+/// and the offsets do not move.
+///
+/// The consumer is `crate::util::doc_commands`'s repository-wide
+/// `--benches` scan, which reads what this repository's comments say
+/// about how to build it. Both directions have teeth, and both were
+/// reached in practice. Keeping too little is the silent one: the
+/// reader this replaced blanked string literals in source that still
+/// carried its comments, so a single unbalanced `"` in prose paired
+/// with the next `"` below and blanked every byte between them,
+/// invocation included. Keeping too much reinstates the fixture
+/// problem — the commands that scan forbids are written as string
+/// literals in its own tests, so a reader that returned its input
+/// would fail on its own test data.
+pub fn do_comment_text_keeps_comments_and_drops_code() {
+    let cases: &[(&str, &str)] = &[
+        // Every comment marker is blanked with its prose left in
+        // place, so a `///` cannot be read as a token of what the
+        // comment says.
+        ("let a = 1; // note\n", "              note\n"),
+        ("/// note\nlet a = 1;", "    note\n          "),
+        ("//! note\nlet a = 1;", "    note\n          "),
+        // A block comment is prose, nested markers and all.
+        ("a /* note */ b", "     note     "),
+        ("a /* x /* note */ keep */ b", "     x    note    keep     "),
+        // A `//` inside a literal opens no comment. This is the case
+        // that makes the scan possible: its fixtures are literals
+        // holding the command it forbids.
+        (r#"let u = "http://x"; // gone"#, "                       gone"),
+        (
+            r##"let s = r#"a // b "#; // gone"##,
+            "                         gone",
+        ),
+        // A `"` inside a comment opens no literal — the defect this
+        // reader exists to close. Under a literal-blanking pass the
+        // second line vanished with the first.
+        ("// a \" quote\n// note", "   a \" quote\n   note"),
+        // A `'` that opens a lifetime rather than a character
+        // literal must not swallow the comment after it.
+        (
+            "fn f<'a>(x: &'a str) {} // note",
+            "                           note",
+        ),
+        // An unterminated block comment is prose to the end rather
+        // than a scan that runs off the string.
+        ("a /* note", "     note"),
+    ];
+    for (source, expected) in cases {
+        let prose = comment_text(source);
+        assert_eq!(&prose, expected, "comment_text disagreed on {source:?}");
+        assert_eq!(
+            prose.len(),
+            source.len(),
+            "byte offsets moved on {source:?}: {} bytes became {}",
+            source.len(),
+            prose.len()
+        );
+        assert_eq!(
+            prose.lines().count(),
+            source.lines().count(),
+            "line numbering moved on {source:?}"
+        );
+    }
+
+    // A multi-byte char in blanked code is one space per *byte*, as
+    // in `blank_string_literals`, or every offset after it shifts.
+    let wide = "let s = \"é→\"; // note";
+    assert_eq!(comment_text(wide).len(), wide.len());
+    // ... and one in comment prose is left alone, so what a comment
+    // says is what comes back.
+    assert_eq!(comment_text("// é→"), "   é→");
+}
+
 /// A statement ends at a `;`, a `{` or a `}` that is not inside
 /// parentheses — and nowhere else.
 ///
@@ -916,6 +989,11 @@ fn test_string_literals_returns_every_literal() {
 #[test]
 fn test_blank_string_literals_keeps_code_and_offsets() {
     do_blank_string_literals_keeps_code_and_offsets();
+}
+
+#[test]
+fn test_comment_text_keeps_comments_and_drops_code() {
+    do_comment_text_keeps_comments_and_drops_code();
 }
 
 #[test]

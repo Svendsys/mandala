@@ -69,16 +69,33 @@
 //! whole-file scan stays green after the thing it claims to pin has
 //! moved somewhere else entirely.
 //!
-//! The repository-wide half has its own edge, in the other
-//! direction. It reads text rather than markup, so a command in
-//! running prose is judged too — but only where the tokens in front
-//! of the flag *are* an invocation: `cargo`, a subcommand, then
-//! nothing but flags and their values. A `--benches` in a sentence
-//! about the flag is prose, not a command, and is passed over. That
-//! is a deliberate hole with a floor under it:
-//! `assert_bench_scan_is_looking` requires the invocation to still
-//! be found in both documents that state the rule and in the script
-//! that runs it, so the shape cannot quietly empty out.
+//! The repository-wide half has its own edges. It reads text rather
+//! than markup, so a command in running prose is judged too — but
+//! only where the tokens in front of the flag *are* an invocation:
+//! `cargo`, a subcommand, then nothing but flags and their values. A
+//! `--benches` in a sentence about the flag is prose, not a command,
+//! and is passed over. That is a deliberate hole with a floor under
+//! it: `assert_bench_scan_is_looking` requires the invocation to
+//! still be found in both documents that state the rule and in the
+//! script that runs it, so the shape cannot quietly empty out.
+//!
+//! In a Rust file it reads the comments — `//`, `///`, `//!` and
+//! `/* … */` alike, by way of
+//! [`comment_text`](crate::util::rust_source::comment_text) — and
+//! nothing else, so a string literal holding the bare command is not
+//! a claim about how to build this repository. That reader is the
+//! whole of the exemption: a hand-rolled one that blanked literals
+//! in source that still had its comments would let an unbalanced
+//! `"` in prose hide the invocation underneath it.
+//!
+//! One edge remains, and it is in the loud direction: the reader
+//! judges a command by what it says, not by where it would run, so
+//! an invocation that a preceding `cd` into a member's directory
+//! would make correct is reported anyway. No such shape is written
+//! here, and reporting one that is fine costs a sentence in a
+//! message, while passing one that is not costs the rule — the
+//! direction a checker of something nobody may test by running it
+//! has to fail in.
 //!
 //! Test-only and native-only, for the same reasons
 //! `crate::util::manifests` — whose member list this reuses rather
@@ -86,7 +103,7 @@
 
 use crate::util::doc_fixtures::{repo_path, section_text};
 use crate::util::manifests::member_manifests;
-use crate::util::rust_source::blank_string_literals;
+use crate::util::rust_source::comment_text;
 use crate::util::source_scan;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -453,14 +470,17 @@ pub(crate) fn unknown_package_selections(
 /// How a file's lines turn into text a command can be read out of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextKind {
-    /// Markdown and shell: every non-blank line carries text and a
-    /// blank line ends a block. A command in a `#` comment and one
-    /// the shell actually runs are both just text here, which is the
-    /// point — `test.sh` is where the rule is kept or lost.
+    /// Markdown and shell: every line is text as written. A command
+    /// in a `#` comment and one the shell actually runs are both
+    /// just text here, which is the point — `test.sh` is where the
+    /// rule is kept or lost.
     Prose,
-    /// Rust: only the text of a `//` comment carries a command, and
-    /// any other line ends the block, so a `cargo` in one doc comment
-    /// cannot be read as the head of a `--benches` far below it.
+    /// Rust: the file is reduced to its comment prose first
+    /// ([`comment_text`]), so what is read is what a person wrote in
+    /// a `//`, `///`, `//!` or `/* … */` comment and nothing else. A
+    /// line of code carries no prose, which makes it a block
+    /// boundary, so a `cargo` in one doc comment cannot be read as
+    /// the head of a `--benches` far below it.
     RustComment,
 }
 
@@ -521,48 +541,48 @@ pub(crate) fn bench_checks() -> Vec<BenchCheck> {
 /// Every `cargo … --benches` in `text`, with `file` naming the
 /// source for the message.
 ///
-/// A Rust file has its string literals blanked first
-/// ([`blank_string_literals`], which keeps byte offsets and line
-/// breaks), because a `//` inside a literal is not a comment — and
-/// this module's own fixtures are literals holding the very command
-/// it forbids.
+/// A Rust file is reduced to its comment prose first
+/// ([`comment_text`], which keeps byte offsets and line breaks), so
+/// the scan reads what the comments say and nothing else — this
+/// module's own fixtures are string literals holding the very
+/// command it forbids.
+///
+/// That reduction is a real comment reader rather than a
+/// literal-blanking pass over raw source, and the difference is not
+/// academic. Blanking literals in a file that still has its comments
+/// pairs the `"` characters *in the comments* with the ones in the
+/// code, so an unbalanced quote in prose — a typo, or a sentence
+/// that opens a quotation and closes it with a curly `”` — opens a
+/// literal that was never one and blanks live comment text until the
+/// next `"`. A `--benches` inside that run disappears, silently, and
+/// whether it does depends on nothing more than the parity of the
+/// quotes above it. That is what
+/// [`blank_string_literals`](crate::util::rust_source::blank_string_literals)'s
+/// own documentation means by "pass comment-free text".
+///
+/// A line with no prose on it ends the block, in both kinds: a blank
+/// line in Markdown, a line of code in Rust.
 pub(crate) fn bench_checks_in(text: &str, kind: TextKind, file: &str) -> Vec<BenchCheck> {
-    let blanked;
+    let prose;
     let text = match kind {
         TextKind::RustComment => {
-            blanked = blank_string_literals(text);
-            blanked.as_str()
+            prose = comment_text(text);
+            prose.as_str()
         }
         TextKind::Prose => text,
     };
     let mut out = Vec::new();
     let mut block: Vec<(String, usize)> = Vec::new();
     for (offset, line) in text.lines().enumerate() {
-        match command_line(line, kind) {
-            Some(line) => block.extend(tokens(&line).map(|token| (token, offset + 1))),
-            None => {
-                out.extend(bench_checks_in_block(&block, file));
-                block.clear();
-            }
+        if line.trim().is_empty() {
+            out.extend(bench_checks_in_block(&block, file));
+            block.clear();
+        } else {
+            block.extend(tokens(line).map(|token| (token, offset + 1)));
         }
     }
     out.extend(bench_checks_in_block(&block, file));
     out
-}
-
-/// The part of `line` a command can be written in, or `None` when the
-/// line ends a block.
-fn command_line(line: &str, kind: TextKind) -> Option<String> {
-    match kind {
-        TextKind::Prose if line.trim().is_empty() => None,
-        TextKind::Prose => Some(line.to_string()),
-        TextKind::RustComment => line.find("//").map(|at| {
-            line[at..]
-                .trim_start_matches('/')
-                .trim_start_matches('!')
-                .to_string()
-        }),
-    }
 }
 
 /// `text` split into tokens, with the markup a command is wrapped in
@@ -630,9 +650,14 @@ fn invocation_around(block: &[(String, usize)], at: usize) -> Option<String> {
     }
     let mut end = at + 1;
     while end < block.len() && end - at <= TRAILING_FLAGS && block[end].0.starts_with('-') {
-        let takes_value = block[end].0 == "-p" || block[end].0 == "--package";
+        // A flag written without `=` may take the next token as its
+        // value, exactly as the walk in front of the flag reads one.
+        // Naming `-p` and `--package` alone instead is what made
+        // `--jobs 4 --workspace` a violation: the walk stopped at
+        // the `4` and never reached the selection behind it.
+        let takes_value = !block[end].0.contains('=');
         end += 1;
-        if takes_value && end < block.len() {
+        if takes_value && end < block.len() && !block[end].0.starts_with('-') {
             end += 1;
         }
     }
@@ -1007,10 +1032,21 @@ mod tests {
                     .to_string()
             ]
         );
+        // `--jobs 4` is a flag and its value, not the end of the
+        // command: a walk that stopped at the `4` never reached the
+        // `--workspace` behind it and reported a correct invocation.
+        let jobs = bench_checks_in("cargo check --benches --jobs 4", TextKind::Prose, "f.md");
+        assert_eq!(
+            bench_selection_violations(&jobs, &targets).len(),
+            1,
+            "a flag's value does not make a selection: {jobs:?}"
+        );
         for clean in [
             "cargo check --workspace --benches",
             "cargo check --benches --workspace",
             "cargo check -p hasbench --benches",
+            "cargo check --benches --jobs 4 --workspace",
+            "cargo check --benches --jobs 4 -p hasbench",
         ] {
             let checks = bench_checks_in(clean, TextKind::Prose, "f.md");
             assert_eq!(checks.len(), 1, "{clean} must yield one site");
@@ -1070,15 +1106,57 @@ mod tests {
         for code in [
             "let command = \"cargo check --benches\";",
             "assert_eq!(read(\"// cargo check --benches\"), 1);",
+            "let s = r#\"// cargo check --benches\"#;",
         ] {
             assert!(
                 bench_checks_in(code, TextKind::RustComment, "f.rs").is_empty(),
                 "{code:?} is code, not a comment"
             );
         }
+        for comment in [
+            "// cargo check --benches",
+            "/// cargo check --benches",
+            "//! cargo check --benches",
+            "/* cargo check --benches */",
+            "let x = 1; // cargo check --benches",
+            "/*\n * cargo check --benches\n */",
+        ] {
+            assert_eq!(
+                bench_checks_in(comment, TextKind::RustComment, "f.rs").len(),
+                1,
+                "{comment:?} is a comment holding a command"
+            );
+        }
+    }
+
+    /// A `"` in comment prose does not hide the comment underneath
+    /// it. This is the reader's whole reason for existing: blanking
+    /// string literals in source that still carries its comments
+    /// pairs a typo's quote with the next `"` anywhere below, blanks
+    /// every byte between them, and takes a real invocation with it —
+    /// silently, and decided by nothing but quote parity.
+    ///
+    /// The fixture is the one a reviewer planted in
+    /// `bench_surface.rs`: three ordinary comment lines, one of them
+    /// carrying an unbalanced quote, with the bare command below.
+    /// Under the literal-blanking reader the scan found nothing;
+    /// closing that one quote made it find the command again.
+    #[test]
+    fn test_an_unbalanced_quote_in_a_comment_hides_nothing_below_it() {
+        let planted = "// The gate prints \"Finished and exits 0.\n\
+                       // Prove the bench target still builds with:\n\
+                       // cargo check --benches\n";
+        let checks = bench_checks_in(planted, TextKind::RustComment, "f.rs");
+        assert_eq!(checks.len(), 1, "the invocation is on line 3: {checks:?}");
+        assert_eq!(checks[0].site, "f.rs:3");
+        assert_eq!(checks[0].invocation, "cargo check --benches");
+        // The same text with the quote closed must read identically:
+        // a reader whose answer depends on quote parity is the defect.
+        let balanced = planted.replace("\"Finished", "\"Finished\"");
         assert_eq!(
-            bench_checks_in("// cargo check --benches", TextKind::RustComment, "f.rs").len(),
-            1
+            bench_checks_in(&balanced, TextKind::RustComment, "f.rs"),
+            checks,
+            "the quote's parity changed the reading"
         );
     }
 
