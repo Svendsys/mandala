@@ -643,34 +643,55 @@ fn zoom_window_skip_default_and_round_trip_on_every_struct() {
 /// pattern; the border inherits the resolved window by
 /// construction (see `tree_builder::node_clip`), so there is
 /// no separate border serde surface.
+///
+/// The node arrives inside a map through
+/// [`crate::mindmap::loader::load_from_str`], not through a bare
+/// `serde_json::from_str::<MindNode>`. `serde` alone is one half of
+/// what a file goes through: `check_invariants` runs afterwards, so
+/// a fixture typed straight into `MindNode` can hold a shape the
+/// app would refuse to open — which is what happened here. This
+/// fixture predates sections and carried none, `sections` is
+/// `#[serde(default)]`, and `detect_zero_section_node` rejects
+/// exactly that; the direct deserialize was the only reason it
+/// still passed. Going through the loader means the fixture is
+/// exercised the way real input is, and cannot drift back.
 #[test]
 fn mindnode_zoom_window_round_trips() {
-    // Deserialize a minimal node with both zoom fields set and
-    // check the pair survives. Constructed as raw JSON rather
+    // Deserialize a minimal one-node map with both zoom fields set
+    // and check the pair survives. Constructed as raw JSON rather
     // than a struct literal so this test also pins the on-disk
     // key names (authors grep for `min_zoom_to_render` in the
     // format docs; breaking either name breaks that contract).
     let raw = r##"{
-        "id":"0","parent_id":null,
-        "position":{"x":0,"y":0},
-        "size":{"width":100,"height":100},
-        "sections":[{"text":""}],
-        "style":{
-            "background_color":"#000","frame_color":"#000","text_color":"#fff",
-            "shape":"rectangle","corner_radius_percent":0,"frame_thickness":0,
-            "show_frame":false,"show_shadow":false
-        },
-        "layout":{"type":"map","direction":"auto","spacing":0},
-        "folded":false,"notes":"","color_schema":null,
-        "min_zoom_to_render":0.25,
-        "max_zoom_to_render":4.0
+        "version":"1.0","name":"zoom_window_fixture",
+        "canvas":{"background_color":"#141414","theme_variables":{}},
+        "edges":[],
+        "nodes":{"0":{
+            "id":"0","parent_id":null,
+            "position":{"x":0,"y":0},
+            "size":{"width":100,"height":100},
+            "sections":[{"text":""}],
+            "style":{
+                "background_color":"#000","frame_color":"#000","text_color":"#fff",
+                "shape":"rectangle","corner_radius_percent":0,"frame_thickness":0,
+                "show_frame":false,"show_shadow":false
+            },
+            "layout":{"type":"map","direction":"auto","spacing":0},
+            "folded":false,"notes":"","color_schema":null,
+            "min_zoom_to_render":0.25,
+            "max_zoom_to_render":4.0
+        }}
     }"##;
-    let node: MindNode = serde_json::from_str(raw).expect("parses");
+    let map = loader::load_from_str(raw).expect("the fixture must survive the real load path");
+    let node = map
+        .nodes
+        .get("0")
+        .expect("the loaded map carries the fixture node");
     assert_eq!(node.min_zoom_to_render, Some(0.25));
     assert_eq!(node.max_zoom_to_render, Some(4.0));
 
     // Reserialize and confirm the pair is preserved.
-    let back_json = serde_json::to_string(&node).unwrap();
+    let back_json = serde_json::to_string(node).unwrap();
     assert!(back_json.contains("\"min_zoom_to_render\":0.25"));
     assert!(back_json.contains("\"max_zoom_to_render\":4.0"));
 }
