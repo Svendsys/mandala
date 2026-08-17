@@ -2370,7 +2370,7 @@ widest variant left and stays unboxed.
 
 `src/application/app/mod.rs`. Native-only today.
 
-**Hit priority, in the two halves it actually has.** The line
+**Hit priority, in the three parts it actually has.** The line
 that used to sit here read "edge handle > portal label > edge
 label > node, so small grab-areas always win over larger AABBs",
 and it was wrong in both clauses. What is true:
