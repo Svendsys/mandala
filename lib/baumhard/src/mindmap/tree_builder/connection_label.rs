@@ -191,14 +191,18 @@ pub fn build_label_elements(
         }
 
         let edge_key = EdgeKey::from_edge(edge);
-        let is_edited = label_edit_override.is_some_and(|(k, _)| *k == edge_key);
+        // Narrowed to the buffer itself rather than to a `bool`, so
+        // the text below reads the value the test admitted instead of
+        // asking the override a second time.
+        let edited_buffer: Option<&str> = label_edit_override
+            .filter(|(k, _)| **k == edge_key)
+            .map(|(_, buf)| buf);
 
         // The label text to render: either the inline edit buffer
         // (plus caret) for the currently-edited edge, or the
         // committed label. Committed-empty non-edited edges skip
         // emission entirely.
-        let rendered_label: String = if is_edited {
-            let (_, buf) = label_edit_override.unwrap();
+        let rendered_label: String = if let Some(buf) = edited_buffer {
             format!("{buf}\u{258C}")
         } else {
             match edge.label.as_deref() {
@@ -235,7 +239,7 @@ pub fn build_label_elements(
                 .unwrap_or_else(|| map.edge_label_color(edge))
         };
 
-        if is_edited {
+        if edited_buffer.is_some() {
             label_override_emitted = true;
         }
 

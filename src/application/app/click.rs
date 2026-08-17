@@ -216,23 +216,25 @@ pub(super) fn compute_node_click_selection(
     shift_pressed: bool,
     interaction_mode: &InteractionMode,
 ) -> SelectionState {
-    let route_to_section = hit_section.is_some() && interaction_mode.click_resolves_to_section(hit_id);
+    // The routing decision and the value it routes are one thing, so
+    // they are bound together: an `is_some()` test followed by a
+    // re-`expect` further down is two chances for the two to drift.
+    let routed_section = hit_section.filter(|_| interaction_mode.click_resolves_to_section(hit_id));
 
     if !shift_pressed {
-        return if route_to_section {
-            SelectionState::Section(SectionSel {
+        return match routed_section {
+            Some(section_idx) => SelectionState::Section(SectionSel {
                 node_id: hit_id.to_string(),
-                section_idx: hit_section.expect("guarded above"),
-            })
-        } else {
-            SelectionState::Single(hit_id.to_string())
+                section_idx,
+            }),
+            None => SelectionState::Single(hit_id.to_string()),
         };
     }
 
-    if route_to_section {
+    if let Some(section_idx) = routed_section {
         let new_sec = SectionSel {
             node_id: hit_id.to_string(),
-            section_idx: hit_section.expect("guarded above"),
+            section_idx,
         };
         return match existing {
             SelectionState::Section(prev) if prev == &new_sec => SelectionState::None,

@@ -540,16 +540,14 @@ fn apply_repeat_while_to_children(
 ) {
     let parent_node = get_target(&mut gfx_tree.arena, target_id);
     let mut head = parent_node.first_child();
-    loop {
-        if head.is_some() {
-            debug!("Found child, recursing down sub-tree");
-            let head_id = head.unwrap();
-            let current = get_target(&mut gfx_tree.arena, head_id);
-            head = current.next_sibling();
-            repeat_while(gfx_tree, mutator_tree, head_id, mutator_id, condition, terminator);
-        } else {
-            break;
-        }
+    // The sibling link is read *before* recursing, because the
+    // recursion may mutate the child it is handed and we still need
+    // somewhere to go next.
+    while let Some(head_id) = head {
+        debug!("Found child, recursing down sub-tree");
+        let current = get_target(&mut gfx_tree.arena, head_id);
+        head = current.next_sibling();
+        repeat_while(gfx_tree, mutator_tree, head_id, mutator_id, condition, terminator);
     }
 }
 

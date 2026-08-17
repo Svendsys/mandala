@@ -436,7 +436,10 @@ pub fn build_connection_elements(
         // get dropped along with the body glyphs that would also render
         // inside the frame area).
         let first_pos = samples[0].position;
-        let last_pos = samples.last().unwrap().position;
+        let last_pos = samples
+            .last()
+            .expect("connection invariant: the empty-sample case continued above")
+            .position;
         let cached_cap_start = config.cap_start.as_ref().map(|g| (g.clone(), first_pos));
         let cached_cap_end = config.cap_end.as_ref().map(|g| (g.clone(), last_pos));
 
