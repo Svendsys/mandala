@@ -19,9 +19,9 @@ fn test_hit_test_direct_hit() {
     // "Lord God" node (id: 0) — get its position from the tree
     let node_id = tree.arena_id_for("0").unwrap();
     let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
-    let center = Vec2::new(
-        area.position.x.0 + area.render_bounds.x.0 / 2.0,
-        area.position.y.0 + area.render_bounds.y.0 / 2.0,
+    let center = aabb_center(
+        Vec2::new(area.position.x.0, area.position.y.0),
+        Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
     );
     let result = hit_test(center, &mut tree);
     assert_eq!(result, Some("0".to_string()));
@@ -36,9 +36,9 @@ fn test_hit_test_target_single_section_collapses_to_node() {
     let mut tree = load_test_tree();
     let node_id = tree.arena_id_for("0").unwrap();
     let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
-    let center = Vec2::new(
-        area.position.x.0 + area.render_bounds.x.0 / 2.0,
-        area.position.y.0 + area.render_bounds.y.0 / 2.0,
+    let center = aabb_center(
+        Vec2::new(area.position.x.0, area.position.y.0),
+        Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
     );
     match hit_test_target(center, &mut tree) {
         Some(HitTarget::NodeContainer { node_id }) => {
@@ -77,9 +77,9 @@ fn test_hit_test_returns_smallest_on_overlap() {
             .find_map(|(mind_id, nid)| {
                 let a = tree.tree.arena.get(nid)?.get().glyph_area()?;
                 let child_size = a.render_bounds.x.0 * a.render_bounds.y.0;
-                let child_center = Vec2::new(
-                    a.position.x.0 + a.render_bounds.x.0 / 2.0,
-                    a.position.y.0 + a.render_bounds.y.0 / 2.0,
+                let child_center = aabb_center(
+                    Vec2::new(a.position.x.0, a.position.y.0),
+                    Vec2::new(a.render_bounds.x.0, a.render_bounds.y.0),
                 );
                 if child_size < parent_size && point_in_node_aabb(child_center, parent_id_str, &tree) {
                     Some((mind_id.to_string(), child_center))

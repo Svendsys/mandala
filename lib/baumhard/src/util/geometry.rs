@@ -139,15 +139,28 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 /// sites stood:
 ///
 /// ```text
-/// grep -rnE "\+ *[A-Za-z0-9_.]+( as f32)? *\* *0\.5" --include=*.rs src lib crates \
+/// grep -rnE "\+ *[A-Za-z0-9_.()]+( as f32)? *(\* *0\.5|/ *2\.0)" --include=*.rs src lib crates \
 ///   | grep -vE "aabb_center|center_vec2|pos \+ size|pos_vec2"
 /// ```
+///
+/// Widening the operand class was not enough on its own: the first
+/// re-run kept the operator as `* 0.5` and reported "done" while
+/// three `/ 2.0` centers stood in a file the same series had already
+/// edited twice. The two spellings are bit-identical for f32, so the
+/// census has to admit both — which is why the pattern above is
+/// written as an alternation rather than tightened again.
 ///
 /// What that leaves is *not* AABB centers and is not this helper's:
 /// the color picker's scalar layout (radii, ring sums, and the
 /// `preview_pos + preview_size * 0.5` the picker computes without
 /// ever naming a `Vec2`), deliberately off-center probe points, and
-/// half-extent terms inside larger anchor formulas. The other
+/// half-extent terms inside larger anchor formulas. It also leaves
+/// the model-space centers in `document::mutations` (`flower_layout`,
+/// `tree_cascade`), which this helper cannot express at all:
+/// [`crate::mindmap::model::Position`] and
+/// [`crate::mindmap::model::Size`] are `f64`, and routing them
+/// through a `Vec2` would round the layout arithmetic to `f32` to
+/// save a multiplication. The other
 /// midpoint *form* — `(min + max) * 0.5` over two corners rather
 /// than a corner and an extent — is a different signature, so it does
 /// not appear here at all and this helper does not cover it

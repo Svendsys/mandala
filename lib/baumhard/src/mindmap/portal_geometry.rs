@@ -380,7 +380,7 @@ mod tests {
     }
 
     /// `default_border_t` for an axis-aligned partner exits
-    /// through the centre of the corresponding side (not a
+    /// through the center of the corresponding side (not a
     /// corner), regardless of the owner's aspect ratio. Pin the
     /// invariant for a tall owner: north-facing partner exits at
     /// the top-side midpoint (`t = 0.5`), east-facing at the

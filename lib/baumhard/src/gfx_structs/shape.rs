@@ -590,7 +590,7 @@ impl NodeShape {
             NodeShape::Rectangle => aabb_contains(local, Vec2::ZERO, bounds),
             NodeShape::Ellipse => {
                 // Normalised coordinates in [-1, 1] relative to the
-                // ellipse centre. A perfect circle is `bounds.x ==
+                // ellipse center. A perfect circle is `bounds.x ==
                 // bounds.y`; a stretched conic is anything else.
                 let rx = bounds.x * 0.5;
                 let ry = bounds.y * 0.5;
@@ -611,7 +611,7 @@ impl NodeShape {
     /// clamped point sits inside the ellipse. That's conservative
     /// in the "selection rect fully inside the ellipse" corner
     /// (the closest-point test returns true when any corner of the
-    /// rect is inside the ellipse, *or* when the ellipse-centre is
+    /// rect is inside the ellipse, *or* when the ellipse-center is
     /// inside the rect) — which is what we want for a lasso.
     ///
     /// Degenerate bounds (zero or negative extent on either axis)
@@ -643,7 +643,7 @@ impl NodeShape {
                 let ry = bounds.y * 0.5;
                 let cx = rx;
                 let cy = ry;
-                // Closest point on the AABB to the ellipse centre.
+                // Closest point on the AABB to the ellipse center.
                 let clamped_x = cx.clamp(min.x, max.x);
                 let clamped_y = cy.clamp(min.y, max.y);
                 let nx = (clamped_x - cx) / rx;
