@@ -2,6 +2,9 @@
 
 //! Tests for [`crate::gfx_structs::tree::Tree`] — arena operations,
 //! mutations, events, and subscriber dispatch (§T1).
+//!
+//! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
+//! body is benchmarkable from `benches/test_bench.rs`.
 
 use glam::Vec2;
 use indextree::NodeId;
@@ -42,10 +45,10 @@ use crate::util::ordered_vec2::OrderedVec2;
 
 #[test]
 pub fn test_basics_solo_mutation() {
-    basics_solo_mutation();
+    do_basics_solo_mutation();
 }
 
-pub fn basics_solo_mutation() {
+pub fn do_basics_solo_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let mut element = GfxElement::new_area_non_indexed_with_id(
@@ -372,10 +375,10 @@ lazy_static!(
 
 #[test]
 fn test_model_block_commands() {
-    model_block_commands();
+    do_model_block_commands();
 }
 
-pub fn model_block_commands() {
+pub fn do_model_block_commands() {
     fonts::init();
 
     let mut reference_model = GfxElement::new_model_non_indexed_with_id(GlyphModel::new(), 0, 0);
@@ -458,10 +461,10 @@ pub fn model_block_commands() {
 
 #[test]
 pub fn test_area_block_commands() {
-    area_block_commands();
+    do_area_block_commands();
 }
 
-pub fn area_block_commands() {
+pub fn do_area_block_commands() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let mut reference_block = GfxElement::new_area_non_indexed_with_id(
@@ -634,7 +637,7 @@ pub fn area_block_commands() {
                         GfxElementField::Id(_) => {}
                         // AREA_COMMANDS never produces a GlyphModel field
                         // — glyph-model deltas are covered by the
-                        // MODEL_COMMANDS pass (see `model_block_commands`).
+                        // MODEL_COMMANDS pass (see `do_model_block_commands`).
                         // If a new AREA_COMMANDS entry starts emitting
                         // `GfxElementField::GlyphModel`, write the Add-branch
                         // assertion here.
@@ -1104,10 +1107,10 @@ fn ancestry_seq(sequence: &[usize]) -> String {
 
 #[test]
 pub fn test_event_propagation_complex_symmetric() {
-    event_propagation_complex_symmetric();
+    do_event_propagation_complex_symmetric();
 }
 
-pub fn event_propagation_complex_symmetric() {
+pub fn do_event_propagation_complex_symmetric() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let region_params = Rc::new(RegionParams::new(10, (1000, 1000)));
@@ -1189,12 +1192,12 @@ pub fn event_propagation_complex_symmetric() {
 }
 
 #[test]
-pub fn test_event_propagation() {
+pub fn test_event_propagation_simple() {
     // This is mainly a smoke test
-    event_propagation_simple();
+    do_event_propagation_simple();
 }
 
-pub fn event_propagation_simple() {
+pub fn do_event_propagation_simple() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
@@ -1246,10 +1249,10 @@ pub fn event_propagation_simple() {
 
 #[test]
 pub fn test_complex_tree_mutation() {
-    complex_tree_mutation();
+    do_complex_tree_mutation();
 }
 
-pub fn complex_tree_mutation() {
+pub fn do_complex_tree_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let mut mutator_c: MutatorTree<GfxMutator> = MutatorTree::new();
@@ -1893,10 +1896,10 @@ pub fn complex_tree_mutation() {
 
 #[test]
 pub fn test_simple_tree_mutation() {
-    simple_tree_mutation();
+    do_simple_tree_mutation();
 }
 
-pub fn simple_tree_mutation() {
+pub fn do_simple_tree_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
@@ -2233,7 +2236,7 @@ pub fn do_font_metric_setters_clamp_to_the_shaper_domain() {
 /// `apply_operation` is what a map-carried `CustomMutation` reaches
 /// — a `GlyphAreaField::Scale` under `ApplyOperation::Add` — and it
 /// composes into a local before storing, so `Add` still adds while
-/// the *result* is what gets bounded. `area_block_commands` drives
+/// the *result* is what gets bounded. `do_area_block_commands` drives
 /// this path but only with in-domain values, where the clamp is the
 /// identity function; this is the case that makes it bind.
 #[test]

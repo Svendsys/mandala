@@ -10,10 +10,18 @@
 //! case below therefore asserts both halves: the comment is gone
 //! *and* the code around it survived.
 
-use crate::util::doc_fixtures::repo_path;
 use crate::util::rust_source::{
-    above_test_modules, braced_block_after, production_code, statements, string_literals, strip_comments,
+    above_test_modules, blank_string_literals, braced_block_after, production_code, statements,
+    string_literals, strip_comments,
 };
+// Only the tree-wide sweep at the bottom of this file walks the
+// filesystem, and that sweep is a plain `#[test]` rather than a
+// `do_*()` body — so in a build without `cfg(test)` (the benchmark
+// binary, `cargo doc`) rustc has already dropped every caller these
+// two imports have.
+#[cfg(test)]
+use crate::util::doc_fixtures::repo_path;
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 /// The attribute header spellings that sit over an inline module in
@@ -35,7 +43,7 @@ use std::path::{Path, PathBuf};
 /// that has nothing to do with `test`, and the two combinator shapes
 /// where `test` appears but does not have to hold.
 ///
-/// [`do_above_test_modules_knows_every_shape_in_this_tree`] is what
+/// `test_above_test_modules_knows_every_shape_in_this_tree` is what
 /// keeps the `true` rows in step with the tree as it grows; this
 /// list is what states the answer for each shape in one place.
 const TEST_MODULE_HEADERS: &[(&str, bool)] = &[
@@ -79,7 +87,7 @@ const TEST_MODULE_HEADERS: &[(&str, bool)] = &[
 /// The counterpart to [`TEST_MODULE_HEADERS`], and the reason the two
 /// lists are separate rather than one. That one is enumerated from
 /// the tree and is kept honest by
-/// [`do_above_test_modules_knows_every_shape_in_this_tree`], which
+/// `test_above_test_modules_knows_every_shape_in_this_tree`, which
 /// sweeps every `.rs` file in the workspace. How many that is stays
 /// out of this sentence on purpose: it was written down twice and
 /// went stale twice, and the sweep asserts a floor rather than a
@@ -233,7 +241,7 @@ pub fn do_strip_comments_survives_unterminated_input() {
 ///
 /// The *positive* cases are enumerated from this tree rather than
 /// invented — see `TEST_MODULE_HEADERS` for where each spelling
-/// occurs and [`do_above_test_modules_knows_every_shape_in_this_tree`]
+/// occurs and `test_above_test_modules_knows_every_shape_in_this_tree`
 /// for the sweep that keeps that enumeration honest as the tree
 /// grows.
 pub fn do_above_test_modules_cuts_at_the_module_only() {
@@ -466,6 +474,88 @@ pub fn do_string_literals_returns_every_literal() {
     }
 }
 
+/// A literal's contents go, its delimiters and the code around it
+/// stay, and every byte offset lands where it did.
+///
+/// The consumer is the §B8 bench-surface gate, which matches
+/// identifiers against the bench file's source text: a criterion id
+/// is a string literal, so `"do_x"` written as an id is the name
+/// `do_x` in the file's bytes and resolves to nothing. Both
+/// directions have teeth. Blanking too little leaves that false
+/// green in place; blanking too much erases the `b.iter(do_x)` that
+/// is the entry, and the gate then reports every body in the tree.
+///
+/// The offset assertion is not decoration: the caller finds a
+/// `bench_function(` call's extent in the blanked text and reads the
+/// id out of the *unblanked* text at those offsets, so a single byte
+/// of drift hands it the wrong id.
+pub fn do_blank_string_literals_keeps_code_and_offsets() {
+    let cases: &[(&str, &str)] = &[
+        // The contract, in miniature: the id is gone, the call and
+        // the identifier it runs are not.
+        (
+            r#"c.bench_function("do_x", |b| b.iter(do_y));"#,
+            r#"c.bench_function("    ", |b| b.iter(do_y));"#,
+        ),
+        // An escaped quote does not end the literal, so the code
+        // after it is not blanked as though it were inside one.
+        (r#"let s = "a \" b"; f(do_z);"#, r#"let s = "      "; f(do_z);"#),
+        // Raw strings: hashes and quotes stay, contents go.
+        (
+            r####"let s = r#"a "b" c"#; g();"####,
+            r####"let s = r#"       "#; g();"####,
+        ),
+        (r#"let s = b"bytes"; h();"#, r#"let s = b"     "; h();"#),
+        // A `'"'` char literal must not open a string, and a `'a`
+        // lifetime must not either.
+        (
+            r#"fn f<'a>(x: &'a str) { let q = '"'; call(do_w); }"#,
+            r#"fn f<'a>(x: &'a str) { let q = '"'; call(do_w); }"#,
+        ),
+        // An empty literal has nothing to blank.
+        (r#"let s = ""; k();"#, r#"let s = ""; k();"#),
+        // Unterminated: everything to the end goes, and no panic.
+        (r#"let s = "never closed"#, r#"let s = "            "#),
+    ];
+    for (source, expected) in cases {
+        let blanked = blank_string_literals(source);
+        assert_eq!(
+            &blanked, expected,
+            "blank_string_literals disagreed on {source:?}"
+        );
+        assert_eq!(
+            blanked.len(),
+            source.len(),
+            "byte offsets moved on {source:?}: {} bytes became {}",
+            source.len(),
+            blanked.len()
+        );
+    }
+
+    // A multi-byte char inside a literal is blanked one space per
+    // *byte*, or every offset after it shifts. `é` is two bytes and
+    // `→` is three.
+    let wide = "let s = \"é→\"; f(do_v);";
+    let blanked = blank_string_literals(wide);
+    assert_eq!(blanked, "let s = \"     \"; f(do_v);");
+    assert_eq!(
+        blanked.len(),
+        wide.len(),
+        "a multi-byte literal moved the offsets"
+    );
+
+    // Newlines inside a raw string survive, so a line number in the
+    // blanked text is still a line number in the original.
+    let spanning = "let s = r\"one\ntwo\";\nf(do_u);";
+    let blanked = blank_string_literals(spanning);
+    assert_eq!(blanked.lines().count(), spanning.lines().count());
+    assert_eq!(blanked.len(), spanning.len());
+    assert!(
+        blanked.contains("do_u"),
+        "code after a spanning literal was eaten"
+    );
+}
+
 /// A statement ends at a `;`, a `{` or a `}` that is not inside
 /// parentheses — and nowhere else.
 ///
@@ -570,10 +660,20 @@ pub fn do_production_code_returns_code_without_prose() {
 ///   un-gated `tests` module in the app crate would be a different
 ///   thing entirely.
 ///
-/// Not a `do_*()` with a bench entry, on the same ground as
-/// [`do_production_code_returns_code_without_prose`]: it is several
-/// hundred file reads, and timing it would time the page cache.
-pub fn do_above_test_modules_knows_every_shape_in_this_tree() {
+/// **A plain `#[test]`, not a `do_*()` pair** — §B8 opt-out class 4,
+/// the subject is the repository, and the one body in this module
+/// that takes it. Every `do_*()` in a
+/// baumhard tests tree has one `bench_function` entry, so the prefix
+/// is a claim that a number for the body would mean something. This
+/// one walks several hundred files per call and takes about a second
+/// doing it: criterion would spend half a minute reporting the page
+/// cache and the recognizer's own walk, neither of which ships. The
+/// unit cases above are where the recognizer is measured; its
+/// sibling [`do_production_code_returns_code_without_prose`] reads a
+/// single file and is benched, because what a second call measures
+/// there is the strip-and-cut over ~40 KB rather than the disk.
+#[test]
+fn test_above_test_modules_knows_every_shape_in_this_tree() {
     let root = repo_path(".");
     let sources = workspace_sources();
     assert!(
@@ -664,12 +764,19 @@ pub fn do_above_test_modules_knows_every_shape_in_this_tree() {
     }
 }
 
+// The filesystem walk below belongs to the tree-wide sweep alone,
+// and that sweep is a plain `#[test]` — which rustc drops from any
+// build without `cfg(test)`. Gating its helpers the same way keeps
+// them from becoming dead code in the benchmark binary and under
+// `cargo doc`, where nothing would call them.
+
 /// Every `.rs` file under the workspace's three source roots, sorted
 /// so a failure names the same file every run.
 ///
 /// Read off the filesystem rather than off `[workspace] members`,
 /// because the question is "what Rust is in this tree" and a file
 /// nobody declares is exactly the kind of thing worth seeing.
+#[cfg(test)]
 fn workspace_sources() -> Vec<PathBuf> {
     let mut found = Vec::new();
     for root in ["src", "lib", "crates"] {
@@ -681,6 +788,7 @@ fn workspace_sources() -> Vec<PathBuf> {
 
 /// Push every `.rs` file under `dir` into `out`, recursively.
 /// Build output and dotted directories are skipped; nothing else is.
+#[cfg(test)]
 fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries =
         std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{} must be readable: {e}", dir.display()));
@@ -720,6 +828,7 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// The parent is searched in the two places Rust looks (`dir/mod.rs`
 /// and `dir.rs`) plus the crate roots, and only files that exist are
 /// followed, which is also what terminates the walk.
+#[cfg(test)]
 fn reached_only_under_test_cfg(path: &Path) -> bool {
     let Some((parents, name)) = parent_modules_of(path) else {
         return false;
@@ -748,6 +857,7 @@ fn reached_only_under_test_cfg(path: &Path) -> bool {
 /// The files that may declare `path` as a module, and the name it
 /// would be declared under. `None` for a crate root, which nothing
 /// declares.
+#[cfg(test)]
 fn parent_modules_of(path: &Path) -> Option<(Vec<PathBuf>, String)> {
     let stem = path.file_stem()?.to_string_lossy().into_owned();
     let directory = path.parent()?;
@@ -804,6 +914,11 @@ fn test_string_literals_returns_every_literal() {
 }
 
 #[test]
+fn test_blank_string_literals_keeps_code_and_offsets() {
+    do_blank_string_literals_keeps_code_and_offsets();
+}
+
+#[test]
 fn test_statements_split_at_the_right_places() {
     do_statements_split_at_the_right_places();
 }
@@ -811,9 +926,4 @@ fn test_statements_split_at_the_right_places() {
 #[test]
 fn test_production_code_returns_code_without_prose() {
     do_production_code_returns_code_without_prose();
-}
-
-#[test]
-fn test_above_test_modules_knows_every_shape_in_this_tree() {
-    do_above_test_modules_knows_every_shape_in_this_tree();
 }

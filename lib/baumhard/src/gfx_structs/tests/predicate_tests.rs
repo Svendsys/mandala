@@ -8,7 +8,7 @@
 //! element, and a field-bearing predicate matches or rejects based
 //! on the element's value.
 //!
-//! Follows the `do_*()` / `test_*()` split from §T2.2: every public
+//! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
 use glam::Vec2;

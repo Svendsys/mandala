@@ -100,6 +100,8 @@ with an error before any model state changes.
 ## Cost
 
 The render-loop cull is two branchless `Option<f32>` comparisons per
-`GlyphArea` per frame (bench: `zoom_visibility_contains` — sub-ns on
-the current hardware). No text reshaping or buffer-cache invalidation
-fires on zoom steps — the cull runs against cached buffers.
+`GlyphArea` per frame (bench:
+`zoom_visibility_unbounded_contains_full_camera_range`, with the
+`zoom_visibility_*_band_*` and `_nan_zoom_*` rows beside it). No text
+reshaping or buffer-cache invalidation fires on zoom steps — the cull
+runs against cached buffers.

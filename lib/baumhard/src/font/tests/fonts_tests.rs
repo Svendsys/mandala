@@ -3,7 +3,7 @@
 //! Tests for [`crate::font::fonts`] measurement primitives:
 //! [`measure_glyph_ink_bounds`] and [`measure_text_block_unbounded`].
 //!
-//! Follows the `do_*()` / `test_*()` split from §B8 — every `do_*`
+//! Follows the `do_*()` / `test_*()` split from §T2.2 — every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
 use cosmic_text::SwashCache;
@@ -421,6 +421,9 @@ pub fn do_app_font_by_family_unknown_returns_none() {
 /// nothing the lock cares about. The spawned holder thread
 /// eventually drops its guard cleanly when it finishes sleeping,
 /// leaving FONT_SYSTEM usable for subsequent tests.
+///
+/// Plain `#[test]` with no `do_*` body: §B8 opt-out class 2, the
+/// body drives a panic — and criterion iterates what it is given.
 #[test]
 #[should_panic(expected = "FONT_SYSTEM write lock not available")]
 fn test_acquire_font_system_write_panics_on_timeout() {

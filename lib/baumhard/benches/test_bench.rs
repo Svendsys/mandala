@@ -4,17 +4,25 @@ use baumhard::core::tests::primitives_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::fonts_tests::*;
 use baumhard::font::tests::hex_tests::*;
+use baumhard::font::tests::metric_cache_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::font::tests::name_rules_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
+use baumhard::gfx_structs::tests::bvh_descent_tests::*;
+use baumhard::gfx_structs::tests::camera_tests::*;
 use baumhard::gfx_structs::tests::delta_tests::*;
+use baumhard::gfx_structs::tests::element_tests::*;
+use baumhard::gfx_structs::tests::map_children_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
 use baumhard::gfx_structs::tests::mutator_tests::*;
+use baumhard::gfx_structs::tests::predicate_tests::*;
 use baumhard::gfx_structs::tests::region_indexer_tests::*;
 use baumhard::gfx_structs::tests::region_params_tests::*;
 use baumhard::gfx_structs::tests::region_rect_tests::*;
 use baumhard::gfx_structs::tests::scene_tests::*;
 use baumhard::gfx_structs::tests::shape_tests::*;
+use baumhard::gfx_structs::tests::spatial_descend_tests::*;
+use baumhard::gfx_structs::tests::subtree_aabb_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
@@ -22,6 +30,7 @@ use baumhard::util::tests::arena_utils_tests::*;
 use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
 use baumhard::util::tests::grapheme_chad_tests::*;
+use baumhard::util::tests::ordered_vec2_tests::*;
 use baumhard::util::tests::primes_test::do_primes;
 use baumhard::util::tests::rust_source_tests::*;
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -168,21 +177,21 @@ fn do_subtree_drag_slow_path(
 
 fn criterion_benchmark(c: &mut Criterion) {
     // glyph_model //
-    c.bench_function("matrix_place_in_1", |b| b.iter(matrix_place_in_1));
-    c.bench_function("matrix_place_in_2", |b| b.iter(matrix_place_in_2));
-    c.bench_function("matrix_place_in_3", |b| b.iter(matrix_place_in_3));
+    c.bench_function("matrix_place_in_1", |b| b.iter(do_matrix_place_in_1));
+    c.bench_function("matrix_place_in_2", |b| b.iter(do_matrix_place_in_2));
+    c.bench_function("matrix_place_in_3", |b| b.iter(do_matrix_place_in_3));
     c.bench_function("matrix_place_in_multiline_component", |b| {
-        b.iter(matrix_place_in_multiline_component)
+        b.iter(do_matrix_place_in_multiline_component)
     });
     c.bench_function("matrix_place_in_fusing_component", |b| {
-        b.iter(matrix_place_in_fusing_component)
+        b.iter(do_matrix_place_in_fusing_component)
     });
-    c.bench_function("matrix_add_assign_1", |b| b.iter(matrix_add_assign_1));
-    c.bench_function("matrix_add_assign_2", |b| b.iter(matrix_add_assign_2));
-    c.bench_function("line_add_assign_1", |b| b.iter(line_add_assign_1));
-    c.bench_function("line_add_assign_2", |b| b.iter(line_add_assign_2));
-    c.bench_function("line_add_assign_3", |b| b.iter(line_add_assign_3));
-    c.bench_function("line_add_assign_4", |b| b.iter(line_add_assign_4));
+    c.bench_function("matrix_add_assign_1", |b| b.iter(do_matrix_add_assign_1));
+    c.bench_function("matrix_add_assign_2", |b| b.iter(do_matrix_add_assign_2));
+    c.bench_function("line_add_assign_1", |b| b.iter(do_line_add_assign_1));
+    c.bench_function("line_add_assign_2", |b| b.iter(do_line_add_assign_2));
+    c.bench_function("line_add_assign_3", |b| b.iter(do_line_add_assign_3));
+    c.bench_function("line_add_assign_4", |b| b.iter(do_line_add_assign_4));
     c.bench_function("line_ignore_initial_space_multibyte_indent", |b| {
         b.iter(do_line_ignore_initial_space_multibyte_indent)
     });
@@ -221,28 +230,28 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("overriding_insert_is_partition_independent", |b| {
         b.iter(do_overriding_insert_is_partition_independent)
     });
-    c.bench_function("component_of_index", |b| b.iter(component_of_index));
-    c.bench_function("index_of_component", |b| b.iter(index_of_component));
-    c.bench_function("expanding_insert_1", |b| b.iter(expanding_insert_1));
-    c.bench_function("expanding_insert_2", |b| b.iter(expanding_insert_2));
-    c.bench_function("expanding_insert_3", |b| b.iter(expanding_insert_3));
-    c.bench_function("expanding_insert_4", |b| b.iter(expanding_insert_4));
-    c.bench_function("expanding_insert_5", |b| b.iter(expanding_insert_5));
-    c.bench_function("expanding_insert_6", |b| b.iter(expanding_insert_6));
-    c.bench_function("expanding_insert_7", |b| b.iter(expanding_insert_7));
-    c.bench_function("overriding_insert_1", |b| b.iter(overriding_insert_1));
-    c.bench_function("overriding_insert_2", |b| b.iter(overriding_insert_2));
-    c.bench_function("overriding_insert_3", |b| b.iter(overriding_insert_3));
-    c.bench_function("overriding_insert_4", |b| b.iter(overriding_insert_4));
-    c.bench_function("overriding_insert_5", |b| b.iter(overriding_insert_5));
-    c.bench_function("overriding_insert_6", |b| b.iter(overriding_insert_6));
-    c.bench_function("overriding_insert_7", |b| b.iter(overriding_insert_7));
-    c.bench_function("overriding_insert_8", |b| b.iter(overriding_insert_8));
-    c.bench_function("overriding_insert_9", |b| b.iter(overriding_insert_9));
-    c.bench_function("overriding_insert_10", |b| b.iter(overriding_insert_10));
-    c.bench_function("overriding_insert_11", |b| b.iter(overriding_insert_11));
-    c.bench_function("overriding_insert_12", |b| b.iter(overriding_insert_12));
-    c.bench_function("overriding_insert_13", |b| b.iter(overriding_insert_13));
+    c.bench_function("component_of_index", |b| b.iter(do_component_of_index));
+    c.bench_function("index_of_component", |b| b.iter(do_index_of_component));
+    c.bench_function("expanding_insert_1", |b| b.iter(do_expanding_insert_1));
+    c.bench_function("expanding_insert_2", |b| b.iter(do_expanding_insert_2));
+    c.bench_function("expanding_insert_3", |b| b.iter(do_expanding_insert_3));
+    c.bench_function("expanding_insert_4", |b| b.iter(do_expanding_insert_4));
+    c.bench_function("expanding_insert_5", |b| b.iter(do_expanding_insert_5));
+    c.bench_function("expanding_insert_6", |b| b.iter(do_expanding_insert_6));
+    c.bench_function("expanding_insert_7", |b| b.iter(do_expanding_insert_7));
+    c.bench_function("overriding_insert_1", |b| b.iter(do_overriding_insert_1));
+    c.bench_function("overriding_insert_2", |b| b.iter(do_overriding_insert_2));
+    c.bench_function("overriding_insert_3", |b| b.iter(do_overriding_insert_3));
+    c.bench_function("overriding_insert_4", |b| b.iter(do_overriding_insert_4));
+    c.bench_function("overriding_insert_5", |b| b.iter(do_overriding_insert_5));
+    c.bench_function("overriding_insert_6", |b| b.iter(do_overriding_insert_6));
+    c.bench_function("overriding_insert_7", |b| b.iter(do_overriding_insert_7));
+    c.bench_function("overriding_insert_8", |b| b.iter(do_overriding_insert_8));
+    c.bench_function("overriding_insert_9", |b| b.iter(do_overriding_insert_9));
+    c.bench_function("overriding_insert_10", |b| b.iter(do_overriding_insert_10));
+    c.bench_function("overriding_insert_11", |b| b.iter(do_overriding_insert_11));
+    c.bench_function("overriding_insert_12", |b| b.iter(do_overriding_insert_12));
+    c.bench_function("overriding_insert_13", |b| b.iter(do_overriding_insert_13));
     c.bench_function("delta_glyph_line_assign_applies_through_apply_to", |b| {
         b.iter(do_delta_glyph_line_assign_applies_through_apply_to)
     });
@@ -273,6 +282,18 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("model_rotate_moves_position_around_pivot", |b| {
         b.iter(do_model_rotate_moves_position_around_pivot)
     });
+    // The three `model_tests.rs` bodies the section above left out:
+    // the scalar multiply that has no `*_2` sibling, and the two
+    // destructive-op pins that hold `Delete`/`Subtract` to *not*
+    // growing a matrix to reach a line that is not there.
+    c.bench_function("matrix_mul_assign_1", |b| b.iter(do_matrix_mul_assign_1));
+    c.bench_function("delta_glyph_line_destructive_ops_do_not_grow_missing_line", |b| {
+        b.iter(do_delta_glyph_line_destructive_ops_do_not_grow_missing_line)
+    });
+    c.bench_function(
+        "delta_glyph_lines_destructive_ops_do_not_grow_missing_lines",
+        |b| b.iter(do_delta_glyph_lines_destructive_ops_do_not_grow_missing_lines),
+    );
     // shared delta plumbing //
     c.bench_function("area_field_tags_cover_every_field", |b| {
         b.iter(do_area_field_tags_cover_every_field)
@@ -346,6 +367,11 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("area_rotate_command_json_wire_shape", |b| {
         b.iter(do_area_rotate_command_json_wire_shape)
+    });
+    // The canonical eight-direction outline stamp — the offset
+    // table every bordered area expands through.
+    c.bench_function("outline_offsets_canonical_8_stamp", |b| {
+        b.iter(do_outline_offsets_canonical_8_stamp)
     });
     // zoom_visibility //
     c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {
@@ -469,19 +495,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_shape_shader_ids_are_stable)
     });
     // glyph_tree //
-    c.bench_function("basics_solo_mutation", |b| b.iter(basics_solo_mutation));
-    c.bench_function("model_block_commands", |b| b.iter(model_block_commands));
-    c.bench_function("area_block_commands", |b| b.iter(area_block_commands));
-    c.bench_function("complex_tree_mutation", |b| b.iter(complex_tree_mutation));
-    c.bench_function("simple_tree_mutation", |b| b.iter(simple_tree_mutation));
-    c.bench_function("repeat_while_skip_while", |b| b.iter(repeat_while_skip_while));
+    c.bench_function("basics_solo_mutation", |b| b.iter(do_basics_solo_mutation));
+    c.bench_function("model_block_commands", |b| b.iter(do_model_block_commands));
+    c.bench_function("area_block_commands", |b| b.iter(do_area_block_commands));
+    c.bench_function("complex_tree_mutation", |b| b.iter(do_complex_tree_mutation));
+    c.bench_function("simple_tree_mutation", |b| b.iter(do_simple_tree_mutation));
+    c.bench_function("repeat_while_skip_while", |b| b.iter(do_repeat_while_skip_while));
     c.bench_function("repeat_while_without_children_is_noop", |b| {
-        b.iter(repeat_while_without_children_is_noop)
+        b.iter(do_repeat_while_without_children_is_noop)
     });
-    c.bench_function("event_propagation_complex", |b| {
-        b.iter(event_propagation_complex_symmetric)
+    c.bench_function("event_propagation_complex_symmetric", |b| {
+        b.iter(do_event_propagation_complex_symmetric)
     });
-    c.bench_function("event_propagation_simple", |b| b.iter(event_propagation_simple));
+    c.bench_function("event_propagation_simple", |b| {
+        b.iter(do_event_propagation_simple)
+    });
     c.bench_function("mutator_macro_applies_all_mutations_in_order", |b| {
         b.iter(do_mutator_macro_applies_all_mutations_in_order)
     });
@@ -493,6 +521,78 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("mutator_void_preserves_channel_alignment_in_tree_walk", |b| {
         b.iter(do_mutator_void_preserves_channel_alignment_in_tree_walk)
+    });
+    // `walk_tree` proper: channel alignment, RepeatWhile
+    // continuation, and the deep-chain / wide-fan-out shapes. §B7
+    // puts everything inside `walk_tree_from` under the hot-path
+    // rules, so these are the bodies whose numbers those rules are
+    // argued from.
+    c.bench_function("macro_applies_all_mutations_in_order", |b| {
+        b.iter(do_macro_applies_all_mutations_in_order)
+    });
+    c.bench_function("macro_with_empty_mutations_is_noop", |b| {
+        b.iter(do_macro_with_empty_mutations_is_noop)
+    });
+    c.bench_function("mutation_none_is_noop", |b| b.iter(do_mutation_none_is_noop));
+    c.bench_function("single_mutator_channel_filter_in_align_child_walks", |b| {
+        b.iter(do_single_mutator_channel_filter_in_align_child_walks)
+    });
+    c.bench_function("direct_walk_at_mismatched_channels_is_noop", |b| {
+        b.iter(do_direct_walk_at_mismatched_channels_is_noop)
+    });
+    c.bench_function("deep_chain_walk_reaches_every_node", |b| {
+        b.iter(do_deep_chain_walk_reaches_every_node)
+    });
+    c.bench_function("wide_fan_out_applies_to_all_matching_siblings", |b| {
+        b.iter(do_wide_fan_out_applies_to_all_matching_siblings)
+    });
+    c.bench_function("applying_same_delta_twice_accumulates", |b| {
+        b.iter(do_applying_same_delta_twice_accumulates)
+    });
+    c.bench_function("mutation_is_deterministic_across_tree_clones", |b| {
+        b.iter(do_mutation_is_deterministic_across_tree_clones)
+    });
+    c.bench_function("clone_preserves_unique_id_and_channel", |b| {
+        b.iter(do_clone_preserves_unique_id_and_channel)
+    });
+    c.bench_function("repeat_while_aligns_non_ascending_target_channels", |b| {
+        b.iter(do_repeat_while_aligns_non_ascending_target_channels)
+    });
+    c.bench_function(
+        "repeat_while_merge_advance_does_not_drop_mutator_without_target",
+        |b| b.iter(do_repeat_while_merge_advance_does_not_drop_mutator_without_target),
+    );
+    c.bench_function(
+        "default_terminator_resumes_over_non_ascending_after_mutators",
+        |b| b.iter(do_default_terminator_resumes_over_non_ascending_after_mutators),
+    );
+    // `Mutation` and `Instruction` at the single-node scale —
+    // AreaDelta / AreaCommand / None, both `Instruction` variants,
+    // `MutatorTree::apply_to`, and the `writes_the_same` predicate
+    // that decides whether a delta is worth walking for at all.
+    c.bench_function("mutation_area_delta_applies_field", |b| {
+        b.iter(do_mutation_area_delta_applies_field)
+    });
+    c.bench_function("mutation_area_command_nudge_right", |b| {
+        b.iter(do_mutation_area_command_nudge_right)
+    });
+    c.bench_function("mutation_noop_leaves_tree_unchanged", |b| {
+        b.iter(do_mutation_noop_leaves_tree_unchanged)
+    });
+    c.bench_function("writes_the_same_is_reflexive_where_partial_eq_is_not", |b| {
+        b.iter(do_writes_the_same_is_reflexive_where_partial_eq_is_not)
+    });
+    c.bench_function("writes_the_same_separates_values_that_write_differently", |b| {
+        b.iter(do_writes_the_same_separates_values_that_write_differently)
+    });
+    c.bench_function("instruction_repeat_while_always_true", |b| {
+        b.iter(do_instruction_repeat_while_always_true)
+    });
+    c.bench_function("instruction_rotate_while", |b| {
+        b.iter(do_instruction_rotate_while)
+    });
+    c.bench_function("mutator_tree_applies_to_target", |b| {
+        b.iter(do_mutator_tree_applies_to_target)
     });
     // regions //
     c.bench_function("region_params_new_sunny_day", |b| {
@@ -515,6 +615,150 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("region_rect_exhaustive_4x4_grid", |b| {
         b.iter(do_rect_exhaustive_4x4_grid)
+    });
+    // `RegionParams` pixel/region math — the rest of
+    // `region_params_tests.rs`, whose four longest-standing entries
+    // are above. Every one is arithmetic over a resolution and a
+    // factor, which is what runs per pointer event once the index is
+    // wired (§B6).
+    c.bench_function("region_params_resolution_1x1", |b| {
+        b.iter(do_region_params_resolution_1x1)
+    });
+    c.bench_function("region_params_factor_one", |b| {
+        b.iter(do_region_params_factor_one)
+    });
+    c.bench_function("region_params_factor_equals_dimension", |b| {
+        b.iter(do_region_params_factor_equals_dimension)
+    });
+    c.bench_function("region_params_pixel_region_roundtrip", |b| {
+        b.iter(do_region_params_pixel_region_roundtrip)
+    });
+    c.bench_function("region_params_roundtrip_asymmetric", |b| {
+        b.iter(do_region_params_roundtrip_asymmetric)
+    });
+    c.bench_function("region_params_boundary_pixels", |b| {
+        b.iter(do_region_params_boundary_pixels)
+    });
+    c.bench_function("region_params_asymmetric", |b| {
+        b.iter(do_region_params_asymmetric)
+    });
+    c.bench_function("region_params_very_wide", |b| b.iter(do_region_params_very_wide));
+    c.bench_function("region_params_exhaustive_4x4", |b| {
+        b.iter(do_region_params_exhaustive_4x4)
+    });
+    c.bench_function("region_params_exhaustive_12x12", |b| {
+        b.iter(do_region_params_exhaustive_12x12)
+    });
+    c.bench_function("region_params_adapt_changes_resolution", |b| {
+        b.iter(do_region_params_adapt_changes_resolution)
+    });
+    c.bench_function("region_params_adapt_chained", |b| {
+        b.iter(do_region_params_adapt_chained)
+    });
+    // `RegionIndexer` insert / remove / query — the forward and
+    // reverse index that makes selection highlighting O(log n)
+    // instead of O(n) (§B6).
+    c.bench_function("region_indexer_initialize_with", |b| {
+        b.iter(do_region_indexer_initialize_with)
+    });
+    c.bench_function("region_indexer_initialize_zero", |b| {
+        b.iter(do_region_indexer_initialize_zero)
+    });
+    c.bench_function("region_indexer_reinitialize_clears_forward_index", |b| {
+        b.iter(do_region_indexer_reinitialize_clears_forward_index)
+    });
+    c.bench_function("region_indexer_multiple_elements_in_one_region", |b| {
+        b.iter(do_region_indexer_multiple_elements_in_one_region)
+    });
+    c.bench_function("region_indexer_one_element_in_multiple_regions", |b| {
+        b.iter(do_region_indexer_one_element_in_multiple_regions)
+    });
+    c.bench_function("region_indexer_empty_region_query", |b| {
+        b.iter(do_region_indexer_empty_region_query)
+    });
+    c.bench_function("region_indexer_boundary_regions", |b| {
+        b.iter(do_region_indexer_boundary_regions)
+    });
+    c.bench_function("region_indexer_duplicate_insert_is_idempotent", |b| {
+        b.iter(do_region_indexer_duplicate_insert_is_idempotent)
+    });
+    c.bench_function("region_indexer_remove_nonexistent_is_noop", |b| {
+        b.iter(do_region_indexer_remove_nonexistent_is_noop)
+    });
+    c.bench_function("region_indexer_no_reverse_index", |b| {
+        b.iter(do_region_indexer_no_reverse_index)
+    });
+    c.bench_function("region_indexer_reverse_index_unknown_element", |b| {
+        b.iter(do_region_indexer_reverse_index_unknown_element)
+    });
+    c.bench_function("region_indexer_reinitialize_stale_reverse_index", |b| {
+        b.iter(do_region_indexer_reinitialize_stale_reverse_index)
+    });
+    c.bench_function("region_indexer_default", |b| b.iter(do_region_indexer_default));
+    c.bench_function("region_indexer_element_id_zero", |b| {
+        b.iter(do_region_indexer_element_id_zero)
+    });
+    c.bench_function("region_indexer_element_id_max", |b| {
+        b.iter(do_region_indexer_element_id_max)
+    });
+    c.bench_function("region_indexer_clone_is_independent", |b| {
+        b.iter(do_region_indexer_clone_is_independent)
+    });
+    c.bench_function("region_indexer_initialize_with_zero_axis", |b| {
+        b.iter(do_region_indexer_initialize_with_zero_axis)
+    });
+    c.bench_function("region_indexer_remove_wrong_region_no_damage", |b| {
+        b.iter(do_region_indexer_remove_wrong_region_no_damage)
+    });
+    c.bench_function("region_indexer_single_region", |b| {
+        b.iter(do_region_indexer_single_region)
+    });
+    c.bench_function("region_indexer_insert_at_scale", |b| {
+        b.iter(do_region_indexer_insert_at_scale)
+    });
+    // `calculate_regions_intersected_by_rectangle` across the grid
+    // shapes: origin blocks, single cells, strips, offsets, the
+    // out-of-bounds error paths, and the 12x12 exhaustive sweep whose
+    // 4x4 sibling is above.
+    c.bench_function("rect_origin_4x4_block", |b| b.iter(do_rect_origin_4x4_block));
+    c.bench_function("rect_origin_4x5_block", |b| b.iter(do_rect_origin_4x5_block));
+    c.bench_function("rect_origin_5x4_block", |b| b.iter(do_rect_origin_5x4_block));
+    c.bench_function("rect_origin_3x2_block", |b| b.iter(do_rect_origin_3x2_block));
+    c.bench_function("rect_single_cell", |b| b.iter(do_rect_single_cell));
+    c.bench_function("rect_single_pixel_each_corner", |b| {
+        b.iter(do_rect_single_pixel_each_corner)
+    });
+    c.bench_function("rect_single_pixel_center", |b| {
+        b.iter(do_rect_single_pixel_center)
+    });
+    c.bench_function("rect_full_width_single_row", |b| {
+        b.iter(do_rect_full_width_single_row)
+    });
+    c.bench_function("rect_full_height_single_column", |b| {
+        b.iter(do_rect_full_height_single_column)
+    });
+    c.bench_function("rect_full_grid", |b| b.iter(do_rect_full_grid));
+    c.bench_function("rect_thin_vertical_strip", |b| {
+        b.iter(do_rect_thin_vertical_strip)
+    });
+    c.bench_function("rect_thin_horizontal_strip", |b| {
+        b.iter(do_rect_thin_horizontal_strip)
+    });
+    c.bench_function("rect_offset_single_row", |b| b.iter(do_rect_offset_single_row));
+    c.bench_function("rect_offset_multi_row", |b| b.iter(do_rect_offset_multi_row));
+    c.bench_function("rect_offset_last_column_multi_row", |b| {
+        b.iter(do_rect_offset_last_column_multi_row)
+    });
+    c.bench_function("rect_center_3x3", |b| b.iter(do_rect_center_3x3));
+    c.bench_function("rect_bottom_right_2x2", |b| b.iter(do_rect_bottom_right_2x2));
+    c.bench_function("rect_asymmetric_grid", |b| b.iter(do_rect_asymmetric_grid));
+    c.bench_function("rect_start_after_end", |b| b.iter(do_rect_start_after_end));
+    c.bench_function("rect_start_out_of_bounds", |b| {
+        b.iter(do_rect_start_out_of_bounds)
+    });
+    c.bench_function("rect_end_out_of_bounds", |b| b.iter(do_rect_end_out_of_bounds));
+    c.bench_function("rect_exhaustive_12x12_grid", |b| {
+        b.iter(do_rect_exhaustive_12x12_grid)
     });
     // grapheme_chad //
     c.bench_function("slice_to_newline", |b| b.iter(do_slice_to_newline));
@@ -566,11 +810,21 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("insert_spaces", |b| b.iter(do_insert_spaces));
     c.bench_function("split_graphemes_owned", |b| b.iter(do_split_graphemes_owned));
     c.bench_function("join_graphemes", |b| b.iter(do_join_graphemes));
-    // rust_source // (the five pure scanners; `production_code` and
-    // the tree-wide sweep have no entry because they are file reads
-    // — see the module docs)
+    // rust_source // — every `do_*()` the module exports, which is
+    // the whole rule this file follows: an entry per body, and a
+    // body that should not be measured is a plain `#[test]` rather
+    // than a `do_*()` with an exemption. The tree-wide sweep is the
+    // one that took that opt-out; `production_code` did not, and
+    // reads one file per iteration like the two `shape_*` entries
+    // above.
     c.bench_function("strip_comments", |b| {
         b.iter(do_strip_comments_removes_only_comments)
+    });
+    c.bench_function("strip_comments_preserves_line_count", |b| {
+        b.iter(do_strip_comments_preserves_line_count)
+    });
+    c.bench_function("strip_comments_survives_unterminated_input", |b| {
+        b.iter(do_strip_comments_survives_unterminated_input)
     });
     c.bench_function("above_test_modules", |b| {
         b.iter(do_above_test_modules_cuts_at_the_module_only)
@@ -581,7 +835,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("string_literals", |b| {
         b.iter(do_string_literals_returns_every_literal)
     });
+    c.bench_function("blank_string_literals_keeps_code_and_offsets", |b| {
+        b.iter(do_blank_string_literals_keeps_code_and_offsets)
+    });
     c.bench_function("statements", |b| b.iter(do_statements_split_at_the_right_places));
+    c.bench_function("production_code_returns_code_without_prose", |b| {
+        b.iter(do_production_code_returns_code_without_prose)
+    });
     // geometry //
     c.bench_function("90_deg_rotation", |b| b.iter(do_90_deg_rotation));
     c.bench_function("180_deg_rotation", |b| b.iter(do_180_deg_rotation));
@@ -596,9 +856,35 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("is_non_negative_finite_f64", |b| {
         b.iter(do_is_non_negative_finite_f64)
     });
+    c.bench_function("option_almost_equal", |b| b.iter(do_option_almost_equal));
     // font / metrics //
     c.bench_function("monospace_advance_scales_linearly", |b| {
         b.iter(do_monospace_advance_scales_linearly)
+    });
+    // font / metric cache //
+    c.bench_function("glyph_advance_cache_hit_matches_miss", |b| {
+        b.iter(do_glyph_advance_cache_hit_matches_miss)
+    });
+    c.bench_function("glyph_advance_distinct_per_grapheme", |b| {
+        b.iter(do_glyph_advance_distinct_per_grapheme)
+    });
+    c.bench_function("cluster_width_sums_per_grapheme", |b| {
+        b.iter(do_cluster_width_sums_per_grapheme)
+    });
+    c.bench_function("glyph_advance_scales_with_size", |b| {
+        b.iter(do_glyph_advance_scales_with_size)
+    });
+    c.bench_function("glyph_ink_distinct_per_size", |b| {
+        b.iter(do_glyph_ink_distinct_per_size)
+    });
+    c.bench_function("glyph_ink_distinct_per_grapheme", |b| {
+        b.iter(do_glyph_ink_distinct_per_grapheme)
+    });
+    c.bench_function("glyph_advance_with_shapes_cold_key_under_held_guard", |b| {
+        b.iter(do_glyph_advance_with_shapes_cold_key_under_held_guard)
+    });
+    c.bench_function("glyph_ink_with_cold_key_under_held_guard", |b| {
+        b.iter(do_glyph_ink_with_cold_key_under_held_guard)
     });
     // font / name rules //
     c.bench_function("decode_name_record_utf16_be_ascii", |b| {
@@ -702,6 +988,111 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("hex_to_cosmic_color_round_trip", |b| {
         b.iter(do_hex_to_cosmic_color_round_trip)
+    });
+    c.bench_function("resolve_var_hit", |b| b.iter(do_resolve_var_hit));
+    c.bench_function("resolve_var_miss_returns_raw", |b| {
+        b.iter(do_resolve_var_miss_returns_raw)
+    });
+    c.bench_function("resolve_var_plain_hex_passes_through", |b| {
+        b.iter(do_resolve_var_plain_hex_passes_through)
+    });
+    c.bench_function("resolve_var_malformed_passes_through", |b| {
+        b.iter(do_resolve_var_malformed_passes_through)
+    });
+    c.bench_function("resolve_var_tolerates_whitespace_inside", |b| {
+        b.iter(do_resolve_var_tolerates_whitespace_inside)
+    });
+    c.bench_function("resolve_var_single_level_no_recursion", |b| {
+        b.iter(do_resolve_var_single_level_no_recursion)
+    });
+    c.bench_function("hex_to_rgba_safe_good_input", |b| {
+        b.iter(do_hex_to_rgba_safe_good_input)
+    });
+    c.bench_function("hex_to_rgba_safe_garbage_returns_fallback", |b| {
+        b.iter(do_hex_to_rgba_safe_garbage_returns_fallback)
+    });
+    c.bench_function("hex_with_alpha_scaled_halves_opaque_input", |b| {
+        b.iter(do_hex_with_alpha_scaled_halves_opaque_input)
+    });
+    c.bench_function("hex_with_alpha_scaled_factor_one_round_trips", |b| {
+        b.iter(do_hex_with_alpha_scaled_factor_one_round_trips)
+    });
+    c.bench_function("hex_with_alpha_scaled_factor_zero_zeros_alpha", |b| {
+        b.iter(do_hex_with_alpha_scaled_factor_zero_zeros_alpha)
+    });
+    c.bench_function(
+        "hex_with_alpha_scaled_factor_above_one_clamps_to_full_alpha",
+        |b| b.iter(do_hex_with_alpha_scaled_factor_above_one_clamps_to_full_alpha),
+    );
+    c.bench_function("hex_with_alpha_scaled_preserves_rgb_on_8_char_input", |b| {
+        b.iter(do_hex_with_alpha_scaled_preserves_rgb_on_8_char_input)
+    });
+    c.bench_function("hex_with_alpha_scaled_parse_failure_passes_through", |b| {
+        b.iter(do_hex_with_alpha_scaled_parse_failure_passes_through)
+    });
+    c.bench_function("hex_with_alpha_scaled_composes", |b| {
+        b.iter(do_hex_with_alpha_scaled_composes)
+    });
+    c.bench_function("hex_to_rgba_safe_with_alpha", |b| {
+        b.iter(do_hex_to_rgba_safe_with_alpha)
+    });
+    c.bench_function("hex_to_rgba_safe_no_panic_on_malformed_batch", |b| {
+        b.iter(do_hex_to_rgba_safe_no_panic_on_malformed_batch)
+    });
+    c.bench_function("hex_to_rgba_safe_short_hex_expands_each_nibble", |b| {
+        b.iter(do_hex_to_rgba_safe_short_hex_expands_each_nibble)
+    });
+    c.bench_function("hex_to_rgba_safe_accepts_valid_6_and_8_char_both_cases", |b| {
+        b.iter(do_hex_to_rgba_safe_accepts_valid_6_and_8_char_both_cases)
+    });
+    c.bench_function("resolve_var_large_theme_map_zero_copy_passthrough", |b| {
+        b.iter(do_resolve_var_large_theme_map_zero_copy_passthrough)
+    });
+    c.bench_function("resolve_var_passthrough_on_unknown_is_verbatim", |b| {
+        b.iter(do_resolve_var_passthrough_on_unknown_is_verbatim)
+    });
+    c.bench_function("hsv_to_rgb_primaries", |b| b.iter(do_hsv_to_rgb_primaries));
+    c.bench_function("hsv_to_rgb_grayscale_ignores_hue", |b| {
+        b.iter(do_hsv_to_rgb_grayscale_ignores_hue)
+    });
+    c.bench_function("hsv_to_rgb_wraps_hue", |b| b.iter(do_hsv_to_rgb_wraps_hue));
+    c.bench_function("rgb_to_hsv_primaries", |b| b.iter(do_rgb_to_hsv_primaries));
+    c.bench_function("hsv_hex_roundtrip_named_colors", |b| {
+        b.iter(do_hsv_hex_roundtrip_named_colors)
+    });
+    c.bench_function("hex_to_hsv_safe_rejects_garbage", |b| {
+        b.iter(do_hex_to_hsv_safe_rejects_garbage)
+    });
+    c.bench_function("hsv_to_hex_emits_six_char_format", |b| {
+        b.iter(do_hsv_to_hex_emits_six_char_format)
+    });
+    c.bench_function("rgba_to_hex_drops_alpha_only_when_saturated_opaque", |b| {
+        b.iter(do_rgba_to_hex_drops_alpha_only_when_saturated_opaque)
+    });
+    c.bench_function("color_add_wraps_per_channel_modulo_256", |b| {
+        b.iter(do_color_add_wraps_per_channel_modulo_256)
+    });
+    c.bench_function("color_sub_wraps_underflow_modulo_256", |b| {
+        b.iter(do_color_sub_wraps_underflow_modulo_256)
+    });
+    c.bench_function("color_mul_wraps_overflow_modulo_256", |b| {
+        b.iter(do_color_mul_wraps_overflow_modulo_256)
+    });
+    c.bench_function("color_div_per_channel", |b| b.iter(do_color_div_per_channel));
+    c.bench_function("color_to_float_does_not_collapse_mid_range_channels", |b| {
+        b.iter(do_color_to_float_does_not_collapse_mid_range_channels)
+    });
+    c.bench_function("color_new_f32_to_float_round_trips_within_one_byte", |b| {
+        b.iter(do_color_new_f32_to_float_round_trips_within_one_byte)
+    });
+    c.bench_function("is_valid_hex_color_matches_hex_parser", |b| {
+        b.iter(do_is_valid_hex_color_matches_hex_parser)
+    });
+    c.bench_function("parse_var_name_tolerates_inner_whitespace", |b| {
+        b.iter(do_parse_var_name_tolerates_inner_whitespace)
+    });
+    c.bench_function("parse_var_name_rejects_malformed_refs", |b| {
+        b.iter(do_parse_var_name_rejects_malformed_refs)
     });
     // primitives //
     c.bench_function("overlaps", |b| b.iter(do_overlaps));
@@ -875,6 +1266,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("rich_text_spans_into_keeps_the_no_region_whole_text_span", |b| {
         b.iter(do_rich_text_spans_into_keeps_the_no_region_whole_text_span)
     });
+    // The grapheme-boundary slicing paths on both bridges: a region
+    // range that lands mid-cluster is the input that turns a byte
+    // slice into a panic, and the ZWJ cases are the widest clusters
+    // the app actually renders.
+    c.bench_function("attrs_list_slice_at_zwj_grapheme_boundary", |b| {
+        b.iter(do_attrs_list_slice_at_zwj_grapheme_boundary)
+    });
+    c.bench_function("rich_text_spans_slice_at_grapheme_boundary", |b| {
+        b.iter(do_rich_text_spans_slice_at_grapheme_boundary)
+    });
+    c.bench_function("rich_text_spans_slice_at_zwj_grapheme_boundary", |b| {
+        b.iter(do_rich_text_spans_slice_at_zwj_grapheme_boundary)
+    });
     // font family enumeration / lookup //
     c.bench_function("list_loaded_families_is_nonempty_sorted_unique", |b| {
         b.iter(do_list_loaded_families_is_nonempty_sorted_unique)
@@ -887,6 +1291,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("loaded_families_iter_matches_owned_list", |b| {
         b.iter(do_loaded_families_iter_matches_owned_list)
+    });
+    c.bench_function("family_name_of_round_trips", |b| {
+        b.iter(do_family_name_of_round_trips)
     });
     // scene + hit-test //
     c.bench_function("descendant_at_hits_single_area", |b| {
@@ -923,6 +1330,305 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("scene_component_in_overlap_smallest_area", |b| {
         b.iter(do_scene_component_in_resolves_overlap_by_smallest_area)
+    });
+    // `Scene` bookkeeping around the hit tests above: the
+    // empty-tree miss, visibility skipping, removal, ownership
+    // hand-back, and the insertion-stable layer order the hit
+    // priority rests on.
+    c.bench_function("descendant_at_returns_none_on_empty_tree", |b| {
+        b.iter(do_descendant_at_returns_none_on_empty_tree)
+    });
+    c.bench_function("scene_invisible_trees_are_skipped", |b| {
+        b.iter(do_scene_invisible_trees_are_skipped)
+    });
+    c.bench_function("scene_remove_drops_entry", |b| {
+        b.iter(do_scene_remove_drops_entry)
+    });
+    c.bench_function("scene_entry_into_tree_returns_ownership", |b| {
+        b.iter(do_scene_entry_into_tree_returns_ownership)
+    });
+    c.bench_function("scene_ids_in_layer_order_is_stable_by_insertion", |b| {
+        b.iter(do_scene_ids_in_layer_order_is_stable_by_insertion)
+    });
+    // subtree AABBs (ensure/invalidate) //
+    c.bench_function("subtree_aabb_leaf_equals_own_bounds", |b| {
+        b.iter(do_subtree_aabb_leaf_equals_own_bounds)
+    });
+    c.bench_function("subtree_aabb_parent_encloses_children", |b| {
+        b.iter(do_subtree_aabb_parent_encloses_children)
+    });
+    c.bench_function("subtree_aabb_root_encloses_entire_tree", |b| {
+        b.iter(do_subtree_aabb_root_encloses_entire_tree)
+    });
+    c.bench_function("subtree_aabb_invalidated_by_mutation", |b| {
+        b.iter(do_subtree_aabb_invalidated_by_mutation)
+    });
+    c.bench_function("subtree_aabb_void_tree_is_none", |b| {
+        b.iter(do_subtree_aabb_void_tree_is_none)
+    });
+    c.bench_function("subtree_aabb_ensure_is_idempotent", |b| {
+        b.iter(do_subtree_aabb_ensure_is_idempotent)
+    });
+    c.bench_function("subtree_aabb_deep_chain_propagates_to_root", |b| {
+        b.iter(do_subtree_aabb_deep_chain_propagates_to_root)
+    });
+    c.bench_function("subtree_aabb_wide_tree_root_covers_all", |b| {
+        b.iter(do_subtree_aabb_wide_tree_root_covers_all)
+    });
+    c.bench_function("subtree_aabb_single_area_node", |b| {
+        b.iter(do_subtree_aabb_single_area_node)
+    });
+    c.bench_function("subtree_aabb_zero_bounds_area_ignored", |b| {
+        b.iter(do_subtree_aabb_zero_bounds_area_ignored)
+    });
+    c.bench_function("subtree_aabb_negative_position", |b| {
+        b.iter(do_subtree_aabb_negative_position)
+    });
+    c.bench_function("subtree_aabb_merge_none_base_with_child", |b| {
+        b.iter(do_subtree_aabb_merge_none_base_with_child)
+    });
+    c.bench_function("subtree_aabb_merge_two_disjoint_children", |b| {
+        b.iter(do_subtree_aabb_merge_two_disjoint_children)
+    });
+    c.bench_function("subtree_aabb_all_children_zero_bounds", |b| {
+        b.iter(do_subtree_aabb_all_children_zero_bounds)
+    });
+    // BVH-accelerated descendant_at / descendant_near //
+    c.bench_function("descendant_at_finds_leaf_via_bvh", |b| {
+        b.iter(do_descendant_at_finds_leaf_via_bvh)
+    });
+    c.bench_function("descendant_at_prunes_disjoint_subtree", |b| {
+        b.iter(do_descendant_at_prunes_disjoint_subtree)
+    });
+    c.bench_function("descendant_at_returns_none_on_miss", |b| {
+        b.iter(do_descendant_at_returns_none_on_miss)
+    });
+    c.bench_function("descendant_at_smallest_area_wins", |b| {
+        b.iter(do_descendant_at_smallest_area_wins)
+    });
+    c.bench_function("descendant_at_deep_chain_finds_leaf", |b| {
+        b.iter(do_descendant_at_deep_chain_finds_leaf)
+    });
+    c.bench_function("descendant_at_deep_chain_miss", |b| {
+        b.iter(do_descendant_at_deep_chain_miss)
+    });
+    c.bench_function("descendant_at_wide_tree_finds_correct_child", |b| {
+        b.iter(do_descendant_at_wide_tree_finds_correct_child)
+    });
+    c.bench_function("descendant_at_wide_tree_gap_is_miss", |b| {
+        b.iter(do_descendant_at_wide_tree_gap_is_miss)
+    });
+    c.bench_function("descendant_at_overlapping_siblings", |b| {
+        b.iter(do_descendant_at_overlapping_siblings)
+    });
+    c.bench_function("descendant_near_negative_coords", |b| {
+        b.iter(do_descendant_near_negative_coords)
+    });
+    c.bench_function("bvh_descend_skips_glyph_model_nodes", |b| {
+        b.iter(do_bvh_descend_skips_glyph_model_nodes)
+    });
+    c.bench_function("bvh_descend_point_on_exact_boundary", |b| {
+        b.iter(do_bvh_descend_point_on_exact_boundary)
+    });
+    c.bench_function("bvh_far_edge_hit_survives_float_rounding", |b| {
+        b.iter(do_bvh_far_edge_hit_survives_float_rounding)
+    });
+    c.bench_function("bvh_point_in_subtree_aabb_but_outside_own_area", |b| {
+        b.iter(do_bvh_point_in_subtree_aabb_but_outside_own_area)
+    });
+    c.bench_function("descendant_near_slack_expands_hit_region", |b| {
+        b.iter(do_descendant_near_slack_expands_hit_region)
+    });
+    c.bench_function("descendant_near_slack_smallest_area_still_wins", |b| {
+        b.iter(do_descendant_near_slack_smallest_area_still_wins)
+    });
+    // SpatialDescend event delivery //
+    c.bench_function("spatial_descend_delivers_event_to_leaf", |b| {
+        b.iter(do_spatial_descend_delivers_event_to_leaf)
+    });
+    c.bench_function("spatial_descend_miss_is_noop", |b| {
+        b.iter(do_spatial_descend_miss_is_noop)
+    });
+    c.bench_function("spatial_descend_finds_innermost_node", |b| {
+        b.iter(do_spatial_descend_finds_innermost_node)
+    });
+    c.bench_function("spatial_descend_deep_chain_delivers_to_leaf", |b| {
+        b.iter(do_spatial_descend_deep_chain_delivers_to_leaf)
+    });
+    c.bench_function("spatial_descend_wide_tree_hits_correct_child", |b| {
+        b.iter(do_spatial_descend_wide_tree_hits_correct_child)
+    });
+    c.bench_function("spatial_descend_no_mutation_is_noop", |b| {
+        b.iter(do_spatial_descend_no_mutation_is_noop)
+    });
+    c.bench_function("spatial_descend_ignores_channel_mismatch", |b| {
+        b.iter(do_spatial_descend_ignores_channel_mismatch)
+    });
+    c.bench_function("apply_to_redirties_subtree_aabbs_after_spatial_descend", |b| {
+        b.iter(do_apply_to_redirties_subtree_aabbs_after_spatial_descend)
+    });
+    c.bench_function("walker_redirties_subtree_aabbs_between_spatial_descends", |b| {
+        b.iter(do_walker_redirties_subtree_aabbs_between_spatial_descends)
+    });
+    c.bench_function("mouse_event_data_round_trips_constructor_inputs", |b| {
+        b.iter(do_mouse_event_data_round_trips_constructor_inputs)
+    });
+    c.bench_function("glyph_tree_event_mouse_carries_data", |b| {
+        b.iter(do_glyph_tree_event_mouse_carries_data)
+    });
+    // MapChildren zip walker //
+    c.bench_function("one_to_one_zip_applies_each_child_by_position", |b| {
+        b.iter(do_one_to_one_zip_applies_each_child_by_position)
+    });
+    c.bench_function("zip_shorter_mutator_than_target", |b| {
+        b.iter(do_zip_shorter_mutator_than_target)
+    });
+    c.bench_function("zip_shorter_target_than_mutator", |b| {
+        b.iter(do_zip_shorter_target_than_mutator)
+    });
+    c.bench_function("zip_empty_mutator_children_is_noop", |b| {
+        b.iter(do_zip_empty_mutator_children_is_noop)
+    });
+    c.bench_function("zip_empty_target_children_is_noop", |b| {
+        b.iter(do_zip_empty_target_children_is_noop)
+    });
+    c.bench_function("zip_empty_both_sides_is_noop", |b| {
+        b.iter(do_zip_empty_both_sides_is_noop)
+    });
+    c.bench_function("nested_map_children_descends_recursively", |b| {
+        b.iter(do_nested_map_children_descends_recursively)
+    });
+    c.bench_function("instruction_carrying_mutation_applies_to_current_target", |b| {
+        b.iter(do_instruction_carrying_mutation_applies_to_current_target)
+    });
+    c.bench_function("instruction_mutation_skipped_on_channel_mismatch", |b| {
+        b.iter(do_instruction_mutation_skipped_on_channel_mismatch)
+    });
+    c.bench_function("compose_repeat_inside_map_children", |b| {
+        b.iter(do_compose_repeat_inside_map_children)
+    });
+    c.bench_function("map_children_ignores_sibling_channels_when_unequal_counts", |b| {
+        b.iter(do_map_children_ignores_sibling_channels_when_unequal_counts)
+    });
+    // camera viewport math //
+    c.bench_function("canvas_to_screen_round_trips", |b| {
+        b.iter(do_canvas_to_screen_round_trips)
+    });
+    c.bench_function("screen_to_canvas_identity_at_default", |b| {
+        b.iter(do_screen_to_canvas_identity_at_default)
+    });
+    c.bench_function("zoom_at_preserves_point_under_cursor", |b| {
+        b.iter(do_zoom_at_preserves_point_under_cursor)
+    });
+    c.bench_function("pan_shifts_viewport", |b| b.iter(do_pan_shifts_viewport));
+    c.bench_function("fit_to_bounds_with_single_element", |b| {
+        b.iter(do_fit_to_bounds_with_single_element)
+    });
+    c.bench_function("fit_to_bounds_empty", |b| b.iter(do_fit_to_bounds_empty));
+    c.bench_function("camera_mutation_pan", |b| b.iter(do_camera_mutation_pan));
+    c.bench_function("camera_mutation_zoom", |b| b.iter(do_camera_mutation_zoom));
+    c.bench_function("camera_mutation_set_zoom_clamps_to_bounds", |b| {
+        b.iter(do_camera_mutation_set_zoom_clamps_to_bounds)
+    });
+    c.bench_function("camera_mutation_fit_to_bounds_matches_imperative", |b| {
+        b.iter(do_camera_mutation_fit_to_bounds_matches_imperative)
+    });
+    c.bench_function("camera_mutation_set_position_assigns_directly", |b| {
+        b.iter(do_camera_mutation_set_position_assigns_directly)
+    });
+    // predicates + comparators //
+    c.bench_function("comparator_equal_f32", |b| b.iter(do_comparator_equal_f32));
+    c.bench_function("comparator_not_equal_f32", |b| {
+        b.iter(do_comparator_not_equal_f32)
+    });
+    c.bench_function("comparator_less_than_f32", |b| {
+        b.iter(do_comparator_less_than_f32)
+    });
+    c.bench_function("comparator_greater_than_f32", |b| {
+        b.iter(do_comparator_greater_than_f32)
+    });
+    c.bench_function("comparator_greater_equal_f32", |b| {
+        b.iter(do_comparator_greater_equal_f32)
+    });
+    c.bench_function("comparator_less_equal_f32", |b| {
+        b.iter(do_comparator_less_equal_f32)
+    });
+    c.bench_function("predicate_always_true_matches_anything", |b| {
+        b.iter(do_predicate_always_true_matches_anything)
+    });
+    c.bench_function("predicate_matches_field_value", |b| {
+        b.iter(do_predicate_matches_field_value)
+    });
+    c.bench_function("predicate_text_with_greater_than_degrades_to_false", |b| {
+        b.iter(do_predicate_text_with_greater_than_degrades_to_false)
+    });
+    c.bench_function("predicate_region_this_with_equals_degrades_to_false", |b| {
+        b.iter(do_predicate_region_this_with_equals_degrades_to_false)
+    });
+    c.bench_function("predicate_region_font_with_greater_than_degrades_to_false", |b| {
+        b.iter(do_predicate_region_font_with_greater_than_degrades_to_false)
+    });
+    c.bench_function("predicate_region_color_with_less_than_degrades_to_false", |b| {
+        b.iter(do_predicate_region_color_with_less_than_degrades_to_false)
+    });
+    c.bench_function("predicate_glyph_lines_with_equals_degrades_to_false", |b| {
+        b.iter(do_predicate_glyph_lines_with_equals_degrades_to_false)
+    });
+    c.bench_function(
+        "predicate_glyph_matrix_with_greater_than_degrades_to_false",
+        |b| b.iter(do_predicate_glyph_matrix_with_greater_than_degrades_to_false),
+    );
+    c.bench_function("predicate_glyph_matrix_with_less_than_degrades_to_false", |b| {
+        b.iter(do_predicate_glyph_matrix_with_less_than_degrades_to_false)
+    });
+    c.bench_function("predicate_glyph_area_field_on_void_degrades_to_false", |b| {
+        b.iter(do_predicate_glyph_area_field_on_void_degrades_to_false)
+    });
+    c.bench_function("predicate_flag_equals_matches_set_flag", |b| {
+        b.iter(do_predicate_flag_equals_matches_set_flag)
+    });
+    c.bench_function("predicate_flag_equals_negated_matches_clear_flag", |b| {
+        b.iter(do_predicate_flag_equals_negated_matches_clear_flag)
+    });
+    c.bench_function("predicate_flag_with_greater_than_degrades_to_false", |b| {
+        b.iter(do_predicate_flag_with_greater_than_degrades_to_false)
+    });
+    c.bench_function("predicate_truth_table", |b| b.iter(do_predicate_truth_table));
+    // GfxElement constructors + accessors //
+    c.bench_function("new_area_constructs_glyph_area_variant", |b| {
+        b.iter(do_new_area_constructs_glyph_area_variant)
+    });
+    c.bench_function("new_void_constructs_void_variant", |b| {
+        b.iter(do_new_void_constructs_void_variant)
+    });
+    c.bench_function("flags_accessor_round_trips", |b| {
+        b.iter(do_flags_accessor_round_trips)
+    });
+    c.bench_function("subtree_aabb_set_and_read", |b| {
+        b.iter(do_subtree_aabb_set_and_read)
+    });
+    c.bench_function("subtree_aabb_clone_resets_cache", |b| {
+        b.iter(do_subtree_aabb_clone_resets_cache)
+    });
+    c.bench_function("event_subscribers_add_and_check", |b| {
+        b.iter(do_event_subscribers_add_and_check)
+    });
+    c.bench_function("event_subscribers_observe_dispatched_event", |b| {
+        b.iter(do_event_subscribers_observe_dispatched_event)
+    });
+    c.bench_function("event_subscriber_can_capture_rc_refcell_state", |b| {
+        b.iter(do_event_subscriber_can_capture_rc_refcell_state)
+    });
+    c.bench_function(
+        "event_subscriber_can_mutate_subscriber_list_during_delivery",
+        |b| b.iter(do_event_subscriber_can_mutate_subscriber_list_during_delivery),
+    );
+    // ordered_vec2 //
+    c.bench_function("ordered_vec2_round_trips_through_hashmap", |b| {
+        b.iter(do_ordered_vec2_round_trips_through_hashmap)
+    });
+    c.bench_function("ordered_vec2_distinguishes_close_floats_in_hashset", |b| {
+        b.iter(do_ordered_vec2_distinguishes_close_floats_in_hashset)
     });
     // arena_utils //
     c.bench_function("arena_utils_clone", |b| b.iter(do_clone));

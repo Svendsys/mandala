@@ -589,9 +589,10 @@ fn shape_section_in(doc: &str) -> String {
 /// it: the copy can publish the vocabulary `KNOWN_SHAPES` has while
 /// the real section below publishes anything at all.
 ///
-/// `#[should_panic]` and so no `do_*()` body or bench entry, the same
-/// carve-out `region_indexer_tests`'s two out-of-bounds tests take —
-/// a benchmark of a panicking body is not a benchmark.
+/// `#[should_panic]` and so no `do_*()` body or bench entry — §B8's
+/// class 2 (drives a panic), the same carve-out
+/// `region_indexer_tests`'s two out-of-bounds tests take: a
+/// benchmark of a panicking body is not a benchmark.
 #[test]
 #[should_panic(expected = "exactly one")]
 fn test_shape_section_rejects_a_duplicated_heading() {
@@ -1018,11 +1019,14 @@ pub fn do_shape_shader_ids_are_stable() {
 /// it is ever a test failure. Verified, not assumed.
 ///
 /// §B8 asks for a `do_*()` body and a bench entry per test; the tests
-/// in this module have neither, deliberately and with precedent.
+/// in this module have neither, deliberately and with precedent —
+/// §B8 opt-out class 1, the body cannot compile into the library.
 /// `syn` is a dev-dependency, so a `pub` body in this `pub mod tests`
 /// tree would not compile into the library, and `serde_coverage`'s
 /// own consumer tests are plain `#[cfg(test)]` tests for the same
-/// reason. Native only: it reads a file.
+/// reason. The `cfg(test)` gate on the module below is what makes
+/// that structural rather than a choice: the bench-surface scan does
+/// not collect through it. Native only: it reads a file.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod log_routing {
     use strum::IntoEnumIterator;
