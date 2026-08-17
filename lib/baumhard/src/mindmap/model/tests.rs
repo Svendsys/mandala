@@ -1508,3 +1508,73 @@ fn test_unlabeled_edge_omits_label_and_labeled_edge_keeps_it() {
         serde_json::from_str(&json.replace(r#""label":"named""#, r#""label":null"#)).unwrap();
     assert_eq!(spelled.label, None);
 }
+
+/// `dewey_cmp` orders ids the way a reader does, which
+/// lexicographic order does not.
+///
+/// Fails when: the segment split goes (the `"0.10"` vs `"0.2"` row
+/// and the `"10"` vs `"2"` row are exactly the pairs `str::cmp`
+/// gets backwards), when the numeric parse goes (same two rows),
+/// or when a prefix stops sorting first (the `"0.2"` vs `"0.2.1"`
+/// row).
+///
+/// The control against the defect it exists to fix is the
+/// `str::cmp` assertion beside each of the two numeric rows: they
+/// state that plain string order gives the *opposite* answer, so a
+/// `dewey_cmp` that quietly became `str::cmp` fails here rather
+/// than passing on rows where the two agree.
+#[test]
+fn test_dewey_cmp_orders_segments_numerically_not_lexicographically() {
+    use std::cmp::Ordering;
+
+    assert_eq!(dewey_cmp("0.2", "0.10"), Ordering::Less);
+    assert_eq!(
+        "0.2".cmp("0.10"),
+        Ordering::Greater,
+        "the control: this is the pair string order gets backwards"
+    );
+
+    assert_eq!(dewey_cmp("2", "10"), Ordering::Less);
+    assert_eq!("2".cmp("10"), Ordering::Greater, "and so is this one");
+
+    // A parent precedes its children.
+    assert_eq!(dewey_cmp("0.2", "0.2.1"), Ordering::Less);
+    assert_eq!(dewey_cmp("0.2.1", "0.2"), Ordering::Greater);
+
+    // Equality, and depth beyond the first differing segment.
+    assert_eq!(dewey_cmp("1.2.3", "1.2.3"), Ordering::Equal);
+    assert_eq!(dewey_cmp("1.2.3", "1.3.0"), Ordering::Less);
+
+    // Non-numeric segments keep a total order instead of collapsing
+    // onto zero, which is what `id_sort_key`'s `unwrap_or(0)` would
+    // do to every one of them.
+    assert_eq!(dewey_cmp("alpha", "beta"), Ordering::Less);
+    assert_eq!(dewey_cmp("0", "alpha"), Ordering::Less);
+    assert_eq!(dewey_cmp("edge[2]", "edge[10]"), "edge[2]".cmp("edge[10]"));
+}
+
+/// Sorting a shuffled list is the property the two call sites
+/// actually depend on, and it is not implied by the pairwise rows
+/// above: a comparator can be right on every pair a test names and
+/// still not be a total order.
+///
+/// Fails when: the comparator becomes inconsistent enough for
+/// `sort_by` to produce an order that depends on the input
+/// permutation. Two different starting permutations must land on
+/// the same sequence, which is the check a single sorted list
+/// cannot make.
+#[test]
+fn test_dewey_cmp_sorts_a_mixed_id_list_into_reading_order() {
+    let expected = ["0", "0.2", "0.10", "1", "2", "10", "10.1"];
+
+    let mut forward: Vec<&str> = vec!["10", "0.10", "2", "0", "10.1", "1", "0.2"];
+    forward.sort_by(|a, b| dewey_cmp(a, b));
+    assert_eq!(forward, expected);
+
+    let mut reversed: Vec<&str> = expected.iter().rev().copied().collect();
+    reversed.sort_by(|a, b| dewey_cmp(a, b));
+    assert_eq!(
+        reversed, expected,
+        "a different starting permutation must reach the same order"
+    );
+}

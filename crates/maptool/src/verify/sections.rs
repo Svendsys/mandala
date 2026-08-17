@@ -27,7 +27,7 @@ const CATEGORY: &str = "sections";
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for (_loc, node) in map.node_locations() {
+    for node in map.nodes.values() {
         // Load-blocking, and it had no counterpart here at all: the
         // loader refuses a node with no sections, and `verify` — whose
         // contract is to diagnose exactly the maps the editor refuses —

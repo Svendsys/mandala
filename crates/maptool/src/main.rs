@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use baumhard::mindmap::loader::{load_from_file, parse_file_for_inspection, save_to_file};
-use baumhard::mindmap::model::MindMap;
+use baumhard::mindmap::model::{dewey_cmp, MindMap};
 use regex::{Regex, RegexBuilder};
 use std::fs;
 use std::io::Write;
@@ -276,9 +276,13 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     eprintln!("{warnings} warning(s)",);
                     Ok(())
                 } else {
-                    eprintln!("{} violation(s)", violations.len());
+                    // The summary line lives on the error, not
+                    // here: `main` prints a `CliError::NotFound`'s
+                    // message to stderr, so an `eprintln!` of the
+                    // same count here printed it twice — once
+                    // without the file name and once with.
                     Err(CliError::NotFound(format!(
-                        "{} violation(s) in {}",
+                        "{} violation(s) in {} ({errors} error(s), {warnings} warning(s))",
                         violations.len(),
                         map_path
                     )))
@@ -378,10 +382,10 @@ fn grep_nodes<'a>(map: &'a MindMap, regex: &Regex) -> Vec<(&'a str, &'a str)> {
             }
         }
     }
-    out.sort_by(|(a, _), (b, _)| match (a.parse::<u64>(), b.parse::<u64>()) {
-        (Ok(x), Ok(y)) => x.cmp(&y),
-        _ => a.cmp(b),
-    });
+    // `dewey_cmp`, not a `u64` parse of the whole id: the parse
+    // fails on every dotted id and falls through to string order,
+    // which lists "0.10" before "0.2".
+    out.sort_by(|(a, _), (b, _)| dewey_cmp(a, b));
     out
 }
 
@@ -481,10 +485,9 @@ fn select_section_targets(map: &MindMap, regex: &Regex, target_notes: bool) -> V
             }
         }
     }
-    targets.sort_by(|a, b| match (a.0.parse::<u64>(), b.0.parse::<u64>()) {
-        (Ok(x), Ok(y)) => x.cmp(&y).then(a.1.cmp(&b.1)),
-        _ => a.0.cmp(&b.0).then(a.1.cmp(&b.1)),
-    });
+    // Same ordering as `grep`'s hit list — one comparator, so the
+    // two subcommands cannot disagree about where a node belongs.
+    targets.sort_by(|a, b| dewey_cmp(&a.0, &b.0).then(a.1.cmp(&b.1)));
     targets
 }
 
@@ -678,6 +681,41 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0, "0");
         assert!(hits[0].1.contains("SENTINEL_ZXCVBNM_12345"));
+    }
+
+    /// `grep`'s hit list reads in Dewey order, which is not the
+    /// order `str::cmp` gives.
+    ///
+    /// Fails when: the sort goes back to parsing the whole id as a
+    /// `u64` — every dotted id fails that parse and falls through
+    /// to string order, which puts `"0.10"` ahead of `"0.2"` and
+    /// `"10"` ahead of `"2"`. Both pairs are in this fixture, so
+    /// either half of the regression is caught.
+    ///
+    /// The expectation is a literal, and the assertion beside it
+    /// states what plain string order would have produced — so a
+    /// sort that quietly became `str::cmp` fails here rather than
+    /// passing on a fixture where the two agree.
+    #[test]
+    fn grep_orders_hits_by_dewey_not_lexicographically() {
+        let mut map = MindMap::new_blank("ordering");
+        for id in ["0", "0.2", "0.10", "1", "2", "10"] {
+            let mut node = crate::verify::test_helpers::node(id, None);
+            node.sections[0].text = "MARK_ORDER".into();
+            map.nodes.insert(id.to_string(), node);
+        }
+
+        let hits = grep_nodes(&map, &rx("MARK_ORDER", false));
+        let ids: Vec<&str> = hits.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec!["0", "0.2", "0.10", "1", "2", "10"]);
+
+        let mut lexicographic = ids.clone();
+        lexicographic.sort_unstable();
+        assert_ne!(
+            ids, lexicographic,
+            "this fixture must be one string order gets wrong, or the assertion above \
+             proves nothing about the comparator"
+        );
     }
 
     #[test]

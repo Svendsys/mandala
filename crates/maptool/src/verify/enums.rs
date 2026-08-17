@@ -17,14 +17,18 @@ const DISPLAY_MODES: &[&str] = &[DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL];
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for (loc, node) in map.node_locations() {
+    for node in map.nodes.values() {
+        // `node.id`, not `node_locations()`'s stamp — the stamp is
+        // that same id cloned into a fresh `String` and dropped at
+        // the end of the iteration.
+        let loc = node.id.as_str();
         // The runtime parses `style.shape` case-insensitively (and
         // treats "circle" as an alias for "ellipse"), so verify must
         // match that leniency. Every other named enum is compared
         // case-sensitively against its canonical constant.
         check_value(
             &mut out,
-            &loc,
+            loc,
             "style.shape",
             &node.style.shape,
             KNOWN_SHAPES,
@@ -32,7 +36,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
         );
         check_value(
             &mut out,
-            &loc,
+            loc,
             "layout.type",
             &node.layout.layout_type,
             LAYOUT_TYPES,
@@ -40,7 +44,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
         );
         check_value(
             &mut out,
-            &loc,
+            loc,
             "layout.direction",
             &node.layout.direction,
             DIRECTIONS,
@@ -48,6 +52,9 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
         );
     }
 
+    // `edge_locations()` keeps its stamp: an edge has no id, so
+    // `edge[<idx>]` is built rather than borrowed and there is no
+    // clone to avoid.
     for (loc, edge) in map.edge_locations() {
         check_value(&mut out, &loc, "type", &edge.edge_type, EDGE_TYPES, false);
         check_value(&mut out, &loc, "line_style", &edge.line_style, LINE_STYLES, false);
