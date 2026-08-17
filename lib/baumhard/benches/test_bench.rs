@@ -1767,6 +1767,42 @@ fn synthetic_multi_section_map(node_count: usize, sections_per_node: usize) -> M
     map
 }
 
+/// Same shape as [`synthetic_multi_section_map`] but every section
+/// carries `runs_per_section` sized text runs, so a fold over them
+/// has something to fold.
+fn synthetic_multi_section_map_with_runs(
+    node_count: usize,
+    sections_per_node: usize,
+    runs_per_section: usize,
+) -> MindMap {
+    use baumhard::mindmap::model::{MindSection, TextRun};
+    let mut map = MindMap::new_blank("bench-multi-runs");
+    for i in 0..node_count {
+        let sections: Vec<MindSection> = (0..sections_per_node)
+            .map(|s_idx| {
+                let text = format!("section {} of {}", s_idx, i);
+                let runs = (0..runs_per_section)
+                    .map(|r| TextRun {
+                        start: r,
+                        end: r + 1,
+                        bold: false,
+                        italic: false,
+                        underline: false,
+                        font: String::new(),
+                        size_pt: 10.0 + r as f32,
+                        color: String::new(),
+                        hyperlink: None,
+                    })
+                    .collect();
+                MindSection::new_default(text, runs)
+            })
+            .collect();
+        let node = bench_node(&format!("r{}", i), (i as f64) * 5.0, sections);
+        map.nodes.insert(node.id.clone(), node);
+    }
+    map
+}
+
 fn do_build_mindmap_tree(map: &MindMap) {
     use baumhard::mindmap::tree_builder::build_mindmap_tree;
     let _ = build_mindmap_tree(map);
@@ -1788,6 +1824,25 @@ fn section_tree_build_benchmark(c: &mut Criterion) {
     let multi_section = synthetic_multi_section_map(50, 5);
     c.bench_function("section_tree_build_50_multi_section", |b| {
         b.iter(|| do_build_mindmap_tree(&multi_section));
+    });
+
+    // `effective_section_scale` runs once per section per tree
+    // build and once more per section in the app's auto-size
+    // measurement, so the row that matters is a whole map's worth
+    // of sections rather than one call. The 5-run sections are the
+    // fold's real shape — a run-less section short-circuits on the
+    // empty iterator and would measure the fallback instead.
+    let with_runs = synthetic_multi_section_map_with_runs(50, 5, 5);
+    c.bench_function("effective_section_scale_over_250_sections", |b| {
+        b.iter(|| {
+            let mut total = 0.0f32;
+            for node in with_runs.nodes.values() {
+                for section in &node.sections {
+                    total += baumhard::mindmap::tree_builder::effective_section_scale(section);
+                }
+            }
+            total
+        });
     });
 }
 

@@ -144,7 +144,8 @@ fn grow_node_sizes_to_fit_text_grows_undersized_boxes() {
         n.size.width
     );
     // Height grows by at least one line of text + pad_y (0.5 *
-    // 14 = 7) → ≥ one line height (14 * 1.2 ≈ 16.8) + 7 ≈ 23.8.
+    // 14 = 7) → ≥ one line height (14 * LINE_HEIGHT_FACTOR ≈ 16.8)
+    // + 7 ≈ 23.8.
     assert!(
         n.size.height >= 20.0,
         "expected height ≥ 20 (grow-only floor), got {}",
@@ -366,3 +367,43 @@ fn portal_edge_selection_uses_edge_variant() {
 // -----------------------------------------------------------------
 // Node text editing
 // -----------------------------------------------------------------
+
+/// The auto-size floor grows by exactly the line height the tree
+/// builder lays the section out at. Adding one line to a section
+/// must add one rendered line's worth of height and no other
+/// number — the padding and the scale are identical between the
+/// two fixtures, so their difference isolates the line height.
+///
+/// This is the drift the shared [`LINE_HEIGHT_FACTOR`] exists to
+/// prevent, and the reason it is worth a test rather than a
+/// comment: the measurement here and the layout in
+/// `tree_builder::node` used to spell `1.2` separately, so a
+/// baumhard change to 1.25 would have grown every auto-sized node
+/// half a line short of what it then drew, clipping the text the
+/// growth was for. The left side is a real cosmic-text measurement,
+/// not a second copy of the formula.
+///
+/// The input that makes it fail is a re-inlined factor on either
+/// side: at 14pt the two answers are 16.8 and 17.5, ten times the
+/// tolerance apart.
+#[test]
+fn test_auto_size_floor_grows_by_the_rendered_line_height() {
+    let one_line = synthetic_single_node_map("one line", 1.0, 1.0);
+    let two_lines = synthetic_single_node_map("one line\nand another", 1.0, 1.0);
+    let node_one = &one_line.nodes["n1"];
+    let node_two = &two_lines.nodes["n1"];
+
+    let (_, floor_one) = compute_one_node_text_floor(node_one);
+    let (_, floor_two) = compute_one_node_text_floor(node_two);
+
+    let line_height = f64::from(effective_section_scale(&node_one.sections[0]) * LINE_HEIGHT_FACTOR);
+    assert!(
+        line_height > 0.0,
+        "the fixture must have a scale to derive a line height from"
+    );
+    assert!(
+        (floor_two - floor_one - line_height).abs() < 1e-3,
+        "one extra line grew the floor by {} where the tree builder draws {line_height}",
+        floor_two - floor_one
+    );
+}

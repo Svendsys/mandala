@@ -60,7 +60,9 @@ pub use connection_label::{
 };
 pub use edge_handle::{build_edge_handles, edge_handle_channel_for, EdgeHandleElement, EdgeHandleKind};
 pub use handle::{build_handle_mutator_tree, build_handle_tree, handle_identity_sequence, HandleVisual};
-pub use node::{section_default_regions, DEFAULT_SECTION_FONT_SCALE};
+pub use node::{
+    effective_section_scale, section_default_regions, DEFAULT_SECTION_FONT_SCALE, LINE_HEIGHT_FACTOR,
+};
 pub use node_clip::{node_clip_aabbs, INACTIVE_NODE_ALPHA_MULTIPLIER};
 pub use node_resize_handle::{
     build_node_resize_handles, build_selected_node_handles, NodeResizeHandleElement,

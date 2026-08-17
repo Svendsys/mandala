@@ -29,6 +29,8 @@ use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
 // run baked opaque white into the model and opted those graphemes
 // out of the palette for good, which is the exact defect the
 // authoring default was changed to avoid.
+use baumhard::mindmap::tree_builder::effective_section_scale;
+
 use super::super::defaults::DEFAULT_RUN_COLOR;
 use super::super::nodes::clamp_runs_to_text;
 use super::super::MindMapDocument;
@@ -101,7 +103,8 @@ pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> f32 {
 ///
 /// The forward map is lossy: it takes the **largest** `size_pt`
 /// across a section's runs (or [`DEFAULT_TEXT_RUN_SIZE_PT`] when
-/// the section has none) and derives `line_height = scale * 1.2`.
+/// the section has none — this is `effective_section_scale`) and
+/// derives `line_height = scale * LINE_HEIGHT_FACTOR`.
 /// The reverse therefore has to answer "the max just moved from A
 /// to B — how do the individual runs move?". We distribute the
 /// change as a **delta** (`tree_scale - old_scale`) added to every
@@ -115,7 +118,8 @@ pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> f32 {
 /// max-collapsing forward map.
 ///
 /// **Line-height** has no independent model home: the forward path
-/// unconditionally recomputes it as `scale * 1.2`, so persisting
+/// unconditionally recomputes it as `scale * LINE_HEIGHT_FACTOR`,
+/// so persisting
 /// `scale` is sufficient and the next rebuild reproduces the right
 /// line-height for free. A mutation that touches *only* line-height
 /// is surfaced at apply time by
@@ -519,18 +523,7 @@ impl MindMapDocument {
             // runless section), and the correct baseline for the
             // font-size delta — recomputing it after the round-trip
             // would misread a run-dropping mutation as a size change.
-            let pre_round_trip_scale = {
-                let max = section
-                    .text_runs
-                    .iter()
-                    .map(|r| r.size_pt)
-                    .fold(0.0_f32, f32::max);
-                if max > 0.0 {
-                    max
-                } else {
-                    DEFAULT_TEXT_RUN_SIZE_PT
-                }
-            };
+            let pre_round_trip_scale = effective_section_scale(section);
 
             // Write `section.offset` back from the tree's section-
             // area position so a `SectionsOnly` translate mutation

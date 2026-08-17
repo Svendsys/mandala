@@ -70,6 +70,53 @@ use glam::Vec2;
 /// exactly this scale by construction.
 pub const DEFAULT_SECTION_FONT_SCALE: f32 = crate::mindmap::model::DEFAULT_TEXT_RUN_SIZE_PT;
 
+/// Ratio of a section's line height to its font scale. Every
+/// `GlyphArea` this builder emits gets `line_height = scale *
+/// LINE_HEIGHT_FACTOR`, and the app's auto-size measurement has to
+/// use the same ratio or a node grown to fit its text clips the
+/// text it was grown for.
+///
+/// 1.2 is the typographic default cosmic-text and CSS both take for
+/// unspecified leading. There is no per-section line-height field in
+/// the model, so this is not a fallback — it is the whole answer,
+/// and the reverse converter in the app's
+/// `document::custom::sync` relies on that to avoid persisting a
+/// line height at all.
+pub const LINE_HEIGHT_FACTOR: f32 = 1.2;
+
+/// The font scale a section is laid out at: the **largest**
+/// `size_pt` among its `text_runs`, or [`DEFAULT_SECTION_FONT_SCALE`]
+/// when it has none.
+///
+/// Largest rather than first so a multi-run section with a small
+/// opening run and a 96pt later run gets a line height tall enough
+/// to keep the larger glyphs from clipping. The single-section
+/// default-migration shape (one run spanning all of `text`)
+/// round-trips with the pre-section behavior because there is only
+/// one size to pick.
+///
+/// This is the one answer to "what size is this section on screen
+/// right now?", and three call sites need it: this builder, which
+/// lays the section out; the app's auto-size measurement, which has
+/// to measure what the builder will draw; and the app's reverse
+/// converter, which reads the pre-mutation scale back out to
+/// distribute a font-size delta across the runs. Open-coded in all
+/// three, they were free to disagree about the run-less case.
+///
+/// **Cost.** O(runs) — one fold over `section.text_runs`, no heap.
+pub fn effective_section_scale(section: &MindSection) -> f32 {
+    let largest = section
+        .text_runs
+        .iter()
+        .map(|r| r.size_pt)
+        .fold(0.0_f32, f32::max);
+    if largest > 0.0 {
+        largest
+    } else {
+        DEFAULT_SECTION_FONT_SCALE
+    }
+}
+
 /// Build the *container* `GlyphArea` for a mind node — the chrome-
 /// bearing area that owns background fill, border padding, shape,
 /// and zoom window, but renders no glyphs of its own (sections do).
@@ -100,7 +147,7 @@ pub(super) fn mindnode_container_area(map: &MindMap, node: &MindNode) -> GlyphAr
     let bounds = node.size_vec2();
     let mut area = GlyphArea::new(
         DEFAULT_SECTION_FONT_SCALE,
-        DEFAULT_SECTION_FONT_SCALE * 1.2,
+        DEFAULT_SECTION_FONT_SCALE * LINE_HEIGHT_FACTOR,
         position,
         bounds,
     );
@@ -181,26 +228,8 @@ pub(super) fn mindnode_section_area(
     section_idx: usize,
 ) -> GlyphArea {
     let vars = &map.canvas.theme_variables;
-    // Effective scale: pick the *largest* run size so a multi-run
-    // section with a small first run and a 96pt later run gets a
-    // line-height tall enough to keep the larger glyphs from
-    // clipping. Falls through to [`DEFAULT_SECTION_FONT_SCALE`]
-    // when the section has no runs. The single-
-    // section default-migration shape (one run spanning all of
-    // `text`) round-trips with the pre-section behavior because
-    // there's only one size to pick. Mirrors the same `max`
-    // posture in `grow_one_node_to_fit_text`.
-    let scale_max = section
-        .text_runs
-        .iter()
-        .map(|r| r.size_pt)
-        .fold(0.0_f32, f32::max);
-    let scale = if scale_max > 0.0 {
-        scale_max
-    } else {
-        DEFAULT_SECTION_FONT_SCALE
-    };
-    let line_height = scale * 1.2;
+    let scale = effective_section_scale(section);
+    let line_height = scale * LINE_HEIGHT_FACTOR;
     let position = node.pos_vec2() + Vec2::new(section.offset.x as f32, section.offset.y as f32);
     let bounds = section
         .size
