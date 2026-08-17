@@ -287,15 +287,25 @@ re-litigate them without a strong reason.
   `CLAUDE.md`). Tests stay that way.
 - **No `wasm-bindgen-test`.** See §T9.
 - **No GPU / live-wgpu test infrastructure.** See §T8.
-- **No CI yet.** `./test.sh` is the covenant — run it before
-  committing.
+- **No lint or coverage gate in CI.** There *is* CI —
+  `.github/workflows/test.yml` runs `./test.sh` on every push to
+  main and every pull request, with the wasm32 target installed on
+  the toolchain action, and `license-headers.yml` runs the SPDX
+  check beside it — but it runs the bare script. `--lint`'s fmt and
+  doc gates and `--coverage` are yours to run locally, so `./test.sh`
+  stays the covenant rather than becoming a formality something else
+  performs. This bullet said "No CI yet" for as long as CI had
+  existed, while §T11 four bullets down described that CI's behavior
+  in the same breath.
 
 ## §T11 Running the suite
 
 - `./test.sh` — full suite across every workspace member —
-  `mandala`, `baumhard`, `mandala_derive`, `maptool` — then the
-  bench-target type-check and the wasm32 type-check gate; prints a
-  test count at the end. The wasm32 gate is skipped with a note when
+  `mandala`, `baumhard`, `mandala_derive`, `maptool` — then a test
+  count, then the bench-target type-check and the wasm32 type-check
+  gate. The count prints where the suite ends, not where the run
+  does, so `== N tests passed ==` scrolling past is not yet a green
+  run: two gates still follow it. The wasm32 gate is skipped with a note when
   the target is not installed, so it is unconditional in CI (which
   installs it) and conditional locally; the count is a convenience
   and cannot fail the run. It runs `cargo test --workspace` rather than
@@ -318,16 +328,27 @@ re-litigate them without a strong reason.
   calling `./bench.sh` rather than repeating its invocation.
   Maintainers only: `AGENTS.md` forbids automated agents this flag,
   `./bench.sh`, and `cargo bench` alike, along with any performance
-  claim lacking the main-against-main control row §T6 and
+  claim lacking the main-against-main control row
   [`lib/baumhard/CONVENTIONS.md §B7`](./lib/baumhard/CONVENTIONS.md)
-  require. Proving a bench target still *compiles* needs no flag —
+  requires — §B7 is the sole source of that rule; §T6 above governs
+  the `do_*()` surface and says nothing about control rows.
+  Proving a bench target still *compiles* needs no flag —
   `./test.sh` type-checks all of them on every run, which is what
   keeps §B8's `do_*()` contract enforceable now that its two named
   mechanisms are off limits.
 - `cargo test -p baumhard --lib <pattern>`,
-  `cargo test -p mandala --lib <pattern>`,
+  `cargo test -p mandala <pattern>`,
   `cargo test -p mandala_derive` or `cargo test -p maptool` —
-  targeted subset while iterating.
+  targeted subset while iterating. `--lib` selects a library target,
+  so it belongs only to the two members that have one, baumhard and
+  mandala_derive; `mandala` and `maptool` are binary crates, where
+  adding it narrows nothing and exits 101 with `no library targets
+  found in package 'mandala'` before a test runs. That was written
+  here and in `CLAUDE.md` for as long as both documents had said it,
+  copied off the baumhard neighbor where the flag is correct (#148);
+  `test_no_documented_command_targets_a_lib_the_package_lacks` now
+  reads both sections and holds every `-p` and every `--lib` in them
+  against the workspace's real manifests.
 - `cargo doc -p baumhard --no-deps` — render the library docs and
   spot-check that every `pub` item has the doc comment
   [`lib/baumhard/CONVENTIONS.md §B9`](./lib/baumhard/CONVENTIONS.md)

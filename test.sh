@@ -148,7 +148,18 @@ if [ "$COVERAGE" -eq 1 ]; then
   if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     echo "cargo-llvm-cov not found."
     echo "Install with: cargo install cargo-llvm-cov"
-    echo "(llvm-tools-preview is already present via rustup.)"
+    # Checked, not asserted. This line used to state flatly that
+    # llvm-tools-preview "is already present via rustup" — true of
+    # the machine it was written on and false of a fresh container,
+    # where it sent the reader off with one of the two prerequisites
+    # silently unmet. A message that tells you the state of your own
+    # toolchain has to read it.
+    if rustup component list --installed 2>/dev/null | grep -q '^llvm-tools'; then
+      echo "(llvm-tools-preview is present via rustup.)"
+    else
+      echo "It also needs the llvm-tools-preview component, which is not installed:"
+      echo "    rustup component add llvm-tools-preview"
+    fi
     exit 1
   fi
   echo "== tests with coverage =="
