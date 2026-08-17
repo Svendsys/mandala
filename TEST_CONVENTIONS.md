@@ -303,15 +303,15 @@ re-litigate them without a strong reason.
 - `./test.sh` — full suite across every workspace member —
   `mandala`, `baumhard`, `mandala_derive`, `maptool` — then a test
   count, then the bench-target type-check and the wasm32 type-check
-  gate. The count prints where the suite ends, not where the run
-  does, so `== N tests passed ==` scrolling past is not yet a green
-  run: two gates still follow it. The wasm32 gate is skipped with a note when
-  the target is not installed, so it is unconditional in CI (which
-  installs it) and conditional locally; the count is a convenience
-  and cannot fail the run. It runs `cargo test --workspace` rather than
-  a list of `-p` flags, on purpose: the list it used to carry named
-  three of the four members and so never ran `mandala_derive`'s tests
-  at all.
+  gate. Read that order literally: the count prints where the
+  *suite* ends, not where the run does, so a `== N tests passed ==`
+  scrolling past still has two gates to clear. It is a convenience
+  either way and cannot fail the run. The wasm32 gate is skipped
+  with a note when the target is not installed, so it is
+  unconditional in CI (which installs it) and conditional locally.
+  It runs `cargo test --workspace` rather than a list of `-p` flags,
+  on purpose: the list it used to carry named three of the four
+  members and so never ran `mandala_derive`'s tests at all.
 - `./test.sh --coverage` — runs under `cargo-llvm-cov` (install with
   `cargo install cargo-llvm-cov`). HTML at
   `target/llvm-cov/html/index.html`, LCOV at
@@ -343,9 +343,9 @@ re-litigate them without a strong reason.
   so it belongs only to the two members that have one, baumhard and
   mandala_derive; `mandala` and `maptool` are binary crates, where
   adding it narrows nothing and exits 101 with `no library targets
-  found in package 'mandala'` before a test runs. That was written
-  here and in `CLAUDE.md` for as long as both documents had said it,
-  copied off the baumhard neighbor where the flag is correct (#148);
+  found in package 'mandala'` before a test runs. Both this document
+  and `CLAUDE.md` put the flag on the mandala line anyway, copied off
+  the baumhard neighbor where it is correct (#148);
   `test_no_documented_command_targets_a_lib_the_package_lacks` now
   reads both sections and holds every `-p` and every `--lib` in them
   against the workspace's real manifests.
