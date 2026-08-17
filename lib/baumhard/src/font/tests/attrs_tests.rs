@@ -5,7 +5,7 @@
 //! [`RegionFamilies`], [`rich_text_spans_into`] and its allocating
 //! wrapper [`rich_text_spans_from_regions`]).
 //!
-//! Follows the `do_*()` / `test_*()` split from §B8 — every `do_*`
+//! Follows the `do_*()` / `test_*()` split from §T2.2 — every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
 use cosmic_text::{Attrs, Color, Family, FontSystem};

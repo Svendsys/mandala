@@ -660,8 +660,9 @@ pub fn do_production_code_returns_code_without_prose() {
 ///   un-gated `tests` module in the app crate would be a different
 ///   thing entirely.
 ///
-/// **A plain `#[test]`, not a `do_*()` pair** — §B8's opt-out, and
-/// the one body in this module that takes it. Every `do_*()` in a
+/// **A plain `#[test]`, not a `do_*()` pair** — §B8 opt-out class 4,
+/// the subject is the repository, and the one body in this module
+/// that takes it. Every `do_*()` in a
 /// baumhard tests tree has one `bench_function` entry, so the prefix
 /// is a claim that a number for the body would mean something. This
 /// one walks several hundred files per call and takes about a second

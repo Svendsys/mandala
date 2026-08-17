@@ -206,11 +206,15 @@ other direction, a body that never got an entry, compiles fine
 forever, because the bench file imports the test modules by glob.
 `test_every_do_body_has_a_bench_entry` is what holds that side:
 writing the `do_*()` / `test_*()` pair *is* putting the body on the
-bench surface, one entry per body, and a test with no benchmark
-value opts out by being a plain `#[test]` fn instead.
+bench surface, exactly one entry per body — the check fails on two
+as well as on none — and a test with no benchmark value opts out by
+being a plain `#[test]` fn instead. Its sibling
+`test_every_bench_entry_id_is_unique` holds the ids apart, because
+criterion keys a row's stored history by its id.
 [`lib/baumhard/CONVENTIONS.md §B8`](./lib/baumhard/CONVENTIONS.md)
-names the three shapes that take the opt-out and the one that looks
-like it should but does not.
+names the four shapes a body cannot take the split in, the one that
+looks like it should and does not, and — counted rather than
+implied — the plain `#[test]`s that are simply unconverted.
 
 ## §T7 When to add a regression test
 

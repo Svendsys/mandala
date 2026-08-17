@@ -72,10 +72,12 @@ pub fn do_clone() {
 /// `NodeId`s the caller gets back. Reading the destination in slot
 /// order must yield the source's pre-order.
 ///
-/// No `do_*()` split: §T2.2 ties that split to benchmark reuse, and
-/// this is a correctness assertion on a seven-node fixture, not a
-/// benchmark candidate. `clone_subtree`'s cost is already covered by
-/// `arena_utils_clone`.
+/// Plain `#[test]`, and none of §B8's four opt-out classes covers
+/// it: nothing stops this body taking the `do_*()` split, it simply
+/// never did. §B8 counts it among the 31 unconverted rather than let
+/// "a correctness assertion on a small fixture is not a benchmark
+/// candidate" stand as a fifth class — that reason fits most of the
+/// tree, which is what makes it the wrong kind of reason.
 #[test]
 fn test_clone_preserves_depth_first_pre_order() {
     // root
@@ -130,6 +132,11 @@ fn test_clone_preserves_depth_first_pre_order() {
 /// deep-chain test does: any reintroduced recursion blows a stack
 /// that small long before the chain ends, while the iterative form
 /// is indifferent to it.
+///
+/// Plain `#[test]`: §B8 opt-out class 3, the enumeration is the
+/// runtime. What an iteration would measure is 50,000 `append_value`
+/// calls and a thread spawn, and the assertion is about the stack
+/// the spawn asks for rather than about a value.
 #[test]
 fn test_clone_deep_chain_does_not_exhaust_the_stack() {
     const DEPTH: usize = 50_000;

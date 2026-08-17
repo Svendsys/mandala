@@ -9,9 +9,10 @@
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`. The
 //! re-entrancy regression at the bottom is a plain `#[test]` on
-//! purpose: its body exists to drive a timeout-and-panic path under
-//! `catch_unwind`, which is a §B8 opt-out class, not a
-//! micro-benchmark.
+//! purpose: its body drives a deliberate lock timeout with the
+//! `FONT_SYSTEM` write guard held and catches the resulting panic
+//! under `catch_unwind`, so an iteration measures the 200 ms
+//! timeout budget and nothing else — §B8 opt-out class 2.
 //!
 //! Grapheme × size keys are chosen per test so that each body's
 //! first call is a genuine cache miss under `cargo test` — no other
@@ -253,9 +254,10 @@ pub fn do_glyph_ink_with_cold_key_under_held_guard() {
 /// short acquire timeout keeps the test fast — the panic path and
 /// message are identical to production's 5 s budget.
 ///
-/// Plain `#[test]` with no `do_*` body: the panic-path drive is the
-/// §B8 opt-out class, so the fold of wrapper and body is required
-/// here rather than forbidden.
+/// Plain `#[test]` with no `do_*` body: §B8 opt-out class 2, the
+/// body drives a panic. Every iteration would wait out the 200 ms
+/// acquire budget before the panic it exists to catch, so the fold
+/// of wrapper and body is required here rather than forbidden.
 #[test]
 fn test_glyph_advance_miss_under_held_guard_panics_not_hangs() {
     use crate::font::metric_cache::glyph_advance_with_timeout;

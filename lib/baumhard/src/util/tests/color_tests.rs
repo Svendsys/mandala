@@ -11,8 +11,8 @@
 //! body is benchmarkable from `benches/test_bench.rs`. The
 //! quarter-stepped exhaustive byte sweep near the bottom is a plain
 //! `#[test]` on purpose — its runtime is the 16.7-million-case
-//! enumeration rather than the primitive under test, which is the
-//! §B8 opt-out shape.
+//! enumeration rather than the primitive under test, which is §B8
+//! opt-out class 3.
 
 use crate::util::color::Color;
 use crate::util::color_conversion::{
