@@ -474,9 +474,11 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::PanCanvas => {
             // Continuous gesture: enter pan mode for the duration of
-            // the press. The mouse-release handler unconditionally
-            // resets `drag_state` to `None`, so this arm only needs
-            // to handle the press side.
+            // the press. Both release paths that can end it — the
+            // left button's `DragState::Panning | DragState::None`
+            // arm and `route_middle_button`'s `Clear` — reset
+            // `drag_state` to `None`, so this arm only needs to
+            // handle the press side.
             *ctx.drag_state = DragState::Panning;
             DispatchOutcome::Handled
         }

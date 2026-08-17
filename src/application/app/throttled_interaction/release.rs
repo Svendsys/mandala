@@ -195,10 +195,11 @@ mod tests {
     }
 
     /// The middle button never reaches the throttled release path —
-    /// its own arm resets the drag state — but the resolver must not
-    /// answer `PutBack` for it if that ever changes, because a
-    /// put-back with the state already replaced would strand the
-    /// gesture invisibly.
+    /// its own arm keeps a `Throttled` state rather than routing it
+    /// (`route_middle_button` answers `Keep`) — but the resolver
+    /// must not answer `PutBack` for it if that ever changes,
+    /// because a put-back with the state already replaced would
+    /// strand the gesture invisibly.
     #[test]
     fn test_resolve_release_treats_any_non_right_button_as_a_finalizer() {
         assert_eq!(

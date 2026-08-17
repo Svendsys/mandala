@@ -21,6 +21,87 @@ use crate::application::console::ConsoleState;
 use crate::application::document::{rect_select, SelectionState};
 use crate::application::keybinds::Action;
 
+/// What a middle-button event does to [`DragState`], with the
+/// bound Action and the renderer factored out.
+///
+/// Pure so both halves of the middle button are pinnable at
+/// `DragState` level — the dispatcher below takes an
+/// [`InputHandlerContext`], i.e. a live wgpu device, which
+/// TEST_CONVENTIONS §T8 keeps out of the harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MiddleButtonRoute {
+    /// The drag state is idle — run whatever the user bound to
+    /// `MouseGesture::MiddleClick`.
+    Dispatch,
+    /// End the pan the middle press armed: the state goes to `None`.
+    Clear,
+    /// Another gesture owns the drag state. Leave it exactly as it
+    /// is, and do nothing else.
+    Keep,
+}
+
+/// Route one middle-button event against the drag state it finds.
+///
+/// The guard on the press half is the same one
+/// [`handle_right_button`] applies, and for the same reason its
+/// comment gives: a press that clobbers a gesture already in flight
+/// destroys it. Middle-click's unconditional overwrite was the
+/// posture that comment named as the one it rejected — this is that
+/// posture removed. Pre-fix, a middle press mid-drag replaced
+/// `DragState::Throttled(..)` (via `Action::PanCanvas` →
+/// `DragState::Panning`) and the release forced `DragState::None`,
+/// so the abandoned drag's `commit_on_release_core` never ran: the
+/// tree kept the dragged offsets until the next model rebuild
+/// snapped them back, with no undo entry to recover from.
+///
+/// The release half needs the same guard for the same reason, so it
+/// clears only what a middle press can arm. `Action::PanCanvas` is
+/// the only Action that writes a drag state from a press with no
+/// prior state (`Action::FastResizeStart` reads `PendingRight` and
+/// bails otherwise), so `Panning` is that set. `None` clears
+/// trivially — a middle press bound to a non-drag Action leaves the
+/// state alone and its release has nothing to end.
+fn route_middle_button(state: ElementState, drag_state: &DragState) -> MiddleButtonRoute {
+    match state {
+        ElementState::Pressed => match drag_state {
+            DragState::None => MiddleButtonRoute::Dispatch,
+            _ => MiddleButtonRoute::Keep,
+        },
+        ElementState::Released => match drag_state {
+            DragState::Panning | DragState::None => MiddleButtonRoute::Clear,
+            _ => MiddleButtonRoute::Keep,
+        },
+    }
+}
+
+/// True when replacing `drag_state` with a fresh left press would
+/// abandon a gesture that nothing else will finish.
+///
+/// Two states are in the class, and both fail silently:
+///
+/// - `Throttled(..)` owes the model a write plus an undo entry, and
+///   `commit_on_release_core` is the only place either happens. Drop
+///   it and the tree keeps the dragged offsets until the next model
+///   rebuild snaps them back. Reachable from a *right*-started
+///   fast-resize, which is in flight while the left button is still
+///   free — the same shape as the middle-press bug above, one
+///   button over.
+/// - `PendingRight` holds a user-named gesture (`RightClick` /
+///   `FastResizeStart`) that has not fired yet.
+///
+/// `Pending` / `Panning` / `SelectingRect` are deliberately outside
+/// it: none owes the model anything, and each is re-derived from the
+/// next press or the next cursor sample. Refusing the press there
+/// would strand a left click after a release the window never
+/// delivered (focus loss mid-drag) instead of re-arming from it,
+/// which is the behavior those three have always had.
+fn press_would_abandon_gesture(drag_state: &DragState) -> bool {
+    matches!(
+        drag_state,
+        DragState::PendingRight { .. } | DragState::Throttled(_)
+    )
+}
+
 /// Dispatch a `WindowEvent::MouseInput`. Persistent state arrives
 /// via [`InputHandlerContext`].
 pub(super) fn handle_mouse_input(
@@ -98,14 +179,12 @@ pub(super) fn handle_mouse_input(
         }
     }
     match button {
-        MouseButton::Middle => {
-            if state == ElementState::Pressed {
-                // Middle-click press: lookup what's bound to MiddleClick
-                // (default `PanCanvas`). The dispatch arm sets
-                // `DragState::Panning`. Release unconditionally resets
-                // drag state below — mirrors today's behavior where
-                // any drag's release goes to None regardless of which
-                // gesture started it.
+        MouseButton::Middle => match route_middle_button(state, ctx.drag_state) {
+            MiddleButtonRoute::Dispatch => {
+                // Middle-click press on an idle drag state: lookup what's
+                // bound to MiddleClick (default `PanCanvas`). The dispatch
+                // arm sets `DragState::Panning`, which the `Clear` route
+                // below takes back down on release.
                 let name = crate::application::keybinds::MouseGesture::MiddleClick.key_name();
                 // Modifier-fallback: Ctrl+MiddleClick matches the bare
                 // MiddleClick binding when no exact-modifier match
@@ -120,10 +199,18 @@ pub(super) fn handle_mouse_input(
                 if let Some(a) = action {
                     let _ = super::dispatch::dispatch_action(a, ctx, None);
                 }
-            } else {
+            }
+            MiddleButtonRoute::Clear => {
                 *ctx.drag_state = DragState::None;
             }
-        }
+            MiddleButtonRoute::Keep => {
+                log::debug!(
+                    "middle-button {:?} ignored (another gesture owns the drag state); \
+                     state stays put",
+                    state
+                );
+            }
+        },
         MouseButton::Left => {
             // In reparent or connect mode, left-click (release) is consumed as
             // a "choose target" gesture and never transitions to Pending/drag.
@@ -348,21 +435,26 @@ pub(super) fn handle_mouse_input(
                 // and a drag on one press can name different
                 // targets; CONCEPTS `DragState` has the shape.
                 //
-                // Don't clobber a right-button gesture in flight.
-                // Symmetric with the right-press guard in
+                // Don't clobber a gesture that nothing else will
+                // finish — see [`press_would_abandon_gesture`] for
+                // which two states those are and why the other three
+                // are not. Symmetric with the right-press guard in
                 // `handle_right_button` (`if !matches!(.., None)
-                // { return }`). Pre-fix, a left-press during a
-                // `PendingRight` would silently overwrite the
-                // right-button state, the user's intended
-                // RightClick / FastResizeStart would never fire,
-                // and the put-back arm in the left-release match
-                // (`other @ DragState::PendingRight => …`) was
-                // unreachable in Default mode. C3 from the
-                // 9-agent review.
-                if matches!(*ctx.drag_state, DragState::PendingRight { .. }) {
-                    log::debug!(
-                        "left-button press ignored (right-button gesture in flight); state stays put"
-                    );
+                // { return }`), which is broader because a
+                // right-press has no re-arming role to preserve.
+                // Pre-fix, a left-press during a `PendingRight`
+                // would silently overwrite the right-button state,
+                // the user's intended RightClick / FastResizeStart
+                // would never fire, and the put-back arm in the
+                // left-release match (`other @
+                // DragState::PendingRight => …`) was unreachable in
+                // Default mode. C3 from the 9-agent review. The
+                // `Throttled` half joined it with #37 item 5: a
+                // right-started fast-resize is in flight while the
+                // left button is free, so a left press reached it
+                // and dropped its release-commit.
+                if press_would_abandon_gesture(ctx.drag_state) {
+                    log::debug!("left-button press ignored (uncommitted gesture in flight); state stays put");
                     return;
                 }
                 *ctx.drag_state = DragState::Pending(Box::new(super::PendingPress {
@@ -519,10 +611,11 @@ pub(super) fn handle_mouse_input(
                     // on it. Reachable in Reparent / Connect modes
                     // (where the left-press path swallows the press
                     // without setting `Pending`) and at startup
-                    // before any drag has fired. In Default mode the
-                    // left-press gate at line 361 short-circuits when
-                    // `PendingRight` is active, so the path through
-                    // here from a Default-mode press is unreachable.
+                    // before any drag has fired. In Default mode
+                    // `press_would_abandon_gesture` short-circuits
+                    // the left-press path when `PendingRight` is
+                    // active, so the path through here from a
+                    // Default-mode press is unreachable.
                     other @ DragState::PendingRight { .. } => {
                         *ctx.drag_state = other;
                     }
@@ -615,10 +708,13 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
         };
         // Don't clobber an active drag. If state is already
         // Pending / PendingRight / Throttled / Panning / SelectingRect,
-        // log + ignore. Mirror's middle-click's posture (which
-        // unconditionally overwrites) is intentionally not chosen
-        // here — fast-resize is a meaningful gesture; clobbering an
-        // in-flight resize with a stray right-press would be visible.
+        // log + ignore. This is the broadest of the three press
+        // guards: a right-press arms `PendingRight` and nothing
+        // else, so there is no re-arming case to preserve the way
+        // the left button has one. Middle-click used to be the
+        // counter-example this comment named — it overwrote any
+        // state unconditionally — and [`route_middle_button`] now
+        // applies exactly this guard on both of its halves.
         if !matches!(*ctx.drag_state, DragState::None) {
             log::debug!("right-button press ignored (drag already in flight); state stays put");
             return;
@@ -754,5 +850,188 @@ fn maybe_exit_node_edit_on_outside_click(
         super::text_edit::point_inside_node_fresh_aabb(&active_node, ctx.mindmap_tree, release_canvas);
     if !inside {
         let _ = super::dispatch::dispatch_action(Action::ExitMode, ctx, None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::app::throttled_interaction::moving_node::MovingNodeInteraction;
+    use crate::application::app::throttled_interaction::node_resize::NodeResizeInteraction;
+    use baumhard::mindmap::model::{Position, Size};
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
+    use std::collections::HashSet;
+
+    /// A left-started move-node drag, mid-gesture: pending state
+    /// buffered, `commit_on_release_core` not yet run.
+    fn moving_node_drag() -> DragState {
+        DragState::throttled(ThrottledDrag::MovingNode(MovingNodeInteraction::new(
+            vec!["n0".to_string()],
+            false,
+            HashSet::new(),
+        )))
+    }
+
+    /// A right-started fast-resize, mid-gesture. `started_with_right`
+    /// is what makes this one reachable with the left button free.
+    fn fast_resize_drag() -> DragState {
+        DragState::throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
+            "n0".to_string(),
+            ResizeHandleSide::SE,
+            Position { x: 0.0, y: 0.0 },
+            Size {
+                width: 100.0,
+                height: 50.0,
+            },
+            true,
+        )))
+    }
+
+    /// The reported symptom: a middle-press part-way through a drag
+    /// destroyed it. `Action::PanCanvas` overwrote
+    /// `DragState::Throttled(..)` with `DragState::Panning`, the
+    /// release then forced `DragState::None`, and the drag's
+    /// `commit_on_release_core` — the only place its model write and
+    /// its undo entry happen — never ran.
+    ///
+    /// Fails on the input below when either half of
+    /// [`route_middle_button`]'s guard is removed: pre-fix the press
+    /// answered `Dispatch` for every state and the release answered
+    /// `Clear` for every state.
+    #[test]
+    fn test_middle_click_mid_drag_leaves_the_throttled_drag_intact() {
+        let drag = moving_node_drag();
+        assert_eq!(
+            route_middle_button(ElementState::Pressed, &drag),
+            MiddleButtonRoute::Keep,
+            "a middle press mid-drag must not reach the MiddleClick binding: \
+             dispatching PanCanvas is what overwrote the drag"
+        );
+        assert_eq!(
+            route_middle_button(ElementState::Released, &drag),
+            MiddleButtonRoute::Keep,
+            "a middle release mid-drag must not force None: the drag's \
+             release-commit has not run, so clearing it drops the model \
+             write and its undo entry"
+        );
+    }
+
+    /// The other half of the same guard — without these rows the fix
+    /// could be "answer `Keep` always", which would leave the middle
+    /// button unable to pan at all.
+    ///
+    /// Fails when the press arm stops matching `DragState::None`, or
+    /// when the release arm stops matching `Panning`: a middle-drag
+    /// pan would then never end and the canvas would keep panning
+    /// after the button came up.
+    #[test]
+    fn test_middle_click_from_idle_still_arms_and_ends_a_pan() {
+        assert_eq!(
+            route_middle_button(ElementState::Pressed, &DragState::None),
+            MiddleButtonRoute::Dispatch,
+            "an idle drag state is what a middle press is for"
+        );
+        assert_eq!(
+            route_middle_button(ElementState::Released, &DragState::Panning),
+            MiddleButtonRoute::Clear,
+            "the release must end the pan its own press armed"
+        );
+        assert_eq!(
+            route_middle_button(ElementState::Released, &DragState::None),
+            MiddleButtonRoute::Clear,
+            "a middle press bound to a non-drag Action leaves None behind; \
+             its release has nothing to end"
+        );
+    }
+
+    /// A middle press must not cancel the two unthrottled gestures
+    /// either. Neither loses model state, but both are live gestures
+    /// the user is performing, and the pre-fix arm ended them.
+    #[test]
+    fn test_middle_click_does_not_end_a_pan_or_a_rect_select_it_did_not_start() {
+        for drag in [
+            DragState::SelectingRect {
+                start_canvas: glam::Vec2::ZERO,
+                current_canvas: glam::Vec2::new(10.0, 10.0),
+            },
+            DragState::Pending(Box::new(super::super::PendingPress {
+                start_pos: (0.0, 0.0),
+                hit_node: None,
+                hit_section_idx: None,
+                hit_edge_handle: None,
+                hit_portal_label: None,
+                hit_edge_label: None,
+                hit_section_resize_handle: None,
+                hit_node_resize_handle: None,
+            })),
+        ] {
+            assert_eq!(
+                route_middle_button(ElementState::Pressed, &drag),
+                MiddleButtonRoute::Keep,
+                "middle press must not clobber {:?}",
+                std::mem::discriminant(&drag)
+            );
+            assert_eq!(
+                route_middle_button(ElementState::Released, &drag),
+                MiddleButtonRoute::Keep,
+                "middle release must not end {:?}",
+                std::mem::discriminant(&drag)
+            );
+        }
+    }
+
+    /// The left button carries the same hole one button over: a
+    /// right-started fast-resize is in flight while the left button
+    /// is still free, so a left press reached
+    /// `DragState::Throttled(..)` and replaced it with `Pending` —
+    /// same silent loss, same missing undo entry.
+    ///
+    /// Fails when `press_would_abandon_gesture` drops its
+    /// `Throttled` arm, which is the pre-fix shape (the guard read
+    /// `matches!(.., DragState::PendingRight { .. })`).
+    #[test]
+    fn test_left_press_is_refused_while_a_right_started_fast_resize_is_in_flight() {
+        assert!(
+            press_would_abandon_gesture(&fast_resize_drag()),
+            "a left press must not replace a right-started fast-resize"
+        );
+        assert!(
+            press_would_abandon_gesture(&moving_node_drag()),
+            "nor any other throttled drag reachable with the left button free"
+        );
+        assert!(
+            press_would_abandon_gesture(&DragState::PendingRight {
+                start_pos: (0.0, 0.0),
+                start_canvas: glam::Vec2::ZERO,
+                hit_node: None,
+                hit_section_idx: None,
+            }),
+            "the guard's original member stays in the class"
+        );
+    }
+
+    /// The complement, and the reason the left guard is narrower
+    /// than the right button's `!matches!(.., None)`: these three
+    /// states owe the model nothing, and a left press has to keep
+    /// re-arming from them or a click after a release the window
+    /// never delivered would do nothing at all.
+    ///
+    /// Fails if the guard is widened to the right button's spelling.
+    #[test]
+    fn test_left_press_still_rearms_from_every_state_that_owes_the_model_nothing() {
+        for drag in [
+            DragState::None,
+            DragState::Panning,
+            DragState::SelectingRect {
+                start_canvas: glam::Vec2::ZERO,
+                current_canvas: glam::Vec2::new(10.0, 10.0),
+            },
+        ] {
+            assert!(
+                !press_would_abandon_gesture(&drag),
+                "a left press must still re-arm from {:?}",
+                std::mem::discriminant(&drag)
+            );
+        }
     }
 }

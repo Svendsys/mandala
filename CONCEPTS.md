@@ -2430,6 +2430,36 @@ reading the promotion order without the capture rule.
 now holds the two paths together, and names the gate that had
 been an unpinnable inline `if` inside the press handler.
 
+**A press never clobbers a gesture already in flight.** All three
+press paths in `event_mouse_click.rs` check the drag state before
+writing it, at two widths:
+
+- **Right and middle** refuse whenever the state is anything but
+  `None` (`handle_right_button`'s inline guard;
+  `route_middle_button`'s `Keep`). Neither button has a re-arming
+  role to preserve — a right press arms `PendingRight` and a
+  middle press dispatches `MouseGesture::MiddleClick`, and both
+  are meaningful only from rest.
+- **Left** refuses on the narrower `press_would_abandon_gesture`
+  class — `PendingRight` and `Throttled(..)` — because it *is*
+  the arming press for `Pending`, and a click after a release the
+  window never delivered has to re-arm rather than do nothing.
+
+The class is the point: `Throttled(..)` owes the model a write
+and an undo entry that only `commit_on_release_core` performs,
+so replacing it leaves the tree holding dragged offsets that the
+next model rebuild silently snaps back — position loss with
+nothing to undo. `Panning`, `SelectingRect` and `Pending` owe the
+model nothing and are re-derived from the next sample or press.
+
+The release halves match: the right button and the middle button
+each put back a state they did not start (`other => …` and `Keep`
+respectively), so an unpaired release cannot end someone else's
+gesture. Middle-click was the exception on both halves until #37
+— it overwrote any state on press and forced `None` on release —
+and the right-button guard's comment named that overwrite as the
+posture it was rejecting.
+
 ### `ThrottledInteraction` and `ThrottledDrag`
 
 A trait pair + seven-variant enum providing one uniform
