@@ -11,8 +11,16 @@ use baumhard::mindmap::custom_mutation::CustomMutation;
 use baumhard::mindmap::model::{MindEdge, MindNode};
 use baumhard::mindmap::scene_cache::EdgeKey;
 
-/// Selection highlight color: bright cyan [R, G, B, A]
-pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
+/// Selection highlight color as float RGBA — the form
+/// `apply_tree_highlights` tints a selected node's regions with.
+///
+/// Derived from [`baumhard::mindmap::SELECTION_HIGHLIGHT`] rather
+/// than written out: this used to be `[0.0, 0.9, 1.0, 1.0]`, which
+/// is a *different* color from the `#00E5FF` baumhard emits into
+/// the tree — 0.9 quantises to 229.5, the hex to 229 — so a
+/// selected node and its selected edge were tinted with two cyans
+/// that happened to look alike.
+pub const HIGHLIGHT_COLOR: [f32; 4] = baumhard::mindmap::SELECTION_HIGHLIGHT.to_float();
 
 // `InteractionModeOverrides` lives in baumhard
 // (`baumhard::mindmap::tree_builder::InteractionModeOverrides`) — its

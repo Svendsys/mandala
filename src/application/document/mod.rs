@@ -16,7 +16,9 @@ use baumhard::mindmap::custom_mutation::CustomMutation;
 use baumhard::mindmap::loader;
 use baumhard::mindmap::model::{MindMap, MAX_NODE_AXIS};
 use baumhard::mindmap::placard;
-use baumhard::mindmap::tree_builder::{self, FrameOverrides, MindMapTree};
+use baumhard::mindmap::tree_builder::{
+    self, effective_section_scale, FrameOverrides, MindMapTree, LINE_HEIGHT_FACTOR,
+};
 
 use crate::application::source_tier::SourceTier;
 
@@ -409,19 +411,13 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
         if !section.offset.x.is_finite() || !section.offset.y.is_finite() {
             continue;
         }
-        let scale = section
-            .text_runs
-            .iter()
-            .map(|r| r.size_pt)
-            .fold(0.0_f32, f32::max);
-        // Same fallback the tree builder measures a run-less
-        // section at — one constant, not a repeated 14.0.
-        let scale = if scale > 0.0 {
-            scale
-        } else {
-            baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE
-        };
-        let line_height = scale * 1.2;
+        // The scale and the line height the tree builder will lay
+        // this section out at, asked of the builder rather than
+        // re-derived: a measurement that disagreed with the render
+        // would grow the node to the wrong height and clip the very
+        // text it was grown for.
+        let scale = effective_section_scale(section);
+        let line_height = scale * LINE_HEIGHT_FACTOR;
         let pad_x = scale * 1.5;
         let pad_y = scale * 0.5;
 

@@ -595,6 +595,7 @@ pub(in crate::application) mod tests {
     use baumhard::font::fonts;
     use baumhard::gfx_structs::area::GlyphArea;
     use baumhard::mindmap::tree_builder::PortalPart;
+    use baumhard::util::geometry::aabb_center;
 
     // ── canvas-role hit-testing ───────────────────────────────────
 
@@ -816,7 +817,7 @@ pub(in crate::application) mod tests {
                         continue;
                     }
                     if let Some(hit) = app.portal_hit_index.resolve(tree, leaf) {
-                        out.push((pos + extent * 0.5, hit));
+                        out.push((aabb_center(pos, extent), hit));
                     }
                 }
             }
@@ -912,15 +913,13 @@ pub(in crate::application) mod tests {
             .collect();
         let mut unambiguous = 0usize;
         for elem in &elements {
-            let center = Vec2::new(
-                elem.position.0 + elem.bounds.0 * 0.5,
-                elem.position.1 + elem.bounds.1 * 0.5,
+            let center = aabb_center(
+                Vec2::new(elem.position.0, elem.position.1),
+                Vec2::new(elem.bounds.0, elem.bounds.1),
             );
             let covering: Vec<_> = rects
                 .iter()
-                .filter(|(min, max, _)| {
-                    center.x >= min.x && center.x <= max.x && center.y >= min.y && center.y <= max.y
-                })
+                .filter(|(min, max, _)| baumhard::util::geometry::aabb_contains(center, *min, *max))
                 .collect();
             let hit = app.edge_label_at(center);
             if covering.len() == 1 {

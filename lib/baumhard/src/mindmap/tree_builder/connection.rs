@@ -801,6 +801,7 @@ pub fn build_connection_mutator_tree(
 #[cfg(test)]
 mod clip_index_tests {
     use super::{point_inside_any_node, NodeClipIndex};
+    use crate::util::geometry::aabb_center;
     use glam::Vec2;
 
     /// Deterministic pseudo-random source. A fixed LCG rather than
@@ -900,7 +901,7 @@ mod clip_index_tests {
                     match pick {
                         0 => pos,
                         1 => pos + size,
-                        2 => pos + size * 0.5,
+                        2 => aabb_center(pos, size),
                         3 => Vec2::new(pos.x + size.x, pos.y),
                         4 => Vec2::new(pos.x + 0.5, pos.y + 0.5),
                         _ => Vec2::new(pos.x + size.x - 0.5, pos.y + size.y - 0.5),

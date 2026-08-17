@@ -91,6 +91,7 @@ pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
 mod tests {
     use super::*;
     use crate::application::document::MindMapDocument;
+    use baumhard::util::geometry::almost_equal_f64;
 
     /// Pinned testament fixture. Node `"1"` has four direct children
     /// (`1.0`, `1.1`, `1.2`, `1.3`) by construction; if that changes
@@ -240,7 +241,7 @@ mod tests {
         // silently regresses to a no-op.
         let any_moved = baseline.iter().any(|(id, x0, y0)| {
             let n = doc.mindmap.nodes.get(id).unwrap();
-            (n.position.x - x0).abs() > 1e-6 || (n.position.y - y0).abs() > 1e-6
+            !almost_equal_f64(n.position.x, *x0) || !almost_equal_f64(n.position.y, *y0)
         });
         assert!(any_moved, "flower-layout must move at least one child");
 
@@ -249,7 +250,7 @@ mod tests {
         for (id, x0, y0) in &baseline {
             let n = doc.mindmap.nodes.get(id).unwrap();
             assert!(
-                (n.position.x - x0).abs() < 1e-6 && (n.position.y - y0).abs() < 1e-6,
+                almost_equal_f64(n.position.x, *x0) && almost_equal_f64(n.position.y, *y0),
                 "child {id} did not restore: ({}, {}) vs baseline ({x0}, {y0})",
                 n.position.x,
                 n.position.y,

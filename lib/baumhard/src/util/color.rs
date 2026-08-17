@@ -186,8 +186,20 @@ impl Color {
     /// Convert to [`FloatRgba`] by dividing each channel by 255.
     /// O(1), no heap. Inverse of [`Color::new_f32`] within rounding
     /// slack of `0.5/255.0` (the half-byte from `.round()` in the
-    /// reverse direction).
-    pub fn to_float(&self) -> FloatRgba {
+    /// reverse direction). `const`, so a compile-time color constant
+    /// reaches the renderer's float form without a second literal.
+    pub const fn to_float(&self) -> FloatRgba {
         convert_u8_to_f32(&self.rgba)
+    }
+
+    /// This color with its alpha channel replaced by `opacity`
+    /// (0 = transparent, 255 = opaque); RGB is unchanged. The
+    /// value-returning, `const` sibling of [`Color::set_alpha`] —
+    /// reach for it when the translucent form of a color constant
+    /// is itself a constant. O(1), no heap.
+    pub const fn with_alpha(self, opacity: u8) -> Self {
+        let mut rgba = self.rgba;
+        rgba[ALPHA_IDX] = opacity;
+        Color { rgba }
     }
 }

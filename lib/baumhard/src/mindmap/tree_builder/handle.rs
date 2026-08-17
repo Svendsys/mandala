@@ -21,6 +21,7 @@ use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea};
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::{GfxMutator, Mutation};
 use crate::gfx_structs::tree::{MutatorTree, Tree};
+use crate::mindmap::SELECTION_HIGHLIGHT;
 use crate::util::color;
 
 /// Per-instance view a handle element exposes to the generic
@@ -48,7 +49,10 @@ pub trait HandleVisual {
 /// the initial-build and in-place mutator paths emit. Single
 /// source of truth — the two paths cannot drift.
 fn handle_layout<E: HandleVisual>(elem: &E) -> (usize, GlyphArea) {
-    let color_rgba = color::hex_to_rgba_safe(elem.color(), [0.0, 0.9, 1.0, 1.0]);
+    // Every handle emitter writes `SELECTION_HIGHLIGHT_HEX`, so the
+    // parse-failure fallback is that same cyan rather than a fourth
+    // spelling of it.
+    let color_rgba = color::hex_to_rgba_safe(elem.color(), SELECTION_HIGHLIGHT.to_float());
     // Handle glyphs are centered on the position with the same
     // half-glyph offset the legacy renderer used.
     let half_w = elem.font_size_pt() * 0.3;

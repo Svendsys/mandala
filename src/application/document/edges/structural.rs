@@ -12,6 +12,7 @@ use baumhard::mindmap::model::{
     portal_endpoint_state_mut, Canvas, EdgeLabelConfig, MindEdge, PortalEndpointState,
 };
 use baumhard::mindmap::tree_builder;
+use baumhard::util::geometry::aabb_center;
 
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
@@ -275,7 +276,7 @@ impl MindMapDocument {
         // curve without looking like a bug.
         let normal = connection::normal_at_t(&path, 0.5);
         let control_point_canvas = mid + normal * (length * 0.25);
-        let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
+        let from_center = aabb_center(from_pos, from_size);
         let offset = control_point_canvas - from_center;
 
         let before = self.mindmap.edges[idx].clone();

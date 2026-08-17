@@ -2,6 +2,7 @@
 
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::font::tests::attrs_tests::*;
+use baumhard::font::tests::color_tests::*;
 use baumhard::font::tests::fonts_tests::*;
 use baumhard::font::tests::hex_tests::*;
 use baumhard::font::tests::metric_cache_tests::*;
@@ -31,7 +32,7 @@ use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
 use baumhard::util::tests::grapheme_chad_tests::*;
 use baumhard::util::tests::ordered_vec2_tests::*;
-use baumhard::util::tests::primes_test::do_primes;
+use baumhard::util::tests::primes_test::{do_is_prime_above_the_sieve_ceiling, do_primes};
 use baumhard::util::tests::rust_source_tests::*;
 use criterion::{criterion_group, criterion_main, Criterion};
 
@@ -850,7 +851,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("0_deg_rotation", |b| b.iter(do_0_deg_rotation));
     c.bench_function("pixel_functions", |b| b.iter(do_pixel_functions));
+    c.bench_function("aabb_contains_includes_every_boundary", |b| {
+        b.iter(do_aabb_contains_includes_every_boundary)
+    });
+    c.bench_function("aabb_contains_rejects_on_each_axis_independently", |b| {
+        b.iter(do_aabb_contains_rejects_on_each_axis_independently)
+    });
     c.bench_function("almost_equal", |b| b.iter(do_almost_equal));
+    c.bench_function("almost_equal_f64_is_tighter_than_its_f32_sibling", |b| {
+        b.iter(do_almost_equal_f64_is_tighter_than_its_f32_sibling)
+    });
     c.bench_function("almost_equal_vec2", |b| b.iter(do_almost_equal_vec2));
     c.bench_function("is_positive_finite", |b| b.iter(do_is_positive_finite));
     c.bench_function("is_non_negative_finite_f64", |b| {
@@ -976,6 +986,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("from_hex_garbage_falls_back_to_black", |b| {
         b.iter(do_from_hex_garbage_falls_back_to_black)
     });
+    c.bench_function("hex_to_color_parses_bytes_at_compile_time", |b| {
+        b.iter(do_hex_to_color_parses_bytes_at_compile_time)
+    });
+    // Reads the two hex-bearing modules' source per iteration, the
+    // same shape as `production_code_returns_code_without_prose`
+    // above: after the first iteration what moves is the two parses
+    // and the closure walk, not the disk.
+    c.bench_function("every_hex_entry_point_is_downstream_of_the_one_parser", |b| {
+        b.iter(do_every_hex_entry_point_is_downstream_of_the_one_parser)
+    });
+    c.bench_function("color_with_alpha_replaces_only_the_alpha_channel", |b| {
+        b.iter(do_color_with_alpha_replaces_only_the_alpha_channel)
+    });
     c.bench_function("hex_to_rgba_three_digit", |b| b.iter(do_hex_to_rgba_three_digit));
     c.bench_function("hex_to_rgba_four_digit", |b| b.iter(do_hex_to_rgba_four_digit));
     c.bench_function("hex_to_rgba_six_digit", |b| b.iter(do_hex_to_rgba_six_digit));
@@ -985,6 +1008,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("hex_to_rgba_rejects_non_hex_char", |b| {
         b.iter(do_hex_to_rgba_rejects_non_hex_char)
+    });
+    c.bench_function("cosmic_color_from_color_carries_every_channel", |b| {
+        b.iter(do_cosmic_color_from_color_carries_every_channel)
+    });
+    c.bench_function("cosmic_color_from_color_agrees_with_the_float_bridge", |b| {
+        b.iter(do_cosmic_color_from_color_agrees_with_the_float_bridge)
     });
     c.bench_function("hex_to_cosmic_color_round_trip", |b| {
         b.iter(do_hex_to_cosmic_color_round_trip)
@@ -1634,6 +1663,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("arena_utils_clone", |b| b.iter(do_clone));
     // primes //
     c.bench_function("primes", |b| b.iter(do_primes));
+    c.bench_function("is_prime_above_the_sieve_ceiling", |b| {
+        b.iter(do_is_prime_above_the_sieve_ceiling)
+    });
 
     // subtree-drag drain at zoom 1 and 30. Caches are warmed outside
     // `iter()` so the first-frame cold miss doesn't dominate the sample.
@@ -1754,6 +1786,42 @@ fn synthetic_multi_section_map(node_count: usize, sections_per_node: usize) -> M
     map
 }
 
+/// Same shape as [`synthetic_multi_section_map`] but every section
+/// carries `runs_per_section` sized text runs, so a fold over them
+/// has something to fold.
+fn synthetic_multi_section_map_with_runs(
+    node_count: usize,
+    sections_per_node: usize,
+    runs_per_section: usize,
+) -> MindMap {
+    use baumhard::mindmap::model::{MindSection, TextRun};
+    let mut map = MindMap::new_blank("bench-multi-runs");
+    for i in 0..node_count {
+        let sections: Vec<MindSection> = (0..sections_per_node)
+            .map(|s_idx| {
+                let text = format!("section {} of {}", s_idx, i);
+                let runs = (0..runs_per_section)
+                    .map(|r| TextRun {
+                        start: r,
+                        end: r + 1,
+                        bold: false,
+                        italic: false,
+                        underline: false,
+                        font: String::new(),
+                        size_pt: 10.0 + r as f32,
+                        color: String::new(),
+                        hyperlink: None,
+                    })
+                    .collect();
+                MindSection::new_default(text, runs)
+            })
+            .collect();
+        let node = bench_node(&format!("r{}", i), (i as f64) * 5.0, sections);
+        map.nodes.insert(node.id.clone(), node);
+    }
+    map
+}
+
 fn do_build_mindmap_tree(map: &MindMap) {
     use baumhard::mindmap::tree_builder::build_mindmap_tree;
     let _ = build_mindmap_tree(map);
@@ -1775,6 +1843,25 @@ fn section_tree_build_benchmark(c: &mut Criterion) {
     let multi_section = synthetic_multi_section_map(50, 5);
     c.bench_function("section_tree_build_50_multi_section", |b| {
         b.iter(|| do_build_mindmap_tree(&multi_section));
+    });
+
+    // `effective_section_scale` runs once per section per tree
+    // build and once more per section in the app's auto-size
+    // measurement, so the row that matters is a whole map's worth
+    // of sections rather than one call. The 5-run sections are the
+    // fold's real shape — a run-less section short-circuits on the
+    // empty iterator and would measure the fallback instead.
+    let with_runs = synthetic_multi_section_map_with_runs(50, 5, 5);
+    c.bench_function("effective_section_scale_over_250_sections", |b| {
+        b.iter(|| {
+            let mut total = 0.0f32;
+            for node in with_runs.nodes.values() {
+                for section in &node.sections {
+                    total += baumhard::mindmap::tree_builder::effective_section_scale(section);
+                }
+            }
+            total
+        });
     });
 }
 

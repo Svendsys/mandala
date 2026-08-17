@@ -47,9 +47,35 @@ mod border_tests;
 #[cfg(test)]
 pub(crate) mod test_helpers;
 
-/// Cyan selection highlight applied at scene / tree emission time
-/// (selected edges, edge handles, portal markers, portal mutator
-/// output). The app crate's `document::types::HIGHLIGHT_COLOR` is
-/// the approximately-matching float-RGBA form used by the selection
-/// machinery upstream.
-pub(crate) const SELECTION_HIGHLIGHT_HEX: &str = "#00E5FF";
+use crate::util::color::Color;
+use crate::util::color_conversion::hex_to_color;
+
+/// The cyan "this is active" affordance, in the `#RRGGBB` notation
+/// the model speaks — the one place the project writes this color
+/// down. Applied at scene / tree emission time (selected edges,
+/// edge handles, portal markers, section frames, portal mutator
+/// output) and, through [`SELECTION_HIGHLIGHT`] below, by every
+/// app-side reading of the same color.
+///
+/// `pub` rather than `pub(crate)` on purpose. While it was
+/// crate-private the app had no way to *reach* the canonical value
+/// and duplicated it instead — as `[0.0, 0.9, 1.0, 1.0]` in the
+/// document layer (which quantises to 229.5, not 229) and as
+/// `Color::rgba(0, 230, 255, ..)` twice in the renderer. Three
+/// spellings of one color, and only one of them was this one.
+pub const SELECTION_HIGHLIGHT_HEX: &str = "#00E5FF";
+
+/// [`SELECTION_HIGHLIGHT_HEX`] in baumhard's byte-packed [`Color`],
+/// parsed at compile time. Every non-hex reading of the selection
+/// color derives from here — the app's float-RGBA
+/// `document::types::HIGHLIGHT_COLOR` via [`Color::to_float`], the
+/// renderer's two cosmic-text colors via
+/// [`crate::font::color::cosmic_color_from_color`] — so no consumer
+/// has a reason to write the channels out again.
+pub const SELECTION_HIGHLIGHT: Color = match hex_to_color(SELECTION_HIGHLIGHT_HEX) {
+    Some(color) => color,
+    // Unreachable for a well-formed literal, and a compile error
+    // rather than a run-time panic if the literal above is ever
+    // edited into something `hex_to_color` rejects.
+    None => panic!("SELECTION_HIGHLIGHT_HEX must be a hex color literal"),
+};

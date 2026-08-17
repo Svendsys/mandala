@@ -10,6 +10,7 @@ use super::*;
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
 use baumhard::mindmap::custom_mutation::{CustomMutation as CM, TargetScope as TS};
 use baumhard::mindmap::tree_builder::INACTIVE_NODE_ALPHA_MULTIPLIER;
+use baumhard::util::geometry::{aabb_center, almost_equal_f64};
 use glam::Vec2;
 
 #[test]
@@ -18,9 +19,9 @@ fn test_hit_test_direct_hit() {
     // "Lord God" node (id: 0) — get its position from the tree
     let node_id = tree.arena_id_for("0").unwrap();
     let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
-    let center = Vec2::new(
-        area.position.x.0 + area.render_bounds.x.0 / 2.0,
-        area.position.y.0 + area.render_bounds.y.0 / 2.0,
+    let center = aabb_center(
+        Vec2::new(area.position.x.0, area.position.y.0),
+        Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
     );
     let result = hit_test(center, &mut tree);
     assert_eq!(result, Some("0".to_string()));
@@ -35,9 +36,9 @@ fn test_hit_test_target_single_section_collapses_to_node() {
     let mut tree = load_test_tree();
     let node_id = tree.arena_id_for("0").unwrap();
     let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
-    let center = Vec2::new(
-        area.position.x.0 + area.render_bounds.x.0 / 2.0,
-        area.position.y.0 + area.render_bounds.y.0 / 2.0,
+    let center = aabb_center(
+        Vec2::new(area.position.x.0, area.position.y.0),
+        Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
     );
     match hit_test_target(center, &mut tree) {
         Some(HitTarget::NodeContainer { node_id }) => {
@@ -76,9 +77,9 @@ fn test_hit_test_returns_smallest_on_overlap() {
             .find_map(|(mind_id, nid)| {
                 let a = tree.tree.arena.get(nid)?.get().glyph_area()?;
                 let child_size = a.render_bounds.x.0 * a.render_bounds.y.0;
-                let child_center = Vec2::new(
-                    a.position.x.0 + a.render_bounds.x.0 / 2.0,
-                    a.position.y.0 + a.render_bounds.y.0 / 2.0,
+                let child_center = aabb_center(
+                    Vec2::new(a.position.x.0, a.position.y.0),
+                    Vec2::new(a.render_bounds.x.0, a.render_bounds.y.0),
                 );
                 if child_size < parent_size && point_in_node_aabb(child_center, parent_id_str, &tree) {
                     Some((mind_id.to_string(), child_center))
@@ -460,13 +461,13 @@ fn test_start_animation_records_instance_without_committing() {
 
     // Model untouched at start.
     let pos_now = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-    assert!((pos_now - orig_x).abs() < 1e-6);
+    assert!(almost_equal_f64(pos_now, orig_x));
 
     // From / to snapshots reflect the nudge (test mutation is
     // NudgeRight(10.0)).
     let inst = &doc.active_animations[0];
-    assert!((inst.from_node.position.x - orig_x).abs() < 1e-6);
-    assert!((inst.to_node.position.x - orig_x - 10.0).abs() < 1e-6);
+    assert!(almost_equal_f64(inst.from_node.position.x, orig_x));
+    assert!(almost_equal_f64(inst.to_node.position.x, orig_x + 10.0));
 }
 
 /// `tick_animations` at the linear midpoint writes the mean of
@@ -1168,7 +1169,7 @@ fn test_hit_test_ellipse_center_hits() {
     let mut tree = load_test_tree();
     set_node_shape_ellipse(&mut tree, "0");
     let (pos, bounds) = node_bounds(&tree, "0");
-    let center = pos + bounds * 0.5;
+    let center = aabb_center(pos, bounds);
     assert_eq!(hit_test(center, &mut tree), Some("0".to_string()));
 }
 
@@ -1193,7 +1194,7 @@ fn test_point_in_node_aabb_is_shape_aware() {
     let mut tree = load_test_tree();
     set_node_shape_ellipse(&mut tree, "0");
     let (pos, bounds) = node_bounds(&tree, "0");
-    let center = pos + bounds * 0.5;
+    let center = aabb_center(pos, bounds);
     let near_corner = pos + Vec2::new(0.5, 0.5);
     assert!(
         point_in_node_aabb(center, "0", &tree),
@@ -1228,7 +1229,7 @@ fn test_rect_select_still_catches_ellipse_through_center() {
     let (pos, bounds) = node_bounds(&tree, "0");
     // Selection rect crossing the center of the ellipse must
     // still register a hit.
-    let center = pos + bounds * 0.5;
+    let center = aabb_center(pos, bounds);
     let hits = rect_select(center - Vec2::new(5.0, 5.0), center + Vec2::new(5.0, 5.0), &tree);
     assert!(
         hits.contains(&"0".to_string()),
@@ -1484,16 +1485,9 @@ fn test_hit_test_node_resize_handle_lands_on_se_corner() {
 fn test_hit_test_node_resize_handle_misses_outside_tolerance() {
     use crate::application::document::hit_test_node_resize_handle;
     use crate::application::document::tests_common::pinned_two_section_node;
-    use glam::Vec2;
 
     let (doc, id) = pinned_two_section_node();
-    let node = &doc.mindmap.nodes[&id];
-    let np = &node.position;
-    let nw = &node.size;
-    let center = Vec2::new(
-        np.x as f32 + nw.width as f32 * 0.5,
-        np.y as f32 + nw.height as f32 * 0.5,
-    );
+    let center = doc.mindmap.nodes[&id].center_vec2();
     assert!(
         hit_test_node_resize_handle(&doc.mindmap, center, &id, 4.0).is_none(),
         "center of node must not hit any handle"

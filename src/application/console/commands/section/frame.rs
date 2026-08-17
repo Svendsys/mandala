@@ -27,6 +27,7 @@
 //! `section=K` kv when the selection is `Single(node_id)`.
 
 use baumhard::mindmap::border::resolve_section_frame_border;
+use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 use crate::application::console::commands::border::{
     custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv, KEYS as BORDER_KEYS,
@@ -422,7 +423,10 @@ fn push_resolved_section_frame(
     } else {
         "hardcoded light floor"
     };
-    let resolved = resolve_section_frame_border(section, canvas, focused, "#00E5FF");
+    // Same floor color the tree builder resolves the frame against
+    // (`tree_builder/section_frame.rs`), read from its definition so
+    // the readout cannot report a color the canvas does not draw.
+    let resolved = resolve_section_frame_border(section, canvas, focused, SELECTION_HIGHLIGHT_HEX);
     // Cascade pick — same logic `resolve_section_frame_border`
     // walks. We re-derive it for the per-side / per-corner readout
     // because `resolve_border_style` discards the source `glyphs`

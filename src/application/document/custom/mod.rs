@@ -81,7 +81,8 @@ fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutati
 ///
 /// The sync-back persists position, section offset / size, text,
 /// color / font runs, and font size (`scale`). Everything else a
-/// `GfxMutator` can reach — line-height (derived as `scale * 1.2`,
+/// `GfxMutator` can reach — line-height (derived as
+/// `scale * LINE_HEIGHT_FACTOR`,
 /// no independent home), the outline halo, the node shape, and the
 /// zoom-visibility window — has a tree representation but no
 /// reverse converter, so it can't survive a `rebuild_all`. Returns
@@ -1143,7 +1144,8 @@ mod unsupported_field_tests {
     }
 
     /// Line-height commands have no model home (line-height is
-    /// derived as `scale * 1.2` on every rebuild) — they must be
+    /// derived as `scale * LINE_HEIGHT_FACTOR` on every rebuild) —
+    /// they must be
     /// flagged so the author isn't left chasing a vanishing change.
     #[test]
     fn test_line_height_commands_are_flagged() {

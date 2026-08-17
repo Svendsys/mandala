@@ -29,6 +29,8 @@ use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
 // run baked opaque white into the model and opted those graphemes
 // out of the palette for good, which is the exact defect the
 // authoring default was changed to avoid.
+use baumhard::mindmap::tree_builder::effective_section_scale;
+
 use super::super::defaults::DEFAULT_RUN_COLOR;
 use super::super::nodes::clamp_runs_to_text;
 use super::super::MindMapDocument;
@@ -101,7 +103,8 @@ pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> f32 {
 ///
 /// The forward map is lossy: it takes the **largest** `size_pt`
 /// across a section's runs (or [`DEFAULT_TEXT_RUN_SIZE_PT`] when
-/// the section has none) and derives `line_height = scale * 1.2`.
+/// the section has none — this is `effective_section_scale`) and
+/// derives `line_height = scale * LINE_HEIGHT_FACTOR`.
 /// The reverse therefore has to answer "the max just moved from A
 /// to B — how do the individual runs move?". We distribute the
 /// change as a **delta** (`tree_scale - old_scale`) added to every
@@ -115,7 +118,8 @@ pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> f32 {
 /// max-collapsing forward map.
 ///
 /// **Line-height** has no independent model home: the forward path
-/// unconditionally recomputes it as `scale * 1.2`, so persisting
+/// unconditionally recomputes it as `scale * LINE_HEIGHT_FACTOR`,
+/// so persisting
 /// `scale` is sufficient and the next rebuild reproduces the right
 /// line-height for free. A mutation that touches *only* line-height
 /// is surfaced at apply time by
@@ -519,18 +523,7 @@ impl MindMapDocument {
             // runless section), and the correct baseline for the
             // font-size delta — recomputing it after the round-trip
             // would misread a run-dropping mutation as a size change.
-            let pre_round_trip_scale = {
-                let max = section
-                    .text_runs
-                    .iter()
-                    .map(|r| r.size_pt)
-                    .fold(0.0_f32, f32::max);
-                if max > 0.0 {
-                    max
-                } else {
-                    DEFAULT_TEXT_RUN_SIZE_PT
-                }
-            };
+            let pre_round_trip_scale = effective_section_scale(section);
 
             // Write `section.offset` back from the tree's section-
             // area position so a `SectionsOnly` translate mutation
@@ -554,35 +547,57 @@ impl MindMapDocument {
                 section.offset.y = (snapshot.tree_position.1 - node_pos_y) as f64;
                 changed = true;
             }
-            // Write `section.size` back when the model carries an
-            // explicit size. `None` size means "fill the parent
-            // node", which the tree resolves to the node's full
-            // render_bounds — *don't* eagerly materialize it as
-            // `Some(node.size)`, that would surprise authors who
-            // chose the inheriting shape. Materialize only when the
-            // tree's render_bounds diverges from the node's full
-            // size (i.e. the mutation explicitly resized the
-            // section, or the model already carried a Some).
-            let tree_size_diverges = (snapshot.tree_size.0 - node_size_x).abs() > f32::EPSILON
-                || (snapshot.tree_size.1 - node_size_y).abs() > f32::EPSILON;
-            if section.size.is_some() || tree_size_diverges {
-                // Project the model's current size to f32 (fill-parent
-                // `None` resolves to the node's size, exactly as the
-                // forward path does) and only rewrite when the tree's
-                // post-mutation bounds actually diverge — comparing the
-                // model `f64` against the tree `f32` directly would flag
-                // a phantom change for any non-`f32`-exact size.
-                let (cur_w, cur_h) = match section.size {
-                    Some(s) => (s.width as f32, s.height as f32),
-                    None => (node_size_x, node_size_y),
-                };
-                if cur_w != snapshot.tree_size.0 || cur_h != snapshot.tree_size.1 {
-                    section.size = Some(baumhard::mindmap::model::Size {
-                        width: snapshot.tree_size.0 as f64,
-                        height: snapshot.tree_size.1 as f64,
-                    });
-                    changed = true;
+            // Write `section.size` back when the tree's post-mutation
+            // bounds differ from what the model already says. `None`
+            // size means "fill the parent node", which the tree
+            // resolves to the node's full render_bounds — *don't*
+            // eagerly materialize it as `Some(node.size)`, that would
+            // surprise authors who chose the inheriting shape. So the
+            // `None` case compares against the node's own size, which
+            // is what the forward path drew, and only a mutation that
+            // actually resized the section pins one.
+            //
+            // Compare in f32 space, for the same reason the position
+            // writeback above does: the tree carries f32 and the model
+            // f64, so a raw f64 compare would flag a phantom change for
+            // any size that is not f32-exact.
+            //
+            // The two arms answer with different rulers, deliberately.
+            // An explicit `Some` is already a pinned size, so any
+            // f32-visible divergence from it is a real edit, and the
+            // exact `!=` is right — the same posture the position
+            // writeback above documents. A `None` is a *shape*, not a
+            // size, and demoting it to a fixed one is a one-way door for
+            // the author, so that arm holds the shape until the resize
+            // clears an absolute `f32::EPSILON` floor.
+            //
+            // The floor is not a restatement of `!=`. It can only ever
+            // differ from one when *both* operands are `<= 2.0`:
+            // `ULP(x) == f32::EPSILON` exactly on `[1, 2)` and doubles
+            // at every binade above, so any two distinct f32s that are
+            // both at 2.0 or above already differ by more than
+            // `f32::EPSILON`, and so does any pair straddling 2.0.
+            // (There is no band "below one ULP" for the floor to
+            // swallow — two distinct f32s cannot differ by less than
+            // one ULP.) Under 2.0 the two spellings genuinely part
+            // company, and that is reachable: `validate.rs` puts no
+            // lower bound on `node.size` beyond finite and positive,
+            // and `format/sections.md` documents `SetBounds` under
+            // `SectionsOnly` as writing through here. Pinned by
+            // `test_sync_node_from_tree_holds_fill_parent_none_at_a_sub_epsilon_resize`.
+            let size_diverges = match section.size {
+                Some(s) => s.width as f32 != snapshot.tree_size.0 || s.height as f32 != snapshot.tree_size.1,
+                None => {
+                    (snapshot.tree_size.0 - node_size_x).abs() > f32::EPSILON
+                        || (snapshot.tree_size.1 - node_size_y).abs() > f32::EPSILON
                 }
+            };
+            if size_diverges {
+                section.size = Some(baumhard::mindmap::model::Size {
+                    width: snapshot.tree_size.0 as f64,
+                    height: snapshot.tree_size.1 as f64,
+                });
+                changed = true;
             }
 
             // Selective gate: tree-side state matches the model

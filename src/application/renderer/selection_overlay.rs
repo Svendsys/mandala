@@ -16,6 +16,21 @@ use glam::Vec2;
 use super::borders::create_border_buffer;
 use super::Renderer;
 
+/// Alpha the rubber band's cyan is drawn at. Reduced from opaque so
+/// the content the band sweeps over stays readable underneath it —
+/// the one thing about this color that is genuinely the selection
+/// rectangle's own, which is why it is named here and the RGB is
+/// not.
+const SELECTION_RECT_ALPHA: u8 = 200;
+
+/// The rubber band's color: the shared selection cyan at
+/// [`SELECTION_RECT_ALPHA`]. Derived rather than written out, which
+/// is how this used to read `Color::rgba(0, 230, 255, 200)` against
+/// a `#00E5FF` whose green channel is 229.
+pub(crate) const SELECTION_RECT_COLOR: Color = baumhard::font::color::cosmic_color_from_color(
+    baumhard::mindmap::SELECTION_HIGHLIGHT.with_alpha(SELECTION_RECT_ALPHA),
+);
+
 impl Renderer {
     /// Build overlay buffers for a selection rectangle using dashed box-drawing glyphs.
     /// Coordinates are in canvas space.
@@ -62,9 +77,8 @@ impl Renderer {
         self.overlay_buffers.clear();
         let mut font_system = fonts::acquire_font_system_write("rebuild_selection_rect_overlay");
 
-        let rect_color = Color::rgba(0, 230, 255, 200);
         let attrs = Attrs::new()
-            .color(rect_color)
+            .color(SELECTION_RECT_COLOR)
             .metrics(Metrics::new(font_size, font_size));
 
         let top_text = format!("\u{256D}{}\u{256E}", "\u{2504}".repeat(char_count));

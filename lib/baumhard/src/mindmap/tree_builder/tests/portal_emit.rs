@@ -10,7 +10,7 @@
 use super::super::*;
 use super::fixtures::*;
 use crate::mindmap::scene_cache::{EdgeKey, SceneConnectionCache};
-use crate::util::geometry::almost_equal;
+use crate::util::geometry::{aabb_center, almost_equal};
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -182,13 +182,17 @@ fn portal_marker_points_at_partner_endpoint() {
     // Center of marker AABB should sit outside the node's right
     // or bottom side (the two sides facing partner b). Check that
     // the marker lives outside the node AABB in at least one axis.
-    let marker_cx = marker_a.position.0 + marker_a.bounds.0 * 0.5;
-    let marker_cy = marker_a.position.1 + marker_a.bounds.1 * 0.5;
+    let marker_center = aabb_center(
+        Vec2::new(marker_a.position.0, marker_a.position.1),
+        Vec2::new(marker_a.bounds.0, marker_a.bounds.1),
+    );
     let right_edge = 100.0 + 80.0;
     let bottom_edge = 200.0 + 40.0;
     assert!(
-        marker_cx > right_edge || marker_cy > bottom_edge,
-        "marker ({marker_cx}, {marker_cy}) should be right or below node AABB"
+        marker_center.x > right_edge || marker_center.y > bottom_edge,
+        "marker ({}, {}) should be right or below node AABB",
+        marker_center.x,
+        marker_center.y
     );
 }
 

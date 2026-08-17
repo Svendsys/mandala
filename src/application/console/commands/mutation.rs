@@ -393,6 +393,7 @@ mod tests {
     use super::*;
     use crate::application::source_tier::SourceTier;
     use baumhard::mindmap::custom_mutation::{CustomMutation, TargetScope};
+    use baumhard::util::geometry::almost_equal_f64;
 
     /// Build a fresh doc by loading the testament map, then overwrite
     /// the registry + sources with the supplied fixtures. Routes
@@ -568,8 +569,24 @@ mod tests {
         assert_eq!(doc.undo_stack.len(), before_undo_len + 1);
         assert!(doc.dirty, "dirty flag must be set after apply");
         let after_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-        assert!(
-            (after_x - before_x - 1.0).abs() < 1e-6,
+        // Compared in `f32`, and exactly. The forward path routes the
+        // nudge through the tree, whose coordinates are `f32`, so the
+        // model gets back a widened `f32`. At this fixture's x of
+        // about −179 the widening that actually lands is 3.06e-7 —
+        // and `f32(after) == f32(before + 1.0)` holds exactly, which
+        // is what makes an exact compare the right one.
+        //
+        // The number that mattered is the *old* tolerance, not this
+        // one: one f32 ULP at this coordinate is 2^-16 = 1.53e-5 (the
+        // widening above is a fiftieth of it), so the `1e-6` that used
+        // to stand here was fifteen times *below* one ULP. It could
+        // not have absorbed a worst-case widening — half an ULP,
+        // 7.6e-6 — and passed on the luck of the fixture rather than
+        // by design. An `f64` ruler here measures the widening
+        // instead of the mutation.
+        assert_eq!(
+            after_x as f32,
+            (before_x + 1.0) as f32,
             "expected position.x to grow by 1.0 (got {} → {})",
             before_x,
             after_x
@@ -580,8 +597,11 @@ mod tests {
         assert!(popped, "undo must report success");
         assert_eq!(doc.undo_stack.len(), before_undo_len);
         let restored_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+        // The undo *is* an `f64` restore — it writes back the
+        // pre-mutation snapshot rather than re-deriving through the
+        // tree — so here the tight ruler is the right one.
         assert!(
-            (restored_x - before_x).abs() < 1e-6,
+            almost_equal_f64(restored_x, before_x),
             "undo must restore the original position (got {} → {})",
             after_x,
             restored_x
