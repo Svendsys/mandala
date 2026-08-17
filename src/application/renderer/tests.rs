@@ -1749,3 +1749,68 @@ fn test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm() {
         );
     }
 }
+
+// ====================================================================
+// Selection-highlight single-sourcing
+// ====================================================================
+
+/// Every reading of the selection cyan carries one RGB triple. The
+/// four items compared here are declared in four different modules
+/// — baumhard's hex literal, the document layer's float quad, and
+/// the renderer's two cosmic-text constants — and the assertion
+/// reads each of them as a value rather than recomputing any of
+/// them, so it is the re-inlining of a literal that turns it red.
+///
+/// That is exactly the input that made it red before this test
+/// existed: the tree carried `#00E5FF` (green 229),
+/// `[0.0, 0.9, 1.0, 1.0]` (229.5) and `Color::rgba(0, 230, 255, ..)`
+/// twice (230) — three byte values for one affordance, each
+/// individually plausible and none of them reachable from the
+/// others.
+///
+/// Alpha is compared separately and only for the two opaque forms:
+/// the rubber band's reduced alpha is the one thing about its color
+/// that is genuinely its own.
+#[test]
+fn test_every_selection_highlight_form_carries_one_rgb_triple() {
+    let from_hex = baumhard::util::color_conversion::hex_to_color(baumhard::mindmap::SELECTION_HIGHLIGHT_HEX)
+        .expect("the canonical hex literal must parse");
+    let hex_rgb = [from_hex.rgba[0], from_hex.rgba[1], from_hex.rgba[2]];
+
+    let doc =
+        baumhard::util::color_conversion::convert_f32_to_u8(&crate::application::document::HIGHLIGHT_COLOR);
+    assert_eq!(
+        [doc[0], doc[1], doc[2]],
+        hex_rgb,
+        "document::HIGHLIGHT_COLOR quantises to a different cyan than the model emits"
+    );
+    assert_eq!(
+        doc[3],
+        baumhard::util::color::VAL_MAX,
+        "the selection tint is opaque"
+    );
+
+    let status = MODE_STATUS_COLOR;
+    assert_eq!(
+        [status.r(), status.g(), status.b()],
+        hex_rgb,
+        "the mode-status row is a different cyan than the selection tint"
+    );
+    assert_eq!(
+        status.a(),
+        baumhard::util::color::VAL_MAX,
+        "the status row is opaque"
+    );
+
+    let band = super::selection_overlay::SELECTION_RECT_COLOR;
+    assert_eq!(
+        [band.r(), band.g(), band.b()],
+        hex_rgb,
+        "the rubber band is a different cyan than the selection tint"
+    );
+    assert!(
+        band.a() < baumhard::util::color::VAL_MAX,
+        "the rubber band is deliberately translucent; an opaque one means the alpha was lost \
+         on the way through the shared definition"
+    );
+}

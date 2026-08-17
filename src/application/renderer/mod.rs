@@ -221,6 +221,15 @@ const MODE_STATUS_FONT_SIZE_PT: f32 = 14.0;
 const MODE_STATUS_OVERLAY_POS: (f32, f32) = (8.0, 32.0);
 const MODE_STATUS_OVERLAY_BOUNDS: (f32, f32) = (640.0, 24.0);
 
+/// Mode-status text color. The status row and the selection tint
+/// are the same "this is active" affordance, so they are the same
+/// color — derived from the one definition of it rather than
+/// re-quantised here, which is how this used to read
+/// `Color::rgba(0, 230, 255, 255)` against a `#00E5FF` whose green
+/// channel is 229.
+pub(crate) const MODE_STATUS_COLOR: baumhard::font::Color =
+    baumhard::font::color::cosmic_color_from_color(baumhard::mindmap::SELECTION_HIGHLIGHT);
+
 /// Fixed-size ring buffer of frame intervals (microseconds) with an
 /// O(1) running sum. Backs `FpsDisplayMode::Debug`'s rolling-average
 /// readout. Encapsulates the sum invariant — `sum` is always
@@ -913,12 +922,7 @@ impl Renderer {
         };
         self.mode_status_overlay_buffers.clear();
         if let Some(text) = self.mode_status_text.as_deref() {
-            // Same cyan as `HIGHLIGHT_COLOR` (the selection-tint
-            // constant in `document::types`) so the status bar
-            // visually pairs with the selection highlight: both are
-            // the canonical "active" affordance.
-            // `HIGHLIGHT_COLOR = [0.0, 0.9, 1.0, 1.0]` → (0, 230, 255).
-            let attrs = Attrs::new().color(baumhard::font::Color::rgba(0, 230, 255, 255));
+            let attrs = Attrs::new().color(MODE_STATUS_COLOR);
             let buf = borders::create_border_buffer(
                 &mut font_system,
                 text,

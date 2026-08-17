@@ -16,8 +16,9 @@
 
 use crate::util::color::Color;
 use crate::util::color_conversion::{
-    from_hex, hex_to_hsv_safe, hex_to_rgba, hex_to_rgba_safe, hex_with_alpha_scaled, hsv_to_hex, hsv_to_rgb,
-    is_valid_hex_color, is_var_ref, parse_var_name, resolve_var, rgb_to_hsv, rgba_to_hex,
+    from_hex, hex_to_color, hex_to_hsv_safe, hex_to_rgba, hex_to_rgba_safe, hex_with_alpha_scaled,
+    hsv_to_hex, hsv_to_rgb, is_valid_hex_color, is_var_ref, parse_var_name, resolve_var, rgb_to_hsv,
+    rgba_to_hex,
 };
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -930,4 +931,83 @@ pub fn do_color_new_f32_to_float_round_trips_within_one_byte() {
             }
         }
     }
+}
+
+#[test]
+fn test_hex_to_color_parses_bytes_at_compile_time() {
+    do_hex_to_color_parses_bytes_at_compile_time();
+}
+
+/// `hex_to_color` is the project's only hex parser and it evaluates
+/// in `const` position. `CONST_PARSED` is the second half of that
+/// claim: initialising a `const` from the function stops compiling
+/// the day it stops being const-evaluable, which is how the
+/// compile-time palette constants that rest on it
+/// (`mindmap::SELECTION_HIGHLIGHT`) fail loudly rather than quietly.
+///
+/// The expectations are byte quads written out by hand, not a second
+/// call to [`hex_to_rgba`]: that function is now this one plus a
+/// division, so a control derived from it would only show the parser
+/// agreeing with itself.
+///
+/// The input that makes the last three assertions fail is the
+/// hand-rolled `#`-scan replacing `trim_start_matches('#')` — a scan
+/// that stopped after one `#` reads `##f0a` as a five-character body
+/// and rejects a string the previous parser accepted, which for a
+/// file format is a silent narrowing.
+pub fn do_hex_to_color_parses_bytes_at_compile_time() {
+    const CONST_PARSED: Color = match hex_to_color("#05638f80") {
+        Some(color) => color,
+        None => panic!("a well-formed literal must parse"),
+    };
+    assert_eq!(CONST_PARSED.rgba, [5, 99, 143, 128]);
+
+    assert_eq!(
+        hex_to_color("#f0a").map(|c| c.rgba),
+        Some([0xff, 0x00, 0xaa, 255])
+    );
+    assert_eq!(
+        hex_to_color("#f0a8").map(|c| c.rgba),
+        Some([0xff, 0x00, 0xaa, 0x88])
+    );
+    assert_eq!(hex_to_color("05638f").map(|c| c.rgba), Some([5, 99, 143, 255]));
+    assert_eq!(
+        hex_to_color("###f0a").map(|c| c.rgba),
+        Some([0xff, 0x00, 0xaa, 255])
+    );
+    assert!(hex_to_color("###").is_none(), "a body of nothing is not a color");
+    assert!(hex_to_color("#gg0000").is_none(), "`g` is not a hex digit");
+}
+
+#[test]
+fn test_color_with_alpha_replaces_only_the_alpha_channel() {
+    do_color_with_alpha_replaces_only_the_alpha_channel();
+}
+
+/// [`Color::with_alpha`] is the `const`, value-returning sibling of
+/// `Color::set_alpha`, so a translucent form of a color *constant*
+/// stays a constant. Both halves are checked: the RGB channels
+/// survive untouched, and the result matches what the `&mut`
+/// sibling produces from the same source — two separately written
+/// implementations, so the agreement is evidence rather than a
+/// mirror.
+///
+/// The input that makes it fail is a `with_alpha` that rebuilds the
+/// quad from `opacity` in the wrong slot; `[5, 99, 143]` has three
+/// distinct channels so any transposition shows.
+pub fn do_color_with_alpha_replaces_only_the_alpha_channel() {
+    const OPAQUE: Color = Color {
+        rgba: [5, 99, 143, 255],
+    };
+    const TRANSLUCENT: Color = OPAQUE.with_alpha(200);
+    assert_eq!(TRANSLUCENT.rgba, [5, 99, 143, 200]);
+    assert_eq!(
+        OPAQUE.rgba,
+        [5, 99, 143, 255],
+        "the source is taken by value, not mutated"
+    );
+
+    let mut via_setter = OPAQUE;
+    via_setter.set_alpha(200);
+    assert_eq!(via_setter.rgba, TRANSLUCENT.rgba);
 }

@@ -2,6 +2,7 @@
 
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::font::tests::attrs_tests::*;
+use baumhard::font::tests::color_tests::*;
 use baumhard::font::tests::fonts_tests::*;
 use baumhard::font::tests::hex_tests::*;
 use baumhard::font::tests::metric_cache_tests::*;
@@ -976,6 +977,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("from_hex_garbage_falls_back_to_black", |b| {
         b.iter(do_from_hex_garbage_falls_back_to_black)
     });
+    c.bench_function("hex_to_color_parses_bytes_at_compile_time", |b| {
+        b.iter(do_hex_to_color_parses_bytes_at_compile_time)
+    });
+    c.bench_function("color_with_alpha_replaces_only_the_alpha_channel", |b| {
+        b.iter(do_color_with_alpha_replaces_only_the_alpha_channel)
+    });
     c.bench_function("hex_to_rgba_three_digit", |b| b.iter(do_hex_to_rgba_three_digit));
     c.bench_function("hex_to_rgba_four_digit", |b| b.iter(do_hex_to_rgba_four_digit));
     c.bench_function("hex_to_rgba_six_digit", |b| b.iter(do_hex_to_rgba_six_digit));
@@ -985,6 +992,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("hex_to_rgba_rejects_non_hex_char", |b| {
         b.iter(do_hex_to_rgba_rejects_non_hex_char)
+    });
+    c.bench_function("cosmic_color_from_color_carries_every_channel", |b| {
+        b.iter(do_cosmic_color_from_color_carries_every_channel)
+    });
+    c.bench_function("cosmic_color_from_color_agrees_with_the_float_bridge", |b| {
+        b.iter(do_cosmic_color_from_color_agrees_with_the_float_bridge)
     });
     c.bench_function("hex_to_cosmic_color_round_trip", |b| {
         b.iter(do_hex_to_cosmic_color_round_trip)

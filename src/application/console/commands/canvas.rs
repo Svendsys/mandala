@@ -30,6 +30,7 @@
 
 use baumhard::mindmap::border::resolve_border_style;
 use baumhard::mindmap::model::GlyphBorderConfig;
+use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 use super::border::{
     custom_preset_hint, edits_has_glyph_field, positional_subverb_to_edits, prepend_line, stage_kv,
@@ -570,7 +571,9 @@ fn execute_show_section_frame(eff: &mut ConsoleEffects, focused: bool) -> ExecRe
         }
     };
     let lines = if let Some(cfg) = cfg {
-        let resolved = resolve_border_style(Some(cfg), None, None, "#00E5FF");
+        // Same floor color the tree builder resolves the frame
+        // against; read from its definition rather than repeated.
+        let resolved = resolve_border_style(Some(cfg), None, None, SELECTION_HIGHLIGHT_HEX);
         format_resolved_with_source(
             label,
             source,
