@@ -186,9 +186,10 @@ else
   # crate has existed — a list of members is a copy of the
   # `[workspace]` table and copies go stale. So did the count this
   # comment used to give for those tests, which is why it now gives
-  # none: it said 13 where the crate runs 19. `--coverage` above
-  # and the wasm32 gate below were already `--workspace`; this is the
-  # odd one out rejoining them.
+  # none: the run below prints what it ran, and a second copy written
+  # up here can only disagree with it. `--coverage` above and the
+  # wasm32 gate below were already `--workspace`; this is the odd one
+  # out rejoining them.
   cargo test --workspace 2>&1 | tee "$TEST_LOG"
 
   # The `|| true` is load-bearing, not defensive noise. Under
