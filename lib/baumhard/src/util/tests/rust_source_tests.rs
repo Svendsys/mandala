@@ -11,7 +11,8 @@
 //! *and* the code around it survived.
 
 use crate::util::rust_source::{
-    above_test_modules, braced_block_after, production_code, statements, string_literals, strip_comments,
+    above_test_modules, blank_string_literals, braced_block_after, production_code, statements,
+    string_literals, strip_comments,
 };
 // Only the tree-wide sweep at the bottom of this file walks the
 // filesystem, and that sweep is a plain `#[test]` rather than a
@@ -473,6 +474,88 @@ pub fn do_string_literals_returns_every_literal() {
     }
 }
 
+/// A literal's contents go, its delimiters and the code around it
+/// stay, and every byte offset lands where it did.
+///
+/// The consumer is the §B8 bench-surface gate, which matches
+/// identifiers against the bench file's source text: a criterion id
+/// is a string literal, so `"do_x"` written as an id is the name
+/// `do_x` in the file's bytes and resolves to nothing. Both
+/// directions have teeth. Blanking too little leaves that false
+/// green in place; blanking too much erases the `b.iter(do_x)` that
+/// is the entry, and the gate then reports every body in the tree.
+///
+/// The offset assertion is not decoration: the caller finds a
+/// `bench_function(` call's extent in the blanked text and reads the
+/// id out of the *unblanked* text at those offsets, so a single byte
+/// of drift hands it the wrong id.
+pub fn do_blank_string_literals_keeps_code_and_offsets() {
+    let cases: &[(&str, &str)] = &[
+        // The contract, in miniature: the id is gone, the call and
+        // the identifier it runs are not.
+        (
+            r#"c.bench_function("do_x", |b| b.iter(do_y));"#,
+            r#"c.bench_function("    ", |b| b.iter(do_y));"#,
+        ),
+        // An escaped quote does not end the literal, so the code
+        // after it is not blanked as though it were inside one.
+        (r#"let s = "a \" b"; f(do_z);"#, r#"let s = "      "; f(do_z);"#),
+        // Raw strings: hashes and quotes stay, contents go.
+        (
+            r####"let s = r#"a "b" c"#; g();"####,
+            r####"let s = r#"       "#; g();"####,
+        ),
+        (r#"let s = b"bytes"; h();"#, r#"let s = b"     "; h();"#),
+        // A `'"'` char literal must not open a string, and a `'a`
+        // lifetime must not either.
+        (
+            r#"fn f<'a>(x: &'a str) { let q = '"'; call(do_w); }"#,
+            r#"fn f<'a>(x: &'a str) { let q = '"'; call(do_w); }"#,
+        ),
+        // An empty literal has nothing to blank.
+        (r#"let s = ""; k();"#, r#"let s = ""; k();"#),
+        // Unterminated: everything to the end goes, and no panic.
+        (r#"let s = "never closed"#, r#"let s = "            "#),
+    ];
+    for (source, expected) in cases {
+        let blanked = blank_string_literals(source);
+        assert_eq!(
+            &blanked, expected,
+            "blank_string_literals disagreed on {source:?}"
+        );
+        assert_eq!(
+            blanked.len(),
+            source.len(),
+            "byte offsets moved on {source:?}: {} bytes became {}",
+            source.len(),
+            blanked.len()
+        );
+    }
+
+    // A multi-byte char inside a literal is blanked one space per
+    // *byte*, or every offset after it shifts. `é` is two bytes and
+    // `→` is three.
+    let wide = "let s = \"é→\"; f(do_v);";
+    let blanked = blank_string_literals(wide);
+    assert_eq!(blanked, "let s = \"     \"; f(do_v);");
+    assert_eq!(
+        blanked.len(),
+        wide.len(),
+        "a multi-byte literal moved the offsets"
+    );
+
+    // Newlines inside a raw string survive, so a line number in the
+    // blanked text is still a line number in the original.
+    let spanning = "let s = r\"one\ntwo\";\nf(do_u);";
+    let blanked = blank_string_literals(spanning);
+    assert_eq!(blanked.lines().count(), spanning.lines().count());
+    assert_eq!(blanked.len(), spanning.len());
+    assert!(
+        blanked.contains("do_u"),
+        "code after a spanning literal was eaten"
+    );
+}
+
 /// A statement ends at a `;`, a `{` or a `}` that is not inside
 /// parentheses — and nowhere else.
 ///
@@ -827,6 +910,11 @@ fn test_braced_block_after_matches_one_item() {
 #[test]
 fn test_string_literals_returns_every_literal() {
     do_string_literals_returns_every_literal();
+}
+
+#[test]
+fn test_blank_string_literals_keeps_code_and_offsets() {
+    do_blank_string_literals_keeps_code_and_offsets();
 }
 
 #[test]

@@ -645,6 +645,94 @@ pub fn strip_comments(src: &str) -> String {
     out
 }
 
+/// `src` with the *contents* of every string, byte-string and
+/// raw-string literal replaced by spaces — the quotes and any `r#`
+/// hashes stay where they were, and so does every newline.
+///
+/// The complement of [`strip_comments`], and the two answer
+/// different questions. `strip_comments` asks *which of these bytes
+/// did the compiler read*, which is why it keeps literals: a pin on
+/// a log line's `"<area>: "` prefix has nothing to assert on
+/// otherwise. This asks the narrower *which of these bytes are
+/// code*, for a scan matching identifiers against source text. There
+/// the answers differ: `"do_x"` written as a criterion id is the
+/// name `do_x` in the file's bytes and resolves to nothing, so a
+/// contract that accepts it is satisfied by a spelling rather than
+/// by a call.
+///
+/// Every literal is blanked one space per byte, so the returned
+/// string has the same **byte length** as `src` and an offset into
+/// one indexes the other. That is stronger than
+/// [`strip_comments`]'s line-count guarantee and is what lets a
+/// caller find a span in the blanked text and then read the literal
+/// it contains out of the original.
+///
+/// Pass comment-free text — [`production_code`] or
+/// [`strip_comments`] — or a `"` in a doc comment's prose opens a
+/// literal that was never one, for the same reason
+/// [`string_literals`] says so.
+///
+/// Cost: one pass over `src` and one `String` of its length.
+pub fn blank_string_literals(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0usize;
+    while i < src.len() {
+        if let Some((content, content_end, end)) = raw_string_at(src, i) {
+            out.push_str(&src[i..content]);
+            blank_into(&src[content..content_end], &mut out);
+            out.push_str(&src[content_end..end]);
+            i = end;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            let end = quoted_end(src, i, '"');
+            // `quoted_end` returns the end of `src` for an
+            // unterminated literal, in which case there is no closing
+            // quote to step back over.
+            let content_end = if src[..end].ends_with('"') && end > i + 1 {
+                end - 1
+            } else {
+                end
+            };
+            out.push('"');
+            blank_into(&src[i + 1..content_end], &mut out);
+            out.push_str(&src[content_end..end]);
+            i = end;
+            continue;
+        }
+        if bytes[i] == b'\'' {
+            if let Some(next) = char_literal_end(src, i) {
+                // A character literal holds no identifier, and
+                // leaving it be keeps `'a` lifetimes untouched too.
+                out.push_str(&src[i..next]);
+                i = next;
+                continue;
+            }
+        }
+        let ch = src[i..].chars().next().expect("in-bounds by the loop guard");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Push one space per byte of `content`, except newlines, which are
+/// pushed as themselves. Per *byte* rather than per char so the
+/// output keeps the input's byte offsets: blanking `é` to one space
+/// would move every offset after it by one.
+fn blank_into(content: &str, out: &mut String) {
+    for ch in content.chars() {
+        if ch == '\n' {
+            out.push('\n');
+        } else {
+            for _ in 0..ch.len_utf8() {
+                out.push(' ');
+            }
+        }
+    }
+}
+
 /// The contents of every string literal in `src`, in source order,
 /// with the quotes and any `r#` hashes removed.
 ///
@@ -880,8 +968,16 @@ pub fn braced_block_after<'a>(src: &'a str, header: &str) -> Option<&'a str> {
 /// `open` and `close` must differ; a same-delimiter run is not a
 /// nesting problem and has no business here.
 ///
+/// `pub(crate)` for `util::bench_surface` — no intra-doc link,
+/// because that module is `cfg(test)`-gated and so absent from the
+/// build `cargo doc` runs — which needs the
+/// same walk over `(` … `)` to find where one `bench_function` entry
+/// ends and the next begins. Sharing it is the rule this module was
+/// written for: a second delimiter walk would be a second chance to
+/// get literals wrong.
+///
 /// Cost: one pass from `from` to the close.
-fn matching_delimiter(src: &str, from: usize, open: u8, close: u8) -> Option<usize> {
+pub(crate) fn matching_delimiter(src: &str, from: usize, open: u8, close: u8) -> Option<usize> {
     debug_assert_ne!(open, close, "a delimiter cannot close itself");
     let bytes = src.as_bytes();
     if bytes.get(from) != Some(&open) {
