@@ -815,6 +815,97 @@ fn test_sync_node_from_tree_pins_section_size_only_on_a_real_resize() {
     );
 }
 
+/// A fill-parent section survives a resize too small for the writeback
+/// to call one: a `SetBounds` that lands one f32 ULP off the node's own
+/// size keeps `size: None` and pushes no undo entry.
+///
+/// This is the half of the fill-parent rule the test above cannot see.
+/// Its translate arm moves the section by 13 px, which every spelling of
+/// the size condition agrees is not a resize — so it passes whether the
+/// condition carries the `f32::EPSILON` floor or compares exactly, and
+/// pins only the behavior both shapes share. The two spellings part
+/// company exactly where this test looks: a `1.0 × 1.0` node, whose ULP
+/// *is* `f32::EPSILON` (`ULP(x) == f32::EPSILON` for `x ∈ [1, 2)`), and a
+/// delta of one ULP on the width. An exact `!=` calls that a resize and
+/// materializes `Some(Size { width: 1.0000001192092896, .. })` onto a
+/// section whose author spelled it `None` on purpose; the floored
+/// comparison holds the `None`.
+///
+/// The input that makes it fail is therefore dropping the
+/// `.abs() > f32::EPSILON` floor from the `None` arm of `size_diverges`
+/// in `custom/sync.rs` and comparing `node_size` against `tree_size`
+/// exactly — the shape shipped at `69420181`. Planted, that body fails
+/// this test at its first assertion (`got Some(Size { width:
+/// 1.0000001192092896, height: 1.0 })`) and leaves the test above green,
+/// which is why that test could not stand in for this one.
+///
+/// Every ingredient is author-reachable: `validate.rs` puts no lower
+/// bound on `node.size` (finite, positive, `<= MAX_NODE_AXIS`), `None` is
+/// the documented fill-parent spelling for a section, and
+/// `format/sections.md` documents `SetBounds` under `SectionsOnly` as
+/// writing straight through this path.
+#[test]
+fn test_sync_node_from_tree_holds_fill_parent_none_at_a_sub_epsilon_resize() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
+    use baumhard::mindmap::model::Size;
+
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.size = Size {
+            width: 1.0,
+            height: 1.0,
+        };
+        node.sections[0].size = None;
+    }
+
+    // 1.0 + one ULP. At this magnitude that step is exactly
+    // `f32::EPSILON`, which is the largest delta the floored
+    // comparison still calls "not a resize" — the boundary input.
+    let one_ulp_up = f32::from_bits(1.0f32.to_bits() + 1);
+    assert_eq!(
+        one_ulp_up - 1.0,
+        f32::EPSILON,
+        "the fixture's step must be exactly f32::EPSILON, or it probes the wrong boundary"
+    );
+
+    let undo_len_before = doc.undo_stack.len();
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(
+        &CustomMutation {
+            id: "sub-epsilon-resize".into(),
+            name: "sub-epsilon-resize".into(),
+            description: String::new(),
+            contexts: vec![],
+            mutator: Some(scope::self_only(vec![Mutation::area_command(
+                GlyphAreaCommand::SetBounds(one_ulp_up, 1.0),
+            )])),
+            target_scope: TS::SectionsOnly,
+            behavior: MB::Persistent,
+            predicate: None,
+            document_actions: vec![],
+            timing: None,
+        },
+        &nid,
+        Some(&mut tree),
+    );
+
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[0];
+    assert!(
+        section.size.is_none(),
+        "a sub-epsilon resize must not pin a size onto a fill-parent section; got {:?}",
+        section.size
+    );
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_len_before,
+        "a writeback that changed nothing must not push an undo entry"
+    );
+}
+
 /// Section-level `OnClick` trigger fires before whole-node
 /// `OnClick` triggers — pin the precedence the
 /// `find_triggered_mutations_at` doc claims. Tier-D wired the
