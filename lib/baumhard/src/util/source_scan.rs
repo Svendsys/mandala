@@ -282,9 +282,13 @@ fn trait_item_attrs(item: &TraitItem) -> &[Attribute] {
 /// item the parser is holding; `#[cfg(test)] mod tests;` is an
 /// attribute on an item whose body is *another file*, and a walk that
 /// visits files has no idea the declaration exists. `util/mod.rs`
-/// gates `manifests`, `serde_coverage` and `test_logger` that way, and
-/// all three were indexed as model sources — eleven test-only types
-/// in a graph whose contract is that it holds none.
+/// gates five modules that way — `bench_surface`, `manifests`,
+/// `serde_coverage`, `serde_probe` and `source_scan` — and the three
+/// that carried the shape when this was written (`manifests`,
+/// `serde_coverage`, and `test_logger`, since widened to `pub` for
+/// callers in the `mandala` crate) were all indexed as model
+/// sources: eleven test-only types in a graph whose contract is that
+/// it holds none.
 ///
 /// Transitive because a gated module can declare further modules of
 /// its own, and those are test sources for the same reason their

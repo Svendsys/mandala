@@ -400,13 +400,15 @@ impl TypeGraph {
     /// **out-of-line** `#[cfg(test)] mod x;` together with everything
     /// those files declare.
     ///
-    /// That fourth one is not a corner. `util/mod.rs` gates
-    /// `manifests`, `serde_coverage` and `test_logger` exactly that
-    /// way, and until it was closed all eleven of their types sat in
-    /// this index — `TypeGraph` and `TypeInfo` among them — while the
-    /// doc here said `#[cfg(test)]` modules were all excluded.
-    /// Nothing had collided yet, which is the only reason it was
-    /// quiet.
+    /// That fourth one is not a corner. `util/mod.rs` gates five
+    /// modules exactly that way — `bench_surface`, `manifests`,
+    /// `serde_coverage`, `serde_probe` and `source_scan` — and until
+    /// it was closed all eleven types of the three gated at the time
+    /// (`manifests`, `serde_coverage` and `test_logger`, the last
+    /// since widened to `pub`) sat in this index — `TypeGraph` and
+    /// `TypeInfo` among them — while the doc here said
+    /// `#[cfg(test)]` modules were all excluded. Nothing had
+    /// collided yet, which is the only reason it was quiet.
     ///
     /// Panics if a file cannot be read or parsed, or if a `mod x;`
     /// names no file on disk: this backs a test whose entire job is to
