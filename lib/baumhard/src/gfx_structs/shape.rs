@@ -21,7 +21,13 @@
 //!    quiet-fallback path.
 //! 3. Add a `SHAPE_*` constant + a `case` arm to the rect pipeline's
 //!    fragment shader (`src/application/renderer/mod.rs`,
-//!    `RECT_SHADER_WGSL`).
+//!    `RECT_SHADER_WGSL`). Forced, not remembered:
+//!    `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
+//!    in the mandala crate reads the shader as text and fails on a
+//!    variant with no constant, a constant carrying the wrong id, and
+//!    a non-default variant with no `case` arm — the last being the
+//!    silent one, where every node of the new shape draws as a
+//!    rectangle.
 //! 4. Add a branch in
 //!    [`crate::gfx_structs::shape::NodeShape::contains_local`] and
 //!    [`crate::gfx_structs::shape::NodeShape::intersects_local_aabb`].
@@ -433,7 +439,10 @@ impl NodeShape {
     /// with the `SHAPE_*` constants in
     /// `src/application/renderer/mod.rs` — adding a variant without
     /// adding its shader case would render the new shape as a
-    /// rectangle. O(1).
+    /// rectangle. The lock-step is checked rather than asked for:
+    /// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
+    /// parses the shader text and holds it against this function over
+    /// `NodeShape::iter()`. O(1).
     #[inline]
     pub const fn shader_id(self) -> u32 {
         match self {
