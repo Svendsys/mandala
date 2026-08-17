@@ -1567,6 +1567,13 @@ fn wgsl_u32_consts(wgsl: &str) -> (Vec<(String, u32)>, usize) {
 /// rectangle — the exact failure the module headers warn about), or
 /// the `default` arm goes and unknown ids stop drawing at all.
 ///
+/// It fails for that same reason one step earlier, too: the two ends
+/// of the `shape_id` wire are asserted by name. A `switch (0u)` in
+/// the fragment stage, or a vertex stage that writes a constant into
+/// `out.shape_id`, leaves every arm above intact and correct while
+/// every node on screen draws the default fill — a shader in perfect
+/// lock-step with a Rust enum it no longer reads.
+///
 /// Comments are stripped before anything is matched, so a `case
 /// SHAPE_X:` written in prose cannot satisfy an arm assertion — the
 /// shader carries one such mention today, naming `SHAPE_RECT` in the
@@ -1598,6 +1605,22 @@ fn test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm() {
         wgsl.contains("default: {"),
         "the fragment switch must keep a `default` arm: it is the fill for the \
          default shape and the safe landing for an id this build does not know"
+    );
+    // The arms are only worth checking if something selects between
+    // them. Both ends of the wire, in the same literal-string style:
+    // the vertex stage forwards the per-instance attribute, and the
+    // fragment stage switches on what it forwarded.
+    assert!(
+        wgsl.contains("out.shape_id = u32(round(in.shape_id))"),
+        "the vertex stage must forward the per-vertex `shape_id` attribute — a \
+         constant written here reaches every fragment with the same value and the \
+         `case` arms below stop being reachable"
+    );
+    assert!(
+        wgsl.contains("switch (in.shape_id)"),
+        "the fragment switch must select on `in.shape_id`: switching on anything \
+         else draws one fill for every node while each arm still matches its \
+         `NodeShape` constant perfectly"
     );
 
     let mut claimed: Vec<&str> = Vec::new();
