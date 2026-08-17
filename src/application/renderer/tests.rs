@@ -1554,6 +1554,59 @@ fn wgsl_u32_consts(wgsl: &str) -> (Vec<(String, u32)>, usize) {
     (parsed, seen)
 }
 
+/// The `shader_location` `Renderer::new` gives the `shape_id` vertex
+/// attribute, read out of the renderer's own source.
+///
+/// The attribute is identified by its byte offset, which the layout
+/// comment above it derives (`pos 8 | uv 8 | color 16` = 32) and which
+/// `VERTEX_STRIDE_BYTES` is already pinned against elsewhere — not by
+/// its position in the array, so reordering the attributes cannot
+/// silently retarget this. Panics rather than returning an `Option`:
+/// every caller is asserting *about* this number, so a parse that
+/// quietly found nothing would turn its caller vacuous.
+fn shape_id_shader_location() -> u32 {
+    use baumhard::util::doc_fixtures::repo_path;
+    use baumhard::util::rust_source::strip_comments;
+
+    let path = repo_path("src/application/renderer/mod.rs");
+    let source = strip_comments(&std::fs::read_to_string(&path).expect("renderer source is readable"));
+
+    // Each attribute is a `wgpu::VertexAttribute { .. }` literal; take
+    // the one whose `offset` is the shape_id slot and read the
+    // `shader_location` that follows it inside the same literal.
+    let mut found: Vec<u32> = Vec::new();
+    for block in source.split("wgpu::VertexAttribute").skip(1) {
+        let Some(end) = block.find('}') else { continue };
+        let block = &block[..end];
+        if !block.contains("offset: 32") {
+            continue;
+        }
+        let Some(rest) = block.split_once("shader_location:") else {
+            continue;
+        };
+        let digits: String = rest
+            .1
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(n) = digits.parse::<u32>() {
+            found.push(n);
+        }
+    }
+
+    assert_eq!(
+        found.len(),
+        1,
+        "expected exactly one `wgpu::VertexAttribute` at offset 32 (the `shape_id` \
+         slot) in {}, found {}: the scanner and the pipeline have drifted apart, \
+         and the assertion this feeds would prove nothing",
+        path.display(),
+        found.len()
+    );
+    found[0]
+}
+
 /// Every `NodeShape` variant has a WGSL constant carrying exactly its
 /// `shader_id`, the shader declares no shape constant no variant
 /// claims, and every variant's fill is reachable from the `switch` —
@@ -1567,12 +1620,15 @@ fn wgsl_u32_consts(wgsl: &str) -> (Vec<(String, u32)>, usize) {
 /// rectangle — the exact failure the module headers warn about), or
 /// the `default` arm goes and unknown ids stop drawing at all.
 ///
-/// It fails for that same reason one step earlier, too: the two ends
-/// of the `shape_id` wire are asserted by name. A `switch (0u)` in
-/// the fragment stage, or a vertex stage that writes a constant into
-/// `out.shape_id`, leaves every arm above intact and correct while
-/// every node on screen draws the default fill — a shader in perfect
-/// lock-step with a Rust enum it no longer reads.
+/// It fails for that same reason one step earlier, too: all three
+/// ends of the `shape_id` wire are asserted by name. A `switch (0u)`
+/// in the fragment stage, or a vertex stage that writes a constant
+/// into `out.shape_id`, leaves every arm above intact and correct
+/// while every node on screen draws the default fill — a shader in
+/// perfect lock-step with a Rust enum it no longer reads. Upstream of
+/// both, `VsIn.shape_id`'s `@location` is checked against the
+/// `shader_location` the pipeline actually assigns, the last binding
+/// in this file that a comment alone was holding in step.
 ///
 /// Comments are stripped before anything is matched, so a `case
 /// SHAPE_X:` written in prose cannot satisfy an arm assertion — the
@@ -1621,6 +1677,19 @@ fn test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm() {
         "the fragment switch must select on `in.shape_id`: switching on anything \
          else draws one fill for every node while each arm still matches its \
          `NodeShape` constant perfectly"
+    );
+
+    // The wire's first end: the slot `VsIn` reads is the slot the
+    // pipeline writes. Both halves are read here rather than one
+    // half compared against a literal, because a literal agrees
+    // with whichever side someone edits last.
+    let rust_location = shape_id_shader_location();
+    assert!(
+        wgsl.contains(&format!("@location({rust_location}) shape_id: f32")),
+        "`VsIn.shape_id` must sit at @location({rust_location}), the \
+         `shader_location` the pipeline gives the `shape_id` attribute in \
+         `Renderer::new` — the two were held in step by a comment, which is \
+         what this reads instead"
     );
 
     let mut claimed: Vec<&str> = Vec::new();
