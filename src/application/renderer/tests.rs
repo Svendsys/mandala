@@ -1848,12 +1848,19 @@ fn renderer_new_field_expression(new_body: &str, field: &str) -> String {
 /// exactly once today, in the expression the pipeline is handed.
 fn assert_name_is_not_shadowed_in_renderer_new(new_body: &str, name: &str) {
     let found = new_body.matches(name).count();
+    let diagnosis = if found == 0 {
+        "zero mentions means `Renderer::new` no longer hands this item to the pipeline at \
+         all — the assertions below would then hold over data no GPU is given, which is the \
+         orphan the expression pins exist to catch"
+    } else {
+        "more than one means either a shadowing declaration — which leaves the pinned text \
+         intact while the name resolves to something this test never saw — or a second use \
+         a text reader cannot tell apart from one"
+    };
     assert_eq!(
         found, 1,
-        "`{name}` must appear exactly once in `Renderer::new` — the pins below read it as \
-         text, so a second mention is either a shadowing declaration (which would leave the \
-         text intact while the name resolves elsewhere) or a use this reader cannot tell \
-         apart from one; it appears {found} times"
+        "`{name}` must appear exactly once in `Renderer::new`, and appears {found} times. \
+         The pins below read it as text: {diagnosis}."
     );
 }
 
