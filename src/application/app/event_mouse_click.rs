@@ -338,10 +338,15 @@ pub(super) fn handle_mouse_input(
                 // Reuse the press-time edge-label hit captured
                 // earlier so the threshold-cross transition can
                 // promote to `DraggingEdgeLabel`. Both label hits
-                // are already node-gated by the click chain; the
-                // promotion order in `event_cursor_moved.rs`
-                // resolves the edge-handle-versus-node overlap,
-                // which is the one pair the chain does not gate.
+                // are already node-gated by the click chain; what
+                // the promotion order in `event_cursor_moved.rs`
+                // resolves is the three hits above that the chain
+                // does not gate — the edge handle and the two
+                // resize handles, each captured on a mode or a
+                // selection rather than on `hit_node`, and each
+                // ranked ahead of it. That is also where a click
+                // and a drag on one press can name different
+                // targets; CONCEPTS `DragState` has the shape.
                 //
                 // Don't clobber a right-button gesture in flight.
                 // Symmetric with the right-press guard in

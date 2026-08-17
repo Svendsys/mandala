@@ -517,9 +517,10 @@ fn click_hit_from_priority(
 /// press stores the portal hit for the drag promotion only when
 /// that chain left `hit_node` empty. The promotion order in
 /// `event_cursor_moved.rs` does list portal-label above node — but
-/// over a set where at most one of them is populated, so the
-/// listing resolves the edge-handle-versus-node overlap and
-/// nothing else.
+/// over a set where at most one of them is populated, so what that
+/// listing resolves is the node against the three *handle* hits
+/// the press captures outside the chain (edge handle, node resize,
+/// section resize), each gated on a mode or a selection instead.
 ///
 /// The rule was an inline `if hit_node.is_none()` guard inside the
 /// press handler, which needs a live event loop to reach and so

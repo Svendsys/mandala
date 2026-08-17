@@ -582,8 +582,15 @@ impl AppScene {
     }
 }
 
+/// Reachable from the rest of `application` under `cfg(test)`: the
+/// portal fixture and its two helpers below are the only place in
+/// the crate that stands a real portal tree up, and `app`'s
+/// click-vs-drag tests need one to ask which sub-part a press
+/// landed on. Same reason `maptool`'s `verify::test_helpers` is
+/// widened — a second copy of a 200-line JSON fixture is a copy
+/// that drifts.
 #[cfg(test)]
-mod tests {
+pub(in crate::application) mod tests {
     use super::*;
     use baumhard::font::fonts;
     use baumhard::gfx_structs::area::GlyphArea;
@@ -761,14 +768,17 @@ mod tests {
     /// Two portal-mode edges from `hub`, one carrying text, laid
     /// out by the real tree builder. Returns the map so a test can
     /// re-derive the pair data it needs.
-    fn portal_fixture_map() -> baumhard::mindmap::model::MindMap {
+    pub(in crate::application) fn portal_fixture_map() -> baumhard::mindmap::model::MindMap {
         baumhard::mindmap::loader::load_from_str(PORTAL_FIXTURE_JSON).expect("portal fixture loads")
     }
 
     /// Register the portal role from `map` exactly the way
     /// `CanvasFrame::update_portal_tree` does — tree and hit index
     /// stamped together.
-    fn register_portals(app: &mut AppScene, map: &baumhard::mindmap::model::MindMap) {
+    pub(in crate::application) fn register_portals(
+        app: &mut AppScene,
+        map: &baumhard::mindmap::model::MindMap,
+    ) {
         fonts::init();
         let hidden = map.fold_hidden_set();
         let pairs = baumhard::mindmap::tree_builder::portal_pair_data(
@@ -789,7 +799,7 @@ mod tests {
     /// The `(position, extent)` of every clickable leaf in the
     /// registered portal tree, paired with the identity the index
     /// gives it — the ground truth a probe is aimed at.
-    fn portal_leaf_probes(app: &AppScene) -> Vec<(Vec2, PortalHit)> {
+    pub(in crate::application) fn portal_leaf_probes(app: &AppScene) -> Vec<(Vec2, PortalHit)> {
         let id = app.canvas_id(CanvasRole::Portals).expect("portals registered");
         let tree = app.canvas_scene().tree(id).expect("portal tree");
         let mut out = Vec::new();
