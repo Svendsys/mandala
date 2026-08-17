@@ -2170,7 +2170,10 @@ SelectionState`, `undo_stack: Vec<UndoAction>`,
 `active_animations`, `active_toggles`, `mutation_registry`,
 `mutation_handlers`, `mutation_sources`, `dirty: bool`,
 `label_edit_preview`, `portal_text_edit_preview`,
-`color_picker_preview`, `border_preview`. What it does **not**
+`color_picker_preview`, `border_preview`,
+`rect_select_preview` (the node ids a rubber-band rectangle
+currently covers — see [`DragState`](#dragstate)). What it does
+**not**
 own: the renderer, GPU resources, drag/mode state, modal editor
 state, keybinds — those are all on `InitState`.
 
@@ -2367,6 +2370,21 @@ itself is 64 bytes rather than the 912 the widest variant used to
 impose on every state — including the `None` that is live for all
 but a few seconds of a session. `PendingRight`, 64 bytes, is the
 widest variant left and stays unboxed.
+
+**`SelectingRect` splits its per-frame work in two, and only one
+half runs every frame.** The overlay rectangle tracks the pointer
+and is redrawn unconditionally. The covered-node preview is
+memoized: `drain_selecting_rect` hit-tests against the *installed*
+tree (a rubber-band drag mutates nothing, so its geometry is
+current) and repaints only when `set_rect_select_preview` reports
+the covered set actually moved. The set itself lives on
+`MindMapDocument` beside the other transient previews, so every
+rebuild path paints it — including the animation tick's, which
+runs after this drain in the same frame and used to wipe a preview
+stamped onto a tree the drain had built for itself. Before #37 the
+drain ran `doc.build_tree()` plus a full text-buffer rebuild on
+every frame of the gesture, under a comment calling it a
+"lightweight overlay redraw".
 
 `src/application/app/mod.rs`. Native-only today.
 
@@ -2702,7 +2720,9 @@ is dispatched explicitly so the cheapest one runs.
 `src/application/app/scene_rebuild.rs`.
 Functions: `rebuild_all` (node tree + every canvas role),
 `rebuild_scene_only` (reuse the node tree, refresh every canvas
-role), and the per-role methods on
+role), `rebuild_selection_highlight` (node text buffers only — no
+canvas roles, no mode-status line: what a change to *which nodes
+are highlighted* actually needs), and the per-role methods on
 [`CanvasFrame`](#canvas-role-projection) —
 `update_connection_trees` (edges + their grab handles),
 `update_portal_tree`, `update_border_tree`,
@@ -2741,6 +2761,14 @@ Two constructors carry the rules:
   run the selection-delta tier even when a trigger had just
   mutated the document, so §4's peers were wrong in opposite
   directions.
+
+`highlight_entries_for(doc)` is the one mapping all four
+node-tree rebuild sites use for *which* nodes to tint: the
+rubber-band preview when one is live, `doc.selection` otherwise.
+The preview replaces rather than adds to the selection's entries,
+because the gesture's release writes `SelectionState::from_ids`
+over the selection outright — painting both would show a set that
+is about to be discarded.
 
 Interactions that decide a tier are split into a renderer-free
 core that returns one and a shell that runs it —

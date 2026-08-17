@@ -442,3 +442,65 @@ fn test_other_variants_selected_grapheme_range_is_none() {
             .is_none()
     );
 }
+
+// -----------------------------------------------------------------
+// Rubber-band preview memo
+// -----------------------------------------------------------------
+
+/// The memo that makes a rubber-band frame cheap: writing the same
+/// covered set twice reports `false` the second time, and `false` is
+/// what `drain_selecting_rect` returns on before it would rebuild
+/// anything.
+///
+/// Fails on the input below if `set_rect_select_preview` stops
+/// comparing against what is already stored — which is the pre-#37
+/// shape, where the drain rebuilt the arena and the text buffers on
+/// every frame of the drag whether or not the rectangle had crossed
+/// a node.
+///
+/// The middle row is the control that keeps the first from being
+/// "answer `false` always": crossing a node boundary adds an id, and
+/// that has to come back `true` or the preview would freeze at
+/// whatever set it first covered.
+#[test]
+fn test_rect_select_preview_reports_a_repaint_only_when_the_covered_set_moves() {
+    let mut doc = super::tests_common::load_test_doc();
+    assert!(
+        doc.set_rect_select_preview(vec!["a".to_string(), "b".to_string()]),
+        "the first frame of a drag always has a set to install"
+    );
+    assert!(
+        !doc.set_rect_select_preview(vec!["a".to_string(), "b".to_string()]),
+        "a frame that slid the rectangle without crossing a node owes no repaint"
+    );
+    assert!(
+        doc.set_rect_select_preview(vec!["a".to_string(), "b".to_string(), "c".to_string()]),
+        "crossing into a third node must repaint"
+    );
+    assert!(
+        doc.set_rect_select_preview(vec!["a".to_string()]),
+        "and crossing back out of two must repaint too"
+    );
+}
+
+/// A rectangle that covers nothing is a real state — the user
+/// starts every drag there — and it is not the same state as "no
+/// drag in flight". `Some(vec![])` clears the pre-drag selection's
+/// highlight; `None` restores it.
+///
+/// Fails if the preview is ever stored as a bare `Vec` with empty
+/// standing in for absent, which would make the first frame of every
+/// drag repaint the old selection instead of clearing it.
+#[test]
+fn test_an_empty_rect_select_preview_is_distinct_from_no_preview() {
+    let mut doc = super::tests_common::load_test_doc();
+    assert!(doc.set_rect_select_preview(Vec::new()));
+    assert_eq!(doc.rect_select_preview.as_deref(), Some(&[][..]));
+    assert_eq!(doc.take_rect_select_preview(), Some(Vec::new()));
+    assert_eq!(doc.rect_select_preview, None);
+    assert_eq!(
+        doc.take_rect_select_preview(),
+        None,
+        "ending a gesture twice is a no-op, not a re-arm"
+    );
+}

@@ -660,9 +660,17 @@ struct PendingPress {
 /// `ThrottledDrag` + a struct + a trait impl; nothing about this
 /// enum needs to grow.
 ///
-/// `Panning` and `SelectingRect` are *not* throttled — panning is
-/// a camera-only decree (no mutation) and rect-select is a
-/// lightweight overlay redraw.
+/// `Panning` and `SelectingRect` are *not* throttled, for two
+/// different reasons. Panning is a camera-only decree with no
+/// mutation to defer. Rect-select's per-frame work is the overlay
+/// rectangle, which tracks the pointer and so must never be
+/// deferred; the expensive half — repainting the covered nodes'
+/// highlight — is gated on the covered *set* changing rather than
+/// on a frame counter, which skips the work outright on a frame
+/// that crosses no node boundary instead of postponing it. This
+/// sentence used to read "rect-select is a lightweight overlay
+/// redraw", which it was not: every drain ran a full
+/// `doc.build_tree()` and a cosmic-text buffer rebuild (#37).
 #[cfg(not(target_arch = "wasm32"))]
 enum DragState {
     /// No drag in progress.
@@ -722,8 +730,14 @@ enum DragState {
     /// tree or model mutation involved.
     Panning,
     /// Shift+drag on empty space: rubber-band selection rectangle.
-    /// Unthrottled — overlay rectangle plus preview highlight is
-    /// cheap enough to run every frame.
+    ///
+    /// Unthrottled: the overlay rectangle is redrawn every frame
+    /// because it tracks the pointer. The covered-node preview is
+    /// not free and is not run every frame — it is memoized on
+    /// `MindMapDocument::rect_select_preview` and repainted only
+    /// when the covered set changes. This comment used to claim the
+    /// preview was "cheap enough to run every frame"; it was a full
+    /// arena build plus a text-buffer rebuild (#37).
     SelectingRect {
         /// Canvas-space corner where the drag started.
         start_canvas: Vec2,

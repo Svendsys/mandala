@@ -16,7 +16,7 @@ use crate::application::platform::window::{CursorIcon, PhysicalPosition};
 use super::click::rebuild_all_with_mode;
 use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::input_context::InputHandlerContext;
-use super::scene_rebuild::RebuildTier;
+use super::scene_rebuild::{rebuild_selection_highlight, RebuildTier};
 use super::throttled_interaction::{
     DragInput, EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
     NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
@@ -839,35 +839,6 @@ pub(super) fn selection_after_node_drag_press(
         Some(SelectionState::Single(node_id.to_string()))
     } else {
         None
-    }
-}
-
-/// Rebuild the tree's selection highlight from the current
-/// `doc.selection`. Shared by the section-drag and whole-node
-/// drag promotion arms — both set selection then need the tree
-/// + renderer buffers refreshed to reflect the new highlight.
-fn rebuild_selection_highlight(
-    doc: &mut crate::application::document::MindMapDocument,
-    interaction_mode: &super::InteractionMode,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    renderer: &mut crate::application::renderer::Renderer,
-) {
-    if let Some(tree) = mindmap_tree.as_mut() {
-        // Every overlay, in the one correct order — see
-        // `build_overlaid_tree`. Highlights route through the
-        // canonical `selection_highlight_entries` helper: Section /
-        // MultiSection narrow to the selected sections, whole-node
-        // selections paint every section. `interaction_mode` is
-        // threaded in for the `NodeEdit` dim; without it a section
-        // drag mid-edit snapped every other node's text back to
-        // full opacity while its border stayed dimmed.
-        let new_tree = super::scene_rebuild::build_overlaid_tree(
-            doc,
-            interaction_mode,
-            super::scene_rebuild::selection_highlight_entries(&doc.selection),
-        );
-        renderer.rebuild_buffers_from_tree(&new_tree.tree);
-        *tree = new_tree;
     }
 }
 

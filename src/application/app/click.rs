@@ -223,11 +223,12 @@ pub(super) fn rebuild_all_with_mode(
     // selected sections only; mode-driven Reparent / Connect
     // highlights always paint every section (the gesture is
     // whole-node). Routes through the canonical
-    // `selection_highlight_entries` helper so the three
-    // selection-rebuild sites (here, `rebuild_all`, and the
-    // threshold-cross promotion's `rebuild_selection_highlight`)
-    // share one mapping.
-    let mut highlights = super::scene_rebuild::selection_highlight_entries(&doc.selection);
+    // `highlight_entries_for` helper so all four node-tree
+    // rebuild sites (here, `rebuild_all`,
+    // `rebuild_selection_highlight`, and the rubber-band drain
+    // through it) share one mapping — including its rule for
+    // which of the selection and the rubber-band preview wins.
+    let mut highlights = super::scene_rebuild::highlight_entries_for(doc);
     match interaction_mode {
         InteractionMode::Reparent { sources } => {
             for s in sources {

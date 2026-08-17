@@ -195,6 +195,31 @@ pub struct MindMapDocument {
     /// `canvas border preview …` /
     /// `canvas section-frame [focused] preview …` console verbs.
     pub border_preview: Option<BorderPreview>,
+    /// Transient rubber-band selection preview: the node ids a
+    /// Shift+drag rectangle currently covers. When `Some(ids)`,
+    /// `app::scene_rebuild::highlight_entries_for` — a plain code
+    /// span because `scene_rebuild` is a private module and rustdoc
+    /// cannot resolve a link into one — paints *those* nodes
+    /// instead of `self.selection`'s: the
+    /// gesture's release replaces the selection with the set
+    /// outright, so the pre-drag selection's highlight stands down
+    /// for the duration rather than sitting under a set that is
+    /// about to overwrite it.
+    ///
+    /// Same discipline as the other `*_preview` fields: never
+    /// serialized, never pushes undo, never flips `dirty`. Written
+    /// only by [`Self::set_rect_select_preview`] and cleared by
+    /// [`Self::take_rect_select_preview`].
+    ///
+    /// It lives here rather than beside the (native-only)
+    /// `DragState` for the reason the rest of this family does:
+    /// *every* rebuild path has to see it. Before it existed the
+    /// preview was stamped onto a private tree the rubber-band
+    /// drain built for itself each frame, so an animation tick
+    /// landing mid-gesture — its `rebuild_all` runs in the same
+    /// frame, after the drain — wiped the preview until the next
+    /// drain rebuilt it.
+    pub rect_select_preview: Option<Vec<String>>,
 }
 
 /// Transient visual-only substitution of a color-pickerable element's
@@ -638,6 +663,7 @@ impl MindMapDocument {
             portal_text_edit_preview: None,
             color_picker_preview: None,
             border_preview: None,
+            rect_select_preview: None,
             active_animations: Vec::new(),
         };
         doc.build_mutation_registry();
@@ -759,6 +785,34 @@ impl MindMapDocument {
     /// `sync_node_from_tree` safe.
     pub fn build_tree(&self) -> MindMapTree {
         tree_builder::build_mindmap_tree(&self.mindmap)
+    }
+
+    /// Install `ids` as the live rubber-band preview and report
+    /// whether that **changed** anything.
+    ///
+    /// `false` means the drag moved without crossing a node
+    /// boundary, so the canvas already shows the right set and the
+    /// caller owes it no repaint at all. That is the whole of what
+    /// makes a rubber-band frame cheap: the hit-test is a geometry
+    /// read over the tree that is already installed, and the tree
+    /// rebuild behind it happens per *change of set*, not per drain.
+    ///
+    /// Order is part of the identity on purpose — `rect_select`
+    /// walks `MindMapTree::node_ids`, which is arena order and
+    /// therefore stable for a given tree, so two frames covering the
+    /// same nodes produce the same `Vec` and compare equal.
+    pub fn set_rect_select_preview(&mut self, ids: Vec<String>) -> bool {
+        if self.rect_select_preview.as_deref() == Some(ids.as_slice()) {
+            return false;
+        }
+        self.rect_select_preview = Some(ids);
+        true
+    }
+
+    /// End the rubber-band gesture, handing back the set it was
+    /// previewing. `None` when no preview was live.
+    pub fn take_rect_select_preview(&mut self) -> Option<Vec<String>> {
+        self.rect_select_preview.take()
     }
 
     /// Assemble every frame-local override the per-role tree

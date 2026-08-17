@@ -590,9 +590,23 @@ pub(super) fn handle_mouse_input(
                     } => {
                         // Finalize: select all nodes in the rectangle
                         ctx.renderer.clear_overlay_buffers();
-                        if let (Some(doc), Some(tree)) = (ctx.document.as_mut(), ctx.mindmap_tree.as_ref()) {
-                            let hits = rect_select(start_canvas, current_canvas, tree);
-                            doc.selection = SelectionState::from_ids(hits);
+                        if let Some(doc) = ctx.document.as_mut() {
+                            // Ending the preview is unconditional, and
+                            // sits above the tree check on purpose: it
+                            // is document state every rebuild path
+                            // reads, so a gesture that ended without
+                            // clearing it would leave the whole canvas
+                            // painting a rectangle the user let go of.
+                            doc.take_rect_select_preview();
+                            // Re-hit-test rather than reuse the
+                            // preview: the last `CursorMoved` may have
+                            // moved `current_canvas` after the final
+                            // drain, and the release commits where the
+                            // pointer *is*.
+                            if let Some(tree) = ctx.mindmap_tree.as_ref() {
+                                let hits = rect_select(start_canvas, current_canvas, tree);
+                                doc.selection = SelectionState::from_ids(hits);
+                            }
                             rebuild_all(
                                 doc,
                                 ctx.interaction_mode,

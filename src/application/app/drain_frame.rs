@@ -11,14 +11,42 @@
 use glam::Vec2;
 
 use super::now_ms;
-use super::scene_rebuild::{overlay_tree, rebuild_all, rebuild_camera_geometry};
-use crate::application::document::{rect_select, MindMapDocument, SelectionState, HIGHLIGHT_COLOR};
+use super::scene_rebuild::{rebuild_all, rebuild_camera_geometry, rebuild_selection_highlight};
+use crate::application::document::{rect_select, MindMapDocument};
 use crate::application::renderer::Renderer;
 
+/// One rubber-band frame: move the overlay rectangle, re-hit-test,
+/// and repaint the preview highlight **only if the covered set
+/// changed**.
+///
+/// Two things used to happen here every frame, and neither has to.
+///
+/// The hit-test built a whole fresh arena (`doc.build_tree()`, a
+/// §B7-benchmarked primitive) just to have something to hit-test
+/// against. It does not need one: a rubber-band drag mutates
+/// nothing, so the geometry `rect_select` reads is exactly the
+/// geometry the installed tree already carries. The old code built
+/// its own because it also needed a *clean* tree to stamp the
+/// preview onto — the preview is an absolute `SetRegionColor` write
+/// with no inverse, so the only way to move it was to start over.
+///
+/// The repaint then ran on every frame regardless. Now the covered
+/// set lives on the document as
+/// [`MindMapDocument::rect_select_preview`], where every rebuild
+/// path reads it, and `set_rect_select_preview` reports whether the
+/// set actually moved. A frame that only slid the rectangle without
+/// crossing a node boundary — nearly all of them — calls neither
+/// `build_tree` nor `rebuild_buffers_from_tree`.
+///
+/// Putting the preview on the document also closed a hole: an
+/// animation tick landing mid-gesture runs its `rebuild_all` *after*
+/// this drain in the same frame, and used to wipe the preview until
+/// the next drain rebuilt it. It now paints the preview like every
+/// other rebuild.
 pub(super) fn drain_selecting_rect(
     start_canvas: Vec2,
     current_canvas: Vec2,
-    document: &Option<MindMapDocument>,
+    document: &mut Option<MindMapDocument>,
     interaction_mode: &super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     renderer: &mut Renderer,
@@ -27,36 +55,29 @@ pub(super) fn drain_selecting_rect(
     let cc = current_canvas;
     let min = Vec2::new(sc.x.min(cc.x), sc.y.min(cc.y));
     let max = Vec2::new(sc.x.max(cc.x), sc.y.max(cc.y));
+    // Unthrottled and unconditional: the rectangle is the part of
+    // this gesture that tracks the pointer, and
+    // `MutationFrequencyThrottle`'s contract is that responsiveness
+    // is never traded for fidelity.
     renderer.rebuild_selection_rect_overlay(min, max);
 
-    // Preview: rebuild tree with intersecting nodes highlighted.
-    if let Some(doc) = document.as_ref() {
-        // Build **once**. The rect hit-test needs a tree, and the
-        // overlays only rewrite region colors — they never move
-        // geometry — so hit-testing before overlaying gives the same
-        // answer as after, and a second `build_mindmap_tree` per
-        // rubber-band frame would be pure waste (§B7: it is a
-        // benchmarked primitive).
-        let mut new_tree = doc.build_tree();
-        let hits = rect_select(sc, cc, &new_tree);
-        let preview_selection = SelectionState::from_ids(hits);
-        // Rect-select preview is always whole-node; `from_ids` never
-        // produces a `Section` selection so the section narrowing
-        // would be `None` here. Routed through `overlay_tree` so the
-        // `NodeEdit` dim and any active toggle survive a rubber-band
-        // drag instead of flickering off for its duration.
-        overlay_tree(
-            &mut new_tree,
-            doc,
-            interaction_mode,
-            preview_selection
-                .selected_ids()
-                .into_iter()
-                .map(|id| (id, None, HIGHLIGHT_COLOR)),
-        );
-        renderer.rebuild_buffers_from_tree(&new_tree.tree);
-        *mindmap_tree = Some(new_tree);
+    let Some(doc) = document.as_mut() else {
+        return;
+    };
+    // No installed tree means no geometry to hit-test and nothing on
+    // screen to preview against. Reachable only between a document
+    // swap and the rebuild that follows it, which installs one.
+    let Some(tree) = mindmap_tree.as_ref() else {
+        return;
+    };
+    let hits = rect_select(sc, cc, tree);
+    if !doc.set_rect_select_preview(hits) {
+        return;
     }
+    // A preview-set change moves node text-buffer colors and nothing
+    // else — no geometry, no canvas roles, no mode-status line — so
+    // this is the node-tree tier rather than `rebuild_all`.
+    rebuild_selection_highlight(doc, interaction_mode, mindmap_tree, renderer);
 }
 
 /// Camera (pan/zoom/resize) changed — rebuild

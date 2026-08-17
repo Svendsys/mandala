@@ -640,7 +640,7 @@ impl InitState {
             drain_frame::drain_selecting_rect(
                 *start_canvas,
                 *current_canvas,
-                &self.document,
+                &mut self.document,
                 &self.interaction_mode,
                 &mut self.mindmap_tree,
                 &mut self.renderer,

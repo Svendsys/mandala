@@ -262,13 +262,66 @@ pub(in crate::application::app) fn rebuild_all(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    let new_tree = build_overlaid_tree(doc, interaction_mode, selection_highlight_entries(&doc.selection));
+    let new_tree = build_overlaid_tree(doc, interaction_mode, highlight_entries_for(doc));
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
     renderer.set_mode_status_text(mode_status_line(interaction_mode, doc));
 
     *mindmap_tree = Some(new_tree);
+}
+
+/// Rebuild the node tree with the current highlights and install
+/// it — the third tier, below [`rebuild_scene_only`]: node text
+/// buffers only, no canvas roles, no mode-status line.
+///
+/// What a change to *which nodes are highlighted* actually needs,
+/// and nothing more. Two callers: the threshold-cross demote that
+/// narrows a `Section` selection to its owning node before a drag,
+/// and the rubber-band drain, whose preview set is a highlight
+/// change by construction.
+pub(in crate::application::app) fn rebuild_selection_highlight(
+    doc: &MindMapDocument,
+    interaction_mode: &super::InteractionMode,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    renderer: &mut Renderer,
+) {
+    if mindmap_tree.is_none() {
+        return;
+    }
+    // Every overlay, in the one correct order — see
+    // [`build_overlaid_tree`]. `interaction_mode` is threaded in for
+    // the `NodeEdit` dim; without it a section drag mid-edit snapped
+    // every other node's text back to full opacity while its border
+    // stayed dimmed.
+    let new_tree = build_overlaid_tree(doc, interaction_mode, highlight_entries_for(doc));
+    renderer.rebuild_buffers_from_tree(&new_tree.tree);
+    *mindmap_tree = Some(new_tree);
+}
+
+/// The highlight entries every node-tree rebuild stamps: the
+/// rubber-band preview when one is live, the selection otherwise.
+///
+/// The preview *replaces* rather than adds to the selection's
+/// entries. A rubber-band release writes `SelectionState::from_ids`
+/// over the selection outright — shift included, since shift is what
+/// starts the gesture rather than what extends it — so leaving the
+/// pre-drag selection painted underneath would show the user a set
+/// that is about to be discarded. This is the rule the drain used to
+/// apply by building a private tree for itself out of the preview
+/// alone; stating it here is what lets *every* rebuild path
+/// reproduce it, including the animation tick's, which used to wipe
+/// the preview for a frame by rebuilding from `doc.selection`.
+pub(in crate::application::app) fn highlight_entries_for(
+    doc: &MindMapDocument,
+) -> Vec<(&str, Option<usize>, [f32; 4])> {
+    match &doc.rect_select_preview {
+        Some(ids) => ids
+            .iter()
+            .map(|id| (id.as_str(), None, HIGHLIGHT_COLOR))
+            .collect(),
+        None => selection_highlight_entries(&doc.selection),
+    }
 }
 
 /// Compute the mode-status overlay line for the active interaction
@@ -1140,7 +1193,7 @@ pub(in crate::application::app) fn warm_handle_tree_arenas(
 
 #[cfg(test)]
 mod tests {
-    use super::RebuildTier;
+    use super::{highlight_entries_for, selection_highlight_entries, RebuildTier};
     use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState};
     use baumhard::mindmap::scene_cache::EdgeKey;
 
@@ -1251,6 +1304,71 @@ mod tests {
             ),
             RebuildTier::All
         );
+    }
+
+    /// While a rubber-band drag is in flight its covered set is what
+    /// every node-tree rebuild paints, and the pre-drag selection's
+    /// highlight stands down — the release writes
+    /// `SelectionState::from_ids` over the selection outright, so
+    /// leaving it painted underneath would show the user a set that
+    /// is about to be discarded.
+    ///
+    /// The fixture is chosen so the two answers cannot be confused:
+    /// the selection names a node the preview does not, and the
+    /// preview names two the selection does not.
+    ///
+    /// Fails when `highlight_entries_for` stops consulting
+    /// `rect_select_preview` — which is how the preview used to be
+    /// invisible to every rebuild but the rubber-band drain's own,
+    /// so an animation tick landing mid-gesture wiped it for a
+    /// frame.
+    #[test]
+    fn test_a_live_rubber_band_preview_replaces_the_selection_highlight() {
+        let mut doc = crate::application::document::tests_common::load_test_doc();
+        doc.selection = SelectionState::Single("selected-node".to_string());
+        doc.set_rect_select_preview(vec!["covered-a".to_string(), "covered-b".to_string()]);
+        let ids: Vec<&str> = highlight_entries_for(&doc)
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["covered-a", "covered-b"],
+            "the covered set is what the user is reading"
+        );
+
+        doc.take_rect_select_preview();
+        let ids: Vec<&str> = highlight_entries_for(&doc)
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["selected-node"],
+            "and the selection comes back the instant the gesture ends"
+        );
+    }
+
+    /// The preview paints whole nodes, never a section narrowing —
+    /// `rect_select` answers in node ids and the release routes
+    /// through `SelectionState::from_ids`, which cannot produce a
+    /// `Section`. A `Some(idx)` here would tint one section of a
+    /// covered node and leave its siblings plain.
+    #[test]
+    fn test_a_rubber_band_preview_entry_never_narrows_to_a_section() {
+        let mut doc = crate::application::document::tests_common::load_test_doc();
+        doc.selection = SelectionState::Section(crate::application::document::SectionSel {
+            node_id: "selected-node".to_string(),
+            section_idx: 3,
+        });
+        assert_eq!(
+            selection_highlight_entries(&doc.selection)[0].1,
+            Some(3),
+            "precondition: the selection this replaces does narrow, or the row below \
+             proves nothing"
+        );
+        doc.set_rect_select_preview(vec!["covered-a".to_string()]);
+        assert_eq!(highlight_entries_for(&doc)[0].1, None);
     }
 
     /// A fired `OnClick` trigger forces the full tier no matter how
