@@ -174,17 +174,30 @@ pub(crate) fn skip_unmodeled_option(meta: &syn::meta::ParseNestedMeta) -> syn::R
 /// silence.
 ///
 /// **A file can also gate itself.** `#![cfg(test)]` written as an
-/// *inner* attribute makes the whole file test source, and it is the
-/// shape `src/application/macros/tests.rs`,
+/// *inner* attribute makes the whole file test source, and three
+/// files in this workspace are written that way:
+/// `src/application/macros/tests.rs`,
 /// `…/cross_dispatch/selection/tests.rs` and
-/// `crates/maptool/src/verify/test_helpers.rs` use — three files
-/// whose `mod` declarations carry no attribute at all, so
-/// [`test_gated_module_files`] does not name them either. Reading
-/// only the *item* attributes below therefore returned every line of
-/// them as shipped code, and the first scan built on this reader
-/// collected twenty-six of their `unwrap()`s as production
-/// offenders. The whole file is blanked when its own attributes gate
-/// on `test`.
+/// `crates/maptool/src/verify/test_helpers.rs`. The whole file is
+/// blanked when its own attributes gate on `test`.
+///
+/// Only two of the three need that, and saying "three" was the
+/// original claim here. `macros/tests.rs` and `selection/tests.rs`
+/// are declared by a bare `mod tests;` carrying no attribute, so
+/// neither the item walk below nor [`test_gated_module_files`] sees
+/// a gate anywhere and the inner attribute is the only one there is.
+/// `test_helpers.rs` is declared `#[cfg(test)] pub(crate) mod
+/// test_helpers;` (`crates/maptool/src/verify/mod.rs:23`), which
+/// [`test_gated_module_files`] already resolves — this reader never
+/// sees the file, and blanking it is redundant rather than
+/// load-bearing.
+///
+/// Reading only the *item* attributes therefore returned every line
+/// of the first two as shipped code, and the first scan built on
+/// this reader collected twenty-six of their `unwrap()`s as
+/// production offenders — nineteen from `macros/tests.rs` and seven
+/// from `selection/tests.rs`, none from `test_helpers.rs`, which is
+/// how the two-of-three split shows up in the numbers.
 ///
 /// Panics when `text` is not valid Rust, naming `file`: every caller
 /// is a guard test whose whole job is to notice that the source
@@ -855,13 +868,19 @@ mod tests {
 
     /// **A file is allowed to gate itself, and three in this
     /// workspace do.** `#![cfg(test)]` is an inner attribute on the
-    /// file, not on any item in it, and the `mod tests;` that names
-    /// such a file carries no attribute — so neither the item walk
-    /// nor [`test_gated_module_files`] sees a gate anywhere. Every
-    /// line of `src/application/macros/tests.rs` and its two
-    /// siblings read as shipped code until this was handled, and the
-    /// first scan built on this reader duly reported twenty-six test
-    /// `unwrap()`s as production offenders.
+    /// file, not on any item in it, so the item walk cannot see it.
+    /// For two of the three — `src/application/macros/tests.rs` and
+    /// `…/cross_dispatch/selection/tests.rs` — the `mod tests;` that
+    /// names the file carries no attribute either, so
+    /// [`test_gated_module_files`] does not name them and nothing
+    /// else would: every line of both read as shipped code until
+    /// this was handled, and the first scan built on this reader
+    /// duly reported twenty-six test `unwrap()`s (nineteen and
+    /// seven) as production offenders. The third,
+    /// `crates/maptool/src/verify/test_helpers.rs`, is declared
+    /// `#[cfg(test)] pub(crate) mod test_helpers;` and was already
+    /// excluded by the sibling mechanism — it contributed none of
+    /// the twenty-six.
     ///
     /// The peer half of the assertion is what keeps it from passing
     /// on a reader that blanks any file carrying an inner attribute.

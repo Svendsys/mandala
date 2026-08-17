@@ -283,14 +283,22 @@ impl RegionParams {
     /// # Errors
     ///
     /// `Poisoned` when an earlier writer panicked while holding the
-    /// parameter lock. The grid keeps whatever it was configured
-    /// with, so a caller that ignores the error keeps drawing
-    /// against the previous resolution rather than dying mid-frame —
-    /// which is the whole reason [`RegionError::Poisoned`] exists,
-    /// and which the read accessors on this type have always
-    /// returned. This one used to `unwrap()` instead: the same
-    /// condition that every reader here reports as a value took the
-    /// process down from the one method that writes. The `warn!` is
+    /// parameter lock. The early return skips the write, so the
+    /// stored configuration is left exactly as it was — but that is
+    /// a fact about this method, not a fallback the caller can use.
+    /// Every read accessor on this type goes through `read_inner`,
+    /// which maps the same poisoned guard to the same
+    /// [`RegionError::Poisoned`], so once the lock is poisoned the
+    /// previous resolution cannot be read back either. The test
+    /// below asserts exactly that pair: `adapt` returns `Poisoned`
+    /// and `read_current_resolution` does too.
+    ///
+    /// What the value buys, then, is not a usable stale grid. It is
+    /// the unwind not happening: an interactive path gets an error
+    /// it can degrade on (§9) instead of a panic crossing a frame.
+    /// This method used to `unwrap()` instead — the same condition
+    /// that every reader here reports as a value took the process
+    /// down from the one method that writes. The `warn!` is
     /// emitted at this site rather than left to the caller because
     /// this is the terminal site — the subsystem is allocated by
     /// `Tree::new` and not yet wired to `MutatorTree::apply_to` (see
@@ -496,6 +504,17 @@ mod tests {
         assert!(
             logged[0].contains("regions:"),
             "the warning must carry the §9 `<area>: message` prefix; got {:?}",
+            logged[0]
+        );
+        // `test_logger` records `"<LEVEL> <message>"`, and the level
+        // is the half §9 legislates separately: this is a designed,
+        // recoverable degrade, so it is `warn!` and not `error!`.
+        // Matching only on the needle and the prefix left the two
+        // macros interchangeable here, which is the one distinction
+        // this assertion exists to hold.
+        assert!(
+            logged[0].starts_with("WARN "),
+            "the degrade is a warning, not an error; got {:?}",
             logged[0]
         );
     }

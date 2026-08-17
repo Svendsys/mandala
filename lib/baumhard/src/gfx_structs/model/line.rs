@@ -393,9 +393,16 @@ impl GlyphLine {
         // 4. [######][new_item][...##]
         //                        ^discard_front(e-b)
         let split_index = begin - comp_begin_e_idx;
-        // One borrow for both halves of the split. `comp_idx` is the
-        // enumerate index the caller's component scan stopped on, so
-        // the component is in the vector by construction.
+        // One borrow for both halves of the split. `comp_idx` is in
+        // the vector by construction, but the chain is one step
+        // longer than "the caller passes the index its scan stopped
+        // on": `overriding_insert` passes `idx_insert_comp - 1`, and
+        // the only branch that sets the `split_and_adjust` flag
+        // guarding that call sets `idx_insert_comp = i + 1` on the
+        // same three lines, where `i` is the `enumerate` index of
+        // the component the scan broke out on. So the value arriving
+        // here is that `i`, and `i` indexes `self.line` because it
+        // came from iterating it.
         let comp = line.get_mut(comp_idx).expect(
             "GlyphLine invariant: split_and_resize receives the index its caller's component scan yielded",
         );
