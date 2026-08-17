@@ -124,11 +124,36 @@ pub fn vec2_area(vec: Vec2) -> f32 {
     vec.x * vec.y
 }
 
-/// AABB centre from a top-left position + size pair. O(1), no
+/// AABB center from a top-left position + size pair. O(1), no
 /// heap. Equivalent to [`crate::mindmap::model::MindNode::center_vec2`]
 /// for the case where only the geometry is in scope (anchor
 /// resolution paths, scene-builder portal-pair midpoint compute);
 /// where a `MindNode` is in scope, prefer the method.
+///
+/// **Finding the ones that got away.** Every open-coded `pos + size *
+/// 0.5` in the workspace routes through this function or through
+/// `center_vec2`, and the census that says so has to be re-run with a
+/// pattern whose operand class admits tuple indices and casts —
+/// `[a-zA-Z_.]+` matches neither `.0` (digits) nor ` as f32 `
+/// (spaces), and a sweep verified with it reported "done" while six
+/// sites stood:
+///
+/// ```text
+/// grep -rnE "\+ *[A-Za-z0-9_.]+( as f32)? *\* *0\.5" --include=*.rs src lib crates \
+///   | grep -vE "aabb_center|center_vec2|pos \+ size|pos_vec2"
+/// ```
+///
+/// What that leaves is *not* AABB centers and is not this helper's:
+/// the color picker's scalar layout (radii, ring sums, and the
+/// `preview_pos + preview_size * 0.5` the picker computes without
+/// ever naming a `Vec2`), deliberately off-center probe points, and
+/// half-extent terms inside larger anchor formulas. The other
+/// midpoint *form* — `(min + max) * 0.5` over two corners rather
+/// than a corner and an extent — is a different signature, so it does
+/// not appear here at all and this helper does not cover it
+/// (the app's `touch_gesture::midpoint`, [`crate::font::fonts`]'s
+/// `InkBounds::x_center` / `y_center`, and the `(r.min + r.max) * 0.5`
+/// probe in the canvas-hit tests).
 #[inline]
 pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
     pos + size * 0.5

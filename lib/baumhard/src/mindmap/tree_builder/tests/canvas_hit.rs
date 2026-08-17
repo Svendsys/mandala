@@ -55,6 +55,7 @@ use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::tree::Tree;
 use crate::mindmap::model::{MindMap, PortalEndpointState};
 use crate::mindmap::scene_cache::EdgeKey;
+use crate::util::geometry::aabb_center;
 
 /// `PORTAL_OUTSET_FRAC` — how far a marker sits off the border, as
 /// a fraction of its font size. Mirrored from `portal_style` so the
@@ -546,9 +547,9 @@ fn test_crossing_edge_labels_resolve_to_the_smaller_label() {
     // Both labels are centered on the crossing point, so the
     // shorter one nests inside the longer one and wins there.
     let short = &elements[1];
-    let center = Vec2::new(
-        short.position.0 + short.bounds.0 * 0.5,
-        short.position.1 + short.bounds.1 * 0.5,
+    let center = aabb_center(
+        Vec2::new(short.position.0, short.position.1),
+        Vec2::new(short.bounds.0, short.bounds.1),
     );
     let node_id = labels
         .tree

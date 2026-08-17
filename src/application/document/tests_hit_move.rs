@@ -1485,16 +1485,9 @@ fn test_hit_test_node_resize_handle_lands_on_se_corner() {
 fn test_hit_test_node_resize_handle_misses_outside_tolerance() {
     use crate::application::document::hit_test_node_resize_handle;
     use crate::application::document::tests_common::pinned_two_section_node;
-    use glam::Vec2;
 
     let (doc, id) = pinned_two_section_node();
-    let node = &doc.mindmap.nodes[&id];
-    let np = &node.position;
-    let nw = &node.size;
-    let center = Vec2::new(
-        np.x as f32 + nw.width as f32 * 0.5,
-        np.y as f32 + nw.height as f32 * 0.5,
-    );
+    let center = doc.mindmap.nodes[&id].center_vec2();
     assert!(
         hit_test_node_resize_handle(&doc.mindmap, center, &id, 4.0).is_none(),
         "center of node must not hit any handle"

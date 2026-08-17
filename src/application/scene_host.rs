@@ -913,9 +913,9 @@ pub(in crate::application) mod tests {
             .collect();
         let mut unambiguous = 0usize;
         for elem in &elements {
-            let center = Vec2::new(
-                elem.position.0 + elem.bounds.0 * 0.5,
-                elem.position.1 + elem.bounds.1 * 0.5,
+            let center = aabb_center(
+                Vec2::new(elem.position.0, elem.position.1),
+                Vec2::new(elem.bounds.0, elem.bounds.1),
             );
             let covering: Vec<_> = rects
                 .iter()
