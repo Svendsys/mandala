@@ -130,7 +130,13 @@ use glam::Vec2;
 /// in lock-step, and
 /// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
 /// is what holds them there — it reads this string as text, so no
-/// GPU is involved and §T8 is untouched.
+/// GPU is involved and §T8 is untouched. That it is *this* string
+/// `Renderer::new` compiles, rather than another const beside it, is
+/// pinned by
+/// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`:
+/// a const read by value can be orphaned, and a decoy handed to
+/// `create_shader_module` would leave both tests holding over a
+/// shader the GPU never sees.
 ///
 /// `shape_id` rides the vertex stream as a plain `f32` (written
 /// with `SHAPE_ID_* as f32`, read with `u32(round(id))`) rather
@@ -204,8 +210,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 /// [`RECT_VERTEX_ATTRIBUTES`]' formats, and
 /// `test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location`
 /// adds them up and compares. The same test ties it to
-/// [`RECT_VERTEX_FLOATS`] and to the slot count `push_rect_ndc`
-/// writes.
+/// [`RECT_VERTEX_FLOATS`] and to the slots `push_rect_ndc` writes,
+/// and pins that this constant — not a literal beside it — is the
+/// `array_stride` `Renderer::new` gives the pipeline. wgpu asks only
+/// that a stride be a multiple of four and leave room for every
+/// attribute, so an over-large one builds cleanly and reads every
+/// vertex after the first from the wrong byte.
 const RECT_VERTEX_SIZE: u64 = 36;
 
 /// The rect pipeline's vertex-attribute table: which run of bytes in
@@ -230,9 +240,14 @@ const RECT_VERTEX_SIZE: u64 = 36;
 /// A module-level `const` rather than an array literal inline in
 /// `Renderer::new` for that test's sake: nothing here is a
 /// source-level property, so the test reads it as a *value* instead
-/// of re-parsing what the compiler has already parsed. `Renderer::new`
-/// is where it is used, and the test pins that too — an inline array
-/// alongside would leave this one a decoy.
+/// of re-parsing what the compiler has already parsed. What the test
+/// does read as text is the expression `Renderer::new` writes after
+/// `attributes:`, compared whole against `&RECT_VERTEX_ATTRIBUTES`.
+/// An inline array grown back alongside, a `RECT_VERTEX_ATTRIBUTES_2`
+/// beside this one, or a `&RECT_VERTEX_ATTRIBUTES[..3]` would each
+/// leave this table a decoy the GPU never sees, and the first name in
+/// that list is why the comparison is an equality rather than a
+/// substring search.
 ///
 /// `shape_id` rides the stream as `Float32`, not `Uint32`: wgpu's
 /// WebGL2 backend doesn't support integer vertex attributes on every
