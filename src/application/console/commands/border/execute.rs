@@ -456,9 +456,29 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
 ///
 /// Returns `true` when at least one node actually changed; `false`
 /// when no node selection exists, the field/value pair fails to
-/// stage, or every selected node was already at the requested
-/// value. The Action arm uses the bool to decide whether to trigger
-/// a scene rebuild.
+/// stage, the setter refuses the edit, or every selected node was
+/// already at the requested value. The Action arm uses the bool to
+/// decide whether to trigger a scene rebuild.
+///
+/// **Every `false` that is not "already at that value" says why.**
+/// There is no scrollback on this path — the caller is a keybind,
+/// a palette press or a macro step — so a returned `false` is the
+/// whole of what the user sees, and a binding that can never work
+/// is indistinguishable from one that has nothing to do. The two
+/// kinds of `false` take different levels, per CODE_CONVENTIONS §9:
+///
+/// - **`warn!` for the permanent ones.** A `field=value` the
+///   staging parser rejects, and an edit the setter refuses, are
+///   properties of the binding and the value, not of the moment.
+///   The binding is dead until the config changes, and `warn!`
+///   survives into release, where the user who has to change it is.
+///   The parser's and the setter's own messages are carried through
+///   — they are the diagnosis, and this function used to discard
+///   them.
+/// - **`debug!` for the transient one.** "Nothing selected" is
+///   answered by selecting something. It is also the state a stray
+///   keypress lands in, so a `warn!` would flood a release build's
+///   stderr with a condition that is not a defect.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_border_field_to_selection(
     doc: &mut crate::application::document::MindMapDocument,
@@ -466,16 +486,39 @@ pub(crate) fn apply_border_field_to_selection(
     value: &str,
 ) -> bool {
     let mut edits = BorderConfigEdits::default();
-    if stage_kv(&mut edits, field, value).is_err() {
+    if let Err(why) = stage_kv(&mut edits, field, value) {
+        log::warn!(
+            "border: binding sets {}={:?}, which is not a valid border edit: {} \
+             (no scrollback on the keybind path; this binding cannot apply)",
+            field,
+            value,
+            why
+        );
         return false;
     }
     let ids = match nodes_in_selection(&doc.selection, "border") {
         Ok(ids) => ids,
-        Err(_) => return false,
+        Err(_) => {
+            log::debug!(
+                "border: {}={:?} has no node in the current selection to apply to",
+                field,
+                value
+            );
+            return false;
+        }
     };
     let mut changed = false;
     for id in &ids {
         let outcome = doc.set_node_border_config(id, edits.clone());
+        if !outcome.rejected.is_empty() {
+            log::warn!(
+                "border: node {:?} refused {}={:?}: {}",
+                id,
+                field,
+                value,
+                outcome.rejected.join("; ")
+            );
+        }
         if outcome.changed {
             changed = true;
         }

@@ -25,21 +25,34 @@
 //! Rather than serialize the suite behind a lock — which would be a
 //! standing tax on every future test — callers search the buffer for
 //! a needle they made unique, and simply do not care what else is in
-//! it. [`lines_containing`] is that search.
+//! it. [`lines_containing`](crate::util::test_logger::lines_containing)
+//! is that search.
 //!
 //! **What it costs, and the two bounds on it.** Being process-global
 //! means every record from every test in the binary is formatted and
 //! retained, and the search is linear in what has accumulated. Two
 //! things keep that finite: only `warn!` and above are recorded
-//! ([`RECORDED_LEVEL`]), and the buffer stops at [`CAPACITY`] rather
+//! (`RECORDED_LEVEL`), and the buffer stops at `CAPACITY` rather
 //! than growing or forgetting. Both failure modes this could have —
 //! a logger conflict at install time and a full buffer at search time
 //! — panic with what actually went wrong, because either one
 //! otherwise turns into "the code under test did not warn", which is
 //! a wrong answer pointing at innocent code.
 //!
-//! Native-only, like the rest of `#[cfg(test)]` support here: the
-//! browser build installs `console_log` and has no use for a buffer.
+//! Native-only: the browser build installs `console_log` and has no
+//! use for a buffer.
+//!
+//! **Not `cfg(test)`-gated**, for the reason `test_temp` and
+//! `rust_source` are not — half its callers are in `mandala`, whose
+//! test build links baumhard as an ordinary dependency and so cannot
+//! see anything gated behind baumhard's own `cfg(test)`. Until this
+//! was widened, `rust_source`'s header named exactly that gap ("a log
+//! statement whose sink the suite does not install") and mandala had
+//! to pin its `warn!`s by parsing its own source instead of watching
+//! them fire. The cost is that a shipped build carries the recorder;
+//! it is inert unless [`install`](crate::util::test_logger::install) is
+//! called, and nothing outside a
+//! test calls it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
@@ -185,7 +198,7 @@ impl log::Log for Recorder {
 /// if something ever does, this says so by name.
 ///
 /// Cost: one atomic check after the first call.
-pub(crate) fn install() {
+pub fn install() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
         if log::set_logger(&Recorder).is_ok() {
@@ -226,13 +239,13 @@ fn assert_recording(recording: bool) {
 /// deliberately does not clear it: clearing would race with those
 /// tests instead of merely coexisting with them.
 ///
-/// Only `warn!` and `error!` are recorded — see [`RECORDED_LEVEL`].
+/// Only `warn!` and `error!` are recorded — see `RECORDED_LEVEL`.
 ///
-/// **Panics if recording stopped**; see [`Buffer::matching`].
+/// **Panics if recording stopped**; see `Buffer::matching`.
 ///
 /// Cost: O(lines recorded so far) per call, under one mutex
 /// acquisition.
-pub(crate) fn lines_containing(needle: &str) -> Vec<String> {
+pub fn lines_containing(needle: &str) -> Vec<String> {
     install();
     buffer()
         .lock()
