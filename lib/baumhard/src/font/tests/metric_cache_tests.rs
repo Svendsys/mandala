@@ -54,8 +54,12 @@ fn test_glyph_advance_distinct_per_grapheme() {
 ///
 /// Measured as one glyph against three of the same glyph shaped as
 /// a single cluster rather than as two unrelated characters,
-/// because the relation then holds for any face: whatever `│`
-/// advances to, `│││` advances to three of it. Two *different*
+/// because the relation then needs no knowledge of the face:
+/// whatever `│` advances to, `│││` advances to three of it, absent
+/// a ligature over the run or pair kerning between the copies. The
+/// vendored font applies neither — the measured ratio is exactly
+/// `3`, and the assertion's 2.5–3.5 band leaves about 16% of
+/// headroom on each side. Two *different*
 /// characters would need the test to know the shipped font's
 /// metrics — `│` and `+` are the same width in a monospace fallback
 /// — which is why the body this replaced asserted only that both

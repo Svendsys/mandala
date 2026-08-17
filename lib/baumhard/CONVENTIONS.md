@@ -394,7 +394,9 @@ rationale.
   `region_params_tests`, the three camera-invariance tests in
   `camera_tests`, and `test_clone_preserves_depth_first_pre_order`
   in `arena_utils_tests`. Converting them is a §B8 two-file change
-  each and the tail of #44's item 6; naming them here is what keeps
+  each, and a judgment about what earns a criterion row rather than
+  unfinished #44 work — #44's subject was the 173 `do_*()` bodies
+  with no entry, and that set is closed. Naming them here is what keeps
   the four classes above from quietly growing a fifth that means
   "the author did not think it was worth it". A test that reaches
   for the opt-out and is none of the four is in this bucket, and

@@ -589,9 +589,10 @@ fn shape_section_in(doc: &str) -> String {
 /// it: the copy can publish the vocabulary `KNOWN_SHAPES` has while
 /// the real section below publishes anything at all.
 ///
-/// `#[should_panic]` and so no `do_*()` body or bench entry, the same
-/// carve-out `region_indexer_tests`'s two out-of-bounds tests take —
-/// a benchmark of a panicking body is not a benchmark.
+/// `#[should_panic]` and so no `do_*()` body or bench entry — §B8's
+/// class 2 (drives a panic), the same carve-out
+/// `region_indexer_tests`'s two out-of-bounds tests take: a
+/// benchmark of a panicking body is not a benchmark.
 #[test]
 #[should_panic(expected = "exactly one")]
 fn test_shape_section_rejects_a_duplicated_heading() {
