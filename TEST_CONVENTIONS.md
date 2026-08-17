@@ -295,8 +295,8 @@ re-litigate them without a strong reason.
   doc gates and `--coverage` are yours to run locally, so `./test.sh`
   stays the covenant rather than becoming a formality something else
   performs. This bullet said "No CI yet" for as long as CI had
-  existed, while §T11 four bullets down described that CI's behavior
-  in the same breath.
+  existed, while the next bullet down — §T11's first, one heading
+  away — described that same CI's behavior.
 
 ## §T11 Running the suite
 

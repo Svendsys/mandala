@@ -182,11 +182,13 @@ else
   trap 'rm -f "$TEST_LOG"' EXIT
   # `--workspace`, not a hand-written list of `-p` flags. The list
   # this replaces named three of the four members and silently
-  # dropped `mandala_derive`'s 13 tests for as long as that crate has
-  # existed — a list of members is a copy of the `[workspace]` table
-  # and copies go stale. `--coverage` above and the wasm32 gate below
-  # were already `--workspace`; this is the odd one out rejoining
-  # them.
+  # dropped every one of `mandala_derive`'s tests for as long as that
+  # crate has existed — a list of members is a copy of the
+  # `[workspace]` table and copies go stale. So did the count this
+  # comment used to give for those tests, which is why it now gives
+  # none: it said 13 where the crate runs 19. `--coverage` above
+  # and the wasm32 gate below were already `--workspace`; this is the
+  # odd one out rejoining them.
   cargo test --workspace 2>&1 | tee "$TEST_LOG"
 
   # The `|| true` is load-bearing, not defensive noise. Under
