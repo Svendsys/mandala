@@ -63,6 +63,55 @@ fn quote_console_arg(s: &str) -> String {
     escaped
 }
 
+/// What [`Action::PanCanvas`] does with the drag state it finds.
+///
+/// Pure so the arm is pinnable at `DragState` level — the arm itself
+/// takes an `InputHandlerContext`, i.e. a live wgpu device, which
+/// TEST_CONVENTIONS §T8 keeps out of the harness. Same shape, and
+/// for the same reason, as `event_mouse_click::route_middle_button`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanCanvasRoute {
+    /// Nothing is in flight that a pan would destroy — enter
+    /// `DragState::Panning` for the duration of the gesture.
+    Arm,
+    /// Another gesture owns the drag state and owes the model a
+    /// commit. Leave it exactly as it is, and do nothing else.
+    Refuse,
+}
+
+/// Route one `Action::PanCanvas` dispatch against the drag state it
+/// finds.
+///
+/// The guard belongs on the Action rather than on any one of the
+/// gestures that reach it (CODE_CONVENTIONS §3), because `PanCanvas`
+/// has three entry points and only one of them was ever guarded:
+/// `MouseGesture::MiddleClick` (routed through
+/// `event_mouse_click::route_middle_button`),
+/// `MouseGesture::LeftDrag` (which only runs from
+/// `DragState::Pending`), and **any keyboard binding or macro step
+/// naming `pan_canvas`** — `keybinds::config` declares it
+/// user-bindable, `event_keyboard` dispatches with no drag-state
+/// check, and `SourceTier::allows_action` does not gate it, so every
+/// tier reaches it. Pre-fix that third route overwrote
+/// `DragState::Throttled(..)` with `Panning` exactly the way the
+/// middle button used to: the abandoned drag's
+/// `commit_on_release_core` never ran, so the tree kept the dragged
+/// offsets until the next model rebuild snapped them back, with no
+/// undo entry to recover from. Same class as #37 item 5, one
+/// dispatch surface over.
+///
+/// `Pending` is not in the refused class and must not be: the
+/// `LeftDrag` threshold cross dispatches `PanCanvas` *from*
+/// `Pending`, so refusing there would leave the left button unable
+/// to pan at all.
+fn route_pan_canvas(drag_state: &DragState) -> PanCanvasRoute {
+    if drag_state.would_abandon_gesture() {
+        PanCanvasRoute::Refuse
+    } else {
+        PanCanvasRoute::Arm
+    }
+}
+
 /// Run an `Action` against the live application context. The body of
 /// every Document-level action lives here; handlers (`event_keyboard`,
 /// `event_mouse_click`, the macro runtime via `dispatch_macro`)
@@ -472,16 +521,24 @@ pub(in crate::application::app) fn dispatch_action(
                 (Some(_), None) => DispatchOutcome::Unhandled,
             }
         }
-        Action::PanCanvas => {
+        Action::PanCanvas => match route_pan_canvas(ctx.drag_state) {
             // Continuous gesture: enter pan mode for the duration of
             // the press. Both release paths that can end it — the
             // left button's `DragState::Panning | DragState::None`
             // arm and `route_middle_button`'s `Clear` — reset
             // `drag_state` to `None`, so this arm only needs to
             // handle the press side.
-            *ctx.drag_state = DragState::Panning;
-            DispatchOutcome::Handled
-        }
+            PanCanvasRoute::Arm => {
+                *ctx.drag_state = DragState::Panning;
+                DispatchOutcome::Handled
+            }
+            // Nothing ran, and the caller — the native macro loop
+            // reads this for `any_ran` — is told so.
+            PanCanvasRoute::Refuse => {
+                log::debug!("PanCanvas ignored (uncommitted gesture in flight); state stays put");
+                DispatchOutcome::Unhandled
+            }
+        },
         // ── Console-verb Actions ───────────────────────────────
         Action::OpenColorPicker => {
             // Mirror `color picker on`: open the standalone palette.
@@ -1109,28 +1166,125 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::application::app::throttled_interaction::moving_node::MovingNodeInteraction;
+    use crate::application::app::throttled_interaction::node_resize::NodeResizeInteraction;
+    use crate::application::app::throttled_interaction::ThrottledDrag;
+    use baumhard::mindmap::model::{Position, Size};
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
+    use std::collections::HashSet;
+
     // Most dispatch arms touch the renderer (wgpu) which is forbidden
-    // in tests per `TEST_CONVENTIONS.md §T8`. Per-arm pure helpers
-    // would be tested here; for now the whole funnel is exercised
-    // manually via `./run.sh` and through end-to-end integration on
-    // top of the keybind tests in `keybinds/tests.rs` (which exercise
-    // the resolver, not the dispatch bodies).
-    //
-    // When adding new arms whose bodies factor cleanly into a pure
-    // helper, add the helper test here.
+    // in tests per `TEST_CONVENTIONS.md §T8`. Arms whose bodies factor
+    // cleanly into a pure helper are tested through that helper —
+    // `route_pan_canvas` below is the first; the rest of the funnel is
+    // exercised manually via `./run.sh` and through end-to-end
+    // integration on top of the keybind tests in `keybinds/tests.rs`
+    // (which exercise the resolver, not the dispatch bodies).
+
+    /// A right-started fast-resize, mid-gesture: the model write and
+    /// the undo entry it owes happen only in
+    /// `commit_on_release_core`.
+    fn fast_resize_drag() -> DragState {
+        DragState::throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
+            "n0".to_string(),
+            ResizeHandleSide::SE,
+            Position { x: 0.0, y: 0.0 },
+            Size {
+                width: 100.0,
+                height: 50.0,
+            },
+            true,
+        )))
+    }
+
+    /// A left-started move-node drag, mid-gesture.
+    fn moving_node_drag() -> DragState {
+        DragState::throttled(ThrottledDrag::MovingNode(MovingNodeInteraction::new(
+            vec!["n0".to_string()],
+            false,
+            HashSet::new(),
+        )))
+    }
+
+    /// **A `pan_canvas` dispatch mid-drag must not destroy the drag.**
+    /// The middle-button route was guarded at the route in #37 item 5;
+    /// this is the same silent loss reached through the *Action*,
+    /// which every keyboard binding and every macro tier can name.
+    ///
+    /// Fails on the pre-fix arm, which wrote `DragState::Panning`
+    /// unconditionally — i.e. on `fn route_pan_canvas(_) ->
+    /// PanCanvasRoute { PanCanvasRoute::Arm }`.
     #[test]
-    fn dispatch_action_module_compiles() {
-        // Smoke test: the module's public surface is reachable.
-        // Replaced by per-arm tests in later phases.
+    fn test_pan_canvas_mid_drag_leaves_the_throttled_drag_intact() {
+        assert_eq!(
+            route_pan_canvas(&fast_resize_drag()),
+            PanCanvasRoute::Refuse,
+            "a keyboard-bound pan must not replace a right-started fast-resize: \
+             its release-commit has not run, so the model write and the undo \
+             entry go with it"
+        );
+        assert_eq!(
+            route_pan_canvas(&moving_node_drag()),
+            PanCanvasRoute::Refuse,
+            "nor any other throttled drag"
+        );
+        assert_eq!(
+            route_pan_canvas(&DragState::PendingRight {
+                start_pos: (0.0, 0.0),
+                start_canvas: glam::Vec2::ZERO,
+                hit_node: None,
+                hit_section_idx: None,
+            }),
+            PanCanvasRoute::Refuse,
+            "nor a right press whose RightClick / FastResizeStart has not fired"
+        );
+    }
+
+    /// The other half of the same guard — without these rows the fix
+    /// could be "answer `Refuse` always", which would leave the canvas
+    /// unable to pan at all.
+    ///
+    /// `Pending` is the load-bearing row: the `LeftDrag` threshold
+    /// cross dispatches `PanCanvas` *from* `Pending`, so a guard as
+    /// broad as the right-button press's `!matches!(.., None)` would
+    /// break the default left-drag pan.
+    #[test]
+    fn test_pan_canvas_still_arms_from_every_state_that_owes_the_model_nothing() {
+        for drag in [
+            DragState::None,
+            DragState::Panning,
+            DragState::SelectingRect {
+                start_canvas: glam::Vec2::ZERO,
+                current_canvas: glam::Vec2::new(10.0, 10.0),
+            },
+            DragState::Pending(Box::new(crate::application::app::PendingPress {
+                start_pos: (0.0, 0.0),
+                hit_node: None,
+                hit_section_idx: None,
+                hit_edge_handle: None,
+                hit_portal_label: None,
+                hit_edge_label: None,
+                hit_section_resize_handle: None,
+                hit_node_resize_handle: None,
+            })),
+        ] {
+            assert_eq!(
+                route_pan_canvas(&drag),
+                PanCanvasRoute::Arm,
+                "PanCanvas must still arm from {:?}",
+                std::mem::discriminant(&drag)
+            );
+        }
     }
 
     #[test]
-    fn quote_console_arg_wraps_plain_path_in_double_quotes() {
+    fn test_quote_console_arg_wraps_plain_path_in_double_quotes() {
         assert_eq!(super::quote_console_arg("/tmp/x.json"), "\"/tmp/x.json\"");
     }
 
     #[test]
-    fn quote_console_arg_handles_paths_with_spaces() {
+    fn test_quote_console_arg_handles_paths_with_spaces() {
         // Embedded whitespace is the whole reason quoting exists —
         // the tokenizer would otherwise split the path into multiple
         // positionals.
@@ -1141,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_console_arg_escapes_embedded_double_quotes() {
+    fn test_quote_console_arg_escapes_embedded_double_quotes() {
         // A literal `"` inside the path becomes `\"` so the
         // tokenizer doesn't terminate the quoted token early.
         assert_eq!(
@@ -1151,7 +1305,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_console_arg_escapes_backslashes_for_windows_paths() {
+    fn test_quote_console_arg_escapes_backslashes_for_windows_paths() {
         // Windows path: every `\` becomes `\\` so the tokenizer
         // doesn't consume the next char as part of an escape, and
         // a path ending in `\` doesn't unterminate the quote.
@@ -1162,7 +1316,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_console_arg_handles_path_ending_in_backslash() {
+    fn test_quote_console_arg_handles_path_ending_in_backslash() {
         // Pre-fix this would produce `"C:\\foo\"` — an unterminated
         // quoted token. With the backslash escape it produces
         // `"C:\\foo\\"` which round-trips cleanly.

@@ -2458,10 +2458,11 @@ writing it, at two widths:
   role to preserve — a right press arms `PendingRight` and a
   middle press dispatches `MouseGesture::MiddleClick`, and both
   are meaningful only from rest.
-- **Left** refuses on the narrower `press_would_abandon_gesture`
-  class — `PendingRight` and `Throttled(..)` — because it *is*
-  the arming press for `Pending`, and a click after a release the
-  window never delivered has to re-arm rather than do nothing.
+- **Left** refuses on the narrower
+  `DragState::would_abandon_gesture` class — `PendingRight` and
+  `Throttled(..)` — because it *is* the arming press for
+  `Pending`, and a click after a release the window never
+  delivered has to re-arm rather than do nothing.
 
 The class is the point: `Throttled(..)` owes the model a write
 and an undo entry that only `commit_on_release_core` performs,
@@ -2470,13 +2471,32 @@ next model rebuild silently snaps back — position loss with
 nothing to undo. `Panning`, `SelectingRect` and `Pending` owe the
 model nothing and are re-derived from the next sample or press.
 
-The release halves match: the right button and the middle button
-each put back a state they did not start (`other => …` and `Keep`
-respectively), so an unpaired release cannot end someone else's
-gesture. Middle-click was the exception on both halves until #37
-— it overwrote any state on press and forced `None` on release —
-and the right-button guard's comment named that overwrite as the
-posture it was rejecting.
+**The same class guards the *Action*, not only the presses.**
+`Action::PanCanvas` is the one Action that writes a drag state
+from rest, and it has three entry points, not one:
+`MouseGesture::MiddleClick`, `MouseGesture::LeftDrag` (which only
+ever runs from `Pending`), and any keyboard binding or macro step
+naming `pan_canvas` — a first-class user-bindable entry that
+`event_keyboard` dispatches with no drag-state check and that
+`SourceTier::allows_action` does not gate. So the guard sits on
+the arm (`dispatch::native::route_pan_canvas`, pure and pinned at
+`DragState` level the way `route_middle_button` is), which closes
+all three at once. `Pending` stays outside the refused class
+precisely because the `LeftDrag` threshold cross dispatches
+`PanCanvas` from it.
+
+The release halves match, and the rule is the same one: **the
+button that started a gesture is the one that finalizes it.**
+`resolve_release` commits only on the owning button and answers
+`PutBack` for every other, which both dispatchers honor by
+restoring the drag state. A stray right-click cannot end a
+left-button drag, and — since the left press started being
+refused mid-gesture — a left release cannot end a right-started
+fast-resize either; the right release, which the user still owes
+because the button is down, commits it. Middle-click was the
+exception on both halves until #37 — it overwrote any state on
+press and forced `None` on release — and the right-button guard's
+comment named that overwrite as the posture it was rejecting.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
@@ -2937,7 +2957,10 @@ dispatch site at all.
 on empty canvas" gesture (default `PanCanvas`). The threshold
 cross dispatches whatever Action the gesture resolves to — no
 `PanCanvas` special-case in the handler — and the `PanCanvas` arm
-sets `DragState::Panning` for the press duration. The per-frame
+sets `DragState::Panning` for the press duration, unless the state
+it finds owes a commit (see the guard under
+[`DragState`](#dragstate); a `pan_canvas` binding on a plain key
+is why the guard is on the arm). The per-frame
 pan delta stays inline in `event_cursor_moved.rs` because
 per-cursor-move state is legitimately not a discrete-action
 concern; the threshold frame's first delta is gated on the

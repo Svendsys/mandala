@@ -1249,17 +1249,33 @@ mod release_gate {
         );
     }
 
-    /// ...and the same fast-resize is still finalized by a left
-    /// release, which is the fourth cell of the gate.
+    /// ...and the same fast-resize is *not* finalized by a left
+    /// release, which is the fourth cell of the gate and the one
+    /// #37 turned over.
+    ///
+    /// The cell became reachable when the left press started being
+    /// refused mid-gesture (`DragState::would_abandon_gesture`):
+    /// refusing the press is what lets the right-started drag
+    /// survive to see a left release at all. Committing there ends a
+    /// resize the user is still performing with the right button
+    /// down, and writes the model at whatever the pointer had
+    /// reached — the same silent loss the right-release cell above
+    /// rejects, mirrored.
     #[test]
-    fn test_left_release_also_commits_a_right_started_drag() {
+    fn test_left_release_hands_back_a_right_started_drag() {
         let mut world = edge_world(false);
+        let before_size = node_size(&world);
         let mut drag = right_started_drag();
 
         let refresh = commit_if_resolved(MouseButton::Left, &mut drag, world.commit());
 
-        assert_eq!(refresh, Some(ReleaseRefresh::All));
-        assert_eq!(undo_depth(&world), 1);
+        assert_eq!(refresh, None, "a put-back owes the canvas no decree");
+        assert_eq!(undo_depth(&world), 0, "a put-back must push no undo entry");
+        assert_eq!(
+            node_size(&world),
+            before_size,
+            "a put-back must not resize the node"
+        );
     }
 
     /// **The gate carries the decree it is handed, it does not

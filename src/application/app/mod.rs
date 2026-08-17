@@ -767,6 +767,38 @@ impl DragState {
     fn throttled(drag: ThrottledDrag) -> Self {
         Self::Throttled(Box::new(drag))
     }
+
+    /// True when overwriting this state with a freshly-armed
+    /// gesture would abandon one that nothing else will finish.
+    ///
+    /// Two states are in the class, and both fail silently:
+    ///
+    /// - `Throttled(..)` owes the model a write plus an undo entry,
+    ///   and `commit_on_release_core` is the only place either
+    ///   happens. Drop it and the tree keeps the dragged offsets
+    ///   until the next model rebuild snaps them back. Reachable
+    ///   from a *right*-started fast-resize, which is in flight
+    ///   while the left button is still free.
+    /// - `PendingRight` holds a user-named gesture (`RightClick` /
+    ///   `FastResizeStart`) that has not fired yet.
+    ///
+    /// `Pending` / `Panning` / `SelectingRect` are deliberately
+    /// outside it: none owes the model anything, and each is
+    /// re-derived from the next press or the next cursor sample.
+    /// Refusing a left press there would strand a click after a
+    /// release the window never delivered (focus loss mid-drag)
+    /// instead of re-arming from it, which is the behavior those
+    /// three have always had.
+    ///
+    /// It lives on the enum rather than beside any one caller
+    /// because it is a property of the state, and two dispatch
+    /// surfaces read it: the left-button press in
+    /// `event_mouse_click` and the `Action::PanCanvas` arm in
+    /// `dispatch::native`, which the keyboard and every macro tier
+    /// reach as well as the middle button.
+    fn would_abandon_gesture(&self) -> bool {
+        matches!(self, Self::PendingRight { .. } | Self::Throttled(_))
+    }
 }
 
 /// Application root — owns the launch options and (on WASM only)
