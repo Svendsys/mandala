@@ -165,7 +165,7 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
     }
 
-    let doc = &mut eff.document;
+    let doc = eff.document_mut();
 
     // Multi takes a count for the "applied to N node(s)" message,
     // so it stays inline here (the bool-returning core can't

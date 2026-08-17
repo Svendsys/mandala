@@ -93,7 +93,7 @@ fn execute_body(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // arm. The verb keeps the typed pre-validation (so a bad
     // preset surfaces as `Err`, not a silent no-op the way the
     // Action arm intentionally does).
-    if apply_body_glyph_to_selection(eff.document, &name) {
+    if apply_body_glyph_to_selection(eff.document_mut(), &name) {
         ExecResult::ok_msg(format!("body glyph set to {}", name))
     } else {
         ExecResult::ok_msg(format!("body glyph already {}", name))

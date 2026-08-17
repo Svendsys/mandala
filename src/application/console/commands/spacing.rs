@@ -50,7 +50,7 @@ fn execute_spacing(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
     // Route through the mutation core — same setter, single
     // source of truth with the parametric `Action::SetSpacing` arm.
-    let changed = apply_spacing_to_selection(eff.document, v);
+    let changed = apply_spacing_to_selection(eff.document_mut(), v);
 
     // Report what was *stored*, not what was typed. `set_edge_spacing`
     // clamps to the loader's bound, so echoing the request told the
@@ -58,7 +58,7 @@ fn execute_spacing(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // then `spacing already 1e30` on a repeat, because the setter
     // correctly reported no change. Two lies from one missing
     // read-back.
-    let stored = stored_spacing(eff.document);
+    let stored = stored_spacing(eff.document());
     match (changed, stored) {
         (_, None) => ExecResult::ok_msg(format!("spacing set to {}", v)),
         (true, Some(stored)) => ExecResult::ok_msg(spacing_msg("spacing set to", v, stored)),

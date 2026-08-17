@@ -29,7 +29,7 @@ use crate::application::document::EdgeRef;
 /// selection is active so the caller can `?` and forward the
 /// error.
 pub fn require_edge_or_portal(eff: &ConsoleEffects) -> Result<EdgeRef, ExecResult> {
-    eff.document
+    eff.document()
         .selection
         .selected_edge_or_portal_edge()
         .ok_or_else(|| ExecResult::err("no edge selected"))

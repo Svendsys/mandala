@@ -3153,6 +3153,28 @@ for the frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
 characters never overflow.
 
+**A command reaches the document through two different calls,
+and which one it picks is the rebuild signal.** `ConsoleEffects`
+hands out `document()` (shared) and `document_mut()`
+(exclusive); the second raises `document_mutated`, which
+`console_input/exec.rs` reads back in
+`console_line_needs_rebuild` to decide whether the line owes a
+`scene_cache.clear()` + `rebuild_all`. The other input is the
+command's `ConsoleSideEffect`: every variant counts except
+`SetFpsDisplay`, whose overlay is screen-space and shares no
+state with the scene tree. So `help`, `fps`, `mutation list`
+and any verb that fails after only reading no longer drop the
+connection cache and re-project the whole scene for output that
+never leaves the scrollback.
+
+The signal is the *borrow*, not the write. It over-reports — a
+`border reset` that turns out to be a no-op still counts — and
+that is the safe direction, since the cost is one rebuild
+against a canvas silently disagreeing with the model. It is
+also the version a new command cannot forget: there is no way
+to write to the document except through the call that raises
+it.
+
 Console parity on WASM is the obvious next step;
 the verb implementations are already cross-platform, only the
 modal shell is native-gated.

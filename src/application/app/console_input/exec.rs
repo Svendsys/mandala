@@ -57,6 +57,7 @@ pub(in crate::application::app) fn execute_console_line(
     let cmd: &'static Command = cmd;
     let mut effects = ConsoleEffects::new(doc);
     let result = (cmd.execute)(&Args::new(&args), &mut effects);
+    let document_mutated = effects.document_mutated();
     let side_effect = effects.side_effect.take();
     let close_after = effects.close_console;
 
@@ -75,6 +76,14 @@ pub(in crate::application::app) fn execute_console_line(
         }
     }
 
+    // Decided before the pre-rebuild handler consumes the effect,
+    // because two of its arms write state the rebuild has to see —
+    // the document swap and the interaction-mode flip both land
+    // through the raw `&mut` this function holds rather than through
+    // `ConsoleEffects`, so `document_mutated` cannot know about
+    // them.
+    let needs_rebuild = console_line_needs_rebuild(document_mutated, side_effect.as_ref());
+
     // Document swap from `open` / `new` happens before
     // `rebuild_all` so the rebuild sees the new doc; the others
     // happen after rebuild_all because they transition modal
@@ -92,16 +101,23 @@ pub(in crate::application::app) fn execute_console_line(
         renderer,
     );
 
-    // Any successful command may have mutated the doc; rebuild.
-    scene_cache.clear();
-    rebuild_all(
-        doc,
-        interaction_mode,
-        mindmap_tree,
-        app_scene,
-        renderer,
-        scene_cache,
-    );
+    // Rebuild only when something the canvas draws could have
+    // moved. Pre-#37 this ran unconditionally, so `help`, `fps`,
+    // `mutation list` and every command that failed after reading
+    // the document each dropped the whole connection cache and ran
+    // a full `doc.build_tree()` + cosmic-text buffer rebuild for
+    // output that never left the scrollback.
+    if needs_rebuild {
+        scene_cache.clear();
+        rebuild_all(
+            doc,
+            interaction_mode,
+            mindmap_tree,
+            app_scene,
+            renderer,
+            scene_cache,
+        );
+    }
 
     let opened_modal = handle_post_rebuild_side_effect(
         post_rebuild,
@@ -118,6 +134,56 @@ pub(in crate::application::app) fn execute_console_line(
     if opened_modal || close_after {
         *console_state = ConsoleState::Closed;
         renderer.rebuild_console_overlay_buffers(app_scene, None);
+    }
+}
+
+/// Whether a console line's execution owes the canvas a
+/// `scene_cache.clear()` + `rebuild_all`.
+///
+/// Two independent sources, because the command surface has two
+/// ways to change what is drawn: writing the document (reported by
+/// `ConsoleEffects::document_mutated`, which is raised by the
+/// `document_mut` borrow itself so no command can forget it) and
+/// requesting a [`ConsoleSideEffect`] the dispatcher applies on the
+/// command's behalf.
+///
+/// Pure and separate from [`execute_console_line`] so the answer is
+/// pinnable per console line — the full path takes a `&mut
+/// Renderer`, which TEST_CONVENTIONS §T8 keeps out of the harness,
+/// and nothing after this decision feeds back into it.
+fn console_line_needs_rebuild(document_mutated: bool, side_effect: Option<&ConsoleSideEffect>) -> bool {
+    document_mutated || side_effect_changes_the_canvas(side_effect)
+}
+
+/// Whether a command's [`ConsoleSideEffect`] changes something the
+/// canvas draws, and so needs the rebuild even when the command
+/// never took `ConsoleEffects::document_mut`.
+///
+/// Every variant does except one. `SetFpsDisplay` is the exception
+/// for the reason [`handle_pre_rebuild_side_effect`] already gives
+/// for running it early: the FPS overlay is screen-space and shares
+/// no state with the scene tree, so `fps on` / `fps debug` /
+/// `fps off` are the one modal-ish transition the scene does not
+/// have to be re-projected for.
+///
+/// Written as an exhaustive match rather than a `matches!` so a new
+/// variant cannot inherit an answer by omission — the default for a
+/// transition nobody has thought about is "rebuild", and the
+/// compiler asks.
+fn side_effect_changes_the_canvas(side_effect: Option<&ConsoleSideEffect>) -> bool {
+    match side_effect {
+        None => false,
+        Some(ConsoleSideEffect::SetFpsDisplay(_)) => false,
+        Some(
+            ConsoleSideEffect::ReplaceDocument(_)
+            | ConsoleSideEffect::SetInteractionMode(_)
+            | ConsoleSideEffect::OpenSectionEdit { .. }
+            | ConsoleSideEffect::OpenLabelEdit(_)
+            | ConsoleSideEffect::OpenPortalTextEdit(..)
+            | ConsoleSideEffect::OpenColorPicker(_)
+            | ConsoleSideEffect::OpenColorPickerStandalone
+            | ConsoleSideEffect::CloseColorPicker,
+        ) => true,
     }
 }
 
@@ -350,5 +416,119 @@ pub(in crate::application::app) fn save_document_to_bound_path(
             log::error!("{}", e);
             push_scrollback_error(console_state, e);
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::load_test_doc;
+    use crate::application::document::SelectionState;
+
+    /// What the caller wants selected before the line runs. Several
+    /// verbs refuse to touch the document without one, so "no
+    /// selection" is not a neutral fixture — it is its own case.
+    enum Sel {
+        None,
+        SingleNode,
+    }
+
+    /// Run one console line against the testament fixture and report
+    /// the rebuild gate's answer, computed exactly as
+    /// [`execute_console_line`] computes it.
+    ///
+    /// Renderer-free: everything downstream of the gate needs a
+    /// device, and none of it feeds back into the decision.
+    fn rebuild_gate_for(line: &str, sel: Sel) -> bool {
+        let mut doc = load_test_doc();
+        if let Sel::SingleNode = sel {
+            let id = doc
+                .mindmap
+                .nodes
+                .keys()
+                .min()
+                .cloned()
+                .expect("the testament fixture has nodes");
+            doc.selection = SelectionState::Single(id);
+        }
+        let (cmd, tokens) = match parse(line) {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            ParseResult::Empty => panic!("fixture line {line:?} must parse; got Empty"),
+            ParseResult::Unknown(head) => {
+                panic!("fixture line {line:?} must parse; got Unknown({head})")
+            }
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        let _ = (cmd.execute)(&Args::new(&tokens), &mut eff);
+        console_line_needs_rebuild(eff.document_mutated(), eff.side_effect.as_ref())
+    }
+
+    /// #37 item 3's acceptance criterion, plus the three neighbors
+    /// the issue names beside it. None of these four lines writes
+    /// anything the canvas draws: `help` and `mutation list` render
+    /// scrollback text out of a document they only read, `fps`
+    /// toggles a screen-space overlay that shares no state with the
+    /// scene tree, and `border show` with no selection fails before
+    /// it reaches a setter.
+    ///
+    /// Pre-#37 every one of them dropped the whole
+    /// `SceneConnectionCache` and ran a full `doc.build_tree()` plus
+    /// a cosmic-text buffer rebuild, because the clear + rebuild sat
+    /// unconditionally after the command.
+    ///
+    /// Fails on any of these lines the moment the gate stops reading
+    /// `document_mutated` — the pre-fix shape is `true` for every
+    /// input.
+    #[test]
+    fn test_a_console_line_that_only_reads_the_document_owes_no_rebuild() {
+        for line in ["help", "mutation list", "fps on", "border show"] {
+            assert!(
+                !rebuild_gate_for(line, Sel::None),
+                "`{line}` writes nothing the canvas draws, so it must not clear the scene cache"
+            );
+        }
+    }
+
+    /// The control that keeps the row above from being "answer
+    /// `false` always" — one line per source the gate reads.
+    ///
+    /// `node fit` writes through `ConsoleEffects::document_mut` and
+    /// nothing else; `mode default` never touches the document at
+    /// all and instead hands back
+    /// `ConsoleSideEffect::SetInteractionMode`, which the dispatcher
+    /// applies through its own `&mut` and which the mode-status
+    /// overlay and the resize-handle trees both read. Drop either
+    /// source from the gate and exactly one of these two rows goes
+    /// red.
+    #[test]
+    fn test_a_console_line_that_changes_the_canvas_still_owes_a_rebuild() {
+        assert!(
+            rebuild_gate_for("node fit", Sel::SingleNode),
+            "a document write must still clear the cache and rebuild"
+        );
+        assert!(
+            rebuild_gate_for("mode default", Sel::None),
+            "an interaction-mode flip changes the mode overlay and the handle trees"
+        );
+    }
+
+    /// `fps` is the one side effect the gate lets through without a
+    /// rebuild, so it is the one worth stating on its own: the
+    /// overlay is screen-space, and `handle_pre_rebuild_side_effect`
+    /// already runs it before the rebuild for that reason.
+    ///
+    /// Fails if `side_effect_changes_the_canvas` is widened to "any
+    /// side effect", which is the obvious over-cautious version of
+    /// this gate.
+    #[test]
+    fn test_the_fps_overlay_toggle_is_the_one_side_effect_that_needs_no_rebuild() {
+        assert!(!side_effect_changes_the_canvas(Some(
+            &ConsoleSideEffect::SetFpsDisplay(crate::application::common::FpsDisplayMode::Snapshot)
+        )));
+        assert!(side_effect_changes_the_canvas(Some(
+            &ConsoleSideEffect::CloseColorPicker
+        )));
+        assert!(!side_effect_changes_the_canvas(None));
     }
 }

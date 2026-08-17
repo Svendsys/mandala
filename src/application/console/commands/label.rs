@@ -77,7 +77,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             // selections — the console effect fields are
             // mutually exclusive (only one can be Some per
             // command execution).
-            match &eff.document.selection {
+            match &eff.document().selection {
                 SelectionState::Edge(e) => {
                     eff.side_effect = Some(super::super::ConsoleSideEffect::OpenLabelEdit(e.clone()));
                     eff.close_console = true;
@@ -94,9 +94,9 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 _ => return ExecResult::err("no edge selected"),
             }
         }
-        Some("clear") => match &eff.document.selection {
+        Some("clear") => match eff.document().selection.clone() {
             SelectionState::Edge(e) => {
-                let changed = eff.document.set_edge_label(&e.clone(), None);
+                let changed = eff.document_mut().set_edge_label(&e, None);
                 return if changed {
                     ExecResult::ok_msg("label cleared")
                 } else {
@@ -106,7 +106,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             SelectionState::PortalLabel(s) => {
                 let er = s.edge_ref();
                 let ep = s.endpoint_node_id.clone();
-                let changed = eff.document.set_portal_label_text(&er, &ep, None);
+                let changed = eff.document_mut().set_portal_label_text(&er, &ep, None);
                 return if changed {
                     ExecResult::ok_msg("portal label text cleared")
                 } else {
@@ -147,7 +147,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let mut any_applied = false;
 
     if !trait_kvs.is_empty() {
-        let report = apply_kvs(eff.document, &trait_kvs, |view, key, value| match key {
+        let report = apply_kvs(eff.document_mut(), &trait_kvs, |view, key, value| match key {
             "text" => Some(view.set_label(Some(value.to_string()))),
             _ => None,
         });
@@ -176,7 +176,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             endpoint_node_id: String,
         },
     }
-    let target: Option<TargetKind> = match &eff.document.selection {
+    let target: Option<TargetKind> = match &eff.document().selection {
         SelectionState::Edge(er) => Some(TargetKind::LineEdge(er.clone())),
         SelectionState::EdgeLabel(s) => Some(TargetKind::LineEdge(s.edge_ref.clone())),
         SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => Some(TargetKind::PortalEndpoint {
@@ -198,7 +198,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 // Route through the mutation core — same setter
                 // path the parametric `Action::SetEdgeLabelPosition`
                 // arm uses.
-                let changed = apply_label_position_to_selection(eff.document, &value);
+                let changed = apply_label_position_to_selection(eff.document_mut(), &value);
                 any_applied |= changed;
                 if !changed {
                     messages.push(format!("position already {}", value));
@@ -229,7 +229,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     if pretty_inequal(t, clamped) {
                         messages.push(format!("position_t {} clamped to {}", value, clamped));
                     }
-                    let changed = eff.document.set_edge_label_position(er, t);
+                    let changed = eff.document_mut().set_edge_label_position(er, t);
                     any_applied |= changed;
                     if !changed {
                         messages.push(format!("position_t already ≈ {:.4}", clamped));
@@ -281,7 +281,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         };
         match target.as_ref() {
             Some(TargetKind::LineEdge(er)) => {
-                let changed = eff.document.set_edge_label_perpendicular_offset(er, offset);
+                let changed = eff.document_mut().set_edge_label_perpendicular_offset(er, offset);
                 any_applied |= changed;
                 if !changed {
                     messages.push("perpendicular already applied".into());
@@ -291,9 +291,11 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 edge_ref,
                 endpoint_node_id,
             }) => {
-                let changed =
-                    eff.document
-                        .set_portal_label_perpendicular_offset(edge_ref, endpoint_node_id, offset);
+                let changed = eff.document_mut().set_portal_label_perpendicular_offset(
+                    edge_ref,
+                    endpoint_node_id,
+                    offset,
+                );
                 any_applied |= changed;
                 if !changed {
                     messages.push("perpendicular already applied".into());

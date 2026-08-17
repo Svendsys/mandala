@@ -121,7 +121,7 @@ fn execute_anchor(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // Route through the mutation core — same setter path the
         // parametric `Action::SetEdgeAnchor` uses. The verb keeps
         // the per-kv tally so each side reports its own outcome.
-        let changed = apply_anchor_slot_to_selection(eff.document, is_from, val);
+        let changed = apply_anchor_slot_to_selection(eff.document_mut(), is_from, val);
         tally.note(changed, || format!("{} already {}", k, v));
     }
     tally.finalize("anchor")

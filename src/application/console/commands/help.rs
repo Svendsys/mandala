@@ -70,7 +70,7 @@ fn complete_help(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 }
 
 fn execute_help(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let ctx = ConsoleContext::from_document(eff.document);
+    let ctx = ConsoleContext::from_document(eff.document());
     match args.positional(0) {
         // `all` is the one argument that is not a command name, and
         // it was the one matched exactly while `command_by_name`

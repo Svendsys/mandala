@@ -282,7 +282,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 _ => return ExecResult::err("usage: color picker on | color picker off"),
             }
         }
-        match picker_target_for(&verb_lc, &eff.document.selection) {
+        match picker_target_for(&verb_lc, &eff.document().selection) {
             PickerTargetOutcome::Open(target) => {
                 eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPicker(target));
                 eff.close_console = true;
@@ -339,10 +339,10 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 
     if let Some(idx) = section_target {
-        return apply_section_colors(eff.document, idx, range_target, &color_kvs);
+        return apply_section_colors(eff.document_mut(), idx, range_target, &color_kvs);
     }
 
-    let report = apply_kvs(eff.document, &color_kvs, stage_color_axis);
+    let report = apply_kvs(eff.document_mut(), &color_kvs, stage_color_axis);
 
     finalize_report(report, "color")
 }

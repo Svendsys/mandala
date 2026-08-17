@@ -40,7 +40,7 @@ fn complete_save(_state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
 fn execute_save(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let target_path: String = match args.positional(0) {
         Some(p) => p.to_string(),
-        None => match &eff.document.file_path {
+        None => match &eff.document().file_path {
             Some(p) => p.clone(),
             None => {
                 return ExecResult::err("no file path bound; use `save <path>` to choose one");
@@ -48,10 +48,10 @@ fn execute_save(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         },
     };
 
-    match loader::save_to_file(Path::new(&target_path), &eff.document.mindmap) {
+    match loader::save_to_file(Path::new(&target_path), &eff.document().mindmap) {
         Ok(()) => {
-            eff.document.file_path = Some(target_path.clone());
-            eff.document.dirty = false;
+            eff.document_mut().file_path = Some(target_path.clone());
+            eff.document_mut().dirty = false;
             ExecResult::ok_msg(format!("saved to {}", target_path))
         }
         Err(e) => ExecResult::err(e),

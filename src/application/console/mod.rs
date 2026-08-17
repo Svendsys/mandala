@@ -139,9 +139,31 @@ impl std::fmt::Debug for ConsoleSideEffect {
 /// Mutable handles handed to `execute`. The dispatcher reads
 /// [`Self::side_effect`] and [`Self::close_console`] after the
 /// command returns; everything else is a direct
-/// `MindMapDocument` mutation through [`Self::document`].
+/// `MindMapDocument` mutation through [`Self::document_mut`].
+///
+/// **Reading and writing the document are different calls on
+/// purpose.** The document is reached through
+/// [`Self::document`] (shared) or [`Self::document_mut`]
+/// (exclusive), and taking the exclusive one raises a flag the
+/// dispatcher reads back through [`Self::document_mutated`]. That
+/// flag is what gates the post-command `scene_cache.clear()` +
+/// `rebuild_all`: `help`, `fps` and `mutation list` never take a
+/// `&mut`, so they no longer pay for a rebuild of a document they
+/// only read.
+///
+/// The signal is deliberately **the borrow, not the write**.
+/// Marking on `&mut` over-reports — a `border reset` that turns out
+/// to be a no-op still counts — and that is the safe direction: the
+/// cost of over-reporting is one rebuild the user would have paid
+/// for anyway, while the cost of under-reporting is a canvas that
+/// silently disagrees with the model. It is also the only version a
+/// new command cannot forget, because there is no way to write to
+/// the document without going through the call that raises it.
 pub struct ConsoleEffects<'a> {
-    pub document: &'a mut MindMapDocument,
+    document: &'a mut MindMapDocument,
+    /// Set by [`Self::document_mut`]. See the type's doc comment for
+    /// why the borrow rather than the write is the signal.
+    document_mutated: bool,
     /// Out-of-band transition / state write the dispatcher should
     /// perform after the command. Mutually exclusive — at most
     /// one effect per command.
@@ -156,9 +178,27 @@ impl<'a> ConsoleEffects<'a> {
     pub fn new(document: &'a mut MindMapDocument) -> Self {
         Self {
             document,
+            document_mutated: false,
             side_effect: None,
             close_console: false,
         }
+    }
+
+    /// Read the document. Leaves [`Self::document_mutated`] alone.
+    pub fn document(&self) -> &MindMapDocument {
+        self.document
+    }
+
+    /// Take the document exclusively, marking the command as one
+    /// that may have changed what is drawn.
+    pub fn document_mut(&mut self) -> &mut MindMapDocument {
+        self.document_mutated = true;
+        self.document
+    }
+
+    /// Whether the command took [`Self::document_mut`].
+    pub fn document_mutated(&self) -> bool {
+        self.document_mutated
     }
 }
 

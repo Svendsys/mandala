@@ -36,7 +36,7 @@ fn execute_open(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Some(p) => p.to_string(),
         None => return ExecResult::err("usage: open <path>"),
     };
-    if eff.document.dirty {
+    if eff.document().dirty {
         return ExecResult::err("unsaved changes; save before opening another map");
     }
     match MindMapDocument::load(&path) {

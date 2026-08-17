@@ -115,7 +115,7 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 }
                 // Route through the mutation core — same setter
                 // path the parametric `Action::SetEdgeType` arm uses.
-                let changed = apply_edge_type_to_selection(eff.document, &v);
+                let changed = apply_edge_type_to_selection(eff.document_mut(), &v);
                 tally.note(changed, || format!("edge already of type {}", v));
             }
             "display_mode" => {
@@ -123,12 +123,12 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     tally.note_error(format!("display_mode '{}' must be line or portal", v));
                     continue;
                 }
-                let changed = apply_edge_display_mode_to_selection(eff.document, &v);
+                let changed = apply_edge_display_mode_to_selection(eff.document_mut(), &v);
                 tally.note(changed, || format!("edge already rendering as {}", v));
             }
             "reset" => match v.as_str() {
                 kind @ ("straight" | "curve" | "style" | "position") => {
-                    let changed = apply_edge_reset_to_selection(eff.document, kind);
+                    let changed = apply_edge_reset_to_selection(eff.document_mut(), kind);
                     let already_msg: &str = match kind {
                         "straight" => "connection already straight",
                         "curve" => "connection already curved",
