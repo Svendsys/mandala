@@ -39,6 +39,12 @@
 // rather than assumed: with an `o.unwrap()` planted below,
 // `cargo clippy --workspace --all-targets` reported nothing against
 // this file until the attribute landed.
+//
+// The `cfg_attr` twin below cannot fire here — cargo never builds a
+// build script under `cfg(test)`, as the module docs above already
+// say. It is carried anyway so every root spells the pair the same
+// way, and a reader comparing roots is not left wondering which
+// omission was deliberate.
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
