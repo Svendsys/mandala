@@ -851,6 +851,70 @@ mod tests {
     use crate::application::document::{GraphemeRange, SectionSel, SectionSpan, SelectionState};
     use crate::application::platform::window::CursorIcon;
     use baumhard::mindmap::tree_builder::ResizeHandleSide;
+    use baumhard::util::rust_source::{braced_block_after, production_code, statements};
+
+    /// This module's own path, for the pin that reads it.
+    const THIS_FILE: &str = "src/application/app/event_cursor_moved.rs";
+
+    /// Both mouse threshold-crossing arms compare against
+    /// `super::POINTER_DRAG_THRESHOLD_SQ_PX` **by name**.
+    ///
+    /// A source-level pin, because no runtime assertion in this crate
+    /// can tell this file reading the shared constant from this file
+    /// carrying its own `25.0`: the arms live inside
+    /// `handle_cursor_moved`, which takes a `&Window` and an
+    /// `InputHandlerContext` and so is not callable from a test
+    /// (`TEST_CONVENTIONS.md` §T9 — the same reason the startup pins
+    /// read source). The constant's *value* is checked at runtime; what
+    /// only the source shows is which number this file compares against.
+    ///
+    /// This is the half `touch_gesture`'s
+    /// `test_pointer_drag_threshold_is_shared_by_touch_and_mouse`
+    /// cannot see. That test drives a production
+    /// `TouchGestureRecognizer` against
+    /// `POINTER_DRAG_THRESHOLD_SQ_PX`, which pins the *touch* side to
+    /// the shared number — but its "mouse side" is that same constant,
+    /// so it is two derivations from one source. Measured: with `25.0`
+    /// re-inlined at both arms below, the `mandala` suite reports
+    /// `2042 passed; 1 failed`, and the one failure is this test. The
+    /// pair is the parity claim; neither half is on its own.
+    ///
+    /// The input that makes this one fail is exactly that re-inlining:
+    /// `sed -i 's/super::POINTER_DRAG_THRESHOLD_SQ_PX/25.0/g'` over
+    /// this file leaves both arms arithmetically identical and turns
+    /// this test red on the first arm it reaches.
+    ///
+    /// Scoped through [`production_code`] and [`braced_block_after`],
+    /// so neither the comment naming the constant at the `PendingRight`
+    /// arm nor this test's own body can satisfy it — only a comparison
+    /// inside `handle_cursor_moved` can.
+    #[test]
+    fn test_the_mouse_drag_arms_name_the_shared_pointer_threshold() {
+        let code = production_code(THIS_FILE);
+        let body = braced_block_after(&code, "fn handle_cursor_moved(")
+            .unwrap_or_else(|| panic!("{THIS_FILE} must still declare `handle_cursor_moved`"));
+
+        // Whitespace-flattened, so a rustfmt reflow across lines does
+        // not read as a missing comparison.
+        let compares: Vec<String> = statements(body)
+            .into_iter()
+            .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|s| s.contains("dist_x * dist_x"))
+            .collect();
+        assert_eq!(
+            compares.len(),
+            2,
+            "expected exactly the left-button `Pending` and right-button `PendingRight` \
+             threshold crossings; found {compares:?}"
+        );
+        for compare in compares {
+            assert!(
+                compare.contains("super::POINTER_DRAG_THRESHOLD_SQ_PX"),
+                "a mouse drag threshold must be the shared constant, not a re-inlined \
+                 literal: {compare}"
+            );
+        }
+    }
 
     /// The `LeftDrag`-on-empty arm dispatches whatever Action the
     /// user bound, then emits the threshold frame's pan delta only

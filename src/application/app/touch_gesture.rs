@@ -79,10 +79,12 @@ use web_time::Instant;
 pub const LONG_PRESS_MS: u64 = 350;
 
 /// What the recogniser's `ingest` / `tick` returns when a
-/// gesture is identified. Cursor pos is in logical pixels (the
-/// same coordinate space `WindowEvent::CursorMoved` reports), so
-/// the runtime can move `ctx.cursor_pos` to this point before
-/// dispatching the bound Action.
+/// gesture is identified. Cursor pos comes back in whatever space
+/// it went in — physical pixels, the same space
+/// `WindowEvent::CursorMoved` reports and the same space
+/// `ctx.cursor_pos` holds — so the runtime can move
+/// `ctx.cursor_pos` to this point before dispatching the bound
+/// Action.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RecognizedGesture {
     /// One finger held in place for [`LONG_PRESS_MS`]ms with
@@ -265,8 +267,13 @@ impl TouchGestureRecognizer {
 
     /// Drive a touch event through the state machine.
     /// `id` is the finger id (winit's `Touch.id`); `pos` is in
-    /// logical pixels (winit reports physical, the runtime
-    /// converts via the scale factor before calling here).
+    /// **physical** pixels — `dispatch_touch_event` passes
+    /// `touch.location`, a `PhysicalPosition<f64>`, straight
+    /// through. (This used to claim logical, "the runtime converts
+    /// via the scale factor before calling here"; no such
+    /// conversion exists, on either target. See
+    /// [`POINTER_DRAG_THRESHOLD_PX`](super::POINTER_DRAG_THRESHOLD_PX)
+    /// for what that costs and what closing it would take.)
     /// Returns `Some(gesture)` when the event triggered a
     /// recognition (e.g. a `Moved` on the second finger that
     /// crosses the centroid-movement threshold). The runtime
@@ -687,20 +694,27 @@ mod tests {
             .expect("LongPress despite untracked Moved");
         assert_eq!(g, RecognizedGesture::LongPress { pos: (100.0, 100.0) });
     }
-    /// A finger and a mouse promote to a drag after exactly the
-    /// same travel. The reference distance is read back out of
-    /// [`POINTER_DRAG_THRESHOLD_SQ_PX`] — the number the mouse arms
-    /// in `event_cursor_moved.rs` actually compare against — and
-    /// driven through a *production* [`TouchGestureRecognizer`], so
-    /// the assertion spans both sides of the constant rather than
-    /// restating it.
+    /// The **touch** side of the one-threshold-for-every-pointer
+    /// claim: a finger promotes to a drag after exactly the travel
+    /// [`POINTER_DRAG_THRESHOLD_SQ_PX`] allows. The reference distance
+    /// is read back out of that constant and driven through a
+    /// *production* [`TouchGestureRecognizer`], so the assertion spans
+    /// the recognizer rather than restating the number.
     ///
     /// The input that makes it fail is the shape this replaced: a
     /// touch-local `MOVE_THRESHOLD_PX = 4.0`. A 4.99px centroid
     /// step is inside the mouse's budget and outside that one, so
-    /// the first assertion fires. Re-inlining `25.0` on the mouse
-    /// side and leaving the linear constant at 5.0 fails the same
-    /// way from the other direction.
+    /// the first assertion fires.
+    ///
+    /// **What it does not catch**, stated because the claim it used to
+    /// carry was false: re-inlining `25.0` in `event_cursor_moved.rs`
+    /// leaves this test green. Its "mouse side" is the same constant
+    /// the recognizer reads, so the two ends of the comparison are two
+    /// derivations from one source — planting that literal leaves the
+    /// whole `mandala` suite green but for the one test written for it,
+    /// `event_cursor_moved::tests::test_the_mouse_drag_arms_name_the_shared_pointer_threshold`,
+    /// which reads the mouse arms out of the source. That pin and this
+    /// test are the parity claim together.
     #[test]
     fn test_pointer_drag_threshold_is_shared_by_touch_and_mouse() {
         let budget_px = POINTER_DRAG_THRESHOLD_SQ_PX.sqrt();

@@ -2914,11 +2914,25 @@ The remainder are deferred here:
       LONG_PRESS_MS)` on native or `setTimeout` on WASM.
 - [ ] **Touch coordinate-space drift** (touch deep-dive HIGH):
       `winit::Touch.location` is `PhysicalPosition<f64>` but
-      `POINTER_DRAG_THRESHOLD_PX` is doc-claimed as logical pixels.
+      `POINTER_DRAG_THRESHOLD_PX` was doc-claimed as logical pixels.
       On a 2x retina device the threshold is effectively ~2
       logical px; on iPhone ~1.3 logical px. Either divide by
       `window.scale_factor()` before ingest or rename the
       constant + fix docs.
+      **Half closed** (#46 review follow-up): the *doc* half is
+      done — the constant, `keybinds/bind.rs` and the touch module
+      now all say physical, and the constant's doc names the two
+      call sites (`handle_cursor_moved`'s `cursor_pos` store and
+      `dispatch_touch_event`'s `touch.location`) that feed raw
+      device coordinates in, plus the fact that no `scale_factor`
+      call exists anywhere under `src/application`. The item stays
+      open for the half that matters to a user: the budget is still
+      display-dependent, so the same gesture costs half the finger
+      travel on a 2x screen. Closing it is the `scale_factor`
+      division at both readers, which changes behavior on every
+      HiDPI machine and wants its own change. The mouse side is
+      equally affected, so the fix is per-pointer-path, not
+      touch-only.
 - [ ] **Touch clock-skew vulnerability** (touch deep-dive HIGH):
       `tick()`'s `now.duration_since(track.started_at)` panics or
       saturates if `now < started_at`. `web_time::Instant` on

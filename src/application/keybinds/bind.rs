@@ -95,7 +95,7 @@ pub enum MouseGesture {
     /// the touch peer of the keyboard's `r` for entering Resize
     /// mode on the selected target. The "no significant movement"
     /// half is the cancel rule: any drag past
-    /// `POINTER_DRAG_THRESHOLD_PX` (5 logical pixels — the same
+    /// `POINTER_DRAG_THRESHOLD_PX` (5 physical pixels — the same
     /// budget a mouse press gets before it promotes to a drag)
     /// before the timer fires aborts the long-press candidate.
     #[strum(serialize = "longpress")]
