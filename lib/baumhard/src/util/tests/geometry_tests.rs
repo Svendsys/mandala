@@ -226,13 +226,30 @@ fn test_aabb_contains_includes_every_boundary() {
 /// or bottom edge has to hit the node rather than fall through to
 /// whatever is beneath it.
 ///
-/// The input that makes this fail is a half-open `<` on either
+/// The input this test is written for is a half-open `<` on either
 /// upper bound — the shape a reader reaching for "width" instead of
 /// "max" writes — which drops the right and bottom edges while
 /// leaving the left and top ones working, so all four corners are
-/// checked rather than one. The degenerate box is the same claim at
-/// zero size: it must contain its single point, which a half-open
-/// test says is empty.
+/// checked rather than one. It fires on a corner. The degenerate box
+/// is the same claim at zero size: it must contain its single point,
+/// which a half-open test says is empty.
+///
+/// It also catches both **transposed** compares, and neither of them
+/// on a corner — worth writing down, because the pair of tests was
+/// shipped claiming otherwise. Planted and measured
+/// (`cargo test -p baumhard --lib aabb_contains`):
+///
+/// | planted body | fires here | rejection test |
+/// |---|---|---|
+/// | `<` on both uppers | `corner (7.0, 11.0) is inside a closed box` | green |
+/// | `point.y <= max.x` | `interior` — the *first* assertion | green |
+/// | `point.x <= max.y` | `a zero-size box contains its own point` | red too |
+/// | drop the two `y` clauses | green | red |
+///
+/// The `y <= max.x` row is why the interior assertion is not
+/// decoration: with `min = (-3, 5)`, `max = (7, 11)` the interior
+/// point `(2, 8)` has `y = 8 > max.x = 7`, so a box that looks
+/// entirely ordinary already rejects its own middle.
 pub fn do_aabb_contains_includes_every_boundary() {
     let min = Vec2::new(-3.0, 5.0);
     let max = Vec2::new(7.0, 11.0);
@@ -271,11 +288,18 @@ fn test_aabb_contains_rejects_on_each_axis_independently() {
 /// `y` clauses `(2.0, 4.999)` and `(2.0, 11.001)` both come back
 /// inside, and without the `x` clauses `(-3.001, 8.0)` does.
 ///
-/// A *transposed* compare — `point.y` against `max.x` — is not this
-/// test's to catch, and could not be: every assertion here is a
-/// rejection, and a transposition only makes the predicate
-/// stricter. `test_aabb_contains_includes_every_boundary` is where
-/// it turns red, on the corners.
+/// One of the two **transposed** compares turns this test red as
+/// well, and the reasoning that said neither could was wrong twice.
+/// A transposition does not "only make the predicate stricter": with
+/// `max = (7, 11)`, swapping the x upper bound to `point.x <= max.y`
+/// *loosens* x from 7 to 11, and `right of max.x` — the assertion at
+/// `(7.001, 8.0)` — is what catches it, a rejection test catching a
+/// too-permissive predicate exactly as it should. The other
+/// transposition, `point.y <= max.x`, does tighten (11 down to 7)
+/// and leaves every assertion here green;
+/// `test_aabb_contains_includes_every_boundary` catches that one, at
+/// its *interior* assertion rather than at a corner. Both rows are
+/// measured; the table is on that test.
 ///
 /// The `max < min` case is the last direction: a box whose bounds
 /// are inverted contains nothing, which the closed comparisons give

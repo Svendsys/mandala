@@ -36,6 +36,7 @@ use crate::mindmap::model::{
 use crate::mindmap::portal_geometry::{border_outward_normal, border_point_at, default_border_t};
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::util::color::resolve_var;
+use crate::util::geometry::aabb_center;
 use crate::util::grapheme_chad::count_grapheme_clusters;
 
 /// Default portal marker font size when no `glyph_connection`
@@ -386,10 +387,7 @@ pub(crate) fn layout_portal_text(
     // 50pt badge still sits at a consistent distance from the badge.
     let padding = icon_font_size_pt * PORTAL_TEXT_PADDING_FRAC;
     // Icon center as the anchor for text placement.
-    let icon_center = Vec2::new(
-        icon.top_left.x + icon.bounds.x * 0.5,
-        icon.top_left.y + icon.bounds.y * 0.5,
-    );
+    let icon_center = aabb_center(icon.top_left, icon.bounds);
     // Distance along the outward normal needed to keep the text
     // AABB entirely outside the icon AABB. Both AABBs are world-
     // axis-aligned; their half-extent along an arbitrary normal is

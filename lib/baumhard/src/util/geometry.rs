@@ -152,10 +152,34 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// `max` below `min` on either axis contains nothing, which is the
 /// answer a degenerate box should give and needs no separate guard.
 ///
-/// Cost: four comparisons, O(1), no heap. Carries no `#[inline]`:
-/// it is a leaf of four compares in the same crate as its hot
-/// caller, so nothing a benchmark here could resolve turns on the
-/// attribute (§B7).
+/// **`NaN` anywhere means "contains nothing"**, for the same reason
+/// and with no guard either: every comparison is `>=` / `<=`, and
+/// both are false against `NaN`. That is a deliberate difference
+/// from the four-way *disjunction* this replaced at
+/// [`crate::gfx_structs::tree_walker`]'s BVH prune, which spelled
+/// the same question as `x < min.x || x > max.x || …` and so
+/// answered "outside is false, descend" for a `NaN` box — walking a
+/// subtree whose bounds are not a box. No reachable `NaN` was found
+/// on the way in (`serde_json` rejects the literals,
+/// `renderable_section` screens non-finite section geometry,
+/// mutation payloads are finiteness-screened, and
+/// `clamp_canvas_coord` maps `NaN` to 0.0), so this is not a bug
+/// fixed but an answer chosen: a box with a `NaN` bound contains
+/// nothing, and the prune drops it.
+///
+/// Cost: four comparisons, O(1), no heap. Carries no `#[inline]`,
+/// and the honest reason is §B7's rather than an absence of effect:
+/// a *new* `#[inline]` needs a benchmark that resolves it, and
+/// `AGENTS.md` forbids an agent from running one, so omission is the
+/// only compliant outcome. There would be something to resolve —
+/// this is `pub` with a cross-crate caller (`mandala`'s
+/// `document::hit_test::point_in_node_aabb`) and the workspace
+/// release profile keeps `codegen-units = 16` with thin-local LTO,
+/// which by the root `Cargo.toml`'s own words leaves cross-crate
+/// inlining on the table. The stakes are small — the genuinely hot
+/// caller, `bvh_find`, is in-crate, and the cross-crate one runs per
+/// pointer event rather than per glyph — but "small" is a guess and
+/// the rule is not.
 pub fn aabb_contains(point: Vec2, min: Vec2, max: Vec2) -> bool {
     point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y
 }

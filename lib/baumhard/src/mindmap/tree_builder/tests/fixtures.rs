@@ -107,7 +107,7 @@ pub(super) fn area_rect(area: &crate::gfx_structs::area::GlyphArea) -> (glam::Ve
 /// "click right on this thing" probe.
 pub(super) fn area_center(area: &crate::gfx_structs::area::GlyphArea) -> glam::Vec2 {
     let (pos, extent) = area_rect(area);
-    pos + extent * 0.5
+    crate::util::geometry::aabb_center(pos, extent)
 }
 
 /// The `(icon, text)` `GlyphArea` pair under endpoint `endpoint_idx`

@@ -595,6 +595,7 @@ pub(in crate::application) mod tests {
     use baumhard::font::fonts;
     use baumhard::gfx_structs::area::GlyphArea;
     use baumhard::mindmap::tree_builder::PortalPart;
+    use baumhard::util::geometry::aabb_center;
 
     // ── canvas-role hit-testing ───────────────────────────────────
 
@@ -816,7 +817,7 @@ pub(in crate::application) mod tests {
                         continue;
                     }
                     if let Some(hit) = app.portal_hit_index.resolve(tree, leaf) {
-                        out.push((pos + extent * 0.5, hit));
+                        out.push((aabb_center(pos, extent), hit));
                     }
                 }
             }

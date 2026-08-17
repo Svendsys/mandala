@@ -10,7 +10,7 @@ use super::*;
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
 use baumhard::mindmap::custom_mutation::{CustomMutation as CM, TargetScope as TS};
 use baumhard::mindmap::tree_builder::INACTIVE_NODE_ALPHA_MULTIPLIER;
-use baumhard::util::geometry::almost_equal_f64;
+use baumhard::util::geometry::{aabb_center, almost_equal_f64};
 use glam::Vec2;
 
 #[test]
@@ -1169,7 +1169,7 @@ fn test_hit_test_ellipse_center_hits() {
     let mut tree = load_test_tree();
     set_node_shape_ellipse(&mut tree, "0");
     let (pos, bounds) = node_bounds(&tree, "0");
-    let center = pos + bounds * 0.5;
+    let center = aabb_center(pos, bounds);
     assert_eq!(hit_test(center, &mut tree), Some("0".to_string()));
 }
 
@@ -1194,7 +1194,7 @@ fn test_point_in_node_aabb_is_shape_aware() {
     let mut tree = load_test_tree();
     set_node_shape_ellipse(&mut tree, "0");
     let (pos, bounds) = node_bounds(&tree, "0");
-    let center = pos + bounds * 0.5;
+    let center = aabb_center(pos, bounds);
     let near_corner = pos + Vec2::new(0.5, 0.5);
     assert!(
         point_in_node_aabb(center, "0", &tree),
@@ -1229,7 +1229,7 @@ fn test_rect_select_still_catches_ellipse_through_center() {
     let (pos, bounds) = node_bounds(&tree, "0");
     // Selection rect crossing the center of the ellipse must
     // still register a hit.
-    let center = pos + bounds * 0.5;
+    let center = aabb_center(pos, bounds);
     let hits = rect_select(center - Vec2::new(5.0, 5.0), center + Vec2::new(5.0, 5.0), &tree);
     assert!(
         hits.contains(&"0".to_string()),
