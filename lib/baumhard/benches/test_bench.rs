@@ -874,6 +874,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("glyph_ink_distinct_per_size", |b| {
         b.iter(do_glyph_ink_distinct_per_size)
     });
+    c.bench_function("glyph_ink_distinct_per_grapheme", |b| {
+        b.iter(do_glyph_ink_distinct_per_grapheme)
+    });
     c.bench_function("glyph_advance_with_shapes_cold_key_under_held_guard", |b| {
         b.iter(do_glyph_advance_with_shapes_cold_key_under_held_guard)
     });

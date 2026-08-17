@@ -44,18 +44,80 @@ fn test_glyph_advance_distinct_per_grapheme() {
     do_glyph_advance_distinct_per_grapheme();
 }
 
-/// Different graphemes get different advances. Sanity that the
-/// cache key includes the grapheme.
+/// Different grapheme clusters get separately measured advances:
+/// the grapheme is part of the cache key, so `│` and `│││` are two
+/// keys and not one. The input that fails this is a key that drops
+/// its grapheme component — both calls then resolve to whichever
+/// `(face, 22.5)` entry landed first and the two widths come back
+/// identical.
+///
+/// Measured as one glyph against three of the same glyph shaped as
+/// a single cluster rather than as two unrelated characters,
+/// because the relation then holds for any face: whatever `│`
+/// advances to, `│││` advances to three of it. Two *different*
+/// characters would need the test to know the shipped font's
+/// metrics — `│` and `+` are the same width in a monospace fallback
+/// — which is why the body this replaced asserted only that both
+/// were positive and so passed with the grapheme dropped from both
+/// cache keys.
 pub fn do_glyph_advance_distinct_per_grapheme() {
     fonts::init();
-    let bar_w = glyph_advance(None, 18.0, "│");
-    let plus_w = glyph_advance(None, 18.0, "+");
-    // No promise about the relationship — just that they're
-    // measured separately and cached separately. We assert they're
-    // both positive; equality would be a coincidence we don't want
-    // the test to depend on.
-    assert!(bar_w > 0.0);
-    assert!(plus_w > 0.0);
+    // (22.5, "│"/"│││") is warmed by no other test, so both calls
+    // shape rather than reading a neighbor's entry.
+    let single = glyph_advance(None, 22.5, "│");
+    let tripled = glyph_advance(None, 22.5, "│││");
+    assert!(single > 0.0, "│ should have positive advance, got {single}");
+    assert!(
+        tripled > single,
+        "│││ ({tripled}) must advance further than │ ({single}); equal means \
+         one cache entry answered both calls"
+    );
+    let ratio = tripled / single;
+    assert!(
+        (2.5..=3.5).contains(&ratio),
+        "│││ / │ advance ratio should be near 3.0; got {ratio}"
+    );
+}
+
+#[test]
+fn test_glyph_ink_distinct_per_grapheme() {
+    do_glyph_ink_distinct_per_grapheme();
+}
+
+/// The ink cache keys on the grapheme too, and it is a *separate*
+/// `FxHashMap` from the advance cache — so the sibling assertion
+/// above says nothing about this one. Same construction, same
+/// failing input: an `INK_EXTENT_CACHE` key without its grapheme
+/// component answers both calls from one entry and the advances
+/// come back equal.
+///
+/// `advance` rather than `ink_height` is the field that separates
+/// the two: three copies of one glyph are three times as wide and
+/// exactly as tall, so a height comparison would be equal on
+/// correct code.
+pub fn do_glyph_ink_distinct_per_grapheme() {
+    fonts::init();
+    // (26.5, "│"/"│││") is cold in INK_EXTENT_CACHE for the same
+    // reason (22.5, …) is cold in ADVANCE_CACHE.
+    let single = glyph_ink(None, 26.5, "│");
+    let tripled = glyph_ink(None, 26.5, "│││");
+    assert!(
+        single.advance > 0.0,
+        "│ should have positive ink advance, got {}",
+        single.advance
+    );
+    assert!(
+        tripled.advance > single.advance,
+        "│││ ({}) must advance further than │ ({}); equal means one ink-cache \
+         entry answered both calls",
+        tripled.advance,
+        single.advance
+    );
+    let ratio = tripled.advance / single.advance;
+    assert!(
+        (2.5..=3.5).contains(&ratio),
+        "│││ / │ ink advance ratio should be near 3.0; got {ratio}"
+    );
 }
 
 #[test]
