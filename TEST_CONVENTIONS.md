@@ -295,7 +295,10 @@ re-litigate them without a strong reason.
 - `./test.sh` — full suite across every workspace member —
   `mandala`, `baumhard`, `mandala_derive`, `maptool` — then the
   bench-target type-check and the wasm32 type-check gate; prints a
-  test count at the end. It runs `cargo test --workspace` rather than
+  test count at the end. The wasm32 gate is skipped with a note when
+  the target is not installed, so it is unconditional in CI (which
+  installs it) and conditional locally; the count is a convenience
+  and cannot fail the run. It runs `cargo test --workspace` rather than
   a list of `-p` flags, on purpose: the list it used to carry named
   three of the four members and so never ran `mandala_derive`'s tests
   at all.
@@ -311,7 +314,8 @@ re-litigate them without a strong reason.
   zero-warning baseline (#134). A hard-gate failure prints a
   `FAILED:` line inline and the run exits non-zero at the end, after
   every gate has reported.
-- `./test.sh --bench` — also *runs* `cargo bench` after tests pass.
+- `./test.sh --bench` — also runs the benchmarks after tests pass, by
+  calling `./bench.sh` rather than repeating its invocation.
   Maintainers only: `AGENTS.md` forbids automated agents this flag,
   `./bench.sh`, and `cargo bench` alike, along with any performance
   claim lacking the main-against-main control row §T6 and

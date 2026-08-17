@@ -77,6 +77,95 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     }
 
+    /// The `TOTAL=` line in `test.sh` extracted verbatim, from its
+    /// `TOTAL=$(` through the closing paren of the assignment.
+    ///
+    /// Read out of the script rather than restated here: a copy of
+    /// the pipeline would go on passing after the real one changed,
+    /// which is the mirror shape a test must not take.
+    fn total_assignment_from_test_sh() -> String {
+        let script = std::fs::read_to_string(repo_root().join("test.sh")).expect("test.sh must be readable");
+        let start = script
+            .find("TOTAL=$(")
+            .expect("test.sh must still compute a test count into TOTAL");
+        let mut depth = 0usize;
+        for (offset, ch) in script[start..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return script[start..start + offset + 1].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("the TOTAL assignment in test.sh has no closing paren");
+    }
+
+    /// **A test count cannot fail a green run.**
+    ///
+    /// `test.sh` runs under `set -euo pipefail`. A `grep` that
+    /// matches nothing exits 1, the pipeline takes that status, the
+    /// assignment takes the pipeline's, and `set -e` ends the script
+    /// — after the suite has already passed, printing nothing. Any
+    /// change to cargo's summary wording turns a green run into a
+    /// silent non-zero exit that reads as a test failure.
+    ///
+    /// The assignment is lifted out of `test.sh` and executed under
+    /// the same shell options against a log with no matching lines,
+    /// which is the exact condition. It must exit 0 and produce `0`.
+    ///
+    /// Control: the same snippet with the guard removed is run the
+    /// same way and must exit non-zero. Without it, "exits 0" would
+    /// be satisfied by a harness that never reproduced the shell
+    /// options in the first place.
+    #[test]
+    fn test_the_test_count_cannot_kill_a_green_run() {
+        use std::process::Command;
+
+        let dir = baumhard::util::test_temp::TempDir::new("test-sh-count");
+        let log = dir.join("suite.log");
+        std::fs::write(&log, "nothing here resembles cargo's summary\n")
+            .expect("seed the log with no matching lines");
+
+        let assignment = total_assignment_from_test_sh();
+        assert!(
+            assignment.contains("|| true"),
+            "the count pipeline must swallow a no-match grep: {assignment}"
+        );
+
+        let run = |snippet: &str| {
+            Command::new("bash")
+                .arg("-c")
+                .arg(format!(
+                    "set -euo pipefail\nTEST_LOG={}\n{snippet}\nprintf '%s' \"$TOTAL\"",
+                    log.display()
+                ))
+                .output()
+                .expect("bash must be available to run the extracted snippet")
+        };
+
+        let guarded = run(&assignment);
+        assert!(
+            guarded.status.success(),
+            "the count must not end the run; stderr: {}",
+            String::from_utf8_lossy(&guarded.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&guarded.stdout), "0");
+
+        let unguarded = run(&assignment
+            .replace(" || true; }", "; }")
+            .replace("{ ", "")
+            .replace(" }", ""));
+        assert!(
+            !unguarded.status.success(),
+            "control: without the guard the same snippet must end the run, or this \
+             harness is not reproducing the shell options the script uses"
+        );
+    }
+
     /// Every `.mindmap.json` in `maps/` is named by a `copy-file`
     /// entry in the browser shell, and nothing else in that
     /// directory is.

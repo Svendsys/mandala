@@ -178,21 +178,43 @@ else
   # them.
   cargo test --workspace 2>&1 | tee "$TEST_LOG"
 
-  TOTAL=$(grep -E '^test result: ok\. [0-9]+ passed' "$TEST_LOG" \
+  # The `|| true` is load-bearing, not defensive noise. Under
+  # `set -o pipefail` a `grep` that matches nothing exits 1, the
+  # pipeline takes that status, the assignment takes the pipeline's,
+  # and `set -e` ends the script there — *after* the suite passed,
+  # printing nothing at all. Anything that changes cargo's summary
+  # wording (a toolchain bump, a `--format` change, a run whose
+  # binaries all report zero tests) turns a green run into a silent
+  # non-zero exit that reads as a test failure. The count is a
+  # convenience; it must not be able to fail the run.
+  TOTAL=$( { grep -E '^test result: ok\. [0-9]+ passed' "$TEST_LOG" || true; } \
     | awk '{ sum += $4 } END { print sum+0 }')
   echo
-  echo "== $TOTAL tests passed =="
+  if [ "$TOTAL" -gt 0 ]; then
+    echo "== $TOTAL tests passed =="
+  else
+    # Say which half is broken. The suite above already passed — a
+    # zero here means the summary lines stopped matching, and a bare
+    # "0 tests passed" would read as though nothing ran.
+    echo "== tests passed; count unavailable =="
+    echo "(no 'test result: ok. <N> passed' lines matched — cargo's summary format"
+    echo " has changed, or every binary reported zero tests)"
+  fi
 fi
 
 if [ "$BENCH" -eq 1 ]; then
   echo "== benches =="
-  # baumhard is the only crate with a benchmark harness
-  # (TEST_CONVENTIONS §T2.3); keep this in step with ./bench.sh.
+  # Delegate to ./bench.sh rather than repeating its `cargo bench`
+  # line. The two used to carry the same invocation with a comment on
+  # each asking the reader to keep them in step, which is the shape
+  # that drifts. What a benchmark run *is* — which crate has the
+  # harness (TEST_CONVENTIONS §T2.3), which flags it takes — is
+  # ./bench.sh's to say, in one place.
   #
   # Maintainers only. AGENTS.md forbids automated agents from running
   # benchmarks at all, which is also why the type-check below is
   # unconditional rather than folded in here.
-  cargo bench -p baumhard
+  "$(dirname "$0")/bench.sh"
 fi
 
 # Bench-target type-check gate. Unconditional, and deliberately not
