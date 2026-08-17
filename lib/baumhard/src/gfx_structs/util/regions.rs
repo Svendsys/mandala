@@ -10,6 +10,7 @@
 //! structure itself.
 
 use crate::util::primes::is_prime;
+use log::warn;
 use std::sync::RwLock;
 
 // Re-export so existing consumers that `use regions::RegionIndexer`
@@ -279,18 +280,44 @@ impl RegionParams {
     /// pre-`adapt` snapshot or the post-`adapt` snapshot — never a
     /// torn mix.
     ///
+    /// # Errors
+    ///
+    /// `Poisoned` when an earlier writer panicked while holding the
+    /// parameter lock. The grid keeps whatever it was configured
+    /// with, so a caller that ignores the error keeps drawing
+    /// against the previous resolution rather than dying mid-frame —
+    /// which is the whole reason [`RegionError::Poisoned`] exists,
+    /// and which the read accessors on this type have always
+    /// returned. This one used to `unwrap()` instead: the same
+    /// condition that every reader here reports as a value took the
+    /// process down from the one method that writes. The `warn!` is
+    /// emitted at this site rather than left to the caller because
+    /// this is the terminal site — the subsystem is allocated by
+    /// `Tree::new` and not yet wired to `MutatorTree::apply_to` (see
+    /// `CONVENTIONS.md` §B6), so there is no caller to delegate the
+    /// telling to and a silent `Err` would be a degrade nobody could
+    /// observe.
+    ///
     /// # Panics
     /// Asserts neither dimension is prime (same invariant as `new`).
     ///
     /// # Costs
     /// O(sqrt(max(dimensions.0, dimensions.1))) for the divisor
     /// search, plus one write-lock acquisition.
-    pub fn adapt(&mut self, target_factor: usize, dimensions: (usize, usize)) {
+    pub fn adapt(&mut self, target_factor: usize, dimensions: (usize, usize)) -> Result<(), RegionError> {
         assert!(!is_prime(dimensions.0));
         assert!(!is_prime(dimensions.1));
         let new_x_factor = Self::calculate_actual_region_factor(target_factor, dimensions.0);
         let new_y_factor = Self::calculate_actual_region_factor(target_factor, dimensions.1);
-        *self.inner.write().unwrap() = Inner {
+        let Ok(mut inner) = self.inner.write() else {
+            warn!(
+                "regions: parameter lock poisoned, grid left at its previous configuration \
+                 (requested factor {target_factor}, {}x{})",
+                dimensions.0, dimensions.1
+            );
+            return Err(RegionError::Poisoned);
+        };
+        *inner = Inner {
             target_region_factor: target_factor,
             region_factor_x: new_x_factor,
             region_factor_y: new_y_factor,
@@ -298,6 +325,7 @@ impl RegionParams {
             region_size_x: dimensions.0 / new_x_factor,
             region_size_y: dimensions.1 / new_y_factor,
         };
+        Ok(())
     }
 
     pub(crate) fn calculate_actual_region_factor(target_factor: usize, dimension_span: usize) -> usize {
@@ -387,5 +415,88 @@ impl RegionElementKeyPair {
     /// into, on a move event).
     pub fn region_num(&self) -> usize {
         self.region_num
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **A poisoned parameter lock is a value `adapt` returns, not a
+    /// panic it propagates.** `adapt` is the only writer on this
+    /// type, and it used to `unwrap()` the write guard while all six
+    /// read accessors beside it mapped the same condition to
+    /// [`RegionError::Poisoned`] — one method taking the process
+    /// down for the condition its neighbors report (issue #42).
+    ///
+    /// The input that makes each assertion fail: a build in which
+    /// `adapt` acquires the guard with `.unwrap()` / `.expect(...)`
+    /// again. That shape does not return at all — the call unwinds
+    /// out of the test — so the assertions below never run and the
+    /// test is red, which is the control this test rests on and the
+    /// only mechanism it has to disable.
+    ///
+    /// The `(992, 996)` half is the second control, and it is the
+    /// one that keeps the log assertion honest: a `warn!` emitted
+    /// unconditionally would satisfy "the poisoned call warned"
+    /// exactly as well as one emitted on the degrade, so a healthy
+    /// call is made first and its dimensions must appear nowhere in
+    /// the buffer.
+    ///
+    /// Plain `#[test]` with no `do_*` body: `CONVENTIONS.md` §B8
+    /// opt-out class 2 — the body drives a panic, and an iteration
+    /// after the first would run against an already-poisoned lock
+    /// and measure nothing.
+    #[test]
+    fn test_adapt_reports_a_poisoned_lock_where_it_used_to_panic() {
+        crate::util::test_logger::install();
+        let mut params = RegionParams::new(4, (1000, 1000));
+
+        // Control: the healthy path still writes, still returns
+        // `Ok`, and says nothing.
+        assert_eq!(params.adapt(8, (992, 996)), Ok(()));
+        assert_eq!(params.read_current_resolution(), Ok((992, 996)));
+        assert!(
+            crate::util::test_logger::lines_containing("992x996").is_empty(),
+            "a healthy adapt must not warn, or the poisoned case's log line proves nothing"
+        );
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = params.inner.write().expect("a fresh lock is not poisoned");
+            panic!("deliberate panic while holding the region parameter lock");
+        }));
+        assert!(
+            unwound.is_err(),
+            "the poisoning panic must have unwound, or nothing below is being tested"
+        );
+        // Precondition, not ceremony: `RwLock` poisons only when a
+        // writer unwinds while holding the guard. If that did not
+        // happen, `adapt` below takes the ordinary path and returns
+        // `Ok`, and every assertion after it would be reporting on
+        // the healthy code.
+        assert!(
+            params.inner.is_poisoned(),
+            "the deliberate panic did not poison the lock, so the degrade path is unreachable"
+        );
+
+        // The degrade itself: a value, and the same value the
+        // readers on this type have always produced.
+        assert_eq!(params.adapt(7, (994, 998)), Err(RegionError::Poisoned));
+        assert_eq!(params.read_current_resolution(), Err(RegionError::Poisoned));
+
+        // …and it told somebody. `warn!` survives into release
+        // builds (CODE_CONVENTIONS §9), so this line is the only
+        // thing a bug report could carry back.
+        let logged = crate::util::test_logger::lines_containing("994x998");
+        assert_eq!(
+            logged.len(),
+            1,
+            "expected exactly one warning naming the refused reconfiguration; got {logged:?}"
+        );
+        assert!(
+            logged[0].contains("regions:"),
+            "the warning must carry the §9 `<area>: message` prefix; got {:?}",
+            logged[0]
+        );
     }
 }
