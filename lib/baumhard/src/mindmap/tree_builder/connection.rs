@@ -336,12 +336,15 @@ pub fn build_connection_elements(
         //   frozen at sample time, so the slow path resamples and
         //   re-caches with the new config.
         //
-        // The probe is split in two phases so the borrow checker lets
-        // us mutate the cache after reading it: first a read-only
-        // `cache.get` computes the delta (returned as a value), then
-        // `cache.translate_in_place` mutates the entry's positions
-        // without re-indexing `by_node` or cloning the string fields.
-        let translate_delta = cache.get(&edge_key).and_then(|cached| {
+        // Probe and mutation are one phase, on one borrow: `get_mut`
+        // hands out the cached entry, the three rejections and the
+        // delta are read off it, `translate` shifts it in place (no
+        // `by_node` reindex, no string clones on the hot path), and
+        // the same borrow is reborrowed as shared to emit the
+        // element. One hash lookup covers the whole path, and there
+        // is no re-lookup whose success has to be asserted after the
+        // guard that already proved it.
+        let translated = cache.get_mut(&edge_key).and_then(|cached| {
             if crate::util::geometry::pretty_inequal(cached.font_size_pt, font_size) {
                 return None;
             }
@@ -356,18 +359,11 @@ pub fn build_connection_elements(
             if (delta_from - delta_to).length_squared() >= TRANSLATE_DELTA_EPSILON_SQ {
                 return None;
             }
-            Some(delta_from)
+            cached.translate(delta_from, from_pos, to_pos);
+            Some(&*cached)
         });
 
-        if let Some(delta) = translate_delta {
-            // Mutate the cached entry in place. No by_node reindex,
-            // no string clones on the hot path. `translate_in_place`
-            // returns a borrow of the mutated entry so we can emit
-            // the element without a follow-up `get`.
-            let entry = cache
-                .translate_in_place(&edge_key, delta, from_pos, to_pos)
-                .expect("entry was present in the guard above");
-
+        if let Some(entry) = translated {
             let color = if let Some(p) = preview_for_this_edge {
                 resolve_var(p, vars).to_string()
             } else if is_selected {
