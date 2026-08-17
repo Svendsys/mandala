@@ -5577,3 +5577,209 @@ fn test_node_and_section_color_writes_stay_in_their_tiers_on_a_themed_node() {
         "the other channels still resolve through the palette"
     );
 }
+
+// ── Uniform font setters over run-less sections ────────────────
+//
+// `MindSection::text_runs` documents a section with text and no
+// runs as a legal shape that renders at the cascade defaults, and
+// the loader synthesizes nothing, so an authored map reaches these
+// setters in that state. `all` over an empty run list is vacuously
+// true, so every uniform font setter reported "already at the
+// target value" and returned `false` without touching anything —
+// while the *range* siblings, which fill uncovered ranges from
+// `default_text_run`, honored the same request.
+
+/// Strip `node_id`'s first section down to the run-less shape a
+/// map can be authored in: text present, `text_runs` empty.
+/// Returns the section's grapheme count so a test can assert the
+/// created run spans it.
+fn make_section_run_less(doc: &mut MindMapDocument, node_id: &str, text: &str) -> usize {
+    let node = doc.mindmap.nodes.get_mut(node_id).expect("node");
+    node.sections[0].text = text.to_string();
+    node.sections[0].text_runs = Vec::new();
+    count_grapheme_clusters(text)
+}
+
+/// The four uniform font setters each author a run onto a
+/// run-less section rather than silently declining.
+///
+/// Fails when: any setter goes back to `text_runs.iter().all(..)`
+/// — the vacuous-truth shape — since that returns `false` and
+/// leaves the section run-less. Asserting on the run's `start` /
+/// `end` as well as the value is what distinguishes "a run was
+/// created spanning the text" from "a degenerate run was pushed".
+///
+/// Control on the same path: the run-less section is re-made
+/// before each row, and the section is asserted run-less *before*
+/// the call, so a row cannot pass by finding a run an earlier row
+/// left behind.
+#[test]
+fn test_uniform_font_setters_author_a_run_onto_a_run_less_section() {
+    let text = "run-less";
+
+    // Whole-node size.
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.mindmap.nodes[&nid].sections[0].text_runs.is_empty());
+    assert!(
+        doc.set_node_font_size(&nid, 33.0),
+        "set_node_font_size must report the change it makes on a run-less section"
+    );
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1, "one run spanning the section's text");
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].size_pt, 33.0);
+
+    // Whole-node family.
+    let mut doc = load_test_doc();
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.set_node_font_family(&nid, Some("DejaVu Sans Mono")));
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].font, "DejaVu Sans Mono");
+
+    // Per-section size.
+    let mut doc = load_test_doc();
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.set_section_font_size(&nid, 0, 17.5));
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].size_pt, 17.5);
+
+    // Per-section family.
+    let mut doc = load_test_doc();
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.set_section_font_family(&nid, 0, Some("DejaVu Sans Mono")));
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].font, "DejaVu Sans Mono");
+}
+
+/// A section with **no text** stays run-less, and the setters say
+/// so by returning `false`.
+///
+/// `text_run_ops` requires `start < end` and panics in debug
+/// builds on a degenerate run, so authoring `TextRun { start: 0,
+/// end: 0 }` here would be a crash waiting on the next slice or
+/// splice — the "create the default run" answer is only correct
+/// where there is text for it to span.
+///
+/// Fails when: the emptiness guard in `write_every_section_run`
+/// goes. Paired with the test above so "returns false" cannot be
+/// satisfied by a setter that declines everything.
+#[test]
+fn test_uniform_font_setters_leave_a_textless_section_run_less() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    make_section_run_less(&mut doc, &nid, "");
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    assert!(!doc.set_node_font_size(&nid, 33.0));
+    assert!(!doc.set_node_font_family(&nid, Some("DejaVu Sans Mono")));
+    assert!(!doc.set_section_font_size(&nid, 0, 17.5));
+    assert!(!doc.set_section_font_family(&nid, 0, Some("DejaVu Sans Mono")));
+
+    assert!(doc.mindmap.nodes[&nid].sections[0].text_runs.is_empty());
+    assert!(
+        doc.undo_stack.is_empty(),
+        "a declined setter must push no undo entry"
+    );
+    assert!(!doc.dirty, "a declined setter must not dirty the document");
+}
+
+/// The write half of the pair refuses a textless section on its
+/// own, not only because its callers ask first.
+///
+/// `section_runs_all_match` reports a textless run-less section as
+/// nothing-to-do, so the four setters never reach the guard —
+/// which is exactly why it is worth pinning here. A future caller
+/// that writes without asking would otherwise push
+/// `TextRun { start: 0, end: 0 }`, and `text_run_ops` panics in
+/// debug builds on the next slice or splice of it.
+///
+/// Fails when: the `count == 0` guard in
+/// `write_every_section_run` goes. The text-bearing half of the
+/// same call is the control — it must author a run, so the
+/// refusal cannot be a helper that never writes at all.
+#[test]
+fn test_write_every_section_run_refuses_to_author_a_zero_length_run() {
+    use super::nodes::write_every_section_run;
+    use baumhard::mindmap::model::MindSection;
+
+    let mut textless = MindSection::new_default(String::new(), Vec::new());
+    write_every_section_run(&mut textless, |r| r.size_pt = 33.0);
+    assert!(
+        textless.text_runs.is_empty(),
+        "no text means no range for a run to span"
+    );
+
+    let mut texted = MindSection::new_default("abc".to_string(), Vec::new());
+    write_every_section_run(&mut texted, |r| r.size_pt = 33.0);
+    assert_eq!(
+        texted.text_runs.len(),
+        1,
+        "control: the same call on a text-bearing section must author a run"
+    );
+    assert_eq!((texted.text_runs[0].start, texted.text_runs[0].end), (0, 3));
+    assert_eq!(texted.text_runs[0].size_pt, 33.0);
+}
+
+/// The authored run is undoable in one step, like every other
+/// write through the style envelope.
+///
+/// Fails when: the run is authored outside the envelope's
+/// snapshot, which would leave undo restoring a section that
+/// still carries it. The pre-assertions pin the run-less start
+/// state, so "run-less after undo" is a restoration rather than a
+/// state that was never left.
+#[test]
+fn test_authoring_a_run_onto_a_run_less_section_undoes_in_one_step() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    make_section_run_less(&mut doc, &nid, "undo me");
+    doc.undo_stack.clear();
+
+    assert!(doc.set_node_font_size(&nid, 33.0));
+    assert_eq!(doc.undo_stack.len(), 1, "one entry for one setter call");
+    assert_eq!(doc.mindmap.nodes[&nid].sections[0].text_runs.len(), 1);
+
+    doc.undo();
+    assert!(
+        doc.mindmap.nodes[&nid].sections[0].text_runs.is_empty(),
+        "undo must restore the section to the run-less shape it was loaded in"
+    );
+    assert_eq!(doc.mindmap.nodes[&nid].sections[0].text, "undo me");
+}
+
+/// The uniform setter and its range sibling now agree on a
+/// run-less section: `font size=N` over the whole text and
+/// `font size=N range=0..n` produce the same runs.
+///
+/// This is the disagreement the fix closes — the range path filled
+/// its gap from `default_text_run` while the uniform path declined
+/// — so the assertion is a direct comparison of the two results
+/// rather than a restatement of either one's expected shape.
+#[test]
+fn test_uniform_and_range_font_size_agree_on_a_run_less_section() {
+    let text = "agree on me";
+
+    let mut uniform = load_test_doc();
+    let nid = first_testament_node_id(&uniform);
+    let count = make_section_run_less(&mut uniform, &nid, text);
+    assert!(uniform.set_section_font_size(&nid, 0, 19.0));
+
+    let mut ranged = load_test_doc();
+    make_section_run_less(&mut ranged, &nid, text);
+    assert!(ranged.set_section_font_size_range(&nid, 0, 0, count, 19.0));
+
+    assert_eq!(
+        uniform.mindmap.nodes[&nid].sections[0].text_runs, ranged.mindmap.nodes[&nid].sections[0].text_runs,
+        "the whole-text uniform setter and the whole-text range setter must author \
+         the same run"
+    );
+}

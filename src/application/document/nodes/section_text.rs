@@ -212,6 +212,11 @@ impl MindMapDocument {
     /// `grow_one_node_to_fit_text` floor as the whole-node setter
     /// — sections share the node's AABB, so a larger run on one
     /// section can grow the node.
+    ///
+    /// A section carrying text but no runs gets one authored at
+    /// the requested size, which is what its range-targeted
+    /// sibling [`Self::set_section_font_size_range`] already did
+    /// through its gap-fill template.
     pub fn set_section_font_size(&mut self, node_id: &str, section_idx: usize, size_pt: f32) -> bool {
         if !size_pt.is_finite() {
             return false;
@@ -220,12 +225,10 @@ impl MindMapDocument {
         // loader's run domain, fractional sizes kept as written.
         let size = crate::application::document::custom::sync::clamp_run_size_pt(size_pt);
         self.mutate_section_with_style_undo(node_id, section_idx, NodeEditTail::Grow, move |s| {
-            if s.text_runs.iter().all(|r| r.size_pt == size) {
+            if section_runs_all_match(s, |r| r.size_pt == size) {
                 return false;
             }
-            for run in s.text_runs.iter_mut() {
-                run.size_pt = size;
-            }
+            write_every_section_run(s, |r| r.size_pt = size);
             true
         })
     }
@@ -236,6 +239,10 @@ impl MindMapDocument {
     /// section; `None` clears the pin. Triggers the same monotonic
     /// `grow_one_node_to_fit_text` re-measure as the whole-node
     /// setter — face changes can shift advance widths.
+    ///
+    /// A section carrying text but no runs gets one authored at
+    /// the requested family, on the same terms as
+    /// [`Self::set_section_font_size`].
     pub fn set_section_font_family(
         &mut self,
         node_id: &str,
@@ -244,12 +251,10 @@ impl MindMapDocument {
     ) -> bool {
         let target = family.unwrap_or("").to_string();
         self.mutate_section_with_style_undo(node_id, section_idx, NodeEditTail::Grow, move |s| {
-            if s.text_runs.iter().all(|r| r.font == target) {
+            if section_runs_all_match(s, |r| r.font == target) {
                 return false;
             }
-            for run in s.text_runs.iter_mut() {
-                run.font = target.clone();
-            }
+            write_every_section_run(s, |r| r.font = target.clone());
             true
         })
     }
@@ -465,6 +470,66 @@ impl MindMapDocument {
             clamp_runs_to_text(s);
             true
         })
+    }
+}
+
+/// Whether every run on `section` already satisfies `matches`, in
+/// the sense the uniform style setters need — i.e. whether
+/// [`write_every_section_run`] would find nothing to do.
+///
+/// **Not `text_runs.iter().all(..)`.** `all` on an empty iterator
+/// is vacuously true, so a section carrying text and no runs
+/// reported "already at the target value" and every uniform
+/// font-size / font-family setter silently returned `false` on
+/// it. A run-less section is a documented, loadable shape (see
+/// `MindSection::text_runs`: it renders at the cascade defaults),
+/// so this is a shape a real map can be in, not a
+/// can't-happen. The answer here is that such a section is
+/// *never* already at the target — writing one materializes a
+/// run — unless it has no text either, in which case there is
+/// genuinely nothing to style.
+pub(in crate::application::document) fn section_runs_all_match(
+    section: &baumhard::mindmap::model::MindSection,
+    matches: impl Fn(&TextRun) -> bool,
+) -> bool {
+    if section.text_runs.is_empty() {
+        return section.text.is_empty();
+    }
+    section.text_runs.iter().all(matches)
+}
+
+/// Apply `set` to every run of `section`, materializing a first
+/// run from the authoring defaults when the section carries text
+/// but no runs.
+///
+/// The template is [`default_text_run`], the same one the
+/// range-targeted setters fill their gaps from
+/// (`clamp_range_and_build_template`) — so `font size=20` over a
+/// section's whole text now lands the same run the equivalent
+/// `font size=20 range=0..n` already did. Before this, the range
+/// setter created the run and the uniform setter did nothing,
+/// which is the disagreement rather than the template's choice of
+/// defaults.
+///
+/// A section with no text is left alone: `text_run_ops` requires
+/// `start < end` and panics in debug builds on a degenerate run,
+/// so "author a run onto empty text" is not an available
+/// outcome. Callers reach [`section_runs_all_match`] first, which
+/// reports that case as nothing-to-do.
+pub(in crate::application::document) fn write_every_section_run(
+    section: &mut baumhard::mindmap::model::MindSection,
+    set: impl Fn(&mut TextRun),
+) {
+    clamp_runs_to_text(section);
+    if section.text_runs.is_empty() {
+        let count = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
+        if count == 0 {
+            return;
+        }
+        section.text_runs.push(default_text_run(count));
+    }
+    for run in section.text_runs.iter_mut() {
+        set(run);
     }
 }
 
