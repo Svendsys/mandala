@@ -117,13 +117,32 @@ mod tests {
     /// the same shell options against a log with no matching lines,
     /// which is the exact condition. It must exit 0 and produce `0`.
     ///
-    /// Control: the same snippet with the guard removed is run the
-    /// same way and must exit non-zero. Without it, "exits 0" would
-    /// be satisfied by a harness that never reproduced the shell
-    /// options in the first place.
+    /// Control, in **two rows**, because one row cannot tell a
+    /// disabled mechanism from a broken snippet. The guard is
+    /// removed and nothing else — `{ grep … || true; }` back to the
+    /// bare `grep …` — and the result is run twice: under the
+    /// script's shell options it must exit **1**, the status
+    /// `pipefail` hands the assignment and `errexit` acts on; with
+    /// those options off, the same text must exit 0 and still print
+    /// `0`. Only the pair shows that the failure is the mechanism
+    /// rather than something the edit did to the snippet.
+    ///
+    /// That is not hypothetical here. The first version of this
+    /// control built its "unguarded" text with three replace-alls,
+    /// two of which also rewrote the `awk` program (`{ sum += $4 }
+    /// END { print sum+0 }` shares its braces with the guard), and
+    /// the result was a bash *syntax error* — non-zero with the
+    /// options and non-zero without them, so it never reached the
+    /// `pipefail` path it claimed to be demonstrating. Issue #138's
+    /// refinement, verbatim: the control has to disable the
+    /// mechanism on the path the test exercises.
     #[test]
     fn test_the_test_count_cannot_kill_a_green_run() {
         use std::process::Command;
+
+        /// The options `test.sh` sets, and the only difference
+        /// between the control's two rows.
+        const SHELL_OPTIONS: &str = "set -euo pipefail";
 
         let dir = baumhard::util::test_temp::TempDir::new("test-sh-count");
         let log = dir.join("suite.log");
@@ -136,18 +155,18 @@ mod tests {
             "the count pipeline must swallow a no-match grep: {assignment}"
         );
 
-        let run = |snippet: &str| {
+        let run = |options: &str, snippet: &str| {
             Command::new("bash")
                 .arg("-c")
                 .arg(format!(
-                    "set -euo pipefail\nTEST_LOG={}\n{snippet}\nprintf '%s' \"$TOTAL\"",
+                    "{options}\nTEST_LOG={}\n{snippet}\nprintf '%s' \"$TOTAL\"",
                     log.display()
                 ))
                 .output()
                 .expect("bash must be available to run the extracted snippet")
         };
 
-        let guarded = run(&assignment);
+        let guarded = run(SHELL_OPTIONS, &assignment);
         assert!(
             guarded.status.success(),
             "the count must not end the run; stderr: {}",
@@ -155,14 +174,37 @@ mod tests {
         );
         assert_eq!(String::from_utf8_lossy(&guarded.stdout), "0");
 
-        let unguarded = run(&assignment
-            .replace(" || true; }", "; }")
-            .replace("{ ", "")
-            .replace(" }", ""));
+        // Unwrap the group and drop the `|| true`, touching nothing
+        // else — in particular not the `awk` program's braces.
+        let unguarded = assignment.replace("{ grep", "grep").replace(" || true; }", "");
         assert!(
-            !unguarded.status.success(),
-            "control: without the guard the same snippet must end the run, or this \
-             harness is not reproducing the shell options the script uses"
+            unguarded != assignment && !unguarded.contains("|| true"),
+            "the control must actually remove the guard; got {unguarded} from {assignment}"
+        );
+
+        let control = run(SHELL_OPTIONS, &unguarded);
+        assert_eq!(
+            control.status.code(),
+            Some(1),
+            "control: unguarded, the assignment must end the run with the status \
+             `pipefail` gives it — an exit code that is not 1 means the snippet \
+             broke for a reason of its own. stderr: {}",
+            String::from_utf8_lossy(&control.stderr)
+        );
+
+        let mechanism_off = run("", &unguarded);
+        assert!(
+            mechanism_off.status.success(),
+            "control: the same unguarded text with the shell options off must \
+             succeed, or the row above proved nothing about `set -euo pipefail`. \
+             stderr: {}",
+            String::from_utf8_lossy(&mechanism_off.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&mechanism_off.stdout),
+            "0",
+            "with the options off the unguarded pipeline still computes the count; \
+             only the exit status differs"
         );
     }
 
@@ -181,8 +223,13 @@ mod tests {
     ///
     /// Fails when: a `.mindmap.json` is added to `maps/` and not to
     /// `web/index.html`; when an entry names a file that is not
-    /// there; or when `copy-dir` comes back, since the directory
-    /// walk would then be shipping the archive again while every
+    /// there; when an entry loses its `data-target-path="maps"`,
+    /// which is the attribute that reproduces the `dist/maps/`
+    /// layout `?map=` and `DEFAULT_MINDMAP` are written against —
+    /// without it trunk drops the fixture in the dist root and the
+    /// URL 404s at runtime with nothing at build time to say why;
+    /// or when `copy-dir` comes back, since the directory walk
+    /// would then be shipping the archive again while every
     /// per-file assertion still passed.
     ///
     /// Reads the two sides independently — the filesystem and the
@@ -208,13 +255,25 @@ mod tests {
             "no fixtures found in maps/, so this test would pass over an empty set"
         );
 
-        let shipped: BTreeSet<String> = shell
-            .lines()
-            .filter(|line| line.contains(r#"rel="copy-file""#))
-            .filter_map(|line| line.split("href=\"../maps/").nth(1))
-            .filter_map(|rest| rest.split('"').next())
-            .map(|name| name.to_string())
-            .collect();
+        let mut shipped: BTreeSet<String> = BTreeSet::new();
+        for line in shell.lines().filter(|line| line.contains(r#"rel="copy-file""#)) {
+            // The one half of the layout claim that is checkable
+            // without running trunk. `copy-file` takes exactly one
+            // optional attribute, and it is this one; the fixture
+            // lands in the dist root without it.
+            assert!(
+                line.contains(r#"data-target-path="maps""#),
+                "every shipped fixture must carry `data-target-path=\"maps\"` — it is what \
+                 puts the file under `dist/maps/`, which is where `?map=` and \
+                 `DEFAULT_MINDMAP` look for it: {line}"
+            );
+            let name = line
+                .split(r#"href="../maps/"#)
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .unwrap_or_else(|| panic!("a `copy-file` entry must name a file in `../maps/`: {line}"));
+            shipped.insert(name.to_string());
+        }
 
         assert_eq!(
             shipped, on_disk,
