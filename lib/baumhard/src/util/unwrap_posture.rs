@@ -103,30 +103,51 @@ pub(crate) fn production_rust_sources() -> Vec<PathBuf> {
 /// recognized by the `::` in front of it, so a plain `unwrap`
 /// appearing as a field or a binding is not mistaken for one.
 ///
-/// Cost: one pass over `code`.
+/// **The whitespace between the three tokens may be a newline.**
+/// `o.unwrap\n()` and `o.unwrap(\n)` are both legal Rust and both
+/// are the bare panic; a reader that looked only within a line
+/// would call each of them clean, which is the same class of escape
+/// as writing the path form and is closed the same way — the search
+/// runs over the whole text and the gaps are skipped with
+/// `trim_start` / `trim_end`, which do not stop at a line ending.
+/// The line reported is the one the name sits on.
+///
+/// One false positive is left standing, in the safe direction: a
+/// *declaration*, `pub fn unwrap() -> u32`, is shaped exactly like a
+/// call and is reported as one. Nothing in this workspace declares
+/// such a function, and the cost of the mistake is a named line a
+/// reader adjudicates rather than a panic that ships.
+///
+/// Cost: one pass over `code`, plus one pass to collect its lines.
 pub(crate) fn bare_unwrap_calls(code: &str) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = code.lines().collect();
+    let bytes = code.as_bytes();
     let mut out = Vec::new();
-    for (index, line) in code.lines().enumerate() {
-        let bytes = line.as_bytes();
-        let mut from = 0usize;
-        while let Some(at) = line[from..].find("unwrap") {
-            let start = from + at;
-            let end = start + "unwrap".len();
-            from = end;
-            if start > 0 && is_ident_byte(bytes[start - 1]) {
-                continue;
-            }
-            if end < line.len() && is_ident_byte(bytes[end]) {
-                continue;
-            }
-            let after_name = line[end..].trim_start();
-            let reported = match after_name.strip_prefix('(') {
-                Some(inside) => inside.trim_start().starts_with(')'),
-                None => line[..start].trim_end().ends_with("::"),
-            };
-            if reported {
-                out.push((index + 1, line.trim().to_string()));
-            }
+    // `start` only ever moves forward, so the line number is carried
+    // along rather than recounted from the top of the file per hit.
+    let mut line_number = 1usize;
+    let mut counted_through = 0usize;
+    let mut from = 0usize;
+    while let Some(at) = code[from..].find("unwrap") {
+        let start = from + at;
+        let end = start + "unwrap".len();
+        from = end;
+        line_number += code[counted_through..start].matches('\n').count();
+        counted_through = start;
+        if start > 0 && is_ident_byte(bytes[start - 1]) {
+            continue;
+        }
+        if end < code.len() && is_ident_byte(bytes[end]) {
+            continue;
+        }
+        let after_name = code[end..].trim_start();
+        let reported = match after_name.strip_prefix('(') {
+            Some(inside) => inside.trim_start().starts_with(')'),
+            None => code[..start].trim_end().ends_with("::"),
+        };
+        if reported {
+            let source = lines.get(line_number - 1).map_or("", |line| line.trim());
+            out.push((line_number, source.to_string()));
         }
     }
     out
@@ -277,6 +298,41 @@ mod tests {
             vec![1, 7],
             "the call and the path handed to `map` are both the bug; `unwrap_or*`, \
              `unwrap_err`, `expect` and a binding named `unwrap` are not"
+        );
+    }
+
+    /// **A line break between the tokens does not make it a
+    /// different call.** `o.unwrap\n()` and `o.unwrap(\n)` are both
+    /// legal Rust, both are the bare panic §9 forbids, and a
+    /// line-local reader called both of them clean — the input that
+    /// used to make this test fail is either of the first two lines
+    /// below. Left open, it was the one spelling that escaped both
+    /// halves of the §9 posture at once: the scan could not see it,
+    /// and until the stress-map generator grew its own
+    /// `#![warn(clippy::unwrap_used)]` the lint could not reach that
+    /// crate root to see it either.
+    ///
+    /// The last two lines are the control on the same widened path.
+    /// `unwrap_or(\n0)` and `unwrap(\n1)` also span a line break, and
+    /// a reader that "fixed" the split forms by skipping ahead to the
+    /// next `(` — or by ignoring what sits between `(` and `)` —
+    /// reports one of them and goes red here. Skipping whitespace is
+    /// the whole of the widening; nothing else about the match moved.
+    #[test]
+    fn test_a_call_split_across_a_line_break_is_still_a_call() {
+        let code = "let a = x.unwrap\n    ();\n\
+                    let b = y.unwrap(\n);\n\
+                    let c = z.unwrap_or(\n    0);\n\
+                    let d = w.unwrap(\n    1);\n";
+        let reported: Vec<(usize, String)> = bare_unwrap_calls(code);
+        assert_eq!(
+            reported,
+            vec![
+                (1, "let a = x.unwrap".to_string()),
+                (3, "let b = y.unwrap(".to_string()),
+            ],
+            "both split spellings of the bare panic are calls, reported at the line the name \
+             sits on; a split `unwrap_or` and a split `unwrap(1)` are not"
         );
     }
 

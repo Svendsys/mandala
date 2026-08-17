@@ -418,9 +418,15 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `#[cfg(test)] mod x;` files and `#![cfg(test)]` files dropped,
   baumhard's ungated `pub mod tests;` trees and `benches/` dropped
   by path — and fails `./test.sh` naming `file:line`. Beside it,
-  every crate root carries `#![warn(clippy::unwrap_used)]` with
+  all five crate roots carry `#![warn(clippy::unwrap_used)]` with
   `#![cfg_attr(test, allow(...))]`, so the same rule reaches an
-  editor while the code is being written. The scan is the gate,
+  editor while the code is being written. **Five, not four:**
+  `lib/baumhard/src/bin/generate_stress_map.rs` is a crate root of
+  its own, and the attribute in `lib.rs` does not reach it — a
+  planted `unwrap()` there draws nothing from `cargo clippy -p
+  baumhard --bins` until the file carries the attribute itself. That
+  is the shape of hole this bullet exists to describe, so it is
+  named rather than rounded off. The scan is the gate,
   because clippy is advisory here until its warning baseline is
   zero; the lint is the faster feedback, and it reads
   post-macro-expansion code the scan cannot. Neither replaces the

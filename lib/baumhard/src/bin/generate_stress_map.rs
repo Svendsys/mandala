@@ -6,7 +6,7 @@
 //! stress the renderer and to catch performance regressions — not a benchmark
 //! harness, just a file writer. Reading the generated file with
 //! `cargo run --release -- maps/stress.mindmap.json` and eyeballing the
-//! behaviour is the feedback loop. Output is deterministic per `--seed`.
+//! behavior is the feedback loop. Output is deterministic per `--seed`.
 //!
 //! # Topologies
 //!
@@ -46,6 +46,25 @@
 //!     --topology star --nodes 1000 \
 //!     --output maps/stress_star.mindmap.json
 //! ```
+
+// This file is a crate root of its own — cargo builds every
+// `src/bin/*.rs` as a separate binary crate — so the
+// `#![warn(clippy::unwrap_used)]` in `lib.rs` does not reach a line
+// written here, and CODE_CONVENTIONS §9's "every crate root carries
+// it" was false of exactly this one until the attribute below.
+// Proven rather than assumed: with an `o.unwrap()` planted in this
+// file and the attribute removed, `cargo clippy -p baumhard --bins`
+// reports no "used unwrap() on an Option value" at all; with the
+// attribute, it reports it at the planted line.
+//
+// It matters more here than the file's own cleanliness suggests.
+// `util::unwrap_posture` reads source text, so a call whose name and
+// parentheses straddle a line break is the shape it has to widen for
+// deliberately; the lint reads the parsed program and never had that
+// problem. Leaving this root uncovered left one file where a
+// misspelled-across-lines panic had only one reader instead of two.
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use std::collections::{HashMap, HashSet};
 use std::env;
