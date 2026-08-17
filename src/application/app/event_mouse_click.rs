@@ -320,28 +320,28 @@ pub(super) fn handle_mouse_input(
                         }
                         _ => None,
                     };
-                // Portal-label drag capture. Takes precedence
-                // over `hit_node` at threshold-cross time so
-                // pressing a marker and dragging slides the label
-                // along its owning node's border rather than
-                // moving the node itself. Captured regardless of
-                // current selection — grabbing a marker is a
-                // valid first action, not just a follow-up to a
-                // prior click.
-                // Portal **icon** drag captures the `border_t`
-                // slide gesture — dragging the text sub-part
-                // isn't a supported interaction. Only populate
-                // this when the icon-side hit was present.
-                let hit_portal_label = match &portal_icon_hit {
-                    Some((key, endpoint)) if hit_node.is_none() => Some((key.clone(), endpoint.clone())),
-                    _ => None,
-                };
+                // Portal-label drag capture: pressing a marker
+                // and dragging slides the label along its owning
+                // node's border. Captured regardless of current
+                // selection — grabbing a marker is a valid first
+                // action, not just a follow-up to a prior click.
+                //
+                // The comment here used to say this takes
+                // precedence over `hit_node` at threshold-cross
+                // time. It does not, and never has:
+                // `portal_label_drag_capture` stores the hit only
+                // when the click chain left `hit_node` empty, so
+                // a node under a marker wins the press on the
+                // drag path exactly as it does on the click path.
+                let hit_portal_label =
+                    super::portal_label_drag_capture(&portal_icon_hit, hit_node.as_deref());
                 // Reuse the press-time edge-label hit captured
                 // earlier so the threshold-cross transition can
-                // promote to `DraggingEdgeLabel`. Priority
-                // ordering in `event_cursor_moved.rs` still
-                // gives portal-label / edge-handle drag higher
-                // precedence when multiple hits overlap.
+                // promote to `DraggingEdgeLabel`. Both label hits
+                // are already node-gated by the click chain; the
+                // promotion order in `event_cursor_moved.rs`
+                // resolves the edge-handle-versus-node overlap,
+                // which is the one pair the chain does not gate.
                 //
                 // Don't clobber a right-button gesture in flight.
                 // Symmetric with the right-press guard in

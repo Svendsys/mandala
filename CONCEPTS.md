@@ -2368,10 +2368,46 @@ impose on every state — including the `None` that is live for all
 but a few seconds of a session. `PendingRight`, 64 bytes, is the
 widest variant left and stays unboxed.
 
-`src/application/app/mod.rs:358-411`.
-Native-only today. Hit priority on `Pending` is fixed: edge
-handle > portal label > edge label > node, so small grab-areas
-always win over larger AABBs.
+`src/application/app/mod.rs`. Native-only today.
+
+**Hit priority, in the two halves it actually has.** The line
+that used to sit here read "edge handle > portal label > edge
+label > node, so small grab-areas always win over larger AABBs",
+and it was wrong in both clauses. What is true:
+
+- **Capture, at button-down.** One chain runs, `compute_click_hit`,
+  and it gives the *node* priority: a portal hit is resolved only
+  when no node was hit, an edge-label hit only when neither was.
+  `portal_label_drag_capture` then arms the portal drag on the
+  same condition. So a marker or a label sitting over a node
+  loses the press to the node — on the drag path and the click
+  path alike, because there is one chain and the drag reads its
+  answer. A larger AABB in front wins.
+- **Promotion, at threshold-cross.** `event_cursor_moved.rs`
+  consumes the captured hits in the order edge-label →
+  portal-label → edge-handle → node-resize-handle →
+  section-resize-handle → section-move → node-move →
+  Shift-rect-select → pan. Over the label hits this order decides
+  nothing, since the capture rule above leaves at most one of them
+  and the node populated. The pair it does decide is **edge handle
+  versus node**, the one hit captured outside the chain.
+
+**The one place a click and a drag on the same press name
+different things** follows from that: an edge handle is captured
+whenever its edge is selected, whatever else is under the cursor,
+and the promotion order puts it ahead of the node — while the
+click ladder has no rung for handles at all. So a press on a
+selected edge's handle that overlaps a node selects the node if
+the hand does not move, and drags the handle if it does. That is
+the intended shape — a handle is a drag affordance, and a click
+through it falling back to selection is what makes the handle
+non-modal — not a divergence to repair.
+
+Issue #48 reported the *portal* case as such a divergence,
+reading the promotion order without the capture rule.
+`portal_label_drag_capture_is_gated_by_the_same_node_hit_the_click_ladder_uses`
+now holds the two paths together, and names the gate that had
+been an unpinnable inline `if` inside the press handler.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 

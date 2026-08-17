@@ -478,6 +478,50 @@ mod click_hit_priority_tests {
         assert!(matches!(hit, ClickHit::EdgeLabel(_)));
     }
 
+    /// **The click path and the drag path resolve a node under a
+    /// portal marker the same way**, because the press stores the
+    /// portal hit for the drag promotion only when the shared click
+    /// chain left `hit_node` empty.
+    ///
+    /// Fails when: the `hit_node.is_none()` gate in
+    /// `portal_label_drag_capture` goes. The drag promotion in
+    /// `event_cursor_moved.rs` lists portal-label above node, so
+    /// without the gate a press on a marker over a node would select
+    /// the node on a click and slide the marker on a drag — one
+    /// press, two targets, decided by whether the hand moved.
+    ///
+    /// Controls, both on this function: with no node the same
+    /// marker *is* captured, so "returns None" is not a capture that
+    /// never fires; and a text-side hit is refused even with no
+    /// node, because only the icon is a drag affordance.
+    #[test]
+    fn portal_label_drag_capture_is_gated_by_the_same_node_hit_the_click_ladder_uses() {
+        let icon = Some((ek(), "endpoint-1".to_string()));
+
+        assert!(
+            super::portal_label_drag_capture(&icon, Some("node-x")).is_none(),
+            "a node under the marker wins the press, so no portal drag is armed"
+        );
+        // ...and the click ladder agrees on the same inputs.
+        assert_eq!(
+            click_hit_from_priority(&Some("node-x".to_string()), None, &None, &icon, &None),
+            ClickHit::Node("node-x".to_string(), None),
+            "the two paths must name the same target for one press"
+        );
+
+        let armed = super::portal_label_drag_capture(&icon, None);
+        assert_eq!(
+            armed, icon,
+            "control: with no node hit the marker must arm the drag"
+        );
+
+        assert!(
+            super::portal_label_drag_capture(&None, None).is_none(),
+            "control: a text-side hit reaches here as None — sliding a portal's text \
+             is not a gesture"
+        );
+    }
+
     #[test]
     fn click_hit_priority_all_none_yields_empty() {
         let hit = click_hit_from_priority(&None, None, &None, &None, &None);
