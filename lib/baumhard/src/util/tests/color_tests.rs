@@ -1058,6 +1058,22 @@ fn test_every_hex_entry_point_is_downstream_of_the_one_parser() {
 /// because "the name ends in `_to_hex`" is a weaker rule than "these
 /// two functions, for this reason" — and a filter by shape is how a
 /// real parser slips out of the scan under a name nobody vetted.
+///
+/// **The bound, which is that same hole one step earlier.** Collection
+/// filters on `name.contains("hex")`, so a hex parser under a name
+/// that does not say "hex" is never collected and this test is green
+/// on it. Measured: a `pub fn parse_color_literal(c: &str) ->
+/// Option<[f32; 4]>` that walks `c.as_bytes()` itself, planted in
+/// `color_conversion.rs`, leaves this test passing. The scope stated
+/// above — "every `pub` function whose *name* says it takes a hex
+/// string" — is therefore exact rather than hedged, but it is a
+/// *name* rule on the collection side while the paragraph above
+/// refuses a *name* rule on the exemption side. Closing it means
+/// classifying by body ("indexes `as_bytes()` and returns a color"),
+/// which decides a different question and would need its own controls;
+/// until someone writes that, what this test derives is "no hex-named
+/// entry point bypasses the one parser", and a color function that
+/// hides its subject in its name is left to review.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn do_every_hex_entry_point_is_downstream_of_the_one_parser() {
     use crate::util::rust_source::{braced_block_after, production_code};
