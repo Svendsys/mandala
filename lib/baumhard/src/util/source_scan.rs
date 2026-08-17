@@ -4,9 +4,9 @@
 //! whose subject is the repository rather than a value a function
 //! returned.
 //!
-//! Three such tests exist, and each of them used to carry its own
-//! answer to the same question — *which of these bytes are shipped
-//! code?*
+//! Three such tests existed when this was written, and each of them
+//! used to carry its own answer to the same question — *which of
+//! these bytes are shipped code?*
 //!
 //! - `mindmap::loader::tests::test_every_mindmap_write_goes_through_the_contract`
 //!   asks whether any path outside `loader::to_json_value` turns a
@@ -35,6 +35,14 @@
 //! [`production_source`] is the only excision of test code from a
 //! file's text; [`test_gated_module_files`] is the only resolution of
 //! a test-gated `mod x;` to the files it names.
+//!
+//! A fourth asker arrived later and is what that consolidation buys:
+//! [`crate::util::unwrap_posture`] asks whether any shipped line
+//! calls `unwrap()`, and answers "which bytes ship" by calling
+//! [`production_source`] rather than by deriving a fourth answer of
+//! its own. It did pay for one correction here — see that function
+//! on the `#![cfg(test)]` *inner*-attribute form, which gates a whole
+//! file and which nothing here had been reading.
 //!
 //! **Both excisions fail toward noise.** [`production_source`] does
 //! not descend into function bodies, so a `#[cfg(test)] mod` written
@@ -165,6 +173,19 @@ pub(crate) fn skip_unmodeled_option(meta: &syn::meta::ParseNestedMeta) -> syn::R
 /// reader adjudicates, rather than skipping a shipped path in
 /// silence.
 ///
+/// **A file can also gate itself.** `#![cfg(test)]` written as an
+/// *inner* attribute makes the whole file test source, and it is the
+/// shape `src/application/macros/tests.rs`,
+/// `…/cross_dispatch/selection/tests.rs` and
+/// `crates/maptool/src/verify/test_helpers.rs` use — three files
+/// whose `mod` declarations carry no attribute at all, so
+/// [`test_gated_module_files`] does not name them either. Reading
+/// only the *item* attributes below therefore returned every line of
+/// them as shipped code, and the first scan built on this reader
+/// collected twenty-six of their `unwrap()`s as production
+/// offenders. The whole file is blanked when its own attributes gate
+/// on `test`.
+///
 /// Panics when `text` is not valid Rust, naming `file`: every caller
 /// is a guard test whose whole job is to notice that the source
 /// moved, and a file that silently produced no production text would
@@ -175,6 +196,9 @@ pub(crate) fn production_source(file: &Path, text: &str) -> String {
     let parsed =
         syn::parse_file(text).unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
     let mut blanked = vec![false; text.lines().count()];
+    if is_test_gated(&parsed.attrs) {
+        blanked.fill(true);
+    }
     blank_test_gated_items(&parsed.items, &mut blanked);
     let kept: Vec<&str> = text
         .lines()
@@ -827,6 +851,44 @@ mod tests {
                 "the gated module's lines must be blank: {lines:?}"
             );
         }
+    }
+
+    /// **A file is allowed to gate itself, and three in this
+    /// workspace do.** `#![cfg(test)]` is an inner attribute on the
+    /// file, not on any item in it, and the `mod tests;` that names
+    /// such a file carries no attribute — so neither the item walk
+    /// nor [`test_gated_module_files`] sees a gate anywhere. Every
+    /// line of `src/application/macros/tests.rs` and its two
+    /// siblings read as shipped code until this was handled, and the
+    /// first scan built on this reader duly reported twenty-six test
+    /// `unwrap()`s as production offenders.
+    ///
+    /// The peer half of the assertion is what keeps it from passing
+    /// on a reader that blanks any file carrying an inner attribute.
+    #[test]
+    fn test_production_source_blanks_a_file_that_gates_itself() {
+        let gated = production_source(Path::new("planted.rs"), "#![cfg(test)]\n\npub fn helper() {}\n");
+        assert!(
+            gated.trim().is_empty(),
+            "a file behind `#![cfg(test)]` ships nothing at all: {gated:?}"
+        );
+
+        // The peer, differing only in which inner attribute it
+        // carries. Without it this test is satisfied by a reader
+        // that blanks every file with an inner attribute, or every
+        // file at all — and the line number is checked here rather
+        // than above because a fully blanked file has no surviving
+        // line to check it on.
+        let ungated = production_source(
+            Path::new("planted.rs"),
+            "#![allow(dead_code)]\n\npub fn helper() {}\n",
+        );
+        assert_eq!(
+            ungated.lines().nth(2),
+            Some("pub fn helper() {}"),
+            "an inner attribute that is not a test gate must leave the file, and its line \
+             numbering, alone: {ungated:?}"
+        );
     }
 
     /// Test code is not only ever a module. A `#[cfg(test)]` helper

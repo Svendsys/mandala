@@ -12,6 +12,23 @@
 //! `lib/baumhard/CONVENTIONS.md` — read them before touching this
 //! crate.
 
+// CODE_CONVENTIONS §9 closes with "Bare `unwrap()` outside tests is
+// a bug", and this is the half of that rule an editor can tell you
+// about while you type. `util::unwrap_posture` is the other half —
+// it reads the workspace's source text and fails `./test.sh`, which
+// is a hard gate where clippy here is advisory. Two mechanisms
+// rather than one because they disagree usefully: the lint sees
+// post-expansion code the text scan cannot read, and the scan sees
+// the `pub mod tests;` trees the lint has to be told about.
+//
+// The `cfg_attr` is what keeps the lint off test code. A
+// `#[cfg(test)] mod` does not exist in the build where the lint is
+// live, and in the build where it does exist the whole crate is
+// allowed — so `unwrap()` stays the right spelling in a test and a
+// bug everywhere else.
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 /// Low-level primitives: colour regions, outlines, apply-operations,
 /// and pure-data value types.
 pub mod core;
