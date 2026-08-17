@@ -400,13 +400,15 @@ impl TypeGraph {
     /// **out-of-line** `#[cfg(test)] mod x;` together with everything
     /// those files declare.
     ///
-    /// That fourth one is not a corner. `util/mod.rs` gates
-    /// `manifests`, `serde_coverage` and `test_logger` exactly that
-    /// way, and until it was closed all eleven of their types sat in
-    /// this index — `TypeGraph` and `TypeInfo` among them — while the
-    /// doc here said `#[cfg(test)]` modules were all excluded.
-    /// Nothing had collided yet, which is the only reason it was
-    /// quiet.
+    /// That fourth one is not a corner. `util/mod.rs` gates five
+    /// modules exactly that way — `bench_surface`, `manifests`,
+    /// `serde_coverage`, `serde_probe` and `source_scan` — and until
+    /// it was closed all eleven types of the three gated at the time
+    /// (`manifests`, `serde_coverage` and `test_logger`, the last
+    /// since widened to `pub`) sat in this index — `TypeGraph` and
+    /// `TypeInfo` among them — while the doc here said
+    /// `#[cfg(test)]` modules were all excluded. Nothing had
+    /// collided yet, which is the only reason it was quiet.
     ///
     /// Panics if a file cannot be read or parsed, or if a `mod x;`
     /// names no file on disk: this backs a test whose entire job is to
@@ -1911,21 +1913,28 @@ mod tests {
     /// inline `#[cfg(test)] mod tests { … }`, which the walk sees as
     /// an attribute on an item it is holding. The four types below
     /// are declared by *files* — `util/mod.rs` gates `manifests`,
-    /// `serde_coverage` and `test_logger` with an out-of-line
-    /// `#[cfg(test)] mod x;`, and a walk over the filesystem never
-    /// meets that attribute at all. All eleven of their types were
-    /// indexed as model types while this test passed on the strength
-    /// of the one case it did check.
+    /// `serde_coverage`, `bench_surface` and `source_scan` with an
+    /// out-of-line `#[cfg(test)] mod x;`, and a walk over the
+    /// filesystem never meets that attribute at all. All eleven of
+    /// their types were indexed as model types while this test passed
+    /// on the strength of the one case it did check.
     ///
-    /// The five named here are this module's own, the recording
-    /// logger's, and its independent counterpart's, chosen because a
-    /// rename that emptied the check would be a rename of something a
-    /// reader of this file is already looking at. `serde_probe`'s own
-    /// `Fields` and `Variant` would collide with nothing today and
-    /// everything tomorrow, which is the case `DerivedShape` stands
-    /// in for. The planted case that depends on nothing in the crate
-    /// is
+    /// The five named here are this module's own and three
+    /// independent counterparts', chosen because a rename that
+    /// emptied the check would be a rename of something a reader of
+    /// this file is already looking at. `serde_probe`'s own `Fields`
+    /// and `Variant` would collide with nothing today and everything
+    /// tomorrow, which is the case `DerivedShape` stands in for. The
+    /// planted case that depends on nothing in the crate is
     /// `source_scan::tests::test_an_out_of_line_test_module_and_its_subtree_are_excluded`.
+    ///
+    /// `Recorder` stood here until `test_logger` stopped being
+    /// `cfg(test)`-gated — its callers are in `mandala` now, which
+    /// links baumhard as an ordinary dependency and cannot see
+    /// anything behind baumhard's own `cfg(test)`. It is a genuine
+    /// member of the on-disk source tree today, so it is no longer a
+    /// witness for this claim; `BenchEntry` replaces it rather than
+    /// leaving the list one shorter.
     #[test]
     fn test_type_graph_excludes_test_sources() {
         let graph = TypeGraph::build(&crate_src_root());
@@ -1933,7 +1942,7 @@ mod tests {
             graph.get("StubCtx").is_none(),
             "a struct declared inside an inline test module must not be indexed"
         );
-        for test_only in ["TypeGraph", "TypeInfo", "Recorder", "Manifest", "DerivedShape"] {
+        for test_only in ["TypeGraph", "TypeInfo", "BenchEntry", "Manifest", "DerivedShape"] {
             assert!(
                 graph.get(test_only).is_none(),
                 "`{test_only}` is declared in a file that `util/mod.rs` gates with an \

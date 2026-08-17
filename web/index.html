@@ -12,6 +12,27 @@
 </head>
 <body>
     <link data-trunk rel="rust" href="../Cargo.toml" data-wasm-opt="z" />
-    <link data-trunk rel="copy-dir" href="../maps" />
+    <!--
+      The four loadable fixtures, named one by one rather than
+      `copy-dir ../maps`. The directory also holds
+      `testament.mind` — a 1 MB 7z miMind archive kept for the
+      `maptool convert --legacy` reference — and `docs/`, neither
+      of which any browser code can open, so `copy-dir` put a
+      megabyte of unreachable bytes in every bundle a phone
+      downloads (CODE_CONVENTIONS §4).
+
+      `data-target-path="maps"` reproduces the `dist/maps/` layout
+      `copy-dir` produced, which is what `?map=` and
+      `DEFAULT_MINDMAP` resolve against.
+
+      A new fixture has to be added here too:
+      `test_every_shipped_map_reaches_the_browser_bundle` reads
+      this file against `maps/` and fails naming the one that is
+      missing.
+    -->
+    <link data-trunk rel="copy-file" href="../maps/testament.mindmap.json" data-target-path="maps" />
+    <link data-trunk rel="copy-file" href="../maps/theme_demo.mindmap.json" data-target-path="maps" />
+    <link data-trunk rel="copy-file" href="../maps/palette_cascade.mindmap.json" data-target-path="maps" />
+    <link data-trunk rel="copy-file" href="../maps/stress_long_edges.mindmap.json" data-target-path="maps" />
 </body>
 </html>

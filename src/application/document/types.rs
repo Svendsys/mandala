@@ -440,11 +440,26 @@ impl SelectionState {
         }
     }
 
+    /// Whether `node_id` is part of the current selection, at
+    /// node granularity — a section-bearing variant answers for
+    /// its owning node.
+    ///
+    /// Allocation-free on every variant. `Multi` compares
+    /// borrowed `&str`s rather than reaching for
+    /// `Vec::contains`, which needs a `&String` and so would
+    /// allocate a throwaway copy of `node_id` on every call. The
+    /// two call sites today are a press and an undo step, but
+    /// this is a `pub` accessor over the selection set and the
+    /// obvious next caller is a per-node loop, where the copy
+    /// would be per candidate.
+    ///
+    /// Cost: O(1) for the single-target variants, O(n) in the
+    /// selection size for `Multi` / `MultiSection`.
     pub fn is_selected(&self, node_id: &str) -> bool {
         match self {
             SelectionState::None => false,
             SelectionState::Single(id) => id == node_id,
-            SelectionState::Multi(ids) => ids.contains(&node_id.to_string()),
+            SelectionState::Multi(ids) => ids.iter().any(|id| id == node_id),
             SelectionState::Section(s) => s.node_id == node_id,
             SelectionState::MultiSection(secs) => secs.iter().any(|s| s.node_id == node_id),
             SelectionState::SectionRange { sel, .. } => sel.node_id == node_id,

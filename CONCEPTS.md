@@ -2368,10 +2368,67 @@ impose on every state — including the `None` that is live for all
 but a few seconds of a session. `PendingRight`, 64 bytes, is the
 widest variant left and stays unboxed.
 
-`src/application/app/mod.rs:358-411`.
-Native-only today. Hit priority on `Pending` is fixed: edge
-handle > portal label > edge label > node, so small grab-areas
-always win over larger AABBs.
+`src/application/app/mod.rs`. Native-only today.
+
+**Hit priority, in the three parts it actually has.** The line
+that used to sit here read "edge handle > portal label > edge
+label > node, so small grab-areas always win over larger AABBs",
+and it was wrong in both clauses. What is true:
+
+- **Capture, at button-down.** One chain runs, `compute_click_hit`,
+  and it gives the *node* priority: a portal hit is resolved only
+  when no node was hit, an edge-label hit only when neither was.
+  `portal_label_drag_capture` then arms the portal drag on the
+  same condition. So a marker or a label sitting over a node
+  loses the press to the node — on the drag path and the click
+  path alike, because there is one chain and the drag reads its
+  answer. A larger AABB in front wins.
+- **Capture, outside that chain.** The press also runs three
+  handle hit-tests that never consult `hit_node`, each gated on
+  state instead: `hit_edge_handle` on the selection being
+  `SelectionState::Edge`, `hit_node_resize_handle` on
+  `InteractionMode::Resize { Node }`, and
+  `hit_section_resize_handle` on `Resize { Section }`. Handles
+  are what the mode or the selection *is for*, so a press near
+  one is read as aimed at it whatever the chain says.
+- **Promotion, at threshold-cross.** `event_cursor_moved.rs`
+  consumes the captured hits in the order edge-label →
+  portal-label → edge-handle → node-resize-handle →
+  section-resize-handle → section-move → node-move →
+  Shift-rect-select → pan. Over the label hits this order decides
+  nothing, since the capture rule above leaves at most one of them
+  and the node populated. What it does decide is **all three
+  handle families versus the node**: each is ranked ahead of
+  `hit_node`, and each was captured without asking about it.
+
+**Where a click and a drag on the same press name different
+things** follows from that: the click ladder has no rung for
+handles at all, so every hit in the second bullet is a target the
+drag path can reach and the click path cannot. Three ways in, one
+shape.
+
+It is reachable, not theoretical. `resize_handle_positions` puts
+the eight handles *on* the boundary of the box they resize and
+`nearest_handle_within` accepts anything inside
+`HANDLE_HIT_TOLERANCE_PX` of one, while `hit_test_target` returns
+`None` for a point `point_in_node_aabb` refuses — and that
+predicate is shape-aware. So a press a few pixels outside a
+corner, or exactly on the corner handle of an ellipse-shaped node
+(where the corner is outside the shape by construction), is empty
+canvas to the click ladder and a resize to the drag: hold still
+and the selection clears, move and the node resizes. Where the
+handle sits *over* a node instead, the same press selects that
+node on a click and drags the handle on a drag.
+
+That is the intended shape — a handle is a drag affordance, and a
+click through it falling back to selection is what makes the
+handle non-modal — not a divergence to repair.
+
+Issue #48 reported the *portal* case as such a divergence,
+reading the promotion order without the capture rule.
+`test_portal_label_drag_capture_is_gated_by_the_same_node_hit_the_click_ladder_uses`
+now holds the two paths together, and names the gate that had
+been an unpinnable inline `if` inside the press handler.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 

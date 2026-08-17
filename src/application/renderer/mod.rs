@@ -127,7 +127,10 @@ use glam::Vec2;
 /// Extending with a new shape: add a `SHAPE_*` constant and a
 /// `case` arm in `fs_main`. The shape id comes from
 /// `NodeShape::shader_id` on the baumhard side; the two must stay
-/// in lock-step.
+/// in lock-step, and
+/// `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
+/// is what holds them there — it reads this string as text, so no
+/// GPU is involved and §T8 is untouched.
 ///
 /// `shape_id` rides the vertex stream as a plain `f32` (written
 /// with `SHAPE_ID_* as f32`, read with `u32(round(id))`) rather
@@ -161,7 +164,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.color = in.color;
     out.uv = in.uv;
     // `round` then cast — the CPU writes exact integers, so the
-    // round is belt-and-braces against any driver-side rasterisation
+    // round is belt-and-braces against any driver-side rasterization
     // of the attribute. Flat-interpolated onto VsOut as `u32` so
     // the fragment `switch` is a plain integer compare.
     out.shape_id = u32(round(in.shape_id));

@@ -509,21 +509,51 @@ pub(crate) fn apply_color_axis_to_selection(
     report.any_applied
 }
 
-/// Surface a NotApplicable outcome on the parametric Action path
-/// where the dispatcher's scrollback messages would otherwise
-/// vanish. Action arms (keybind / palette / macro) have no
-/// scrollback to pipe per-pair outcomes into; without this hook
-/// a `SetColor { axis: Bg }` triggered against a `Section`
-/// selection (where the `HasBgColor` arm returns NotApplicable
-/// per the Tier-2A trait split) would silently no-op with no
-/// signal in the log either. Verb path keeps full per-pair
-/// reporting via `finalize_report` and ignores this hook.
+/// Surface a silent no-op on the parametric Action path where the
+/// dispatcher's scrollback messages would otherwise vanish. Action
+/// arms (keybind / palette / macro) have no scrollback to pipe
+/// per-pair outcomes into; without this hook a `SetColor { axis:
+/// Bg }` triggered against a `Section` selection (where the
+/// `HasBgColor` arm returns NotApplicable per the Tier-2A trait
+/// split) would silently no-op with no signal in the log either.
+/// Verb path keeps full per-pair reporting via `finalize_report`
+/// and ignores this hook.
+///
+/// Two outcomes reach here and they are not the same condition, so
+/// they do not take the same level (CODE_CONVENTIONS §9):
+///
+/// - **NotApplicable** is transient — the axis is fine, the
+///   selection is the wrong kind, and the same binding works on the
+///   next selection. `info!`, which is compiled out of release,
+///   because a stray keypress against the wrong selection is not a
+///   defect and must not accumulate in a user's stderr.
+/// - **Invalid** is permanent: the *value* the binding carries is
+///   one the parser rejects, so the binding cannot ever apply, to
+///   any selection. That is a defect in a config file the user
+///   owns and cannot see from inside the app — `warn!`, which
+///   survives into release where they are.
+///
+/// Before this split, an `Invalid` outcome matched neither the
+/// "not applicable" substring nor anything else, so a keybinding
+/// carrying an unparseable color was the quietest failure on the
+/// path: no scrollback, no log, no change.
 fn log_not_applicable_if_silent(
     report: &crate::application::console::traits::DispatchReport,
     verb: &str,
     axis: &str,
 ) {
-    if !report.any_applied && report.messages.iter().any(|m| m.contains("not applicable")) {
+    if report.any_applied {
+        return;
+    }
+    if !report.invalid.is_empty() {
+        log::warn!(
+            "{} {}: value rejected, so this binding cannot apply to any selection \
+             (Action path; no scrollback): {}",
+            verb,
+            axis,
+            report.invalid.join("; "),
+        );
+    } else if report.messages.iter().any(|m| m.contains("not applicable")) {
         log::info!(
             "{} {}: not applicable to current selection (Action path; no scrollback). \
              Dispatcher messages: {}",
@@ -1149,5 +1179,55 @@ mod tests {
         assert_eq!(doc.mindmap.node_background_color(node), group.background);
         assert_eq!(doc.mindmap.node_frame_color(node), group.frame);
         assert_eq!(doc.mindmap.node_text_color(node), group.text);
+    }
+
+    /// The parametric path reports an unusable *value* at `warn!`
+    /// and a wrong *selection* at `info!`, which the release cap
+    /// compiles out.
+    ///
+    /// The distinction is the point: a keybinding carrying
+    /// `bg=zzz-not-a-color` can never apply, to any selection, and
+    /// the user cannot see why from inside the app; a `bg` press
+    /// against a section selection works again on the next node.
+    /// Before the `invalid` field on `DispatchReport` existed, the
+    /// first case matched no substring the hook looked for and was
+    /// the quietest failure on the path — no scrollback, no log, no
+    /// change.
+    ///
+    /// Fails when: the `warn!` arm goes or is downgraded (the
+    /// recorder keeps `warn!` and above, so a lower level
+    /// disappears), or when the not-applicable case is raised to
+    /// `warn!` (the control block finds a line, and every stray
+    /// keypress against the wrong selection would reach a release
+    /// build's stderr).
+    #[test]
+    fn test_parametric_color_warns_only_for_a_value_that_can_never_apply() {
+        baumhard::util::test_logger::install();
+
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        assert!(!super::apply_color_axis_to_selection(
+            &mut doc,
+            "bg",
+            "zzz-not-a-color-9f31"
+        ));
+        let logged = baumhard::util::test_logger::lines_containing("zzz-not-a-color-9f31");
+        assert!(
+            logged.iter().any(|l| l.starts_with("WARN ")),
+            "an unparseable value must be reported at warn level, logged: {logged:?}"
+        );
+
+        // Control: a perfectly good color against a selection the
+        // axis does not reach. `bg` on a section is the
+        // NotApplicable case the hook was written for.
+        let mut doc = load_test_doc();
+        doc.selection = SelectionState::Section(crate::application::document::SectionSel::new(&id, 0));
+        assert!(!super::apply_color_axis_to_selection(&mut doc, "bg", "#b2c3d4"));
+        let logged = baumhard::util::test_logger::lines_containing("#b2c3d4");
+        assert!(
+            logged.is_empty(),
+            "a wrong-selection press is transient and must not warn: {logged:?}"
+        );
     }
 }

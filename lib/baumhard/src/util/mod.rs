@@ -73,10 +73,12 @@ pub(crate) mod serde_probe;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod source_scan;
 /// A recording `log::Log` sink, so a test can assert that a degrade
-/// path emitted the `warn!` CODE_CONVENTIONS §9 promises. Test-only
-/// and native-only — the browser build installs `console_log`.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) mod test_logger;
+/// path emitted the `warn!` CODE_CONVENTIONS §9 promises.
+/// Native-only — the browser build installs `console_log`; not
+/// `cfg(test)`-gated because its callers live in `mandala` too,
+/// the same reason `rust_source` and `test_temp` are not.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod test_logger;
 /// Collision-free scratch directories for filesystem tests, so
 /// concurrent `cargo test` runs cannot race on a shared path.
 /// Native-only — there is no filesystem to scratch on under wasm32.

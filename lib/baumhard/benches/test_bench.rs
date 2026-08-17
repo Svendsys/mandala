@@ -2058,9 +2058,37 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
     });
 }
 
+/// `dewey_cmp` sorting a node-id list, which is the shape every
+/// call site uses it in — `maptool grep` / `apply` ordering their
+/// hits, and `maptool verify` ordering its violations. Measured as
+/// a sort rather than a single compare because a single compare is
+/// below what criterion can resolve, and because the sort is what
+/// the callers pay for.
+///
+/// No `do_*()` body to reuse: `mindmap::model`'s tests are an
+/// inline `#[cfg(test)] mod tests;`, not a `pub mod tests;` tree,
+/// so nothing there is reachable from this file (§B8).
+fn dewey_cmp_benchmark(c: &mut Criterion) {
+    use baumhard::mindmap::model::dewey_cmp;
+    // A realistic three-level tree, shuffled deterministically by
+    // construction order rather than by an RNG so the row measures
+    // the comparator and not a seed.
+    let ids: Vec<String> = (0..8)
+        .flat_map(|a| (0..8).flat_map(move |b| (0..8).map(move |c| format!("{}.{}.{}", a, c, b))))
+        .collect();
+    c.bench_function("dewey_cmp_sorts_a_three_level_id_list", |b| {
+        b.iter(|| {
+            let mut scratch: Vec<&str> = ids.iter().map(String::as_str).collect();
+            scratch.sort_by(|x, y| dewey_cmp(x, y));
+            scratch.len()
+        })
+    });
+}
+
 criterion_group!(
     benches,
     criterion_benchmark,
+    dewey_cmp_benchmark,
     section_tree_build_benchmark,
     resize_mode_rebuild_benchmark,
     node_edit_mode_rebuild_benchmark,

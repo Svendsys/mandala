@@ -467,6 +467,48 @@ pub fn id_sort_key(id: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// Order two Dewey-decimal node IDs the way a reader expects:
+/// segment by segment, each segment numerically.
+///
+/// **Not `str::cmp`.** Lexicographic order puts `"0.10"` before
+/// `"0.2"` and `"10"` before `"2"`, which is wrong everywhere a
+/// human reads the result — `maptool grep`'s hit list, `maptool
+/// apply`'s target list, `maptool verify`'s violation list. It is
+/// not `id_sort_key` either: that reads the *last* segment only,
+/// which orders siblings under one parent and says nothing about
+/// two ids from different subtrees.
+///
+/// Segments that do not parse as `u64` compare as strings, so a
+/// non-Dewey id still has a total order rather than collapsing
+/// onto zero. A prefix sorts first — `"0.2"` before `"0.2.1"` —
+/// because a parent precedes its children in every listing this
+/// feeds.
+///
+/// Costs: no allocation. One `split('.')` walk over the shared
+/// prefix of the two ids, with a `u64` parse per segment pair.
+pub fn dewey_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut left = a.split('.');
+    let mut right = b.split('.');
+    loop {
+        match (left.next(), right.next()) {
+            (Some(x), Some(y)) => {
+                let ordering = match (x.parse::<u64>(), y.parse::<u64>()) {
+                    (Ok(nx), Ok(ny)) => nx.cmp(&ny),
+                    _ => x.cmp(y),
+                };
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+            // One id is a prefix of the other: the shorter is the
+            // ancestor and comes first.
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (None, None) => return std::cmp::Ordering::Equal,
+        }
+    }
+}
+
 /// Derive the parent ID from a Dewey-decimal node ID.
 /// `"1.2.3"` → `Some("1.2")`, `"0"` → `None` (root node).
 pub fn derive_parent_id(id: &str) -> Option<String> {

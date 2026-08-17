@@ -10,7 +10,7 @@ use super::Violation;
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for (_loc, node) in map.node_locations() {
+    for node in map.nodes.values() {
         if let Some(ref schema) = node.color_schema {
             if !map.palettes.contains_key(&schema.palette) {
                 out.push(Violation::node(

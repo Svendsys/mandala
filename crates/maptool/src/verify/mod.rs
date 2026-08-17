@@ -16,10 +16,14 @@ mod sections;
 mod tree;
 mod unknown_keys;
 
+/// `pub(crate)` so `main.rs`'s tests can build the same fixture
+/// node rather than restating a 40-field literal — the ordering
+/// tests for `grep` / `apply` need a map with chosen ids and
+/// nothing else about the node matters.
 #[cfg(test)]
-mod test_helpers;
+pub(crate) mod test_helpers;
 
-use baumhard::mindmap::model::{MindMap, MindNode};
+use baumhard::mindmap::model::{dewey_cmp, MindMap, MindNode};
 
 /// Severity of a [`Violation`]. Warnings are printed but do not make
 /// `maptool verify` exit nonzero — they flag likely mistakes (e.g.
@@ -89,6 +93,16 @@ impl std::fmt::Display for Violation {
 
 /// Run all invariant checks and return every violation found.
 /// An empty Vec means the file is valid.
+///
+/// **The result is sorted, and that is not cosmetic.** Most checks
+/// walk `map.nodes`, a `HashMap` with a per-process random seed, so
+/// the unsorted order differed between two runs of `maptool verify`
+/// on the same file — which makes a diff of two runs unreadable and
+/// any script that pins the output flaky. Sorting by location
+/// through [`dewey_cmp`] also puts the list in the order an author
+/// reads a Dewey tree in, rather than `"0.10"` ahead of `"0.2"`;
+/// category and message break ties so two violations at one
+/// location keep a fixed order too.
 pub fn verify(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
     out.extend(tree::check(map));
@@ -101,7 +115,66 @@ pub fn verify(map: &MindMap) -> Vec<Violation> {
     out.extend(numeric::check(map));
     out.extend(unknown_keys::check(map));
     out.extend(unknown_keys::check_skipped_constructs(map));
+    out.sort_by(|a, b| {
+        dewey_cmp(&a.location, &b.location)
+            .then_with(|| a.category.cmp(b.category))
+            .then_with(|| a.message.cmp(&b.message))
+    });
     out
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    use crate::verify::test_helpers::node;
+
+    /// A map with the same violations, built in two different
+    /// insertion orders, verifies to the same sequence.
+    ///
+    /// `map.nodes` is a `HashMap`, so its iteration order depends on
+    /// the hash seed and on insertion history; without the sort at
+    /// the end of `verify`, two runs over one file could print the
+    /// same violations in different orders. That makes a diff of two
+    /// runs unreadable and anything that pins the output flaky.
+    ///
+    /// Fails when: the sort goes. The two insertion orders are what
+    /// make that reachable — one map compared with itself would
+    /// agree no matter what.
+    ///
+    /// The literal expectation is the second half: the order is
+    /// Dewey, not lexicographic, so `"0.2"` precedes `"0.10"`. That
+    /// pair is in the fixture precisely because plain string order
+    /// gets it backwards.
+    #[test]
+    fn violations_come_out_in_a_stable_dewey_order() {
+        // Every one of these has a dangling parent, so each yields
+        // exactly one `tree` violation stamped at its own id.
+        let ids = ["0.10", "2", "0.2", "10", "1"];
+
+        let build = |order: &[&str]| {
+            let mut map = MindMap::new_blank("ordering");
+            for id in order {
+                map.nodes.insert((*id).to_string(), node(id, Some("ghost")));
+            }
+            verify(&map)
+                .into_iter()
+                .map(|v| v.location)
+                .collect::<Vec<String>>()
+        };
+
+        let forward = build(&ids);
+        let reversed: Vec<&str> = ids.iter().rev().copied().collect();
+        let backward = build(&reversed);
+
+        assert_eq!(forward, backward, "insertion order must not reach the output");
+        // Each of these ids trips more than one check, so collapse
+        // runs of the same location before comparing against the
+        // order under test. That the runs are *contiguous* is itself
+        // part of the claim — an unsorted list would interleave them.
+        let mut locations = forward.clone();
+        locations.dedup();
+        assert_eq!(locations, vec!["0.2", "0.10", "1", "2", "10"]);
+    }
 }
 
 #[cfg(test)]

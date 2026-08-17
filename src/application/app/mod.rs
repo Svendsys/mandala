@@ -507,6 +507,42 @@ fn click_hit_from_priority(
     }
 }
 
+/// The portal-icon hit a left press hands on to
+/// [`DragState::Pending`], given the node hit the same click chain
+/// resolved.
+///
+/// **This is why the click path and the drag path cannot disagree
+/// about a node under a portal marker.** They run one hit chain,
+/// not two: `compute_click_hit` gives the node priority, and a
+/// press stores the portal hit for the drag promotion only when
+/// that chain left `hit_node` empty. The promotion order in
+/// `event_cursor_moved.rs` does list portal-label above node — but
+/// over a set where at most one of them is populated, so what that
+/// listing resolves is the node against the three *handle* hits
+/// the press captures outside the chain (edge handle, node resize,
+/// section resize), each gated on a mode or a selection instead.
+///
+/// The rule was an inline `if hit_node.is_none()` guard inside the
+/// press handler, which needs a live event loop to reach and so
+/// could not be pinned (`TEST_CONVENTIONS §T9`). A July-2026
+/// review read the promotion order without it and reported the two
+/// paths as targeting different things on the same press; naming
+/// the rule is what makes that answerable rather than re-derivable.
+///
+/// Only the icon sub-part is a drag affordance — sliding a
+/// portal's text along the border is not a gesture — so a
+/// text-side hit yields `None` here regardless of the node.
+#[cfg(not(target_arch = "wasm32"))]
+fn portal_label_drag_capture(
+    portal_icon_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    hit_node: Option<&str>,
+) -> Option<(baumhard::mindmap::scene_cache::EdgeKey, String)> {
+    match portal_icon_hit {
+        Some((key, endpoint)) if hit_node.is_none() => Some((key.clone(), endpoint.clone())),
+        _ => None,
+    }
+}
+
 // Re-export the mode enum, the shared selection→target resolver,
 // and the resolver's typed error so the console layer can carry
 // `InteractionMode` inside `ConsoleSideEffect` and consumers across

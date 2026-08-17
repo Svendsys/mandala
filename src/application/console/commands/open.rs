@@ -101,6 +101,42 @@ mod tests {
         assert_eq!(doc.mindmap.name, name_before);
     }
 
+    /// The dirty guard is the only thing between a typo'd `open` and
+    /// losing unsaved work, and it is checked before the loader runs:
+    /// a dirty document is refused even when the path names a map
+    /// that would have loaded cleanly.
+    ///
+    /// Fails when: the `dirty` check is removed, or moved below the
+    /// `MindMapDocument::load` call — the second shape still refuses,
+    /// but only for paths that happen to parse, so a broken map would
+    /// report the loader's message instead of the unsaved-work one.
+    /// Using the testament map as the argument is what makes that
+    /// distinction reachable.
+    ///
+    /// Negative control: clearing `dirty` on the same document and
+    /// repeating the same call succeeds, which pins the rejection on
+    /// the flag rather than on the path or the document.
+    #[test]
+    fn test_open_on_a_dirty_document_is_refused_before_the_load() {
+        let path = test_map_path().to_string_lossy().to_string();
+        let mut doc = load_test_doc();
+        doc.dirty = true;
+        let name_before = doc.mindmap.name.clone();
+
+        let (result, side) = run_open(&path, &mut doc);
+        assert_exec_err_contains(result, "unsaved changes");
+        assert!(side.is_none(), "a refused open must not replace the document");
+        assert_eq!(doc.mindmap.name, name_before);
+
+        doc.dirty = false;
+        let (result, side) = run_open(&path, &mut doc);
+        assert!(
+            matches!(result, ExecResult::Ok(_)),
+            "control: a clean document must accept the same open, got {result:?}"
+        );
+        assert!(side.is_some(), "control: a clean open must replace the document");
+    }
+
     /// The happy path still swaps the document in. Pairs with the
     /// rejection test so "reports the error" cannot be satisfied by
     /// a verb that never succeeds.

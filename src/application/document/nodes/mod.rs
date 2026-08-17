@@ -34,7 +34,9 @@ pub(in crate::application) use border::apply_glyph_border_edits_to_slot;
 #[cfg(test)]
 pub(in crate::application::document) use border::merge_outcome;
 pub use option_edit::OptionEdit;
-pub(in crate::application::document) use section_text::clamp_runs_to_text;
+pub(in crate::application::document) use section_text::{
+    clamp_runs_to_text, section_runs_all_match, write_every_section_run,
+};
 
 /// Which of a node's three color channels a per-node write
 /// targets.
@@ -658,6 +660,15 @@ impl MindMapDocument {
     /// ceiling the loader refuses the saved file. Fractional sizes
     /// are stored as written — `size_pt` is an `f32` in the model.
     /// See `custom::sync::clamp_run_size_pt`.
+    ///
+    /// A section carrying text but no runs — a loadable shape,
+    /// see `MindSection::text_runs` — gets one authored at the
+    /// requested size rather than being skipped. It used to be
+    /// skipped, silently and while returning `false`, because
+    /// `all` over an empty run list is vacuously true; see
+    /// `write_every_section_run`. A section with no text at all
+    /// stays run-less: there is nothing to size, and a
+    /// zero-length run is a shape `text_run_ops` panics on.
     pub fn set_node_font_size(&mut self, node_id: &str, size_pt: f32) -> bool {
         if !size_pt.is_finite() {
             return false;
@@ -673,16 +684,12 @@ impl MindMapDocument {
             let already = node
                 .sections
                 .iter()
-                .flat_map(|s| s.text_runs.iter())
-                .all(|r| r.size_pt == size);
+                .all(|s| section_runs_all_match(s, |r| r.size_pt == size));
             if already {
                 return None;
             }
             for section in node.sections.iter_mut() {
-                clamp_runs_to_text(section);
-                for run in section.text_runs.iter_mut() {
-                    run.size_pt = size;
-                }
+                write_every_section_run(section, |r| r.size_pt = size);
             }
             Some(())
         })
@@ -701,6 +708,10 @@ impl MindMapDocument {
     /// job; an unknown family lands in the data model and degrades
     /// at render time per CODE_CONVENTIONS §9.
     ///
+    /// A run-less section carrying text gets a run authored at
+    /// the requested family, on the same terms as
+    /// [`Self::set_node_font_size`].
+    ///
     /// Capture / undo: piggybacks on the existing
     /// `UndoAction::EditNodeStyle` envelope (which already includes
     /// the full `text_runs` snapshot via `before_runs`), so a
@@ -717,16 +728,12 @@ impl MindMapDocument {
             let already = node
                 .sections
                 .iter()
-                .flat_map(|s| s.text_runs.iter())
-                .all(|r| r.font == target);
+                .all(|s| section_runs_all_match(s, |r| r.font == target));
             if already {
                 return None;
             }
             for section in node.sections.iter_mut() {
-                clamp_runs_to_text(section);
-                for run in section.text_runs.iter_mut() {
-                    run.font = target.clone();
-                }
+                write_every_section_run(section, |r| r.font = target.clone());
             }
             Some(())
         })

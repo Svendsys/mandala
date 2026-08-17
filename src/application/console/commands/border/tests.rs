@@ -468,8 +468,12 @@ fn apply_border_field_returns_false_on_invalid_value() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    // `stage_kv` rejects unknown presets — the core silently no-ops
-    // (Action arm warns upstream; verb path surfaces the typed err).
+    // `stage_kv` rejects unknown presets. The comment here used to
+    // say the Action arm warned upstream; it did not —
+    // `apply_set_border_field` forwards the bool and says nothing,
+    // so this was the silent no-op the report named. The core warns
+    // itself now; see
+    // `apply_border_field_warns_only_where_the_binding_can_never_work`.
     assert!(!super::apply_border_field_to_selection(
         &mut doc,
         "preset",
@@ -1463,4 +1467,113 @@ fn toggle_core_rejects_a_non_node_selection() {
     let mut doc = fixture_doc();
     doc.selection = SelectionState::None;
     assert!(super::toggle_border_visible_on_selection(&mut doc).is_err());
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Silent-failure reporting on the parametric Action path.
+//
+// `apply_border_field_to_selection` is reached from a keybind, a
+// palette press or a macro step, none of which has scrollback, so a
+// returned `false` is the whole of what the user sees. Two of its
+// three `false`s are permanent — the binding can never work — and
+// those now say so at `warn!`, which survives into release
+// (CODE_CONVENTIONS §9). The third, "nothing selected", is answered
+// by selecting something and stays at `debug!`.
+// ─────────────────────────────────────────────────────────────────
+
+/// A binding whose value the staging parser rejects warns once,
+/// carrying the parser's own message, and a binding that merely has
+/// nothing selected does not.
+///
+/// Fails when: the `warn!` on the stage-error path goes (the first
+/// block finds no line), when it is downgraded below `warn!` (the
+/// recorder only keeps `warn!` and above, so the line disappears),
+/// or when the no-selection path is raised to `warn!` (the second
+/// block finds one) — which would put a line in every release
+/// build's stderr for every stray keypress against an empty
+/// selection.
+///
+/// The needles are unique strings so the process-global recorder,
+/// which holds lines from every test in the binary, can be searched
+/// without serializing the suite.
+#[test]
+fn apply_border_field_warns_only_where_the_binding_can_never_work() {
+    baumhard::util::test_logger::install();
+
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    assert!(!super::apply_border_field_to_selection(
+        &mut doc,
+        "preset",
+        "zzz-not-a-preset-9f31"
+    ));
+    let logged = baumhard::util::test_logger::lines_containing("zzz-not-a-preset-9f31");
+    assert_eq!(
+        logged.len(),
+        1,
+        "an unstageable value must be reported exactly once, logged: {logged:?}"
+    );
+    assert!(
+        logged[0].starts_with("WARN "),
+        "a binding that can never apply is a warning, not instrumentation: {}",
+        logged[0]
+    );
+    assert!(
+        logged[0].contains("preset"),
+        "the message must name the field the binding sets: {}",
+        logged[0]
+    );
+
+    // Control: the transient failure on the same function must stay
+    // out of a release build's stderr. `#a1b2c3` stages fine; what
+    // fails is that nothing is selected.
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::None;
+    assert!(!super::apply_border_field_to_selection(
+        &mut doc, "color", "#a1b2c3"
+    ));
+    assert!(
+        baumhard::util::test_logger::lines_containing("#a1b2c3").is_empty(),
+        "an empty selection is not a defect and must not warn: {:?}",
+        baumhard::util::test_logger::lines_containing("#a1b2c3")
+    );
+}
+
+/// A glyph the setter refuses is reported too. It stages cleanly —
+/// the ceiling is enforced by the setter, not the parser — so
+/// before this it was the one failure that reached the model layer
+/// and came back with nothing said.
+///
+/// Fails when: `outcome.rejected` is dropped on the floor again.
+/// The `changed == false` assertion is what pins the refusal as
+/// atomic rather than half-applied.
+#[test]
+fn apply_border_field_warns_when_the_setter_refuses_the_glyph() {
+    baumhard::util::test_logger::install();
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+
+    // One cluster over MAX_BORDER_GLYPH_CLUSTERS, spelled with a
+    // marker the recorder can be searched for.
+    let over_ceiling = format!(
+        "zq9f31{}",
+        "x".repeat(baumhard::mindmap::model::validate::MAX_BORDER_GLYPH_CLUSTERS)
+    );
+    assert!(!super::apply_border_field_to_selection(
+        &mut doc,
+        "tl",
+        &over_ceiling
+    ));
+    assert!(
+        doc.mindmap.nodes[&id].style.border.is_none(),
+        "a refused glyph must leave the node's border slot alone"
+    );
+
+    let logged = baumhard::util::test_logger::lines_containing("glyphs.top_left");
+    assert!(
+        logged.iter().any(|l| l.starts_with("WARN ")),
+        "a refused edit must be reported at warn level, logged: {logged:?}"
+    );
 }

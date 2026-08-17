@@ -1486,3 +1486,266 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
         "a set that shapes to nothing must fall back rather than return zero"
     );
 }
+
+// ====================================================================
+// WGSL <-> Rust shape lock-step
+// ====================================================================
+//
+// `RECT_SHADER_WGSL` and `NodeShape::shader_id` are two halves of one
+// wire format, and until this section existed the only thing holding
+// them together was a pair of comments asking each side to remember
+// the other. `do_shape_shader_ids_are_stable` (baumhard) pins the
+// Rust half against its own constants; nothing read the shader. The
+// checks below close that by reading the shader as text — no wgpu
+// device, no GPU, so §T8 is satisfied by construction.
+
+/// The WGSL constant each `NodeShape` variant expects the fragment
+/// shader to declare.
+///
+/// Exhaustive on purpose, and that is the point: a new variant does
+/// not compile until it names its shader constant here, which is step
+/// 3 of the extension recipe in `baumhard::gfx_structs::shape`'s
+/// module header. The mapping is not derivable — `Rectangle` is
+/// `SHAPE_RECT`, not `SHAPE_RECTANGLE` — so it has to be written
+/// somewhere, and a test-local match keeps it out of the production
+/// surface while staying compiler-forced.
+fn wgsl_shape_const_name(shape: baumhard::gfx_structs::shape::NodeShape) -> &'static str {
+    use baumhard::gfx_structs::shape::NodeShape;
+    match shape {
+        NodeShape::Rectangle => "SHAPE_RECT",
+        NodeShape::Ellipse => "SHAPE_ELLIPSE",
+    }
+}
+
+/// Every `const <NAME>: u32 = <n>u;` declaration in `wgsl`, as
+/// `(name, value)` pairs, plus the number of lines that opened with
+/// `const` at all.
+///
+/// The second half of the return is what keeps the parser honest. A
+/// scanner that skips what it cannot read turns a spelling change in
+/// the shader into an empty result set, and an empty set satisfies
+/// every "no orphan constant" assertion vacuously. Callers compare
+/// the two numbers and refuse to proceed when they differ, so an
+/// unreadable declaration is reported rather than dropped.
+fn wgsl_u32_consts(wgsl: &str) -> (Vec<(String, u32)>, usize) {
+    let mut parsed = Vec::new();
+    let mut seen = 0usize;
+    for line in wgsl.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("const ") else {
+            continue;
+        };
+        seen += 1;
+        let Some((name, value)) = rest.split_once(':') else {
+            continue;
+        };
+        let Some(value) = value.trim().strip_prefix("u32") else {
+            continue;
+        };
+        let Some(value) = value.trim().strip_prefix('=') else {
+            continue;
+        };
+        let value = value.trim().trim_end_matches(';').trim().trim_end_matches('u');
+        let Ok(n) = value.trim().parse::<u32>() else {
+            continue;
+        };
+        parsed.push((name.trim().to_string(), n));
+    }
+    (parsed, seen)
+}
+
+/// The `shader_location` `Renderer::new` gives the `shape_id` vertex
+/// attribute, read out of the renderer's own source.
+///
+/// The attribute is identified by its byte offset, which the layout
+/// comment above it derives (`pos 8 | uv 8 | color 16` = 32) and which
+/// `VERTEX_STRIDE_BYTES` is already pinned against elsewhere — not by
+/// its position in the array, so reordering the attributes cannot
+/// silently retarget this. Panics rather than returning an `Option`:
+/// every caller is asserting *about* this number, so a parse that
+/// quietly found nothing would turn its caller vacuous.
+fn shape_id_shader_location() -> u32 {
+    use baumhard::util::doc_fixtures::repo_path;
+    use baumhard::util::rust_source::strip_comments;
+
+    let path = repo_path("src/application/renderer/mod.rs");
+    let source = strip_comments(&std::fs::read_to_string(&path).expect("renderer source is readable"));
+
+    // Each attribute is a `wgpu::VertexAttribute { .. }` literal; take
+    // the one whose `offset` is the shape_id slot and read the
+    // `shader_location` that follows it inside the same literal.
+    let mut found: Vec<u32> = Vec::new();
+    for block in source.split("wgpu::VertexAttribute").skip(1) {
+        let Some(end) = block.find('}') else { continue };
+        let block = &block[..end];
+        if !block.contains("offset: 32") {
+            continue;
+        }
+        let Some(rest) = block.split_once("shader_location:") else {
+            continue;
+        };
+        let digits: String = rest
+            .1
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(n) = digits.parse::<u32>() {
+            found.push(n);
+        }
+    }
+
+    assert_eq!(
+        found.len(),
+        1,
+        "expected exactly one `wgpu::VertexAttribute` at offset 32 (the `shape_id` \
+         slot) in {}, found {}: the scanner and the pipeline have drifted apart, \
+         and the assertion this feeds would prove nothing",
+        path.display(),
+        found.len()
+    );
+    found[0]
+}
+
+/// Every `NodeShape` variant has a WGSL constant carrying exactly its
+/// `shader_id`, the shader declares no shape constant no variant
+/// claims, and every variant's fill is reachable from the `switch` —
+/// by its own `case` arm, or, for the default variant, by the
+/// `default` arm that also catches ids from a future build.
+///
+/// Fails when: a variant is added with no `SHAPE_*` constant, a
+/// constant's value is renumbered on either side, the two names are
+/// swapped so `SHAPE_RECT` carries the ellipse's id, a `case` arm is
+/// deleted (every node of that shape would then silently draw as a
+/// rectangle — the exact failure the module headers warn about), or
+/// the `default` arm goes and unknown ids stop drawing at all.
+///
+/// It fails for that same reason one step earlier, too: all three
+/// ends of the `shape_id` wire are asserted by name. A `switch (0u)`
+/// in the fragment stage, or a vertex stage that writes a constant
+/// into `out.shape_id`, leaves every arm above intact and correct
+/// while every node on screen draws the default fill — a shader in
+/// perfect lock-step with a Rust enum it no longer reads. Upstream of
+/// both, `VsIn.shape_id`'s `@location` is checked against the
+/// `shader_location` the pipeline actually assigns, the last binding
+/// in this file that a comment alone was holding in step.
+///
+/// Comments are stripped before anything is matched, so a `case
+/// SHAPE_X:` written in prose cannot satisfy an arm assertion — the
+/// shader carries one such mention today, naming `SHAPE_RECT` in the
+/// comment above the `default` arm.
+#[test]
+fn test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm() {
+    use baumhard::gfx_structs::shape::NodeShape;
+    use baumhard::util::rust_source::strip_comments;
+    use strum::IntoEnumIterator;
+
+    let wgsl = strip_comments(RECT_SHADER_WGSL);
+    let (consts, const_lines) = wgsl_u32_consts(&wgsl);
+
+    // Preconditions. Without these the assertions below hold over an
+    // empty set and prove nothing about the shader.
+    assert!(
+        !consts.is_empty(),
+        "no `const <NAME>: u32 = <n>u;` found in the rect shader — the parser \
+         and the shader have drifted apart, and every check below is vacuous"
+    );
+    assert_eq!(
+        consts.len(),
+        const_lines,
+        "{} of the shader's {const_lines} `const` declarations did not parse; \
+         a declaration this scanner cannot read must be reported, not skipped",
+        const_lines - consts.len()
+    );
+    assert!(
+        wgsl.contains("default: {"),
+        "the fragment switch must keep a `default` arm: it is the fill for the \
+         default shape and the safe landing for an id this build does not know"
+    );
+    // The arms are only worth checking if something selects between
+    // them. Both ends of the wire, in the same literal-string style:
+    // the vertex stage forwards the per-instance attribute, and the
+    // fragment stage switches on what it forwarded.
+    assert!(
+        wgsl.contains("out.shape_id = u32(round(in.shape_id))"),
+        "the vertex stage must forward the per-vertex `shape_id` attribute — a \
+         constant written here reaches every fragment with the same value and the \
+         `case` arms below stop being reachable"
+    );
+    assert!(
+        wgsl.contains("switch (in.shape_id)"),
+        "the fragment switch must select on `in.shape_id`: switching on anything \
+         else draws one fill for every node while each arm still matches its \
+         `NodeShape` constant perfectly"
+    );
+
+    // The wire's first end: the slot `VsIn` reads is the slot the
+    // pipeline writes. Both halves are read here rather than one
+    // half compared against a literal, because a literal agrees
+    // with whichever side someone edits last.
+    let rust_location = shape_id_shader_location();
+    assert!(
+        wgsl.contains(&format!("@location({rust_location}) shape_id: f32")),
+        "`VsIn.shape_id` must sit at @location({rust_location}), the \
+         `shader_location` the pipeline gives the `shape_id` attribute in \
+         `Renderer::new` — the two were held in step by a comment, which is \
+         what this reads instead"
+    );
+
+    let mut claimed: Vec<&str> = Vec::new();
+    let mut ids: Vec<u32> = Vec::new();
+    for shape in NodeShape::iter() {
+        let name = wgsl_shape_const_name(shape);
+        claimed.push(name);
+        ids.push(shape.shader_id());
+
+        let declared = consts
+            .iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("{shape:?} expects the shader to declare `{name}`"));
+        assert_eq!(
+            declared.1,
+            shape.shader_id(),
+            "`{name}` is {} in the shader but {shape:?}::shader_id() is {}",
+            declared.1,
+            shape.shader_id()
+        );
+
+        if shape == NodeShape::default() {
+            // The default variant is what the `default` arm draws;
+            // asserting a `case` arm for it would fail against the
+            // shader as designed.
+            continue;
+        }
+        assert!(
+            wgsl.contains(&format!("case {name}:")),
+            "{shape:?} has a shader id but no `case {name}:` arm — every node \
+             of this shape would draw as the default shape instead"
+        );
+    }
+
+    ids.sort_unstable();
+    let distinct = {
+        let mut d = ids.clone();
+        d.dedup();
+        d.len()
+    };
+    assert_eq!(
+        distinct,
+        ids.len(),
+        "two NodeShape variants share a shader id, so one of them cannot be \
+         selected: {ids:?}"
+    );
+
+    for (name, value) in &consts {
+        if !name.starts_with("SHAPE_") {
+            continue;
+        }
+        assert!(
+            claimed.contains(&name.as_str()),
+            "the shader declares `{name}` = {value} but no NodeShape variant \
+             claims it — either a variant was removed without its constant, or \
+             wgsl_shape_const_name is a name behind"
+        );
+    }
+}

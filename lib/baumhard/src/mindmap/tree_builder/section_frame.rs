@@ -149,25 +149,17 @@ pub fn build_section_frames(
         return Vec::new();
     }
 
-    // Missing-offset for the active node means the layout/scene-
-    // build invariant ("the active node has an offset entry") was
-    // broken upstream — every other emission path consults the
-    // same map and would also fall back to (0,0) silently. Log so
-    // the regression is visible without panicking; per
-    // `CODE_CONVENTIONS.md` §9 interactive paths must keep running.
-    let (ox, oy) = match offsets.get(active_id).copied() {
-        Some(v) => v,
-        None => {
-            log::warn!(
-                "build_section_frames: active node {:?} missing from `offsets` map; \
-                 falling back to (0, 0) — frames will render at the node's authored \
-                 position. This indicates the layout/scene-build pass didn't populate \
-                 the active node's offset.",
-                active_id
-            );
-            (0.0, 0.0)
-        }
-    };
+    // `offsets` holds in-flight *drag* deltas and is empty on
+    // every non-drag rebuild (`CanvasFrame::offsets`), so a
+    // missing entry is the ordinary case, not a broken invariant:
+    // NodeEdit mode on a multi-section node rebuilds constantly
+    // while nothing is being dragged. This asserted an invariant
+    // that does not exist and warned on every such rebuild —
+    // `warn!` survives into release (CODE_CONVENTIONS §9), so the
+    // message reached users' stderr at rebuild rate. Absent means
+    // undragged, which is what the other twelve consulting sites
+    // read it as.
+    let (ox, oy) = offsets.get(active_id).copied().unwrap_or((0.0, 0.0));
     let pos = node.pos_vec2();
     let size = node.size_vec2();
     // Active-node AABB sanity: NaN or non-positive size produces

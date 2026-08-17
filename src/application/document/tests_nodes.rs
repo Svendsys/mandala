@@ -2883,6 +2883,128 @@ fn test_border_preview_commit_force_shows_frame_on_hidden_node() {
     );
 }
 
+/// **Every** field the force-show coupling claims to cover
+/// actually fires it, not just `preset`.
+///
+/// The coupling asks `edits_touch_cfg_field` whether the preview
+/// changed anything; until #48 `commit_border_preview` open-coded
+/// that predicate's field list instead of calling it, so a field
+/// added to the setter's copy and not to the commit's copy would
+/// preview a frame and then hide it at commit — visible only on a
+/// node whose committed `show_frame` is already `false`, which is
+/// why the single-field `preset` test above never saw it.
+///
+/// Fails when: a field drops out of `edits_touch_cfg_field` (its
+/// row stops flipping `show_frame`), or when the coupling stops
+/// consulting the predicate at all (every row fails).
+///
+/// Control on the same path: the last row stages nothing at all
+/// and must leave `show_frame` false. Without it every row above
+/// is satisfied by a commit that force-shows unconditionally.
+///
+/// The exhaustive destructuring below is what keeps the table
+/// honest: a new field on `BorderConfigEdits` does not compile
+/// until it is named here, and the two fields deliberately absent
+/// from the table are named as absent rather than forgotten.
+#[test]
+fn test_border_preview_commit_force_shows_for_every_field_the_predicate_covers() {
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
+    use baumhard::mindmap::border::PaletteField;
+
+    // `visible` is the field the coupling *writes*, and `clear` is
+    // covered by its own row below rather than by the predicate.
+    let BorderConfigEdits {
+        preset: _,
+        font: _,
+        font_size_pt: _,
+        color: _,
+        padding: _,
+        color_palette: _,
+        color_palette_field: _,
+        side_top: _,
+        side_bottom: _,
+        side_left: _,
+        side_right: _,
+        corner_top_left: _,
+        corner_top_right: _,
+        corner_bottom_left: _,
+        corner_bottom_right: _,
+        visible: _,
+        clear: _,
+    } = BorderConfigEdits::default();
+
+    type Stage = fn(&mut BorderConfigEdits);
+    let rows: &[(&str, Stage)] = &[
+        ("preset", |e| e.preset = OptionEdit::Set("heavy".into())),
+        ("font", |e| e.font = OptionEdit::Set("DejaVu Sans Mono".into())),
+        ("font_size_pt", |e| e.font_size_pt = OptionEdit::Set(11.0)),
+        ("color", |e| e.color = OptionEdit::Set("#ff8800".into())),
+        ("padding", |e| e.padding = OptionEdit::Set(3.0)),
+        ("color_palette", |e| {
+            e.color_palette = OptionEdit::Set("sunset".into())
+        }),
+        ("color_palette_field", |e| {
+            e.color_palette_field = OptionEdit::Set(PaletteField::Background)
+        }),
+        ("side_top", |e| e.side_top = OptionEdit::Set("=".into())),
+        ("side_bottom", |e| e.side_bottom = OptionEdit::Set("=".into())),
+        ("side_left", |e| e.side_left = OptionEdit::Set("|".into())),
+        ("side_right", |e| e.side_right = OptionEdit::Set("|".into())),
+        ("corner_top_left", |e| {
+            e.corner_top_left = OptionEdit::Set("+".into())
+        }),
+        ("corner_top_right", |e| {
+            e.corner_top_right = OptionEdit::Set("+".into())
+        }),
+        ("corner_bottom_left", |e| {
+            e.corner_bottom_left = OptionEdit::Set("+".into())
+        }),
+        ("corner_bottom_right", |e| {
+            e.corner_bottom_right = OptionEdit::Set("+".into())
+        }),
+        // Not a config field, but the commit path couples it the
+        // same way: `border reset` on a hidden-frame node has to
+        // leave the node showing its (now default) border.
+        ("clear", |e| e.clear = true),
+    ];
+
+    for (label, stage) in rows {
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
+        doc.selection = SelectionState::Single(nid.clone());
+
+        let mut edits = BorderConfigEdits::default();
+        stage(&mut edits);
+        let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+        let _ = doc
+            .commit_border_preview()
+            .unwrap_or_else(|| panic!("{label}: the preview must be active at commit"));
+
+        assert!(
+            doc.mindmap.nodes.get(&nid).unwrap().style.show_frame,
+            "{label}: a preview touching this field renders a frame, so committing it \
+             must leave the frame shown"
+        );
+    }
+
+    // Control: a preview that stages nothing must not force-show.
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
+    doc.selection = SelectionState::Single(nid.clone());
+    let _ = doc.set_border_preview(
+        BorderPreviewTarget::Nodes(vec![nid.clone()]),
+        BorderConfigEdits::default(),
+    );
+    let _ = doc.commit_border_preview();
+    assert!(
+        !doc.mindmap.nodes.get(&nid).unwrap().style.show_frame,
+        "an empty preview touches no field, so nothing implies visibility — if this \
+         flips, the rows above are passing on an unconditional force-show"
+    );
+}
+
 /// Inverse of the C8 fix — explicit `visible=Some(false)` in the
 /// preview edits survives the auto-flip rule.
 #[test]
@@ -5453,5 +5575,281 @@ fn test_node_and_section_color_writes_stay_in_their_tiers_on_a_themed_node() {
         doc.mindmap.node_frame_color(node),
         group.frame,
         "the other channels still resolve through the palette"
+    );
+}
+
+// ── Uniform font setters over run-less sections ────────────────
+//
+// `MindSection::text_runs` documents a section with text and no
+// runs as a legal shape that renders at the cascade defaults, and
+// the loader synthesizes nothing, so an authored map reaches these
+// setters in that state. `all` over an empty run list is vacuously
+// true, so every uniform font setter reported "already at the
+// target value" and returned `false` without touching anything —
+// while the *range* siblings, which fill uncovered ranges from
+// `default_text_run`, honored the same request.
+
+/// Strip `node_id`'s first section down to the run-less shape a
+/// map can be authored in: text present, `text_runs` empty.
+/// Returns the section's grapheme count so a test can assert the
+/// created run spans it.
+fn make_section_run_less(doc: &mut MindMapDocument, node_id: &str, text: &str) -> usize {
+    let node = doc.mindmap.nodes.get_mut(node_id).expect("node");
+    node.sections[0].text = text.to_string();
+    node.sections[0].text_runs = Vec::new();
+    count_grapheme_clusters(text)
+}
+
+/// The four uniform font setters each author a run onto a
+/// run-less section rather than silently declining.
+///
+/// Fails when: any setter goes back to `text_runs.iter().all(..)`
+/// — the vacuous-truth shape — since that returns `false` and
+/// leaves the section run-less. Asserting on the run's `start` /
+/// `end` as well as the value is what distinguishes "a run was
+/// created spanning the text" from "a degenerate run was pushed".
+///
+/// Control on the same path: the run-less section is re-made
+/// before each row, and the section is asserted run-less *before*
+/// the call, so a row cannot pass by finding a run an earlier row
+/// left behind.
+#[test]
+fn test_uniform_font_setters_author_a_run_onto_a_run_less_section() {
+    let text = "run-less";
+
+    // Whole-node size.
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.mindmap.nodes[&nid].sections[0].text_runs.is_empty());
+    assert!(
+        doc.set_node_font_size(&nid, 33.0),
+        "set_node_font_size must report the change it makes on a run-less section"
+    );
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1, "one run spanning the section's text");
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].size_pt, 33.0);
+
+    // Whole-node family.
+    let mut doc = load_test_doc();
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.set_node_font_family(&nid, Some("DejaVu Sans Mono")));
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].font, "DejaVu Sans Mono");
+
+    // Per-section size.
+    let mut doc = load_test_doc();
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.set_section_font_size(&nid, 0, 17.5));
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].size_pt, 17.5);
+
+    // Per-section family.
+    let mut doc = load_test_doc();
+    let count = make_section_run_less(&mut doc, &nid, text);
+    assert!(doc.set_section_font_family(&nid, 0, Some("DejaVu Sans Mono")));
+    let runs = &doc.mindmap.nodes[&nid].sections[0].text_runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!((runs[0].start, runs[0].end), (0, count));
+    assert_eq!(runs[0].font, "DejaVu Sans Mono");
+}
+
+/// A section with **no text** stays run-less, and the setters say
+/// so by returning `false`.
+///
+/// `text_run_ops` requires `start < end` and panics in debug
+/// builds on a degenerate run, so authoring `TextRun { start: 0,
+/// end: 0 }` here would be a crash waiting on the next slice or
+/// splice — the "create the default run" answer is only correct
+/// where there is text for it to span.
+///
+/// Fails when: the emptiness guard in `write_every_section_run`
+/// goes. Paired with the test above so "returns false" cannot be
+/// satisfied by a setter that declines everything.
+#[test]
+fn test_uniform_font_setters_leave_a_textless_section_run_less() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    make_section_run_less(&mut doc, &nid, "");
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    assert!(!doc.set_node_font_size(&nid, 33.0));
+    assert!(!doc.set_node_font_family(&nid, Some("DejaVu Sans Mono")));
+    assert!(!doc.set_section_font_size(&nid, 0, 17.5));
+    assert!(!doc.set_section_font_family(&nid, 0, Some("DejaVu Sans Mono")));
+
+    assert!(doc.mindmap.nodes[&nid].sections[0].text_runs.is_empty());
+    assert!(
+        doc.undo_stack.is_empty(),
+        "a declined setter must push no undo entry"
+    );
+    assert!(!doc.dirty, "a declined setter must not dirty the document");
+}
+
+/// The write half of the pair refuses a textless section on its
+/// own, not only because its callers ask first.
+///
+/// The *per-section* setters ask first: `section_runs_all_match`
+/// reports a textless run-less section as nothing-to-do and they
+/// return before the write. The whole-node pair does not — it asks
+/// about the node, `sections.iter().all(..)`, and then writes every
+/// section, so one section that needs a run carries its textless
+/// siblings into `write_every_section_run` with it. That live path
+/// is pinned by
+/// `test_a_whole_node_setter_carries_a_textless_section_into_the_guard`;
+/// this test is the same guard exercised directly, so a helper that
+/// no caller happened to route into a zero-length write today would
+/// still be caught. Without it, the push is
+/// `TextRun { start: 0, end: 0 }`, and `text_run_ops` panics in
+/// debug builds on the next slice or splice of it.
+///
+/// Fails when: the `count == 0` guard in
+/// `write_every_section_run` goes. The text-bearing half of the
+/// same call is the control — it must author a run, so the
+/// refusal cannot be a helper that never writes at all.
+#[test]
+fn test_write_every_section_run_refuses_to_author_a_zero_length_run() {
+    use super::nodes::write_every_section_run;
+    use baumhard::mindmap::model::MindSection;
+
+    let mut textless = MindSection::new_default(String::new(), Vec::new());
+    write_every_section_run(&mut textless, |r| r.size_pt = 33.0);
+    assert!(
+        textless.text_runs.is_empty(),
+        "no text means no range for a run to span"
+    );
+
+    let mut texted = MindSection::new_default("abc".to_string(), Vec::new());
+    write_every_section_run(&mut texted, |r| r.size_pt = 33.0);
+    assert_eq!(
+        texted.text_runs.len(),
+        1,
+        "control: the same call on a text-bearing section must author a run"
+    );
+    assert_eq!((texted.text_runs[0].start, texted.text_runs[0].end), (0, 3));
+    assert_eq!(texted.text_runs[0].size_pt, 33.0);
+}
+
+/// **The whole-node setters do reach the guard**, on a node whose
+/// sections disagree about whether there is anything to do.
+///
+/// `set_node_font_size` decides once for the node — `already =
+/// sections.iter().all(section_runs_all_match)` — and then writes
+/// *every* section. A node carrying one text-bearing run-less
+/// section and one textless one therefore hands the textless one to
+/// `write_every_section_run` even though `section_runs_all_match`
+/// had reported it as nothing-to-do, and only the emptiness guard
+/// keeps a zero-length run off it. Nothing else in the suite drives
+/// a caller into that branch, which is how it was described as
+/// unreachable.
+///
+/// Fails when: the `count == 0` guard in `write_every_section_run`
+/// goes — `sections[1]` then gains `TextRun { start: 0, end: 0 }`,
+/// the shape `text_run_ops` panics on. `sections[0]` is asserted in
+/// the same call as the control: the setter must still author the
+/// run it was asked for, so "no run on the textless section" cannot
+/// be a setter that wrote nothing at all.
+#[test]
+fn test_a_whole_node_setter_carries_a_textless_section_into_the_guard() {
+    use baumhard::mindmap::model::MindSection;
+
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let count = make_section_run_less(&mut doc, &nid, "run-less");
+    doc.mindmap
+        .nodes
+        .get_mut(&nid)
+        .expect("node")
+        .sections
+        .push(MindSection::new_default(String::new(), Vec::new()));
+
+    let sections = &doc.mindmap.nodes[&nid].sections;
+    assert_eq!(sections.len(), 2, "the fixture needs both section shapes");
+    assert!(
+        sections[0].text_runs.is_empty() && sections[1].text_runs.is_empty(),
+        "both sections start run-less, or a later assertion reads a pre-existing run"
+    );
+
+    assert!(
+        doc.set_node_font_size(&nid, 33.0),
+        "the text-bearing section needs the write, so the node is not already at 33"
+    );
+
+    let sections = &doc.mindmap.nodes[&nid].sections;
+    assert_eq!(
+        sections[0].text_runs.len(),
+        1,
+        "control: the text-bearing section is written"
+    );
+    assert_eq!(
+        (sections[0].text_runs[0].start, sections[0].text_runs[0].end),
+        (0, count)
+    );
+    assert_eq!(sections[0].text_runs[0].size_pt, 33.0);
+    assert!(
+        sections[1].text_runs.is_empty(),
+        "the textless section reached `write_every_section_run` and must come back \
+         run-less: a zero-length run is what `text_run_ops` panics on"
+    );
+}
+
+/// The authored run is undoable in one step, like every other
+/// write through the style envelope.
+///
+/// Fails when: the run is authored outside the envelope's
+/// snapshot, which would leave undo restoring a section that
+/// still carries it. The pre-assertions pin the run-less start
+/// state, so "run-less after undo" is a restoration rather than a
+/// state that was never left.
+#[test]
+fn test_authoring_a_run_onto_a_run_less_section_undoes_in_one_step() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    make_section_run_less(&mut doc, &nid, "undo me");
+    doc.undo_stack.clear();
+
+    assert!(doc.set_node_font_size(&nid, 33.0));
+    assert_eq!(doc.undo_stack.len(), 1, "one entry for one setter call");
+    assert_eq!(doc.mindmap.nodes[&nid].sections[0].text_runs.len(), 1);
+
+    doc.undo();
+    assert!(
+        doc.mindmap.nodes[&nid].sections[0].text_runs.is_empty(),
+        "undo must restore the section to the run-less shape it was loaded in"
+    );
+    assert_eq!(doc.mindmap.nodes[&nid].sections[0].text, "undo me");
+}
+
+/// The uniform setter and its range sibling now agree on a
+/// run-less section: `font size=N` over the whole text and
+/// `font size=N range=0..n` produce the same runs.
+///
+/// This is the disagreement the fix closes — the range path filled
+/// its gap from `default_text_run` while the uniform path declined
+/// — so the assertion is a direct comparison of the two results
+/// rather than a restatement of either one's expected shape.
+#[test]
+fn test_uniform_and_range_font_size_agree_on_a_run_less_section() {
+    let text = "agree on me";
+
+    let mut uniform = load_test_doc();
+    let nid = first_testament_node_id(&uniform);
+    let count = make_section_run_less(&mut uniform, &nid, text);
+    assert!(uniform.set_section_font_size(&nid, 0, 19.0));
+
+    let mut ranged = load_test_doc();
+    make_section_run_less(&mut ranged, &nid, text);
+    assert!(ranged.set_section_font_size_range(&nid, 0, 0, count, 19.0));
+
+    assert_eq!(
+        uniform.mindmap.nodes[&nid].sections[0].text_runs, ranged.mindmap.nodes[&nid].sections[0].text_runs,
+        "the whole-text uniform setter and the whole-text range setter must author \
+         the same run"
     );
 }

@@ -142,7 +142,16 @@ the parity trajectory (or why none is owed):
   prints a test count, then type-checks the benchmark targets
   (`cargo check --workspace --benches`, which runs no benchmark) and
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
-  cross-platform drift can pass a green run. Flags: `--coverage`
+  cross-platform drift can pass a green run. **With one caveat about
+  where**: the wasm32 leg is *skipped with a note* when the target is
+  not installed, so a green local run on a machine that has never
+  had `rustup target add wasm32-unknown-unknown` has proved nothing
+  about the browser build. CI installs the target
+  (`.github/workflows/test.yml` names it on the toolchain action), so
+  the guarantee is unconditional there and conditional here. The
+  test count itself is not a gate — a summary-format change makes it
+  print "count unavailable" rather than ending the run, which is
+  what it used to do, silently, under `set -euo pipefail`. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
   `target/llvm-cov/html/index.html`), `--lint` (runs
   `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt` and both
@@ -183,6 +192,9 @@ the parity trajectory (or why none is owed):
   binary and `trunk serve --release` in parallel; Ctrl+C stops both.
   For one-off iteration use `cargo run -- maps/testament.mindmap.json`
   (native) or `trunk serve` (WASM) directly.
+- **Dev-profile build**: `./debug_build.sh [flags]` is `./build.sh
+  --debug` with every other flag forwarded — the shorthand for the
+  build run most often while iterating.
 - **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
   `cargo test -p mandala --lib <pattern>`,
   `cargo test -p mandala_derive` or `cargo test -p maptool`.
