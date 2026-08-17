@@ -2883,6 +2883,128 @@ fn test_border_preview_commit_force_shows_frame_on_hidden_node() {
     );
 }
 
+/// **Every** field the force-show coupling claims to cover
+/// actually fires it, not just `preset`.
+///
+/// The coupling asks `edits_touch_cfg_field` whether the preview
+/// changed anything; until #48 `commit_border_preview` open-coded
+/// that predicate's field list instead of calling it, so a field
+/// added to the setter's copy and not to the commit's copy would
+/// preview a frame and then hide it at commit — visible only on a
+/// node whose committed `show_frame` is already `false`, which is
+/// why the single-field `preset` test above never saw it.
+///
+/// Fails when: a field drops out of `edits_touch_cfg_field` (its
+/// row stops flipping `show_frame`), or when the coupling stops
+/// consulting the predicate at all (every row fails).
+///
+/// Control on the same path: the last row stages nothing at all
+/// and must leave `show_frame` false. Without it every row above
+/// is satisfied by a commit that force-shows unconditionally.
+///
+/// The exhaustive destructuring below is what keeps the table
+/// honest: a new field on `BorderConfigEdits` does not compile
+/// until it is named here, and the two fields deliberately absent
+/// from the table are named as absent rather than forgotten.
+#[test]
+fn test_border_preview_commit_force_shows_for_every_field_the_predicate_covers() {
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
+    use baumhard::mindmap::border::PaletteField;
+
+    // `visible` is the field the coupling *writes*, and `clear` is
+    // covered by its own row below rather than by the predicate.
+    let BorderConfigEdits {
+        preset: _,
+        font: _,
+        font_size_pt: _,
+        color: _,
+        padding: _,
+        color_palette: _,
+        color_palette_field: _,
+        side_top: _,
+        side_bottom: _,
+        side_left: _,
+        side_right: _,
+        corner_top_left: _,
+        corner_top_right: _,
+        corner_bottom_left: _,
+        corner_bottom_right: _,
+        visible: _,
+        clear: _,
+    } = BorderConfigEdits::default();
+
+    type Stage = fn(&mut BorderConfigEdits);
+    let rows: &[(&str, Stage)] = &[
+        ("preset", |e| e.preset = OptionEdit::Set("heavy".into())),
+        ("font", |e| e.font = OptionEdit::Set("DejaVu Sans Mono".into())),
+        ("font_size_pt", |e| e.font_size_pt = OptionEdit::Set(11.0)),
+        ("color", |e| e.color = OptionEdit::Set("#ff8800".into())),
+        ("padding", |e| e.padding = OptionEdit::Set(3.0)),
+        ("color_palette", |e| {
+            e.color_palette = OptionEdit::Set("sunset".into())
+        }),
+        ("color_palette_field", |e| {
+            e.color_palette_field = OptionEdit::Set(PaletteField::Background)
+        }),
+        ("side_top", |e| e.side_top = OptionEdit::Set("=".into())),
+        ("side_bottom", |e| e.side_bottom = OptionEdit::Set("=".into())),
+        ("side_left", |e| e.side_left = OptionEdit::Set("|".into())),
+        ("side_right", |e| e.side_right = OptionEdit::Set("|".into())),
+        ("corner_top_left", |e| {
+            e.corner_top_left = OptionEdit::Set("+".into())
+        }),
+        ("corner_top_right", |e| {
+            e.corner_top_right = OptionEdit::Set("+".into())
+        }),
+        ("corner_bottom_left", |e| {
+            e.corner_bottom_left = OptionEdit::Set("+".into())
+        }),
+        ("corner_bottom_right", |e| {
+            e.corner_bottom_right = OptionEdit::Set("+".into())
+        }),
+        // Not a config field, but the commit path couples it the
+        // same way: `border reset` on a hidden-frame node has to
+        // leave the node showing its (now default) border.
+        ("clear", |e| e.clear = true),
+    ];
+
+    for (label, stage) in rows {
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
+        doc.selection = SelectionState::Single(nid.clone());
+
+        let mut edits = BorderConfigEdits::default();
+        stage(&mut edits);
+        let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+        let _ = doc
+            .commit_border_preview()
+            .unwrap_or_else(|| panic!("{label}: the preview must be active at commit"));
+
+        assert!(
+            doc.mindmap.nodes.get(&nid).unwrap().style.show_frame,
+            "{label}: a preview touching this field renders a frame, so committing it \
+             must leave the frame shown"
+        );
+    }
+
+    // Control: a preview that stages nothing must not force-show.
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
+    doc.selection = SelectionState::Single(nid.clone());
+    let _ = doc.set_border_preview(
+        BorderPreviewTarget::Nodes(vec![nid.clone()]),
+        BorderConfigEdits::default(),
+    );
+    let _ = doc.commit_border_preview();
+    assert!(
+        !doc.mindmap.nodes.get(&nid).unwrap().style.show_frame,
+        "an empty preview touches no field, so nothing implies visibility — if this \
+         flips, the rows above are passing on an unconditional force-show"
+    );
+}
+
 /// Inverse of the C8 fix — explicit `visible=Some(false)` in the
 /// preview edits survives the auto-flip rule.
 #[test]

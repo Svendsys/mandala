@@ -758,24 +758,22 @@ impl MindMapDocument {
         // `show_frame` stays false). For `Nodes(_)` targets we
         // therefore inject `visible = Set(true)` into the
         // commit-time edits whenever the preview's edits touch
-        // any field — same predicate the scene-side preview used
-        // to set `force_show_frame`. Per-section / canvas previews
-        // don't carry a visibility axis (sections render in
-        // NodeEdit unconditionally; canvas defaults don't have a
-        // `show_frame` flag), so the coupling is `Nodes`-only.
+        // any field — the same `edits_touch_cfg_field` the
+        // scene-side preview used to set `force_show_frame`, and
+        // the same one `apply_border_config_edits` uses to decide
+        // whether a slot is worth allocating. It was open-coded
+        // here until #48: two copies of one field list, where a
+        // field added to only one silently stops force-showing at
+        // commit while still previewing. Per-section / canvas
+        // previews don't carry a visibility axis (sections render
+        // in NodeEdit unconditionally; canvas defaults don't have
+        // a `show_frame` flag), so the coupling is `Nodes`-only.
         let mut commit_edits = preview.edits.clone();
-        if matches!(preview.target, BorderPreviewTarget::Nodes(_)) && commit_edits.visible.is_none() {
-            let touches_any_field = !matches!(commit_edits.preset, OptionEdit::Keep)
-                || !matches!(commit_edits.font, OptionEdit::Keep)
-                || !matches!(commit_edits.font_size_pt, OptionEdit::Keep)
-                || !matches!(commit_edits.color, OptionEdit::Keep)
-                || !matches!(commit_edits.padding, OptionEdit::Keep)
-                || !matches!(commit_edits.color_palette, OptionEdit::Keep)
-                || !matches!(commit_edits.color_palette_field, OptionEdit::Keep)
-                || edits_touch_glyphs(&commit_edits);
-            if touches_any_field || commit_edits.clear {
-                commit_edits.visible = Some(true);
-            }
+        if matches!(preview.target, BorderPreviewTarget::Nodes(_))
+            && commit_edits.visible.is_none()
+            && (edits_touch_cfg_field(&commit_edits) || commit_edits.clear)
+        {
+            commit_edits.visible = Some(true);
         }
         let mut merged = BorderEditOutcome::default();
         match preview.target {
