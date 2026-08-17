@@ -390,8 +390,8 @@ fn has_bench_target(manifest: &str, text: &str) -> bool {
     for line in text.lines() {
         let trimmed = line.trim();
         declared |= trimmed == "[[bench]]";
-        if trimmed.starts_with("autobenches") {
-            autobenches = !trimmed.split('=').nth(1).is_some_and(|v| v.trim() == "false");
+        if let Some(value) = trimmed.strip_prefix("autobenches") {
+            autobenches = value.trim_start().strip_prefix('=').map(str::trim) != Some("false");
         }
     }
     if declared {
