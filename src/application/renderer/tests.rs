@@ -1830,6 +1830,33 @@ fn renderer_new_field_expression(new_body: &str, field: &str) -> String {
     rest[..end].split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Require `name` to appear exactly once in `Renderer::new`'s body.
+///
+/// [`renderer_new_field_expression`] compares text, so it reads
+/// `&RECT_VERTEX_ATTRIBUTES` as the module-level table on the
+/// strength of the name alone. A `const RECT_VERTEX_ATTRIBUTES`
+/// declared *inside* `Renderer::new` would shadow it: the text the
+/// pin reads is unchanged while the name resolves to something the
+/// test never saw, which is the one silent bypass left after the
+/// three orphans were closed. Nothing under §T8 can resolve a name —
+/// that needs a `Renderer`, and building one needs a GPU — but a
+/// shadowing declaration has to be *written*, and writing it spends
+/// the name a second time.
+///
+/// The input that makes this fail: add `const RECT_VERTEX_SIZE: u64
+/// = 40;` inside `Renderer::new`. Each of the three names occurs
+/// exactly once today, in the expression the pipeline is handed.
+fn assert_name_is_not_shadowed_in_renderer_new(new_body: &str, name: &str) {
+    let found = new_body.matches(name).count();
+    assert_eq!(
+        found, 1,
+        "`{name}` must appear exactly once in `Renderer::new` — the pins below read it as \
+         text, so a second mention is either a shadowing declaration (which would leave the \
+         text intact while the name resolves elsewhere) or a use this reader cannot tell \
+         apart from one; it appears {found} times"
+    );
+}
+
 /// The per-vertex values the closure in `push_rect_ndc` pushes, in
 /// order, exactly as `renderer/render.rs` spells them.
 ///
@@ -1841,10 +1868,19 @@ fn renderer_new_field_expression(new_body: &str, field: &str) -> String {
 /// one vertex ended.
 ///
 /// The names are returned as well as counted, and the caller pins
-/// them in order. They are local bindings with no compiler-visible
-/// tie to `VsIn.pos`, so this does redden on a rename of one of them
-/// — the price of closing a reorder of the slice alone, which is one
-/// line, breaks the layout, and passed while only the width was read.
+/// them in order against a literal. **The price is any edit to this
+/// slice, not only a rename**: growing the vertex — #147's own
+/// third acceptance case, where a scalar is added and the WGSL
+/// updated correctly — reddens here until the literal in the test is
+/// updated too. That is one extra edit, it fails loudly, and the
+/// message prints both lists side by side.
+///
+/// It is worth that price because the alternative was worse: reading
+/// only the width let a reorder of this slice alone pass, which is
+/// one line, breaks the layout silently, and was the input that
+/// falsified this function's previous doc. A layout test that has to
+/// be edited when the layout changes is the honest shape; a layout
+/// test that stays green when the layout is scrambled is not.
 /// What it still cannot prove is that `x` is a coordinate; see the
 /// residual named in the test below.
 ///
@@ -1992,6 +2028,10 @@ fn test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location() {
     let renderer = production_code("src/application/renderer/mod.rs");
     let new_body = braced_block_after(&renderer, "async fn new(")
         .expect("`Renderer::new` must still be a braced item in renderer/mod.rs");
+
+    for name in ["RECT_VERTEX_ATTRIBUTES", "RECT_VERTEX_SIZE", "RECT_SHADER_WGSL"] {
+        assert_name_is_not_shadowed_in_renderer_new(new_body, name);
+    }
 
     let attributes_expression = renderer_new_field_expression(new_body, "attributes");
     assert_eq!(
