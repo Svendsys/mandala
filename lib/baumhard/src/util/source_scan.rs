@@ -83,6 +83,11 @@ pub(crate) const MARKDOWN_ROOTS: &[&str] = &["format", "work_plans", "lib", "cra
 /// the same reason it is absent from [`MARKDOWN_ROOTS`].
 pub(crate) const SHELL_ROOTS: &[&str] = &["scripts"];
 
+/// Repo-relative directory holding the CI workflows — the other
+/// place, besides the shell scripts, where this repository *runs* a
+/// command rather than describing one.
+pub(crate) const WORKFLOW_ROOT: &str = ".github/workflows";
+
 /// Directory names no walk here descends into: build output, vendored
 /// third-party trees, git's own storage, and the browser bundle.
 const SKIPPED_DIRS: &[&str] = &["target", "vendor", ".git", "dist", "node_modules"];
@@ -467,6 +472,21 @@ pub(crate) fn workspace_markdown_docs() -> Vec<PathBuf> {
 /// is checked in the cheaper of the two places.
 pub(crate) fn workspace_shell_scripts() -> Vec<PathBuf> {
     collect_by_extension(SHELL_ROOTS, ".sh", true)
+}
+
+/// Every workflow file under [`WORKFLOW_ROOT`] — `test.yml` and
+/// `license-headers.yml` today.
+///
+/// CI runs commands, so it states rules about how this repository is
+/// built in exactly the way the scripts do. It runs bare `./test.sh`
+/// today and nothing else, which is the reason to read it now rather
+/// than after the first `cargo` line is added to a step and quietly
+/// escapes a scan that stopped at the file extension.
+pub(crate) fn workspace_ci_workflows() -> Vec<PathBuf> {
+    let mut out = collect_by_extension(&[WORKFLOW_ROOT], ".yml", false);
+    out.extend(collect_by_extension(&[WORKFLOW_ROOT], ".yaml", false));
+    out.sort();
+    out
 }
 
 fn collect_by_extension(roots: &[&str], extension: &str, include_repo_root: bool) -> Vec<PathBuf> {

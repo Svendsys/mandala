@@ -35,8 +35,8 @@
 //! - every `--benches` sits on a selection that owns a bench target.
 //!
 //! **The third question is asked repository-wide** — every Markdown
-//! file, every Rust comment, and the shell scripts — while the first
-//! two are asked of two named sections. The difference is not an
+//! file, every Rust comment, the shell scripts and the CI workflows
+//! — while the first two are asked of two named sections. The difference is not an
 //! oversight in either direction. A `--lib` is a mistake *inside* a
 //! passage about narrowing a test run, and [`AUDITED_SECTIONS`] is
 //! where those passages live; a `--benches` with no selection is a
@@ -45,12 +45,13 @@
 //!
 //! **What this reads.** Every way those two sections can publish a
 //! command: an inline code span opened with any number of backticks,
-//! and every line of a fenced block, whether or not the fence
-//! carries a language tag. The tagged fence is called out because it
-//! was the one gap that made the reader *inconsistent* rather than
-//! narrow — the tag glued itself to the front of the command and the
-//! `cargo` filter then dropped it, so a fence opened with a `bash`
-//! tag hid a command that the same fence untagged did not.
+//! and every line of a fenced block — backtick-fenced or
+//! tilde-fenced, tagged or not. The tagged fence is called out
+//! because it was the one gap that made the reader *inconsistent*
+//! rather than narrow — the tag glued itself to the front of the
+//! command and the `cargo` filter then dropped it, so a fence opened
+//! with a `bash` tag hid a command that the same fence untagged did
+//! not.
 //!
 //! **What this does not reach**, said plainly so the silence is not
 //! read as coverage. It runs nothing: that a documented command is
@@ -180,23 +181,18 @@ pub(crate) fn documented_cargo_commands() -> Vec<DocCommand> {
 pub(crate) fn cargo_spans(text: &str, doc: &str) -> Vec<String> {
     let mut spans = Vec::new();
     let mut prose = String::new();
-    let mut fence: Option<String> = None;
+    let mut fence: Option<(char, usize)> = None;
     for line in text.lines() {
         let trimmed = line.trim_start();
-        match &fence {
-            Some(marker) => {
-                if is_fence_close(trimmed, marker) {
-                    fence = None;
-                } else {
-                    spans.push(normalize(line));
-                }
-            }
-            None if trimmed.starts_with("```") => {
+        match (fence, fence_open(trimmed)) {
+            (Some(marker), _) if is_fence_close(trimmed, marker) => fence = None,
+            (Some(_), _) => spans.push(normalize(line)),
+            (None, Some(marker)) => {
                 spans.extend(inline_spans(&prose, doc));
                 prose.clear();
-                fence = Some(trimmed.chars().take_while(|c| *c == '`').collect());
+                fence = Some(marker);
             }
-            None => {
+            (None, None) => {
                 prose.push('\n');
                 prose.push_str(line);
             }
@@ -213,12 +209,32 @@ pub(crate) fn cargo_spans(text: &str, doc: &str) -> Vec<String> {
     spans
 }
 
+/// The marker `trimmed` opens a fenced block with, or `None` when it
+/// opens none: a run of three or more backticks, or of three or more
+/// tildes.
+///
+/// CommonMark gives both, and this repository writes only the
+/// backtick form — which is exactly why the tilde form is read too. A
+/// reader that knew one of the two spellings would go quiet on a
+/// command published in the other, and go quiet in the shape this
+/// module exists to remove: silently, on a document that looks
+/// checked.
+fn fence_open(trimmed: &str) -> Option<(char, usize)> {
+    let opener = trimmed.chars().next()?;
+    if opener != '`' && opener != '~' {
+        return None;
+    }
+    let run = trimmed.chars().take_while(|c| *c == opener).count();
+    (run >= 3).then_some((opener, run))
+}
+
 /// Whether `trimmed` closes a fence opened with `marker` — a run of
-/// at least as many backticks as opened it, and nothing else on the
-/// line, which is what CommonMark asks of a closing fence.
-fn is_fence_close(trimmed: &str, marker: &str) -> bool {
-    let run = trimmed.chars().take_while(|c| *c == '`').count();
-    run >= marker.len() && trimmed.trim_end().len() == run
+/// at least as many of the same character as opened it, and nothing
+/// else on the line, which is what CommonMark asks of a closing
+/// fence.
+fn is_fence_close(trimmed: &str, (opener, opened): (char, usize)) -> bool {
+    let run = trimmed.chars().take_while(|c| *c == opener).count();
+    run >= opened && trimmed.trim_end().len() == run
 }
 
 /// `text` with every run of whitespace — line breaks included —
@@ -506,7 +522,8 @@ const CARGO_LOOKBACK: usize = 12;
 const TRAILING_FLAGS: usize = 6;
 
 /// Every `--benches` this repository writes: in its Markdown, in its
-/// Rust comments, and in the shell scripts that run the command.
+/// Rust comments, and in the shell scripts and CI workflows that run
+/// the command.
 ///
 /// Deliberately wider than [`documented_cargo_commands`], which reads
 /// two named sections. The `--lib` defect was a mistake inside a
@@ -515,12 +532,13 @@ const TRAILING_FLAGS: usize = 6;
 /// and the bare form is a no-op wherever it is written — so it is
 /// judged wherever it is written.
 ///
-/// Cost: one read of every `.md`, `.rs` and `.sh` file in the
-/// workspace. Paid once per test that asks.
+/// Cost: one read of every `.md`, `.rs`, `.sh` and workflow file in
+/// the workspace. Paid once per test that asks.
 pub(crate) fn bench_checks() -> Vec<BenchCheck> {
     let prose = source_scan::workspace_markdown_docs()
         .into_iter()
         .chain(source_scan::workspace_shell_scripts())
+        .chain(source_scan::workspace_ci_workflows())
         .map(|file| (file, TextKind::Prose));
     let rust = source_scan::workspace_rust_sources()
         .into_iter()
@@ -948,23 +966,29 @@ mod tests {
         cargo_spans("a `cargo test -p alib` and a stray ` tick", "fixture.md");
     }
 
-    /// A command published in a fenced block is published, tag or no
-    /// tag. The tagged fence is the case that used to disappear: the
-    /// info string was read as the first word of the command, and
-    /// the `cargo` filter dropped what came out.
+    /// A command published in a fenced block is published, whatever
+    /// the fence is spelled with. The tagged fence is the case that
+    /// used to disappear: the info string was read as the first word
+    /// of the command, and the `cargo` filter dropped what came out.
+    /// The tilde fence is CommonMark's other spelling, unwritten
+    /// here — and a reader that knew only the spelling in front of it
+    /// would go quiet on the day somebody used the other one.
     #[test]
-    fn test_a_fenced_block_publishes_commands_tag_or_no_tag() {
-        let tagged = "prose\n\n```bash\ncargo test -p abin --lib pattern\n```\n\nmore";
-        let untagged = "prose\n\n```\ncargo test -p abin --lib pattern\n```\n\nmore";
+    fn test_a_fenced_block_publishes_commands_however_it_is_fenced() {
         let expected = vec!["cargo test -p abin --lib pattern".to_string()];
-        assert_eq!(cargo_spans(tagged, "fixture.md"), expected);
-        assert_eq!(cargo_spans(untagged, "fixture.md"), expected);
-        assert_eq!(
-            cargo_spans(tagged, "fixture.md"),
-            cargo_spans(untagged, "fixture.md"),
-            "a fence's language tag is a highlighting hint; it cannot decide whether the \
-             command inside is checked"
-        );
+        for fence in ["```bash", "```", "~~~bash", "~~~", "````", "~~~~"] {
+            let close = fence.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+            let text = format!("prose\n\n{fence}\ncargo test -p abin --lib pattern\n{close}\n\nmore");
+            assert_eq!(
+                cargo_spans(&text, "fixture.md"),
+                expected,
+                "a fence opened with {fence:?} hid the command inside it"
+            );
+        }
+        // A tilde fence is closed by tildes, so a backtick run inside
+        // one is content — content this reader must still read.
+        let mixed = "~~~\n```\ncargo test -p abin --lib pattern\n~~~";
+        assert_eq!(cargo_spans(mixed, "fixture.md"), expected);
     }
 
     /// Spans and fences are read in document order, and a fence body

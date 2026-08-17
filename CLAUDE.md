@@ -18,10 +18,11 @@ primitive); executing it is not — `cargo check --workspace --benches` proves t
 Say `--workspace`, and say it every time: without it cargo selects only the root package, which
 declares `autobenches = false` and owns no bench target, so the bare form exits 0 on a bench file that
 does not compile. `test_no_bench_check_selects_a_package_that_owns_no_bench` holds the flag to that
-spelling everywhere this repository writes it, `test.sh` included. Make no performance claims: §B7
-wants a main-against-main control row you will not have, and control runs on identical code swing
-±10–25% at p=0.00 on this hardware, so an uncontrolled number is indistinguishable from noise. State
-work removed as a structural fact visible in the diff, never as a measured win. See `AGENTS.md`, which
+spelling in every Markdown file, shell script, CI workflow and Rust comment here — `test.sh`, where
+the command is run rather than described, included. Make no performance claims: §B7 wants a
+main-against-main control row you will not have, and control runs on identical code swing ±10–25% at
+p=0.00 on this hardware, so an uncontrolled number is indistinguishable from noise. State work
+removed as a structural fact visible in the diff, never as a measured win. See `AGENTS.md`, which
 carries this same rule for agents on other harnesses.
 
 "API error: Stream idle timeout - partial response received" is an error that occurs regularly these days. 
