@@ -11,10 +11,17 @@
 //! the sentence a reader gets when it fires, so the rule is about
 //! what a failure *says*, not about which of two functions was
 //! called. Nothing enforced it: issue #42 counted twenty-six
-//! offenders by hand, and by the time anyone looked again six weeks
-//! later nine of the twenty-six had been deleted or moved by
-//! unrelated work, one had already been fixed, and one was new.
-//! That drift is the argument for a scan rather than a list.
+//! offenders by hand; six weeks later nine of the twenty-six had
+//! been deleted or moved by unrelated work and one had already been
+//! fixed, leaving sixteen — and a scan of that same tree found
+//! seventeen. The seventeenth was not something that had appeared in
+//! the meantime. `mindmap/connection/mod.rs:90` had been sitting at
+//! that exact line since 041ec40e (2026-04-15), eleven weeks before
+//! the issue was filed; the hand count simply missed it, and the
+//! shipped record here said "one was new" until a review checked.
+//! So a hand list does not only drift — it can start incomplete,
+//! and nothing about reading it tells you which. That is the
+//! argument for a scan rather than a list.
 //!
 //! **What counts as shipped.** Four excisions, and each names a
 //! shape of test code the previous one cannot see:
@@ -206,9 +213,21 @@ mod tests {
     ///
     /// The input that makes it fail is a bare `unwrap()` written
     /// anywhere outside the four test shapes the module header
-    /// lists. That is not hypothetical: this test is red on the
-    /// commit before the one that introduced it, naming the sixteen
-    /// sites that were fixed to make it green.
+    /// lists. That is not hypothetical, and the tree to try it on is
+    /// this branch's merge base. Transplanted onto `84af03ea` the
+    /// test fails reporting seventeen shipped lines, from
+    /// `regions.rs:293` to `connection_label.rs:201` — every site
+    /// the two commits before this module fixed.
+    ///
+    /// The commit *immediately* before the one that added this file
+    /// is the wrong tree to reach for, and this sentence used to
+    /// name it. By `122ea19d` all seventeen were already fixed, so
+    /// the same transplant runs green: a maintainer following the
+    /// old instruction would have concluded the gate was vacuous.
+    /// Both runs are the same recipe — check out the commit, restore
+    /// `unwrap_posture.rs`, `util/mod.rs` and `source_scan.rs` from
+    /// this branch, then `cargo test -p baumhard --lib
+    /// test_no_shipped_line_calls_unwrap`.
     ///
     /// Two assertions stand in front of the offender list so its
     /// emptiness is evidence rather than silence — a file-count

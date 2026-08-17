@@ -435,8 +435,13 @@ industrial cost/benefit reasoning. This is not license for speculation.
   something already proved it, and degrading is the answer in an
   interactive path. The count this rule was written against was
   twenty-six sites (#42); six weeks later ten of them had moved or
-  vanished under unrelated work and one was new, which is why the
-  posture is checked rather than listed.
+  vanished under unrelated work, leaving sixteen — and the scan
+  found seventeen. The extra one was not new:
+  `mindmap/connection/mod.rs:90` had been at that line since
+  2026-04-15, eleven weeks before the issue was filed, and the hand
+  count missed it. A list does not only go stale, it can be wrong
+  the day it is written, which is why the posture is checked rather
+  than listed.
 - **The initial map load is the one startup path that does not
   `expect`, and the reason names the boundary.** `expect` is for a
   *program precondition* that did not hold — no adapter, no fonts,
