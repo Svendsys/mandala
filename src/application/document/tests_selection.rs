@@ -449,7 +449,7 @@ fn test_other_variants_selected_grapheme_range_is_none() {
 
 /// The memo that makes a rubber-band frame cheap: writing the same
 /// covered set twice reports `false` the second time, and `false` is
-/// what `drain_selecting_rect` returns on before it would rebuild
+/// what `drain_selecting_rect` returns on, before it would rebuild
 /// anything.
 ///
 /// Fails on the input below if `set_rect_select_preview` stops

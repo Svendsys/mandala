@@ -179,18 +179,19 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
 /// to be re-applied at every site that rebuilds the tree — and
 /// "every site" is the whole problem this function exists to solve.
 ///
-/// Five sites rebuild the tree. Four install it as the live
+/// Four sites rebuild the tree. Three install it as the live
 /// `mindmap_tree` and must overlay it: [`rebuild_all`],
-/// `click::rebuild_all_with_mode`,
-/// `event_cursor_moved::rebuild_selection_highlight`, and
-/// `drain_frame::drain_selecting_rect`. Before this helper each
-/// open-coded its own subset — two silently omitted the `NodeEdit`
-/// dim (a section drag mid-edit snapped every other node's text
-/// back to full opacity while its border stayed dimmed), and three
-/// omitted `reapply_active_toggles` (an active toggle's visual
-/// vanished on any click-driven rebuild).
+/// `click::rebuild_all_with_mode`, and
+/// [`rebuild_selection_highlight`] — the last of which is also how
+/// `drain_frame::drain_selecting_rect` repaints, so the rubber-band
+/// preview inherits the overlay order rather than restating it.
+/// Before this helper each open-coded its own subset — two silently
+/// omitted the `NodeEdit` dim (a section drag mid-edit snapped every
+/// other node's text back to full opacity while its border stayed
+/// dimmed), and three omitted `reapply_active_toggles` (an active
+/// toggle's visual vanished on any click-driven rebuild).
 ///
-/// The fifth, `document::animations::tick`, deliberately installs an
+/// The fourth, `document::animations::tick`, deliberately installs an
 /// **overlay-free** projection: `drain_animation_tick` calls
 /// `rebuild_all` unconditionally on any advance, so the bare tree
 /// exists for less than one frame and is superseded before it can be
@@ -228,12 +229,14 @@ pub(in crate::application::app) fn overlay_tree<'a, I>(
     doc.reapply_active_toggles(tree);
 }
 
-/// [`overlay_tree`] over a freshly-built tree — the shape three of
-/// the four overlay sites want.
+/// [`overlay_tree`] over a freshly-built tree — the shape every
+/// overlay site wants today.
 ///
-/// The fourth, `drain_frame::drain_selecting_rect`, needs the bare
-/// tree first (its rect hit-test runs against it) and so calls
-/// [`overlay_tree`] in place rather than building a second one.
+/// [`overlay_tree`] stays separate rather than being folded in
+/// (CODE_CONVENTIONS §7 — preserve the seam): applying the overlays
+/// to a tree that already exists is where a §B2 in-place consumer
+/// attaches, and the rubber-band drain was one until it stopped
+/// needing a bare tree to hit-test against.
 ///
 /// # Costs
 ///
@@ -413,6 +416,10 @@ pub(in crate::application::app) fn mode_status_line(
 /// only the selected sections (and a multi-section set on
 /// one node tints just those sections, leaving sibling
 /// sections untouched).
+///
+/// Reached through [`highlight_entries_for`], which is where the
+/// rubber-band preview gets to speak instead. Call this one
+/// directly only when the selection is genuinely the subject.
 pub(in crate::application::app) fn selection_highlight_entries(
     selection: &SelectionState,
 ) -> Vec<(&str, Option<usize>, [f32; 4])> {
@@ -1662,9 +1669,9 @@ mod tests {
     }
 
     /// NodeEdit: every node but the active one dims — the property
-    /// `rebuild_selection_highlight` and `drain_selecting_rect`
-    /// used to drop, leaving text at full opacity over a
-    /// half-alpha border for the duration of a drag.
+    /// the rebuild sites used to drop before they shared one
+    /// overlay body, leaving text at full opacity over a half-alpha
+    /// border for the duration of a drag.
     #[test]
     fn test_build_overlaid_tree_node_edit_dims_inactive_nodes() {
         let doc = load_test_doc();
@@ -1695,13 +1702,12 @@ mod tests {
         );
     }
 
-    /// The split `overlay_tree` / `build_overlaid_tree` exists so
-    /// `drain_selecting_rect` can hit-test a bare tree and then
-    /// overlay it in place, instead of building the tree twice per
-    /// rubber-band frame. That is only sound while the two produce
-    /// the same result — pin it, so a future overlay added to one
-    /// and not the other fails here rather than as a flicker during
-    /// a drag.
+    /// The split `overlay_tree` / `build_overlaid_tree` is the seam
+    /// a §B2 in-place consumer attaches to: overlaying a tree that
+    /// already exists, instead of building a fresh one to overlay.
+    /// The seam is only worth anything while the two produce the
+    /// same result — pin it, so a future overlay added to one and
+    /// not the other fails here rather than as a flicker on screen.
     #[test]
     fn test_overlay_tree_in_place_matches_build_overlaid_tree() {
         let doc = load_test_doc();
