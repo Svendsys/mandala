@@ -171,8 +171,15 @@ fn test_selection_state_is_selected() {
 
     let multi = SelectionState::Multi(vec!["123".to_string(), "456".to_string()]);
     assert!(multi.is_selected("123"));
+    // The second member too, so a scan that only reads the head
+    // of the list fails.
     assert!(multi.is_selected("456"));
     assert!(!multi.is_selected("789"));
+    // Near-misses, in both directions: whole-id equality, not a
+    // prefix or containment test. Dewey ids make these neighbors
+    // real — "1.2" and "1.23" are different nodes.
+    assert!(!multi.is_selected("12"));
+    assert!(!multi.is_selected("1234"));
 
     // Section selection counts as "this owning node is selected" —
     // every per-node consumer (highlight, drag, chrome) gets the
