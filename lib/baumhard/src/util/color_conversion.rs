@@ -100,9 +100,12 @@ const fn nibble(b: u8) -> Option<u8> {
 
 /// Parse a hex color literal into a [`Color`], returning `None` on
 /// any parse failure. Accepts 3, 4, 6, or 8 hex chars with any
-/// number of leading `#`. **This is the project's only hex parser**
-/// — [`hex_to_rgba`] and everything downstream of it is this
-/// function plus a byte→float conversion.
+/// number of leading `#`. **This is the project's only hex-color
+/// parser** — [`hex_to_rgba`] is this function plus a byte→float
+/// conversion, and every other hex entry point in the crate
+/// (`hex_to_rgba_safe`, `from_hex`, `hex_to_hsv_safe`,
+/// `hex_with_alpha_scaled`, `font::hex::hex_to_cosmic_color`) is
+/// downstream of that.
 ///
 /// `const`, which is the point: a palette constant can be *written*
 /// in the notation designers and `.mindmap.json` both speak and
