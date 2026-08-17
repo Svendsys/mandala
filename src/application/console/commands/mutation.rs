@@ -571,12 +571,19 @@ mod tests {
         let after_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
         // Compared in `f32`, and exactly. The forward path routes the
         // nudge through the tree, whose coordinates are `f32`, so the
-        // model gets back a widened `f32` — at this fixture's x of
-        // about −179 that is a few times 1e-7 away from the `f64`
-        // arithmetic, which is one f32 ULP of nothing and a thousand
-        // times the `f64` tolerance the undo assertion below can
-        // afford. Measuring the widening instead of the mutation is
-        // what an `f64` ruler would do here.
+        // model gets back a widened `f32`. At this fixture's x of
+        // about −179 the widening that actually lands is 3.06e-7 —
+        // and `f32(after) == f32(before + 1.0)` holds exactly, which
+        // is what makes an exact compare the right one.
+        //
+        // The number that mattered is the *old* tolerance, not this
+        // one: one f32 ULP at this coordinate is 2^-16 = 1.53e-5 (the
+        // widening above is a fiftieth of it), so the `1e-6` that used
+        // to stand here was fifteen times *below* one ULP. It could
+        // not have absorbed a worst-case widening — half an ULP,
+        // 7.6e-6 — and passed on the luck of the fixture rather than
+        // by design. An `f64` ruler here measures the widening
+        // instead of the mutation.
         assert_eq!(
             after_x as f32,
             (before_x + 1.0) as f32,

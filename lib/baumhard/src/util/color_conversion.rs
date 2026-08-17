@@ -103,9 +103,18 @@ const fn nibble(b: u8) -> Option<u8> {
 /// number of leading `#`. **This is the project's only hex-color
 /// parser** — [`hex_to_rgba`] is this function plus a byte→float
 /// conversion, and every other hex entry point in the crate
-/// (`hex_to_rgba_safe`, `from_hex`, `hex_to_hsv_safe`,
-/// `hex_with_alpha_scaled`, `font::hex::hex_to_cosmic_color`) is
-/// downstream of that.
+/// ([`hex_to_rgba_safe`], [`is_valid_hex_color`], [`from_hex`],
+/// [`hex_to_hsv_safe`], [`hex_with_alpha_scaled`],
+/// [`crate::font::hex::hex_to_cosmic_color`]) is downstream of that.
+///
+/// That list is six names because a seventh went missing from it the
+/// day it was written — `is_valid_hex_color` — so the claim is now
+/// **derived rather than enumerated**:
+/// `test_every_hex_entry_point_is_downstream_of_the_one_parser` reads
+/// both modules' production code, collects every `pub` function whose
+/// name says it takes a hex string, and requires each to reach this
+/// one. A new entry point that parses hex itself fails that test; a
+/// stale sentence here cannot hide it.
 ///
 /// `const`, which is the point: a palette constant can be *written*
 /// in the notation designers and `.mindmap.json` both speak and

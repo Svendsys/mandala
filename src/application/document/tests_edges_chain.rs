@@ -383,9 +383,20 @@ fn portal_edge_selection_uses_edge_variant() {
 /// growth was for. The left side is a real cosmic-text measurement,
 /// not a second copy of the formula.
 ///
-/// The input that makes it fail is a re-inlined factor on either
-/// side: at 14pt the two answers are 16.8 and 17.5, ten times the
-/// tolerance apart.
+/// The input that makes it fail is a re-inlined factor on **this
+/// layer's** side — `document/mod.rs`'s `scale * LINE_HEIGHT_FACTOR`
+/// back at `1.25` — which reports "one extra line grew the floor by
+/// 17.5 where the tree builder draws 16.8", ten times the tolerance
+/// apart.
+///
+/// A re-inline on the *builder's* side leaves it green (verified):
+/// the auto-size floor measures through cosmic-text and derives its
+/// own expected line height from the shared factor, so it never reads
+/// what `tree_builder::node` laid the area out at. That half is
+/// `tree_builder::tests::section_text::test_section_area_is_laid_out_at_the_effective_scale`,
+/// which asserts against the emitted `GlyphArea` and reddens on
+/// exactly the input this one does not. The pair covers both layers;
+/// neither test covers both.
 #[test]
 fn test_auto_size_floor_grows_by_the_rendered_line_height() {
     let one_line = synthetic_single_node_map("one line", 1.0, 1.0);

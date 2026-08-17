@@ -989,6 +989,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("hex_to_color_parses_bytes_at_compile_time", |b| {
         b.iter(do_hex_to_color_parses_bytes_at_compile_time)
     });
+    // Reads the two hex-bearing modules' source per iteration, the
+    // same shape as `production_code_returns_code_without_prose`
+    // above: after the first iteration what moves is the two parses
+    // and the closure walk, not the disk.
+    c.bench_function("every_hex_entry_point_is_downstream_of_the_one_parser", |b| {
+        b.iter(do_every_hex_entry_point_is_downstream_of_the_one_parser)
+    });
     c.bench_function("color_with_alpha_replaces_only_the_alpha_channel", |b| {
         b.iter(do_color_with_alpha_replaces_only_the_alpha_channel)
     });

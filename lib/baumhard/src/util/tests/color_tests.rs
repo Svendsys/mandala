@@ -950,11 +950,13 @@ fn test_hex_to_color_parses_bytes_at_compile_time() {
 /// division, so a control derived from it would only show the parser
 /// agreeing with itself.
 ///
-/// The input that makes the last three assertions fail is the
-/// hand-rolled `#`-scan replacing `trim_start_matches('#')` — a scan
-/// that stopped after one `#` reads `##f0a` as a five-character body
-/// and rejects a string the previous parser accepted, which for a
-/// file format is a silent narrowing.
+/// The input that makes the `###f0a` assertion fail — and only that
+/// one of the last three; the two `is_none` claims below it stay true
+/// under the mutation, and an `assert_eq!` aborts at the first failure
+/// regardless — is the hand-rolled `#`-scan replacing
+/// `trim_start_matches('#')`. A scan that stopped after one `#` reads
+/// `##f0a` as a five-character body and rejects a string the previous
+/// parser accepted, which for a file format is a silent narrowing.
 pub fn do_hex_to_color_parses_bytes_at_compile_time() {
     const CONST_PARSED: Color = match hex_to_color("#05638f80") {
         Some(color) => color,
@@ -1010,4 +1012,146 @@ pub fn do_color_with_alpha_replaces_only_the_alpha_channel() {
     let mut via_setter = OPAQUE;
     via_setter.set_alpha(200);
     assert_eq!(via_setter.rgba, TRANSLUCENT.rgba);
+}
+
+// Both halves follow `util::rust_source`'s own gate — it reads files
+// off the filesystem, which wasm32 does not have — the same reason
+// `util::tests::rust_source_tests` is gated as a whole module. This
+// file's other bodies are target-independent, so the gate is on the
+// pair rather than on the file.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_every_hex_entry_point_is_downstream_of_the_one_parser() {
+    do_every_hex_entry_point_is_downstream_of_the_one_parser();
+}
+
+/// [`hex_to_color`]'s claim to be the project's only hex-color parser,
+/// derived from the source instead of enumerated in prose.
+///
+/// The enumeration it replaces was wrong on the commit that added it:
+/// it listed five downstream entry points and missed
+/// [`is_valid_hex_color`], a sixth `pub` function that takes a hex
+/// string. A list a reader is asked to trust is exactly the thing that
+/// goes stale, and this one went stale immediately.
+///
+/// So: read both hex-bearing modules' production code, collect every
+/// `pub` function whose *name* says it takes a hex string, and grow a
+/// downstream set outward from `hex_to_color` until it stops growing.
+/// Every collected name must land in that set.
+///
+/// The input that makes it fail is a new (or rewritten) hex entry
+/// point that walks the bytes itself instead of delegating — the exact
+/// drift the claim exists to forbid — and it fails naming that
+/// function. Planting `pub fn hex_to_rgba_direct(c: &str) -> Option<[f32; 4]> { let _ = c.as_bytes(); None }`
+/// in `color_conversion.rs` turns it red; a body that calls
+/// `hex_to_rgba` instead leaves it green.
+///
+/// Scoped through [`production_code`](crate::util::rust_source::production_code),
+/// so the many `hex_to_rgba` mentions in these modules' doc comments
+/// do not stand in for a call, and the test modules below them are cut
+/// away before the scan starts.
+///
+/// `rgba_to_hex` and `hsv_to_hex` are the two deliberate non-members:
+/// both are *inverses*, formatting a hex string rather than reading
+/// one, so neither has any business being downstream of a parser.
+/// They are listed one by one rather than filtered by name shape,
+/// because "the name ends in `_to_hex`" is a weaker rule than "these
+/// two functions, for this reason" — and a filter by shape is how a
+/// real parser slips out of the scan under a name nobody vetted.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn do_every_hex_entry_point_is_downstream_of_the_one_parser() {
+    use crate::util::rust_source::{braced_block_after, production_code};
+
+    const FILES: &[&str] = &[
+        "lib/baumhard/src/util/color_conversion.rs",
+        "lib/baumhard/src/font/hex.rs",
+    ];
+    const NOT_A_PARSER: &[&str] = &["rgba_to_hex", "hsv_to_hex"];
+    const ROOT: &str = "hex_to_color";
+
+    // Every `pub …fn NAME(` in `code`, in declaration order.
+    fn pub_fn_names(code: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for (at, _) in code.match_indices("pub") {
+            // Whole word: `public_thing` is not `pub`.
+            let mut rest = &code[at + 3..];
+            if rest.starts_with('(') {
+                // `pub(crate)`, `pub(in path)`, …
+                let Some(close) = rest.find(')') else { continue };
+                rest = &rest[close + 1..];
+            } else if !rest.starts_with(char::is_whitespace) {
+                continue;
+            }
+            rest = rest.trim_start();
+            for keyword in ["const ", "unsafe ", "extern "] {
+                if let Some(tail) = rest.strip_prefix(keyword) {
+                    rest = tail.trim_start();
+                }
+            }
+            let Some(tail) = rest.strip_prefix("fn ") else { continue };
+            let name: String = tail
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                out.push(name);
+            }
+        }
+        out
+    }
+
+    // (name, body) for every hex-named `pub` function across both files.
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for path in FILES {
+        let code = production_code(path);
+        assert!(
+            !code.trim().is_empty(),
+            "{path} produced no production code — the scan below would pass vacuously"
+        );
+        for name in pub_fn_names(&code) {
+            if !name.contains("hex") || NOT_A_PARSER.contains(&name.as_str()) {
+                continue;
+            }
+            let body = braced_block_after(&code, &format!("fn {name}("))
+                .unwrap_or_else(|| panic!("{path} declares `{name}` with no body"));
+            entries.push((name, body.to_string()));
+        }
+    }
+    assert!(
+        entries.iter().any(|(name, _)| name == ROOT),
+        "the scan must find `{ROOT}` itself, or it is not reading the parser's own module"
+    );
+    assert!(
+        entries.len() >= 7,
+        "expected at least the parser and its six downstream entry points; found {:?}",
+        entries.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+
+    // Grow outward from the root: a function is downstream when its
+    // body names something already known to be.
+    let mut downstream: Vec<&str> = vec![ROOT];
+    loop {
+        let before = downstream.len();
+        for (name, body) in &entries {
+            if downstream.contains(&name.as_str()) {
+                continue;
+            }
+            if downstream.iter().any(|known| body.contains(known)) {
+                downstream.push(name);
+            }
+        }
+        if downstream.len() == before {
+            break;
+        }
+    }
+
+    for (name, _) in &entries {
+        assert!(
+            downstream.contains(&name.as_str()),
+            "`{name}` takes a hex string but never reaches `{ROOT}` — either route it \
+             through the one parser, or, if it does not parse hex at all, name it in \
+             NOT_A_PARSER with the reason"
+        );
+    }
 }
