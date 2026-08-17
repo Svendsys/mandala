@@ -16,6 +16,15 @@ pub(crate) mod bench_surface;
 pub mod color;
 /// Hex ↔ RGB ↔ HSV plus theme-variable resolution.
 pub mod color_conversion;
+/// The `cargo` commands this repository publishes, held against
+/// the workspace's real manifests — a documented `--lib` names a
+/// member that has one, a documented `-p` names a member that
+/// exists, and a `--benches` anywhere in the tree selects a member
+/// that owns a bench target instead of compiling nothing (#148).
+/// Test-only and native-only for the same reasons `manifests`,
+/// whose member list it reuses, is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod doc_commands;
 /// Readers that pull published examples straight out of the
 /// `format/` specs, so a doc pin tests the doc rather than a copy of
 /// it. Native-only — the specs live on the filesystem.

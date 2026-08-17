@@ -14,11 +14,16 @@ not whatever is the default. Opus or if available Mythos
 
 §7 NEVER run benchmarks — no `cargo bench`, no `./bench.sh`, no `./test.sh --bench`. Run the tests.
 `./test.sh` is the gate. Changing benchmark code is fine (§B3 requires a bench entry alongside a new
-primitive); executing it is not — `cargo check --benches` proves the target still builds. Make no
-performance claims: §B7 wants a main-against-main control row you will not have, and control runs on
-identical code swing ±10–25% at p=0.00 on this hardware, so an uncontrolled number is indistinguishable
-from noise. State work removed as a structural fact visible in the diff, never as a measured win.
-See `AGENTS.md`, which carries this same rule for agents on other harnesses.
+primitive); executing it is not — `cargo check --workspace --benches` proves the target still builds.
+Say `--workspace`, and say it every time: without it cargo selects only the root package, which
+declares `autobenches = false` and owns no bench target, so the bare form exits 0 on a bench file that
+does not compile. `test_no_bench_check_selects_a_package_that_owns_no_bench` holds the flag to that
+spelling in every Markdown file, shell script, CI workflow and Rust comment here — `test.sh`, where
+the command is run rather than described, included. Make no performance claims: §B7 wants a
+main-against-main control row you will not have, and control runs on identical code swing ±10–25% at
+p=0.00 on this hardware, so an uncontrolled number is indistinguishable from noise. State work
+removed as a structural fact visible in the diff, never as a measured win. See `AGENTS.md`, which
+carries this same rule for agents on other harnesses.
 
 "API error: Stream idle timeout - partial response received" is an error that occurs regularly these days. 
 To avoid it, please make sure that any large files such as (but not limited to) plan files are written in 
@@ -190,13 +195,29 @@ the parity trajectory (or why none is owed):
   and the `wasm32-unknown-unknown` target installed.
 - **Run the app**: `./run.sh [map.mindmap.json]` launches the release
   binary and `trunk serve --release` in parallel; Ctrl+C stops both.
-  For one-off iteration use `cargo run -- maps/testament.mindmap.json`
-  (native) or `trunk serve` (WASM) directly.
+  It launches rather than builds, so it refuses up front — naming
+  which one — when `target/release/mandala` is absent or not
+  executable, when the map file does not exist, or when `trunk` is
+  not on `PATH`; produce the binary with `./build.sh` first. For
+  one-off iteration use `cargo run -- maps/testament.mindmap.json`
+  (native) or `trunk serve` (WASM) directly; `cargo run` builds what
+  it needs, which makes it the form that works from a fresh clone.
 - **Dev-profile build**: `./debug_build.sh [flags]` is `./build.sh
   --debug` with every other flag forwarded — the shorthand for the
   build run most often while iterating.
 - **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
-  `cargo test -p mandala --lib <pattern>`,
-  `cargo test -p mandala_derive` or `cargo test -p maptool`.
+  `cargo test -p mandala <pattern>`,
+  `cargo test -p mandala_derive` or `cargo test -p maptool`. `--lib`
+  narrows to a library target, so it belongs only to the two members
+  that have one — baumhard and mandala_derive. `mandala` and
+  `maptool` are binary crates, where adding it narrows nothing and
+  exits 101 with `no library targets found in package 'mandala'`
+  before a test runs (#148).
+  `test_no_documented_command_targets_a_lib_the_package_lacks` holds
+  this bullet and TEST_CONVENTIONS §T11's copy of it against the real
+  manifests — every code span and every fenced line in those two
+  sections — so the flag cannot come back to either of them on a
+  member that has no library target. It reads nothing else: the rest
+  of this file, and every other document, is on your own care.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.

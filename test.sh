@@ -148,7 +148,18 @@ if [ "$COVERAGE" -eq 1 ]; then
   if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     echo "cargo-llvm-cov not found."
     echo "Install with: cargo install cargo-llvm-cov"
-    echo "(llvm-tools-preview is already present via rustup.)"
+    # Checked, not asserted. This line used to state flatly that
+    # llvm-tools-preview "is already present via rustup" — true of
+    # the machine it was written on and false of a fresh container,
+    # where it sent the reader off with one of the two prerequisites
+    # silently unmet. A message that tells you the state of your own
+    # toolchain has to read it.
+    if rustup component list --installed 2>/dev/null | grep -q '^llvm-tools'; then
+      echo "(llvm-tools-preview is present via rustup.)"
+    else
+      echo "It also needs the llvm-tools-preview component, which is not installed:"
+      echo "    rustup component add llvm-tools-preview"
+    fi
     exit 1
   fi
   echo "== tests with coverage =="
@@ -171,11 +182,14 @@ else
   trap 'rm -f "$TEST_LOG"' EXIT
   # `--workspace`, not a hand-written list of `-p` flags. The list
   # this replaces named three of the four members and silently
-  # dropped `mandala_derive`'s 13 tests for as long as that crate has
-  # existed — a list of members is a copy of the `[workspace]` table
-  # and copies go stale. `--coverage` above and the wasm32 gate below
-  # were already `--workspace`; this is the odd one out rejoining
-  # them.
+  # dropped every one of `mandala_derive`'s tests for as long as that
+  # crate has existed — a list of members is a copy of the
+  # `[workspace]` table and copies go stale. So did the count this
+  # comment used to give for those tests, which is why it now gives
+  # none: the run below prints what it ran, and a second copy written
+  # up here can only disagree with it. `--coverage` above and the
+  # wasm32 gate below were already `--workspace`; this is the odd one
+  # out rejoining them.
   cargo test --workspace 2>&1 | tee "$TEST_LOG"
 
   # The `|| true` is load-bearing, not defensive noise. Under

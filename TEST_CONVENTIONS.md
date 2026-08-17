@@ -287,21 +287,31 @@ re-litigate them without a strong reason.
   `CLAUDE.md`). Tests stay that way.
 - **No `wasm-bindgen-test`.** See §T9.
 - **No GPU / live-wgpu test infrastructure.** See §T8.
-- **No CI yet.** `./test.sh` is the covenant — run it before
-  committing.
+- **No lint or coverage gate in CI.** There *is* CI —
+  `.github/workflows/test.yml` runs `./test.sh` on every push to
+  main and every pull request, with the wasm32 target installed on
+  the toolchain action, and `license-headers.yml` runs the SPDX
+  check beside it — but it runs the bare script. `--lint`'s fmt and
+  doc gates and `--coverage` are yours to run locally, so `./test.sh`
+  stays the covenant rather than becoming a formality something else
+  performs. This bullet said "No CI yet" for as long as CI had
+  existed, while the next bullet down — §T11's first, one heading
+  away — described that same CI's behavior.
 
 ## §T11 Running the suite
 
 - `./test.sh` — full suite across every workspace member —
-  `mandala`, `baumhard`, `mandala_derive`, `maptool` — then the
-  bench-target type-check and the wasm32 type-check gate; prints a
-  test count at the end. The wasm32 gate is skipped with a note when
-  the target is not installed, so it is unconditional in CI (which
-  installs it) and conditional locally; the count is a convenience
-  and cannot fail the run. It runs `cargo test --workspace` rather than
-  a list of `-p` flags, on purpose: the list it used to carry named
-  three of the four members and so never ran `mandala_derive`'s tests
-  at all.
+  `mandala`, `baumhard`, `mandala_derive`, `maptool` — then a test
+  count, then the bench-target type-check and the wasm32 type-check
+  gate. Read that order literally: the count prints where the
+  *suite* ends, not where the run does, so a `== N tests passed ==`
+  scrolling past still has two gates to clear. It is a convenience
+  either way and cannot fail the run. The wasm32 gate is skipped
+  with a note when the target is not installed, so it is
+  unconditional in CI (which installs it) and conditional locally.
+  It runs `cargo test --workspace` rather than a list of `-p` flags,
+  on purpose: the list it used to carry named three of the four
+  members and so never ran `mandala_derive`'s tests at all.
 - `./test.sh --coverage` — runs under `cargo-llvm-cov` (install with
   `cargo install cargo-llvm-cov`). HTML at
   `target/llvm-cov/html/index.html`, LCOV at
@@ -318,16 +328,27 @@ re-litigate them without a strong reason.
   calling `./bench.sh` rather than repeating its invocation.
   Maintainers only: `AGENTS.md` forbids automated agents this flag,
   `./bench.sh`, and `cargo bench` alike, along with any performance
-  claim lacking the main-against-main control row §T6 and
+  claim lacking the main-against-main control row
   [`lib/baumhard/CONVENTIONS.md §B7`](./lib/baumhard/CONVENTIONS.md)
-  require. Proving a bench target still *compiles* needs no flag —
+  requires — §B7 is the sole source of that rule; §T6 above governs
+  the `do_*()` surface and says nothing about control rows.
+  Proving a bench target still *compiles* needs no flag —
   `./test.sh` type-checks all of them on every run, which is what
   keeps §B8's `do_*()` contract enforceable now that its two named
   mechanisms are off limits.
 - `cargo test -p baumhard --lib <pattern>`,
-  `cargo test -p mandala --lib <pattern>`,
+  `cargo test -p mandala <pattern>`,
   `cargo test -p mandala_derive` or `cargo test -p maptool` —
-  targeted subset while iterating.
+  targeted subset while iterating. `--lib` selects a library target,
+  so it belongs only to the two members that have one, baumhard and
+  mandala_derive; `mandala` and `maptool` are binary crates, where
+  adding it narrows nothing and exits 101 with `no library targets
+  found in package 'mandala'` before a test runs. Both this document
+  and `CLAUDE.md` put the flag on the mandala line anyway, copied off
+  the baumhard neighbor where it is correct (#148);
+  `test_no_documented_command_targets_a_lib_the_package_lacks` now
+  reads both sections and holds every `-p` and every `--lib` in them
+  against the workspace's real manifests.
 - `cargo doc -p baumhard --no-deps` — render the library docs and
   spot-check that every `pub` item has the doc comment
   [`lib/baumhard/CONVENTIONS.md §B9`](./lib/baumhard/CONVENTIONS.md)

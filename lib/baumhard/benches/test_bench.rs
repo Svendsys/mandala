@@ -839,6 +839,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("blank_string_literals_keeps_code_and_offsets", |b| {
         b.iter(do_blank_string_literals_keeps_code_and_offsets)
     });
+    c.bench_function("comment_text_keeps_comments_and_drops_code", |b| {
+        b.iter(do_comment_text_keeps_comments_and_drops_code)
+    });
     c.bench_function("statements", |b| b.iter(do_statements_split_at_the_right_places));
     c.bench_function("production_code_returns_code_without_prose", |b| {
         b.iter(do_production_code_returns_code_without_prose)

@@ -60,6 +60,21 @@
 //! narrows further, to one item's body, for the pins that are about
 //! one statement.
 //!
+//! ## The other direction: reading the prose
+//!
+//! One pin wants the opposite half of the same file.
+//! `crate::util::doc_commands` — unlinked here, being a test-only
+//! module `cargo doc` never sees — checks that no build command this
+//! repository *writes down* is a no-op, and a command written into a
+//! `//` comment counts;
+//! [`comment_text`](crate::util::rust_source::comment_text) is
+//! [`strip_comments`](crate::util::rust_source::strip_comments)
+//! inverted for it — the comments come back and the code, the
+//! literals and the markers go. Sharing the walk is the point rather
+//! than a convenience: a reader that decided where a comment ends by
+//! pairing quotes across the file made the visibility of one comment
+//! depend on the punctuation of the comments above it.
+//!
 //! ## What is still out of reach
 //!
 //! A **string literal** in production code holding the needle
@@ -643,6 +658,130 @@ pub fn strip_comments(src: &str) -> String {
         i += ch.len_utf8();
     }
     out
+}
+
+/// `src` with everything that is **not** comment prose replaced by
+/// spaces: the code, the string literals, and the `//` / `/*`
+/// markers themselves. What a person wrote *inside* a comment stays
+/// exactly where it was.
+///
+/// The inverse of [`strip_comments`], which keeps the code and drops
+/// the prose; this keeps the prose and drops the code. Same walk, so
+/// the two agree on where a comment starts and ends — including the
+/// cases that make a hand-rolled reader wrong:
+///
+/// - a `//` or a `/*` inside a string literal opens no comment
+///   (`let u = "http://x";`);
+/// - a `"` inside a comment opens no literal, which is the whole
+///   reason this exists rather than a
+///   [`blank_string_literals`] call on raw source: pairing quotes
+///   file-wide makes the visibility of a comment depend on how many
+///   `"` characters the comments above it happen to contain;
+/// - a block comment is nested and multi-line, and its body is prose
+///   even where that prose contains `//`, `"` or `*/`-shaped text;
+/// - a `'a` lifetime is not a character literal.
+///
+/// Every dropped byte becomes one space and every newline is kept,
+/// so the result has the same **byte length** and the same line
+/// numbering as `src` — a caller that reports `file:line` reports
+/// the line the comment is really on.
+///
+/// The markers go because a caller reading the prose as text should
+/// not have to strip them: `/// cargo check` yields
+/// `    cargo check`, not `/// cargo check`, so a leading `///`
+/// cannot be mistaken for a token of what the comment says.
+///
+/// Cost: one pass over `src` and one `String` of its length.
+pub fn comment_text(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0usize;
+    while i < src.len() {
+        let rest = &src[i..];
+        if rest.starts_with("//") {
+            let end = rest.find('\n').map_or(src.len(), |n| i + n);
+            let prose = line_comment_prose(src, i, end);
+            blank_into(&src[i..prose], &mut out);
+            out.push_str(&src[prose..end]);
+            i = end;
+            continue;
+        }
+        if rest.starts_with("/*") {
+            i = copy_block_comment(src, i, &mut out);
+            continue;
+        }
+        let next = if let Some(next) = raw_string_end(src, i) {
+            next
+        } else if bytes[i] == b'"' {
+            quoted_end(src, i, '"')
+        } else if bytes[i] == b'\'' {
+            char_literal_end(src, i).unwrap_or_else(|| next_char_end(src, i))
+        } else {
+            next_char_end(src, i)
+        };
+        blank_into(&src[i..next], &mut out);
+        i = next;
+    }
+    out
+}
+
+/// Byte offset just past the one character at `from`.
+fn next_char_end(src: &str, from: usize) -> usize {
+    let ch = src[from..].chars().next().expect("in-bounds by the caller");
+    from + ch.len_utf8()
+}
+
+/// Where the prose of the line comment spanning `from..end` starts:
+/// past the run of `/` that opens it and past the `!` of a `//!`
+/// inner doc comment.
+///
+/// A `////////` rule line is all marker and no prose, which yields
+/// `end` — an empty comment rather than a comment full of slashes.
+fn line_comment_prose(src: &str, from: usize, end: usize) -> usize {
+    let bytes = src.as_bytes();
+    let mut i = from;
+    while i < end && bytes[i] == b'/' {
+        i += 1;
+    }
+    if i < end && bytes[i] == b'!' {
+        i += 1;
+    }
+    i
+}
+
+/// Copy the body of the block comment starting at `from` into `out`,
+/// blanking its `/*` and `*/` markers, and return the byte offset
+/// just past it.
+///
+/// Nesting is Rust's, so the inner markers of `/* a /* b */ c */` go
+/// too and `c` is still prose. An unterminated comment runs to the
+/// end of `src`, which is the posture [`skip_block_comment`] takes
+/// for the same input.
+fn copy_block_comment(src: &str, from: usize, out: &mut String) -> usize {
+    let mut depth = 0usize;
+    let mut i = from;
+    while i < src.len() {
+        let rest = &src[i..];
+        if rest.starts_with("/*") {
+            depth += 1;
+            out.push_str("  ");
+            i += 2;
+            continue;
+        }
+        if rest.starts_with("*/") {
+            depth -= 1;
+            out.push_str("  ");
+            i += 2;
+            if depth == 0 {
+                return i;
+            }
+            continue;
+        }
+        let ch = rest.chars().next().expect("in-bounds by the loop guard");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    src.len()
 }
 
 /// `src` with the *contents* of every string, byte-string and
