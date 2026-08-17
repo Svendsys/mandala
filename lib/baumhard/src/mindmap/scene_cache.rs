@@ -98,6 +98,43 @@ pub struct CachedConnection {
     pub base_to: Vec2,
 }
 
+impl CachedConnection {
+    /// Rigid-body translate of this entry's geometry in place.
+    /// Shifts `pre_clip_positions` and both caps by `delta`, stamps
+    /// `base_from` / `base_to` to the new reference endpoints.
+    ///
+    /// Why the whole entry is mutated instead of being rebuilt and
+    /// handed back to [`SceneConnectionCache::insert`]: this runs on
+    /// every internal edge of a subtree drag every drain. Routing
+    /// through `insert` would reindex both `by_node` buckets (two
+    /// `retain` scans + two `push` calls per edge) and clone
+    /// `body_glyph` / `font` / `color` — none of which change under
+    /// a pure translation. On a 500-edge drag that's ~1000 bucket
+    /// scans and ~1500 string clones per drain the translate path is
+    /// specifically trying to avoid.
+    ///
+    /// The fields a translation leaves alone are the ones that
+    /// describe how the samples were taken — `font_size_pt`,
+    /// `body_glyph`, `font` — and `color`. Keeping them is the
+    /// caller's business: it has already rejected any entry whose
+    /// sampling config moved, and it resolves the color per frame.
+    ///
+    /// Cost: one pass over `pre_clip_positions`.
+    pub fn translate(&mut self, delta: Vec2, new_base_from: Vec2, new_base_to: Vec2) {
+        for p in &mut self.pre_clip_positions {
+            *p += delta;
+        }
+        if let Some((_, p)) = self.cap_start.as_mut() {
+            *p += delta;
+        }
+        if let Some((_, p)) = self.cap_end.as_mut() {
+            *p += delta;
+        }
+        self.base_from = new_base_from;
+        self.base_to = new_base_to;
+    }
+}
+
 /// Per-edge cache of sampled connection geometry, plus a reverse
 /// index from node ID → edges that touch it so a drag of node N
 /// dirties the right edges in `O(k_N)` instead of walking the whole
@@ -227,44 +264,24 @@ impl SceneConnectionCache {
         }
     }
 
-    /// Rigid-body translate of a cached entry's geometry in place.
-    /// Shifts `pre_clip_positions` and both caps by `delta`, stamps
-    /// `base_from` / `base_to` to the new reference endpoints.
-    /// Returns a borrow of the mutated entry so the scene builder's
-    /// translate path can emit the `ConnectionElement` without a
-    /// follow-up `get`.
+    /// Look up a cached entry for mutation, leaving the `by_node`
+    /// reverse index alone. `None` if the key isn't cached.
     ///
-    /// Why a dedicated method instead of `insert`: this runs on
-    /// every internal edge of a subtree drag every drain. Routing
-    /// through `insert` would reindex both `by_node` buckets (two
-    /// `retain` scans + two `push` calls per edge) and clone
-    /// `body_glyph` / `font` / `color` — none of which change under
-    /// a pure translation. On a 500-edge drag that's ~1000 bucket
-    /// scans and ~1500 string clones per drain the translate path
-    /// is specifically trying to avoid.
+    /// This is what the scene builder's translate path holds: the
+    /// same borrow answers "is this edge cached, fresh, and moving
+    /// rigidly?", performs [`CachedConnection::translate`], and is
+    /// reborrowed as shared to emit the element — one hash lookup
+    /// for the whole path, and no re-lookup whose success has to be
+    /// asserted after the fact.
     ///
-    /// Returns `None` if the key isn't cached. Callers should fall
-    /// back to the slow path in that case.
-    pub fn translate_in_place(
-        &mut self,
-        key: &EdgeKey,
-        delta: Vec2,
-        new_base_from: Vec2,
-        new_base_to: Vec2,
-    ) -> Option<&CachedConnection> {
-        let entry = self.entries.get_mut(key)?;
-        for p in &mut entry.pre_clip_positions {
-            *p += delta;
-        }
-        if let Some((_, p)) = entry.cap_start.as_mut() {
-            *p += delta;
-        }
-        if let Some((_, p)) = entry.cap_end.as_mut() {
-            *p += delta;
-        }
-        entry.base_from = new_base_from;
-        entry.base_to = new_base_to;
-        Some(&*entry)
+    /// Leaving `by_node` alone is sound rather than a shortcut:
+    /// that index maps a node id to the edges that touch it, and
+    /// the node ids live in the [`EdgeKey`], not in the entry this
+    /// borrow reaches. Changing *which* nodes an edge connects is
+    /// therefore changing its key, which is [`Self::invalidate_edge`]
+    /// followed by [`Self::insert`] — the two paths that do re-index.
+    pub fn get_mut(&mut self, key: &EdgeKey) -> Option<&mut CachedConnection> {
+        self.entries.get_mut(key)
     }
 
     /// After a scene build, evict any cache entries whose keys are not in

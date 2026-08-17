@@ -73,7 +73,7 @@ fn build_arc_length_table(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2
 pub(super) fn cubic_bezier_length(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2) -> f32 {
     *build_arc_length_table(start, control1, control2, end)
         .last()
-        .unwrap()
+        .expect("bezier invariant: the arc-length table always carries its leading 0.0 sample")
 }
 
 pub(super) fn sample_cubic_bezier(
@@ -85,7 +85,9 @@ pub(super) fn sample_cubic_bezier(
     cap: usize,
 ) -> Vec<SampledPoint> {
     let arc_lengths = build_arc_length_table(start, control1, control2, end);
-    let total_length = *arc_lengths.last().unwrap();
+    let total_length = *arc_lengths
+        .last()
+        .expect("bezier invariant: the arc-length table always carries its leading 0.0 sample");
     if total_length < f32::EPSILON {
         return vec![SampledPoint { position: start }];
     }

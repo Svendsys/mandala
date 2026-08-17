@@ -34,14 +34,22 @@ pub struct GlyphLine {
 impl Index<usize> for GlyphLine {
     type Output = GlyphComponent;
 
+    /// Component access — panics out of bounds, which is what
+    /// `Index` means. Delegated to the backing `Vec` rather than
+    /// unwrapped, so the panic names the index and the length
+    /// instead of saying only that an `Option` was `None`. A caller
+    /// that cannot prove the component exists wants
+    /// [`GlyphLine::get`] instead.
     fn index(&self, index: usize) -> &Self::Output {
-        self.line.get(index).unwrap()
+        &self.line[index]
     }
 }
 
 impl IndexMut<usize> for GlyphLine {
+    /// Mutable component access; see [`Index::index`] on this type
+    /// for why it delegates rather than unwraps.
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        self.line.get_mut(index).unwrap()
+        &mut self.line[index]
     }
 }
 
@@ -385,8 +393,21 @@ impl GlyphLine {
         // 4. [######][new_item][...##]
         //                        ^discard_front(e-b)
         let split_index = begin - comp_begin_e_idx;
-        let mut cloned_comp = line.get(comp_idx).expect("Yeah we expected this one").clone();
-        let split_str = split_off_graphemes(&mut line.get_mut(comp_idx).unwrap().text, split_index);
+        // One borrow for both halves of the split. `comp_idx` is in
+        // the vector by construction, but the chain is one step
+        // longer than "the caller passes the index its scan stopped
+        // on": `overriding_insert` passes `idx_insert_comp - 1`, and
+        // the only branch that sets the `split_and_adjust` flag
+        // guarding that call sets `idx_insert_comp = i + 1` on the
+        // same three lines, where `i` is the `enumerate` index of
+        // the component the scan broke out on. So the value arriving
+        // here is that `i`, and `i` indexes `self.line` because it
+        // came from iterating it.
+        let comp = line.get_mut(comp_idx).expect(
+            "GlyphLine invariant: split_and_resize receives the index its caller's component scan yielded",
+        );
+        let mut cloned_comp = comp.clone();
+        let split_str = split_off_graphemes(&mut comp.text, split_index);
         cloned_comp.text = split_str;
         cloned_comp.discard_front(end - begin);
         line.insert(comp_idx + 1, cloned_comp);
@@ -400,7 +421,13 @@ impl GlyphLine {
 
     #[inline]
     fn split_component_at(comp_idx: usize, split_at: usize, line: &mut Vec<GlyphComponent>) {
-        let split_off_comp = line.get_mut(comp_idx).unwrap().split_off(split_at);
+        let split_off_comp = line
+            .get_mut(comp_idx)
+            .expect(
+                "GlyphLine invariant: split_component_at receives a component_of_index result taken \
+                 below the line length, so it addresses a component rather than the past-the-end slot",
+            )
+            .split_off(split_at);
         line.insert(comp_idx + 1, split_off_comp);
     }
 
@@ -416,8 +443,8 @@ impl GlyphLine {
 
         if self.length() <= begin {
             let spaces_we_need_to_add = begin - self.length();
-            if !self.line.is_empty() {
-                self.last_comp_mut().unwrap().space_back(spaces_we_need_to_add);
+            if let Some(last) = self.last_comp_mut() {
+                last.space_back(spaces_we_need_to_add);
             } else if spaces_we_need_to_add > 0 {
                 self.push(GlyphComponent::space(spaces_we_need_to_add));
             }
@@ -437,8 +464,18 @@ impl GlyphLine {
             self.line.insert(comp_at_insert, item.clone());
             return;
         }
-        let end_index_of_comp_at_insert =
-            index_of_comp_at_insert + self.line.get(comp_at_insert).unwrap().length();
+        // `component_of_index` returns `line.len()` only when `begin`
+        // is past the last component, and the early return above has
+        // already taken that case, so this addresses a component.
+        let comp_at_insert_length = self
+            .line
+            .get(comp_at_insert)
+            .expect(
+                "GlyphLine invariant: expanding_insert reaches here only with begin < length, \
+                 where component_of_index addresses a component rather than the past-the-end slot",
+            )
+            .length();
+        let end_index_of_comp_at_insert = index_of_comp_at_insert + comp_at_insert_length;
         // check if (c)
         if end_index_of_comp_at_insert == begin {
             self.line.insert(comp_at_insert + 1, item.clone());
@@ -545,12 +582,16 @@ impl GlyphLine {
     #[inline]
     fn add_space_delta(&mut self, idx_insert_comp: usize, delta_head: usize) {
         if delta_head > 0 {
-            // We need to check if the previous component is also just space
-            if idx_insert_comp > 0 {
-                let previous = self
-                    .line
-                    .get_mut(idx_insert_comp - 1)
-                    .expect("No previous component exists, this is an invalid state");
+            // We need to check if the previous component is also just
+            // space. Bound at the lookup rather than re-asserted after
+            // an index check: `idx_insert_comp > 0` says only that a
+            // slot before it exists in the numbering, not that the
+            // vector reaches that far — every caller passes an
+            // insertion point, which is allowed to be one past the end.
+            let previous = idx_insert_comp
+                .checked_sub(1)
+                .and_then(|before| self.line.get_mut(before));
+            if let Some(previous) = previous {
                 if !previous.contains_non_space() {
                     // This is all space alright
                     previous.space_back(delta_head);

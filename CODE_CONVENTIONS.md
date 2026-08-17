@@ -411,6 +411,41 @@ industrial cost/benefit reasoning. This is not license for speculation.
   long as nothing looked; and the third direction did not exist at
   all, which is how `request_adapter` and `request_device` came to
   `expect` on every launch of both targets while going unmentioned.
+- **"Bare `unwrap()` outside tests is a bug" is enforced twice, and
+  the two mechanisms are not redundant.**
+  `baumhard::util::unwrap_posture` reads every `.rs` file a shipped
+  build compiles — `#[cfg(test)]` items excised in place,
+  `#[cfg(test)] mod x;` files and `#![cfg(test)]` files dropped,
+  baumhard's ungated `pub mod tests;` trees and `benches/` dropped
+  by path — and fails `./test.sh` naming `file:line`. Beside it,
+  six of the seven cargo targets carry
+  `#![warn(clippy::unwrap_used)]` with
+  `#![cfg_attr(test, allow(...))]`, so the same rule reaches an
+  editor while the code is being written. The seventh is the
+  criterion bench root, which is test code by §T2.2 and which the
+  scan drops by path. **Count the targets, not the libraries:**
+  `lib/baumhard/src/bin/generate_stress_map.rs` and
+  `lib/baumhard/build.rs` are each a crate root of their own, and
+  the attribute in `lib.rs` reaches neither — a planted `unwrap()`
+  in either drew nothing from `cargo clippy` until that file carried
+  the attribute itself. Both were found by writing the count down
+  and then checking it against `cargo metadata`, which is the only
+  reason this sentence states a number at all. The scan is the gate,
+  because clippy is advisory here until its warning baseline is
+  zero; the lint is the faster feedback, and it reads
+  post-macro-expansion code the scan cannot. Neither replaces the
+  judgment: `expect("<the invariant relied on>")` is the answer when
+  a value is provably there, binding at the guard is the answer when
+  something already proved it, and degrading is the answer in an
+  interactive path. The count this rule was written against was
+  twenty-six sites (#42); six weeks later ten of them had moved or
+  vanished under unrelated work, leaving sixteen — and the scan
+  found seventeen. The extra one was not new:
+  `mindmap/connection/mod.rs:90` had been at that line since
+  2026-04-15, eleven weeks before the issue was filed, and the hand
+  count missed it. A list does not only go stale, it can be wrong
+  the day it is written, which is why the posture is checked rather
+  than listed.
 - **The initial map load is the one startup path that does not
   `expect`, and the reason names the boundary.** `expect` is for a
   *program precondition* that did not hold — no adapter, no fonts,

@@ -37,11 +37,11 @@ pub fn do_region_params_non_divisor_target() {
     assert_eq!(params.read_region_size_x(), Ok(125));
     assert_eq!(params.read_target_region_factor(), Ok(7));
 
-    params.adapt(6, (1000, 1000));
+    assert_eq!(params.adapt(6, (1000, 1000)), Ok(()));
     assert_eq!(params.read_region_factor_x(), Ok(5));
     assert_eq!(params.read_region_size_x(), Ok(200));
 
-    params.adapt(13, (1000, 1000));
+    assert_eq!(params.adapt(13, (1000, 1000)), Ok(()));
     assert_eq!(params.read_region_factor_x(), Ok(10));
 }
 
@@ -243,7 +243,7 @@ fn test_region_params_adapt_changes_resolution() {
 
 pub fn do_region_params_adapt_changes_resolution() {
     let mut params = RegionParams::new(10, (1000, 1000));
-    params.adapt(5, (500, 500));
+    assert_eq!(params.adapt(5, (500, 500)), Ok(()));
     assert_eq!(params.read_current_resolution(), Ok((500, 500)));
     assert_eq!(params.calc_num_regions(), Ok(25));
 }
@@ -255,13 +255,13 @@ fn test_region_params_adapt_chained() {
 
 pub fn do_region_params_adapt_chained() {
     let mut params = RegionParams::new(10, (1000, 1000));
-    params.adapt(5, (500, 500));
+    assert_eq!(params.adapt(5, (500, 500)), Ok(()));
     assert_eq!(params.calc_num_regions(), Ok(25));
 
-    params.adapt(8, (800, 600));
+    assert_eq!(params.adapt(8, (800, 600)), Ok(()));
     assert_eq!(params.read_region_factor_x(), Ok(8));
 
-    params.adapt(3, (120, 90));
+    assert_eq!(params.adapt(3, (120, 90)), Ok(()));
     assert_eq!(params.read_region_size_x(), Ok(40));
     assert_eq!(params.read_region_size_y(), Ok(30));
     assert_eq!(params.calculate_region_from_pixel((119, 89)), Ok(8));
@@ -340,19 +340,19 @@ fn test_prime_y() {
 #[should_panic]
 fn test_adapt_prime_x() {
     let mut p = RegionParams::new(7, (1000, 1000));
-    p.adapt(10, (241, 1000));
+    let _ = p.adapt(10, (241, 1000));
 }
 
 #[test]
 #[should_panic]
 fn test_adapt_prime_y() {
     let mut p = RegionParams::new(7, (1000, 1000));
-    p.adapt(10, (1000, 251));
+    let _ = p.adapt(10, (1000, 251));
 }
 
 #[test]
 #[should_panic]
 fn test_adapt_prime_both() {
     let mut p = RegionParams::new(7, (1000, 1000));
-    p.adapt(13, (241, 251));
+    let _ = p.adapt(13, (241, 251));
 }

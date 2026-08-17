@@ -460,13 +460,15 @@ pub(in crate::application::app) fn prepare_copy_or_cut(
     }
     if !section_texts.is_empty() {
         let joined_text = section_texts.join(MULTI_TARGET_SEPARATOR);
-        let structured = if section_texts.len() == 1 {
-            first_section_payload.map(|payload| StructuredSection {
-                text: section_texts.into_iter().next().expect("len == 1"),
-                payload,
-            })
-        } else {
-            None
+        // A structured payload only makes sense for exactly one
+        // section — two of them have no shape a paste could restore.
+        // Draining the iterator is what decides that, so the text is
+        // in hand at the moment the shape is settled rather than
+        // fetched again afterwards behind a length test.
+        let mut sections = section_texts.into_iter();
+        let structured = match (sections.next(), sections.next(), first_section_payload) {
+            (Some(text), None, Some(payload)) => Some(StructuredSection { text, payload }),
+            _ => None,
         };
         return Some(ComputedCopy {
             joined_text,

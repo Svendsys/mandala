@@ -602,8 +602,10 @@ impl ColorFontRegions {
     /// `Some(_)` fields in `region` (leaving the rest intact). If no
     /// match exists, the region is inserted as-is.
     pub fn set_or_insert(&mut self, region: &ColorFontRegion) {
-        if self.regions.contains(region) {
-            let mut new_region = *self.regions.get(region).unwrap();
+        // One lookup rather than a `contains` whose only use was to
+        // license the `get` that repeats it.
+        if let Some(existing) = self.regions.get(region) {
+            let mut new_region = *existing;
             if region.color.is_some() {
                 new_region.color = region.color;
             }

@@ -87,7 +87,7 @@ pub fn resolve_anchor_point(node_pos: Vec2, node_size: Vec2, anchor: &str, other
                     let db = b.distance_squared(other_center);
                     da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
                 })
-                .unwrap()
+                .expect("connection invariant: a box has four edge midpoints, so the candidate array is never empty")
         }
     }
 }

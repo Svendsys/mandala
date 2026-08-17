@@ -33,8 +33,13 @@ pub struct GlyphMatrix {
 impl Index<usize> for GlyphMatrix {
     type Output = GlyphLine;
 
+    /// Line access — panics on out-of-bounds, matching
+    /// [`Self::index_mut`] and `Vec::index`. Delegated to the
+    /// backing `Vec` so the panic names the index and the length;
+    /// use [`Self::ensure_line`] before indexing if the line might
+    /// not exist yet.
     fn index(&self, index: usize) -> &Self::Output {
-        self.matrix.get(index).unwrap()
+        &self.matrix[index]
     }
 }
 
