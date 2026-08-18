@@ -77,6 +77,17 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border size=abc"),
     (Sel::Node, "border bogus=1"),
     (Sel::Node, "border preview preset=heavy"),
+    // The shared closing move (`border::BorderEdit`) on all four
+    // surfaces that make it: the auto-promotion note and the bare
+    // `preset=custom` hint. Nothing pinned either before this,
+    // which left the two most-copied branches of the four tails
+    // answerable only per-verb.
+    (Sel::Node, "border preset=heavy top=###"),
+    (Sel::Node, "border preset=custom"),
+    (Sel::Node, "border preview preset=heavy top=###"),
+    (Sel::Node, "border preview preset=custom"),
+    (Sel::Node, "canvas border preset=custom"),
+    (Sel::Section, "section frame preset=custom"),
     (Sel::Node, "border preview commit"),
     (Sel::Node, "border preview cancel"),
     (Sel::Node, "border preview nope"),

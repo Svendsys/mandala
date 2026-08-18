@@ -21,6 +21,7 @@ use crate::application::document::{
     BorderConfigEdits, BorderEditOutcome, BorderSide, MindMapDocument, OptionEdit, SelectionState,
 };
 
+use super::finish::BorderEdit;
 use super::grammar::BORDER;
 use super::positional::{positional_subverb_to_edits, BorderSurface};
 use super::show::execute_border_show;
@@ -336,50 +337,15 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
             rejected = outcome.rejected;
         }
     }
-    // A refused glyph is an error, not a "no change": the setter
-    // declined it because the loader would reject the saved file,
-    // and reporting success here is exactly how the user ends up
-    // with a map they cannot reopen.
-    if !rejected.is_empty() {
-        return ExecResult::Err(format!("border: {}", rejected.join("; ")));
+    BorderEdit {
+        label: "border",
+        scope: "node",
+        headline: (changed > 0).then(|| format!("border applied to {} node(s)", changed)),
+        rejected,
+        auto_promoted,
+        bare_custom,
     }
-    let mut lines: Vec<String> = Vec::new();
-    if changed == 0 {
-        // A `preset=custom`-only edit on a node that already records
-        // `preset: custom` is a no-op at the data-model level, but
-        // the user still benefits from the same orientation message
-        // as the changed-path branch. Emit it instead of the bare
-        // "no change" line so the input doesn't feel ignored.
-        if bare_custom {
-            lines.push("border: preset=custom set; no glyph fields were given".into());
-            lines.push(custom_preset_hint("border"));
-            return ExecResult::lines(lines);
-        }
-        return ExecResult::ok_msg("border: no change");
-    }
-    // Surface auto-promotion exactly once per command invocation,
-    // not once per affected node — the same edit applies to every
-    // selected node so the message would be redundant. Only the
-    // first promoted node's `requested_preset` is reported; every
-    // other node received the same edit struct, so the value is
-    // necessarily the same.
-    lines.push(format!("border applied to {} node(s)", changed));
-    if let Some(name) = auto_promoted {
-        lines.push(format!(
-            "note: preset='{}' auto-promoted to 'custom' \
-             (a side or corner glyph was set; non-custom presets \
-             ignore the per-node glyph override)",
-            name
-        ));
-    }
-    if bare_custom {
-        lines.push(custom_preset_hint("border"));
-    }
-    if lines.len() == 1 {
-        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
-    } else {
-        ExecResult::lines(lines)
-    }
+    .finish()
 }
 
 /// Mutation core: apply a single `field=value` edit to every node

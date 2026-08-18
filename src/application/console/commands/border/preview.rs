@@ -25,7 +25,8 @@ use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
 
-use super::execute::{custom_preset_hint, edits_has_glyph_field, stage_kv};
+use super::execute::{edits_has_glyph_field, stage_kv};
+use super::finish::BorderEdit;
 
 /// Entry point for the per-node `border preview …` verb.
 ///
@@ -175,33 +176,23 @@ pub(crate) fn cancel_border_preview_verb(eff: &mut ConsoleEffects, verb_label: &
 /// message; bare `preset=custom` (no glyph fields) gets the same
 /// hint the committing path emits.
 fn finish_preview(outcome: BorderEditOutcome, verb_label: &'static str, bare_custom: bool) -> ExecResult {
-    // A refused glyph is an error, not an active preview. The setter
-    // declined it because the loader would reject the saved file, and
-    // reporting "active" here would stage a border the commit cannot
-    // keep — the same shape as the committing verbs' refusal, which is
-    // where this wording comes from.
-    if !outcome.rejected.is_empty() {
-        return ExecResult::Err(format!("{}: {}", verb_label, outcome.rejected.join("; ")));
+    // `headline` is unconditionally `Some`: a staged preview is
+    // active whether or not the edit moved anything, so this verb
+    // has no "no change" outcome and cannot reach that arm of the
+    // shared tail. That is the one structural difference between
+    // the preview family and the three committing verbs.
+    BorderEdit {
+        label: verb_label,
+        scope: "target",
+        headline: Some(format!("{} active (commit / cancel to terminate)", verb_label)),
+        rejected: outcome.rejected,
+        auto_promoted: outcome
+            .preset_auto_promoted
+            .then_some(outcome.requested_preset)
+            .flatten(),
+        bare_custom,
     }
-    let mut lines: Vec<String> = vec![format!("{} active (commit / cancel to terminate)", verb_label)];
-    if outcome.preset_auto_promoted {
-        if let Some(name) = outcome.requested_preset.as_deref() {
-            lines.push(format!(
-                "note: preset='{}' auto-promoted to 'custom' \
-                 (a side or corner glyph was set; non-custom presets \
-                 ignore the per-target glyph override)",
-                name
-            ));
-        }
-    }
-    if bare_custom {
-        lines.push(custom_preset_hint(verb_label));
-    }
-    if lines.len() == 1 {
-        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
-    } else {
-        ExecResult::lines(lines)
-    }
+    .finish()
 }
 
 #[cfg(test)]

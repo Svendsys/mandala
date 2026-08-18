@@ -27,6 +27,7 @@ use super::Command;
 use crate::application::console::predicates::node_or_section_selected;
 
 mod execute;
+mod finish;
 pub(crate) mod grammar;
 mod positional;
 mod preview;
@@ -55,8 +56,13 @@ pub(crate) use preview::dispatch_border_preview;
 // these replaced — three copies each of the hint table,
 // `edits_has_glyph_field` and `custom_preset_hint` — violated
 // `CODE_CONVENTIONS.md` §5; the hint table itself is now a column
-// of `grammar::KEYS` rather than a function.
-pub(crate) use execute::{custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv};
+// of `grammar::KEYS` rather than a function, and
+// `custom_preset_hint` is reached only through [`BorderEdit`],
+// which is the only thing that still emits it.
+pub(crate) use execute::{edits_has_glyph_field, nodes_in_selection, stage_kv};
+// The closing move all four of them make — see `finish.rs` for
+// what the four copies of it had in common and where they differed.
+pub(crate) use finish::BorderEdit;
 // The positional subverb grammar (`preset` / `color` / `padding` /
 // `palette` / `font` / `side` / `corner`) is surface-agnostic:
 // `canvas border …`, `canvas section-frame [focused] …` and

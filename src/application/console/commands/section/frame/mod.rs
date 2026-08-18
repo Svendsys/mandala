@@ -30,7 +30,7 @@ use baumhard::mindmap::border::resolve_section_frame_border;
 use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 use crate::application::console::commands::border::{
-    custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv,
+    edits_has_glyph_field, nodes_in_selection, stage_kv, BorderEdit,
 };
 use crate::application::console::parser::Args;
 use crate::application::console::spec::descent::Stop;
@@ -207,39 +207,15 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
             rejected = outcome.rejected;
         }
     }
-    // A refused glyph is an error, not a "no change": the setter
-    // declined it because the loader would reject the saved file.
-    // Same posture as the per-node `border` verb's `apply_edits`.
-    if !rejected.is_empty() {
-        return ExecResult::Err(format!("section frame: {}", rejected.join("; ")));
+    BorderEdit {
+        label: "section frame",
+        scope: "section",
+        headline: (changed > 0).then(|| format!("section frame applied to {} section(s)", changed)),
+        rejected,
+        auto_promoted,
+        bare_custom,
     }
-
-    let mut lines: Vec<String> = Vec::new();
-    if changed == 0 {
-        if bare_custom {
-            lines.push("section frame: preset=custom set; no glyph fields were given".into());
-            lines.push(custom_preset_hint("section frame"));
-            return ExecResult::lines(lines);
-        }
-        return ExecResult::ok_msg("section frame: no change");
-    }
-    lines.push(format!("section frame applied to {} section(s)", changed));
-    if let Some(name) = auto_promoted {
-        lines.push(format!(
-            "note: preset='{}' auto-promoted to 'custom' \
-             (a side or corner glyph was set; non-custom presets \
-             ignore the per-section glyph override)",
-            name
-        ));
-    }
-    if bare_custom {
-        lines.push(custom_preset_hint("section frame"));
-    }
-    if lines.len() == 1 {
-        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
-    } else {
-        ExecResult::lines(lines)
-    }
+    .finish()
 }
 
 fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -408,11 +384,11 @@ fn resolve_section_idx_for(
     super::target::resolve_section_index(sel, node_id, kv_idx, Some(n_sections), SectionTargetPolicy::Frame)
 }
 
-// `edits_has_glyph_field` and `custom_preset_hint` are shared with
-// the `border …` and `canvas …` verbs through
-// `border::edits_has_glyph_field` / `border::custom_preset_hint(label)`.
-// They used to live here as byte-identical copies — see CODE_CONVENTIONS.md
-// §5 for why that's forbidden.
+// `edits_has_glyph_field` is shared with the `border …` and
+// `canvas …` verbs through `border::edits_has_glyph_field`, and the
+// closing move this verb makes with the setter's outcome is
+// `border::BorderEdit`. Both used to live here as byte-identical
+// copies — see CODE_CONVENTIONS.md §5 for why that's forbidden.
 
 /// `section frame preview …` — same kv vocabulary, no model
 /// write. Routes to the shared

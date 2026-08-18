@@ -33,8 +33,7 @@ use baumhard::mindmap::model::GlyphBorderConfig;
 use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 use super::border::{
-    custom_preset_hint, edits_has_glyph_field, positional_subverb_to_edits, prepend_line, stage_kv,
-    BorderSurface,
+    edits_has_glyph_field, positional_subverb_to_edits, prepend_line, stage_kv, BorderEdit, BorderSurface,
 };
 use super::Command;
 use crate::application::console::parser::Args;
@@ -266,42 +265,18 @@ fn apply_canvas_edits(
 }
 
 fn finish(outcome: BorderEditOutcome, label: &str, bare_custom: bool) -> ExecResult {
-    // A refused glyph is an error, not a "no change": the setter
-    // declined it because the loader would reject the saved file,
-    // and reporting success here is exactly how the user ends up
-    // with a map they cannot reopen. Same posture as the per-node
-    // `border` verb's `apply_edits`.
-    if !outcome.rejected.is_empty() {
-        return ExecResult::Err(format!("{}: {}", label, outcome.rejected.join("; ")));
+    BorderEdit {
+        label,
+        scope: "canvas",
+        headline: outcome.changed.then(|| format!("{} updated", label)),
+        rejected: outcome.rejected,
+        auto_promoted: outcome
+            .preset_auto_promoted
+            .then_some(outcome.requested_preset)
+            .flatten(),
+        bare_custom,
     }
-    if !outcome.changed {
-        if bare_custom {
-            return ExecResult::lines(vec![
-                format!("{}: preset=custom set; no glyph fields were given", label),
-                custom_preset_hint(label),
-            ]);
-        }
-        return ExecResult::ok_msg(format!("{}: no change", label));
-    }
-    let mut lines: Vec<String> = vec![format!("{} updated", label)];
-    if outcome.preset_auto_promoted {
-        if let Some(name) = outcome.requested_preset.as_deref() {
-            lines.push(format!(
-                "note: preset='{}' auto-promoted to 'custom' \
-                 (a side or corner glyph was set; non-custom presets \
-                 ignore the per-canvas glyph override)",
-                name
-            ));
-        }
-    }
-    if bare_custom {
-        lines.push(custom_preset_hint(label));
-    }
-    if lines.len() == 1 {
-        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
-    } else {
-        ExecResult::lines(lines)
-    }
+    .finish()
 }
 
 fn execute_show_border(eff: &mut ConsoleEffects) -> ExecResult {
@@ -423,9 +398,9 @@ fn format_resolved_with_source(
     lines
 }
 
-// `edits_has_glyph_field` and `custom_preset_hint` are imported
-// from `super::border` (re-exported in `border/mod.rs`) — the
-// canvas / section-frame / per-node verbs all share the same
+// `edits_has_glyph_field` and the `BorderEdit` closing move are
+// imported from `super::border` (re-exported in `border/mod.rs`) —
+// the canvas / section-frame / per-node verbs all share the same
 // helpers per CODE_CONVENTIONS.md §5.
 
 #[cfg(test)]
