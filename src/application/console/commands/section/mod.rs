@@ -45,7 +45,7 @@ use self::target::{
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::node_or_section_selected_single_node;
-use crate::application::console::spec::descent::{descend, unquoted_multiword_hint, Stop};
+use crate::application::console::spec::descent::{descend, Stop};
 use crate::application::console::spec::kvs::Pair;
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
@@ -87,14 +87,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // `text=` is the key most likely to carry one: `section
         // text=hello world` used to answer "unknown subverb
         // 'world'".
-        Stop::KvForm => {
-            return ExecResult::err(unquoted_multiword_hint(
-                grammar::SECTION.label,
-                args.tokens(),
-                descent.slot,
-                descent.typed.unwrap_or_default(),
-            ))
-        }
+        Stop::KvForm => return ExecResult::err(descent.quoting_hint(args)),
         // Validated against the declaration *before* the
         // per-section resolver runs. A `section <typo>` against a
         // multi-section node used to reach the resolver first and

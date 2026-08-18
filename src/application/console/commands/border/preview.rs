@@ -20,7 +20,7 @@
 //! through) or `cancel` (discards).
 
 use crate::application::console::parser::Args;
-use crate::application::console::spec::descent::{unquoted_multiword_hint, Stop};
+use crate::application::console::spec::descent::Stop;
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
@@ -79,14 +79,7 @@ where
                 descent.typed.unwrap_or_default(),
             ))
         }
-        Stop::KvForm => {
-            return ExecResult::err(unquoted_multiword_hint(
-                level.label,
-                args.tokens(),
-                descent.slot,
-                descent.typed.unwrap_or_default(),
-            ))
-        }
+        Stop::KvForm => return ExecResult::err(descent.quoting_hint(args)),
         Stop::Bare => {}
     }
 

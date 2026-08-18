@@ -34,6 +34,13 @@ pub struct Pair<'a> {
 /// but this subverb does not name is refused by name and pointed at
 /// the form that does read it, rather than being silently dropped.
 pub fn read<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>>, String> {
+    // No form matched, so there is nothing to say about the keys:
+    // the caller owns the unknown-subverb or quoting rejection, and
+    // that is the error the user needs. Reporting a key problem
+    // first would answer a question they did not ask.
+    if matches!(descent.stop, Stop::Unknown | Stop::KvForm) {
+        return Ok(Vec::new());
+    }
     let level = descent.level;
     let readable = readable_keys(descent);
     let full = full_label(descent);
@@ -65,6 +72,9 @@ pub fn read<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>>, Stri
 /// silence on four surfaces.
 pub fn read_strict<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>>, String> {
     let pairs = read(descent, args)?;
+    if matches!(descent.stop, Stop::Unknown | Stop::KvForm) {
+        return Ok(pairs);
+    }
     let slots = descent
         .subverb()
         .map(|s| s.slot_count())

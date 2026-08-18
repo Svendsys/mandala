@@ -281,3 +281,71 @@ fn test_a_gated_subverb_sits_at_a_level_that_has_keys() {
         }
     }
 }
+
+/// The stray-positional rejection opens a second sentence only when
+/// it has one to open, and that sentence stands on its own words.
+///
+/// Four levels, four shapes: keys and `preview`, keys alone,
+/// `preview` alone, neither. Fails when: the two suggestion clauses
+/// are appended one after the other rather than composed — the
+/// no-suggestion row then ends `'x'..` (which is what `open` really
+/// printed) and the preview-only row opens on `or`.
+///
+/// Negative control for the two live shapes: they are the exact
+/// bytes `EXEC_CORPUS` pins for `border padding 12 50` and for
+/// `anchor sideways`, so a rewording that satisfies this test
+/// silently would still have to move a pinned row.
+#[test]
+fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
+    use super::usage::extra_positional_message;
+    use super::{Bare, Form, Key, Vocabulary};
+
+    static KEYS: &[Key] = &[Key::new("pad", "padding", Vocabulary::Free { placeholder: "n" })];
+    static COMPOSED: &[Form] = &[Form::opt(&["pad"])];
+    static SLOT_ONLY: &[Form] = &[Form::slots(&[])];
+    static PREVIEW: &[Subverb] = &[Subverb::bare("preview", "staged", "stage the edit")];
+
+    static BOTH: Grammar = Grammar {
+        label: "both",
+        subverb_sets: &[PREVIEW],
+        key_sets: &[KEYS],
+        bare: Some(Bare::new("composed", COMPOSED)),
+    };
+    static KEYS_ONLY: Grammar = Grammar {
+        label: "keys-only",
+        subverb_sets: &[],
+        key_sets: &[KEYS],
+        bare: Some(Bare::new("composed", COMPOSED)),
+    };
+    static PREVIEW_ONLY: Grammar = Grammar {
+        label: "preview-only",
+        subverb_sets: &[PREVIEW],
+        key_sets: &[],
+        bare: Some(Bare::new("slots", SLOT_ONLY)),
+    };
+    static NEITHER: Grammar = Grammar {
+        label: "neither",
+        subverb_sets: &[],
+        key_sets: &[],
+        bare: Some(Bare::new("slots", SLOT_ONLY)),
+    };
+
+    assert_eq!(
+        extra_positional_message(&BOTH, "both pad", "50"),
+        "both pad: unexpected extra positional '50'. Compose multiple edits via \
+         the kv form (`both <key>=<value> …`) or stage with `both preview …`."
+    );
+    assert_eq!(
+        extra_positional_message(&KEYS_ONLY, "keys-only", "50"),
+        "keys-only: unexpected extra positional '50'. Compose multiple edits via \
+         the kv form (`keys-only <key>=<value> …`)."
+    );
+    assert_eq!(
+        extra_positional_message(&PREVIEW_ONLY, "preview-only", "50"),
+        "preview-only: unexpected extra positional '50'. Stage with `preview-only preview …`."
+    );
+    assert_eq!(
+        extra_positional_message(&NEITHER, "neither", "50"),
+        "neither: unexpected extra positional '50'."
+    );
+}

@@ -37,7 +37,7 @@ pub enum Stop {
     /// `["palette=My", "Palette"]` and `Palette` coincidentally
     /// names a subverb — reading it as one would dispatch the
     /// positional grammar with the wrong value. See
-    /// [`unquoted_multiword_hint`], the rejection every surface
+    /// [`Descent::quoting_hint`], the rejection every surface
     /// shares for it.
     KvForm,
 }
@@ -98,12 +98,25 @@ impl<'a> Descent<'a> {
         self.parent(i).map(|s| s.name)
     }
 
-    /// The value of the matched subverb's slot `i` — one positional
-    /// past the subverb itself, plus `i`.
+    /// Where the matched form's slot 0 sits among the positionals.
+    ///
+    /// One past the subverb when a subverb matched; *at* the
+    /// subverb slot for a bare form, which has no name of its own
+    /// to consume a positional — `open <path>` puts the path in the
+    /// very slot `border on` puts its subverb.
+    fn slot_base(&self) -> usize {
+        match self.stop {
+            Stop::Matched(_) => self.slot + 1,
+            _ => self.slot,
+        }
+    }
+
+    /// The values of the matched form's positional slots, indexed
+    /// from the form rather than from the line.
     pub fn slot_value<'b>(&self, args: &'b Args) -> SlotReader<'b> {
         SlotReader {
             args,
-            base: self.slot + 1,
+            base: self.slot_base(),
         }
     }
 
@@ -111,7 +124,24 @@ impl<'a> Descent<'a> {
     /// declares — a stray argument the verb should refuse rather
     /// than drop. `count` is how many slots the form declares.
     pub fn extra_positional<'b>(&self, args: &'b Args, count: usize) -> Option<&'b str> {
-        args.positional(self.slot + 1 + count)
+        args.positional(self.slot_base() + count)
+    }
+
+    /// The "you probably meant to quote this" rejection for a
+    /// [`Stop::KvForm`], built from this descent's own level, slot
+    /// and typed word.
+    ///
+    /// Seven surfaces answer that stop, and every one of them wants
+    /// the same sentence. Reading it off the descent is also what
+    /// keeps the raw token slice out of a verb's hands: the only
+    /// thing a handler passes is the `args` it already has.
+    pub fn quoting_hint(&self, args: &Args) -> String {
+        unquoted_multiword_hint(
+            self.level.label,
+            args.tokens(),
+            self.slot,
+            self.typed.unwrap_or_default(),
+        )
     }
 }
 
@@ -172,6 +202,21 @@ pub fn descend_at<'a>(root: &'static Grammar, tokens: &'a [String], start_slot: 
                 depth,
             };
         };
+        // A level that declares no subverbs cannot report an
+        // unknown one: the positional sitting here is its bare
+        // form's first slot, not a word it failed to recognize.
+        // `open <path>` is the shape — the path occupies the very
+        // slot `border on` puts its subverb in.
+        if level.subverb_sets.iter().all(|set| set.is_empty()) {
+            return Descent {
+                level,
+                stop: Stop::Bare,
+                slot,
+                typed: Some(word),
+                path,
+                depth,
+            };
+        }
         let positional_form = subverb_slot_is_positional(tokens, slot);
         let stop = match level.subverb(word) {
             // Ungated subverbs are matched ahead of the
@@ -225,7 +270,7 @@ pub fn descend_at<'a>(root: &'static Grammar, tokens: &'a [String], start_slot: 
 /// and coincidentally matches a subverb name. A kv ahead of the
 /// subverb slot means the user is writing kv form, whatever the
 /// later positional happens to spell — so the caller routes to
-/// [`unquoted_multiword_hint`] instead of dispatching the
+/// [`Descent::quoting_hint`] instead of dispatching the
 /// positional grammar with the wrong value.
 ///
 /// It is asked once per level inside [`descend`], for the subverbs
@@ -252,7 +297,7 @@ pub fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> bool {
 /// message exists for — suggested ``border palette="Sans"``, naming
 /// a key the user had not typed and quoting the tail of the value
 /// rather than the value.
-pub fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb: &str) -> String {
+fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb: &str) -> String {
     let suggestion = split_kv_suggestion(tokens, verb_pos).unwrap_or_else(|| format!("<key>=\"{}\"", verb));
     format!(
         "{}: unexpected positional '{}' alongside a kv pair — \

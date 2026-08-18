@@ -344,17 +344,40 @@ pub fn subverb_usage(grammar: &'static Grammar, subverb: &'static Subverb) -> St
 /// alternative and the `preview` suggestion are both read off the
 /// level, so a surface that has no `preview` subverb does not
 /// suggest one.
+///
+/// The composed alternative asks whether the bare form reads any
+/// *keys*, not merely whether it exists: `open`'s bare form is a
+/// path slot and nothing else, and pointing it at
+/// ``open <key>=<value> …`` would name a form that has no keys to
+/// fill it.
 pub fn extra_positional_message(grammar: &'static Grammar, full: &str, extra: &str) -> String {
     let mut out = format!("{}: unexpected extra positional '{}'.", full, extra);
-    if grammar.bare.as_ref().is_some_and(|b| !b.forms.is_empty()) {
-        out.push_str(&format!(
-            " Compose multiple edits via the kv form (`{} <key>=<value> …`)",
-            grammar.label
-        ));
+    let composed = grammar
+        .bare
+        .as_ref()
+        .is_some_and(|b| !b.readable_keys().is_empty());
+    let staged = grammar.subverb("preview").is_some();
+    let label = grammar.label;
+    // Four combinations, and the suggestion has to open its own
+    // sentence in each. Appending the clauses one after another
+    // instead left `open` — which has neither — with the bare
+    // period twice, and would have left a level with `preview` but
+    // no keys opening on `or`.
+    let tail = match (composed, staged) {
+        (true, true) => Some(format!(
+            "Compose multiple edits via the kv form (`{label} <key>=<value> …`) \
+             or stage with `{label} preview …`"
+        )),
+        (true, false) => Some(format!(
+            "Compose multiple edits via the kv form (`{label} <key>=<value> …`)"
+        )),
+        (false, true) => Some(format!("Stage with `{label} preview …`")),
+        (false, false) => None,
+    };
+    if let Some(tail) = tail {
+        out.push(' ');
+        out.push_str(&tail);
+        out.push('.');
     }
-    if grammar.subverb("preview").is_some() {
-        out.push_str(&format!(" or stage with `{} preview …`", grammar.label));
-    }
-    out.push('.');
     out
 }

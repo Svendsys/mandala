@@ -20,6 +20,10 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Edge, "anchor from=diagonal"),
     (Sel::Edge, "anchor bogus=1"),
     (Sel::Node, "anchor from=top"),
+    // A bare form's slots are counted from the verb, not from a
+    // subverb it does not have, so a stray positional on a kv-only
+    // verb is named rather than dropped.
+    (Sel::Edge, "anchor sideways"),
     // body
     (Sel::Edge, "body"),
     (Sel::Edge, "body glyph=dash"),
@@ -277,6 +281,9 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "node nope"),
     // open / new / save
     (Sel::Node, "open"),
+    // The same count, one slot along: `open` declares a path and
+    // refuses a second one instead of loading the first in silence.
+    (Sel::Node, "open a.mindmap.json b.mindmap.json"),
     (Sel::Node, "save"),
     (Sel::Node, "new"),
     // section

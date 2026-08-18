@@ -17,7 +17,7 @@ use super::Command;
 use crate::application::color_picker::{ColorTarget, NodeColorAxis, SectionColorAxis};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::descent::{descend, unquoted_multiword_hint, Stop};
+use crate::application::console::spec::descent::{descend, Stop};
 use crate::application::console::spec::{
     bare_words, free_words, kvs, usage, Bare, Descent, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word,
 };
@@ -287,14 +287,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     };
     match descent.stop {
         Stop::Matched(subverb) => return execute_picker(&descent, args, eff, subverb.name),
-        Stop::KvForm => {
-            return ExecResult::err(unquoted_multiword_hint(
-                GRAMMAR.label,
-                args.tokens(),
-                descent.slot,
-                descent.typed.unwrap_or_default(),
-            ))
-        }
+        Stop::KvForm => return ExecResult::err(descent.quoting_hint(args)),
         Stop::Unknown => {
             return ExecResult::err(usage::unknown_subverb_message(
                 descent.level,

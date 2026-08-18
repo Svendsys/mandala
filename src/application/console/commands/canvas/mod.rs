@@ -39,7 +39,7 @@ use super::border::{
 use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::descent::{descend, unquoted_multiword_hint, Stop};
+use crate::application::console::spec::descent::{descend, Stop};
 use crate::application::console::spec::{kvs, usage, Descent, Grammar};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
@@ -103,12 +103,7 @@ pub fn execute_canvas(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // that made the subject slot kv-form.
         Level::Root => match descent.stop {
             Stop::Bare => ExecResult::err(usage::no_arguments_message(&grammar::CANVAS)),
-            Stop::KvForm => ExecResult::err(unquoted_multiword_hint(
-                grammar::CANVAS.label,
-                args.tokens(),
-                descent.slot,
-                descent.typed.unwrap_or_default(),
-            )),
+            Stop::KvForm => ExecResult::err(descent.quoting_hint(args)),
             _ => ExecResult::err(usage::unknown_subverb_message(
                 descent.level,
                 descent.typed.unwrap_or_default(),
@@ -152,12 +147,7 @@ fn execute_subject(
             },
             _ => apply_positional(descent, args, surface, eff),
         },
-        Stop::KvForm => ExecResult::err(unquoted_multiword_hint(
-            descent.level.label,
-            args.tokens(),
-            descent.slot,
-            descent.typed.unwrap_or_default(),
-        )),
+        Stop::KvForm => ExecResult::err(descent.quoting_hint(args)),
         Stop::Unknown => ExecResult::err(usage::unknown_subverb_message(
             descent.level,
             descent.typed.unwrap_or_default(),

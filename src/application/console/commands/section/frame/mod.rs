@@ -33,7 +33,7 @@ use crate::application::console::commands::border::{
     custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv,
 };
 use crate::application::console::parser::Args;
-use crate::application::console::spec::descent::{unquoted_multiword_hint, Stop};
+use crate::application::console::spec::descent::Stop;
 use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionEdit, SelectionState};
@@ -63,12 +63,7 @@ pub fn execute_section_frame(descent: &Descent, args: &Args, eff: &mut ConsoleEf
                 Err(msg) => ExecResult::err(msg),
             },
         },
-        Stop::KvForm => ExecResult::err(unquoted_multiword_hint(
-            SECTION_FRAME.label,
-            args.tokens(),
-            descent.slot,
-            descent.typed.unwrap_or_default(),
-        )),
+        Stop::KvForm => ExecResult::err(descent.quoting_hint(args)),
         Stop::Unknown => ExecResult::err(usage::unknown_subverb_message(
             descent.level,
             descent.typed.unwrap_or_default(),

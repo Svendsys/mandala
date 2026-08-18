@@ -47,14 +47,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // (`border palette=My Palette` tokenizes as
         // `["palette=My", "Palette"]`). Hint at quoting rather than
         // at the subverb the second token coincidentally spells.
-        Stop::KvForm => ExecResult::err(
-            crate::application::console::spec::descent::unquoted_multiword_hint(
-                BORDER.label,
-                args.tokens(),
-                descent.slot,
-                descent.typed.unwrap_or_default(),
-            ),
-        ),
+        Stop::KvForm => ExecResult::err(descent.quoting_hint(args)),
         Stop::Unknown => ExecResult::err(usage::unknown_subverb_message(
             descent.level,
             descent.typed.unwrap_or_default(),
