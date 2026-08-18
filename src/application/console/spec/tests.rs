@@ -539,6 +539,29 @@ fn command_sources() -> Vec<std::path::PathBuf> {
     files
 }
 
+/// Remove `{…}` format placeholders from `text`, leaving everything the
+/// literal spells out itself.
+///
+/// The input that makes its caller fail: `usage: {} text=<text>` — a
+/// placeholder for the head and a hand-written tail. Placeholders do not
+/// nest in `format!`, so scanning for the next `}` after each `{` is exact;
+/// an unclosed `{` consumes the remainder, which is the conservative
+/// direction (it can only make a line look *more* derived, and such a
+/// literal would not compile as a format string anyway).
+fn strip_format_placeholders(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        match rest[open..].find('}') {
+            Some(close) => rest = &rest[open + close + 1..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Every `usage:` line a verb prints has its words supplied by
 /// [`super::usage`], never typed out in the verb.
 ///
@@ -590,7 +613,17 @@ fn test_no_console_verb_hand_writes_its_own_usage_line() {
         for (line_no, content) in string_literals(&live_lines(&src)) {
             for (i, _) in content.match_indices("usage:") {
                 let tail = content[i + "usage:".len()..].trim_start();
-                if !tail.starts_with('{') {
+                // Every word after the colon must come from a format
+                // placeholder, not from the literal. Checking only that
+                // the tail *starts* with `{` accepts
+                // `usage: {} text=<text>`, where the placeholder supplies
+                // the head and the literal hand-writes the rest — the shape
+                // `border/preview.rs` used before this series. Strip the
+                // placeholders and require nothing but whitespace to
+                // survive; format placeholders do not nest, so a
+                // non-greedy scan is exact.
+                let without_placeholders = strip_format_placeholders(tail);
+                if !without_placeholders.trim().is_empty() {
                     offenders.push(format!(
                         "{}:{line_no}: hand-written usage line: `usage:{}`",
                         path.display(),
