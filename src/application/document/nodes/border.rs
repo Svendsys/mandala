@@ -833,7 +833,17 @@ pub(in crate::application::document) fn merge_outcome(
 /// Set `outcome.preset_auto_promoted = true` when `landed`'s preset
 /// is `"custom"` (case-insensitive), the pre-edit preset wasn't
 /// already custom, and the user explicitly asked for some preset
-/// (i.e. their kv mentioned `preset=`). Shared between the four
+/// **other than `custom`** (i.e. their kv mentioned `preset=` and
+/// named something the glyph then overrode).
+///
+/// The last clause used to be only "mentioned `preset=`", which
+/// made `border preset=custom` on a non-custom node answer
+/// `note: preset='custom' auto-promoted to 'custom' (a side or
+/// corner glyph was set; …)`. Neither half was true: the user asked
+/// for `custom` and got it, and on the bare form no glyph was set at
+/// all. A promotion needs something to be promoted *from*.
+///
+/// Shared between the four
 /// border-style setters (`set_node_border_config`,
 /// `set_section_frame_border_config`,
 /// `set_canvas_default_border`,
@@ -854,7 +864,11 @@ pub(super) fn detect_preset_auto_promote(
     let was_already_custom = preset_before
         .map(|p| p.eq_ignore_ascii_case("custom"))
         .unwrap_or(false);
-    if !was_already_custom && outcome.requested_preset.is_some() {
+    let asked_for_custom = outcome
+        .requested_preset
+        .as_deref()
+        .is_some_and(|p| p.eq_ignore_ascii_case("custom"));
+    if !was_already_custom && outcome.requested_preset.is_some() && !asked_for_custom {
         outcome.preset_auto_promoted = true;
     }
 }

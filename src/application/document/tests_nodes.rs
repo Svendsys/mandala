@@ -2598,6 +2598,65 @@ fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
     assert_eq!(outcome.requested_preset.as_deref(), Some("heavy"));
 }
 
+/// Asking for `preset=custom` is not a promotion — it is the thing
+/// promotion promotes *to*. The outcome must not claim otherwise.
+///
+/// Fails when: `detect_preset_auto_promote` asks only whether a
+/// `preset=` kv was present. It did, and the console printed
+/// `note: preset='custom' auto-promoted to 'custom' (a side or
+/// corner glyph was set; non-custom presets ignore the per-node
+/// glyph override)` on all four border surfaces — two false clauses
+/// in one line, since nothing was promoted and, on the bare form,
+/// no glyph was set.
+///
+/// Negative control: the same node, the same call, with `heavy` in
+/// place of `custom` and a side glyph alongside it, is a real
+/// promotion and must still report one. Without that row a
+/// `detect_preset_auto_promote` that returned early always would
+/// pass the first half.
+#[test]
+fn test_asking_for_preset_custom_is_not_reported_as_a_promotion_to_custom() {
+    use crate::application::document::{BorderConfigEdits, OptionEdit};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // A non-custom starting point, so `was_already_custom` is not
+    // what suppresses the note.
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
+
+    let outcome = doc.set_node_border_config(
+        &nid,
+        BorderConfigEdits {
+            preset: OptionEdit::Set("custom".into()),
+            ..Default::default()
+        },
+    );
+    assert!(
+        !outcome.preset_auto_promoted,
+        "`preset=custom` is what the user asked for, not a promotion away from it"
+    );
+    assert_eq!(
+        outcome.requested_preset.as_deref(),
+        Some("custom"),
+        "the requested preset is still reported — only the promotion claim is dropped"
+    );
+
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
+    let mut edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
+    edits
+        .with_side_pattern(crate::application::document::BorderSide::Top, "###(*)###")
+        .expect("pattern parses");
+    let control = doc.set_node_border_config(&nid, edits);
+    assert!(
+        control.preset_auto_promoted,
+        "control: a side glyph over a non-custom preset is still a promotion"
+    );
+}
+
 /// Selection drift: when the live selection no longer covers the
 /// preview's `selection_snapshot`, the scene-build path renders
 /// as if no preview were active. The actual slot empties at the
