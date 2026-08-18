@@ -2522,6 +2522,18 @@ exception on both halves until #37 — it overwrote any state on
 press and forced `None` on release — and the right-button guard's
 comment named that overwrite as the posture it was rejecting.
 
+**One state is outside the rule, and knowingly.** `Panning` does
+not record which button armed it, and three things arm it (a
+middle press, the `LeftDrag` threshold cross, any keyboard or
+macro `pan_canvas`), so a middle release during a left-drag pan
+ends it and a left release ends a middle-started one. Nothing is
+at risk — `Panning` owes the model no write and no undo entry,
+which is exactly what puts it outside the class above — and
+closing it is a decision about `Action::PanCanvas`'s semantics
+rather than a guard: the variant would have to carry its origin,
+and a keyboard-armed pan has no button to name, so "momentary or
+modal" has to be answered first.
+
 ### `ThrottledInteraction` and `ThrottledDrag`
 
 A trait pair + seven-variant enum providing one uniform

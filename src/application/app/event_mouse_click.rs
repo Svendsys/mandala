@@ -55,13 +55,29 @@ enum MiddleButtonRoute {
 /// tree kept the dragged offsets until the next model rebuild
 /// snapped them back, with no undo entry to recover from.
 ///
-/// The release half needs the same guard for the same reason, so it
-/// clears only what a middle press can arm. `Action::PanCanvas` is
-/// the only Action that writes a drag state from a press with no
-/// prior state (`Action::FastResizeStart` reads `PendingRight` and
-/// bails otherwise), so `Panning` is that set. `None` clears
-/// trivially — a middle press bound to a non-drag Action leaves the
-/// state alone and its release has nothing to end.
+/// The release half needs a guard for the same reason, but it is
+/// **not the same guard** — it is wider by one state, and the width
+/// is a known hole rather than a design. `Panning` is what a middle
+/// press can arm (`Action::PanCanvas` is the only Action that writes
+/// a drag state with no prior state; `Action::FastResizeStart` reads
+/// `PendingRight` and bails otherwise), but it is not *only* that:
+/// the `LeftDrag` threshold cross and any keyboard or macro
+/// `pan_canvas` arm the same variant, and `Panning` carries nothing
+/// that says which. So a middle release during a *left*-drag pan
+/// still writes `DragState::None` and ends the pan while the left
+/// button is down. Pre-existing, and left standing here on purpose:
+/// closing it means giving `Panning` its origin the way the resize
+/// gestures carry `started_with_right`, and once it has one the same
+/// question has to be answered for the left release (which ends a
+/// middle-started pan just as readily) and for a keyboard-armed pan,
+/// which has no button at all — i.e. whether `pan_canvas` on a key
+/// is momentary or modal. That is a decision about the Action's
+/// semantics, not a guard. Nothing is at risk while it stands:
+/// `Panning` owes the model no write and no undo entry, which is
+/// what separates it from the class above.
+///
+/// `None` clears trivially — a middle press bound to a non-drag
+/// Action leaves the state alone and its release has nothing to end.
 fn route_middle_button(state: ElementState, drag_state: &DragState) -> MiddleButtonRoute {
     match state {
         ElementState::Pressed => match drag_state {
@@ -700,8 +716,10 @@ fn handle_right_button(state: ElementState, cursor_pos_val: (f64, f64), ctx: &mu
         // else, so there is no re-arming case to preserve the way
         // the left button has one. Middle-click used to be the
         // counter-example this comment named — it overwrote any
-        // state unconditionally — and [`route_middle_button`] now
-        // applies exactly this guard on both of its halves.
+        // state unconditionally — and [`route_middle_button`]'s
+        // *press* half now applies exactly this guard. Its release
+        // half is wider by `Panning`, for the reason recorded there:
+        // that variant does not say which button armed it.
         if !matches!(*ctx.drag_state, DragState::None) {
             log::debug!("right-button press ignored (drag already in flight); state stays put");
             return;
