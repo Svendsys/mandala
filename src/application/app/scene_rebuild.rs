@@ -179,10 +179,12 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
 /// to be re-applied at every site that rebuilds the tree — and
 /// "every site" is the whole problem this function exists to solve.
 ///
-/// Four sites rebuild the tree. Three install it as the live
-/// `mindmap_tree` and must overlay it: [`rebuild_all`],
-/// `click::rebuild_all_with_mode`, and
-/// [`rebuild_selection_highlight`] — the last of which is also how
+/// **Six production sites build a tree and install it.** Three go
+/// through here: [`rebuild_all`], `click::rebuild_all_with_mode`,
+/// and `rebuild_selection_highlight` — a code span rather than a
+/// link because that one is native-gated, and a link from this
+/// cross-platform doc into a stripped item breaks the wasm32 doc leg
+/// (CODE_CONVENTIONS §8). The last of those is also how
 /// `drain_frame::drain_rect_select` repaints, so the rubber-band
 /// preview inherits the overlay order rather than restating it.
 /// Before this helper each open-coded its own subset — two silently
@@ -191,13 +193,27 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
 /// dimmed), and three omitted `reapply_active_toggles` (an active
 /// toggle's visual vanished on any click-driven rebuild).
 ///
-/// The fourth, `document::animations::tick`, deliberately installs an
-/// **overlay-free** projection: `drain_animation_tick` calls
-/// `rebuild_all` unconditionally on any advance, so the bare tree
-/// exists for less than one frame and is superseded before it can be
-/// drawn. That safety rests entirely on the call staying
-/// unconditional; a future change that gates it must route the
-/// animation rebuild through here.
+/// The other three install an **overlay-free** projection on
+/// purpose, and each is safe for its own reason — which is why
+/// "every site" above counts installs rather than callers of this
+/// helper:
+///
+/// - `document::animations::tick`. `drain_animation_tick` calls
+///   `rebuild_all` unconditionally on any advance, so the bare tree
+///   exists for less than one frame and is superseded before it can
+///   be drawn. That safety rests entirely on the call staying
+///   unconditional; a future change that gates it must route the
+///   animation rebuild through here.
+/// - The two startup installers, `run_native_init` and
+///   `run_wasm`'s init. At load there is no overlay to lose: the
+///   selection is empty, the interaction mode is `Default`, and no
+///   toggle is active — so the bare tree and the overlaid one are
+///   the same tree. A future startup path that adopts a document
+///   with any of those already set would have to come through here.
+///
+/// A seventh build, `console::commands::mutation`, is not an
+/// installer: it builds a tree for the flat-apply path and discards
+/// it, and the renderer rebuilds from the model on the next frame.
 ///
 /// Order is load-bearing:
 ///
@@ -283,6 +299,14 @@ pub(in crate::application::app) fn rebuild_all(
 /// narrows a `Section` selection to its owning node before a drag,
 /// and the rubber-band drain, whose preview set is a highlight
 /// change by construction.
+///
+/// Native-only because both of those are: the threshold cross and
+/// the per-frame drain are `DragState` machinery, which the browser
+/// has no counterpart for. The tier itself is not native by nature —
+/// whichever browser-side gesture first needs a highlight-only
+/// repaint takes the `cfg` off. See CLAUDE.md's "Dual-target status"
+/// registry.
+#[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn rebuild_selection_highlight(
     doc: &MindMapDocument,
     interaction_mode: &super::InteractionMode,
@@ -318,7 +342,7 @@ pub(in crate::application::app) fn rebuild_selection_highlight(
 pub(in crate::application::app) fn highlight_entries_for(
     doc: &MindMapDocument,
 ) -> Vec<(&str, Option<usize>, [f32; 4])> {
-    match &doc.rect_select_preview {
+    match doc.rect_select_preview() {
         Some(ids) => ids
             .iter()
             .map(|id| (id.as_str(), None, HIGHLIGHT_COLOR))

@@ -26,7 +26,8 @@ use crate::application::renderer::Renderer;
 /// halves of it.** `DragState::SelectingRect` is the authority on
 /// whether a rubber band exists; the two artifacts it leaves on
 /// screen — the overlay rectangle in the renderer and the covered
-/// set on [`MindMapDocument::rect_select_preview`] — are its
+/// set on [`MindMapDocument::rect_select_preview`] (the field; the
+/// cross-platform read is the method of the same name) — are its
 /// projection, re-derived here from that authority once per frame.
 ///
 /// That is why this function takes the whole `DragState` rather than
@@ -108,7 +109,7 @@ pub(super) fn drain_rect_select(
 ) {
     let preview_live = document
         .as_ref()
-        .is_some_and(|doc| doc.rect_select_preview.is_some());
+        .is_some_and(|doc| doc.rect_select_preview().is_some());
     match rect_select_frame(drag_state, preview_live) {
         RectSelectFrame::Track {
             start_canvas: sc,
@@ -417,7 +418,9 @@ mod tests {
         let mut document = Some(doc);
         let frame = rect_select_frame(
             &pending(),
-            document.as_ref().is_some_and(|d| d.rect_select_preview.is_some()),
+            document
+                .as_ref()
+                .is_some_and(|d| d.rect_select_preview().is_some()),
         );
         // The drain's own body, minus the half that needs a live wgpu
         // device (TEST_CONVENTIONS §T8): the frame's answer is what
