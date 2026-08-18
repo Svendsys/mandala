@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Registry-wide invariants over every declared [`Grammar`].
+//! Registry-wide invariants over every declared [`Grammar`], and
+//! over the registry's *use* of the engine that reads them.
 //!
 //! These are the checks that replace the per-verb assertions #128
 //! had to write twice and called "a per-verb copy of a check, i.e.
@@ -11,6 +12,17 @@
 //! caught `font range=`, `color range=` and `color section=` on the
 //! day each was written: each was parseable, named in the verb's own
 //! rejection, and absent from the list `help` printed.
+//!
+//! Holding the declaration against itself is not enough on its own,
+//! because a verb can decline to ask. `label` printed a
+//! hand-written usage literal naming two of the four keys it
+//! declares, so its popup, its `help` page and its kv rejection all
+//! said four while the verb itself said two — and every invariant
+//! here stayed green, because every one of them read the table
+//! rather than the verb.
+//! [`test_no_console_verb_hand_writes_its_own_usage_line`] is the
+//! direction that catches that: it reads the sources under
+//! `commands/` instead of the registry.
 
 use super::{Grammar, Subverb};
 use crate::application::console::commands::COMMANDS;
@@ -382,5 +394,292 @@ fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
         !reached[1],
         "a level now declares `preview` beside a bare form that reads no keys, so the \
          `(false, true)` arm is reachable and owes a pinned corpus row of its own"
+    );
+}
+
+/// Every `.rs` file under `commands/` that a shipped build
+/// compiles: the tree minus the modules a parent declares as
+/// `#[cfg(test)] mod <name>;`, which are whole files of test code
+/// (`border/tests.rs` is the one in this tree).
+///
+/// The same distinction `baumhard::util::unwrap_posture` draws for
+/// the same reason: a scan that reads test files reports their
+/// assertions as if they were shipped code, and a scan that skips
+/// live code reports nothing at all.
+fn command_sources() -> Vec<std::path::PathBuf> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/application/console/commands");
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {dir:?}: {e}"));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+    // Whole-file test modules, named by whichever parent declares
+    // them. Collected first, because the declaration sits in a
+    // different file from the one it excludes.
+    let mut excluded: Vec<std::path::PathBuf> = Vec::new();
+    for path in &files {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        let dir = path.parent().unwrap_or(&root).to_path_buf();
+        let mut gated = false;
+        for line in src.lines() {
+            let line = line.trim();
+            if line == "#[cfg(test)]" {
+                gated = true;
+                continue;
+            }
+            if gated {
+                if let Some(name) = line
+                    .strip_prefix("mod ")
+                    .or_else(|| line.strip_prefix("pub mod "))
+                    .and_then(|rest| rest.strip_suffix(';'))
+                {
+                    excluded.push(dir.join(format!("{name}.rs")));
+                    excluded.push(dir.join(name).join("mod.rs"));
+                }
+                gated = false;
+            }
+        }
+    }
+    files.retain(|p| !excluded.contains(p));
+    files.sort();
+    files
+}
+
+/// Every `usage:` line a verb prints has its words supplied by
+/// [`super::usage`], never typed out in the verb.
+///
+/// This is the one check here that reads the sources rather than the
+/// registry, and it is the only shape that could have caught the
+/// defect it was written for. `label` answered its no-arguments case
+/// with
+///
+/// ```text
+/// usage: label text="<text>" [position=<start|middle|end>]
+/// ```
+///
+/// — two of the four keys `label`'s grammar declares. Every
+/// registry-wide invariant above stayed green, because each of them
+/// reads the table and the table was right; what was wrong was a
+/// verb that did not ask it. The other three surfaces
+/// (`label bogus=1`, `label <TAB>`, `help label`) had said four for
+/// as long as the grammar had, so the four disagreed in the shipped
+/// branch of the very epic whose acceptance criterion is that they
+/// cannot.
+///
+/// The rule is mechanical: inside `console/commands/`, a string
+/// literal may spell `usage:` only when what follows it is a format
+/// placeholder — `help`'s `format!("usage: {}", head)`, whose
+/// argument comes from [`super::usage::forms`]. Words after the
+/// colon mean the verb wrote the line itself.
+///
+/// What it does **not** catch, stated so the next reader does not
+/// over-trust it: a hand-written refusal that never says `usage:`,
+/// and a `format!` whose *arguments* are hand-written. It catches
+/// the shape all twenty-one no-argument answers in this tree take,
+/// which is the shape the twenty-first took for the whole migration.
+#[test]
+fn test_no_console_verb_hand_writes_its_own_usage_line() {
+    let files = command_sources();
+    // The scan proves nothing if it read nothing. Twenty-one command
+    // modules plus the registry and the shared helpers; the floor is
+    // deliberately below that so a new file does not fail the run,
+    // and deliberately above zero so a wrong path does.
+    assert!(
+        files.len() >= 20,
+        "the command scan found only {} files — the walk, not the tree, is what broke",
+        files.len()
+    );
+
+    let mut offenders: Vec<String> = Vec::new();
+    for path in &files {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        for (line_no, content) in string_literals(&live_lines(&src)) {
+            for (i, _) in content.match_indices("usage:") {
+                let tail = content[i + "usage:".len()..].trim_start();
+                if !tail.starts_with('{') {
+                    offenders.push(format!(
+                        "{}:{line_no}: hand-written usage line: `usage:{}`",
+                        path.display(),
+                        &content[i + "usage:".len()..]
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "a verb spells out a usage line instead of deriving it from its grammar — \
+         answer with `usage::no_arguments_message` / `usage::subverb_usage` instead:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
+/// The lines of a source file a shipped build compiles: every
+/// top-level `#[cfg(test)] mod … { … }` dropped, everything else
+/// kept, each surviving line paired with its 1-based number.
+///
+/// A `#[cfg(test)]` that introduces a `use` rather than a module is
+/// *not* a cut point — `commands/mode.rs` opens one at line 34 and
+/// then carries four hundred lines of live code, so cutting the file
+/// at the first `#[cfg(test)]` would hide most of the verb from the
+/// scan while the scan reported success.
+///
+/// The closing brace of a top-level module is a line that is exactly
+/// `}`, which is what lets this be a line scan rather than a brace
+/// parse; [`test_the_console_source_scan_reads_what_it_claims_to`]
+/// holds that assumption against the tree.
+fn live_lines(src: &str) -> Vec<(usize, &str)> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim_end() == "#[cfg(test)]"
+            && lines
+                .get(i + 1)
+                .is_some_and(|l| l.starts_with("mod ") || l.starts_with("pub mod "))
+        {
+            i += 1;
+            while i < lines.len() && lines[i] != "}" {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        out.push((i + 1, lines[i]));
+        i += 1;
+    }
+    out
+}
+
+/// Every string literal in `lines`, paired with the line it opens
+/// on. Comments are skipped; a literal that spans lines is followed
+/// across them.
+///
+/// There are no raw strings and no `'"'` char literals under
+/// `commands/`, which is what keeps this a three-state scan;
+/// [`test_the_console_source_scan_reads_what_it_claims_to`] holds
+/// that too, since a raw string would make the scan silently read
+/// the wrong thing rather than fail.
+fn string_literals(lines: &[(usize, &str)]) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut open: Option<(usize, String)> = None;
+    for (line_no, line) in lines {
+        let mut chars = line.char_indices().peekable();
+        while let Some((idx, c)) = chars.next() {
+            match &mut open {
+                Some((_, body)) => match c {
+                    '\\' => {
+                        if let Some((_, escaped)) = chars.next() {
+                            body.push(escaped);
+                        }
+                    }
+                    '"' => {
+                        let done = open.take().expect("just matched Some");
+                        out.push(done);
+                    }
+                    other => body.push(other),
+                },
+                None => {
+                    if c == '/' && line[idx..].starts_with("//") {
+                        break;
+                    }
+                    if c == '"' {
+                        open = Some((*line_no, String::new()));
+                    }
+                }
+            }
+        }
+        // A literal left open at end of line continues on the next
+        // one — Rust string literals may span lines, and the console's
+        // longer messages are written that way.
+        if let Some((_, body)) = &mut open {
+            body.push('\n');
+        }
+    }
+    out
+}
+
+/// The three assumptions the source scan above rests on, held
+/// against the tree it reads rather than asserted in prose.
+///
+/// A `#[cfg(test)] mod` indented under something else would survive
+/// [`live_lines`] and put test assertions in front of the usage
+/// scan; a raw string would make [`string_literals`] read past its
+/// own end; and a whole-file test module the parent gates with
+/// `#[cfg(test)] mod x;` is invisible from inside the file itself —
+/// `border/tests.rs` is that file, and the first draft of this scan
+/// reported its five `assert_exec_err_contains(…, "usage: border …")`
+/// lines as verbs hand-writing their usage. None of the three would
+/// announce itself.
+#[test]
+fn test_the_console_source_scan_reads_what_it_claims_to() {
+    let files = command_sources();
+    assert!(
+        files.len() >= 20,
+        "the walk found only {} command sources",
+        files.len()
+    );
+    assert!(
+        !files.iter().any(|p| p.ends_with("border/tests.rs")),
+        "`border/tests.rs` is a whole-file test module and must not be scanned as verb source"
+    );
+    let mut declared = 0usize;
+    let mut excised = 0usize;
+    for path in &files {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        // `r"` / `r#"` only opens a raw string when the `r` starts a
+        // token; `"…color "` contains the same two bytes and does
+        // not, which is what the first draft of this assertion
+        // tripped over. Asked of the *live* lines only: `font.rs`
+        // quotes a family name with `r#"…"#` inside its test module,
+        // which the scan never reads.
+        for (line_no, line) in live_lines(&src) {
+            for pat in ["r\"", "r#\""] {
+                for (i, _) in line.match_indices(pat) {
+                    let before = line[..i].chars().next_back();
+                    assert!(
+                        before.is_some_and(|c| c.is_alphanumeric() || c == '_'),
+                        "{}:{line_no}: a raw string literal would make `string_literals` \
+                         read past its own end",
+                        path.display()
+                    );
+                }
+            }
+        }
+        let mut gated = false;
+        for line in src.lines() {
+            if line.trim() == "#[cfg(test)]" {
+                gated = true;
+                continue;
+            }
+            if gated {
+                let body = line.trim_start();
+                if (body.starts_with("mod ") || body.starts_with("pub mod ")) && body.ends_with('{') {
+                    declared += 1;
+                    assert!(
+                        !line.starts_with(char::is_whitespace),
+                        "{}: `#[cfg(test)] {}` is nested, and the excision only matches \
+                         a module at column 0",
+                        path.display(),
+                        body
+                    );
+                }
+                gated = false;
+            }
+        }
+        excised += usize::from(live_lines(&src).len() < src.lines().count());
+    }
+    assert!(
+        declared > 20 && excised > 20,
+        "expected an inline test module in most command sources; declared {declared}, \
+         excised from {excised} files"
     );
 }

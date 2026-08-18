@@ -182,7 +182,7 @@ pub const EXEC_EXPECTED: &[&str] = &[
     "OK spacing set to 3.5",
     "ERR 'nope' must be a preset (tight|normal|wide) or a float",
     "ERR spacing: unknown key 'bogus'; spacing reads value",
-    "ERR usage: label text=\"<text>\" [position=<start|middle|end>]",
+    "ERR usage: label\\n  editor:   edit\\n  reset:    clear\\n  composed: <key>=<value> …",
     "ERR no edge selected",
     "OK label applied",
     "OK label applied",

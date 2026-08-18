@@ -141,7 +141,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
     let kvs: Vec<(String, String)> = args.kvs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     if kvs.is_empty() {
-        return ExecResult::err("usage: label text=\"<text>\" [position=<start|middle|end>]");
+        return ExecResult::err(usage::no_arguments_message(&GRAMMAR));
     }
 
     // Position / position_t / perpendicular are edge-label-specific
