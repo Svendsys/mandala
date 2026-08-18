@@ -463,3 +463,15 @@ pub const COMPLETION_EXPECTED: &[&str] = &[
     "clear [drop both bounds so the selection always renders]",
     "-",
 ];
+
+/// Pinned signatures for [`super::oracle_corpus::EXEC_SEQ_CORPUS`],
+/// one per sequence: the lines' own signatures joined with `" ;; "`.
+pub const EXEC_SEQ_EXPECTED: &[&str] = &[
+    "LINES border preview active (commit / cancel to terminate)\\nnote: preset='heavy' auto-promoted to 'custom' (a side or corner glyph was set; non-custom presets ignore the per-target glyph override) ;; LINES border preview committed\\nnote: preset='heavy' auto-promoted to 'custom' (a side or corner glyph was set; non-custom presets ignore the per-target glyph override)",
+    "LINES section frame preview active (commit / cancel to terminate)\\nnote: preset='heavy' auto-promoted to 'custom' (a side or corner glyph was set; non-custom presets ignore the per-target glyph override) ;; LINES section frame preview committed\\nnote: preset='heavy' auto-promoted to 'custom' (a side or corner glyph was set; non-custom presets ignore the per-target glyph override)",
+    "LINES canvas border preview active (commit / cancel to terminate)\\nnote: preset='heavy' auto-promoted to 'custom' (a side or corner glyph was set; non-custom presets ignore the per-target glyph override) ;; LINES canvas border preview committed\\nnote: preset='heavy' auto-promoted to 'custom' (a side or corner glyph was set; non-custom presets ignore the per-target glyph override)",
+    "OK border preview active (commit / cancel to terminate) ;; OK border preview committed",
+    "LINES border preview active (commit / cancel to terminate)\\nhint: 'custom' is the preset that lets you author per-side / per-corner glyphs. Combine it with any of: top=… bottom=… left=… right=… tl=… tr=… bl=… br=…  e.g. `border preview preset=custom top=\"###(*)###\" tl=\"+\" tr=\"+\" bl=\"+\" br=\"+\"`. See `format/border-patterns.md` for the side-pattern grammar. ;; OK border preview committed",
+    "OK border preview: no active preview",
+    "OK border preview active (commit / cancel to terminate) ;; OK border preview cancelled",
+];

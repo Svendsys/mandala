@@ -2,19 +2,29 @@
 
 //! The closing move every border-family verb makes, written once.
 //!
-//! Four verbs stage a
+//! Five verbs stage a
 //! [`crate::application::document::BorderConfigEdits`] and hand it
 //! to a different setter — `border` to `set_node_border_config`,
 //! `section frame` to `set_section_frame_border_config`, `canvas`
-//! to one of two canvas-default setters, and the `preview` family
-//! to `set_border_preview`. What they do with the
+//! to one of two canvas-default setters, the `preview` family to
+//! `set_border_preview`, and `preview commit` to whichever of those
+//! the staged target names. What they do with the
 //! [`crate::application::document::BorderEditOutcome`] afterwards
-//! was four copies of the same thirty lines, and the copies had
+//! was five copies of the same thirty lines, and the copies had
 //! drifted: the auto-promotion note named a different scope in
 //! each (correctly), but the refusal wording, the
 //! `preset=custom`-with-no-glyphs hint and the
 //! single-line-vs-`Lines` collapse were byte-identical
 //! reimplementations.
+//!
+//! Four is what an earlier pass counted, because the fifth —
+//! `preview::commit_border_preview_verb` — prints only after a
+//! *prior* line staged a preview, and every `EXEC_CORPUS` row runs
+//! on a document of its own. It took the console oracle's
+//! `EXEC_SEQ_CORPUS` — sequences run against one document, named
+//! rather than linked because it is `#[cfg(test)]` and rustdoc
+//! strips it — to make that copy visible: perturb the note here, and the
+//! staging line moved while the commit line did not.
 //!
 //! [`BorderEdit`] is the four differences named as fields, and
 //! [`BorderEdit::finish`] is the shared thirty lines. The one

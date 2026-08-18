@@ -136,26 +136,45 @@ pub(crate) fn stage_kv_for_preview(descent: &Descent, args: &Args) -> Result<Bor
 /// `border preview commit` — flush the preview through the
 /// matching committing setter and surface the merged outcome.
 /// Returns "no preview" when no preview is active.
+///
+/// The fifth caller of [`BorderEdit::finish`], and the last one to
+/// become one: it wrote the auto-promotion note, the `per-target`
+/// scope and the single-line-vs-`Lines` collapse out by hand, so the
+/// most-copied string in the family stayed written twice after the
+/// commit that unified the other four. Nothing pinned it — the
+/// branch needs an *active* preview, and every `EXEC_CORPUS` row runs
+/// on a fresh document — which is why the oracle's `EXEC_SEQ_CORPUS`
+/// exists.
 pub(crate) fn commit_border_preview_verb(eff: &mut ConsoleEffects, verb_label: &'static str) -> ExecResult {
     let Some(outcome) = eff.document_mut().commit_border_preview() else {
         return ExecResult::ok_msg(format!("{}: no active preview", verb_label));
     };
-    let mut lines: Vec<String> = vec![format!("{} committed", verb_label)];
-    if outcome.preset_auto_promoted {
-        if let Some(name) = outcome.requested_preset.as_deref() {
-            lines.push(format!(
-                "note: preset='{}' auto-promoted to 'custom' \
-                 (a side or corner glyph was set; non-custom presets \
-                 ignore the per-target glyph override)",
-                name
-            ));
-        }
+    BorderEdit {
+        label: verb_label,
+        scope: "target",
+        // A committed preview is not a "no change" outcome any more
+        // than a staged one is: the write happened, and the line
+        // that staged it already reported what it was.
+        headline: Some(format!("{} committed", verb_label)),
+        // Empty in practice — `set_border_preview` refuses a
+        // violating glyph edit before it records the preview, so a
+        // stored one has nothing left for the committing setter to
+        // decline. Carried rather than dropped because
+        // `document::nodes::border::merge_outcome` folds it here for
+        // exactly this reader, and reporting success for a border the
+        // model does not have is the failure that fold exists to
+        // prevent.
+        rejected: outcome.rejected,
+        auto_promoted: outcome
+            .preset_auto_promoted
+            .then_some(outcome.requested_preset)
+            .flatten(),
+        // `preset=custom` with no glyph fields is a property of the
+        // line that carried the kv, and the staging line printed the
+        // hint for it. A commit has no kvs of its own.
+        bare_custom: false,
     }
-    if lines.len() == 1 {
-        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
-    } else {
-        ExecResult::lines(lines)
-    }
+    .finish()
 }
 
 /// `border preview cancel` — discard the preview without writing

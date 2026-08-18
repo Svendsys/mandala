@@ -638,3 +638,63 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
 /// whole new line into the readout between `padding:` and `size:`
 /// passed every test in the workspace.
 pub const EXEC_PREFIX_CORPUS: &[(Sel, &str)] = &[(Sel::Node, "open /nonexistent-dir-xyz/x.mindmap.json")];
+
+/// Lines run **in order against one document**, for the outcomes a
+/// fresh-document row cannot reach.
+///
+/// Every row of [`EXEC_CORPUS`] runs on a document of its own, which
+/// is what makes those rows independent and reorderable — and what
+/// puts a whole branch of the border family outside the oracle's
+/// reach. `border preview commit` only prints its auto-promotion
+/// note when a preview is *active*, so no single line can pin it, and
+/// `commit_border_preview_verb` accordingly carried a fifth,
+/// hand-written copy of the note the four committing surfaces share
+/// through `border::finish` — through a commit whose stated control
+/// ("perturb the shared note and all six new rows move") could not
+/// reach it, because none of those six rows is a sequence.
+///
+/// The cost of a stateful row is that it depends on its
+/// predecessors, so a row here is a *whole* interaction rather than a
+/// step in one, and the signature pins every line of it. That keeps
+/// the failure output readable: a moved row shows which line of the
+/// sequence changed.
+pub const EXEC_SEQ_CORPUS: &[(Sel, &[&str])] = &[
+    // The auto-promotion note on the commit line — the branch no
+    // fresh-document row can reach, on all three surfaces that stage
+    // a preview.
+    (
+        Sel::Node,
+        &["border preview preset=heavy top=###", "border preview commit"],
+    ),
+    (
+        Sel::Section,
+        &[
+            "section frame preview preset=heavy top=###",
+            "section frame preview commit",
+        ],
+    ),
+    (
+        Sel::Node,
+        &[
+            "canvas border preview preset=heavy top=###",
+            "canvas border preview commit",
+        ],
+    ),
+    // The same tail with nothing to promote: one line, not `Lines`.
+    (
+        Sel::Node,
+        &["border preview preset=heavy", "border preview commit"],
+    ),
+    // `preset=custom` stages the orientation hint and commits without
+    // it — the hint belongs to the line that carried the kv.
+    (
+        Sel::Node,
+        &["border preview preset=custom", "border preview commit"],
+    ),
+    // Terminators against no preview, and the cancel path.
+    (Sel::Node, &["border preview commit"]),
+    (
+        Sel::Node,
+        &["border preview preset=heavy", "border preview cancel"],
+    ),
+];

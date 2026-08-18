@@ -122,6 +122,45 @@ pub fn exec_signature(line: &str, sel: Sel) -> String {
     }
 }
 
+/// Run `lines` in order against **one** document and render the
+/// whole interaction as a single stable string.
+///
+/// [`exec_signature`] throws its document away, which is what makes
+/// an `EXEC_CORPUS` row independent of its neighbors — and what puts
+/// every outcome that needs a *prior* line out of the oracle's reach.
+/// `border preview commit` prints its auto-promotion note only when a
+/// preview is active, so the note it hand-wrote for its own use went
+/// unpinned through the commit that claimed to have written the
+/// border family's closing move once.
+pub fn exec_sequence_signature(lines: &[&str], sel: Sel) -> String {
+    let mut doc = doc_for(sel);
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    for line in lines {
+        let (cmd, tokens) = match parse(line) {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            ParseResult::Empty => {
+                out.push("PARSE-EMPTY".to_string());
+                continue;
+            }
+            ParseResult::Unknown(s) => {
+                out.push(format!("PARSE-UNKNOWN {s}"));
+                continue;
+            }
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        let res = (cmd.execute)(&Args::new(&tokens), &mut eff);
+        out.push(match res {
+            ExecResult::Ok(m) => format!("OK {}", escape(&m)),
+            ExecResult::Lines(ls) => format!(
+                "LINES {}",
+                escape(&ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"))
+            ),
+            ExecResult::Err(m) => format!("ERR {}", escape(&m)),
+        });
+    }
+    out.join(" ;; ")
+}
+
 /// Render the completion popup for `line` (cursor at end) as a
 /// single stable string.
 pub fn completion_signature(line: &str, sel: Sel) -> String {
@@ -192,6 +231,31 @@ fn test_console_oracle_locale_bearing_readout_opens_unchanged() {
         assert!(
             got.starts_with(want),
             "oracle prefix row {i} drifted for input {line:?}\n  want prefix: {want}\n  got:         {got}"
+        );
+    }
+}
+
+/// Every stateful sequence still reads exactly the way it was
+/// pinned, line by line.
+///
+/// The rows here exist for the branches a fresh document cannot
+/// reach — chiefly the border family's commit tail, which is
+/// unreachable from any single line and was therefore the one copy of
+/// the shared closing move that could drift unobserved.
+#[test]
+fn test_console_oracle_stateful_sequences_are_unchanged() {
+    let corpus = super::oracle_corpus::EXEC_SEQ_CORPUS;
+    let expected = super::oracle_expected::EXEC_SEQ_EXPECTED;
+    assert_eq!(
+        corpus.len(),
+        expected.len(),
+        "EXEC_SEQ_CORPUS and EXEC_SEQ_EXPECTED must stay the same length"
+    );
+    for (i, ((sel, lines), want)) in corpus.iter().zip(expected).enumerate() {
+        assert_eq!(
+            &exec_sequence_signature(lines, *sel),
+            want,
+            "oracle sequence row {i} drifted for input {lines:?}"
         );
     }
 }
