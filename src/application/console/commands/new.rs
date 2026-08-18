@@ -12,30 +12,37 @@ use std::path::Path;
 
 use baumhard::mindmap::loader;
 
-use crate::application::console::completion::{Completion, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::spec::descent::descend;
+use crate::application::console::spec::{free, kvs, Bare, Form, Grammar, Slot};
+use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::MindMapDocument;
 
 use super::Command;
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "new",
+    subverb_sets: &[],
+    key_sets: &[],
+    bare: Some(Bare::new("file", &[Form::slots(&[Slot::opt(free("path"))])])),
+};
 
 pub const COMMAND: Command = Command {
     name: "new",
     aliases: &[],
     summary: "Start a new blank mindmap, replacing the current one",
-    usage: "new [path]",
-    tags: &["new", "blank", "create", "file"],
     applicable: always,
-    complete: complete_new,
+    grammar: &GRAMMAR,
+    synonyms: &["blank", "create", "file"],
     execute: execute_new,
 };
 
-fn complete_new(_state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    Vec::new()
-}
-
 fn execute_new(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
     if eff.document().dirty {
         return ExecResult::err("unsaved changes; save before starting a new map");
     }

@@ -9,10 +9,12 @@
 //! `_font_family_range`) consume directly; `section=N` lifts a
 //! non-negative integer.
 //!
-//! Alongside the parsers sit [`section_idx_completions`] — the
-//! popup those same verbs offer on the value side of `section=` —
-//! and [`kv_hint`], the one sentence each of the two keys is
-//! described by wherever it is offered.
+//! Alongside the parsers sit the two [`Key`] declarations the
+//! levels that speak them splice into their own key sets, and
+//! [`section_idx_completions`] — the popup those same verbs offer
+//! on the value side of `section=`. One declaration each, so the
+//! four surfaces that carry `section=` describe it one way and
+//! answer it one way.
 //!
 //! They live here for the same reason the parsers do: `color`,
 //! `font`, `section` and `section frame` all speak these two kvs.
@@ -26,15 +28,49 @@
 //! Giving a shared kv one shared answer is what retires the class.
 
 use crate::application::console::completion::Completion;
+use crate::application::console::spec::kvs::{self, Pair};
+use crate::application::console::spec::{free, Key, Vocabulary};
 use crate::application::console::ConsoleContext;
 use crate::application::document::GraphemeRange;
+use crate::application::document::MindMapDocument;
 
-/// The `section=<idx>` key as a one-entry keyset, for the verbs
-/// that splice it into a keyset they do not own — `section frame
-/// …`, whose other keys belong to the `border` verb. A verb with
-/// a `KEYS` list of its own spells `"section"` into that list
-/// instead and reaches here only for the hint.
-pub(super) const SECTION_KEY: &[&str] = &["section"];
+/// Both shared targeting keys, for the levels that take a grapheme
+/// range as well as a section index — `color` and `font`.
+pub(super) const TARGET_KEYS: &[Key] = &[SECTION_KEY, RANGE_KEY];
+
+/// The `section=<idx>` targeting key, declared once for every level
+/// that speaks it.
+///
+/// A level splices this slice into its own `key_sets` rather than
+/// re-declaring it, which is what stops the four popups that
+/// surface `section=` from coming to describe it four ways. It is
+/// also why `section=<TAB>` answers with section indices at every
+/// one: each verb's hand-written `KvValue` arm used to match its
+/// *whole* key list and answer with the single vocabulary it
+/// happened to know, so `font section=<TAB>` offered point sizes
+/// and `color section=<TAB>` offered color names.
+pub(super) const SECTION_KEYS: &[Key] = &[SECTION_KEY];
+
+const RANGE_KEY: Key = Key::new(
+    "range",
+    "grapheme range A..B inside the targeted section",
+    free("A..B"),
+);
+
+const SECTION_KEY: Key = Key::new(
+    "section",
+    "target section index inside a multi-section node",
+    Vocabulary::Rows {
+        placeholder: "idx",
+        rows: section_idx_rows,
+        sentinels: &[],
+    },
+);
+
+/// [`section_idx_completions`] in the shape a [`Vocabulary`] wants.
+fn section_idx_rows(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
+    section_idx_completions(ctx, partial)
+}
 
 /// Parse a `range=A..B` kv value into a [`GraphemeRange`] over a
 /// section's grapheme clusters. Accepts the Rust-style
@@ -78,18 +114,78 @@ pub(super) fn parse_section_kv(verb: &str, value: &str) -> Result<usize, String>
         .map_err(|_| format!("{}: section='{}' is not a non-negative integer", verb, value))
 }
 
-/// The sentence each shared key is described by, wherever it is
-/// offered. Every verb that accepts `section=` / `range=` falls
-/// back to this from its own `kv_hint`, so the four popups that
-/// surface `section=` cannot come to describe it four ways.
-/// `None` for anything else — the caller's own table answers for
-/// the keys it owns.
-pub(super) fn kv_hint(key: &str) -> Option<&'static str> {
-    match key {
-        "section" => Some("target section index inside a multi-section node"),
-        "range" => Some("grapheme range A..B inside the targeted section"),
-        _ => None,
+/// The `section=` / `range=` pair as a verb reads it, with the one
+/// rule that binds them already applied.
+pub(super) struct SectionRange {
+    /// The section the edit targets, when the line named one.
+    pub(super) section: Option<usize>,
+    /// The grapheme range inside that section, when the line named
+    /// one.
+    pub(super) range: Option<GraphemeRange>,
+}
+
+/// Lift the two shared targeting kvs out of an already-read pair
+/// list.
+///
+/// The rule they carry: a range indexes graphemes *inside* one
+/// section, so `range=` without `section=` is a usage error. Three
+/// copies of this loop lived in `color` and `font` — two of them in
+/// the same file — each with its own spelling of the same three
+/// messages.
+pub(super) fn extract_section_range_kvs(pairs: &[Pair], verb: &str) -> Result<SectionRange, String> {
+    let mut out = SectionRange {
+        section: None,
+        range: None,
+    };
+    if let Some(v) = kvs::value(pairs, "section") {
+        out.section = Some(parse_section_kv(verb, v)?);
     }
+    if let Some(v) = kvs::value(pairs, "range") {
+        out.range = Some(parse_range_kv(v).map_err(|msg| format!("{}: range='{}' — {}", verb, v, msg))?);
+    }
+    if out.range.is_some() && out.section.is_none() {
+        return Err(format!(
+            "{}: range=A..B requires section=N — ranges target grapheme indices inside one section",
+            verb
+        ));
+    }
+    Ok(out)
+}
+
+/// Reject a range whose start sits past the target section's
+/// grapheme count.
+///
+/// Without this pre-flight the range-aware setters silently no-op
+/// and the verb prints "no change", which is indistinguishable from
+/// "you set red on already-red text". `color` and `font` each
+/// carried a copy, worded the same and reached from different
+/// depths.
+pub(super) fn preflight_range(
+    doc: &MindMapDocument,
+    node_id: &str,
+    section_idx: usize,
+    range: Option<GraphemeRange>,
+    verb: &str,
+) -> Result<(), String> {
+    let Some(start) = range.map(|r| r.start()) else {
+        return Ok(());
+    };
+    let Some(section) = doc
+        .mindmap
+        .nodes
+        .get(node_id)
+        .and_then(|n| n.sections.get(section_idx))
+    else {
+        return Ok(());
+    };
+    let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
+    if start >= total {
+        return Err(format!(
+            "{}: range_start={} is past the section's grapheme count ({})",
+            verb, start, total
+        ));
+    }
+    Ok(())
 }
 
 /// The popup for `section=<TAB>`: one row per section on the

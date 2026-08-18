@@ -20,11 +20,24 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Edge, "anchor from=diagonal"),
     (Sel::Edge, "anchor bogus=1"),
     (Sel::Node, "anchor from=top"),
+    // A bare form's slots are counted from the verb, not from a
+    // subverb it does not have, so a stray positional on a kv-only
+    // verb is named rather than dropped.
+    (Sel::Edge, "anchor sideways"),
     // body
     (Sel::Edge, "body"),
     (Sel::Edge, "body glyph=dash"),
     (Sel::Edge, "body glyph=nope"),
     (Sel::Edge, "body bogus=1"),
+    // A repeated key resolves to its **last** occurrence, the shell
+    // intuition `spec::kvs::value` implements with `rfind`. Two rows
+    // in opposite orders, because one alone is satisfied by a reader
+    // that takes the first: these two swap answers under that
+    // reading, and `dash`/`dot` are chosen so the fixture's own
+    // starting glyph makes the two answers differ in wording as well
+    // as in value.
+    (Sel::Edge, "body glyph=dash glyph=dot"),
+    (Sel::Edge, "body glyph=dot glyph=dash"),
     // border
     (Sel::Node, "border"),
     (Sel::Node, "border on"),
@@ -50,6 +63,14 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border padding 4"),
     (Sel::Node, "border padding abc"),
     (Sel::Node, "border padding"),
+    // The `(composed, staged)` shape of the extra-positional
+    // rejection — the one the whole border family reaches, and the
+    // one no corpus row covered while a doc comment in
+    // `spec/tests.rs` asserted that two of them did. The sentence
+    // changed here in the migration's first commit with nothing
+    // pinning it; it is pinned now, on two surfaces, so the level
+    // it is built from is visible in the diff.
+    (Sel::Node, "border padding 12 50"),
     (Sel::Node, "border palette off"),
     (Sel::Node, "border palette"),
     (Sel::Node, "border font off"),
@@ -73,6 +94,17 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border size=abc"),
     (Sel::Node, "border bogus=1"),
     (Sel::Node, "border preview preset=heavy"),
+    // The shared closing move (`border::BorderEdit`) on all four
+    // surfaces that make it: the auto-promotion note and the bare
+    // `preset=custom` hint. Nothing pinned either before this,
+    // which left the two most-copied branches of the four tails
+    // answerable only per-verb.
+    (Sel::Node, "border preset=heavy top=###"),
+    (Sel::Node, "border preset=custom"),
+    (Sel::Node, "border preview preset=heavy top=###"),
+    (Sel::Node, "border preview preset=custom"),
+    (Sel::Node, "canvas border preset=custom"),
+    (Sel::Section, "section frame preset=custom"),
     (Sel::Node, "border preview commit"),
     (Sel::Node, "border preview cancel"),
     (Sel::Node, "border preview nope"),
@@ -137,6 +169,10 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas border bogus=1"),
     (Sel::Node, "canvas border preset=heavy"),
     (Sel::Node, "canvas border padding abc"),
+    // The same shape one level down: the suggestion names `canvas
+    // border`, not `border`, because it is read off the level the
+    // rejection printed from.
+    (Sel::Node, "canvas border padding 12 50"),
     (Sel::Node, "canvas border side top reset"),
     (Sel::Node, "canvas border corner tl reset"),
     (Sel::Node, "canvas border corner nope x"),
@@ -277,6 +313,9 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "node nope"),
     // open / new / save
     (Sel::Node, "open"),
+    // The same count, one slot along: `open` declares a path and
+    // refuses a second one instead of loading the first in silence.
+    (Sel::Node, "open a.mindmap.json b.mindmap.json"),
     (Sel::Node, "save"),
     (Sel::Node, "new"),
     // section
@@ -293,6 +332,13 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Section, "section resize w=40 h=20"),
     (Sel::Section, "section resize"),
     (Sel::Section, "section resize bogus=1"),
+    // `resize` declares two forms — the `fill` literal and the
+    // `w=`/`h=` pair — and the engine reads the *union* of a
+    // subverb's forms, so the kvs are accepted here and then
+    // dropped by a handler that returns on `fill` before it looks
+    // at them. Pinned as the defect it is; corrected in the commit
+    // that narrows the kv check to the forms the positionals admit.
+    (Sel::Section, "section resize fill w=99 h=99"),
     (Sel::Section, "section text hi"),
     (Sel::Section, "section text hi runs=clear"),
     (Sel::Section, "section text hi runs=nope"),
@@ -514,6 +560,10 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::TwoSectionNode, "section m"),
     (Sel::TwoSectionNode, "section move "),
     (Sel::TwoSectionNode, "section resize "),
+    // The popup half of the same defect: `fill` is behind the
+    // cursor, so the only form still in play is the one that reads
+    // `section=` alone — and the two size keys are offered anyway.
+    (Sel::TwoSectionNode, "section resize fill "),
     (Sel::TwoSectionNode, "section text "),
     (Sel::TwoSectionNode, "section add "),
     (Sel::TwoSectionNode, "section split "),
@@ -597,3 +647,63 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
 /// whole new line into the readout between `padding:` and `size:`
 /// passed every test in the workspace.
 pub const EXEC_PREFIX_CORPUS: &[(Sel, &str)] = &[(Sel::Node, "open /nonexistent-dir-xyz/x.mindmap.json")];
+
+/// Lines run **in order against one document**, for the outcomes a
+/// fresh-document row cannot reach.
+///
+/// Every row of [`EXEC_CORPUS`] runs on a document of its own, which
+/// is what makes those rows independent and reorderable — and what
+/// puts a whole branch of the border family outside the oracle's
+/// reach. `border preview commit` only prints its auto-promotion
+/// note when a preview is *active*, so no single line can pin it, and
+/// `commit_border_preview_verb` accordingly carried a fifth,
+/// hand-written copy of the note the four committing surfaces share
+/// through `border::finish` — through a commit whose stated control
+/// ("perturb the shared note and all six new rows move") could not
+/// reach it, because none of those six rows is a sequence.
+///
+/// The cost of a stateful row is that it depends on its
+/// predecessors, so a row here is a *whole* interaction rather than a
+/// step in one, and the signature pins every line of it. That keeps
+/// the failure output readable: a moved row shows which line of the
+/// sequence changed.
+pub const EXEC_SEQ_CORPUS: &[(Sel, &[&str])] = &[
+    // The auto-promotion note on the commit line — the branch no
+    // fresh-document row can reach, on all three surfaces that stage
+    // a preview.
+    (
+        Sel::Node,
+        &["border preview preset=heavy top=###", "border preview commit"],
+    ),
+    (
+        Sel::Section,
+        &[
+            "section frame preview preset=heavy top=###",
+            "section frame preview commit",
+        ],
+    ),
+    (
+        Sel::Node,
+        &[
+            "canvas border preview preset=heavy top=###",
+            "canvas border preview commit",
+        ],
+    ),
+    // The same tail with nothing to promote: one line, not `Lines`.
+    (
+        Sel::Node,
+        &["border preview preset=heavy", "border preview commit"],
+    ),
+    // `preset=custom` stages the orientation hint and commits without
+    // it — the hint belongs to the line that carried the kv.
+    (
+        Sel::Node,
+        &["border preview preset=custom", "border preview commit"],
+    ),
+    // Terminators against no preview, and the cancel path.
+    (Sel::Node, &["border preview commit"]),
+    (
+        Sel::Node,
+        &["border preview preset=heavy", "border preview cancel"],
+    ),
+];

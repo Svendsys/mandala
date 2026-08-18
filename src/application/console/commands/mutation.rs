@@ -13,127 +13,120 @@
 //!   scope, behavior, and source layer.
 
 use super::Command;
-use crate::application::console::completion::{Completion, CompletionContext, CompletionState};
+use crate::application::console::completion::Completion;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
+use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::{
+    free, kvs, usage, Descent, Form, Grammar, Slot, Subverb, Vocabulary, Word,
+};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SelectionState};
+
+/// The one flag in the console. It is a *slot value* rather than a
+/// subverb, so `commands/mod.rs` § Casing's case-insensitive subverb
+/// rule does not reach it and `mutation list --ALL` still falls to
+/// the filter arm (#135). Declaring it here is what makes it
+/// discoverable at all: no completer offered it before.
+const ALL_FLAG: &[Word] = &[Word::new(
+    "--all",
+    "include internal mutations and ones that do not target the map",
+)];
+
+/// One row per registered non-internal mutation, hinted with its
+/// display name.
+fn mutation_id_rows(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
+    let partial = partial.to_ascii_lowercase();
+    let mut ids: Vec<(&String, &baumhard::mindmap::custom_mutation::CustomMutation)> = ctx
+        .document
+        .mutation_registry
+        .iter()
+        .filter(|(_, cm)| !cm.is_internal())
+        .filter(|(id, _)| id.to_ascii_lowercase().starts_with(&partial))
+        .collect();
+    ids.sort_by(|a, b| a.0.cmp(b.0));
+    ids.into_iter()
+        .map(|(id, cm)| Completion {
+            text: id.clone(),
+            display: id.clone(),
+            hint: Some(cm.name.clone()),
+            font_family: None,
+        })
+        .collect()
+}
+
+const ID_VOCAB: Vocabulary = Vocabulary::Rows {
+    placeholder: "id",
+    rows: mutation_id_rows,
+    sentinels: &[],
+};
+
+const SUBVERBS: &[Subverb] = &[
+    Subverb::bare("list", "registry", "list the registered mutations").taking(&[Form::slots(&[
+        Slot::opt(Vocabulary::Words(ALL_FLAG)),
+        Slot::opt(free("filter")),
+    ])]),
+    Subverb::bare("apply", "registry", "run one mutation on a node")
+        .taking(&[Form::slots(&[Slot::req(ID_VOCAB), Slot::opt(free("node-id"))])]),
+    Subverb::bare("help", "registry", "print one mutation's description")
+        .taking(&[Form::slots(&[Slot::req(ID_VOCAB)])]),
+    Subverb::bare("inspect", "registry", "print one mutation's full definition")
+        .taking(&[Form::slots(&[Slot::req(ID_VOCAB)])]),
+];
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "mutation",
+    subverb_sets: &[SUBVERBS],
+    key_sets: &[],
+    bare: None,
+};
 
 pub const COMMAND: Command = Command {
     name: "mutation",
     aliases: &["mut"],
     summary: "List, apply, and inspect registered mutations",
-    usage: "mutation <list [--all] [filter] | apply <id> [node-id] | help <id> | inspect <id>>",
-    tags: &["mut", "apply", "run", "list", "inspect", "debug"],
     applicable: always,
-    complete: complete_mutation,
+    grammar: &GRAMMAR,
+    synonyms: &["mut", "run", "debug"],
     execute: execute_mutation,
 };
 
-fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    // Slot-counted through the same positional view the execute
-    // path reads (`Args::positional`), rather than through raw
-    // token offsets.
-    //
-    // This comment used to claim the two agree on every line, so
-    // the switch changed nothing. They do not, and it did — twice
-    // here, each time the popup catching up with a line the verb
-    // already accepted or already refused:
-    //
-    // - `mutation x=1 <TAB>` offered nothing. The raw offset read
-    //   `x=1` as the sub-command slot and found no sub-command
-    //   there. It offers the four sub-commands now, which is what
-    //   the verb reads: `Args::positional` skips the kv, so
-    //   `mutation x=1 list` has run all along.
-    // - `mutation ap=li` offered `list`. The raw offset put the
-    //   cursor at the sub-command slot while the engine had
-    //   already split the token and handed over `li` as the value
-    //   of a key `ap`. It offers nothing now, which is right —
-    //   this verb has no kv form, so a value of a key it does not
-    //   have has no vocabulary.
-    //
-    // Both are pinned in `tests::oracle_corpus`. `help` took the
-    // same switch and moved two lines of its own; see
-    // `help.rs::complete_help`.
-    let index = match state.context {
-        CompletionContext::Token { index } => index,
-        _ => return Vec::new(),
-    };
-    match index {
-        0 => {
-            // Sub-command slot.
-            let partial = state.partial.to_ascii_lowercase();
-            ["list", "apply", "help", "inspect"]
-                .iter()
-                .filter(|s| s.starts_with(&partial))
-                .map(|s| Completion {
-                    text: s.to_string(),
-                    display: s.to_string(),
-                    hint: None,
-                    font_family: None,
-                })
-                .collect()
-        }
-        1 if matches!(
-            state.positional(0).map(str::to_ascii_lowercase).as_deref(),
-            Some("apply") | Some("help") | Some("inspect")
-        ) =>
-        {
-            // Mutation id slot. Show user-facing mutations by default
-            // (internal ones are reachable but not completed — they
-            // can still be typed by exact id in debugging sessions).
-            let partial = state.partial.to_ascii_lowercase();
-            let mut ids: Vec<(&String, &baumhard::mindmap::custom_mutation::CustomMutation)> = ctx
-                .document
-                .mutation_registry
-                .iter()
-                .filter(|(_, cm)| !cm.is_internal())
-                .filter(|(id, _)| id.to_ascii_lowercase().starts_with(&partial))
-                .collect();
-            ids.sort_by(|a, b| a.0.cmp(b.0));
-            ids.into_iter()
-                .map(|(id, cm)| Completion {
-                    text: id.clone(),
-                    display: id.clone(),
-                    hint: Some(cm.name.clone()),
-                    font_family: None,
-                })
-                .collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
 fn execute_mutation(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // Sub-command names are case-insensitive console-wide — see
-    // `commands/mod.rs` § Casing. The mutation *id* at
-    // positional(1) is not: it is a registry key, matched as
-    // written.
-    let sub = args.positional(0);
-    match sub.map(str::to_ascii_lowercase).as_deref() {
-        Some("list") => list(args, eff),
-        Some("apply") => apply(args, eff),
-        Some("help") => help(args, eff),
-        Some("inspect") => inspect(args, eff),
-        Some(_) => ExecResult::err(format!(
-            "unknown mutation sub-command: {} (try list / apply / help / inspect)",
-            sub.unwrap_or_default()
+    // Sub-command names are matched case-insensitively by the
+    // descent, console-wide — see `commands/mod.rs` § Casing. The
+    // mutation *id* in the next slot is not: it is a registry key,
+    // matched as written.
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
+    match descent.stop {
+        Stop::Matched(subverb) => match subverb.name {
+            "list" => list(&descent, args, eff),
+            "apply" => apply(&descent, args, eff),
+            "help" => help(&descent, args, eff),
+            _ => inspect(&descent, args, eff),
+        },
+        Stop::Bare => ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
+        _ => ExecResult::err(usage::unknown_subverb_message(
+            descent.level,
+            descent.typed.unwrap_or_default(),
         )),
-        None => ExecResult::err("mutation needs a sub-command (list / apply / help / inspect)"),
     }
 }
 
-fn list(args: &Args, eff: &ConsoleEffects) -> ExecResult {
-    // `--all` is recognized as either a positional or a bare flag; the
-    // parser treats it as a positional in either case.
+fn list(descent: &Descent, args: &Args, eff: &ConsoleEffects) -> ExecResult {
+    // `--all` is a slot value rather than a subverb, so it stays
+    // case-sensitive (#135) and sits in either of the two slots the
+    // form declares.
+    let slots = descent.slot_value(args);
     let mut show_all = false;
     let mut filter: Option<&str> = None;
-    for i in 1.. {
-        match args.positional(i) {
+    for i in 0..2 {
+        match slots.get(i) {
             Some("--all") => show_all = true,
             Some(other) if filter.is_none() => filter = Some(other),
-            Some(_) => {} // ignore extra positionals
-            None => break,
+            Some(_) | None => {}
         }
     }
 
@@ -186,12 +179,13 @@ fn list(args: &Args, eff: &ConsoleEffects) -> ExecResult {
     ExecResult::lines(lines)
 }
 
-fn apply(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let id = match args.positional(1) {
+fn apply(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let slots = descent.slot_value(args);
+    let id = match slots.get(0) {
         Some(s) => s.to_string(),
         None => return ExecResult::err("mutation apply needs an id (`mutation apply <id>`)"),
     };
-    let explicit_node = args.positional(2).map(str::to_string);
+    let explicit_node = slots.get(1).map(str::to_string);
 
     // Look up the mutation. `.clone()` so we don't hold a borrow while
     // mutating through `eff.document_mut()` below.
@@ -259,8 +253,8 @@ fn resolve_target_id(doc: &MindMapDocument, explicit: Option<&str>) -> Result<St
     }
 }
 
-fn help(args: &Args, eff: &ConsoleEffects) -> ExecResult {
-    let id = match args.positional(1) {
+fn help(descent: &Descent, args: &Args, eff: &ConsoleEffects) -> ExecResult {
+    let id = match descent.slot_value(args).get(0) {
         Some(s) => s,
         None => return ExecResult::err("mutation help needs an id"),
     };
@@ -304,8 +298,8 @@ fn help(args: &Args, eff: &ConsoleEffects) -> ExecResult {
 /// mutator, whether it has document actions, and whether a Rust
 /// handler will intercept it on apply. Intended as the first-stop
 /// command when `mutation apply` appears to do nothing.
-fn inspect(args: &Args, eff: &ConsoleEffects) -> ExecResult {
-    let id = match args.positional(1) {
+fn inspect(descent: &Descent, args: &Args, eff: &ConsoleEffects) -> ExecResult {
+    let id = match descent.slot_value(args).get(0) {
         Some(s) => s,
         None => return ExecResult::err("mutation inspect needs an id"),
     };

@@ -36,117 +36,80 @@
 //! - `font list` — emit one scrollback line per loaded family,
 //!   each rendered in its own face. Sorted alphabetically.
 
+use super::range_kv::TARGET_KEYS;
 use super::Command;
-use crate::application::console::completion::{
-    kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
-};
+use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
+use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::{
+    kvs, usage, Bare, Descent, Form, Grammar, Key, Slot, Subverb, Vocabulary,
+};
 use crate::application::console::traits::{apply_to_targets, AcceptsFontFamily};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
 
-/// kv keys the verb accepts. `range` sat in `parse_font_args` and
-/// in the verb's own error text without ever reaching this list, so
-/// it was parseable but invisible: `font ra<TAB>` offered nothing
-/// and the usage line did not mention it.
-///
-/// That *instance* is closed —
-/// `test_font_completion_offers_the_range_key` holds every key
-/// here against both literals below. The drift that produced it
-/// is not; see [`super`]'s § Usage and tags are hand-written for
-/// what is and is not closed, and for the rule that follows from
-/// it.
-pub const KEYS: &[&str] = &["size", "min", "max", "section", "range"];
-/// Positional subverbs surfaced as token-0 completions alongside
-/// the kv keys.
-pub const VERBS: &[&str] = &["set", "list"];
-/// Preset sizes surfaced in completion. Users can type any positive
-/// float; the preset list just makes the popup useful.
+/// Point sizes the popup suggests. Any positive float is legal, so
+/// these are *suggestions* rather than a vocabulary — hence
+/// [`Vocabulary::Rows`], whose usage line prints `<pt>` and whose
+/// popup prints the list.
 pub const SIZE_PRESETS: &[&str] = &["10", "12", "14", "16", "18", "24", "32"];
+
+fn size_rows(_ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
+    prefix_filter(SIZE_PRESETS, partial)
+}
+
+const SIZE_VOCAB: Vocabulary = Vocabulary::Rows {
+    placeholder: "pt",
+    rows: size_rows,
+    sentinels: &[],
+};
+
+fn family_rows(_ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
+    font_family_completions(partial)
+}
+
+const FAMILY_VOCAB: Vocabulary = Vocabulary::Rows {
+    placeholder: "family",
+    rows: family_rows,
+    sentinels: &[],
+};
+
+const KEYS: &[Key] = &[
+    Key::new("size", "target on-screen size in points", SIZE_VOCAB),
+    Key::new("min", "lower screen-space clamp in points", SIZE_VOCAB),
+    Key::new("max", "upper screen-space clamp in points", SIZE_VOCAB),
+];
+
+const SUBVERBS: &[Subverb] = &[
+    Subverb::bare("set", "family", "pin the font family on the current selection")
+        .taking(&[Form::slots(&[Slot::req(FAMILY_VOCAB)]).reading(&["section", "range"])]),
+    Subverb::bare(
+        "list",
+        "family",
+        "list every loaded font, each rendered in its face",
+    ),
+];
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "font",
+    subverb_sets: &[SUBVERBS],
+    key_sets: &[KEYS, TARGET_KEYS],
+    bare: Some(Bare::new(
+        "composed",
+        &[Form::keys(&["size"], &["min", "max", "section", "range"])],
+    )),
+};
 
 pub const COMMAND: Command = Command {
     name: "font",
     aliases: &[],
     summary: "Set font family / size / clamps on the selection, or list fonts",
-    usage: "font set <family> [section=<N>] [range=<A..B>] | font list | font size=<pt> [min=<pt>] [max=<pt>] [section=<N>] [range=<A..B>]",
-    tags: &[
-        "font", "family", "set", "list", "size", "min", "max", "clamp", "pt", "smaller", "larger",
-        "section", "range",
-    ],
     applicable: always,
-    complete: complete_font,
+    grammar: &GRAMMAR,
+    synonyms: &["family", "clamp", "pt", "smaller", "larger"],
     execute: execute_font,
 };
-
-fn complete_font(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    match &state.context {
-        // Token 0: positional verbs (`set`, `list`) + kv keys.
-        CompletionContext::Token { index: 0 } => {
-            let mut out: Vec<Completion> = Vec::new();
-            let verb_partial = state.partial.to_ascii_lowercase();
-            for v in VERBS {
-                if v.starts_with(&verb_partial) {
-                    out.push(Completion {
-                        text: match *v {
-                            "set" => "set ".to_string(),
-                            other => other.to_string(),
-                        },
-                        display: v.to_string(),
-                        hint: verb_hint(v).map(str::to_string),
-                        font_family: None,
-                    });
-                }
-            }
-            out.extend(kv_key_completions_with_hints(KEYS, state.partial, kv_hint));
-            out
-        }
-        // Token 1 after `set`: every loaded font family, each
-        // pre-shaped in its own face so the user sees the look
-        // before committing.
-        CompletionContext::Token { index: 1 }
-            if state.positional(0).is_some_and(|v| v.eq_ignore_ascii_case("set")) =>
-        {
-            font_family_completions(state.partial)
-        }
-        // Bare-token slots past index 0 with no preceding `set`
-        // fall back to the kv keys (parity with the pre-existing
-        // shape).
-        CompletionContext::Token { .. } => kv_key_completions_with_hints(KEYS, state.partial, kv_hint),
-        // Per-key value vocabularies. Matching the whole `KEYS`
-        // list here is what made `font section=<TAB>` offer point
-        // sizes: `section` is a key of this verb, so the arm fired,
-        // and the only vocabulary it knew was the one belonging to
-        // `size`. Each key answers for itself now.
-        CompletionContext::KvValue { key } if matches!(key.as_str(), "size" | "min" | "max") => {
-            prefix_filter(SIZE_PRESETS, state.partial)
-        }
-        CompletionContext::KvValue { key } if key == "section" => {
-            super::range_kv::section_idx_completions(ctx, state.partial)
-        }
-        // `range=A..B` is free-form — grapheme indices into the
-        // targeted section, with no list to offer.
-        _ => Vec::new(),
-    }
-}
-
-fn verb_hint(verb: &str) -> Option<&'static str> {
-    match verb {
-        "set" => Some("pin the font family on the current selection"),
-        "list" => Some("list every loaded font, each rendered in its face"),
-        _ => None,
-    }
-}
-
-fn kv_hint(key: &str) -> Option<&'static str> {
-    match key {
-        "size" => Some("target on-screen size in points"),
-        "min" => Some("lower screen-space clamp in points"),
-        "max" => Some("upper screen-space clamp in points"),
-        // `section` / `range` are the shared targeting vocabulary.
-        other => super::range_kv::kv_hint(other),
-    }
-}
 
 /// Build font-family completions: one entry per loaded family
 /// whose name starts with `partial` (case-insensitive). Each entry
@@ -261,28 +224,31 @@ struct FontApplyReport {
 }
 
 fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // Positional subverbs are checked first — they're channel-less
-    // operations and don't share parse state with the kv triple.
-    if let Some(verb) = args.positional(0) {
-        // Subverb names are case-insensitive console-wide — see
-        // `commands/mod.rs` § Casing. The *family* at
-        // positional(1) is not: `font set Norse` names a loaded
-        // face, and the loaded-family lookup owns that comparison.
-        return match verb.to_ascii_lowercase().as_str() {
-            "set" => execute_font_set(args, eff),
-            "list" => execute_font_list(args),
-            _ => ExecResult::err(format!(
-                "font: unknown subverb '{}'; use 'set <family>', \
-                 'list', or 'size=<pt>' (kv form)",
-                verb
-            )),
-        };
+    // The descent matches subverb names case-insensitively,
+    // console-wide (`commands/mod.rs` § Casing). The *family* in
+    // `set`'s slot is not: `font set Norse` names a loaded face,
+    // and the loaded-family lookup owns that comparison.
+    let descent = descend(&GRAMMAR, args.tokens());
+    match descent.stop {
+        Stop::Matched(subverb) => match subverb.name {
+            "set" => execute_font_set(&descent, args, eff),
+            _ => match kvs::read_strict(&descent, args) {
+                Ok(_) => execute_font_list(),
+                Err(msg) => ExecResult::err(msg),
+            },
+        },
+        Stop::Bare => {
+            let parsed = match parse_font_args(&descent, args) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            apply_font_args(eff.document_mut(), &parsed)
+        }
+        _ => ExecResult::err(usage::unknown_subverb_message(
+            descent.level,
+            descent.typed.unwrap_or_default(),
+        )),
     }
-    let parsed = match parse_font_args(args) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    apply_font_args(eff.document_mut(), &parsed)
 }
 
 /// Parse every recognized kv up front so the atomic application
@@ -290,49 +256,35 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// for unknown keys, malformed values, mutually-exclusive
 /// combinations, or empty input — all surface to the caller via
 /// the same error channel `apply_font_args` would use.
-fn parse_font_args(args: &Args) -> Result<FontSizeEdit, ExecResult> {
+fn parse_font_args(descent: &Descent, args: &Args) -> Result<FontSizeEdit, ExecResult> {
+    let pairs = kvs::read_strict(descent, args).map_err(ExecResult::err)?;
+    let target = super::range_kv::extract_section_range_kvs(&pairs, "font").map_err(ExecResult::err)?;
     let mut out = FontSizeEdit {
         size: None,
         min: None,
         max: None,
-        section_target: None,
-        range_target: None,
+        section_target: target.section,
+        range_target: target.range,
     };
-    let mut saw_any = false;
-    for (k, v) in args.kvs() {
-        saw_any = true;
+    for pair in &pairs {
+        let (k, v) = (pair.key.name, pair.value);
         match k {
             "size" => out.size = Some(parse_pt("size", v)?),
             "min" => out.min = Some(parse_pt("min", v)?),
             "max" => out.max = Some(parse_pt("max", v)?),
-            "section" => {
-                out.section_target =
-                    Some(super::range_kv::parse_section_kv("font", v).map_err(ExecResult::err)?);
-            }
-            "range" => {
-                out.range_target = Some(
-                    super::range_kv::parse_range_kv(v)
-                        .map_err(|msg| ExecResult::err(format!("font: range='{}' — {}", v, msg)))?,
-                );
-            }
-            other => return Err(ExecResult::err(format!("unknown key '{}'", other))),
+            // `section` / `range` were lifted out above; nothing
+            // else reaches here, because the engine refused every
+            // key this form does not read.
+            _ => {}
         }
-    }
-    if out.range_target.is_some() && out.section_target.is_none() {
-        return Err(ExecResult::err(
-            "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
-        ));
     }
     if out.range_target.is_some() && (out.min.is_some() || out.max.is_some()) {
         return Err(ExecResult::err(
             "font: min/max not applicable to a section range (per-grapheme clamps don't exist)",
         ));
     }
-    if !saw_any {
-        return Err(ExecResult::err(
-            "usage: font set <family> | font list | \
-             font size=<pt> [min=<pt>] [max=<pt>]",
-        ));
+    if pairs.is_empty() {
+        return Err(ExecResult::err(usage::no_arguments_message(&GRAMMAR)));
     }
     if out.size.is_none() && out.min.is_none() && out.max.is_none() {
         return Err(ExecResult::err("font: nothing to set"));
@@ -584,20 +536,29 @@ fn single_target_result(changed: usize, clamp_msg: Option<String>, success: &str
 /// selection through the `AcceptsFontFamily` trait. Validates the
 /// family name against `list_loaded_families()` first; an unknown
 /// name surfaces an error pointing the user at `font list`.
-fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+fn execute_font_set(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Collect every positional after `set` into one family name.
     // The tokenizer preserves quoted multi-word strings as one
     // token already (`font set "Norse Bold"`), but a user can also
     // bypass quoting entirely and just type `font set Norse Bold`
     // — joining positionals with a single space matches both shapes
     // and keeps the surface forgiving.
+    // `set` reads a *run* of positionals rather than one slot, so
+    // it takes `kvs::read` (keys only) rather than the strict read
+    // its siblings use: `font set Norse Bold` is deliberately
+    // accepted unquoted, and a strict read would refuse the second
+    // word as a stray positional.
+    let pairs = match kvs::read(descent, args) {
+        Ok(pairs) => pairs,
+        Err(msg) => return ExecResult::err(msg),
+    };
     let positionals: Vec<&str> = args.positionals().collect();
     if positionals.len() < 2 {
-        return ExecResult::err("usage: font set <family> [section=N] [range=A..B]");
+        return ExecResult::err(usage::subverb_usage(descent.level, &SUBVERBS[0]));
     }
     let family = positionals[1..].join(" ");
     if family.is_empty() {
-        return ExecResult::err("usage: font set <family> [section=N] [range=A..B]");
+        return ExecResult::err(usage::subverb_usage(descent.level, &SUBVERBS[0]));
     }
     // Validate against the loaded family list. Exact-match per
     // `app_font_by_family` semantics — the completion popup feeds
@@ -614,26 +575,11 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // section setters directly — the trait surface doesn't
     // carry per-section / per-range routing today (deferred to
     // N4-C alongside `SelectionState::SectionRange`).
-    let mut section_target: Option<usize> = None;
-    let mut range_target: Option<crate::application::document::GraphemeRange> = None;
-    for (k, v) in args.kvs() {
-        match k {
-            "section" => match super::range_kv::parse_section_kv("font", v) {
-                Ok(idx) => section_target = Some(idx),
-                Err(msg) => return ExecResult::err(msg),
-            },
-            "range" => match super::range_kv::parse_range_kv(v) {
-                Ok(range) => range_target = Some(range),
-                Err(msg) => return ExecResult::err(format!("font: range='{}' — {}", v, msg)),
-            },
-            other => return ExecResult::err(format!("font set: unknown key '{}'", other)),
-        }
-    }
-    if range_target.is_some() && section_target.is_none() {
-        return ExecResult::err(
-            "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
-        );
-    }
+    let target = match super::range_kv::extract_section_range_kvs(&pairs, "font") {
+        Ok(t) => t,
+        Err(msg) => return ExecResult::err(msg),
+    };
+    let (section_target, range_target) = (target.section, target.range);
     if let (Some(idx), Some(range)) = (section_target, range_target) {
         let (rs, re) = (range.start(), range.end());
         let node_id = match eff.document().selection.clone() {
@@ -762,7 +708,7 @@ pub(crate) fn apply_font_kv_to_selection(
 /// pinned to render in its own face (so a long list is a
 /// font-by-font preview). Streams from `loaded_families_iter` so
 /// no intermediate `Vec<String>` allocates.
-fn execute_font_list(_args: &Args) -> ExecResult {
+fn execute_font_list() -> ExecResult {
     use crate::application::console::OutputLine;
     let lines: Vec<OutputLine> = baumhard::font::fonts::loaded_families_iter()
         .map(|name| OutputLine::in_font(name, name))
@@ -793,8 +739,10 @@ mod tests {
     /// `section=` is an index into the selected node's sections, so
     /// its popup must be those indices. It offered `SIZE_PRESETS`
     /// instead — the vocabulary of `size=`, a different key of the
-    /// same verb — because the value-side arm matched the whole
-    /// `KEYS` list and knew only one list to answer with.
+    /// same verb — because the hand-written value-side arm matched
+    /// the verb's whole key list and knew only one list to answer
+    /// with. Each key declares its own vocabulary now, and this
+    /// pins both halves of the pair the defect confused.
     #[test]
     fn test_font_section_value_completion_offers_section_indices() {
         let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();
@@ -804,33 +752,25 @@ mod tests {
     }
 
     /// `range=` was accepted by `parse_font_args` and named in the
-    /// verb's own error text, but absent from `KEYS` — so it
-    /// completed to nothing and `help font` never mentioned it.
+    /// verb's own error text, but reached no popup and no help page
+    /// — the exact defect the declarative grammar exists to make
+    /// impossible.
     ///
-    /// The `usage` half of this is a check on one key, not an
-    /// invariant: `usage` is a hand-written literal (see the
-    /// `KEYS` doc comment), so this catches `range=` being dropped
-    /// from it and nothing else. Every key `KEYS` names is
-    /// documented, though, so assert that much rather than the one
-    /// key this test was written for — a key added to `KEYS` and
-    /// forgotten in `usage` is the drift, and it is the drift that
-    /// should fail.
+    /// It is structural now: the key is one row of `font`'s
+    /// declaration, and `spec::tests` holds every level's keys
+    /// against the forms that print them, in both directions, over
+    /// the whole registry. What stays here is the popup and the
+    /// `keys:` block, which the declaration alone does not prove
+    /// reach the user.
     #[test]
     fn test_font_completion_offers_the_range_key() {
         let doc = fixture_doc();
         assert!(popup("font ", &doc).iter().any(|t| t == "range="));
-        for key in KEYS {
-            assert!(
-                COMMAND.usage.contains(&format!("{}=", key)),
-                "`font` accepts `{key}=` but its usage line never says so: {}",
-                COMMAND.usage
-            );
-            assert!(
-                COMMAND.tags.contains(key),
-                "`font` accepts `{key}=` but it is not a search tag: {:?}",
-                COMMAND.tags
-            );
-        }
+        assert!(
+            COMMAND.key_lines().iter().any(|l| l.starts_with("range=")),
+            "`help font` must publish the key: {:?}",
+            COMMAND.key_lines()
+        );
     }
 
     fn first_loaded_family() -> String {

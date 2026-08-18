@@ -64,15 +64,16 @@ pub enum CompletionContext {
 
 /// Snapshot of where the cursor is, passed to each command's
 /// `complete` fn. `context` is the primary dispatch switch;
-/// [`Self::positional`] and [`Self::arg_tokens`] are the lookahead
-/// views a command reaches for when it needs to know what sits
-/// earlier on the line.
+/// [`Self::arg_tokens`] is the verb's own token slice, which
+/// `console::spec::descent` walks.
 ///
-/// There is deliberately no raw cursor-token index here. One used
-/// to be published beside `tokens`, and reaching for it is what
-/// let a `Token { index }` arm — which counts *positionals* — pair
-/// with a lookahead that counted *tokens*, so the two disagreed
-/// the moment a kv pair sat earlier on the line.
+/// There is deliberately no raw cursor-token index here, and no
+/// per-command completer left to reach for one. An index used to be
+/// published beside `tokens`, and reaching for it is what let a
+/// `Token { index }` arm — which counts *positionals* — pair with a
+/// lookahead that counted *tokens*, so the two disagreed the moment
+/// a kv pair sat earlier on the line. The grammar descent is the
+/// only reader of token order now.
 pub struct CompletionState<'a> {
     pub tokens: &'a [String],
     /// What the user has typed in the current completion slot:
@@ -84,28 +85,6 @@ pub struct CompletionState<'a> {
 }
 
 impl CompletionState<'_> {
-    /// The `index`-th bare positional after the command name — the
-    /// very tokens [`CompletionContext::Token`]'s `index` counts,
-    /// and the very tokens [`super::parser::Args::positional`]
-    /// hands the execute path. An arm keyed on `Token { index }`
-    /// and a lookahead written with this agree by construction.
-    ///
-    /// Indexing `tokens` directly does not agree: `tokens` is every
-    /// token on the line, kv pairs included. `border color=#fff
-    /// preset <TAB>` puts the cursor at positional 1 — which is
-    /// what `execute_border` reads the subverb from — while raw
-    /// `tokens[1]` is `color=#fff`, so a raw lookahead answers for
-    /// the wrong slot and the popup goes quiet on a line the verb
-    /// accepts. Cost is a short linear scan of a hand-typed line
-    /// per call.
-    pub fn positional(&self, index: usize) -> Option<&str> {
-        self.arg_tokens()
-            .iter()
-            .filter(|t| !is_kv_token(t))
-            .nth(index)
-            .map(String::as_str)
-    }
-
     /// The verb's own tokens — everything past the command name,
     /// which is the same slice [`super::parser::Args`] is built
     /// from on the execute side. Empty when the state carries no
@@ -186,7 +165,7 @@ pub fn complete(input: &str, cursor: usize, ctx: &ConsoleContext) -> Vec<Complet
         Some(c) => c,
         None => return Vec::new(),
     };
-    (cmd.complete)(&state, ctx)
+    cmd.completions(&state, ctx)
 }
 
 fn complete_command_name(partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
@@ -215,40 +194,6 @@ pub fn prefix_filter<S: AsRef<str>>(options: &[S], partial: &str) -> Vec<Complet
             text: o.as_ref().to_string(),
             display: o.as_ref().to_string(),
             hint: None,
-            font_family: None,
-        })
-        .collect()
-}
-
-/// Helper used by per-command `complete` fns at `Token { .. }`
-/// completion sites: filter the verb's kv-key list by prefix and
-/// emit each as a `key=` completion (the trailing `=` cues the
-/// user that a value follows). No per-key hint surface — for that,
-/// use [`kv_key_completions_with_hints`].
-pub fn kv_key_completions(keys: &[&str], partial: &str) -> Vec<Completion> {
-    kv_key_completions_with_hints(keys, partial, |_| None)
-}
-
-/// Like [`kv_key_completions`] but each emitted row carries a hint
-/// returned by `hint_for(key)`. Used by `font` / `color` whose kv
-/// keys carry a per-key explanation (`size = "target on-screen size
-/// in points"`, `bg = "fill / background color"`, etc.).
-///
-/// Returning `None` from `hint_for` for a particular key emits a
-/// hint-less row (same shape as [`kv_key_completions`]) for that
-/// key — useful when a verb mixes documented and undocumented kv
-/// keys, though no current verb does.
-pub fn kv_key_completions_with_hints(
-    keys: &[&str],
-    partial: &str,
-    hint_for: impl Fn(&str) -> Option<&'static str>,
-) -> Vec<Completion> {
-    keys.iter()
-        .filter(|k| k.starts_with(partial))
-        .map(|k| Completion {
-            text: format!("{}=", k),
-            display: format!("{}=", k),
-            hint: hint_for(k).map(str::to_string),
             font_family: None,
         })
         .collect()

@@ -11,55 +11,55 @@
 //! state the ambient `grow_*` passes can't (shrink to text floor).
 
 use super::Command;
-use crate::application::console::completion::{
-    prefix_filter, Completion, CompletionContext, CompletionState,
-};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::{free, kvs, usage, Descent, Form, Grammar, Slot, Subverb};
+use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
 
-pub const VERBS: &[&str] = &["resize", "fit", "edit"];
+const SUBVERBS: &[Subverb] = &[
+    Subverb::bare("resize", "geometry", "pin the node's width and height")
+        .taking(&[Form::slots(&[Slot::req(free("w")), Slot::req(free("h"))])]),
+    Subverb::bare("fit", "geometry", "shrink the node to its content"),
+    Subverb::bare("edit", "editor", "enter node-edit mode on the selection"),
+];
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "node",
+    subverb_sets: &[SUBVERBS],
+    key_sets: &[],
+    bare: None,
+};
 
 pub const COMMAND: Command = Command {
     name: "node",
     aliases: &[],
     summary: "Resize the selected node, fit it to its content, or enter node-edit mode",
-    usage: "node resize <w> <h> | node fit | node edit",
-    tags: &[
-        "node",
-        "resize",
-        "size",
-        "fit",
-        "shrink",
-        "content",
-        "edit",
-        "node-edit",
-    ],
     applicable: always,
-    complete: complete_node,
+    grammar: &GRAMMAR,
+    synonyms: &["size", "shrink", "content", "node-edit"],
     execute: execute_node,
 };
 
-fn complete_node(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    match &state.context {
-        CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
-        _ => Vec::new(),
-    }
-}
-
 fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let verb = match args.positional(0) {
-        Some(v) => v,
-        None => return ExecResult::err("usage: node resize <w> <h> | node fit | node edit"),
-    };
-    // Subverb names are case-insensitive console-wide — see
-    // `commands/mod.rs` § Casing.
-    match verb.to_ascii_lowercase().as_str() {
-        "resize" => execute_resize(args, eff),
-        "fit" => execute_fit(eff),
-        "edit" => execute_edit(eff),
-        _ => ExecResult::err(format!("node: unknown subverb '{}'", verb)),
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
+    // Subverb names are matched case-insensitively by the descent,
+    // console-wide — see `commands/mod.rs` § Casing.
+    match descent.stop {
+        Stop::Matched(subverb) => match subverb.name {
+            "resize" => execute_resize(&descent, args, eff),
+            "fit" => execute_fit(eff),
+            _ => execute_edit(eff),
+        },
+        Stop::Bare => ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
+        _ => ExecResult::err(usage::unknown_subverb_message(
+            descent.level,
+            descent.typed.unwrap_or_default(),
+        )),
     }
 }
 
@@ -102,7 +102,7 @@ fn execute_fit(eff: &mut ConsoleEffects) -> ExecResult {
     }
 }
 
-fn execute_resize(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+fn execute_resize(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let node_id = match &eff.document().selection {
         SelectionState::Single(id) => id.clone(),
         // A `Section` selection lifts to its owning node — the
@@ -115,11 +115,12 @@ fn execute_resize(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             return ExecResult::err("node resize: requires a single-node or section selection");
         }
     };
-    let w = match args.positional(1).and_then(|s| s.parse::<f64>().ok()) {
+    let slots = descent.slot_value(args);
+    let w = match slots.get(0).and_then(|s| s.parse::<f64>().ok()) {
         Some(v) => v,
         None => return ExecResult::err("node resize: <w> must be a number"),
     };
-    let h = match args.positional(2).and_then(|s| s.parse::<f64>().ok()) {
+    let h = match slots.get(1).and_then(|s| s.parse::<f64>().ok()) {
         Some(v) => v,
         None => return ExecResult::err("node resize: <h> must be a number"),
     };

@@ -454,6 +454,28 @@ mod tests {
         assert!(border_preset_hint("no-such-preset").is_none());
     }
 
+    /// The three views of the preset table agree: the name list,
+    /// the pair list a vocabulary is built from, and the lookup.
+    ///
+    /// The failing input is a `BORDER_PRESET_ROWS` whose order or
+    /// content drifts from `BORDER_PRESETS` — which is reachable
+    /// the moment either stops deriving from the other, and which
+    /// a consumer that indexes one and looks up in the other would
+    /// read as a silently mismatched hint rather than as an error.
+    #[test]
+    fn border_preset_rows_agree_with_the_name_list_and_the_lookup() {
+        use crate::mindmap::border::{border_preset_hint, BORDER_PRESETS, BORDER_PRESET_ROWS};
+        assert_eq!(BORDER_PRESET_ROWS.len(), BORDER_PRESETS.len());
+        for (i, (name, hint)) in BORDER_PRESET_ROWS.iter().enumerate() {
+            assert_eq!(*name, BORDER_PRESETS[i], "row {i} names a different preset");
+            assert_eq!(
+                border_preset_hint(name),
+                Some(*hint),
+                "row {i} hint differs from the lookup"
+            );
+        }
+    }
+
     /// **Parity guard for the clip-AABB fast path.**
     /// `resolve_border_font_size_pt` exists so `node_clip_aabbs`
     /// can skip a whole `BorderStyle` allocation for the one `f32`
