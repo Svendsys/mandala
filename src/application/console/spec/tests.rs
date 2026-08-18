@@ -179,6 +179,90 @@ fn test_every_usage_form_leads_with_its_verb() {
     }
 }
 
+/// Every key a level's *bare* form names is offered by the popup at
+/// that level's first slot, and published by `help <verb>`.
+///
+/// This is the acceptance criterion of the whole engine stated as a
+/// test: adding a kv key is one table row, and parse, complete, help
+/// and hint follow. The `help` half is a mirror — `key_lines`
+/// derives from the same declaration — so what it can catch is
+/// narrow. The *popup* half is not: it runs the real completion
+/// engine over the real line, through the descent, the
+/// positional-vs-kv gate and the readable-key resolution, and a
+/// failure anywhere along that path shows up here.
+#[test]
+fn test_every_bare_form_key_reaches_the_popup_and_help() {
+    let doc = crate::application::document::tests_common::load_test_doc();
+    let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+    for cmd in COMMANDS {
+        let Some(bare) = &cmd.grammar.bare else { continue };
+        let line = format!("{} ", cmd.name);
+        let offered: Vec<String> = crate::application::console::completion::complete(&line, line.len(), &ctx)
+            .into_iter()
+            .map(|c| c.text)
+            .collect();
+        let published = cmd.key_lines();
+        for name in bare.readable_keys() {
+            assert!(
+                offered.iter().any(|t| t == &format!("{}=", name)),
+                "{}: `{}<TAB>` must offer '{}='; got {offered:?}",
+                cmd.name,
+                line,
+                name
+            );
+            assert!(
+                published.iter().any(|l| l.starts_with(&format!("{}=", name))),
+                "{}: `help {}` must publish '{}='; got {published:?}",
+                cmd.name,
+                cmd.name,
+                name
+            );
+        }
+    }
+}
+
+/// A subverb that reads no keys refuses one by name rather than
+/// dropping it.
+///
+/// The failing input is any subverb whose form list grows a key it
+/// does not mean to read, or a `kvs::read` that stops asking per
+/// *form*. Before the engine, four border surfaces staged
+/// `border preset heavy color=#fff`'s preset and discarded the
+/// color without a word.
+#[test]
+fn test_a_subverb_that_reads_no_keys_refuses_one_by_name() {
+    use crate::application::console::parser::Args;
+    use crate::application::console::spec::descent::descend_at;
+    for (verb, grammar) in all_levels() {
+        let Some(key) = grammar.keys().next() else { continue };
+        for subverb in grammar.subverbs() {
+            if subverb.child.is_some() || !subverb.readable_keys().is_empty() {
+                continue;
+            }
+            // Enter this level directly so the probe is one
+            // subverb plus one kv, whatever depth the level sits
+            // at on a real line.
+            let tokens = vec![subverb.name.to_string(), format!("{}=x", key.name)];
+            let args = Args::new(&tokens);
+            let descent = descend_at(grammar, &tokens, 0);
+            let err = super::kvs::read(&descent, &args).err().unwrap_or_else(|| {
+                panic!(
+                    "{verb}: `{} {} {}=x` must be refused",
+                    grammar.label, subverb.name, key.name
+                )
+            });
+            assert!(
+                err.contains(key.name),
+                "{verb}: the refusal must name the key: {err}"
+            );
+            assert!(
+                err.contains(subverb.name),
+                "{verb}: the refusal must name the form: {err}"
+            );
+        }
+    }
+}
+
 /// The gate is only ever declared on subverbs that have something
 /// to be confused with — a level with no kv keys at all can never
 /// put its subverb slot in kv form, so a gate there would be inert

@@ -3240,6 +3240,82 @@ for the frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
 characters never overflow.
 
+### `Grammar` — the declarative console verb spec
+
+**Every verb is one declaration, and one engine reads it.**
+`console::spec` holds `Grammar` / `Subverb` / `Key` / `Slot` /
+`Form` / `Vocabulary`, and `Command` carries a
+`&'static Grammar` and nothing else: the usage forms `help`
+prints, the `keys:` block under them, the search tags, the
+completion popup, the kv parse loop and every hint all derive
+from it. Adding a kv key is one table row — parse, complete,
+help and hint follow.
+
+A `Grammar` is a **level**, not a verb. `border` is one,
+`border preview` is another, `canvas section-frame focused` a
+third, each joined to its parent by a `&'static` reference on
+`Subverb::child`. `subverb_sets` and `key_sets` are slices *of
+slices*, so `canvas border` names border's fifteen keys and
+border's seven per-field subverbs rather than transcribing
+them; `section frame` names the same fifteen and adds its own
+`section=`.
+
+Four things the shape is load-bearing for:
+
+- **`Vocabulary` answers three questions from one
+  declaration** — the rows a popup offers, the `<…>` a usage
+  form prints, and the word list an error can quote back.
+  `Rows` covers both the document-derived vocabularies (a
+  map's palettes, a node's sections, the host's font families)
+  and the *suggestion* lists too open-ended to print: `zoom
+  min=` offers eight zoom levels and accepts any positive
+  float, so the popup gets the eight and the usage line gets
+  `<zoom|unset>`.
+- **A `Form` is (slots, keys), and a subverb may declare
+  several.** `section move` takes `dx=`/`dy=` *or* `x=`/`y=`
+  and rejects a mix; `section resize` takes the `fill` literal
+  *or* `w=`/`h=`. `help` prints one line per form, and the
+  popup offers the union — which is what puts `fill` beside
+  `w=` and `h=` at `section resize <TAB>`.
+- **No verb sees a raw token index.** `spec::descent` is the
+  only reader of token order. A handler asks
+  `descent.subverb()`, `descent.parent_name(0)` and
+  `descent.slot_value(args)`. Eight completion sites used to
+  do their lookahead with `tokens.get(N)` while the arms they
+  fed were keyed on the *positional* index, and the two
+  disagree the moment a kv pair sits earlier on the line. The
+  positional-vs-kv discriminator lives there too, declared on
+  the subverb (`Subverb::gated`) rather than re-asked at each
+  slot that emits the vocabulary.
+- **A kv the matched form does not read is refused by name.**
+  `kvs::read` asks per *form*, not per level, and points the
+  key at the composed form that does read it. Before the
+  declaration, `border preset heavy color=#fff` staged the
+  preset and discarded the color without a word, identically
+  on four surfaces.
+
+What stays hand-written is value parsing and mutation: a `Key`
+declares its name, its sentence and its vocabulary, and what
+`padding=8` *means* is the verb's. Bespoke semantics —
+`section move`'s mutual exclusion, the `border side`
+non-custom-preset gate — are handwritten handlers *behind* the
+table.
+
+`console::spec`'s own tests hold the declaration against itself
+over the whole registry, in both directions: a form naming a
+key its level does not declare, and a key no form prints. The
+second is what would have caught `font range=`, `color range=`
+and `color section=` on the day each was written — each was
+parseable, named in its verb's own rejection, and documented
+nowhere.
+
+The differential oracle (`console::tests::oracle`) is what made
+the migration reviewable: `EXEC_CORPUS`, `COMPLETION_CORPUS`
+and `EXEC_PREFIX_CORPUS` pin execute outcomes and popup
+contents byte for byte, so a change that alters no pinned row
+is behavior-preserving by construction and a row that does move
+is a decision with a reason attached.
+
 **A command reaches the document through two different calls,
 and which one it picks is the rebuild signal.** `ConsoleEffects`
 hands out `document()` (shared) and `document_mut()`

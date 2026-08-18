@@ -739,8 +739,10 @@ mod tests {
     /// `section=` is an index into the selected node's sections, so
     /// its popup must be those indices. It offered `SIZE_PRESETS`
     /// instead — the vocabulary of `size=`, a different key of the
-    /// same verb — because the value-side arm matched the whole
-    /// `KEYS` list and knew only one list to answer with.
+    /// same verb — because the hand-written value-side arm matched
+    /// the verb's whole key list and knew only one list to answer
+    /// with. Each key declares its own vocabulary now, and this
+    /// pins both halves of the pair the defect confused.
     #[test]
     fn test_font_section_value_completion_offers_section_indices() {
         let (mut doc, id) = crate::application::document::tests_common::pinned_two_section_node();

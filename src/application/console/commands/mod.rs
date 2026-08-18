@@ -10,23 +10,25 @@
 //!
 //! # Casing
 //!
-//! One rule, and it is the one every completer already assumes:
+//! One rule, and the engine is now the one place that applies it:
 //!
 //! - **Command names, aliases and positional subverbs are matched
 //!   case-insensitively.** `mode DEFAULT`, `font SET Norse` and
-//!   `border PRESET heavy` all run. Every subverb popup filters
-//!   its partial case-insensitively and inserts the canonical
-//!   spelling, so this is what the popup has always promised; five
-//!   verbs honored it and the rest did not, which meant a word the
+//!   `border PRESET heavy` all run. The grammar descent lowercases
+//!   once and the popup filters its partial the same way, so the
+//!   two cannot disagree; before the declaration, five verbs
+//!   honored the rule and the rest did not, which meant a word the
 //!   popup listed could still be refused when typed out in full.
 //! - **Kv *keys* are exact.** `border TOP=x` is `unknown key
-//!   'TOP'`, and `kv_key_completions` filters case-sensitively to
+//!   'TOP'`, and the engine's key rows filter case-sensitively to
 //!   say so. A key is a field name, not a word the user picks.
-//! - **Kv *values* belong to the key's own parser.** Most are
-//!   case-insensitive (`preset=HEAVY`, `color=ACCENT`,
-//!   `side=TOP`); a palette name is stored verbatim and compared
-//!   as written. Each value completer matches the way its parser
-//!   does, and the oracle corpus pins the pair.
+//! - **Kv *values* belong to the key's own parser.** A closed
+//!   vocabulary is matched case-insensitively (`preset=HEAVY`,
+//!   `color=ACCENT`, `side=TOP`); a document-derived one is
+//!   matched the way its own rows are found, which is how a
+//!   palette name is stored verbatim and still found by
+//!   `palette=CO`. One flag survives outside the rule —
+//!   `mutation list --all` is a slot *value*, not a subverb (#135).
 //!
 //! What makes the first bullet checkable rather than aspirational
 //! is `console::tests::oracle_corpus`: every verb whose subverb
@@ -38,7 +40,7 @@
 //!
 //! # Usage, tags and completion come from the grammar
 //!
-//! A migrated verb declares one [`crate::application::console::spec::Grammar`]
+//! A verb declares one [`crate::application::console::spec::Grammar`]
 //! and nothing else: [`Command::usage_forms`], [`Command::key_lines`],
 //! [`Command::tag_list`] and [`Command::completions`] are all derived
 //! from it, and the kv parse loop reads it too. Adding a key is one
@@ -49,15 +51,15 @@
 //! `Command` used to carry `usage` and `tags` as `&'static str`
 //! literals that `help` printed verbatim while nothing derived them
 //! from the verb's key list, so the three declarations could
-//! disagree: a key added to a verb's `KEYS` was offered by the popup
-//! on the next keystroke and stayed absent from `help <verb>` until
-//! somebody wrote it in by hand. `font` and `color` each carried
+//! disagree: a key added to a verb's key list was offered by the
+//! popup on the next keystroke and stayed absent from `help <verb>`
+//! until somebody wrote it in by hand. `font` and `color` each carried
 //! that drift for `range=` — parseable, named in the verb's own
 //! rejection, and documented nowhere. The two per-verb assertions
 //! that closed those *instances* were themselves per-verb copies of
-//! a check; `spec::tests` holds the invariant over every declared
-//! level instead, in both directions — a form naming a key its level
-//! does not declare, and a key no form prints.
+//! a check; `console::spec`'s own tests hold the invariant over every
+//! declared level instead, in both directions — a form naming a key
+//! its level does not declare, and a key no form prints.
 //!
 //! There is no second way to declare a verb. [`Command`] has no
 //! `usage`, no `tags` and no `complete` field for a grammar to
