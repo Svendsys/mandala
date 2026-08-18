@@ -54,6 +54,14 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "border padding 4"),
     (Sel::Node, "border padding abc"),
     (Sel::Node, "border padding"),
+    // The `(composed, staged)` shape of the extra-positional
+    // rejection — the one the whole border family reaches, and the
+    // one no corpus row covered while a doc comment in
+    // `spec/tests.rs` asserted that two of them did. The sentence
+    // changed here in the migration's first commit with nothing
+    // pinning it; it is pinned now, on two surfaces, so the level
+    // it is built from is visible in the diff.
+    (Sel::Node, "border padding 12 50"),
     (Sel::Node, "border palette off"),
     (Sel::Node, "border palette"),
     (Sel::Node, "border font off"),
@@ -152,6 +160,10 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "canvas border bogus=1"),
     (Sel::Node, "canvas border preset=heavy"),
     (Sel::Node, "canvas border padding abc"),
+    // The same shape one level down: the suggestion names `canvas
+    // border`, not `border`, because it is read off the level the
+    // rejection printed from.
+    (Sel::Node, "canvas border padding 12 50"),
     (Sel::Node, "canvas border side top reset"),
     (Sel::Node, "canvas border corner tl reset"),
     (Sel::Node, "canvas border corner nope x"),
@@ -311,6 +323,13 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Section, "section resize w=40 h=20"),
     (Sel::Section, "section resize"),
     (Sel::Section, "section resize bogus=1"),
+    // `resize` declares two forms — the `fill` literal and the
+    // `w=`/`h=` pair — and the engine reads the *union* of a
+    // subverb's forms, so the kvs are accepted here and then
+    // dropped by a handler that returns on `fill` before it looks
+    // at them. Pinned as the defect it is; corrected in the commit
+    // that narrows the kv check to the forms the positionals admit.
+    (Sel::Section, "section resize fill w=99 h=99"),
     (Sel::Section, "section text hi"),
     (Sel::Section, "section text hi runs=clear"),
     (Sel::Section, "section text hi runs=nope"),
@@ -532,6 +551,10 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::TwoSectionNode, "section m"),
     (Sel::TwoSectionNode, "section move "),
     (Sel::TwoSectionNode, "section resize "),
+    // The popup half of the same defect: `fill` is behind the
+    // cursor, so the only form still in play is the one that reads
+    // `section=` alone — and the two size keys are offered anyway.
+    (Sel::TwoSectionNode, "section resize fill "),
     (Sel::TwoSectionNode, "section text "),
     (Sel::TwoSectionNode, "section add "),
     (Sel::TwoSectionNode, "section split "),

@@ -291,10 +291,19 @@ fn test_a_gated_subverb_sits_at_a_level_that_has_keys() {
 /// no-suggestion row then ends `'x'..` (which is what `open` really
 /// printed) and the preview-only row opens on `or`.
 ///
-/// Negative control for the two live shapes: they are the exact
-/// bytes `EXEC_CORPUS` pins for `border padding 12 50` and for
-/// `anchor sideways`, so a rewording that satisfies this test
-/// silently would still have to move a pinned row.
+/// Three of the four arms are reachable from the real registry, and
+/// `EXEC_CORPUS` pins one line through each: `border padding 12 50`
+/// and `canvas border padding 12 50` through `(composed, staged)`,
+/// `anchor sideways` through `(composed, bare)`, and
+/// `open a.mindmap.json b.mindmap.json` through `(neither)`. The
+/// levels differ, so the bytes do — what those rows hold is the arm,
+/// which is why a reword that satisfied this test by editing one
+/// `match` arm would still move a pinned row.
+///
+/// The fourth arm — `preview` beside a bare form that reads no keys
+/// — is declared by no level today, so the synthetic `PREVIEW_ONLY`
+/// grammar below is the only thing that pins its wording. That is
+/// the arm this test exists for; the other three it merely seconds.
 #[test]
 fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
     use super::usage::extra_positional_message;
@@ -347,5 +356,31 @@ fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
     assert_eq!(
         extra_positional_message(&NEITHER, "neither", "50"),
         "neither: unexpected extra positional '50'."
+    );
+
+    // Hold the doc comment's division of labor against the real
+    // registry rather than trusting it. Three arms are seconded by a
+    // pinned corpus row *because* a level reaches them; the fourth
+    // is pinned here alone *because* none does. A level that grows a
+    // `preview` subverb beside a bare form reading no keys flips
+    // that, and this is what says so — at which point the arm wants
+    // a corpus row and this comment wants a rewrite.
+    let mut reached = [false; 4];
+    for (_, grammar) in all_levels() {
+        let composed = grammar
+            .bare
+            .as_ref()
+            .is_some_and(|b| !b.readable_keys().is_empty());
+        let staged = grammar.subverb("preview").is_some();
+        reached[usize::from(composed) * 2 + usize::from(staged)] = true;
+    }
+    assert!(
+        reached[3] && reached[2] && reached[0],
+        "the three arms `EXEC_CORPUS` seconds must each be reachable: {reached:?}"
+    );
+    assert!(
+        !reached[1],
+        "a level now declares `preview` beside a bare form that reads no keys, so the \
+         `(false, true)` arm is reachable and owes a pinned corpus row of its own"
     );
 }
