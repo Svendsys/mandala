@@ -29,7 +29,7 @@ fn render_vocabulary(vocab: &Vocabulary) -> String {
             _ => format!("<{}>", words.iter().map(|w| w.name).collect::<Vec<_>>().join("|")),
         },
         Vocabulary::FreeWords { placeholder, words }
-        | Vocabulary::FromDoc {
+        | Vocabulary::Rows {
             placeholder,
             sentinels: words,
             ..
@@ -306,9 +306,17 @@ pub fn unknown_subverb_message(grammar: &'static Grammar, typed: &str) -> String
     )
 }
 
-/// The listing a level prints when it was handed nothing it can act
-/// on.
+/// What a level prints when it was handed nothing it can act on.
+///
+/// A level with subverbs answers with the grouped listing, because
+/// "which words are there" is the question a user who typed the bare
+/// verb is asking. A level with none — `anchor`, `body`, `spacing` —
+/// has no groups to list, so it prints its forms instead, which is
+/// the one-line usage those verbs have always shown.
 pub fn no_arguments_message(grammar: &'static Grammar) -> String {
+    if grammar.subverbs().next().is_none() {
+        return format!("usage: {}", forms(grammar).join(" | "));
+    }
     listing(grammar, &format!("usage: {}", grammar.label))
 }
 

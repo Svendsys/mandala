@@ -16,41 +16,55 @@
 
 use super::Command;
 use crate::application::common::FpsDisplayMode;
-use crate::application::console::completion::{
-    prefix_filter, Completion, CompletionContext, CompletionState,
-};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::{kvs, usage, Grammar, Subverb};
+use crate::application::console::{ConsoleEffects, ExecResult};
+
+const SUBVERBS: &[Subverb] = &[
+    Subverb::bare("on", "overlay", "show the one-line FPS snapshot"),
+    Subverb::bare("off", "overlay", "hide the readout"),
+    Subverb::bare("debug", "overlay", "show the rolling per-frame average"),
+];
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "fps",
+    subverb_sets: &[SUBVERBS],
+    key_sets: &[],
+    bare: None,
+};
 
 pub const COMMAND: Command = Command {
     name: "fps",
     aliases: &[],
     summary: "Toggle the FPS overlay (on | off | debug)",
-    usage: "fps on | fps off | fps debug",
-    tags: &["fps", "debug", "overlay", "hud", "perf"],
     applicable: always,
-    grammar: None,
-    synonyms: &[],
-    complete: Some(complete_fps),
+    grammar: &GRAMMAR,
+    synonyms: &["overlay", "hud", "perf"],
     execute: execute_fps,
 };
 
-fn complete_fps(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    match &state.context {
-        CompletionContext::Token { index: 0 } => prefix_filter(&["on", "off", "debug"], state.partial),
-        _ => Vec::new(),
-    }
-}
-
 fn execute_fps(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // Subverb names are case-insensitive console-wide — see
-    // `commands/mod.rs` § Casing.
-    let mode = match args.positional(0).map(str::to_ascii_lowercase).as_deref() {
-        Some("on") => FpsDisplayMode::Snapshot,
-        Some("off") => FpsDisplayMode::Off,
-        Some("debug") => FpsDisplayMode::Debug,
-        _ => return ExecResult::err("usage: fps on | fps off | fps debug"),
+    // The descent matches subverb names case-insensitively,
+    // console-wide — see `commands/mod.rs` § Casing.
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
+    let mode = match descent.stop {
+        Stop::Matched(subverb) => match subverb.name {
+            "on" => FpsDisplayMode::Snapshot,
+            "off" => FpsDisplayMode::Off,
+            _ => FpsDisplayMode::Debug,
+        },
+        Stop::Bare => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
+        _ => {
+            return ExecResult::err(usage::unknown_subverb_message(
+                descent.level,
+                descent.typed.unwrap_or_default(),
+            ))
+        }
     };
     eff.side_effect = Some(super::super::ConsoleSideEffect::SetFpsDisplay(mode));
     eff.close_console = true;
@@ -128,7 +142,9 @@ mod tests {
     fn test_fps_without_a_recognized_subverb_reports_usage() {
         for args in [&[][..], &["onn"][..], &["sideways"][..], &[""][..]] {
             let (result, side, close) = run_fps(args);
-            assert_exec_err_contains(result, "usage: fps on | fps off | fps debug");
+            // The listing is derived from the declaration, so the
+            // three words it names are the three the verb accepts.
+            assert_exec_err_contains(result, "overlay: on | off | debug");
             assert!(side.is_none(), "`fps {args:?}` must not change the display mode");
             assert!(!close, "`fps {args:?}` must leave the console open");
         }

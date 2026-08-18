@@ -74,8 +74,6 @@ pub const COMMAND: Command = Command {
     name: "border",
     aliases: &[],
     summary: "Configure the node border (preset, font, color, custom glyphs, palette)",
-    usage: "",
-    tags: &[],
     //borders are node-only, so the verb hides on
     // edge / edge-label / portal selections in completion +
     // help. Pre-fix the predicate was `always` which surfaced
@@ -84,7 +82,7 @@ pub const COMMAND: Command = Command {
     // `section` verb's surface (every section sits inside a
     // node, so a section selection implies a node selection).
     applicable: node_or_section_selected,
-    grammar: Some(&grammar::BORDER),
+    grammar: &grammar::BORDER,
     // Every structural word — the thirteen subverbs, the sixteen
     // keys — is derived from the grammar. These are the search
     // words that are neither: the preset names a user might grep
@@ -92,6 +90,5 @@ pub const COMMAND: Command = Command {
     synonyms: &[
         "frame", "glyph", "pattern", "rounded", "heavy", "double", "light", "custom",
     ],
-    complete: None,
     execute: execute_border,
 };

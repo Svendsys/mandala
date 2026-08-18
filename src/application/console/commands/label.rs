@@ -13,65 +13,84 @@
 use baumhard::util::geometry::pretty_inequal;
 
 use super::Command;
-use crate::application::console::completion::{
-    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
-};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
+use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::{
+    bare_words, free, kvs, usage, Bare, Form, Grammar, Key, Subverb, Vocabulary, Word,
+};
 use crate::application::console::traits::{apply_kvs, HasLabel};
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SelectionState};
 
-pub const VERBS: &[&str] = &["edit", "clear"];
-pub const KEYS: &[&str] = &["text", "position", "position_t", "perpendicular"];
 pub const POSITIONS: &[&str] = &["start", "middle", "end"];
+const POSITION_WORDS: &[Word] = &bare_words::<3>(POSITIONS);
+
+const KEYS: &[Key] = &[
+    Key::new("text", "label text (quote multi-word values)", free("text")),
+    Key::new(
+        "position",
+        "anchor the label at the start, middle or end of the edge",
+        Vocabulary::Words(POSITION_WORDS),
+    ),
+    Key::new(
+        "position_t",
+        "fractional position along the edge, 0.0 … 1.0",
+        free("f32"),
+    ),
+    Key::new(
+        "perpendicular",
+        "offset away from the edge, in canvas units",
+        free("f32"),
+    ),
+];
+
+const SUBVERBS: &[Subverb] = &[
+    Subverb::bare("edit", "editor", "open the inline single-line editor"),
+    Subverb::bare("clear", "reset", "drop the label text"),
+];
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "label",
+    subverb_sets: &[SUBVERBS],
+    key_sets: &[KEYS],
+    bare: Some(Bare::new(
+        "composed",
+        &[Form::opt(&["text", "position", "position_t", "perpendicular"])],
+    )),
+};
 
 pub const COMMAND: Command = Command {
     name: "label",
     aliases: &[],
     summary: "Edit, clear, reposition, or offset the selected edge's label",
-    usage: "label text=\"<text>\" [position=<start|middle|end>] [position_t=<f32>] [perpendicular=<f32>]   |   label edit   |   label clear",
-    tags: &[
-        "edge", "label", "text", "position", "position_t",
-        "perpendicular", "offset", "drag", "clear", "edit",
-    ],
     applicable: edge_or_portal_label_selected,
-    grammar: None,
-    synonyms: &[],
-    complete: Some(complete_label),
+    grammar: &GRAMMAR,
+    synonyms: &["edge", "offset", "drag"],
     execute: execute_label,
 };
 
-fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    match &state.context {
-        CompletionContext::Token { index: 0 } => {
-            // Position 0: either a verb (`edit`, `clear`) or a kv key.
-            let mut out = prefix_filter(VERBS, state.partial);
-            for k in KEYS {
-                if k.starts_with(state.partial) {
-                    out.push(Completion {
-                        text: format!("{}=", k),
-                        display: format!("{}=", k),
-                        hint: None,
-                        font_family: None,
-                    });
-                }
-            }
-            out
-        }
-        CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
-        CompletionContext::KvValue { key } if key == "position" => prefix_filter(POSITIONS, state.partial),
-        _ => Vec::new(),
-    }
-}
-
 fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // Positional verbs: `edit`, `clear`. These sit *alongside* the
-    // kv surface — `label edit` with no kvs hands off to the modal;
-    // `label clear` empties the label. Case-insensitive
-    // console-wide — see `commands/mod.rs` § Casing.
-    let verb = args.positional(0);
-    match verb.map(str::to_ascii_lowercase).as_deref() {
+    // Positional subverbs: `edit`, `clear`. These sit *alongside*
+    // the kv surface — `label edit` with no kvs hands off to the
+    // modal; `label clear` empties the label. The descent matches
+    // them case-insensitively, console-wide
+    // (`commands/mod.rs` § Casing).
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
+    let name = match descent.stop {
+        Stop::Matched(subverb) => Some(subverb.name),
+        Stop::Bare => None,
+        _ => {
+            return ExecResult::err(usage::unknown_subverb_message(
+                descent.level,
+                descent.typed.unwrap_or_default(),
+            ))
+        }
+    };
+    match name {
         Some("edit") => {
             // `label edit` opens the inline editor. Dispatches
             // to the edge label editor for `Edge` selections and
@@ -117,13 +136,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             _ => return ExecResult::err("no edge selected"),
         },
-        Some(_) => {
-            return ExecResult::err(format!(
-                "unknown label verb '{}'; use kv form (text=... position=...) or 'edit' / 'clear'",
-                verb.unwrap_or_default()
-            ))
-        }
-        None => {}
+        _ => {}
     }
 
     let kvs: Vec<(String, String)> = args.kvs().map(|(k, v)| (k.to_string(), v.to_string())).collect();

@@ -34,56 +34,65 @@ use super::Command;
 #[cfg(test)]
 use crate::application::app::ResizeTarget;
 use crate::application::app::{resolve_resize_target, InteractionMode, ResizeTargetError};
-use crate::application::console::completion::{
-    prefix_filter, Completion, CompletionContext, CompletionState,
-};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::{ConsoleContext, ConsoleEffects, ConsoleSideEffect, ExecResult};
+use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::{kvs, usage, Grammar, Subverb};
+use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ExecResult};
 use crate::application::document::SelectionState;
 
-const VERBS: &[&str] = &["default", "resize", "node-edit"];
+const SUBVERBS: &[Subverb] = &[
+    Subverb::bare("default", "modes", "leave the current mode and return to Default"),
+    Subverb::bare("resize", "modes", "enter Resize on the current selection"),
+    Subverb::bare(
+        "node-edit",
+        "modes",
+        "enter NodeEdit on the selection's owning node",
+    ),
+];
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "mode",
+    subverb_sets: &[SUBVERBS],
+    key_sets: &[],
+    bare: None,
+};
 
 pub const COMMAND: Command = Command {
     name: "mode",
     aliases: &[],
     summary: "Change the active interaction mode (default / resize / node-edit)",
-    usage: "mode default | mode resize | mode node-edit",
-    tags: &[
-        "mode",
-        "resize",
-        "interaction",
-        "default",
-        "exit",
-        "node-edit",
-        "edit",
-    ],
     applicable: always,
-    grammar: None,
-    synonyms: &[],
-    complete: Some(complete_mode),
+    grammar: &GRAMMAR,
+    synonyms: &["interaction", "exit", "edit"],
     execute: execute_mode,
 };
 
-fn complete_mode(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    match &state.context {
-        CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
-        _ => Vec::new(),
-    }
-}
-
 fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // Subverb names are case-insensitive console-wide — see
-    // `commands/mod.rs` § Casing. The unknown-subverb arm still
-    // echoes what the user typed, not the normalized form.
-    let verb = args.positional(0);
-    match verb.map(str::to_ascii_lowercase).as_deref() {
-        Some("default") => {
+    // Subverb names are matched case-insensitively by the descent,
+    // console-wide (`commands/mod.rs` § Casing); the unknown-subverb
+    // message still echoes what the user typed.
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
+    let name = match descent.stop {
+        Stop::Matched(subverb) => subverb.name,
+        Stop::Bare => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
+        _ => {
+            return ExecResult::err(usage::unknown_subverb_message(
+                descent.level,
+                descent.typed.unwrap_or_default(),
+            ))
+        }
+    };
+    match name {
+        "default" => {
             eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Default));
             eff.close_console = true;
             ExecResult::ok_msg("mode: returning to Default")
         }
-        Some("resize") => match resolve_resize_target(&eff.document().selection, &eff.document().mindmap) {
+        "resize" => match resolve_resize_target(&eff.document().selection, &eff.document().mindmap) {
             Ok(target) => {
                 eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
                     target,
@@ -93,7 +102,7 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             Err(e) => ExecResult::err(format_resize_error(&e)),
         },
-        Some("node-edit") => match resolve_node_edit_target(&eff.document().selection) {
+        _ => match resolve_node_edit_target(&eff.document().selection) {
             Ok(node_id) => {
                 eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::NodeEdit {
                     node_id: node_id.clone(),
@@ -103,11 +112,6 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             Err(msg) => ExecResult::err(msg),
         },
-        Some(_) => ExecResult::err(format!(
-            "mode: unknown subverb '{}'; use 'default', 'resize', or 'node-edit'",
-            verb.unwrap_or_default()
-        )),
-        None => ExecResult::err("usage: mode default | mode resize | mode node-edit"),
     }
 }
 

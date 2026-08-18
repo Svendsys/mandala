@@ -202,7 +202,7 @@ pub fn vocabulary_rows(vocab: &Vocabulary, ctx: &ConsoleContext, partial: &str) 
     match vocab {
         Vocabulary::Free { .. } => Vec::new(),
         Vocabulary::Words(words) | Vocabulary::FreeWords { words, .. } => word_rows(words, partial),
-        Vocabulary::FromDoc { rows, sentinels, .. } => {
+        Vocabulary::Rows { rows, sentinels, .. } => {
             let mut out = rows(ctx, partial);
             out.extend(word_rows(sentinels, partial));
             out

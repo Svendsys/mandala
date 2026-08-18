@@ -46,7 +46,7 @@
 //! makes it parseable.
 //!
 //! That replaces a genuine defect rather than a stylistic one.
-//! [`Command::usage`] and [`Command::tags`] were `&'static str`
+//! `Command` used to carry `usage` and `tags` as `&'static str`
 //! literals that `help` printed verbatim while nothing derived them
 //! from the verb's key list, so the three declarations could
 //! disagree: a key added to a verb's `KEYS` was offered by the popup
@@ -59,12 +59,12 @@
 //! level instead, in both directions — a form naming a key its level
 //! does not declare, and a key no form prints.
 //!
-//! **Migration in flight.** [`Command::grammar`] is an `Option` and
-//! the three literal fields are still read where it is `None`. That
-//! is the length of one branch, not a supported state: a framework
-//! with two adopters leaves two grammars in the tree, which is worse
-//! than the one hand-rolled grammar it replaces, so the branch that
-//! introduces the engine migrates every verb before it merges.
+//! There is no second way to declare a verb. [`Command`] has no
+//! `usage`, no `tags` and no `complete` field for a grammar to
+//! disagree with — a framework with two adopters would leave two
+//! grammars in the tree, which is worse than the one hand-rolled
+//! grammar it replaced, so every verb reads the engine or none
+//! would.
 
 use super::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::console::completion::{Completion, CompletionState};
@@ -103,30 +103,11 @@ pub struct Command {
     pub aliases: &'static [&'static str],
     /// One-line summary shown in `help` with no args.
     pub summary: &'static str,
-    /// Full usage line shown in `help <cmd>`. Conventionally starts
-    /// with the command name: `"anchor set <from|to> <side>"`.
-    ///
-    /// Read only while [`Self::grammar`] is `None`. A migrated verb
-    /// derives its usage from the grammar, which is what makes a
-    /// key added to the table documented by the same edit.
-    pub usage: &'static str,
-    /// Extra search tokens printed by `help <cmd>` so a user
-    /// grepping the command list can find "pick" under `color`
-    /// even though the name doesn't include it. Read only while
-    /// [`Self::grammar`] is `None`; a migrated verb derives its
-    /// tags from the grammar and declares only [`Self::synonyms`].
-    pub tags: &'static [&'static str],
-    /// The verb's declarative grammar (`console::spec`). `Some`
-    /// once the verb is migrated, and then the single source of its
-    /// usage forms, its tags, its completion popup, its kv parse
-    /// loop and its hint surface.
-    ///
-    /// `Option` only for the length of the migration: the branch
-    /// that introduces the engine migrates every verb, because a
-    /// framework with two adopters leaves two grammars in the tree
-    /// and that is worse than the one hand-rolled grammar it
-    /// replaces.
-    pub grammar: Option<&'static Grammar>,
+    /// The verb's declarative grammar (`console::spec`) — the
+    /// single source of its usage forms, its `keys:` block, its
+    /// tags, its completion popup, its kv parse loop and its hint
+    /// surface.
+    pub grammar: &'static Grammar,
     /// Search words the grammar does not contain — `wheel` under
     /// `color`, `lod` under `zoom`. Every structural word (subverb
     /// names, kv keys) is derived; this is only what is neither.
@@ -136,15 +117,6 @@ pub struct Command {
     /// context-specific but whose verb is always meaningful should
     /// return `true` here and validate in `execute`.
     pub applicable: fn(&ConsoleContext) -> bool,
-    /// Build completion candidates for the token currently under the
-    /// cursor. Return an empty `Vec` when the command can't offer
-    /// any useful completion for that position.
-    ///
-    /// Read only while [`Self::grammar`] is `None`. A migrated verb
-    /// has no hand-written completer at all — the engine's one walk
-    /// answers every slot, which is what stops a verb's completion
-    /// copy of its grammar from drifting away from its execute copy.
-    pub complete: Option<fn(&CompletionState, &ConsoleContext) -> Vec<Completion>>,
     /// Run the command. The dispatcher clears the scene cache and
     /// rebuilds after every non-`Err` result.
     pub execute: fn(&Args, &mut ConsoleEffects) -> ExecResult,
@@ -153,41 +125,24 @@ pub struct Command {
 impl Command {
     /// The usage lines `help <cmd>` prints, one per form.
     pub fn usage_forms(&self) -> Vec<String> {
-        match self.grammar {
-            Some(grammar) => spec::usage::forms(grammar),
-            None => help::split_usage_forms(self.usage)
-                .into_iter()
-                .map(|s| s.trim().to_string())
-                .collect(),
-        }
+        spec::usage::forms(self.grammar)
     }
 
     /// One line per kv key the verb declares, printed by
-    /// `help <cmd>` under a `keys:` block. Empty for a verb whose
-    /// grammar has not been declared yet, and for one that has no
-    /// keys.
+    /// `help <cmd>` under a `keys:` block. Empty for a verb that
+    /// declares no keys.
     pub fn key_lines(&self) -> Vec<String> {
-        match self.grammar {
-            Some(grammar) => spec::usage::key_lines(grammar),
-            None => Vec::new(),
-        }
+        spec::usage::key_lines(self.grammar)
     }
 
     /// The search words `help <cmd>` publishes.
     pub fn tag_list(&self) -> Vec<&'static str> {
-        match self.grammar {
-            Some(grammar) => spec::usage::tags(grammar, self.synonyms),
-            None => self.tags.to_vec(),
-        }
+        spec::usage::tags(self.grammar, self.synonyms)
     }
 
     /// The completion popup for one cursor position.
     pub fn completions(&self, state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-        match (self.grammar, self.complete) {
-            (Some(grammar), _) => spec::complete::completions(grammar, state, ctx),
-            (None, Some(complete)) => complete(state, ctx),
-            (None, None) => Vec::new(),
-        }
+        spec::complete::completions(self.grammar, state, ctx)
     }
 }
 

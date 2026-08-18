@@ -8,35 +8,40 @@
 //! swaps the app's document, drops the cached `mindmap_tree`, and
 //! clears any open modal-editor state.
 
-use crate::application::console::completion::{Completion, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::spec::descent::descend;
+use crate::application::console::spec::{free, kvs, usage, Bare, Form, Grammar, Slot};
+use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::MindMapDocument;
 
 use super::Command;
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "open",
+    subverb_sets: &[],
+    key_sets: &[],
+    bare: Some(Bare::new("file", &[Form::slots(&[Slot::req(free("path"))])])),
+};
 
 pub const COMMAND: Command = Command {
     name: "open",
     aliases: &[],
     summary: "Open a mindmap file, replacing the current one",
-    usage: "open <path>",
-    tags: &["open", "load", "file"],
     applicable: always,
-    grammar: None,
-    synonyms: &[],
-    complete: Some(complete_open),
+    grammar: &GRAMMAR,
+    synonyms: &["load", "file"],
     execute: execute_open,
 };
 
-fn complete_open(_state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    Vec::new()
-}
-
 fn execute_open(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
     let path = match args.positional(0) {
         Some(p) => p.to_string(),
-        None => return ExecResult::err("usage: open <path>"),
+        None => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
     };
     if eff.document().dirty {
         return ExecResult::err("unsaved changes; save before opening another map");

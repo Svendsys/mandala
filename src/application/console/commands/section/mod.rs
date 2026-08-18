@@ -55,8 +55,6 @@ pub const COMMAND: Command = Command {
     name: "section",
     aliases: &[],
     summary: "Inspect, move, resize, edit text, or structurally modify a section (add / delete / split)",
-    usage: "",
-    tags: &[],
     // Stricter than `border` — section subverbs need a single
     // node target (or section), so `Multi(_)` is excluded. Pre-
     // fix the shared predicate admitted Multi but the section
@@ -64,14 +62,13 @@ pub const COMMAND: Command = Command {
     // reintroducing the UX-vs-runtime mismatch Critical #5 was
     // meant to fix.
     applicable: node_or_section_selected_single_node,
-    grammar: Some(&grammar::SECTION),
+    grammar: &grammar::SECTION,
     // Every subverb and key is derived. `info`, `offset`, `size`,
     // `border` and `preset` are the words a user greps for that the
     // grammar does not contain — the last two reach the `frame`
     // subject's vocabulary, which lives one level down under
     // `border`'s own declaration.
     synonyms: &["info", "offset", "size", "border", "preset", "glyph"],
-    complete: None,
     execute: execute_section,
 };
 

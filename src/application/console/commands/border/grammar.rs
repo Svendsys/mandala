@@ -19,7 +19,9 @@
 use baumhard::mindmap::border::BORDER_PRESET_ROWS;
 
 use crate::application::console::completion::Completion;
-use crate::application::console::spec::{free, free_words, Bare, Form, Grammar, Key, Slot, Subverb, Word};
+use crate::application::console::spec::{
+    bare_words, free, free_words, Bare, Form, Grammar, Key, Slot, Subverb, Word,
+};
 use crate::application::console::spec::{Vocabulary, Word as W};
 use crate::application::console::ConsoleContext;
 
@@ -47,24 +49,6 @@ pub(crate) const PRESET_WORDS: &[Word] = &{
     out[N] = Word::new("cycle", "advance to the next preset (wraps)");
     out
 };
-
-/// Lift a plain name list into a hint-less vocabulary at const-fn
-/// time.
-///
-/// A closed vocabulary of bare enum values is its own explanation —
-/// `top` needs no sentence beside it — so the `&[&str]` list stays
-/// the source and the `&[Word]` the engine reads derives from it.
-/// That keeps the name list a verb's parser validates against and
-/// the word list its popup offers from ever being two declarations.
-const fn bare_words<const N: usize>(names: &'static [&'static str]) -> [Word; N] {
-    let mut out = [Word::bare(""); N];
-    let mut i = 0;
-    while i < N {
-        out[i] = Word::bare(names[i]);
-        i += 1;
-    }
-    out
-}
 
 /// The four sides plus the `all` fan-out selector.
 pub(crate) const SIDE_VALUES: &[&str] = &["top", "bottom", "left", "right", "all"];
@@ -131,13 +115,13 @@ fn font_rows(_ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
     super::super::font::font_family_completions(partial)
 }
 
-const PALETTE_VOCAB: Vocabulary = Vocabulary::FromDoc {
+const PALETTE_VOCAB: Vocabulary = Vocabulary::Rows {
     placeholder: "name",
     rows: palette_rows,
     sentinels: OFF_PALETTE,
 };
 
-const FONT_VOCAB: Vocabulary = Vocabulary::FromDoc {
+const FONT_VOCAB: Vocabulary = Vocabulary::Rows {
     placeholder: "family",
     rows: font_rows,
     sentinels: OFF_FONT,

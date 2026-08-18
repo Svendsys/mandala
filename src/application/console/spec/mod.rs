@@ -118,10 +118,18 @@ pub enum Vocabulary {
         placeholder: &'static str,
         words: &'static [Word],
     },
-    /// Rows derived from the live document: the palettes a map
-    /// declares, the sections a node has, the families the host
-    /// loaded. `sentinels` are the fixed words offered beside them.
-    FromDoc {
+    /// Rows a function produces, plus the fixed `sentinels` offered
+    /// beside them.
+    ///
+    /// Two kinds of vocabulary need this. One is genuinely derived
+    /// from the live document — the palettes a map declares, the
+    /// sections a node has, the families the host loaded. The other
+    /// is a *suggestion* list too long or too open-ended to belong
+    /// in a usage line: `zoom min=` offers eight zoom levels and
+    /// accepts any positive float, so the popup wants the eight and
+    /// the usage line wants `<zoom|unset>`. Only the sentinels are
+    /// printed, which is what keeps the two honest at once.
+    Rows {
         placeholder: &'static str,
         rows: fn(&ConsoleContext, &str) -> Vec<Completion>,
         sentinels: &'static [Word],
@@ -165,6 +173,24 @@ pub const fn free(placeholder: &'static str) -> Vocabulary {
 /// A free-form vocabulary with named sentinels beside it.
 pub const fn free_words(placeholder: &'static str, words: &'static [Word]) -> Vocabulary {
     Vocabulary::FreeWords { placeholder, words }
+}
+
+/// Lift a plain name list into a hint-less vocabulary at const-fn
+/// time.
+///
+/// A closed vocabulary of bare enum values is its own explanation —
+/// `top` needs no sentence beside it — so the `&[&str]` list a
+/// verb's parser validates against stays the source and the
+/// `&[Word]` the engine reads derives from it. One declaration, two
+/// readers.
+pub const fn bare_words<const N: usize>(names: &'static [&'static str]) -> [Word; N] {
+    let mut out = [Word::bare(""); N];
+    let mut i = 0;
+    while i < N {
+        out[i] = Word::bare(names[i]);
+        i += 1;
+    }
+    out
 }
 
 /// One `key=value` the level accepts.

@@ -15,31 +15,37 @@ use std::path::Path;
 use baumhard::mindmap::loader;
 
 use super::Command;
-use crate::application::console::completion::{Completion, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::spec::descent::descend;
+use crate::application::console::spec::{free, kvs, Bare, Form, Grammar, Slot};
+use crate::application::console::{ConsoleEffects, ExecResult};
+
+/// The path slot offers no rows: paths are free-form and the console
+/// does not (yet) shell out to a filesystem walker. Declaring it is
+/// still what puts `save [<path>]` in `help save`.
+pub static GRAMMAR: Grammar = Grammar {
+    label: "save",
+    subverb_sets: &[],
+    key_sets: &[],
+    bare: Some(Bare::new("file", &[Form::slots(&[Slot::opt(free("path"))])])),
+};
 
 pub const COMMAND: Command = Command {
     name: "save",
     aliases: &[],
     summary: "Save the current mindmap to disk",
-    usage: "save [path]",
-    tags: &["save", "write", "persist", "file"],
     applicable: always,
-    grammar: None,
-    synonyms: &[],
-    complete: Some(complete_save),
+    grammar: &GRAMMAR,
+    synonyms: &["write", "persist", "file"],
     execute: execute_save,
 };
 
-fn complete_save(_state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    // No completions — paths are free-form and the console doesn't
-    // (yet) shell out to a filesystem walker.
-    Vec::new()
-}
-
 fn execute_save(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let descent = descend(&GRAMMAR, args.tokens());
+    if let Err(msg) = kvs::read_strict(&descent, args) {
+        return ExecResult::err(msg);
+    }
     let target_path: String = match args.positional(0) {
         Some(p) => p.to_string(),
         None => match &eff.document().file_path {

@@ -81,7 +81,7 @@ pub fn read_strict<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>
 
 /// Fetch one key's value from an already-read pair list. `None`
 /// when the key was not on the line; the **last** occurrence wins,
-/// matching [`Args::kv`]'s "last one sticks" shell intuition.
+/// which is the shell intuition a repeated key carries.
 pub fn value<'a>(pairs: &[Pair<'a>], name: &str) -> Option<&'a str> {
     pairs.iter().rfind(|p| p.key.name == name).map(|p| p.value)
 }

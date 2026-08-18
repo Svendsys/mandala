@@ -23,17 +23,15 @@
 //! on this command.
 
 use super::Command;
-use crate::application::console::completion::{
-    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
-};
 use crate::application::console::constants::{EDGE_TYPE_CROSS_LINK, EDGE_TYPE_PARENT_CHILD};
-use crate::application::console::helpers::{collect_kvs_or_usage, require_edge_or_portal, ApplyTally};
+use crate::application::console::helpers::{require_edge_or_portal, ApplyTally};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::spec::descent::descend;
+use crate::application::console::spec::{bare_words, kvs, usage, Bare, Form, Grammar, Key, Vocabulary, Word};
+use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::MindMapDocument;
 
-pub const KEYS: &[&str] = &["type", "reset", "display_mode"];
 pub const EDGE_TYPES: &[&str] = &[EDGE_TYPE_CROSS_LINK, EDGE_TYPE_PARENT_CHILD];
 pub const RESETS: &[&str] = &["straight", "curve", "style", "position"];
 pub const DISPLAY_MODES: &[&str] = &[
@@ -41,52 +39,57 @@ pub const DISPLAY_MODES: &[&str] = &[
     baumhard::mindmap::model::DISPLAY_MODE_PORTAL,
 ];
 
+const TYPE_WORDS: &[Word] = &bare_words::<2>(EDGE_TYPES);
+const RESET_WORDS: &[Word] = &bare_words::<4>(RESETS);
+const DISPLAY_MODE_WORDS: &[Word] = &bare_words::<2>(DISPLAY_MODES);
+
+const KEYS: &[Key] = &[
+    Key::new(
+        "type",
+        "reparent the edge or turn it into a cross link",
+        Vocabulary::Words(TYPE_WORDS),
+    ),
+    Key::new(
+        "reset",
+        "drop one aspect back to its default",
+        Vocabulary::Words(RESET_WORDS),
+    ),
+    Key::new(
+        "display_mode",
+        "draw the edge as a line or as a portal pair",
+        Vocabulary::Words(DISPLAY_MODE_WORDS),
+    ),
+];
+
+pub static GRAMMAR: Grammar = Grammar {
+    label: "edge",
+    subverb_sets: &[],
+    key_sets: &[KEYS],
+    bare: Some(Bare::new(
+        "composed",
+        &[Form::opt(&["type", "display_mode", "reset"])],
+    )),
+};
+
 pub const COMMAND: Command = Command {
     name: "edge",
     aliases: &[],
     summary: "Convert edge type, switch display mode, curve/straighten, or reset style/position",
-    usage: "edge type=<cross_link|parent_child>   |   edge display_mode=<line|portal>   |   edge reset=<straight|curve|style|position>",
-    tags: &[
-        "edge",
-        "type",
-        "reset",
-        "straight",
-        "curve",
-        "bezier",
-        "style",
-        "cross_link",
-        "parent_child",
-        "display_mode",
-        "line",
-        "link",
-    ],
     applicable: edge_or_portal_label_selected,
-    grammar: None,
-    synonyms: &[],
-    complete: Some(complete_edge),
+    grammar: &GRAMMAR,
+    synonyms: &["straight", "curve", "bezier", "style", "link"],
     execute: execute_edge,
 };
 
-fn complete_edge(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
-    match &state.context {
-        CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
-        CompletionContext::KvValue { key } if key == "type" => prefix_filter(EDGE_TYPES, state.partial),
-        CompletionContext::KvValue { key } if key == "reset" => prefix_filter(RESETS, state.partial),
-        CompletionContext::KvValue { key } if key == "display_mode" => {
-            prefix_filter(DISPLAY_MODES, state.partial)
-        }
-        _ => Vec::new(),
-    }
-}
-
 fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let kvs = match collect_kvs_or_usage(
-        args,
-        "usage: edge type=<...>   |   edge display_mode=<...>   |   edge reset=<straight|curve|style|position>",
-    ) {
-        Ok(k) => k,
-        Err(r) => return r,
+    let descent = descend(&GRAMMAR, args.tokens());
+    let pairs = match kvs::read_strict(&descent, args) {
+        Ok(pairs) => pairs,
+        Err(msg) => return ExecResult::err(msg),
     };
+    if pairs.is_empty() {
+        return ExecResult::err(usage::no_arguments_message(&GRAMMAR));
+    }
 
     // All kv operations target the currently-selected edge. A
     // portal-label selection resolves to its owning edge, so
@@ -108,27 +111,28 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
     let mut tally = ApplyTally::new();
 
-    for (k, v) in kvs {
-        match k.as_str() {
+    for pair in &pairs {
+        let (k, v) = (pair.key.name, pair.value);
+        match k {
             "type" => {
-                if !EDGE_TYPES.iter().any(|t| *t == v) {
+                if !EDGE_TYPES.contains(&v) {
                     tally.note_error(format!("type '{}' must be cross_link or parent_child", v));
                     continue;
                 }
                 // Route through the mutation core — same setter
                 // path the parametric `Action::SetEdgeType` arm uses.
-                let changed = apply_edge_type_to_selection(eff.document_mut(), &v);
+                let changed = apply_edge_type_to_selection(eff.document_mut(), v);
                 tally.note(changed, || format!("edge already of type {}", v));
             }
             "display_mode" => {
-                if !DISPLAY_MODES.iter().any(|m| *m == v) {
+                if !DISPLAY_MODES.contains(&v) {
                     tally.note_error(format!("display_mode '{}' must be line or portal", v));
                     continue;
                 }
-                let changed = apply_edge_display_mode_to_selection(eff.document_mut(), &v);
+                let changed = apply_edge_display_mode_to_selection(eff.document_mut(), v);
                 tally.note(changed, || format!("edge already rendering as {}", v));
             }
-            "reset" => match v.as_str() {
+            "reset" => match v {
                 kind @ ("straight" | "curve" | "style" | "position") => {
                     let changed = apply_edge_reset_to_selection(eff.document_mut(), kind);
                     let already_msg: &str = match kind {
@@ -152,7 +156,10 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     ));
                 }
             },
-            other => tally.note_error(format!("unknown key '{}'", other)),
+            // Unreachable: the engine refused every key this form
+            // does not read before the loop ran. Degrade rather
+            // than panic — this is an interactive path (§9).
+            other => log::error!("edge: engine admitted unread key '{other}'"),
         }
     }
     tally.finalize("edge")

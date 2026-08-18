@@ -34,11 +34,9 @@ fn levels(root: &'static Grammar, out: &mut Vec<&'static Grammar>) {
 fn all_levels() -> Vec<(&'static str, &'static Grammar)> {
     let mut out = Vec::new();
     for cmd in COMMANDS {
-        if let Some(grammar) = cmd.grammar {
-            let mut mine = Vec::new();
-            levels(grammar, &mut mine);
-            out.extend(mine.into_iter().map(|g| (cmd.name, g)));
-        }
+        let mut mine = Vec::new();
+        levels(cmd.grammar, &mut mine);
+        out.extend(mine.into_iter().map(|g| (cmd.name, g)));
     }
     out
 }
@@ -171,8 +169,7 @@ fn test_names_are_unique_within_a_level() {
 #[test]
 fn test_every_usage_form_leads_with_its_verb() {
     for cmd in COMMANDS {
-        let Some(grammar) = cmd.grammar else { continue };
-        for form in super::usage::forms(grammar) {
+        for form in super::usage::forms(cmd.grammar) {
             assert!(
                 form.starts_with(cmd.name),
                 "{}: usage form '{form}' does not lead with the verb name",

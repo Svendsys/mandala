@@ -131,9 +131,8 @@ impl<'b> SlotReader<'b> {
 }
 
 /// Positional token `idx` of a raw token slice — the same view
-/// [`Args::positional`] gives the execute path and
-/// [`crate::application::console::completion::CompletionState::positional`]
-/// gives the popup.
+/// [`Args::positional`] gives the execute path, and the very slots
+/// `CompletionContext::Token`'s `index` counts on the popup side.
 fn positional_at(tokens: &[String], idx: usize) -> Option<&str> {
     tokens
         .iter()

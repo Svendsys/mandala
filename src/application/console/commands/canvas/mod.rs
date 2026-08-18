@@ -50,15 +50,12 @@ pub const COMMAND: Command = Command {
     name: "canvas",
     aliases: &[],
     summary: "Edit map-wide canvas defaults (border, section frame)",
-    usage: "",
-    tags: &[],
     applicable: always,
-    grammar: Some(&grammar::CANVAS),
+    grammar: &grammar::CANVAS,
     // The subjects, the modifier, the ten subverbs and the fifteen
     // keys are all derived. `default` is the noun a user greps for
     // and the grammar does not contain.
     synonyms: &["default", "frame", "glyph"],
-    complete: None,
     execute: execute_canvas,
 };
 
