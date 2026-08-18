@@ -3326,6 +3326,19 @@ and `color section=` on the day each was written — each was
 parseable, named in its verb's own rejection, and documented
 nowhere.
 
+They also hold the *engine* against the declaration, over the
+same registry rather than a sample of it: for every form of
+every subverb at every level, the line that reaches it is built
+from the level's `label` and the form's own required slots,
+handed to the real completion engine, and checked for the keys
+that form names. Two more read the sources rather than the
+tables, because a verb can decline to consult them: no verb
+spells out a `usage:` line of its own (`label` did, two keys
+behind its grammar), and no hint names a value in a `|`
+alternation that the vocabulary beside it rejects
+(`border color`'s two hints said `preset`, which the slot
+refuses, and omitted `accent|edge|fg`, which it accepts).
+
 The differential oracle (`console::tests::oracle`) is what made
 the migration reviewable: `EXEC_CORPUS`, `COMPLETION_CORPUS`
 and `EXEC_PREFIX_CORPUS` pin execute outcomes and popup

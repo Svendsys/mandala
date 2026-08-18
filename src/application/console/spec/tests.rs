@@ -25,7 +25,7 @@
 //! `commands/` instead of the registry.
 
 use super::{Grammar, Subverb};
-use crate::application::console::commands::COMMANDS;
+use crate::application::console::commands::{Command, COMMANDS};
 
 /// Every level reachable from `root`, outermost first. Depth is
 /// bounded by the declaration (four, at
@@ -41,16 +41,26 @@ fn levels(root: &'static Grammar, out: &mut Vec<&'static Grammar>) {
     }
 }
 
-/// Every grammar level in the registry, paired with the verb that
-/// roots it so a failure names something a reader can find.
-fn all_levels() -> Vec<(&'static str, &'static Grammar)> {
+/// Every grammar level in the registry, paired with the command that
+/// roots it — the one that owns its `help` page and its completion
+/// entry point, whatever depth the level sits at.
+fn all_levels_rooted() -> Vec<(&'static Command, &'static Grammar)> {
     let mut out = Vec::new();
     for cmd in COMMANDS {
         let mut mine = Vec::new();
         levels(cmd.grammar, &mut mine);
-        out.extend(mine.into_iter().map(|g| (cmd.name, g)));
+        out.extend(mine.into_iter().map(|g| (cmd, g)));
     }
     out
+}
+
+/// [`all_levels_rooted`], keyed by the rooting verb's name, so a
+/// failure names something a reader can find.
+fn all_levels() -> Vec<(&'static str, &'static Grammar)> {
+    all_levels_rooted()
+        .into_iter()
+        .map(|(cmd, g)| (cmd.name, g))
+        .collect()
 }
 
 /// Every key a form names is a key its level declares.
@@ -191,46 +201,122 @@ fn test_every_usage_form_leads_with_its_verb() {
     }
 }
 
-/// Every key a level's *bare* form names is offered by the popup at
-/// that level's first slot, and published by `help <verb>`.
+/// Every key **every form at every level** names is offered by the
+/// popup at that form's own slot, and published by `help <verb>`.
 ///
 /// This is the acceptance criterion of the whole engine stated as a
 /// test: adding a kv key is one table row, and parse, complete, help
-/// and hint follow. The `help` half is a mirror — `key_lines`
-/// derives from the same declaration — so what it can catch is
-/// narrow. The *popup* half is not: it runs the real completion
-/// engine over the real line, through the descent, the
-/// positional-vs-kv gate and the readable-key resolution, and a
-/// failure anywhere along that path shows up here.
+/// and hint follow. The `help` half is a mirror — `key_lines` derives
+/// from the same declaration — so what it can catch is narrow. The
+/// *popup* half is not: it builds the line the user would type, hands
+/// it to the real completion engine, and so runs the descent, the
+/// positional-vs-kv gate, the form narrowing and the readable-key
+/// resolution.
+///
+/// It used to iterate `COMMANDS` and take `cmd.grammar.bare`: 14 of
+/// the registry's 29 levels, and none of the 20 subverbs that read
+/// keys — while calling itself the acceptance criterion of the whole
+/// engine. The control that showed the gap: making
+/// `complete::form_rows` withhold its `key_rows` at every level whose
+/// label contains a space — `border preview`, `canvas border`,
+/// `canvas section-frame [focused]`, `section frame` — left all ten
+/// invariants in this file green, and only the pinned corpus noticed.
+///
+/// Reaching a nested level is what the level's `label` is for: it is
+/// exactly the words that lead a line there
+/// (`test_every_child_label_extends_its_parent` holds that), so
+/// `canvas section-frame focused ` is constructible from the
+/// declaration alone. A form's *required* slots are filled from their
+/// own vocabularies first, because the engine withholds a form's keys
+/// until they sit behind the cursor — `border palette off <TAB>`
+/// offers `field=` where `border palette <TAB>` correctly does not.
+/// Filling them from the slot's own vocabulary is also what keeps the
+/// form eligible under [`super::Form::admits_prefix`], so this walk
+/// asks each shape for its own keys rather than for the subverb's
+/// union.
 #[test]
-fn test_every_bare_form_key_reaches_the_popup_and_help() {
+fn test_every_form_key_reaches_the_popup_and_help() {
     let doc = crate::application::document::tests_common::load_test_doc();
     let ctx = crate::application::console::ConsoleContext::from_document(&doc);
-    for cmd in COMMANDS {
-        let Some(bare) = &cmd.grammar.bare else { continue };
-        let line = format!("{} ", cmd.name);
-        let offered: Vec<String> = crate::application::console::completion::complete(&line, line.len(), &ctx)
-            .into_iter()
-            .map(|c| c.text)
-            .collect();
+    let mut probes = 0usize;
+    let mut keys_seen = 0usize;
+    for (cmd, grammar) in all_levels_rooted() {
         let published = cmd.key_lines();
-        for name in bare.readable_keys() {
-            assert!(
-                offered.iter().any(|t| t == &format!("{}=", name)),
-                "{}: `{}<TAB>` must offer '{}='; got {offered:?}",
-                cmd.name,
-                line,
-                name
-            );
-            assert!(
-                published.iter().any(|l| l.starts_with(&format!("{}=", name))),
-                "{}: `help {}` must publish '{}='; got {published:?}",
-                cmd.name,
-                cmd.name,
-                name
-            );
+        let mut check = |head: String, form: &super::Form| {
+            probes += 1;
+            let mut line = head;
+            // Fill up to and including the last required slot; the
+            // cursor then sits one slot past it, which is where the
+            // form's keys come on offer.
+            let fill_upto = form
+                .slots
+                .iter()
+                .rposition(|slot| !slot.optional)
+                .map_or(0, |i| i + 1);
+            for slot in form.slots.iter().take(fill_upto) {
+                line.push(' ');
+                line.push_str(&slot_filler(&slot.vocab));
+            }
+            line.push(' ');
+            let offered: Vec<String> =
+                crate::application::console::completion::complete(&line, line.len(), &ctx)
+                    .into_iter()
+                    .map(|c| c.text)
+                    .collect();
+            for name in form.names() {
+                keys_seen += 1;
+                assert!(
+                    offered.iter().any(|t| t == &format!("{}=", name)),
+                    "{}: `{line}<TAB>` must offer '{name}='; got {offered:?}",
+                    cmd.name
+                );
+                assert!(
+                    published.iter().any(|l| l.starts_with(&format!("{}=", name))),
+                    "{}: `help {}` must publish '{name}='; got {published:?}",
+                    cmd.name,
+                    cmd.name
+                );
+            }
+        };
+        if let Some(bare) = &grammar.bare {
+            for form in bare.forms {
+                check(grammar.label.to_string(), form);
+            }
+        }
+        for subverb in grammar.subverbs() {
+            for form in subverb.forms {
+                check(format!("{} {}", grammar.label, subverb.name), form);
+            }
         }
     }
+    // The registry is 29 levels and 20 key-bearing subverbs; the
+    // floors are below both so a declaration change does not fail the
+    // run, and far enough above the 14 bare forms this walk used to
+    // see that shrinking back to them would.
+    assert!(
+        probes >= 40 && keys_seen >= 150,
+        "the form walk reached {probes} forms and {keys_seen} keys — the walk, not the \
+         registry, is what broke"
+    );
+}
+
+/// A single token a slot with this vocabulary would accept, for
+/// building a line that reaches the slot after it.
+///
+/// Drawn from the vocabulary itself where there is one to draw from,
+/// so the filled prefix is a line a user could really have typed and
+/// [`super::Form::admits_prefix`] keeps the form it belongs to.
+fn slot_filler(vocab: &super::Vocabulary) -> String {
+    let words: &[super::Word] = match vocab {
+        super::Vocabulary::Words(words) | super::Vocabulary::FreeWords { words, .. } => words,
+        super::Vocabulary::Rows { sentinels, .. } => sentinels,
+        super::Vocabulary::Free { .. } => &[],
+    };
+    // `x` for an open vocabulary with no sentinels — a font family,
+    // a file path. One token, which is all the slot behind it needs.
+    words
+        .first()
+        .map_or_else(|| "x".to_string(), |w| w.name.to_string())
 }
 
 /// A subverb that reads no keys refuses one by name rather than
