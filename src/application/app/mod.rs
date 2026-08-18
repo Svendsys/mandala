@@ -660,9 +660,17 @@ struct PendingPress {
 /// `ThrottledDrag` + a struct + a trait impl; nothing about this
 /// enum needs to grow.
 ///
-/// `Panning` and `SelectingRect` are *not* throttled — panning is
-/// a camera-only decree (no mutation) and rect-select is a
-/// lightweight overlay redraw.
+/// `Panning` and `SelectingRect` are *not* throttled, for two
+/// different reasons. Panning is a camera-only decree with no
+/// mutation to defer. Rect-select's per-frame work is the overlay
+/// rectangle, which tracks the pointer and so must never be
+/// deferred; the expensive half — repainting the covered nodes'
+/// highlight — is gated on the covered *set* changing rather than
+/// on a frame counter, which skips the work outright on a frame
+/// that crosses no node boundary instead of postponing it. This
+/// sentence used to read "rect-select is a lightweight overlay
+/// redraw", which it was not: every drain ran a full
+/// `doc.build_tree()` and a cosmic-text buffer rebuild (#37).
 #[cfg(not(target_arch = "wasm32"))]
 enum DragState {
     /// No drag in progress.
@@ -722,8 +730,23 @@ enum DragState {
     /// tree or model mutation involved.
     Panning,
     /// Shift+drag on empty space: rubber-band selection rectangle.
-    /// Unthrottled — overlay rectangle plus preview highlight is
-    /// cheap enough to run every frame.
+    ///
+    /// Unthrottled: the overlay rectangle is redrawn every frame
+    /// because it tracks the pointer. The covered-node preview is
+    /// not free and is not run every frame — it is memoized on
+    /// `MindMapDocument::rect_select_preview` and repainted only
+    /// when the covered set changes. This comment used to claim the
+    /// preview was "cheap enough to run every frame"; it was a full
+    /// arena build plus a text-buffer rebuild (#37).
+    ///
+    /// **This variant is the authority for both.** The overlay
+    /// rectangle and the covered set are its projection, and
+    /// `drain_frame::drain_rect_select` re-derives them from it
+    /// every frame rather than trusting each exit from this state to
+    /// clean up after itself — which matters because the covered set
+    /// is document state *every* node-tree rebuild in the app reads,
+    /// and this variant has more ways out than the release arm that
+    /// used to be the only one dropping it.
     SelectingRect {
         /// Canvas-space corner where the drag started.
         start_canvas: Vec2,
@@ -752,6 +775,38 @@ impl DragState {
     /// `dispatch::native` — should each have to spell.
     fn throttled(drag: ThrottledDrag) -> Self {
         Self::Throttled(Box::new(drag))
+    }
+
+    /// True when overwriting this state with a freshly-armed
+    /// gesture would abandon one that nothing else will finish.
+    ///
+    /// Two states are in the class, and both fail silently:
+    ///
+    /// - `Throttled(..)` owes the model a write plus an undo entry,
+    ///   and `commit_on_release_core` is the only place either
+    ///   happens. Drop it and the tree keeps the dragged offsets
+    ///   until the next model rebuild snaps them back. Reachable
+    ///   from a *right*-started fast-resize, which is in flight
+    ///   while the left button is still free.
+    /// - `PendingRight` holds a user-named gesture (`RightClick` /
+    ///   `FastResizeStart`) that has not fired yet.
+    ///
+    /// `Pending` / `Panning` / `SelectingRect` are deliberately
+    /// outside it: none owes the model anything, and each is
+    /// re-derived from the next press or the next cursor sample.
+    /// Refusing a left press there would strand a click after a
+    /// release the window never delivered (focus loss mid-drag)
+    /// instead of re-arming from it, which is the behavior those
+    /// three have always had.
+    ///
+    /// It lives on the enum rather than beside any one caller
+    /// because it is a property of the state, and two dispatch
+    /// surfaces read it: the left-button press in
+    /// `event_mouse_click` and the `Action::PanCanvas` arm in
+    /// `dispatch::native`, which the keyboard and every macro tier
+    /// reach as well as the middle button.
+    fn would_abandon_gesture(&self) -> bool {
+        matches!(self, Self::PendingRight { .. } | Self::Throttled(_))
     }
 }
 

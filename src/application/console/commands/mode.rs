@@ -81,7 +81,7 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             eff.close_console = true;
             ExecResult::ok_msg("mode: returning to Default")
         }
-        Some("resize") => match resolve_resize_target(&eff.document.selection, &eff.document.mindmap) {
+        Some("resize") => match resolve_resize_target(&eff.document().selection, &eff.document().mindmap) {
             Ok(target) => {
                 eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
                     target,
@@ -91,7 +91,7 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             Err(e) => ExecResult::err(format_resize_error(&e)),
         },
-        Some("node-edit") => match resolve_node_edit_target(&eff.document.selection) {
+        Some("node-edit") => match resolve_node_edit_target(&eff.document().selection) {
             Ok(node_id) => {
                 eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::NodeEdit {
                     node_id: node_id.clone(),

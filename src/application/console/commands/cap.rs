@@ -115,7 +115,7 @@ fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             tally.note_error(format!("'{}': expected arrow|circle|diamond|none", v));
             continue;
         }
-        let changed = apply_cap_slot_to_selection(eff.document, is_from, &v);
+        let changed = apply_cap_slot_to_selection(eff.document_mut(), is_from, &v);
         tally.note(changed, || format!("cap {} already {}", k, v));
     }
     tally.finalize("cap")

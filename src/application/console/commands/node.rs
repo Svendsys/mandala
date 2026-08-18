@@ -68,7 +68,7 @@ fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// node-id resolves from the active selection (Single, Section,
 /// SectionRange, or MultiSection's primary). Closes the console.
 fn execute_edit(eff: &mut ConsoleEffects) -> ExecResult {
-    let node_id = match &eff.document.selection {
+    let node_id = match &eff.document().selection {
         SelectionState::Single(id) => id.clone(),
         SelectionState::Section(s) => s.node_id.clone(),
         SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
@@ -87,7 +87,7 @@ fn execute_edit(eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn execute_fit(eff: &mut ConsoleEffects) -> ExecResult {
-    let node_id = match &eff.document.selection {
+    let node_id = match &eff.document().selection {
         SelectionState::Single(id) => id.clone(),
         SelectionState::Section(s) => s.node_id.clone(),
         SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
@@ -95,7 +95,7 @@ fn execute_fit(eff: &mut ConsoleEffects) -> ExecResult {
             return ExecResult::err("node fit: requires a single-node or section selection");
         }
     };
-    match eff.document.fit_node_to_content(&node_id) {
+    match eff.document_mut().fit_node_to_content(&node_id) {
         Ok(true) => ExecResult::ok_msg(format!("node '{}' fitted to content", node_id)),
         Ok(false) => ExecResult::ok_msg("node fit: already at floor".to_string()),
         Err(msg) => ExecResult::err(msg),
@@ -103,7 +103,7 @@ fn execute_fit(eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn execute_resize(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let node_id = match &eff.document.selection {
+    let node_id = match &eff.document().selection {
         SelectionState::Single(id) => id.clone(),
         // A `Section` selection lifts to its owning node — the
         // verb operates on the *node*, not the section. Keeps
@@ -124,7 +124,7 @@ fn execute_resize(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         None => return ExecResult::err("node resize: <h> must be a number"),
     };
     let new_size = baumhard::mindmap::model::Size { width: w, height: h };
-    match eff.document.set_node_size(&node_id, new_size) {
+    match eff.document_mut().set_node_size(&node_id, new_size) {
         Ok(true) => ExecResult::ok_msg(format!("node '{}' resized to {}×{}", node_id, w, h)),
         Ok(false) => ExecResult::ok_msg("node resize: no change".to_string()),
         Err(msg) => ExecResult::err(msg),

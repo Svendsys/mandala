@@ -282,7 +282,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Ok(p) => p,
         Err(e) => return e,
     };
-    apply_font_args(&mut eff.document, &parsed)
+    apply_font_args(eff.document_mut(), &parsed)
 }
 
 /// Parse every recognized kv up front so the atomic application
@@ -636,7 +636,7 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
     if let (Some(idx), Some(range)) = (section_target, range_target) {
         let (rs, re) = (range.start(), range.end());
-        let node_id = match eff.document.selection.clone() {
+        let node_id = match eff.document().selection.clone() {
             SelectionState::Single(id) => id,
             SelectionState::Section(s) => s.node_id,
             SelectionState::SectionRange { sel, .. } => sel.node_id,
@@ -655,20 +655,22 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         };
     }
     if let Some(idx) = section_target {
-        let node_id = match eff.document.selection.clone() {
+        let node_id = match eff.document().selection.clone() {
             SelectionState::Single(id) => id,
             SelectionState::Section(s) => s.node_id,
             SelectionState::SectionRange { sel, .. } => sel.node_id,
             _ => return ExecResult::err("font: section=N requires a node or section selection"),
         };
-        let applied = eff.document.set_section_font_family(&node_id, idx, Some(&family));
+        let applied = eff
+            .document_mut()
+            .set_section_font_family(&node_id, idx, Some(&family));
         return if applied {
             ExecResult::ok_msg(format!("font set: {} on section {}", family, idx))
         } else {
             ExecResult::ok_msg("font: no change")
         };
     }
-    let report = apply_to_targets(eff.document, |view| view.set_font_family(Some(&family)));
+    let report = apply_to_targets(eff.document_mut(), |view| view.set_font_family(Some(&family)));
     if report.all_failed {
         return ExecResult::err(report.messages.join("; "));
     }

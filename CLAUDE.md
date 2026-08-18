@@ -121,6 +121,26 @@ the parity trajectory (or why none is owed):
   observable. Parity unblocks `Action::DoubleClickActivate` and
   `Action::EditSelection*` flipping to `Compatible`; tracked in
   `work_plans/WASM_CONVERGENCE.md`.
+- **Rubber-band select** (`DragState::SelectingRect`,
+  `src/application/app/drain_frame.rs`,
+  `scene_rebuild::rebuild_selection_highlight`,
+  `MindMapDocument::{set,take}_rect_select_preview`) —
+  native-only because `DragState` and the per-frame drain are:
+  the browser has no drag-state machine and no `AboutToWait` to
+  hang a per-frame hit-test off, so there is nothing for a
+  Shift+drag to enter. **The read is deliberately not gated.**
+  `MindMapDocument::rect_select_preview` (the method) and
+  `scene_rebuild::highlight_entries_for` are cross-platform,
+  because both targets' node-tree rebuilds go through the one
+  mapping that answers "which nodes are tinted"; only the
+  gesture that fills it is native. On wasm32 the field is
+  therefore always `None`, and the tier
+  `rebuild_selection_highlight` is not native *by nature* —
+  whichever browser-side gesture first needs a highlight-only
+  repaint takes the `cfg` off it. Parity for the gesture itself
+  rides on the browser gaining a drag-state machine, which is
+  the same prerequisite the per-frame animation drain below
+  names; not yet scheduled.
 - **Per-frame animation drain**
   (`src/application/app/drain_frame.rs`) — native-only, so
   *animated* `CustomMutation`s (`timing.duration_ms > 0`) start on

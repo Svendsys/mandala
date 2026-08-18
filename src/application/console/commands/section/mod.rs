@@ -214,11 +214,11 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // selected) doesn't trip the "select a specific section"
     // error.
     if verb_lc == "add" {
-        let node_id = match resolve_node_id(&eff.document.selection) {
+        let node_id = match resolve_node_id(&eff.document().selection) {
             Ok(id) => id,
             Err(msg) => return ExecResult::err(msg),
         };
-        return execute_add(args, eff.document, &node_id);
+        return execute_add(args, eff.document_mut(), &node_id);
     }
     // CRIT-1 (whole-PR review): validate the verb against the known
     // set BEFORE the per-section resolver runs. Pre-fix a `section
@@ -251,14 +251,14 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // (different sections + same absolute coords would all pile
     // up at the same offset, which is never the intent).
     if verb == "move" {
-        if let SelectionState::MultiSection(_) = &eff.document.selection {
+        if let SelectionState::MultiSection(_) = &eff.document().selection {
             // Peek the form before dispatching; only delta fans
             // out. The form-mismatch reject for absolute survives
             // through `execute_move` → `parse_move_kvs` paths.
             let has_delta = args.kvs().any(|(k, _)| k == "dx" || k == "dy");
             let has_abs = args.kvs().any(|(k, _)| k == "x" || k == "y");
             if has_delta && !has_abs {
-                return execute_move_fan_out_multisection(args, eff.document);
+                return execute_move_fan_out_multisection(args, eff.document_mut());
             }
         }
     }
@@ -274,7 +274,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Ok(v) => v,
         Err(msg) => return ExecResult::err(msg),
     };
-    let node_id = match resolve_node_id(&eff.document.selection) {
+    let node_id = match resolve_node_id(&eff.document().selection) {
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
     };
@@ -286,7 +286,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         .map(|n| n.sections.len())
         .unwrap_or(0);
     let target_idx = match resolve_section_index(
-        &eff.document.selection,
+        &eff.document().selection,
         &node_id,
         kv_idx,
         Some(section_count),
@@ -302,13 +302,13 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         return ExecResult::err(format!("section[{}] not found on node '{}'", target_idx, node_id));
     }
     match verb_lc.as_str() {
-        "move" => execute_move(args, eff.document, &node_id, target_idx),
-        "resize" => execute_resize(args, eff.document, &node_id, target_idx),
-        "show" => execute_show(args, eff.document, &node_id, target_idx),
-        "text" => execute_text(args, eff.document, &node_id, target_idx),
+        "move" => execute_move(args, eff.document_mut(), &node_id, target_idx),
+        "resize" => execute_resize(args, eff.document_mut(), &node_id, target_idx),
+        "show" => execute_show(args, eff.document(), &node_id, target_idx),
+        "text" => execute_text(args, eff.document_mut(), &node_id, target_idx),
         "edit" => execute_edit(args, eff, &node_id, target_idx),
-        "delete" => execute_delete(args, eff.document, &node_id, target_idx),
-        "split" => execute_split(args, eff.document, &node_id, target_idx),
+        "delete" => execute_delete(args, eff.document_mut(), &node_id, target_idx),
+        "split" => execute_split(args, eff.document_mut(), &node_id, target_idx),
         "add" => {
             // Should be routed earlier; defensive Err per
             // CODE_CONVENTIONS §9 (interactive paths must not panic).

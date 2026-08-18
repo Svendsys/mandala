@@ -755,3 +755,121 @@ mod native_only_warn_latch_tests {
         assert!(!warn(&latch));
     }
 }
+
+// -----------------------------------------------------------------
+// Drag-state abandonment guard
+// -----------------------------------------------------------------
+
+/// [`super::DragState::would_abandon_gesture`] — the class of states
+/// a freshly-armed gesture may not overwrite.
+///
+/// Lives here rather than beside either caller because both read it:
+/// the left-button press in `event_mouse_click` and the
+/// `Action::PanCanvas` arm in `dispatch::native`, which the keyboard
+/// and every macro tier reach as well as the middle button.
+mod abandonment_guard {
+    use super::*;
+    use crate::application::app::throttled_interaction::moving_node::MovingNodeInteraction;
+    use crate::application::app::throttled_interaction::node_resize::NodeResizeInteraction;
+    use crate::application::app::throttled_interaction::ThrottledDrag;
+    use baumhard::mindmap::model::{Position, Size};
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
+    use std::collections::HashSet;
+
+    /// A left-started move-node drag, mid-gesture: pending state
+    /// buffered, `commit_on_release_core` not yet run.
+    fn moving_node_drag() -> DragState {
+        DragState::throttled(ThrottledDrag::MovingNode(MovingNodeInteraction::new(
+            vec!["n0".to_string()],
+            false,
+            HashSet::new(),
+        )))
+    }
+
+    /// A right-started fast-resize, mid-gesture. `started_with_right`
+    /// is what makes this one reachable with the left button free.
+    fn fast_resize_drag() -> DragState {
+        DragState::throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
+            "n0".to_string(),
+            ResizeHandleSide::SE,
+            Position { x: 0.0, y: 0.0 },
+            Size {
+                width: 100.0,
+                height: 50.0,
+            },
+            true,
+        )))
+    }
+
+    /// The left button carries the same hole one button over: a
+    /// right-started fast-resize is in flight while the left button
+    /// is still free, so a left press reached
+    /// `DragState::Throttled(..)` and replaced it with `Pending` —
+    /// same silent loss, same missing undo entry.
+    ///
+    /// Fails when `would_abandon_gesture` drops its `Throttled` arm,
+    /// which is the pre-fix shape (the guard read
+    /// `matches!(.., DragState::PendingRight { .. })`).
+    #[test]
+    fn test_left_press_is_refused_while_a_right_started_fast_resize_is_in_flight() {
+        assert!(
+            fast_resize_drag().would_abandon_gesture(),
+            "a left press must not replace a right-started fast-resize"
+        );
+        assert!(
+            moving_node_drag().would_abandon_gesture(),
+            "nor any other throttled drag reachable with the left button free"
+        );
+        assert!(
+            DragState::PendingRight {
+                start_pos: (0.0, 0.0),
+                start_canvas: glam::Vec2::ZERO,
+                hit_node: None,
+                hit_section_idx: None,
+            }
+            .would_abandon_gesture(),
+            "the guard's original member stays in the class"
+        );
+    }
+
+    /// The complement, and the reason the guard is narrower than the
+    /// right button's `!matches!(.., None)`: these four states owe
+    /// the model nothing, and a left press has to keep re-arming from
+    /// them or a click after a release the window never delivered
+    /// would do nothing at all.
+    ///
+    /// `Pending` is the load-bearing row for `Action::PanCanvas`
+    /// rather than for the press: the `LeftDrag` threshold cross
+    /// dispatches `PanCanvas` *from* `Pending`, so a guard that
+    /// refused there would leave the left button unable to pan at
+    /// all.
+    ///
+    /// Fails if the guard is widened to the right button's spelling.
+    #[test]
+    fn test_left_press_still_rearms_from_every_state_that_owes_the_model_nothing() {
+        for drag in [
+            DragState::None,
+            DragState::Panning,
+            DragState::SelectingRect {
+                start_canvas: glam::Vec2::ZERO,
+                current_canvas: glam::Vec2::new(10.0, 10.0),
+            },
+            DragState::Pending(Box::new(PendingPress {
+                start_pos: (0.0, 0.0),
+                hit_node: None,
+                hit_section_idx: None,
+                hit_edge_handle: None,
+                hit_portal_label: None,
+                hit_edge_label: None,
+                hit_section_resize_handle: None,
+                hit_node_resize_handle: None,
+            })),
+        ] {
+            assert!(
+                !drag.would_abandon_gesture(),
+                "a left press must still re-arm from {:?}",
+                std::mem::discriminant(&drag)
+            );
+        }
+    }
+}

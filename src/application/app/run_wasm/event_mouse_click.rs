@@ -12,8 +12,8 @@
 //! - **Released** ([`super::WasmApp::handle_mouse_released`]): consumes the pending
 //!   click — click-outside on an open editor commits the edit via
 //!   the funnel, otherwise the pending tag becomes a fresh
-//!   `SelectionState` and the scene is rebuilt through
-//!   `rebuild_after_selection_change`.
+//!   `SelectionState` and the scene is rebuilt at the tier
+//!   `RebuildTier::for_click` names.
 //!
 //! Mirrors the native shape at `event_mouse_click.rs`; the WASM
 //! variant has no console / color-picker / drag-state intercepts so
@@ -26,7 +26,7 @@ use crate::application::platform::input::ElementState;
 use super::PendingClick;
 use crate::application::app::click_triggers::fire_onclick_triggers;
 use crate::application::app::dispatch::DispatchOutcome;
-use crate::application::app::scene_rebuild::rebuild_after_selection_change;
+use crate::application::app::scene_rebuild::RebuildTier;
 use crate::application::app::{
     compute_click_hit, dispatch, is_double_click, now_ms, ClickHitParts, LastClick,
 };
@@ -323,8 +323,8 @@ impl super::WasmApp {
             PendingClick::Section { node_id, section_idx } => (Some(node_id.clone()), Some(*section_idx)),
             _ => (None, None),
         };
-        if let Some(id) = trigger_node_id.as_ref() {
-            fire_onclick_triggers(
+        let triggers_fired = match trigger_node_id.as_ref() {
+            Some(id) => fire_onclick_triggers(
                 &mut input.document,
                 &mut input.mindmap_tree,
                 &mut input.scene_cache,
@@ -332,15 +332,16 @@ impl super::WasmApp {
                 trigger_section_idx,
                 baumhard::mindmap::custom_mutation::PlatformContext::Web,
                 now_ms() as u64,
-            );
-        }
+            ),
+            None => false,
+        };
 
         // Plain selection click. Snapshot the previous
-        // selection so `rebuild_after_selection_change`
-        // can pick between `rebuild_all` (needed when
-        // either side is a node selection — tree
-        // highlights must be applied or cleared) and the
-        // cheaper `rebuild_scene_only` (edge-adjacent →
+        // selection so `RebuildTier::for_click` can pick
+        // between `rebuild_all` (needed when either side is
+        // a node selection — tree highlights must be
+        // applied or cleared) and the cheaper
+        // `rebuild_scene_only` (edge-adjacent →
         // edge-adjacent transitions).
         let prev_selection = input.document.selection.clone();
         input.document.selection = match pending {
@@ -372,10 +373,19 @@ impl super::WasmApp {
             }
             _ => SelectionState::None,
         };
+        // The selection delta is only the whole story when no
+        // trigger fired. This arm used to run
+        // `rebuild_after_selection_change` regardless, so a click
+        // whose `OnClick` mutation swapped the theme while the
+        // selection stayed edge-adjacent got a scene-only rebuild
+        // and left every node's text buffer painted in the old
+        // palette. Native forced `rebuild_all` for every click and
+        // so never had the hole; `RebuildTier::for_click` is now
+        // the one rule both targets read (CODE_CONVENTIONS §4).
+        let tier = RebuildTier::for_click(triggers_fired, &prev_selection, &input.document.selection);
         let mut renderer_borrow = self.renderer.borrow_mut();
         if let Some(renderer) = renderer_borrow.as_mut() {
-            rebuild_after_selection_change(
-                &prev_selection,
+            tier.execute(
                 &input.document,
                 &input.interaction_mode,
                 &mut input.mindmap_tree,

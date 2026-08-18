@@ -20,54 +20,134 @@ use crate::application::document::{
 use crate::application::renderer::Renderer;
 use baumhard::mindmap::tree_builder::{FrameOverrides, InteractionModeOverrides};
 
-/// Pure predicate for [`rebuild_after_selection_change`]'s
-/// dispatch. Returns `true` when transitioning from `prev` to
-/// `new` requires a full `rebuild_all` (node-tree highlights
-/// need to be applied, shifted, or cleared). Returns `false`
-/// when both selections are edge-adjacent and only the scene-
-/// level highlight cascade moves.
+/// Which of the two whole-canvas rebuild tiers a change owes,
+/// **named rather than run**.
 ///
-/// Factored out of the helper so the decision is unit-testable
-/// without renderer / scene-host setup — the full
-/// `rebuild_after_selection_change` is an integration surface
-/// over wgpu state.
-pub(in crate::application::app) fn selection_change_touches_tree(
-    prev: &SelectionState,
-    new: &SelectionState,
-) -> bool {
-    fn touches_tree(sel: &SelectionState) -> bool {
-        // `Section` joins `Single` / `Multi` because section-area
-        // highlights are stamped through the node-tree's
-        // `ColorFontRegions` (see `apply_tree_highlights`); a
-        // Section-selection transition that goes through
-        // `rebuild_scene_only` would leave the prior cyan stamp
-        // un-cleared (or never apply a fresh one), leaking a
-        // stale highlight.
-        matches!(
-            sel,
-            SelectionState::Single(_)
-                | SelectionState::Multi(_)
-                | SelectionState::Section(_)
-                | SelectionState::MultiSection(_)
-                | SelectionState::SectionRange { .. }
-        )
-    }
-    touches_tree(prev) || touches_tree(new)
+/// Same split `ReleaseRefresh` makes on the drag-release path
+/// (`throttled_interaction/release.rs`, native-only, which is why
+/// this is not an intra-doc link — the wasm32 doc leg would not
+/// resolve it), and for the same reason: both
+/// tiers need `&mut Renderer`, so a caller that *decides* a tier
+/// cannot be exercised at the same time as one that *performs* it —
+/// TEST_CONVENTIONS §T8 keeps live wgpu out of the harness. Handing
+/// the decision back as a value is what lets a test ask "which tier
+/// does a click that only moves the selection ask for?" without
+/// standing up a device.
+///
+/// `ReleaseRefresh` is deliberately not reused for this: it carries a
+/// third variant (`None`) that only a commit against a missing
+/// document produces, and it runs through a `DrainContext`, which the
+/// click path — it has no `ColorPickerState` — cannot build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum RebuildTier {
+    /// [`rebuild_all`] — node tree plus every canvas role. Needed
+    /// whenever node-tree text buffers are affected: a selection
+    /// highlight to apply, shift, or clear, or a document mutation
+    /// that could have changed anything at all.
+    All,
+    /// [`rebuild_scene_only`] — every canvas role, node tree reused.
+    /// Enough when only the scene-level highlight cascade moves.
+    SceneOnly,
 }
 
-/// Post-selection-change rebuild with the right granularity.
-/// Picks `rebuild_all` when either the previous or new selection
-/// is `Single` / `Multi` (node-tree highlights need reapplying or
-/// clearing), `rebuild_scene_only` otherwise (edge-adjacent
-/// selection changes only move scene-level highlight cascades,
-/// not node text-buffer region colors).
+impl RebuildTier {
+    /// The tier a `prev` → `new` selection transition needs.
+    ///
+    /// [`Self::All`] when either side is a node-ish selection
+    /// (node-tree highlights need to be applied, shifted, or
+    /// cleared); [`Self::SceneOnly`] when both are edge-adjacent and
+    /// only the scene-level highlight cascade moves.
+    pub(in crate::application::app) fn for_selection_change(
+        prev: &SelectionState,
+        new: &SelectionState,
+    ) -> Self {
+        fn touches_tree(sel: &SelectionState) -> bool {
+            // `Section` joins `Single` / `Multi` because section-area
+            // highlights are stamped through the node-tree's
+            // `ColorFontRegions` (see `apply_tree_highlights`); a
+            // Section-selection transition that goes through
+            // `rebuild_scene_only` would leave the prior cyan stamp
+            // un-cleared (or never apply a fresh one), leaking a
+            // stale highlight.
+            matches!(
+                sel,
+                SelectionState::Single(_)
+                    | SelectionState::Multi(_)
+                    | SelectionState::Section(_)
+                    | SelectionState::MultiSection(_)
+                    | SelectionState::SectionRange { .. }
+            )
+        }
+        if touches_tree(prev) || touches_tree(new) {
+            Self::All
+        } else {
+            Self::SceneOnly
+        }
+    }
+
+    /// The tier a click owes, on both targets.
+    ///
+    /// A click does two things that can invalidate the canvas: it
+    /// moves the selection, and — when it landed on a node carrying
+    /// an `OnClick` binding — it fires custom mutations and document
+    /// actions. The second is unbounded (a theme switch repaints
+    /// everything), so a fired trigger forces [`Self::All`] and only
+    /// a click that changed nothing but the selection gets to ask
+    /// [`Self::for_selection_change`].
+    ///
+    /// Shared by `click::handle_click_core` and the browser's
+    /// `run_wasm::event_mouse_click` release path, which had drifted
+    /// in *opposite* directions: native rebuilt everything for every
+    /// click outcome, and the browser ran the selection-delta tier
+    /// even when a trigger had just mutated the document
+    /// (CODE_CONVENTIONS §4 — the two are peers).
+    pub(in crate::application::app) fn for_click(
+        triggers_fired: bool,
+        prev: &SelectionState,
+        new: &SelectionState,
+    ) -> Self {
+        if triggers_fired {
+            Self::All
+        } else {
+            Self::for_selection_change(prev, new)
+        }
+    }
+
+    /// Run the tier against the live renderer.
+    pub(in crate::application::app) fn execute(
+        self,
+        doc: &MindMapDocument,
+        interaction_mode: &super::InteractionMode,
+        mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+        app_scene: &mut crate::application::scene_host::AppScene,
+        renderer: &mut Renderer,
+        scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    ) {
+        match self {
+            Self::All => rebuild_all(
+                doc,
+                interaction_mode,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+            ),
+            Self::SceneOnly => rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache),
+        }
+    }
+}
+
+/// Post-selection-change rebuild with the right granularity —
+/// [`RebuildTier::for_selection_change`] decided, then run.
 ///
 /// Exists for every selection-change callsite that would
 /// otherwise call `rebuild_all` unconditionally — under §4's
 /// mobile budget a full rebuild on every edge-label / portal
 /// click is wasted work on a large map. This helper makes the
 /// right choice a one-liner so callers don't have to re-derive
-/// the decision.
+/// the decision. Callers that need the tier as a *value* (because
+/// something other than the selection also moved) reach for
+/// `RebuildTier` directly instead.
 pub(in crate::application::app) fn rebuild_after_selection_change(
     prev_selection: &SelectionState,
     doc: &MindMapDocument,
@@ -77,18 +157,14 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    if selection_change_touches_tree(prev_selection, &doc.selection) {
-        rebuild_all(
-            doc,
-            interaction_mode,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-        );
-    } else {
-        rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
-    }
+    RebuildTier::for_selection_change(prev_selection, &doc.selection).execute(
+        doc,
+        interaction_mode,
+        mindmap_tree,
+        app_scene,
+        renderer,
+        scene_cache,
+    );
 }
 
 /// Stamp **every render-layer overlay** onto an already-built node
@@ -103,24 +179,41 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
 /// to be re-applied at every site that rebuilds the tree — and
 /// "every site" is the whole problem this function exists to solve.
 ///
-/// Five sites rebuild the tree. Four install it as the live
-/// `mindmap_tree` and must overlay it: [`rebuild_all`],
-/// `click::rebuild_all_with_mode`,
-/// `event_cursor_moved::rebuild_selection_highlight`, and
-/// `drain_frame::drain_selecting_rect`. Before this helper each
-/// open-coded its own subset — two silently omitted the `NodeEdit`
-/// dim (a section drag mid-edit snapped every other node's text
-/// back to full opacity while its border stayed dimmed), and three
-/// omitted `reapply_active_toggles` (an active toggle's visual
-/// vanished on any click-driven rebuild).
+/// **Six production sites build a tree and install it.** Three go
+/// through here: [`rebuild_all`], `click::rebuild_all_with_mode`,
+/// and `rebuild_selection_highlight` — a code span rather than a
+/// link because that one is native-gated, and a link from this
+/// cross-platform doc into a stripped item breaks the wasm32 doc leg
+/// (CODE_CONVENTIONS §8). The last of those is also how
+/// `drain_frame::drain_rect_select` repaints, so the rubber-band
+/// preview inherits the overlay order rather than restating it.
+/// Before this helper each open-coded its own subset — two silently
+/// omitted the `NodeEdit` dim (a section drag mid-edit snapped every
+/// other node's text back to full opacity while its border stayed
+/// dimmed), and three omitted `reapply_active_toggles` (an active
+/// toggle's visual vanished on any click-driven rebuild).
 ///
-/// The fifth, `document::animations::tick`, deliberately installs an
-/// **overlay-free** projection: `drain_animation_tick` calls
-/// `rebuild_all` unconditionally on any advance, so the bare tree
-/// exists for less than one frame and is superseded before it can be
-/// drawn. That safety rests entirely on the call staying
-/// unconditional; a future change that gates it must route the
-/// animation rebuild through here.
+/// The other three install an **overlay-free** projection on
+/// purpose, and each is safe for its own reason — which is why
+/// "every site" above counts installs rather than callers of this
+/// helper:
+///
+/// - `document::animations::tick`. `drain_animation_tick` calls
+///   `rebuild_all` unconditionally on any advance, so the bare tree
+///   exists for less than one frame and is superseded before it can
+///   be drawn. That safety rests entirely on the call staying
+///   unconditional; a future change that gates it must route the
+///   animation rebuild through here.
+/// - The two startup installers, `run_native_init` and
+///   `run_wasm`'s init. At load there is no overlay to lose: the
+///   selection is empty, the interaction mode is `Default`, and no
+///   toggle is active — so the bare tree and the overlaid one are
+///   the same tree. A future startup path that adopts a document
+///   with any of those already set would have to come through here.
+///
+/// A seventh build, `console::commands::mutation`, is not an
+/// installer: it builds a tree for the flat-apply path and discards
+/// it, and the renderer rebuilds from the model on the next frame.
 ///
 /// Order is load-bearing:
 ///
@@ -152,12 +245,14 @@ pub(in crate::application::app) fn overlay_tree<'a, I>(
     doc.reapply_active_toggles(tree);
 }
 
-/// [`overlay_tree`] over a freshly-built tree — the shape three of
-/// the four overlay sites want.
+/// [`overlay_tree`] over a freshly-built tree — the shape every
+/// overlay site wants today.
 ///
-/// The fourth, `drain_frame::drain_selecting_rect`, needs the bare
-/// tree first (its rect hit-test runs against it) and so calls
-/// [`overlay_tree`] in place rather than building a second one.
+/// [`overlay_tree`] stays separate rather than being folded in
+/// (CODE_CONVENTIONS §7 — preserve the seam): applying the overlays
+/// to a tree that already exists is where a §B2 in-place consumer
+/// attaches, and the rubber-band drain was one until it stopped
+/// needing a bare tree to hit-test against.
 ///
 /// # Costs
 ///
@@ -186,13 +281,74 @@ pub(in crate::application::app) fn rebuild_all(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    let new_tree = build_overlaid_tree(doc, interaction_mode, selection_highlight_entries(&doc.selection));
+    let new_tree = build_overlaid_tree(doc, interaction_mode, highlight_entries_for(doc));
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
     renderer.set_mode_status_text(mode_status_line(interaction_mode, doc));
 
     *mindmap_tree = Some(new_tree);
+}
+
+/// Rebuild the node tree with the current highlights and install
+/// it — the third tier, below [`rebuild_scene_only`]: node text
+/// buffers only, no canvas roles, no mode-status line.
+///
+/// What a change to *which nodes are highlighted* actually needs,
+/// and nothing more. Two callers: the threshold-cross demote that
+/// narrows a `Section` selection to its owning node before a drag,
+/// and the rubber-band drain, whose preview set is a highlight
+/// change by construction.
+///
+/// Native-only because both of those are: the threshold cross and
+/// the per-frame drain are `DragState` machinery, which the browser
+/// has no counterpart for. The tier itself is not native by nature —
+/// whichever browser-side gesture first needs a highlight-only
+/// repaint takes the `cfg` off. See CLAUDE.md's "Dual-target status"
+/// registry.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::application::app) fn rebuild_selection_highlight(
+    doc: &MindMapDocument,
+    interaction_mode: &super::InteractionMode,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    renderer: &mut Renderer,
+) {
+    if mindmap_tree.is_none() {
+        return;
+    }
+    // Every overlay, in the one correct order — see
+    // [`build_overlaid_tree`]. `interaction_mode` is threaded in for
+    // the `NodeEdit` dim; without it a section drag mid-edit snapped
+    // every other node's text back to full opacity while its border
+    // stayed dimmed.
+    let new_tree = build_overlaid_tree(doc, interaction_mode, highlight_entries_for(doc));
+    renderer.rebuild_buffers_from_tree(&new_tree.tree);
+    *mindmap_tree = Some(new_tree);
+}
+
+/// The highlight entries every node-tree rebuild stamps: the
+/// rubber-band preview when one is live, the selection otherwise.
+///
+/// The preview *replaces* rather than adds to the selection's
+/// entries. A rubber-band release writes `SelectionState::from_ids`
+/// over the selection outright — shift included, since shift is what
+/// starts the gesture rather than what extends it — so leaving the
+/// pre-drag selection painted underneath would show the user a set
+/// that is about to be discarded. This is the rule the drain used to
+/// apply by building a private tree for itself out of the preview
+/// alone; stating it here is what lets *every* rebuild path
+/// reproduce it, including the animation tick's, which used to wipe
+/// the preview for a frame by rebuilding from `doc.selection`.
+pub(in crate::application::app) fn highlight_entries_for(
+    doc: &MindMapDocument,
+) -> Vec<(&str, Option<usize>, [f32; 4])> {
+    match doc.rect_select_preview() {
+        Some(ids) => ids
+            .iter()
+            .map(|id| (id.as_str(), None, HIGHLIGHT_COLOR))
+            .collect(),
+        None => selection_highlight_entries(&doc.selection),
+    }
 }
 
 /// Compute the mode-status overlay line for the active interaction
@@ -284,6 +440,10 @@ pub(in crate::application::app) fn mode_status_line(
 /// only the selected sections (and a multi-section set on
 /// one node tints just those sections, leaving sibling
 /// sections untouched).
+///
+/// Reached through [`highlight_entries_for`], which is where the
+/// rubber-band preview gets to speak instead. Call this one
+/// directly only when the selection is genuinely the subject.
 pub(in crate::application::app) fn selection_highlight_entries(
     selection: &SelectionState,
 ) -> Vec<(&str, Option<usize>, [f32; 4])> {
@@ -1064,7 +1224,7 @@ pub(in crate::application::app) fn warm_handle_tree_arenas(
 
 #[cfg(test)]
 mod tests {
-    use super::selection_change_touches_tree;
+    use super::{highlight_entries_for, selection_highlight_entries, RebuildTier};
     use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState};
     use baumhard::mindmap::scene_cache::EdgeKey;
 
@@ -1079,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn edge_adjacent_to_edge_adjacent_is_scene_only() {
+    fn test_selection_tier_edge_adjacent_to_edge_adjacent_is_scene_only() {
         // Any pair of edge-adjacent variants (Edge / EdgeLabel /
         // PortalLabel / PortalText) transitions without touching
         // node text buffers — scene-only is correct.
@@ -1091,8 +1251,9 @@ mod tests {
         ];
         for prev in &variants {
             for new in &variants {
-                assert!(
-                    !selection_change_touches_tree(prev, new),
+                assert_eq!(
+                    RebuildTier::for_selection_change(prev, new),
+                    RebuildTier::SceneOnly,
                     "{:?} -> {:?} should be scene-only",
                     prev,
                     new
@@ -1102,22 +1263,22 @@ mod tests {
     }
 
     #[test]
-    fn transition_into_node_selection_needs_full_rebuild() {
+    fn test_selection_tier_into_node_selection_needs_full_rebuild() {
         // Edge-adjacent -> Single / Multi: the new node must have
         // its highlight color region applied to its text buffer.
         let prev = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()));
-        assert!(selection_change_touches_tree(
-            &prev,
-            &SelectionState::Single("n".into())
-        ));
-        assert!(selection_change_touches_tree(
-            &prev,
-            &SelectionState::Multi(vec!["a".into(), "b".into()])
-        ));
+        assert_eq!(
+            RebuildTier::for_selection_change(&prev, &SelectionState::Single("n".into())),
+            RebuildTier::All
+        );
+        assert_eq!(
+            RebuildTier::for_selection_change(&prev, &SelectionState::Multi(vec!["a".into(), "b".into()])),
+            RebuildTier::All
+        );
     }
 
     #[test]
-    fn transition_out_of_node_selection_needs_full_rebuild() {
+    fn test_selection_tier_out_of_node_selection_needs_full_rebuild() {
         // Single / Multi -> Edge-adjacent: the previous node's
         // highlight must be CLEARED from its text buffer. Scene-
         // only would leave the stale highlight stuck.
@@ -1125,28 +1286,26 @@ mod tests {
             SelectionState::Single("n".into()),
             SelectionState::Multi(vec!["a".into(), "b".into()]),
         ] {
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::Edge(edge_ref())
-            ));
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()))
-            ));
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::PortalLabel(portal())
-            ));
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::PortalText(portal())
-            ));
-            assert!(selection_change_touches_tree(&prev, &SelectionState::None));
+            for new in [
+                SelectionState::Edge(edge_ref()),
+                SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref())),
+                SelectionState::PortalLabel(portal()),
+                SelectionState::PortalText(portal()),
+                SelectionState::None,
+            ] {
+                assert_eq!(
+                    RebuildTier::for_selection_change(&prev, &new),
+                    RebuildTier::All,
+                    "{:?} -> {:?} must clear the node highlight",
+                    prev,
+                    new
+                );
+            }
         }
     }
 
     #[test]
-    fn none_to_edge_adjacent_is_scene_only() {
+    fn test_selection_tier_none_to_edge_adjacent_is_scene_only() {
         // A fresh click on an edge label when nothing was
         // selected: no tree highlight to clear, no new one to
         // apply. Scene-only is correct.
@@ -1156,8 +1315,9 @@ mod tests {
             SelectionState::PortalLabel(portal()),
             SelectionState::PortalText(portal()),
         ] {
-            assert!(
-                !selection_change_touches_tree(&SelectionState::None, &new),
+            assert_eq!(
+                RebuildTier::for_selection_change(&SelectionState::None, &new),
+                RebuildTier::SceneOnly,
                 "None -> {:?} should be scene-only",
                 new
             );
@@ -1165,13 +1325,129 @@ mod tests {
     }
 
     #[test]
-    fn node_to_node_needs_full_rebuild() {
+    fn test_selection_tier_node_to_node_needs_full_rebuild() {
         // Node -> node: old highlight clears, new highlight
         // applies. Full rebuild in both directions.
-        assert!(selection_change_touches_tree(
-            &SelectionState::Single("a".into()),
-            &SelectionState::Single("b".into())
-        ));
+        assert_eq!(
+            RebuildTier::for_selection_change(
+                &SelectionState::Single("a".into()),
+                &SelectionState::Single("b".into())
+            ),
+            RebuildTier::All
+        );
+    }
+
+    /// While a rubber-band drag is in flight its covered set is what
+    /// every node-tree rebuild paints, and the pre-drag selection's
+    /// highlight stands down — the release writes
+    /// `SelectionState::from_ids` over the selection outright, so
+    /// leaving it painted underneath would show the user a set that
+    /// is about to be discarded.
+    ///
+    /// The fixture is chosen so the two answers cannot be confused:
+    /// the selection names a node the preview does not, and the
+    /// preview names two the selection does not.
+    ///
+    /// Fails when `highlight_entries_for` stops consulting
+    /// `rect_select_preview` — which is how the preview used to be
+    /// invisible to every rebuild but the rubber-band drain's own,
+    /// so an animation tick landing mid-gesture wiped it for a
+    /// frame.
+    #[test]
+    fn test_a_live_rubber_band_preview_replaces_the_selection_highlight() {
+        let mut doc = crate::application::document::tests_common::load_test_doc();
+        doc.selection = SelectionState::Single("selected-node".to_string());
+        doc.set_rect_select_preview(vec!["covered-a".to_string(), "covered-b".to_string()]);
+        let ids: Vec<&str> = highlight_entries_for(&doc)
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["covered-a", "covered-b"],
+            "the covered set is what the user is reading"
+        );
+
+        doc.take_rect_select_preview();
+        let ids: Vec<&str> = highlight_entries_for(&doc)
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["selected-node"],
+            "and the selection comes back the instant the gesture ends"
+        );
+    }
+
+    /// The preview paints whole nodes, never a section narrowing —
+    /// `rect_select` answers in node ids and the release routes
+    /// through `SelectionState::from_ids`, which cannot produce a
+    /// `Section`. A `Some(idx)` here would tint one section of a
+    /// covered node and leave its siblings plain.
+    #[test]
+    fn test_a_rubber_band_preview_entry_never_narrows_to_a_section() {
+        let mut doc = crate::application::document::tests_common::load_test_doc();
+        doc.selection = SelectionState::Section(crate::application::document::SectionSel {
+            node_id: "selected-node".to_string(),
+            section_idx: 3,
+        });
+        assert_eq!(
+            selection_highlight_entries(&doc.selection)[0].1,
+            Some(3),
+            "precondition: the selection this replaces does narrow, or the row below \
+             proves nothing"
+        );
+        doc.set_rect_select_preview(vec!["covered-a".to_string()]);
+        assert_eq!(highlight_entries_for(&doc)[0].1, None);
+    }
+
+    /// A fired `OnClick` trigger forces the full tier no matter how
+    /// small the selection delta is, on both targets. The trigger
+    /// runs custom mutations and document actions — a theme switch
+    /// repaints every node — so the selection delta says nothing
+    /// about what changed.
+    ///
+    /// Fails on the input below when `for_click` stops consulting
+    /// `triggers_fired`: the pair of edge-adjacent selections is one
+    /// `for_selection_change` answers `SceneOnly` for, so the `All`
+    /// here can only come from the flag. That is the browser's
+    /// pre-fix shape — `run_wasm::event_mouse_click` fired triggers
+    /// and then called `rebuild_after_selection_change` regardless.
+    #[test]
+    fn test_click_tier_is_full_when_a_trigger_fired_however_small_the_selection_delta() {
+        let edge_adjacent = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()));
+        assert_eq!(
+            RebuildTier::for_selection_change(&edge_adjacent, &edge_adjacent),
+            RebuildTier::SceneOnly,
+            "precondition: this transition must be the cheap tier, or the row below proves nothing"
+        );
+        assert_eq!(
+            RebuildTier::for_click(true, &edge_adjacent, &edge_adjacent),
+            RebuildTier::All,
+            "a fired trigger can have changed anything"
+        );
+    }
+
+    /// The complement: with no trigger, a click is exactly its
+    /// selection delta. Without this row the fix could be "answer
+    /// `All` always", which is the native pre-fix shape — every
+    /// click ran `rebuild_all`, including an edge-label -> edge-label
+    /// selection change that cannot touch a node text buffer.
+    #[test]
+    fn test_click_tier_with_no_trigger_is_the_selection_delta_alone() {
+        let from = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()));
+        let to = SelectionState::PortalLabel(portal());
+        assert_eq!(
+            RebuildTier::for_click(false, &from, &to),
+            RebuildTier::SceneOnly,
+            "a click that only moves between edge-adjacent selections owes no node-tree rebuild"
+        );
+        assert_eq!(
+            RebuildTier::for_click(false, &from, &SelectionState::Single("n".into())),
+            RebuildTier::All,
+            "...and one that lands on a node still owes one"
+        );
     }
 
     /// Construction-side panic guard for the load-time pre-warm.
@@ -1417,9 +1693,9 @@ mod tests {
     }
 
     /// NodeEdit: every node but the active one dims — the property
-    /// `rebuild_selection_highlight` and `drain_selecting_rect`
-    /// used to drop, leaving text at full opacity over a
-    /// half-alpha border for the duration of a drag.
+    /// the rebuild sites used to drop before they shared one
+    /// overlay body, leaving text at full opacity over a half-alpha
+    /// border for the duration of a drag.
     #[test]
     fn test_build_overlaid_tree_node_edit_dims_inactive_nodes() {
         let doc = load_test_doc();
@@ -1450,13 +1726,12 @@ mod tests {
         );
     }
 
-    /// The split `overlay_tree` / `build_overlaid_tree` exists so
-    /// `drain_selecting_rect` can hit-test a bare tree and then
-    /// overlay it in place, instead of building the tree twice per
-    /// rubber-band frame. That is only sound while the two produce
-    /// the same result — pin it, so a future overlay added to one
-    /// and not the other fails here rather than as a flicker during
-    /// a drag.
+    /// The split `overlay_tree` / `build_overlaid_tree` is the seam
+    /// a §B2 in-place consumer attaches to: overlaying a tree that
+    /// already exists, instead of building a fresh one to overlay.
+    /// The seam is only worth anything while the two produce the
+    /// same result — pin it, so a future overlay added to one and
+    /// not the other fails here rather than as a flicker on screen.
     #[test]
     fn test_overlay_tree_in_place_matches_build_overlaid_tree() {
         let doc = load_test_doc();

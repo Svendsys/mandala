@@ -137,7 +137,7 @@ fn list(args: &Args, eff: &ConsoleEffects) -> ExecResult {
         }
     }
 
-    let doc = &eff.document;
+    let doc = eff.document();
     let mut rows: Vec<(&String, &baumhard::mindmap::custom_mutation::CustomMutation)> = doc
         .mutation_registry
         .iter()
@@ -194,8 +194,8 @@ fn apply(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let explicit_node = args.positional(2).map(str::to_string);
 
     // Look up the mutation. `.clone()` so we don't hold a borrow while
-    // mutating `eff.document` below.
-    let cm = match eff.document.mutation_registry.get(&id) {
+    // mutating through `eff.document_mut()` below.
+    let cm = match eff.document().mutation_registry.get(&id) {
         Some(cm) => cm.clone(),
         None => return ExecResult::err(format!("unknown mutation: {}", id)),
     };
@@ -206,7 +206,7 @@ fn apply(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         ));
     }
 
-    let target_id = match resolve_target_id(eff.document, explicit_node.as_deref()) {
+    let target_id = match resolve_target_id(eff.document(), explicit_node.as_deref()) {
         Ok(t) => t,
         Err(e) => return ExecResult::err(e),
     };
@@ -222,14 +222,14 @@ fn apply(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // dispatch will go to a handler. The tree is discarded after
     // apply either way — the renderer rebuilds from the model on
     // the next frame.
-    if eff.document.will_dispatch_to_handler(&cm.id) {
-        eff.document.apply_custom_mutation(&cm, &target_id, None);
+    if eff.document().will_dispatch_to_handler(&cm.id) {
+        eff.document_mut().apply_custom_mutation(&cm, &target_id, None);
     } else {
-        let mut tree = eff.document.build_tree();
-        eff.document
+        let mut tree = eff.document().build_tree();
+        eff.document_mut()
             .apply_custom_mutation(&cm, &target_id, Some(&mut tree));
     }
-    eff.document.apply_document_actions(&cm);
+    eff.document_mut().apply_document_actions(&cm);
 
     ExecResult::ok_msg(format!("applied '{}' to node '{}'", id, target_id))
 }
@@ -264,7 +264,7 @@ fn help(args: &Args, eff: &ConsoleEffects) -> ExecResult {
         Some(s) => s,
         None => return ExecResult::err("mutation help needs an id"),
     };
-    let cm = match eff.document.mutation_registry.get(id) {
+    let cm = match eff.document().mutation_registry.get(id) {
         Some(cm) => cm,
         None => return ExecResult::err(format!("unknown mutation: {}", id)),
     };
@@ -309,7 +309,7 @@ fn inspect(args: &Args, eff: &ConsoleEffects) -> ExecResult {
         Some(s) => s,
         None => return ExecResult::err("mutation inspect needs an id"),
     };
-    let cm = match eff.document.mutation_registry.get(id) {
+    let cm = match eff.document().mutation_registry.get(id) {
         Some(cm) => cm,
         None => return ExecResult::err(format!("unknown mutation: {}", id)),
     };
@@ -335,7 +335,7 @@ fn inspect(args: &Args, eff: &ConsoleEffects) -> ExecResult {
         (false, true) => "NO PAYLOAD — this mutation is effectively a no-op",
     };
 
-    let dispatch = if eff.document.will_dispatch_to_handler(id) {
+    let dispatch = if eff.document().will_dispatch_to_handler(id) {
         "Rust handler (imperative; mutator AST ignored)"
     } else if cm.mutator.is_some() {
         "declarative (walks the mutator AST at apply time)"

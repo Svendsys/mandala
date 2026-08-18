@@ -909,6 +909,31 @@ fn test_pan_canvas_default_resolves_via_middle_click_and_left_drag() {
     );
 }
 
+/// **`pan_canvas` is bindable to a plain key, not only to the two
+/// mouse gestures it ships bound to.** That third route is why
+/// `Action::PanCanvas`'s dispatch arm carries the drag-state guard
+/// (`dispatch::native::route_pan_canvas`) rather than the middle
+/// button's route carrying it alone: `event_keyboard` dispatches the
+/// Action with no drag-state check of its own, and
+/// `SourceTier::allows_action` does not gate it, so every macro tier
+/// reaches the same arm.
+///
+/// Fails if `KeyBind::parse` ever starts refusing a non-gesture token
+/// for a gesture-defaulted Action, which is the shape that would make
+/// the keyboard route unreachable.
+#[test]
+fn test_pan_canvas_is_reachable_from_a_plain_key_binding() {
+    let cfg = KeybindConfig {
+        pan_canvas: vec!["p".into()],
+        ..KeybindConfig::default()
+    };
+    assert_eq!(
+        cfg.resolve()
+            .action_for_context(InputContext::Document, "p", false, false, false),
+        Some(Action::PanCanvas)
+    );
+}
+
 #[test]
 fn test_zoom_in_default_resolves_to_wheelup() {
     let r = KeybindConfig::default().resolve();

@@ -36,7 +36,7 @@ fn complete_new(_state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 }
 
 fn execute_new(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    if eff.document.dirty {
+    if eff.document().dirty {
         return ExecResult::err("unsaved changes; save before starting a new map");
     }
     let path = args.positional(0).map(|p| p.to_string());

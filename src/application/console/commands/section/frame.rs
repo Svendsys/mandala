@@ -207,7 +207,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
     // `nodes_in_selection` rather than collapsing all five branches
     // (no selection / edge / edge-label / portal-label / portal-text)
     // into a single misleading "select a section" message.
-    let node_ids = match nodes_in_selection(&eff.document.selection, "section frame") {
+    let node_ids = match nodes_in_selection(&eff.document().selection, "section frame") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
@@ -237,11 +237,11 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
             .get(node_id)
             .map(|n| n.sections.len())
             .unwrap_or(0);
-        let section_idx = match resolve_section_idx_for(&eff.document.selection, node_id, kv_idx, n_sections)
-        {
-            Ok(idx) => idx,
-            Err(msg) => return ExecResult::err(msg),
-        };
+        let section_idx =
+            match resolve_section_idx_for(&eff.document().selection, node_id, kv_idx, n_sections) {
+                Ok(idx) => idx,
+                Err(msg) => return ExecResult::err(msg),
+            };
         if section_idx >= n_sections {
             return ExecResult::err(format!(
                 "section[{}] not found on node '{}'",
@@ -268,7 +268,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
                 .and_then(|s| s.frame_border.as_ref())
                 .map(|c| c.preset.as_str())
                 .or_else(|| {
-                    eff.document
+                    eff.document()
                         .mindmap
                         .canvas
                         .default_section_frame_border
@@ -292,7 +292,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
     let mut rejected: Vec<String> = Vec::new();
     for (node_id, section_idx) in &targets {
         let outcome: BorderEditOutcome =
-            eff.document
+            eff.document_mut()
                 .set_section_frame_border_config(node_id, *section_idx, edits.clone());
         if outcome.changed {
             changed += 1;
@@ -342,7 +342,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
 fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Surface the specific not-applicable variant — same shape as
     // `apply_edits`. See its comment for the rationale.
-    let node_ids = match nodes_in_selection(&eff.document.selection, "section frame show") {
+    let node_ids = match nodes_in_selection(&eff.document().selection, "section frame show") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
@@ -361,11 +361,11 @@ fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         .get(&node_id)
         .map(|n| n.sections.len())
         .unwrap_or(0);
-    let section_idx = match resolve_section_idx_for(&eff.document.selection, &node_id, kv_idx, n_sections) {
+    let section_idx = match resolve_section_idx_for(&eff.document().selection, &node_id, kv_idx, n_sections) {
         Ok(idx) => idx,
         Err(msg) => return ExecResult::err(msg),
     };
-    let map = &eff.document.mindmap;
+    let map = &eff.document().mindmap;
     let Some(node) = map.nodes.get(&node_id) else {
         return ExecResult::err(format!("section frame show: node '{}' not found", node_id));
     };
@@ -536,7 +536,7 @@ fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecR
     // single-section auto-resolve (CRIT-2: pre-fix `Single(node)`
     // with one section spuriously errored). Cloning the model into
     // a closure-captured map is cheaper than re-borrowing
-    // `eff.document` inside the closure (the closure is `FnOnce`,
+    // `eff.document()` inside the closure (the closure is `FnOnce`,
     // doc is already borrowed mutably for the dispatch_border_preview
     // call).
     let section_counts: std::collections::HashMap<String, usize> = eff

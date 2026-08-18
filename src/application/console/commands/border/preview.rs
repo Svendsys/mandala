@@ -108,7 +108,7 @@ where
         Ok(e) => e,
         Err(err) => return ExecResult::err(err),
     };
-    let target = match target_for_verb(&eff.document.selection) {
+    let target = match target_for_verb(&eff.document().selection) {
         Ok(t) => t,
         Err(e) => return e,
     };
@@ -118,7 +118,7 @@ where
         OptionEdit::Set(ref s) if s.eq_ignore_ascii_case("custom")
     ) && !edits_has_glyph_field(&edits);
 
-    let outcome: BorderEditOutcome = eff.document.set_border_preview(target, edits);
+    let outcome: BorderEditOutcome = eff.document_mut().set_border_preview(target, edits);
     finish_preview(outcome, verb_label, bare_custom)
 }
 
@@ -158,7 +158,7 @@ pub(crate) fn stage_kv_for_preview(args: &Args, verb_label: &str) -> Result<Bord
 /// matching committing setter and surface the merged outcome.
 /// Returns "no preview" when no preview is active.
 pub(crate) fn commit_border_preview_verb(eff: &mut ConsoleEffects, verb_label: &'static str) -> ExecResult {
-    let Some(outcome) = eff.document.commit_border_preview() else {
+    let Some(outcome) = eff.document_mut().commit_border_preview() else {
         return ExecResult::ok_msg(format!("{}: no active preview", verb_label));
     };
     let mut lines: Vec<String> = vec![format!("{} committed", verb_label)];
@@ -184,7 +184,7 @@ pub(crate) fn commit_border_preview_verb(eff: &mut ConsoleEffects, verb_label: &
 /// was active (cancelling drift-cleared previews falls into the
 /// same branch).
 pub(crate) fn cancel_border_preview_verb(eff: &mut ConsoleEffects, verb_label: &'static str) -> ExecResult {
-    let cleared = eff.document.cancel_border_preview();
+    let cleared = eff.document_mut().cancel_border_preview();
     if cleared {
         ExecResult::ok_msg(format!("{} cancelled", verb_label))
     } else {

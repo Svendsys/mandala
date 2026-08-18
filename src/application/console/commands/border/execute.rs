@@ -109,13 +109,13 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn apply_set_visible(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
-    let ids = match nodes_in_selection(&eff.document.selection, "border") {
+    let ids = match nodes_in_selection(&eff.document().selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
     let mut changed = 0usize;
     for id in &ids {
-        if eff.document.set_node_border_visible(id, on) {
+        if eff.document_mut().set_node_border_visible(id, on) {
             changed += 1;
         }
     }
@@ -303,7 +303,7 @@ fn apply_toggle_visible(eff: &mut ConsoleEffects) -> ExecResult {
         toggled,
         now_on,
         now_off,
-    } = match toggle_border_visible_on_selection(eff.document) {
+    } = match toggle_border_visible_on_selection(eff.document_mut()) {
         Ok(report) => report,
         Err(e) => return e,
     };
@@ -335,7 +335,7 @@ fn apply_positional(verb: &str, args: &Args, eff: &mut ConsoleEffects) -> ExecRe
         args,
         /* verb_pos */ 0,
         BorderSurface::Selection,
-        eff.document,
+        eff.document(),
     ) {
         Ok(Some(staged)) => staged,
         // Unreachable through `execute_border`'s dispatch (which
@@ -371,7 +371,7 @@ pub(crate) fn prepend_line(result: ExecResult, header: String) -> ExecResult {
 }
 
 fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult {
-    let ids = match nodes_in_selection(&eff.document.selection, "border") {
+    let ids = match nodes_in_selection(&eff.document().selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
@@ -390,7 +390,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
     let mut auto_promoted: Option<String> = None;
     let mut rejected: Vec<String> = Vec::new();
     for id in &ids {
-        let outcome: BorderEditOutcome = eff.document.set_node_border_config(id, edits.clone());
+        let outcome: BorderEditOutcome = eff.document_mut().set_node_border_config(id, edits.clone());
         if outcome.changed {
             changed += 1;
         }

@@ -2170,7 +2170,10 @@ SelectionState`, `undo_stack: Vec<UndoAction>`,
 `active_animations`, `active_toggles`, `mutation_registry`,
 `mutation_handlers`, `mutation_sources`, `dirty: bool`,
 `label_edit_preview`, `portal_text_edit_preview`,
-`color_picker_preview`, `border_preview`. What it does **not**
+`color_picker_preview`, `border_preview`,
+`rect_select_preview` (the node ids a rubber-band rectangle
+currently covers — see [`DragState`](#dragstate)). What it does
+**not**
 own: the renderer, GPU resources, drag/mode state, modal editor
 state, keybinds — those are all on `InitState`.
 
@@ -2368,6 +2371,45 @@ impose on every state — including the `None` that is live for all
 but a few seconds of a session. `PendingRight`, 64 bytes, is the
 widest variant left and stays unboxed.
 
+**`SelectingRect` splits its per-frame work in two, and only one
+half runs every frame.** The overlay rectangle tracks the pointer
+and is redrawn unconditionally. The covered-node preview is
+memoized: `drain_rect_select` hit-tests against the *installed*
+tree (a rubber-band drag mutates nothing, so its geometry is
+current) and repaints only when `set_rect_select_preview` reports
+the covered set actually moved. The set itself lives on
+`MindMapDocument` beside the other transient previews, so every
+rebuild path paints it — including the animation tick's, which
+runs after this drain in the same frame and used to wipe a preview
+stamped onto a tree the drain had built for itself. Before #37 the
+drain ran `doc.build_tree()` plus a full text-buffer rebuild on
+every frame of the gesture, under a comment calling it a
+"lightweight overlay redraw".
+
+**The variant is the authority; both artifacts are its
+projection.** Because the covered set is document state that every
+node-tree rebuild reads, a gesture that ended without it being
+dropped leaves the whole canvas painting a rectangle the user let
+go of — and `SelectingRect` has more ways out than the left-release
+arm that used to be the only one dropping it (a left press
+overwrote it with `Pending`, `Action::PanCanvas` with `Panning`,
+and a target-picker mode swallowed the release entirely). So the
+drain runs on *every* frame, not only the gesture's, and
+re-derives the overlay rectangle and the covered set from the drag
+state it finds; the two eager calls that remain (the release arm,
+the target-picker mode entries) exist only so the rebuild they run
+in the same breath does not paint the set one last time. Nothing
+has to enumerate the exits, so a new one cannot strand it.
+
+One consequence of hit-testing the installed tree is worth naming:
+the drain runs *before* the animation tick in the same frame, so a
+node an animation is advancing is hit-tested one tick behind where
+it is drawn. The window is a single frame and only opens while an
+animation and a rubber band are live at once; closing it would
+mean either ordering the animation tick first (which would make
+the rectangle lag the pointer) or going back to a per-frame arena
+build.
+
 `src/application/app/mod.rs`. Native-only today.
 
 **Hit priority, in the three parts it actually has.** The line
@@ -2429,6 +2471,68 @@ reading the promotion order without the capture rule.
 `test_portal_label_drag_capture_is_gated_by_the_same_node_hit_the_click_ladder_uses`
 now holds the two paths together, and names the gate that had
 been an unpinnable inline `if` inside the press handler.
+
+**A press never clobbers a gesture already in flight.** All three
+press paths in `event_mouse_click.rs` check the drag state before
+writing it, at two widths:
+
+- **Right and middle** refuse whenever the state is anything but
+  `None` (`handle_right_button`'s inline guard;
+  `route_middle_button`'s `Keep`). Neither button has a re-arming
+  role to preserve — a right press arms `PendingRight` and a
+  middle press dispatches `MouseGesture::MiddleClick`, and both
+  are meaningful only from rest.
+- **Left** refuses on the narrower
+  `DragState::would_abandon_gesture` class — `PendingRight` and
+  `Throttled(..)` — because it *is* the arming press for
+  `Pending`, and a click after a release the window never
+  delivered has to re-arm rather than do nothing.
+
+The class is the point: `Throttled(..)` owes the model a write
+and an undo entry that only `commit_on_release_core` performs,
+so replacing it leaves the tree holding dragged offsets that the
+next model rebuild silently snaps back — position loss with
+nothing to undo. `Panning`, `SelectingRect` and `Pending` owe the
+model nothing and are re-derived from the next sample or press.
+
+**The same class guards the *Action*, not only the presses.**
+`Action::PanCanvas` is the one Action that writes a drag state
+from rest, and it has three entry points, not one:
+`MouseGesture::MiddleClick`, `MouseGesture::LeftDrag` (which only
+ever runs from `Pending`), and any keyboard binding or macro step
+naming `pan_canvas` — a first-class user-bindable entry that
+`event_keyboard` dispatches with no drag-state check and that
+`SourceTier::allows_action` does not gate. So the guard sits on
+the arm (`dispatch::native::route_pan_canvas`, pure and pinned at
+`DragState` level the way `route_middle_button` is), which closes
+all three at once. `Pending` stays outside the refused class
+precisely because the `LeftDrag` threshold cross dispatches
+`PanCanvas` from it.
+
+The release halves match, and the rule is the same one: **the
+button that started a gesture is the one that finalizes it.**
+`resolve_release` commits only on the owning button and answers
+`PutBack` for every other, which both dispatchers honor by
+restoring the drag state. A stray right-click cannot end a
+left-button drag, and — since the left press started being
+refused mid-gesture — a left release cannot end a right-started
+fast-resize either; the right release, which the user still owes
+because the button is down, commits it. Middle-click was the
+exception on both halves until #37 — it overwrote any state on
+press and forced `None` on release — and the right-button guard's
+comment named that overwrite as the posture it was rejecting.
+
+**One state is outside the rule, and knowingly.** `Panning` does
+not record which button armed it, and three things arm it (a
+middle press, the `LeftDrag` threshold cross, any keyboard or
+macro `pan_canvas`), so a middle release during a left-drag pan
+ends it and a left release ends a middle-started one. Nothing is
+at risk — `Panning` owes the model no write and no undo entry,
+which is exactly what puts it outside the class above — and
+closing it is a decision about `Action::PanCanvas`'s semantics
+rather than a guard: the variant would have to carry its origin,
+and a keyboard-armed pan has no button to name, so "momentary or
+modal" has to be answered first.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
@@ -2672,13 +2776,63 @@ is dispatched explicitly so the cheapest one runs.
 `src/application/app/scene_rebuild.rs`.
 Functions: `rebuild_all` (node tree + every canvas role),
 `rebuild_scene_only` (reuse the node tree, refresh every canvas
-role), and the per-role methods on
+role), `rebuild_selection_highlight` (node text buffers only — no
+canvas roles, no mode-status line: what a change to *which nodes
+are highlighted* actually needs), and the per-role methods on
 [`CanvasFrame`](#canvas-role-projection) —
 `update_connection_trees` (edges + their grab handles),
 `update_portal_tree`, `update_border_tree`,
 `update_connection_label_tree`, `update_section_frame_tree`, and
 the two resize-handle updaters — each callable on its own so a
 caller refreshes only what its interaction can change.
+
+**`RebuildTier` names the top two rather than running them.**
+`RebuildTier::{All, SceneOnly}` is the choice between the first
+two as a value, with `execute` as the only place either is
+actually called. The reason is the same one
+[`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
+the drag-release path: both tiers need `&mut Renderer`, so an
+interaction that *decides* a tier could not be tested at all
+while deciding and performing were one statement (TEST_CONVENTIONS
+§T8 keeps live wgpu out of the harness). Handing the decision back
+as a value is what lets a test ask which tier a given interaction
+picks.
+
+Two constructors carry the rules:
+
+- `for_selection_change(prev, new)` — `All` when either side is a
+  node-ish selection (`Single` / `Multi` / `Section` /
+  `MultiSection` / `SectionRange`), because section-area
+  highlights are stamped into the node tree's
+  `ColorFontRegions`; `SceneOnly` when both are edge-adjacent and
+  only the scene-level cascade moves.
+  `rebuild_after_selection_change` is this constructor plus
+  `execute`, and stays the one-liner for callers with nothing
+  else to weigh.
+- `for_click(triggers_fired, prev, new)` — the same, except a
+  fired `OnClick` trigger forces `All`, since a trigger's
+  document actions are unbounded (a theme switch repaints every
+  node). Both targets read this one function: native used to run
+  `rebuild_all` for every click outcome, and the browser used to
+  run the selection-delta tier even when a trigger had just
+  mutated the document, so §4's peers were wrong in opposite
+  directions.
+
+`highlight_entries_for(doc)` is the one mapping all four
+node-tree rebuild sites use for *which* nodes to tint: the
+rubber-band preview when one is live, `doc.selection` otherwise.
+The preview replaces rather than adds to the selection's entries,
+because the gesture's release writes `SelectionState::from_ids`
+over the selection outright — painting both would show a set that
+is about to be discarded.
+
+Interactions that decide a tier are split into a renderer-free
+core that returns one and a shell that runs it —
+`click::handle_click_core` / `click::handle_click`,
+`event_cursor_moved::arm_label_drag` /
+`event_cursor_moved::start_label_drag`. Both label promotions
+(edge-label and portal-label) go through the second pair, so they
+cannot pick different tiers again.
 
 ### Dirty flag
 
@@ -2839,7 +2993,10 @@ dispatch site at all.
 on empty canvas" gesture (default `PanCanvas`). The threshold
 cross dispatches whatever Action the gesture resolves to — no
 `PanCanvas` special-case in the handler — and the `PanCanvas` arm
-sets `DragState::Panning` for the press duration. The per-frame
+sets `DragState::Panning` for the press duration, unless the state
+it finds owes a commit (see the guard under
+[`DragState`](#dragstate); a `pan_canvas` binding on a plain key
+is why the guard is on the arm). The per-frame
 pan delta stays inline in `event_cursor_moved.rs` because
 per-cursor-move state is legitimately not a discrete-action
 concern; the threshold frame's first delta is gated on the
@@ -3082,6 +3239,28 @@ subverbs), `open`, `new`, `quit`, `save`. Visuals borrow
 for the frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
 characters never overflow.
+
+**A command reaches the document through two different calls,
+and which one it picks is the rebuild signal.** `ConsoleEffects`
+hands out `document()` (shared) and `document_mut()`
+(exclusive); the second raises `document_mutated`, which
+`console_input/exec.rs` reads back in
+`console_line_needs_rebuild` to decide whether the line owes a
+`scene_cache.clear()` + `rebuild_all`. The other input is the
+command's `ConsoleSideEffect`: every variant counts except
+`SetFpsDisplay`, whose overlay is screen-space and shares no
+state with the scene tree. So `help`, `fps`, `mutation list`
+and any verb that fails after only reading no longer drop the
+connection cache and re-project the whole scene for output that
+never leaves the scrollback.
+
+The signal is the *borrow*, not the write. It over-reports — a
+`border reset` that turns out to be a no-op still counts — and
+that is the safe direction, since the cost is one rebuild
+against a canvas silently disagreeing with the model. It is
+also the version a new command cannot forget: there is no way
+to write to the document except through the call that raises
+it.
 
 Console parity on WASM is the obvious next step;
 the verb implementations are already cross-platform, only the

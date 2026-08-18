@@ -506,7 +506,19 @@ pub struct Renderer {
     /// this region alongside the palette backdrop. `None` whenever
     /// the picker is closed.
     color_picker_backdrop: Option<(f32, f32, f32, f32)>,
-    /// Temporary overlay buffers (e.g., selection rectangle). Camera-transformed.
+    /// The rubber-band selection rectangle's four shaped edges, and
+    /// nothing else. Camera-transformed. Written only by
+    /// [`Self::rebuild_selection_rect_overlay`] and dropped only by
+    /// [`Self::clear_overlay_buffers`]; the color picker, the FPS
+    /// readout and the mode-status line each have their own store.
+    ///
+    /// The exclusivity is load-bearing rather than incidental:
+    /// `app::drain_frame::drain_rect_select` — a plain code span
+    /// because `app` is a private module and rustdoc cannot resolve
+    /// a link into one — clears this on every frame no rubber band
+    /// is live, so anything else parked here would be wiped. The
+    /// doc used to read "temporary overlay buffers (e.g., selection
+    /// rectangle)", which invited exactly that.
     overlay_buffers: Vec<MindMapTextBuffer>,
     /// `(char_count, row_count)` of the most recent selection-rect
     /// shape held in [`Self::overlay_buffers`]. Per-tick rebuilds

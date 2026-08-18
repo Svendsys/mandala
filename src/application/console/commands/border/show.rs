@@ -31,7 +31,7 @@ use crate::application::document::SelectionState;
 /// see why their border color doesn't match —calls
 /// this out as a UX bug bake-in.
 pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let id = match first_selected_node_id(&eff.document.selection) {
+    let id = match first_selected_node_id(&eff.document().selection) {
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
     };
@@ -51,16 +51,16 @@ pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
         .positionals()
         .skip(1)
         .any(|p| p.eq_ignore_ascii_case("verbose"));
-    let node = match eff.document.mindmap.nodes.get(&id) {
+    let node = match eff.document().mindmap.nodes.get(&id) {
         Some(n) => n,
         None => return ExecResult::err(format!("border: node '{}' not found", id)),
     };
-    let mut lines = format_border_readout(&eff.document.mindmap, node, side_filter.as_deref(), verbose);
+    let mut lines = format_border_readout(&eff.document().mindmap, node, side_filter.as_deref(), verbose);
     // API/UX M4: when the selection covers more than one node,
     // the readout silently rolls up to the first one. Prepend a
     // single-line note so the user knows there are siblings —
     // mirrors the `font show` Multi-rollup posture.
-    if let Some(extra) = multi_rollup_count(&eff.document.selection) {
+    if let Some(extra) = multi_rollup_count(&eff.document().selection) {
         lines.insert(
             0,
             crate::application::console::OutputLine::plain(format!(

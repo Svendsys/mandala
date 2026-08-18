@@ -327,7 +327,7 @@ fn apply_positional(
     surface: BorderSurface,
     eff: &mut ConsoleEffects,
 ) -> ExecResult {
-    let staged = match positional_subverb_to_edits(verb, args, verb_pos, surface, eff.document) {
+    let staged = match positional_subverb_to_edits(verb, args, verb_pos, surface, eff.document()) {
         Ok(Some(staged)) => staged,
         Ok(None) => return ExecResult::err(unknown_canvas_subverb_message(surface, verb)),
         Err(msg) => return ExecResult::err(msg),
@@ -468,7 +468,7 @@ fn apply_canvas_edits(
     ) && !edits_has_glyph_field(&edits);
 
     let outcome: BorderEditOutcome = match surface {
-        BorderSurface::CanvasDefault => eff.document.set_canvas_default_border(edits),
+        BorderSurface::CanvasDefault => eff.document_mut().set_canvas_default_border(edits),
         BorderSurface::CanvasSectionFrame => eff
             .document
             .set_canvas_default_section_frame_border_config(false, edits),
@@ -527,7 +527,7 @@ fn finish(outcome: BorderEditOutcome, label: &str, bare_custom: bool) -> ExecRes
 }
 
 fn execute_show_border(eff: &mut ConsoleEffects) -> ExecResult {
-    let map = &eff.document.mindmap;
+    let map = &eff.document().mindmap;
     let cfg: Option<&GlyphBorderConfig> = map.canvas.default_border.as_ref();
     let lines = if let Some(cfg) = cfg {
         let resolved = resolve_border_style(Some(cfg), None, None, "#cccace");
@@ -546,7 +546,7 @@ fn execute_show_border(eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn execute_show_section_frame(eff: &mut ConsoleEffects, focused: bool) -> ExecResult {
-    let map = &eff.document.mindmap;
+    let map = &eff.document().mindmap;
     let label = if focused {
         "canvas section-frame focused"
     } else {
