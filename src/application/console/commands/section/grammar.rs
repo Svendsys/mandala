@@ -9,12 +9,21 @@
 //!
 //! Second, `move` and `resize` each declare **two forms**, because
 //! their shapes are genuinely alternatives rather than a menu.
-//! `section move` takes `dx=`/`dy=` *or* `x=`/`y=` and rejects a
-//! mix; `section resize` takes the `fill` literal *or* `w=`/`h=`.
-//! Bracketing either pair onto one line would document a command the
-//! verb refuses, so `help` prints one line per form — and the popup
-//! offers the union, which is what puts `fill` beside `w=` and `h=`
-//! at `section resize <TAB>`.
+//! `section move` takes `dx=`/`dy=` *or* `x=`/`y=`; `section resize`
+//! takes the `fill` literal *or* `w=`/`h=`. Bracketing either pair
+//! onto one line would document a command the verb refuses, so
+//! `help` prints one line per form.
+//!
+//! The two are not enforced the same way, and the difference is
+//! where the alternative is *written*. `resize`'s lives in a slot —
+//! only one of its forms declares the `fill` literal — so the engine
+//! narrows on it and `section resize fill w=99` is refused by name
+//! (`spec::Form::admits_prefix`). `move`'s lives only in its key
+//! lists, which an empty positional list admits equally, so the
+//! engine offers and accepts their union and `execute_move` refuses
+//! the mix by hand, naming both shapes. That handwritten guard is
+//! one of the two bespoke semantics issue #27's fix plan names as
+//! staying behind the table.
 //!
 //! This level is also where `KNOWN_VERBS` used to live: a second
 //! nine-entry vocabulary beside `VERBS`, in a different order, that

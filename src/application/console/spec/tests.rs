@@ -844,3 +844,52 @@ fn admits_hinted_word(vocab: &super::Vocabulary, word: &str) -> bool {
                 .to_ascii_lowercase()
                 .contains(&word.to_ascii_lowercase()))
 }
+
+/// A positional narrows a two-form subverb to the shape that
+/// declares it, and the keys of the other shape are then refused by
+/// name.
+///
+/// The mechanism `section resize` needed and did not have.
+/// `resize` declares the `fill` literal in one form and the
+/// `w=`/`h=` pair in the other; the engine read the *union* of a
+/// subverb's forms, so `section resize fill w=99 h=99` was accepted
+/// and then dropped by a handler that returns on `fill` before it
+/// looks at the pairs — `OK section: no change`, identically on
+/// origin/main.
+///
+/// Three cases, because the narrowing has three outcomes and only
+/// the first is the fix: a committed positional that one form
+/// declares, no positional at all (the union stands, which is what
+/// keeps `section resize <TAB>` offering `fill` beside `w=`), and a
+/// positional no form admits (the union stands again, so a
+/// structural error is reported on its own terms rather than as a
+/// key problem).
+#[test]
+fn test_a_committed_positional_narrows_a_subverb_to_the_form_that_declares_it() {
+    use super::{eligible_forms, free, Form, Slot, Subverb, Vocabulary, Word};
+
+    static LITERAL: &[Word] = &[Word::new("fill", "the literal form")];
+    static FORMS: &[Form] = &[
+        Form::keys(&["w", "h"], &["target"]),
+        Form::slots(&[Slot::req(Vocabulary::Words(LITERAL))]).reading(&["target"]),
+    ];
+    static SIZED: Subverb = Subverb::bare("resize", "geometry", "two shapes").taking(FORMS);
+
+    assert_eq!(SIZED.readable_keys(), vec!["w", "h", "target"]);
+    assert_eq!(SIZED.readable_keys_for(&[]), vec!["w", "h", "target"]);
+    assert_eq!(SIZED.readable_keys_for(&["fill"]), vec!["target"]);
+    assert_eq!(SIZED.readable_keys_for(&["FILL"]), vec!["target"]);
+    assert_eq!(SIZED.readable_keys_for(&["bogus"]), vec!["w", "h", "target"]);
+
+    // The fallback is a fallback, not an accident: no form admits
+    // `bogus`, so every form is back in play.
+    assert_eq!(eligible_forms(FORMS, &["bogus"]).len(), 2);
+    assert_eq!(eligible_forms(FORMS, &["fill"]).len(), 1);
+
+    // An open vocabulary admits whatever is typed, so a form whose
+    // slot is free never narrows anything away — the property that
+    // keeps `border palette <name> field=…` reading `field` for a
+    // palette named `fill`.
+    static OPEN: &[Form] = &[Form::slots(&[Slot::req(free("name"))]).reading(&["target"])];
+    assert_eq!(eligible_forms(OPEN, &["anything at all"]).len(), 1);
+}

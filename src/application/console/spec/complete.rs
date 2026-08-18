@@ -55,7 +55,7 @@ pub fn completions_at(
         // Token 0 of the line is the verb name; the engine answers
         // it without consulting any grammar.
         CompletionContext::CommandName => Vec::new(),
-        CompletionContext::KvValue { key } => match readable_key(&descent, key) {
+        CompletionContext::KvValue { key } => match readable_key(&descent, tokens, key) {
             Some(k) => vocabulary_rows(&k.vocab, ctx, state.partial),
             None => Vec::new(),
         },
@@ -63,20 +63,24 @@ pub fn completions_at(
             let positional_form = subverb_slot_is_positional(tokens, descent.slot);
             let mut out = subverb_rows(level, state.partial, positional_form);
             if let Some(bare) = &level.bare {
-                out.extend(form_rows(level, bare.forms, 0, ctx, state.partial));
+                out.extend(form_rows(level, bare.forms, 0, &[], ctx, state.partial));
             }
             out
         }
         CompletionContext::Token { index } => match descent.stop {
             Stop::Matched(subverb) => {
                 let i = index.saturating_sub(descent.slot + 1);
-                form_rows(level, subverb.forms, i, ctx, state.partial)
+                let committed = committed_before(&descent, tokens, i);
+                form_rows(level, subverb.forms, i, &committed, ctx, state.partial)
             }
             // `Bare` past the bare form's own slots is the kv tail:
             // the keys stay on offer, which is what makes
             // `border preset=heavy <TAB>` list the rest of them.
             Stop::Bare => match &level.bare {
-                Some(bare) => key_rows(level, &bare.readable_keys(), state.partial),
+                Some(bare) => {
+                    let committed = committed_before(&descent, tokens, bare.slot_count());
+                    key_rows(level, &bare.readable_keys_for(&committed), state.partial)
+                }
                 None => Vec::new(),
             },
             // The word at the subverb slot names nothing this level
@@ -88,14 +92,46 @@ pub fn completions_at(
     }
 }
 
-/// The key under the cursor, but only when the matched form reads
-/// it. A key the level declares and this subverb does not is not
+/// The positionals already committed to the matched form's first `i`
+/// slots — the same narrowing the parse loop applies, asked of the
+/// slots strictly *before* the cursor so the one under it is still
+/// free to become anything the popup offers.
+///
+/// The completion state carries no `Args`, so the slot walk is done
+/// against the raw token slice here rather than through
+/// `Descent::committed_slots`; both count positionals from
+/// `descent.slot`, which is the invariant that keeps a `Token`
+/// arm and the execute path looking at the same words.
+fn committed_before<'a>(descent: &super::Descent, tokens: &'a [String], i: usize) -> Vec<&'a str> {
+    let base = match descent.stop {
+        Stop::Matched(_) => descent.slot + 1,
+        _ => descent.slot,
+    };
+    (0..i)
+        .map_while(|n| {
+            tokens
+                .iter()
+                .filter(|t| !crate::application::console::parser::is_kv_token(t))
+                .nth(base + n)
+                .map(String::as_str)
+        })
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// The key under the cursor, but only when the shape being typed
+/// reads it. A key the level declares and this form does not is not
 /// offered a value vocabulary, for the same reason the parse loop
 /// rejects it by name.
-fn readable_key(descent: &super::Descent, key: &str) -> Option<&'static Key> {
+fn readable_key(descent: &super::Descent, tokens: &[String], key: &str) -> Option<&'static Key> {
     let readable = match descent.stop {
-        Stop::Matched(subverb) => subverb.readable_keys(),
-        Stop::Bare => descent.level.bare.as_ref()?.readable_keys(),
+        Stop::Matched(subverb) => {
+            subverb.readable_keys_for(&committed_before(descent, tokens, subverb.slot_count()))
+        }
+        Stop::Bare => {
+            let bare = descent.level.bare.as_ref()?;
+            bare.readable_keys_for(&committed_before(descent, tokens, bare.slot_count()))
+        }
         Stop::Unknown | Stop::KvForm => return None,
     };
     if !readable.contains(&key) {
@@ -117,6 +153,7 @@ fn form_rows(
     grammar: &'static Grammar,
     forms: &'static [Form],
     i: usize,
+    committed: &[&str],
     ctx: &ConsoleContext,
     partial: &str,
 ) -> Vec<Completion> {
@@ -127,7 +164,12 @@ fn form_rows(
             keys.push(name);
         }
     };
-    for form in forms {
+    // Only the shapes the positionals behind the cursor still admit:
+    // `section resize fill <TAB>` is the `fill` form, so the other
+    // form's `w=` / `h=` are withheld here exactly as the parse loop
+    // refuses them.
+    let eligible = super::eligible_forms(forms, committed);
+    for form in &eligible {
         if let Some(slot) = form.slots.get(i) {
             out.extend(vocabulary_rows(&slot.vocab, ctx, partial));
         }
@@ -135,12 +177,12 @@ fn form_rows(
     // Required keys of every eligible form first, then the
     // optional ones — the same order `help` prints and the
     // rejection quotes.
-    for form in forms.iter().filter(|f| f.required_slots_behind(i)) {
+    for form in eligible.iter().filter(|f| f.required_slots_behind(i)) {
         for name in form.required {
             push(name, &mut keys);
         }
     }
-    for form in forms.iter().filter(|f| f.required_slots_behind(i)) {
+    for form in eligible.iter().filter(|f| f.required_slots_behind(i)) {
         for name in form.optional {
             push(name, &mut keys);
         }

@@ -170,6 +170,22 @@ pub fn forms(grammar: &'static Grammar) -> Vec<String> {
     out
 }
 
+/// The one usage line a single [`Form`] prints, under a subverb's
+/// head or under the level's own.
+///
+/// `help` prints every form of every subverb; this is the same
+/// rendering asked for one of them, so a rejection that has to name
+/// a *particular* shape — `section resize fill w=99`, refused because
+/// `w=` belongs to the other one — quotes the same words the help
+/// page does.
+pub fn form_line(grammar: &'static Grammar, subverb: Option<&'static Subverb>, form: &Form) -> String {
+    let head = match subverb {
+        Some(s) => format!("{} {}", grammar.label, s.name),
+        None => grammar.label.to_string(),
+    };
+    push_form(&head, grammar, form)
+}
+
 fn subverb_forms(grammar: &'static Grammar, subverb: &'static Subverb) -> Vec<String> {
     let head = format!("{} {}", grammar.label, subverb.name);
     if subverb.forms.is_empty() {

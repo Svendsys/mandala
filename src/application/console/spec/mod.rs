@@ -35,9 +35,10 @@
 //!   forms; a key added to a [`Grammar`] is documented by the same
 //!   edit that makes it parseable.
 //! - **The kv loop**, through [`kvs::read`]: unknown keys rejected
-//!   by name, and keys the *matched subverb* does not read rejected
-//!   by name too — `border preset heavy color=#fff` used to stage
-//!   the preset and drop the color without a word.
+//!   by name, and keys the *shape being typed* does not read
+//!   rejected by name too — `border preset heavy color=#fff` used to
+//!   stage the preset and drop the color without a word, and
+//!   `section resize fill w=99` used to drop the size.
 //! - **The hint surface**: one [`Word::hint`] per vocabulary entry
 //!   and one [`Key::hint`] per key, read by the popup and by the
 //!   `<…>` a usage form prints.
@@ -136,6 +137,24 @@ pub enum Vocabulary {
     },
 }
 
+impl Vocabulary {
+    /// Whether a positional already on the line could be standing in
+    /// a slot with this vocabulary.
+    ///
+    /// Only a closed word list can answer "no". An open vocabulary —
+    /// a path, a pattern, a palette name — admits whatever was typed,
+    /// and its sentinels are a suggestion list rather than a filter,
+    /// so `border palette My-Palette` is still the palette form.
+    /// Closed words are matched case-insensitively, the way every
+    /// parser in the console reads them (`commands/mod.rs` § Casing).
+    pub fn admits(&self, value: &str) -> bool {
+        match self {
+            Vocabulary::Words(words) => words.iter().any(|w| w.name.eq_ignore_ascii_case(value)),
+            Vocabulary::Free { .. } | Vocabulary::FreeWords { .. } | Vocabulary::Rows { .. } => true,
+        }
+    }
+}
+
 /// One positional argument of a subverb or of a level's bare form.
 ///
 /// `optional` decides both the square brackets in usage and whether
@@ -216,12 +235,27 @@ impl Key {
 ///
 /// Most subverbs have exactly one. A second exists where the shapes
 /// are genuinely alternatives rather than a menu: `section move`
-/// takes `dx=`/`dy=` *or* `x=`/`y=`, never a mix, and
+/// takes `dx=`/`dy=` *or* `x=`/`y=`, and
 /// `section resize` takes the `fill` literal *or* `w=`/`h=`.
 /// Printing either pair on one bracketed line would document a
-/// command the verb rejects. The union across a subverb's forms is
-/// what [`kvs::read`] accepts and what the popup offers; each form
-/// on its own is what `help` prints.
+/// command the verb rejects, so each form on its own is what `help`
+/// prints.
+///
+/// What [`kvs::read`] accepts and what the popup offers is the union
+/// across the forms **the line's positionals still admit** — see
+/// [`Self::admits_prefix`]. That is what makes the exclusion real on
+/// `section resize`: `fill` sits in a slot only one of the two forms
+/// declares, so once it is typed the other form's `w=`/`h=` are
+/// refused by name instead of being read and dropped.
+///
+/// It reaches exactly as far as the *slots* do. Two forms that differ
+/// only in their keys — `section move`'s `dx=`/`dy=` against its
+/// `x=`/`y=` — are equally admitted by an empty positional list, so
+/// the engine offers and accepts their union and the exclusion stays
+/// the verb's own: `execute_move` refuses the mix by hand, with a
+/// message naming both shapes. Deciding it here would mean letting
+/// whichever key was typed first pick the form, which is a guess, not
+/// a grammar.
 ///
 /// `required` keys print bare, `optional` keys print bracketed.
 /// Both are names resolved against the level's
@@ -279,6 +313,47 @@ impl Form {
     /// while the cursor is at slot `i`.
     pub fn required_slots_behind(&self, i: usize) -> bool {
         !self.slots.iter().skip(i).any(|s| !s.optional)
+    }
+
+    /// Whether the positionals already on the line could be standing
+    /// in *this* form's slots.
+    ///
+    /// The question a subverb with two shapes has to answer before it
+    /// can say which keys it reads. `section resize` declares the
+    /// `fill` literal in one form and the `w=`/`h=` pair in another;
+    /// once `fill` is on the line, only the first form is still being
+    /// typed, and the second one's keys are not this line's to fill.
+    ///
+    /// More positionals than slots is a no, and a closed slot
+    /// vocabulary that does not contain the word is a no. Nothing
+    /// else is: a form is narrowed by what the line already says, not
+    /// by what it has yet to say, which is why a missing required
+    /// slot does not disqualify one — the popup at that very slot is
+    /// what offers it.
+    pub fn admits_prefix(&self, committed: &[&str]) -> bool {
+        committed.len() <= self.slots.len()
+            && self
+                .slots
+                .iter()
+                .zip(committed)
+                .all(|(slot, value)| slot.vocab.admits(value))
+    }
+}
+
+/// The forms of a subverb (or of a level's bare form) that the
+/// positionals already on the line admit.
+///
+/// Falls back to *every* form when the line admits none of them: a
+/// positional that fits no shape is a structural error the caller
+/// reports on its own terms (`section resize bogus` prints both usage
+/// lines), and narrowing the key vocabulary to nothing there would
+/// answer a question the user did not ask.
+pub fn eligible_forms(forms: &'static [Form], committed: &[&str]) -> Vec<&'static Form> {
+    let narrowed: Vec<&'static Form> = forms.iter().filter(|f| f.admits_prefix(committed)).collect();
+    if narrowed.is_empty() {
+        forms.iter().collect()
+    } else {
+        narrowed
     }
 }
 
@@ -363,8 +438,17 @@ impl Subverb {
 
     /// Every kv key this subverb reads, across all its forms, in
     /// declaration order with duplicates dropped.
+    ///
+    /// The union — what the subverb reads in *some* shape. What the
+    /// line in front of it reads is [`Self::readable_keys_for`].
     pub fn readable_keys(&self) -> Vec<&'static str> {
-        dedup_names(self.forms)
+        dedup_names(&self.forms.iter().collect::<Vec<_>>())
+    }
+
+    /// Every kv key the forms `committed` still admits read — the
+    /// keys *this* line may carry. See [`Form::admits_prefix`].
+    pub fn readable_keys_for(&self, committed: &[&str]) -> Vec<&'static str> {
+        dedup_names(&eligible_forms(self.forms, committed))
     }
 
     /// How many positionals the subverb declares — the widest of
@@ -382,7 +466,7 @@ impl Subverb {
 /// `dx | dy | x | y | section` rather than interleaving the shared
 /// optional key between the two required pairs. Short lists (at most
 /// a dozen), so the linear `contains` is cheaper than building a set.
-fn dedup_names(forms: &'static [Form]) -> Vec<&'static str> {
+fn dedup_names(forms: &[&'static Form]) -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
     let mut push = |name: &'static str| {
         if !out.contains(&name) {
@@ -424,7 +508,12 @@ impl Bare {
 
     /// Every kv key the bare form reads, across all its forms.
     pub fn readable_keys(&self) -> Vec<&'static str> {
-        dedup_names(self.forms)
+        dedup_names(&self.forms.iter().collect::<Vec<_>>())
+    }
+
+    /// Every kv key the bare forms `committed` still admits read.
+    pub fn readable_keys_for(&self, committed: &[&str]) -> Vec<&'static str> {
+        dedup_names(&eligible_forms(self.forms, committed))
     }
 
     /// How many positionals the bare form declares.

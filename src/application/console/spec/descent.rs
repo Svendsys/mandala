@@ -127,6 +127,18 @@ impl<'a> Descent<'a> {
         args.positional(self.slot_base() + count)
     }
 
+    /// The positionals already sitting in the matched form's slots,
+    /// in slot order, stopping at the first one the line does not
+    /// carry. `count` bounds the walk at the widest form the subverb
+    /// declares.
+    ///
+    /// This is the "what has the line already said" a subverb with
+    /// two shapes is narrowed by — see [`super::Form::admits_prefix`].
+    pub fn committed_slots<'b>(&self, args: &'b Args, count: usize) -> Vec<&'b str> {
+        let reader = self.slot_value(args);
+        (0..count).map_while(|i| reader.get(i)).collect()
+    }
+
     /// The "you probably meant to quote this" rejection for a
     /// [`Stop::KvForm`], built from this descent's own level, slot
     /// and typed word.

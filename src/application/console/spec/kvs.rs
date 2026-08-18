@@ -12,13 +12,15 @@
 //! four surfaces.
 //!
 //! [`read`] asks both questions from the one declaration: the key
-//! must exist at this level, and the matched subverb's forms must
-//! name it.
+//! must exist at this level, and the shape the user is typing must
+//! name it — where "the shape" is narrowed by the positionals already
+//! on the line, so `section resize fill w=99` is refused by the form
+//! `fill` picked rather than read by the form it did not.
 
 use crate::application::console::parser::Args;
 
 use super::descent::Stop;
-use super::{Descent, Grammar, Key};
+use super::{Descent, Key};
 
 /// One accepted `key=value`, resolved to the [`Key`] that declared
 /// it so the caller reads a typed declaration rather than a string.
@@ -30,9 +32,18 @@ pub struct Pair<'a> {
 /// The kv pairs on this line, in the order they were typed, or the
 /// rejection for the first one the matched form does not read.
 ///
-/// The check is *per form*, not per level. A key the level declares
-/// but this subverb does not name is refused by name and pointed at
-/// the form that does read it, rather than being silently dropped.
+/// The check is per *form*, not per level, and the forms in play are
+/// the ones the positionals already on the line admit
+/// ([`super::Form::admits_prefix`]). Three narrowings, outermost
+/// first: a key the level does not declare at all; a key the matched
+/// subverb reads in no shape; and a key only a shape this line has
+/// ruled out reads — `section resize fill w=99` is the third, and it
+/// is pointed at the form that does read `w=` rather than dropped.
+///
+/// The narrowing is by slots, so a subverb whose two forms differ
+/// only in their keys — `section move`'s `dx=`/`dy=` against its
+/// `x=`/`y=` — still accepts their union here, and refuses the mix in
+/// its own handler with a message naming both shapes.
 pub fn read<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>>, String> {
     // No form matched, so there is nothing to say about the keys:
     // the caller owns the unknown-subverb or quoting rejection, and
@@ -42,12 +53,12 @@ pub fn read<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>>, Stri
         return Ok(Vec::new());
     }
     let level = descent.level;
-    let readable = readable_keys(descent);
+    let readable = readable_keys(descent, args);
     let full = full_label(descent);
     let mut out = Vec::new();
     for (k, v) in args.kvs() {
         if !readable.contains(&k) {
-            return Err(unread_key_message(level, &full, &readable, k));
+            return Err(unread_key_message(descent, args, &full, &readable, k));
         }
         match level.key(k) {
             Some(key) => out.push(Pair { key, value: v }),
@@ -97,14 +108,16 @@ pub fn value<'a>(pairs: &[Pair<'a>], name: &str) -> Option<&'a str> {
 }
 
 /// The keys the form the user actually typed reads.
-pub fn readable_keys(descent: &Descent) -> Vec<&'static str> {
+pub fn readable_keys(descent: &Descent, args: &Args) -> Vec<&'static str> {
     match descent.stop {
-        Stop::Matched(subverb) => subverb.readable_keys(),
+        Stop::Matched(subverb) => {
+            subverb.readable_keys_for(&descent.committed_slots(args, subverb.slot_count()))
+        }
         Stop::Bare => descent
             .level
             .bare
             .as_ref()
-            .map(|b| b.readable_keys())
+            .map(|b| b.readable_keys_for(&descent.committed_slots(args, b.slot_count())))
             .unwrap_or_default(),
         Stop::Unknown | Stop::KvForm => Vec::new(),
     }
@@ -120,7 +133,14 @@ pub fn full_label(descent: &Descent) -> String {
     }
 }
 
-fn unread_key_message(grammar: &'static Grammar, full: &str, readable: &[&'static str], key: &str) -> String {
+fn unread_key_message(
+    descent: &Descent,
+    args: &Args,
+    full: &str,
+    readable: &[&'static str],
+    key: &str,
+) -> String {
+    let grammar = descent.level;
     let mut out = format!("{}: unknown key '{}'; ", full, key);
     if readable.is_empty() {
         out.push_str(&format!("{} takes no keys", full));
@@ -131,14 +151,34 @@ fn unread_key_message(grammar: &'static Grammar, full: &str, readable: &[&'stati
     // not read it, is a different mistake from a typo — say where
     // it does belong. `border preset heavy color=#fff` used to
     // drop the color in silence on four surfaces.
-    if grammar.key(key).is_some() {
-        if let Some(bare) = &grammar.bare {
-            if bare.readable_keys().contains(&key) {
-                out.push_str(&format!(
-                    ". `{}=` belongs to the composed form: `{} {}=<value>`",
-                    key, grammar.label, key
-                ));
-            }
+    if grammar.key(key).is_none() {
+        return out;
+    }
+    // The nearer of the two homes first: another shape of the very
+    // subverb the user typed. `section resize fill w=99` is refused
+    // because `fill` picked the form that has no `w=`, and the answer
+    // the user needs is the shape that does.
+    if let Stop::Matched(subverb) = descent.stop {
+        let committed = descent.committed_slots(args, subverb.slot_count());
+        if let Some(form) = subverb
+            .forms
+            .iter()
+            .find(|f| !f.admits_prefix(&committed) && f.names().any(|n| n == key))
+        {
+            out.push_str(&format!(
+                ". `{}=` belongs to another form: `{}`",
+                key,
+                super::usage::form_line(grammar, Some(subverb), form)
+            ));
+            return out;
+        }
+    }
+    if let Some(bare) = &grammar.bare {
+        if bare.readable_keys().contains(&key) {
+            out.push_str(&format!(
+                ". `{}=` belongs to the composed form: `{} {}=<value>`",
+                key, grammar.label, key
+            ));
         }
     }
     out

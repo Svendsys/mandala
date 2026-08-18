@@ -3272,11 +3272,25 @@ Four things the shape is load-bearing for:
   float, so the popup gets the eight and the usage line gets
   `<zoom|unset>`.
 - **A `Form` is (slots, keys), and a subverb may declare
-  several.** `section move` takes `dx=`/`dy=` *or* `x=`/`y=`
-  and rejects a mix; `section resize` takes the `fill` literal
-  *or* `w=`/`h=`. `help` prints one line per form, and the
-  popup offers the union — which is what puts `fill` beside
-  `w=` and `h=` at `section resize <TAB>`.
+  several.** `section move` takes `dx=`/`dy=` *or* `x=`/`y=`;
+  `section resize` takes the `fill` literal *or* `w=`/`h=`.
+  `help` prints one line per form, and the popup offers the
+  union of the forms the line's positionals still admit —
+  which is what puts `fill` beside `w=` and `h=` at
+  `section resize <TAB>` and takes both away again at
+  `section resize fill <TAB>`.
+
+  The engine enforces the exclusion as far as the *slots*
+  express it, and no further. `fill` sits in a slot only one
+  form declares, so typing it rules the other form out and
+  `section resize fill w=99` is refused by name and pointed at
+  the shape that reads `w=`. `section move`'s two forms differ
+  only in their *keys*, so an empty positional list admits
+  both equally; deciding between them would mean letting
+  whichever key was typed first pick the form. That exclusion
+  stays a handwritten guard in `execute_move`, with a message
+  naming both shapes — one of the two bespoke semantics #27's
+  fix plan names as staying behind the table.
 - **No verb sees a raw token index.** `spec::descent` is the
   only reader of token order. A handler asks
   `descent.subverb()`, `descent.parent_name(0)` and
@@ -3288,11 +3302,14 @@ Four things the shape is load-bearing for:
   the subverb (`Subverb::gated`) rather than re-asked at each
   slot that emits the vocabulary.
 - **A kv the matched form does not read is refused by name.**
-  `kvs::read` asks per *form*, not per level, and points the
-  key at the composed form that does read it. Before the
-  declaration, `border preset heavy color=#fff` staged the
-  preset and discarded the color without a word, identically
-  on four surfaces.
+  `kvs::read` asks per *form* — narrowed by the positionals
+  already on the line, per the bullet above — rather than per
+  level, and points the key at the form that does read it:
+  the level's composed form for `border preset heavy
+  color=#fff`, another shape of the same subverb for
+  `section resize fill w=99`. Before the declaration both
+  staged what they matched and discarded the rest without a
+  word, the first identically on four surfaces.
 
 What stays hand-written is value parsing and mutation: a `Key`
 declares its name, its sentence and its vocabulary, and what
