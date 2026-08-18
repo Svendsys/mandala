@@ -149,7 +149,7 @@ pub(crate) const KEYS: &[Key] = &[
     Key::new("size", "border glyph size in points", free("pt")),
     Key::new(
         "color",
-        "#hex, var(--name), preset, or 'reset'",
+        "#hex, var(--name), accent | edge | fg, or 'reset'",
         free_words("#hex|var(--name)", COLOR_PRESET_WORDS),
     ),
     Key::new(
@@ -236,12 +236,16 @@ pub(crate) const POSITIONAL_SUBVERBS: &[Subverb] = &[
     )
     .taking(&[Form::slots(&[Slot::req(Vocabulary::Words(PRESET_WORDS))])])
     .gated(),
-    Subverb::bare("color", "per-field", "set border color (#hex|var|preset|reset)")
-        .taking(&[Form::slots(&[Slot::req(free_words(
-            "#hex|var(--name)",
-            COLOR_PRESET_WORDS,
-        ))])])
-        .gated(),
+    Subverb::bare(
+        "color",
+        "per-field",
+        "set border color (#hex|var|accent|edge|fg|reset)",
+    )
+    .taking(&[Form::slots(&[Slot::req(free_words(
+        "#hex|var(--name)",
+        COLOR_PRESET_WORDS,
+    ))])])
+    .gated(),
     Subverb::bare("padding", "per-field", "set border padding in pixels")
         .taking(&[Form::slots(&[Slot::req(free("px"))])])
         .gated(),

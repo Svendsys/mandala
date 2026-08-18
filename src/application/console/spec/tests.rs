@@ -683,3 +683,164 @@ fn test_the_console_source_scan_reads_what_it_claims_to() {
          excised from {excised} files"
     );
 }
+
+/// The alternatives a hint spells out are values its own vocabulary
+/// accepts.
+///
+/// `Word::hint` and `Key::hint` are free text sitting one line above
+/// the [`super::Vocabulary`] they describe, and nothing held the two
+/// together. `border color` was declared as
+///
+/// ```text
+/// Subverb::bare("color", "per-field", "set border color (#hex|var|preset|reset)")
+///     .taking(&[Form::slots(&[Slot::req(free_words("#hex|var(--name)", COLOR_PRESET_WORDS))])])
+/// ```
+///
+/// with `COLOR_PRESETS = ["accent", "edge", "fg", "reset"]` beside
+/// it. `border color preset` answers `ERR color: unknown color
+/// 'preset'`; `border color accent` succeeds. Both hints named the
+/// value the slot refuses and omitted the three it accepts, and the
+/// engine then *pinned* them — into `border <TAB>`, `canvas border
+/// <TAB>`, `border preview <TAB>` and `help BORDER`.
+///
+/// What is checkable is narrow and deliberately so: an alternation —
+/// a run of words joined by `|` — is a hint quoting a vocabulary, and
+/// every alternative in it must be a word the vocabulary declares or
+/// a fragment of its placeholder. Prose is not checked, because prose
+/// is not a quotation. A leading `key=` names which vocabulary the
+/// run belongs to, which is how `section text`'s
+/// `(runs=preserve|clear)` is read against the `runs` key rather than
+/// against the subverb's own text slot.
+///
+/// That narrowness shapes the correction as well as the check. The
+/// `color` *key*'s hint listed its values with commas —
+/// `"#hex, var(--name), preset, or 'reset'"` — which no alternation
+/// scan can tell from prose, so it is now spelled
+/// `"#hex, var(--name), accent | edge | fg, or 'reset'"`: the three
+/// values the vocabulary declares are written as the alternation they
+/// are, and the rewrite is what brings them under this test. A hint
+/// that quotes a vocabulary in prose is still outside it.
+#[test]
+fn test_every_hinted_alternation_names_values_its_vocabulary_accepts() {
+    let mut offenders: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (verb, grammar) in all_levels() {
+        for key in grammar.keys() {
+            for run in alternations(key.hint) {
+                checked += 1;
+                check_run(grammar, &run, &[key.vocab], &mut offenders, || {
+                    format!("{verb}: key `{}` of level `{}`", key.name, grammar.label)
+                });
+            }
+        }
+        for subverb in grammar.subverbs() {
+            // A subverb's hint may quote either one of its own slots
+            // or one of the keys its forms read — `border side`
+            // quotes the first, `section text` the second — so the
+            // vocabularies it may draw on are the union.
+            let mut vocabs: Vec<super::Vocabulary> = Vec::new();
+            for form in subverb.forms {
+                vocabs.extend(form.slots.iter().map(|s| s.vocab));
+            }
+            vocabs.extend(
+                subverb
+                    .readable_keys()
+                    .iter()
+                    .filter_map(|n| grammar.key(n))
+                    .map(|k| k.vocab),
+            );
+            for run in alternations(subverb.hint) {
+                checked += 1;
+                check_run(grammar, &run, &vocabs, &mut offenders, || {
+                    format!("{verb}: subverb `{} {}`", grammar.label, subverb.name)
+                });
+            }
+        }
+    }
+    // A hint scan that found no alternations would pass by reading
+    // nothing. The border and section families alone declare more
+    // than a dozen, counted across every level that composes them.
+    assert!(
+        checked >= 12,
+        "the hint scan found only {checked} alternations — the parse, not the registry, is what broke"
+    );
+    assert!(
+        offenders.is_empty(),
+        "a hint names a value the vocabulary beside it rejects:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
+/// Every `a|b|c` run in `hint`, each as its own alternative list.
+///
+/// Spaces around the pipes are removed first, so the two spellings
+/// in the tree — `light | heavy | double` and `top|bottom|left` —
+/// read the same; each alternative is then trimmed of the
+/// punctuation a sentence wraps it in.
+fn alternations(hint: &str) -> Vec<Vec<String>> {
+    const EDGE: &[char] = &['(', ')', '[', ']', ',', '.', ';', ':', '\'', '"', '`', '<', '>'];
+    let squeezed = hint.split('|').map(str::trim).collect::<Vec<_>>().join("|");
+    squeezed
+        .split_whitespace()
+        .filter(|t| t.contains('|'))
+        .map(|t| {
+            t.split('|')
+                .map(|w| w.trim_matches(EDGE).to_string())
+                .filter(|w| !w.is_empty())
+                .collect()
+        })
+        .filter(|run: &Vec<String>| run.len() > 1)
+        .collect()
+}
+
+/// Hold one alternation against the vocabularies its declaration
+/// makes available. A `key=` on the first alternative redirects the
+/// whole run to that key's vocabulary, which is the only shape in
+/// the tree where a hint quotes a vocabulary that is not its own.
+fn check_run(
+    grammar: &'static Grammar,
+    run: &[String],
+    vocabs: &[super::Vocabulary],
+    offenders: &mut Vec<String>,
+    site: impl Fn() -> String,
+) {
+    let mut run = run.to_vec();
+    let mut vocabs = vocabs.to_vec();
+    if let Some((name, first)) = run.first().and_then(|w| w.split_once('=')) {
+        if let Some(key) = grammar.key(name) {
+            let first = first.to_string();
+            run[0] = first;
+            vocabs = vec![key.vocab];
+        }
+    }
+    for word in &run {
+        if !vocabs.iter().any(|v| admits_hinted_word(v, word)) {
+            offenders.push(format!(
+                "{}: `{word}` is in the hint and in no vocabulary",
+                site()
+            ));
+        }
+    }
+}
+
+/// Whether a hint may name `word`: a declared vocabulary entry, or a
+/// fragment of the placeholder that stands in for the open half of a
+/// [`super::Vocabulary::FreeWords`] / [`super::Vocabulary::Rows`]
+/// (`var` for `var(--name)`).
+fn admits_hinted_word(vocab: &super::Vocabulary, word: &str) -> bool {
+    let (placeholder, words): (&str, &[super::Word]) = match vocab {
+        super::Vocabulary::Free { placeholder } => (placeholder, &[]),
+        super::Vocabulary::Words(words) => ("", words),
+        super::Vocabulary::FreeWords { placeholder, words } => (placeholder, words),
+        super::Vocabulary::Rows {
+            placeholder,
+            sentinels,
+            ..
+        } => (placeholder, sentinels),
+    };
+    words.iter().any(|w| w.name.eq_ignore_ascii_case(word))
+        || (!word.is_empty()
+            && placeholder
+                .to_ascii_lowercase()
+                .contains(&word.to_ascii_lowercase()))
+}
