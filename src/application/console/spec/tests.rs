@@ -979,3 +979,49 @@ fn test_a_committed_positional_narrows_a_subverb_to_the_form_that_declares_it() 
     static OPEN: &[Form] = &[Form::slots(&[Slot::req(free("name"))]).reading(&["target"])];
     assert_eq!(eligible_forms(OPEN, &["anything at all"]).len(), 1);
 }
+
+/// A repeated key resolves to its **last** occurrence.
+///
+/// The rule outlived its test. A parser-side test pinned it while
+/// `Args::kv` owned it; `Args::kv` was deleted with the hand-rolled
+/// grammar, the rule moved intact to [`super::kvs::value`]'s
+/// `rfind`, and what replaced that test —
+/// [`crate::application::console::parser`]'s
+/// `test_args_kvs_keeps_every_occurrence_in_order` — pins the
+/// *precondition*, that the iterator yields both occurrences, rather
+/// than the resolution between them. So the behavior shipped
+/// untested and unpinned.
+///
+/// Asserted here at its new home, and pinned end to end by the
+/// `body glyph=dash glyph=dot` / `body glyph=dot glyph=dash` pair in
+/// `EXEC_CORPUS`, which swap answers under a first-wins reader.
+#[test]
+fn test_a_repeated_key_resolves_to_its_last_occurrence() {
+    use super::kvs::{value, Pair};
+    use super::{free, Key};
+
+    static GLYPH: Key = Key::new("glyph", "edge body glyph", free("name"));
+    static SIZE: Key = Key::new("size", "point size", free("pt"));
+
+    let pairs = vec![
+        Pair {
+            key: &GLYPH,
+            value: "dash",
+        },
+        Pair {
+            key: &SIZE,
+            value: "12",
+        },
+        Pair {
+            key: &GLYPH,
+            value: "dot",
+        },
+    ];
+    assert_eq!(value(&pairs, "glyph"), Some("dot"));
+    // The other key is unaffected by the repetition beside it, and a
+    // key that is not on the line is still `None` — the two failures
+    // an `rfind` over the wrong predicate would produce.
+    assert_eq!(value(&pairs, "size"), Some("12"));
+    assert_eq!(value(&pairs, "absent"), None);
+    assert_eq!(value(&[], "glyph"), None);
+}

@@ -26,6 +26,8 @@ pub const EXEC_EXPECTED: &[&str] = &[
     "OK body glyph set to dash",
     "ERR glyph 'nope' must be one of dot|dash|double|wave|chain",
     "ERR body: unknown key 'bogus'; body reads glyph",
+    "OK body glyph already dot",
+    "OK body glyph set to dash",
     "ERR usage: border\\n  visibility: on | off | toggle | reset\\n  readout:    show\\n  staged:     preview\\n  per-field:  preset | color | padding | palette | font\\n  glyphs:     side | corner\\n  composed:   <key>=<value> …",
     "OK border on on 1 node(s)",
     "OK border: already off",

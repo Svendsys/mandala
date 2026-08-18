@@ -29,6 +29,15 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Edge, "body glyph=dash"),
     (Sel::Edge, "body glyph=nope"),
     (Sel::Edge, "body bogus=1"),
+    // A repeated key resolves to its **last** occurrence, the shell
+    // intuition `spec::kvs::value` implements with `rfind`. Two rows
+    // in opposite orders, because one alone is satisfied by a reader
+    // that takes the first: these two swap answers under that
+    // reading, and `dash`/`dot` are chosen so the fixture's own
+    // starting glyph makes the two answers differ in wording as well
+    // as in value.
+    (Sel::Edge, "body glyph=dash glyph=dot"),
+    (Sel::Edge, "body glyph=dot glyph=dash"),
     // border
     (Sel::Node, "border"),
     (Sel::Node, "border on"),
