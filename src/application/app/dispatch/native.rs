@@ -127,19 +127,41 @@ fn route_pan_canvas(drag_state: &DragState) -> PanCanvasRoute {
 /// interrupt are not this function's call: `Throttled(..)` owes the
 /// model a commit that its own release still performs, and dropping
 /// it here would be the silent loss #37 item 5 is about.
+///
+/// The shell around [`take_rubber_band_for_target_picker`], which is
+/// the whole of it except dropping the overlay rectangle —
+/// `&mut Renderer` is a live wgpu device, which TEST_CONVENTIONS §T8
+/// keeps out of the harness.
 fn end_target_picker_rubber_band(
     drag_state: &mut DragState,
     document: &mut Option<crate::application::document::MindMapDocument>,
     renderer: &mut crate::application::renderer::Renderer,
 ) {
+    if take_rubber_band_for_target_picker(drag_state, document) {
+        renderer.clear_overlay_buffers();
+    }
+}
+
+/// The renderer-free half of [`end_target_picker_rubber_band`]:
+/// drop the drag state and the covered set it authorized, and report
+/// whether there was one.
+///
+/// The per-frame drain would end the covered set on its own next
+/// frame — that is where the invariant lives, not here — but a mode
+/// entry rebuilds immediately, and that rebuild would paint the
+/// abandoned set once on its way out.
+fn take_rubber_band_for_target_picker(
+    drag_state: &mut DragState,
+    document: &mut Option<crate::application::document::MindMapDocument>,
+) -> bool {
     if !matches!(drag_state, DragState::SelectingRect { .. }) {
-        return;
+        return false;
     }
     *drag_state = DragState::None;
-    // The per-frame drain would end it on its own next frame — that
-    // is where the invariant lives — but the mode entry rebuilds
-    // immediately, and that rebuild would paint the abandoned set.
-    super::super::drain_frame::end_rect_select_gesture(document, renderer);
+    document
+        .as_mut()
+        .and_then(crate::application::document::MindMapDocument::take_rect_select_preview);
+    true
 }
 
 /// Run an `Action` against the live application context. The body of
@@ -1317,6 +1339,72 @@ mod tests {
                 PanCanvasRoute::Arm,
                 "PanCanvas must still arm from {:?}",
                 std::mem::discriminant(&drag)
+            );
+        }
+    }
+
+    /// **A target-picker mode takes the pointer, so it has to take
+    /// the rubber band with it.** `Reparent` / `Connect` swallow both
+    /// halves of the left button and `handle_cursor_moved` returns
+    /// before the drag-state ladder, so a band live at mode entry
+    /// would sit frozen for the whole picker session — and its
+    /// covered set would be painted by every hover rebuild the mode
+    /// runs, because `highlight_entries_for` is what all of them
+    /// read.
+    ///
+    /// Fails on the pre-fix shape, which is this function not
+    /// existing: the mode entries wrote `interaction_mode` and
+    /// rebuilt, and touched neither the drag state nor the set.
+    #[test]
+    fn test_entering_a_target_picker_mode_ends_a_live_rubber_band() {
+        let mut doc = crate::application::document::tests_common::load_test_doc();
+        doc.selection = SelectionState::Single("the-real-selection".to_string());
+        doc.set_rect_select_preview(vec!["stale-preview".to_string()]);
+        let mut document = Some(doc);
+        let mut drag_state = DragState::SelectingRect {
+            start_canvas: glam::Vec2::ZERO,
+            current_canvas: glam::Vec2::new(10.0, 10.0),
+        };
+
+        assert!(take_rubber_band_for_target_picker(&mut drag_state, &mut document));
+
+        assert!(
+            matches!(drag_state, DragState::None),
+            "the gesture the mode interrupted must not stay live"
+        );
+        let ids: Vec<&str> = crate::application::app::scene_rebuild::highlight_entries_for(
+            document.as_ref().expect("fixture document"),
+        )
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
+        assert_eq!(
+            ids,
+            vec!["the-real-selection"],
+            "the mode's own hover rebuilds must not paint the abandoned set"
+        );
+    }
+
+    /// The complement: every other state is left alone. `Throttled`
+    /// is the row that matters — it owes the model a write and an
+    /// undo entry that only its own release performs, so ending it
+    /// here would be the silent loss this issue opened with.
+    #[test]
+    fn test_entering_a_target_picker_mode_leaves_every_other_gesture_alone() {
+        for mut drag in [
+            fast_resize_drag(),
+            moving_node_drag(),
+            DragState::Panning,
+            DragState::None,
+        ] {
+            let before = std::mem::discriminant(&drag);
+            let mut document = None;
+            assert!(!take_rubber_band_for_target_picker(&mut drag, &mut document));
+            assert_eq!(
+                std::mem::discriminant(&drag),
+                before,
+                "a picker mode must not end {:?}",
+                before
             );
         }
     }
