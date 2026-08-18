@@ -32,48 +32,33 @@ use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::application::console::commands::border::{
     custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv,
 };
-use crate::application::console::completion::{Completion, CompletionState};
 use crate::application::console::parser::Args;
-use crate::application::console::spec::descent::{descend_at, unquoted_multiword_hint, Stop};
-use crate::application::console::spec::{complete, kvs, usage};
-use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::console::spec::descent::{unquoted_multiword_hint, Stop};
+use crate::application::console::spec::{kvs, usage, Descent};
+use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionEdit, SelectionState};
 
-use self::grammar::{SECTION_FRAME, SUBVERB_SLOT};
+use self::grammar::SECTION_FRAME;
 use super::target::{parse_section_target_kv, SectionTargetPolicy};
 
 pub(crate) mod grammar;
-
-/// The popup for every slot past `section frame`.
-///
-/// Delegated from `complete_section`, and answered by the engine's
-/// one walk over [`SECTION_FRAME`] entered at [`SUBVERB_SLOT`] —
-/// the same level and the same offset the execute path descends.
-/// The hand-written completer this replaces had to re-derive
-/// "is the cursor past `preview`" per arm and read `BORDER_KEYS`
-/// alone, which is how `section frame se<TAB>` stayed silent about
-/// a key the verb had accepted all along.
-pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    complete::completions_at(&SECTION_FRAME, state, ctx, SUBVERB_SLOT)
-}
 
 /// Entry point dispatched from `section/mod.rs::execute_section`
 /// when the user typed `section frame …`. Args still includes the
 /// `frame` token at positional(0) (the parent dispatcher only
 /// consumed `section`); we read positional(1) to peek at the
 /// optional `show` / `reset` subverb.
-pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let descent = descend_at(&SECTION_FRAME, args.tokens(), SUBVERB_SLOT);
-    if descent.parent_name(0) == Some("preview") {
-        return execute_section_frame_preview(&descent, args, eff);
+pub fn execute_section_frame(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    if descent.parent_name(1) == Some("preview") {
+        return execute_section_frame_preview(descent, args, eff);
     }
     match descent.stop {
         Stop::Matched(subverb) => match subverb.name {
-            "show" => match kvs::read_strict(&descent, args) {
+            "show" => match kvs::read_strict(descent, args) {
                 Ok(_) => execute_show(args, eff),
                 Err(msg) => ExecResult::err(msg),
             },
-            _ => match kvs::read_strict(&descent, args) {
+            _ => match kvs::read_strict(descent, args) {
                 Ok(_) => apply_reset(args, eff),
                 Err(msg) => ExecResult::err(msg),
             },
@@ -89,7 +74,7 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
             descent.typed.unwrap_or_default(),
         )),
         Stop::Bare => {
-            let pairs = match kvs::read_strict(&descent, args) {
+            let pairs = match kvs::read_strict(descent, args) {
                 Ok(pairs) => pairs,
                 Err(msg) => return ExecResult::err(msg),
             };

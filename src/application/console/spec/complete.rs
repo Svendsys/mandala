@@ -26,7 +26,7 @@ use crate::application::console::completion::{Completion, CompletionContext, Com
 use crate::application::console::ConsoleContext;
 
 use super::descent::{descend_at, subverb_slot_is_positional, Stop};
-use super::{Grammar, Key, Slot, Vocabulary, Word};
+use super::{Form, Grammar, Key, Vocabulary, Word};
 
 /// The popup for one console line, from the verb's grammar alone.
 pub fn completions(
@@ -62,29 +62,15 @@ pub fn completions_at(
         CompletionContext::Token { index } if *index == descent.slot => {
             let positional_form = subverb_slot_is_positional(tokens, descent.slot);
             let mut out = subverb_rows(level, state.partial, positional_form);
-            let mut keys_ok = true;
             if let Some(bare) = &level.bare {
-                if let Some(slot) = bare.slots.first() {
-                    out.extend(vocabulary_rows(&slot.vocab, ctx, state.partial));
-                    keys_ok = slot.optional;
-                }
-                if keys_ok {
-                    out.extend(key_rows(level, &bare.readable_keys(), state.partial));
-                }
+                out.extend(form_rows(level, bare.forms, 0, ctx, state.partial));
             }
             out
         }
         CompletionContext::Token { index } => match descent.stop {
             Stop::Matched(subverb) => {
                 let i = index.saturating_sub(descent.slot + 1);
-                let mut out = Vec::new();
-                if let Some(slot) = subverb.slots.get(i) {
-                    out.extend(vocabulary_rows(&slot.vocab, ctx, state.partial));
-                }
-                if required_slots_are_behind(subverb.slots, i) {
-                    out.extend(key_rows(level, &subverb.readable_keys(), state.partial));
-                }
-                out
+                form_rows(level, subverb.forms, i, ctx, state.partial)
             }
             // `Bare` past the bare form's own slots is the kv tail:
             // the keys stay on offer, which is what makes
@@ -118,11 +104,49 @@ fn readable_key(descent: &super::Descent, key: &str) -> Option<&'static Key> {
     descent.level.key(key)
 }
 
-/// Whether every required slot of `slots` sits strictly before
-/// index `i` — the condition for a form's kv keys to stay on offer
-/// while the cursor is at slot `i`.
-fn required_slots_are_behind(slots: &[Slot], i: usize) -> bool {
-    !slots.iter().skip(i).any(|s| !s.optional)
+/// What every shape of one subverb (or of a level's bare form)
+/// offers at positional slot `i`: each form's own vocabulary for
+/// that slot, then that form's kv keys once its *required* slots
+/// sit behind the cursor.
+///
+/// Two shapes answering the same slot is what makes
+/// `section resize <TAB>` offer `fill` beside `w=` / `h=`: one form
+/// declares the literal, the other declares the pair, and the
+/// cursor is legal in both.
+fn form_rows(
+    grammar: &'static Grammar,
+    forms: &'static [Form],
+    i: usize,
+    ctx: &ConsoleContext,
+    partial: &str,
+) -> Vec<Completion> {
+    let mut out = Vec::new();
+    let mut keys: Vec<&'static str> = Vec::new();
+    let push = |name: &'static str, keys: &mut Vec<&'static str>| {
+        if !keys.contains(&name) {
+            keys.push(name);
+        }
+    };
+    for form in forms {
+        if let Some(slot) = form.slots.get(i) {
+            out.extend(vocabulary_rows(&slot.vocab, ctx, partial));
+        }
+    }
+    // Required keys of every eligible form first, then the
+    // optional ones — the same order `help` prints and the
+    // rejection quotes.
+    for form in forms.iter().filter(|f| f.required_slots_behind(i)) {
+        for name in form.required {
+            push(name, &mut keys);
+        }
+    }
+    for form in forms.iter().filter(|f| f.required_slots_behind(i)) {
+        for name in form.optional {
+            push(name, &mut keys);
+        }
+    }
+    out.extend(key_rows(grammar, &keys, partial));
+    out
 }
 
 /// One row per subverb whose name starts with `partial`,

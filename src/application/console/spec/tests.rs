@@ -95,19 +95,19 @@ fn test_every_declared_key_is_printed_by_some_form() {
     }
 }
 
-/// A subverb either descends into a child level or reads positional
-/// slots, never both.
+/// A subverb either descends into a child level or declares shapes
+/// of its own, never both.
 ///
 /// [`super::descent`] relies on it: a subverb with a child is a step
-/// deeper and a subverb with slots is the end of the walk, so one
-/// carrying both would have its slots silently unreachable.
+/// deeper and a subverb with forms is the end of the walk, so one
+/// carrying both would have its slots and keys silently unreachable.
 #[test]
-fn test_no_subverb_both_descends_and_takes_slots() {
+fn test_no_subverb_both_descends_and_declares_forms() {
     for (verb, grammar) in all_levels() {
         for subverb in grammar.subverbs() {
             assert!(
-                subverb.child.is_none() || subverb.slots.is_empty(),
-                "{verb}: `{} {}` declares both a child level and positional slots",
+                subverb.child.is_none() || subverb.forms.is_empty(),
+                "{verb}: `{} {}` declares both a child level and shapes of its own",
                 grammar.label,
                 subverb.name
             );

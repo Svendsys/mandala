@@ -68,7 +68,7 @@ pub fn read_strict<'a>(descent: &Descent, args: &'a Args) -> Result<Vec<Pair<'a>
     let slots = descent
         .subverb()
         .map(|s| s.slot_count())
-        .unwrap_or_else(|| descent.level.bare.as_ref().map(|b| b.slots.len()).unwrap_or(0));
+        .unwrap_or_else(|| descent.level.bare.as_ref().map(|b| b.slot_count()).unwrap_or(0));
     if let Some(extra) = descent.extra_positional(args, slots) {
         return Err(super::usage::extra_positional_message(
             descent.level,

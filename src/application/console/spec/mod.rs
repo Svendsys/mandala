@@ -185,16 +185,17 @@ impl Key {
     }
 }
 
-/// One kv shape of a subverb or of a level's bare form — the unit a
-/// usage line is printed from.
+/// One shape of a subverb or of a level's bare form — positional
+/// slots plus kv keys, and the unit a usage line is printed from.
 ///
 /// Most subverbs have exactly one. A second exists where the shapes
 /// are genuinely alternatives rather than a menu: `section move`
-/// takes `dx=`/`dy=` *or* `x=`/`y=`, never a mix, and printing both
-/// on one bracketed line would document a command the verb rejects.
-/// The union across a subverb's forms is what
-/// [`kvs::read`] accepts; each form on its own is what `help`
-/// prints.
+/// takes `dx=`/`dy=` *or* `x=`/`y=`, never a mix, and
+/// `section resize` takes the `fill` literal *or* `w=`/`h=`.
+/// Printing either pair on one bracketed line would document a
+/// command the verb rejects. The union across a subverb's forms is
+/// what [`kvs::read`] accepts and what the popup offers; each form
+/// on its own is what `help` prints.
 ///
 /// `required` keys print bare, `optional` keys print bracketed.
 /// Both are names resolved against the level's
@@ -202,36 +203,71 @@ impl Key {
 /// declare — or a key no form prints — fails the suite.
 #[derive(Clone, Copy)]
 pub struct Form {
+    pub slots: &'static [Slot],
     pub required: &'static [&'static str],
     pub optional: &'static [&'static str],
 }
 
 impl Form {
-    /// A form whose keys are all optional.
+    /// A form whose keys are all optional and which takes no
+    /// positional arguments.
     pub const fn opt(optional: &'static [&'static str]) -> Self {
         Self {
+            slots: &[],
             required: &[],
             optional,
         }
+    }
+
+    /// A form with required keys and optional ones beside them.
+    pub const fn keys(required: &'static [&'static str], optional: &'static [&'static str]) -> Self {
+        Self {
+            slots: &[],
+            required,
+            optional,
+        }
+    }
+
+    /// A form that is only positional arguments.
+    pub const fn slots(slots: &'static [Slot]) -> Self {
+        Self {
+            slots,
+            required: &[],
+            optional: &[],
+        }
+    }
+
+    /// The same form, with the named optional keys beside its slots.
+    pub const fn reading(mut self, optional: &'static [&'static str]) -> Self {
+        self.optional = optional;
+        self
     }
 
     /// Every key this form names, required first.
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.required.iter().copied().chain(self.optional.iter().copied())
     }
+
+    /// Whether every required slot of this form sits strictly before
+    /// index `i` — the condition for its kv keys to stay on offer
+    /// while the cursor is at slot `i`.
+    pub fn required_slots_behind(&self, i: usize) -> bool {
+        !self.slots.iter().skip(i).any(|s| !s.optional)
+    }
 }
 
-/// The one form a subverb or bare form has when it reads no kvs at
-/// all — used so "no forms declared" and "one empty form" are the
-/// same shape to every reader.
-pub const NO_KEYS: &[Form] = &[];
+/// A subverb or bare form that accepts nothing at all — no slots,
+/// no keys — so that "declares no shapes" and "declares one empty
+/// shape" are the same thing to every reader.
+pub const NO_FORMS: &[Form] = &[];
 
 /// One named form at a level: `show`, `preset <name>`, `preview …`.
 ///
-/// A subverb either descends into a [`Self::child`] level or reads
-/// [`Self::slots`] — never both. That is what lets [`descent`] walk
-/// a line without a lookahead table: a subverb with a child is a
-/// step deeper, a subverb with slots is the end of the descent.
+/// A subverb either descends into a [`Self::child`] level or
+/// declares [`Self::forms`] of its own — never both. That is what
+/// lets [`descent`] walk a line without a lookahead table: a subverb
+/// with a child is a step deeper, a subverb with forms is the end of
+/// the descent.
 #[derive(Clone, Copy)]
 pub struct Subverb {
     pub name: &'static str,
@@ -240,12 +276,10 @@ pub struct Subverb {
     /// one line, in declaration order.
     pub group: &'static str,
     pub hint: &'static str,
-    /// Positional arguments, in order. Empty for a bare subverb.
-    pub slots: &'static [Slot],
-    /// The kv shapes this subverb accepts. A kv no form names is
-    /// rejected by name rather than dropped — `border preset heavy
-    /// color=#fff` used to stage the preset and discard the color
-    /// without a word.
+    /// The shapes this subverb accepts — positional slots and kv
+    /// keys together. A kv no form names is rejected by name rather
+    /// than dropped: `border preset heavy color=#fff` used to stage
+    /// the preset and discard the color without a word.
     pub forms: &'static [Form],
     /// The level this subverb opens, for a subverb that nests
     /// rather than taking arguments.
@@ -265,26 +299,7 @@ impl Subverb {
             name,
             group,
             hint,
-            slots: &[],
-            forms: NO_KEYS,
-            child: None,
-            gated: false,
-        }
-    }
-
-    /// A subverb taking positional arguments.
-    pub const fn with_slots(
-        name: &'static str,
-        group: &'static str,
-        hint: &'static str,
-        slots: &'static [Slot],
-    ) -> Self {
-        Self {
-            name,
-            group,
-            hint,
-            slots,
-            forms: NO_KEYS,
+            forms: NO_FORMS,
             child: None,
             gated: false,
         }
@@ -301,15 +316,14 @@ impl Subverb {
             name,
             group,
             hint,
-            slots: &[],
-            forms: NO_KEYS,
+            forms: NO_FORMS,
             child: Some(child),
             gated: false,
         }
     }
 
-    /// The same subverb, accepting the given kv shapes.
-    pub const fn reading(mut self, forms: &'static [Form]) -> Self {
+    /// The same subverb, accepting the given shapes.
+    pub const fn taking(mut self, forms: &'static [Form]) -> Self {
         self.forms = forms;
         self
     }
@@ -327,23 +341,36 @@ impl Subverb {
         dedup_names(self.forms)
     }
 
-    /// How many positionals the subverb declares — the count a
-    /// stray extra positional is measured against.
+    /// How many positionals the subverb declares — the widest of
+    /// its forms, since a stray extra positional is only stray past
+    /// every shape the subverb accepts.
     pub fn slot_count(&self) -> usize {
-        self.slots.len()
+        self.forms.iter().map(|f| f.slots.len()).max().unwrap_or(0)
     }
 }
 
-/// The key names across `forms`, in declaration order, each once.
-/// Short lists (at most a dozen) so the linear `contains` is
-/// cheaper than building a set.
+/// The key names across `forms`, each once: every form's required
+/// keys first, then every form's optional ones.
+///
+/// Two passes rather than one, so a subverb with two forms reads as
+/// `dx | dy | x | y | section` rather than interleaving the shared
+/// optional key between the two required pairs. Short lists (at most
+/// a dozen), so the linear `contains` is cheaper than building a set.
 fn dedup_names(forms: &'static [Form]) -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
+    let mut push = |name: &'static str| {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    };
     for form in forms {
-        for name in form.names() {
-            if !out.contains(&name) {
-                out.push(name);
-            }
+        for name in form.required {
+            push(name);
+        }
+    }
+    for form in forms {
+        for name in form.optional {
+            push(name);
         }
     }
     out
@@ -360,23 +387,23 @@ pub struct Bare {
     /// Heading the bare form sits under in the level's
     /// unknown-subverb listing.
     pub group: &'static str,
-    pub slots: &'static [Slot],
     pub forms: &'static [Form],
 }
 
 impl Bare {
-    /// A bare form that is only kv pairs.
-    pub const fn kvs(group: &'static str, forms: &'static [Form]) -> Self {
-        Self {
-            group,
-            slots: &[],
-            forms,
-        }
+    /// The shapes a level accepts with no subverb named.
+    pub const fn new(group: &'static str, forms: &'static [Form]) -> Self {
+        Self { group, forms }
     }
 
     /// Every kv key the bare form reads, across all its forms.
     pub fn readable_keys(&self) -> Vec<&'static str> {
         dedup_names(self.forms)
+    }
+
+    /// How many positionals the bare form declares.
+    pub fn slot_count(&self) -> usize {
+        self.forms.iter().map(|f| f.slots.len()).max().unwrap_or(0)
     }
 }
 

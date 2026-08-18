@@ -88,6 +88,10 @@ const MAX_SPELLED_FORM: usize = 120;
 
 fn push_form(head: &str, grammar: &Grammar, form: &Form) -> String {
     let mut tail = String::new();
+    for slot in form.slots {
+        tail.push(' ');
+        tail.push_str(&render_slot(slot));
+    }
     for name in form.required {
         tail.push(' ');
         tail.push_str(&render_key(grammar, name, false));
@@ -167,11 +171,7 @@ pub fn forms(grammar: &'static Grammar) -> Vec<String> {
 }
 
 fn subverb_forms(grammar: &'static Grammar, subverb: &'static Subverb) -> Vec<String> {
-    let mut head = format!("{} {}", grammar.label, subverb.name);
-    for slot in subverb.slots {
-        head.push(' ');
-        head.push_str(&render_slot(slot));
-    }
+    let head = format!("{} {}", grammar.label, subverb.name);
     if subverb.forms.is_empty() {
         return vec![head];
     }
@@ -183,11 +183,7 @@ fn subverb_forms(grammar: &'static Grammar, subverb: &'static Subverb) -> Vec<St
 }
 
 fn bare_forms(grammar: &'static Grammar, bare: &Bare) -> Vec<String> {
-    let mut head = grammar.label.to_string();
-    for slot in bare.slots {
-        head.push(' ');
-        head.push_str(&render_slot(slot));
-    }
+    let head = grammar.label.to_string();
     if bare.forms.is_empty() {
         return vec![head];
     }
@@ -269,17 +265,19 @@ pub fn listing(grammar: &'static Grammar, head: &str) -> String {
     }
     if let Some(bare) = &grammar.bare {
         let mut body = String::new();
-        for slot in bare.slots {
-            if !body.is_empty() {
-                body.push(' ');
+        for form in bare.forms {
+            for slot in form.slots {
+                if !body.is_empty() {
+                    body.push(' ');
+                }
+                body.push_str(&render_slot(slot));
             }
-            body.push_str(&render_slot(slot));
-        }
-        if !bare.forms.is_empty() {
-            if !body.is_empty() {
-                body.push(' ');
+            if form.names().next().is_some() && !body.contains("<key>=<value>") {
+                if !body.is_empty() {
+                    body.push(' ');
+                }
+                body.push_str("<key>=<value> …");
             }
-            body.push_str("<key>=<value> …");
         }
         if !body.is_empty() {
             groups.push((bare.group, vec![body]));
@@ -314,15 +312,20 @@ pub fn no_arguments_message(grammar: &'static Grammar) -> String {
     listing(grammar, &format!("usage: {}", grammar.label))
 }
 
-/// The one-line `usage: …` a level prints when a required
-/// positional is missing — the same line `help` publishes for that
-/// subverb, so the two cannot word the shape differently.
+/// The `usage: …` a level prints when a subverb was handed too
+/// little to act on — every shape that subverb accepts, joined the
+/// way `help` joins forms, so the rejection and the help page cannot
+/// word the shape differently.
+///
+/// A subverb with two forms prints both: `section move` takes
+/// `dx=`/`dy=` *or* `x=`/`y=`, and one bracketed line would document
+/// a command it refuses.
 pub fn subverb_usage(grammar: &'static Grammar, subverb: &'static Subverb) -> String {
-    let mut lines = subverb_forms(grammar, subverb);
+    let lines = subverb_forms(grammar, subverb);
     if lines.is_empty() {
         return format!("usage: {} {}", grammar.label, subverb.name);
     }
-    format!("usage: {}", lines.remove(0))
+    format!("usage: {}", lines.join(" | "))
 }
 
 /// The rejection for a positional past everything the matched form

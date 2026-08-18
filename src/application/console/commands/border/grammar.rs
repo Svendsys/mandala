@@ -245,63 +245,44 @@ pub(crate) const COMPOSED: &[Form] = &[Form::opt(KEY_NAMES)];
 /// subverb slot means the line is kv form whatever the positional
 /// happens to say.
 pub(crate) const POSITIONAL_SUBVERBS: &[Subverb] = &[
-    Subverb::with_slots(
+    Subverb::bare(
         "preset",
         "per-field",
         "pick light|heavy|double|rounded|custom or `cycle`",
-        &[Slot::req(Vocabulary::Words(PRESET_WORDS))],
     )
+    .taking(&[Form::slots(&[Slot::req(Vocabulary::Words(PRESET_WORDS))])])
     .gated(),
-    Subverb::with_slots(
-        "color",
-        "per-field",
-        "set border color (#hex|var|preset|reset)",
-        &[Slot::req(free_words("#hex|var(--name)", COLOR_PRESET_WORDS))],
-    )
-    .gated(),
-    Subverb::with_slots(
-        "padding",
-        "per-field",
-        "set border padding in pixels",
-        &[Slot::req(free("px"))],
-    )
-    .gated(),
-    Subverb::with_slots(
-        "palette",
-        "per-field",
-        "cycle a palette across glyphs (or `off`)",
-        &[Slot::req(PALETTE_VOCAB)],
-    )
-    .reading(&[Form::opt(&["field"])])
-    .gated(),
-    Subverb::with_slots(
+    Subverb::bare("color", "per-field", "set border color (#hex|var|preset|reset)")
+        .taking(&[Form::slots(&[Slot::req(free_words(
+            "#hex|var(--name)",
+            COLOR_PRESET_WORDS,
+        ))])])
+        .gated(),
+    Subverb::bare("padding", "per-field", "set border padding in pixels")
+        .taking(&[Form::slots(&[Slot::req(free("px"))])])
+        .gated(),
+    Subverb::bare("palette", "per-field", "cycle a palette across glyphs (or `off`)")
+        .taking(&[Form::slots(&[Slot::req(PALETTE_VOCAB)]).reading(&["field"])])
+        .gated(),
+    Subverb::bare(
         "font",
         "per-field",
         "set border glyph font family (with optional size=)",
-        &[Slot::req(FONT_VOCAB)],
     )
-    .reading(&[Form::opt(&["size"])])
+    .taking(&[Form::slots(&[Slot::req(FONT_VOCAB)]).reading(&["size"])])
     .gated(),
-    Subverb::with_slots(
-        "side",
-        "glyphs",
-        "set per-side glyph (top|bottom|left|right|all)",
-        &[
+    Subverb::bare("side", "glyphs", "set per-side glyph (top|bottom|left|right|all)")
+        .taking(&[Form::slots(&[
             Slot::req(Vocabulary::Words(SIDE_WORDS)),
             Slot::req(free_words("pattern", RESET_GLYPH)),
-        ],
-    )
-    .gated(),
-    Subverb::with_slots(
-        "corner",
-        "glyphs",
-        "set per-corner glyph (tl|tr|bl|br|all)",
-        &[
+        ])])
+        .gated(),
+    Subverb::bare("corner", "glyphs", "set per-corner glyph (tl|tr|bl|br|all)")
+        .taking(&[Form::slots(&[
             Slot::req(Vocabulary::Words(CORNER_WORDS)),
             Slot::req(free_words("glyph", RESET_GLYPH)),
-        ],
-    )
-    .gated(),
+        ])])
+        .gated(),
 ];
 
 /// The `preview` staging level's terminators. Siblings of the kv
@@ -329,13 +310,12 @@ const BORDER_OWN_SUBVERBS: &[Subverb] = &[
     Subverb::bare("on", "visibility", "show the border"),
     Subverb::bare("off", "visibility", "hide the border"),
     Subverb::bare("toggle", "visibility", "flip show_frame per node"),
-    Subverb::with_slots(
+    Subverb::bare(
         "show",
         "readout",
         "print the resolved config (use [side=…] [verbose])",
-        &[Slot::opt(Vocabulary::Words(VERBOSE_FLAG))],
     )
-    .reading(&[Form::opt(&["side"])]),
+    .taking(&[Form::slots(&[Slot::opt(Vocabulary::Words(VERBOSE_FLAG))]).reading(&["side"])]),
     Subverb::bare("reset", "visibility", "drop the per-node override"),
     Subverb::nested(
         "preview",
@@ -354,7 +334,7 @@ pub static BORDER_PREVIEW: Grammar = Grammar {
     label: "border preview",
     subverb_sets: &[PREVIEW_TERMINATORS],
     key_sets: &[KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };
 
 /// `border …` — the per-node level.
@@ -362,5 +342,5 @@ pub static BORDER: Grammar = Grammar {
     label: "border",
     subverb_sets: &[BORDER_OWN_SUBVERBS, POSITIONAL_SUBVERBS],
     key_sets: &[KEYS, SHOW_KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };

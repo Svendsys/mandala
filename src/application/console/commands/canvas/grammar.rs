@@ -96,42 +96,42 @@ pub static CANVAS_BORDER_PREVIEW: Grammar = Grammar {
     label: "canvas border preview",
     subverb_sets: &[crate::application::console::commands::border::grammar::PREVIEW_TERMINATORS],
     key_sets: &[BORDER_KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };
 
 pub static CANVAS_SECTION_FRAME_PREVIEW: Grammar = Grammar {
     label: "canvas section-frame preview",
     subverb_sets: &[crate::application::console::commands::border::grammar::PREVIEW_TERMINATORS],
     key_sets: &[BORDER_KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };
 
 pub static CANVAS_FOCUSED_PREVIEW: Grammar = Grammar {
     label: "canvas section-frame focused preview",
     subverb_sets: &[crate::application::console::commands::border::grammar::PREVIEW_TERMINATORS],
     key_sets: &[BORDER_KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };
 
 pub static CANVAS_BORDER: Grammar = Grammar {
     label: "canvas border",
     subverb_sets: &[CANVAS_BORDER_SUBVERBS, POSITIONAL_SUBVERBS],
     key_sets: &[BORDER_KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };
 
 pub static CANVAS_SECTION_FRAME_FOCUSED: Grammar = Grammar {
     label: "canvas section-frame focused",
     subverb_sets: &[FOCUSED_SUBVERBS, POSITIONAL_SUBVERBS],
     key_sets: &[BORDER_KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };
 
 pub static CANVAS_SECTION_FRAME: Grammar = Grammar {
     label: "canvas section-frame",
     subverb_sets: &[FOCUSED_MODIFIER, SECTION_FRAME_SUBVERBS, POSITIONAL_SUBVERBS],
     key_sets: &[BORDER_KEYS],
-    bare: Some(Bare::kvs("composed", COMPOSED)),
+    bare: Some(Bare::new("composed", COMPOSED)),
 };
 
 /// `canvas …` — the verb's own level. It owns no keys: everything

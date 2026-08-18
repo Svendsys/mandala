@@ -37,8 +37,8 @@ const FRAME_COMPOSED: &[Form] = &[Form::opt(FRAME_KEY_NAMES)];
 
 const FRAME_SUBVERBS: &[Subverb] = &[
     Subverb::bare("show", "readout", "print the resolved section-frame style")
-        .reading(&[Form::opt(&["section"])]),
-    Subverb::bare("reset", "override", "drop the per-section override").reading(&[Form::opt(&["section"])]),
+        .taking(&[Form::opt(&["section"])]),
+    Subverb::bare("reset", "override", "drop the per-section override").taking(&[Form::opt(&["section"])]),
     Subverb::nested(
         "preview",
         "staged",
@@ -51,21 +51,12 @@ pub static SECTION_FRAME_PREVIEW: Grammar = Grammar {
     label: "section frame preview",
     subverb_sets: &[PREVIEW_TERMINATORS],
     key_sets: &[BORDER_KEYS, SECTION_KEYS],
-    bare: Some(Bare::kvs("composed", FRAME_COMPOSED)),
+    bare: Some(Bare::new("composed", FRAME_COMPOSED)),
 };
 
 pub static SECTION_FRAME: Grammar = Grammar {
     label: "section frame",
     subverb_sets: &[FRAME_SUBVERBS],
     key_sets: &[BORDER_KEYS, SECTION_KEYS],
-    bare: Some(Bare::kvs("composed", FRAME_COMPOSED)),
+    bare: Some(Bare::new("composed", FRAME_COMPOSED)),
 };
-
-/// The positional index `section frame`'s subverb slot sits at.
-///
-/// `section` dispatches on its own `positional(0)` before this
-/// level starts, so the level is entered one slot in. Naming the
-/// offset once is what lets the execute path and the popup enter at
-/// the same place — [`crate::application::console::spec::descent::descend_at`]
-/// and its completion twin both take it.
-pub const SUBVERB_SLOT: usize = 1;
