@@ -27,7 +27,9 @@ pub const COMMAND: Command = Command {
     usage: "new [path]",
     tags: &["new", "blank", "create", "file"],
     applicable: always,
-    complete: complete_new,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_new),
     execute: execute_new,
 };
 

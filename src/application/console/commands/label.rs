@@ -36,7 +36,9 @@ pub const COMMAND: Command = Command {
         "perpendicular", "offset", "drag", "clear", "edit",
     ],
     applicable: edge_or_portal_label_selected,
-    complete: complete_label,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_label),
     execute: execute_label,
 };
 

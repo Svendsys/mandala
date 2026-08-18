@@ -59,7 +59,9 @@ pub const COMMAND: Command = Command {
         "edit",
     ],
     applicable: always,
-    complete: complete_mode,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_mode),
     execute: execute_mode,
 };
 

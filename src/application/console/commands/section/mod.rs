@@ -72,7 +72,9 @@ pub const COMMAND: Command = Command {
     // reintroducing the UX-vs-runtime mismatch Critical #5 was
     // meant to fix.
     applicable: node_or_section_selected_single_node,
-    complete: complete_section,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_section),
     execute: execute_section,
 };
 

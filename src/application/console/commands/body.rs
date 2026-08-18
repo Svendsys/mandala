@@ -32,7 +32,9 @@ pub const COMMAND: Command = Command {
     usage: "body glyph=<dot|dash|double|wave|chain>",
     tags: &["edge", "body", "glyph", "style"],
     applicable: edge_selected,
-    complete: complete_body,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_body),
     execute: execute_body,
 };
 

@@ -26,15 +26,37 @@
 //! Giving a shared kv one shared answer is what retires the class.
 
 use crate::application::console::completion::Completion;
+use crate::application::console::spec::{Key, Vocabulary};
 use crate::application::console::ConsoleContext;
 use crate::application::document::GraphemeRange;
 
-/// The `section=<idx>` key as a one-entry keyset, for the verbs
-/// that splice it into a keyset they do not own — `section frame
-/// …`, whose other keys belong to the `border` verb. A verb with
-/// a `KEYS` list of its own spells `"section"` into that list
-/// instead and reaches here only for the hint.
-pub(super) const SECTION_KEY: &[&str] = &["section"];
+/// The `section=<idx>` targeting key, declared once for every level
+/// that speaks it.
+///
+/// A level splices this slice into its own `key_sets` rather than
+/// re-declaring it, which is what stops the four popups that
+/// surface `section=` from coming to describe it four ways. It is
+/// also why `section=<TAB>` answers with section indices at every
+/// one: each verb's hand-written `KvValue` arm used to match its
+/// *whole* key list and answer with the single vocabulary it
+/// happened to know, so `font section=<TAB>` offered point sizes
+/// and `color section=<TAB>` offered color names.
+pub(super) const SECTION_KEYS: &[Key] = &[SECTION_KEY];
+
+const SECTION_KEY: Key = Key::new(
+    "section",
+    "target section index inside a multi-section node",
+    Vocabulary::FromDoc {
+        placeholder: "idx",
+        rows: section_idx_rows,
+        sentinels: &[],
+    },
+);
+
+/// [`section_idx_completions`] in the shape a [`Vocabulary`] wants.
+fn section_idx_rows(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
+    section_idx_completions(ctx, partial)
+}
 
 /// Parse a `range=A..B` kv value into a [`GraphemeRange`] over a
 /// section's grapheme clusters. Accepts the Rust-style

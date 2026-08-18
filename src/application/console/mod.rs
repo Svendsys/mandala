@@ -25,6 +25,7 @@ pub mod constants;
 pub mod helpers;
 pub mod parser;
 pub mod predicates;
+pub mod spec;
 pub mod traits;
 pub mod visuals;
 

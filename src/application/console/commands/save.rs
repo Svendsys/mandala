@@ -27,7 +27,9 @@ pub const COMMAND: Command = Command {
     usage: "save [path]",
     tags: &["save", "write", "persist", "file"],
     applicable: always,
-    complete: complete_save,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_save),
     execute: execute_save,
 };
 

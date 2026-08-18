@@ -51,7 +51,9 @@ pub const COMMAND: Command = Command {
         "color", "bg", "text", "border", "section", "range", "pick", "picker", "wheel",
     ],
     applicable: always,
-    complete: complete_color,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_color),
     execute: execute_color,
 };
 

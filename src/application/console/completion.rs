@@ -186,7 +186,7 @@ pub fn complete(input: &str, cursor: usize, ctx: &ConsoleContext) -> Vec<Complet
         Some(c) => c,
         None => return Vec::new(),
     };
-    (cmd.complete)(&state, ctx)
+    cmd.completions(&state, ctx)
 }
 
 fn complete_command_name(partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {

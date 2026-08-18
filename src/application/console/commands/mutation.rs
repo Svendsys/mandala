@@ -26,7 +26,9 @@ pub const COMMAND: Command = Command {
     usage: "mutation <list [--all] [filter] | apply <id> [node-id] | help <id> | inspect <id>>",
     tags: &["mut", "apply", "run", "list", "inspect", "debug"],
     applicable: always,
-    complete: complete_mutation,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_mutation),
     execute: execute_mutation,
 };
 

@@ -23,7 +23,9 @@ pub const COMMAND: Command = Command {
     usage: "open <path>",
     tags: &["open", "load", "file"],
     applicable: always,
-    complete: complete_open,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_open),
     execute: execute_open,
 };
 

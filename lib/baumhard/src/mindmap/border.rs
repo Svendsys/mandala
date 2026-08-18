@@ -1433,33 +1433,52 @@ const CUSTOM_PRESET_HINT: &str = "user-supplied per-side / per-corner glyphs";
 /// lowercased needle.
 pub fn border_preset_hint(preset: &str) -> Option<&'static str> {
     let name = preset.to_ascii_lowercase();
-    if name == CUSTOM_PRESET_NAME {
-        return Some(CUSTOM_PRESET_HINT);
-    }
-    PRESET_TABLE
+    BORDER_PRESET_ROWS
         .iter()
-        .find(|(n, _, _)| *n == name)
-        .map(|(_, _, hint)| *hint)
+        .find(|(n, _)| *n == name)
+        .map(|(_, hint)| *hint)
 }
+
+/// Every preset name paired with its one-line description, in the
+/// order [`BORDER_PRESETS`] lists them.
+///
+/// The pair form is what a UI needs when it offers the presets as a
+/// *vocabulary* rather than looking one up: the console's
+/// declarative grammar (`console::spec`) builds its `preset` word
+/// list from this at const-fn time, so a fifth row in
+/// `PRESET_TABLE` reaches the popup, the usage line and the
+/// rejection message with its description already attached.
+/// [`BORDER_PRESETS`] and [`border_preset_hint`] both read it, so
+/// the three views cannot come apart.
+pub const BORDER_PRESET_ROWS: &[(&str, &str)] = &{
+    const N: usize = PRESET_TABLE.len();
+    let mut out: [(&str, &str); N + 1] = [("", ""); N + 1];
+    let mut i = 0;
+    while i < N {
+        out[i] = (PRESET_TABLE[i].0, PRESET_TABLE[i].2);
+        i += 1;
+    }
+    out[N] = (CUSTOM_PRESET_NAME, CUSTOM_PRESET_HINT);
+    out
+};
 
 /// Every preset name accepted by the schema's
 /// `GlyphBorderConfig.preset` field — the four typed glyph rows
 /// in `PRESET_TABLE` plus the [`CUSTOM_PRESET_NAME`] sentinel.
 /// Surfaced for the console's `border preset=` completion.
 ///
-/// Derived from `PRESET_TABLE`'s row-index → name extraction at
-/// const-fn time so adding a fifth glyph row to `PRESET_TABLE`
-/// only requires extending the table — `BORDER_PRESETS` rebuilds
+/// Derived from [`BORDER_PRESET_ROWS`]'s name column at const-fn
+/// time so adding a fifth glyph row to `PRESET_TABLE` only
+/// requires extending the table — `BORDER_PRESETS` rebuilds
 /// automatically.
 pub const BORDER_PRESETS: &[&str] = &{
-    const N: usize = PRESET_TABLE.len();
-    let mut out: [&str; N + 1] = [""; N + 1];
+    const N: usize = BORDER_PRESET_ROWS.len();
+    let mut out: [&str; N] = [""; N];
     let mut i = 0;
     while i < N {
-        out[i] = PRESET_TABLE[i].0;
+        out[i] = BORDER_PRESET_ROWS[i].0;
         i += 1;
     }
-    out[N] = CUSTOM_PRESET_NAME;
     out
 };
 

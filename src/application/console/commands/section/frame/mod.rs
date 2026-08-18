@@ -30,100 +30,31 @@ use baumhard::mindmap::border::resolve_section_frame_border;
 use baumhard::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 use crate::application::console::commands::border::{
-    custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv, KEYS as BORDER_KEYS,
+    custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv,
 };
-use crate::application::console::completion::{
-    kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
-};
+use crate::application::console::completion::{Completion, CompletionState};
 use crate::application::console::parser::Args;
+use crate::application::console::spec::descent::{descend_at, unquoted_multiword_hint, Stop};
+use crate::application::console::spec::{complete, kvs, usage};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionEdit, SelectionState};
 
+use self::grammar::{SECTION_FRAME, SUBVERB_SLOT};
 use super::target::{parse_section_target_kv, SectionTargetPolicy};
 
-/// Subverbs surfaced as token-2 completions after `section frame`.
-pub const VERBS: &[&str] = &["show", "reset", "preview"];
+pub(crate) mod grammar;
 
+/// The popup for every slot past `section frame`.
+///
+/// Delegated from `complete_section`, and answered by the engine's
+/// one walk over [`SECTION_FRAME`] entered at [`SUBVERB_SLOT`] —
+/// the same level and the same offset the execute path descends.
+/// The hand-written completer this replaces had to re-derive
+/// "is the cursor past `preview`" per arm and read `BORDER_KEYS`
+/// alone, which is how `section frame se<TAB>` stayed silent about
+/// a key the verb had accepted all along.
 pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    // After `section frame preview ` the user gets `commit` /
-    // `cancel` plus the kv keys (preview accepts the same
-    // vocabulary as the committing kv-form). The engine's
-    // `Token { index }` counts past the parent command, so
-    // `section frame preview <here>` lands at index 2.
-    // `eq_ignore_ascii_case`, because `execute_section_frame`
-    // dispatches on `verb.to_ascii_lowercase()`: `section frame
-    // PREVIEW commit` runs, so `section frame PREVIEW <TAB>` has
-    // to reach the same arm rather than falling to the kv keys.
-    let after_preview = state
-        .positional(1)
-        .is_some_and(|v| v.eq_ignore_ascii_case("preview"));
-    match &state.context {
-        // The engine's `Token { index }` is the count of non-kv
-        // positionals *after* the command name, so for the input
-        // `section frame ` the cursor sits at `index: 1`. (`index: 0`
-        // is for `section <here>` — handled by `complete_section`.)
-        // Anything past the `frame` subverb (so `index >= 1`) accepts
-        // the same kv keyset the top-level `border …` verb does.
-        CompletionContext::Token { index: 1 } => {
-            let mut out = prefix_filter(VERBS, state.partial);
-            out.extend(frame_key_completions(state.partial));
-            out
-        }
-        CompletionContext::Token { index: 2 } if after_preview => {
-            // C12: surface commit/cancel with their hints (shared
-            // helper) so the popup tells users what each does.
-            let mut out =
-                crate::application::console::commands::border::preview_subverb_completions(state.partial);
-            out.extend(frame_key_completions(state.partial));
-            out
-        }
-        CompletionContext::Token { index: i } if *i > 1 => frame_key_completions(state.partial),
-        // `section=<idx>` is this verb's own target selector, not
-        // part of the border vocabulary it borrows — the shared
-        // popup answers for it, the same one `section show
-        // section=<TAB>` and `color section=<TAB>` get.
-        CompletionContext::KvValue { key } if key == "section" => {
-            super::super::range_kv::section_idx_completions(ctx, state.partial)
-        }
-        // KvValue completions for `preset=` / `palette=` / `font=` /
-        // `color=` / `field=`. Mirror `border/complete.rs` so the
-        // popup vocabulary is identical regardless of which border
-        // surface (node / section / canvas) the user is editing.
-        CompletionContext::KvValue { key } => {
-            crate::application::console::commands::border::kv_value_completions(
-                key.as_str(),
-                state.partial,
-                ctx,
-            )
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// The kv keyset every `section frame …` slot offers: the border
-/// vocabulary it borrows wholesale, plus the `section=<idx>`
-/// target its own usage line documents and
-/// [`parse_section_target_kv`] honors. Reading `BORDER_KEYS`
-/// alone is what left `section frame se<TAB>` silent about a key
-/// the verb had accepted all along — and `section frame preview`
-/// silent about it twice.
-fn frame_key_completions(partial: &str) -> Vec<Completion> {
-    let mut out = kv_key_completions_with_hints(BORDER_KEYS, partial, kv_hint);
-    out.extend(kv_key_completions_with_hints(
-        super::super::range_kv::SECTION_KEY,
-        partial,
-        kv_hint,
-    ));
-    out
-}
-
-/// Per-key hint table — delegates to the shared
-/// [`super::super::border::kv_hint`] so `border …`,
-/// `section frame …`, and `canvas …` surface identical hints, and
-/// to [`super::super::range_kv::kv_hint`] for the `section=`
-/// target this verb adds on top.
-fn kv_hint(key: &str) -> Option<&'static str> {
-    super::super::border::kv_hint(key).or_else(|| super::super::range_kv::kv_hint(key))
+    complete::completions_at(&SECTION_FRAME, state, ctx, SUBVERB_SLOT)
 }
 
 /// Entry point dispatched from `section/mod.rs::execute_section`
@@ -132,66 +63,58 @@ fn kv_hint(key: &str) -> Option<&'static str> {
 /// consumed `section`); we read positional(1) to peek at the
 /// optional `show` / `reset` subverb.
 pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    if let Some(verb) = args.positional(1) {
-        // The same discriminator the `border …` and `canvas …`
-        // surfaces apply, read one slot right because the `frame`
-        // token still sits at positional(0).
-        let positional_form = super::super::border::subverb_slot_is_positional(args.tokens(), 1);
-        // C14: case-insensitive match — same posture as `border
-        // preview commit` / `cancel` already use, and as the
-        // committing `border …` verb arms. Without normalizing
-        // here `Show` / `RESET` / `Preview` would route through
-        // the kv-form path and produce a confusing error.
-        match verb.to_ascii_lowercase().as_str() {
-            "show" => return execute_show(args, eff),
-            "reset" => return apply_reset(args, eff),
-            "preview" => return execute_section_frame_preview(args, eff),
-            other if !other.contains('=') => {
-                if !positional_form {
-                    return ExecResult::err(super::super::border::unquoted_multiword_hint(
-                        "section frame",
-                        args.tokens(),
-                        /* verb_pos */ 1,
-                        verb,
-                    ));
+    let descent = descend_at(&SECTION_FRAME, args.tokens(), SUBVERB_SLOT);
+    if descent.parent_name(0) == Some("preview") {
+        return execute_section_frame_preview(&descent, args, eff);
+    }
+    match descent.stop {
+        Stop::Matched(subverb) => match subverb.name {
+            "show" => match kvs::read_strict(&descent, args) {
+                Ok(_) => execute_show(args, eff),
+                Err(msg) => ExecResult::err(msg),
+            },
+            _ => match kvs::read_strict(&descent, args) {
+                Ok(_) => apply_reset(args, eff),
+                Err(msg) => ExecResult::err(msg),
+            },
+        },
+        Stop::KvForm => ExecResult::err(unquoted_multiword_hint(
+            SECTION_FRAME.label,
+            args.tokens(),
+            descent.slot,
+            descent.typed.unwrap_or_default(),
+        )),
+        Stop::Unknown => ExecResult::err(usage::unknown_subverb_message(
+            descent.level,
+            descent.typed.unwrap_or_default(),
+        )),
+        Stop::Bare => {
+            let pairs = match kvs::read_strict(&descent, args) {
+                Ok(pairs) => pairs,
+                Err(msg) => return ExecResult::err(msg),
+            };
+            let mut edits = BorderConfigEdits::default();
+            let mut saw_any = false;
+            for pair in &pairs {
+                // The `section=K` kv targets the section to write
+                // to; it is not a border field. The level declares
+                // it so the popup offers it and `help` documents
+                // it, and the staging pass skips it — the resolver
+                // below consumes it separately.
+                if pair.key.name == "section" {
+                    continue;
                 }
-                return ExecResult::err(format!(
-                    "section frame: unknown subverb '{}'\n  \
-                     positional today: show | reset | preview\n  \
-                     per-field grammar lives in the kv form for now — \
-                     `section frame preset=heavy padding=8` etc. Per-node \
-                     `border` and `canvas border` accept positional \
-                     `preset / color / padding / palette / font / side / corner`; \
-                     section-frame parity is tracked as a follow-up.\n  \
-                     staged: preview <kv>=… | preview commit | preview cancel\n  \
-                     composed: <key>=<value> [<key>=<value> …]",
-                    verb
-                ));
+                saw_any = true;
+                if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
+                    return ExecResult::err(e);
+                }
             }
-            _ => {}
+            if !saw_any {
+                return ExecResult::err(usage::no_arguments_message(&SECTION_FRAME));
+            }
+            apply_edits(args, eff, edits)
         }
     }
-
-    let mut edits = BorderConfigEdits::default();
-    let mut saw_any = false;
-    for (k, v) in args.kvs() {
-        if k == "section" {
-            // The `section=K` kv targets the section to write to;
-            // it's not a border field. Skip it on the staging
-            // pass — the resolver below consumes it separately.
-            continue;
-        }
-        saw_any = true;
-        if let Err(e) = stage_kv(&mut edits, k, v) {
-            return ExecResult::err(e);
-        }
-    }
-    if !saw_any {
-        return ExecResult::err(
-            "usage: section frame show|reset | section frame <key>=<value> … [section=<idx>]",
-        );
-    }
-    apply_edits(args, eff, edits)
 }
 
 fn apply_reset(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -520,7 +443,11 @@ fn resolve_section_idx_for(
 /// requires an explicit `section=K` kv (mirroring the committing
 /// `section frame …` verb's posture). The preview's
 /// `selection_snapshot` rides on `self.selection` at set time.
-fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+fn execute_section_frame_preview(
+    descent: &crate::application::console::spec::Descent,
+    args: &Args,
+    eff: &mut ConsoleEffects,
+) -> ExecResult {
     use crate::application::document::BorderPreviewTarget;
 
     // The `section=K` kv (if any) overrides the selection's
@@ -546,41 +473,35 @@ fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecR
         .iter()
         .map(|(id, n)| (id.clone(), n.sections.len()))
         .collect();
-    super::super::border::dispatch_border_preview(
-        args,
-        eff,
-        "section frame preview",
-        /* subverb_pos */ 2,
-        move |sel| {
-            // `MultiSection([(A,0),(A,1),(B,0)])` already encodes
-            // distinct (node_id, section_idx) pairs — drop them
-            // straight into `BorderPreviewTarget::Sections` rather
-            // than collapsing to node-ids and re-resolving via
-            // `resolve_section_idx_for` (which doesn't know how
-            // to pick one section idx out of a multi-pair shape).
-            // Mirrors the resolver `apply_set_border_preview` in
-            // `cross_dispatch/style.rs` already uses for the same
-            // case.
-            if let SelectionState::MultiSection(sels) = sel {
-                let pairs: Vec<(String, usize)> =
-                    sels.iter().map(|s| (s.node_id.clone(), s.section_idx)).collect();
-                return Ok(BorderPreviewTarget::Sections(pairs));
-            }
-            let node_ids = nodes_in_selection(sel, "section frame preview")?;
-            let mut pairs: Vec<(String, usize)> = Vec::with_capacity(node_ids.len());
-            for nid in &node_ids {
-                let n_sections = section_counts.get(nid).copied().unwrap_or(0);
-                let idx = match resolve_section_idx_for(sel, nid, kv_idx, n_sections) {
-                    Ok(i) => i,
-                    Err(msg) => {
-                        return Err(crate::application::console::ExecResult::err(msg));
-                    }
-                };
-                pairs.push((nid.clone(), idx));
-            }
-            Ok(BorderPreviewTarget::Sections(pairs))
-        },
-    )
+    crate::application::console::commands::border::dispatch_border_preview(descent, args, eff, move |sel| {
+        // `MultiSection([(A,0),(A,1),(B,0)])` already encodes
+        // distinct (node_id, section_idx) pairs — drop them
+        // straight into `BorderPreviewTarget::Sections` rather
+        // than collapsing to node-ids and re-resolving via
+        // `resolve_section_idx_for` (which doesn't know how
+        // to pick one section idx out of a multi-pair shape).
+        // Mirrors the resolver `apply_set_border_preview` in
+        // `cross_dispatch/style.rs` already uses for the same
+        // case.
+        if let SelectionState::MultiSection(sels) = sel {
+            let pairs: Vec<(String, usize)> =
+                sels.iter().map(|s| (s.node_id.clone(), s.section_idx)).collect();
+            return Ok(BorderPreviewTarget::Sections(pairs));
+        }
+        let node_ids = nodes_in_selection(sel, "section frame preview")?;
+        let mut pairs: Vec<(String, usize)> = Vec::with_capacity(node_ids.len());
+        for nid in &node_ids {
+            let n_sections = section_counts.get(nid).copied().unwrap_or(0);
+            let idx = match resolve_section_idx_for(sel, nid, kv_idx, n_sections) {
+                Ok(i) => i,
+                Err(msg) => {
+                    return Err(crate::application::console::ExecResult::err(msg));
+                }
+            };
+            pairs.push((nid.clone(), idx));
+        }
+        Ok(BorderPreviewTarget::Sections(pairs))
+    })
 }
 
 #[cfg(test)]

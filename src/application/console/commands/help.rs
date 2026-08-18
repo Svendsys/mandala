@@ -22,7 +22,9 @@ pub const COMMAND: Command = Command {
     usage: "help [command | all]",
     tags: &["list", "usage", "commands"],
     applicable: always,
-    complete: complete_help,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_help),
     execute: execute_help,
 };
 
@@ -92,7 +94,7 @@ fn execute_help(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// ` | ` inside `<...>` to mean "alternation among parameter
 /// values"; only the top-level (depth==0) separator marks form
 /// boundaries.
-fn split_usage_forms(usage: &str) -> Vec<&str> {
+pub(super) fn split_usage_forms(usage: &str) -> Vec<&str> {
     let bytes = usage.as_bytes();
     let mut forms = Vec::new();
     let mut depth: i32 = 0;
@@ -120,14 +122,31 @@ fn help_for(name: &str, _ctx: &ConsoleContext) -> ExecResult {
     match command_by_name(name) {
         Some(cmd) => {
             let mut lines = vec![format!("{} — {}", cmd.name, cmd.summary)];
-            let forms = split_usage_forms(cmd.usage);
-            if forms.len() == 1 {
-                lines.push(format!("usage: {}", forms[0]));
-            } else {
-                lines.push(format!("usage: {}", forms[0].trim()));
-                for form in forms.iter().skip(1) {
-                    lines.push(format!("       {}", form.trim()));
+            let forms = cmd.usage_forms();
+            match forms.split_first() {
+                Some((head, rest)) => {
+                    lines.push(format!("usage: {}", head));
+                    for form in rest {
+                        lines.push(format!("       {}", form));
+                    }
                 }
+                None => lines.push(format!("usage: {}", cmd.name)),
+            }
+            // The kv vocabulary, one line per key. A long composed
+            // form collapses to `<key>=<value> …` in the usage
+            // block above precisely because this block carries the
+            // detail; both derive from the one grammar, so a key
+            // added to a verb is documented here by the same edit
+            // that makes it parseable.
+            let keys = cmd.key_lines();
+            match keys.split_first() {
+                Some((head, rest)) => {
+                    lines.push(format!("keys:  {}", head));
+                    for key in rest {
+                        lines.push(format!("       {}", key));
+                    }
+                }
+                None => {}
             }
             if !cmd.aliases.is_empty() {
                 lines.push(format!("aliases: {}", cmd.aliases.join(", ")));
@@ -136,9 +155,12 @@ fn help_for(name: &str, _ctx: &ConsoleContext) -> ExecResult {
             // contain ("pick" under `color`). Twenty commands author
             // them and nothing read the field until #41 found it
             // dead; printing them here is what makes them
-            // discoverable rather than decorative.
-            if !cmd.tags.is_empty() {
-                lines.push(format!("tags: {}", cmd.tags.join(", ")));
+            // discoverable rather than decorative. A migrated verb
+            // derives the whole list from its grammar, so a key
+            // added to the table is searchable by the same edit.
+            let tags = cmd.tag_list();
+            if !tags.is_empty() {
+                lines.push(format!("tags: {}", tags.join(", ")));
             }
             ExecResult::lines(lines)
         }

@@ -14,6 +14,7 @@ use baumhard::mindmap::border_pattern::SidePattern;
 use baumhard::mindmap::model::{MindMap, MindNode};
 
 use crate::application::console::parser::Args;
+use crate::application::console::spec::{kvs, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
 use crate::application::document::SelectionState;
 
@@ -30,15 +31,20 @@ use crate::application::document::SelectionState;
 /// `style.border.color` set via `border color`) so the user can
 /// see why their border color doesn't match —calls
 /// this out as a UX bug bake-in.
-pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+pub fn execute_border_show(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    // `side=` is a key of the *readout*, not of the border
+    // configuration, so the grammar declares it on this subverb
+    // alone: the composed kv form does not read it and the popup at
+    // that slot does not offer it.
+    let pairs = match kvs::read_strict(descent, args) {
+        Ok(pairs) => pairs,
+        Err(msg) => return ExecResult::err(msg),
+    };
     let id = match first_selected_node_id(&eff.document().selection) {
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
     };
-    let side_filter = args
-        .kvs()
-        .find(|(k, _)| *k == "side")
-        .map(|(_, v)| v.to_ascii_lowercase());
+    let side_filter = kvs::value(&pairs, "side").map(|v| v.to_ascii_lowercase());
     if let Some(ref s) = side_filter {
         if !matches!(s.as_str(), "top" | "bottom" | "left" | "right" | "all") {
             return ExecResult::err(format!(
@@ -47,10 +53,10 @@ pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
             ));
         }
     }
-    let verbose = args
-        .positionals()
-        .skip(1)
-        .any(|p| p.eq_ignore_ascii_case("verbose"));
+    let verbose = descent
+        .slot_value(args)
+        .get(0)
+        .is_some_and(|p| p.eq_ignore_ascii_case("verbose"));
     let node = match eff.document().mindmap.nodes.get(&id) {
         Some(n) => n,
         None => return ExecResult::err(format!("border: node '{}' not found", id)),

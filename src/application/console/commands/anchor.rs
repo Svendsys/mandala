@@ -26,7 +26,9 @@ pub const COMMAND: Command = Command {
     usage: "anchor from=<side> to=<side>   (side: auto|top|right|bottom|left)",
     tags: &["edge", "anchor", "side"],
     applicable: edge_selected,
-    complete: complete_anchor,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_anchor),
     execute: execute_anchor,
 };
 

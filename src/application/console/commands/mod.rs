@@ -36,53 +36,40 @@
 //! `--document-private-items`, and an intra-doc link to it fails
 //! the `-D warnings` doc gate.)
 //!
-//! # Usage and tags are hand-written
+//! # Usage, tags and completion come from the grammar
 //!
-//! [`Command::usage`] and [`Command::tags`] are `&'static str`
-//! literals and `help` prints them verbatim (`help.rs::help_for`).
-//! Nothing derives them from the verb's own `KEYS` list, so the
-//! three declarations can disagree: a key added to `KEYS` is
-//! offered by the popup on the next keystroke and stays absent
-//! from `help <verb>` until somebody writes it in by hand. `font`
-//! and `color` each carried that drift for `range=` — parseable,
-//! named in the verb's own rejection, and documented nowhere.
+//! A migrated verb declares one [`crate::application::console::spec::Grammar`]
+//! and nothing else: [`Command::usage_forms`], [`Command::key_lines`],
+//! [`Command::tag_list`] and [`Command::completions`] are all derived
+//! from it, and the kv parse loop reads it too. Adding a key is one
+//! table row, and `help <verb>` documents it in the same edit that
+//! makes it parseable.
 //!
-//! Those two verbs now assert that every key in their `KEYS`
-//! appears in both literals. That closes the two *instances* and
-//! deliberately not the *mechanism*: the assertion is itself a
-//! per-verb copy, so the nine other `KEYS`-bearing verbs have
-//! neither the check nor any reason they would not need it.
+//! That replaces a genuine defect rather than a stylistic one.
+//! [`Command::usage`] and [`Command::tags`] were `&'static str`
+//! literals that `help` printed verbatim while nothing derived them
+//! from the verb's key list, so the three declarations could
+//! disagree: a key added to a verb's `KEYS` was offered by the popup
+//! on the next keystroke and stayed absent from `help <verb>` until
+//! somebody wrote it in by hand. `font` and `color` each carried
+//! that drift for `range=` — parseable, named in the verb's own
+//! rejection, and documented nowhere. The two per-verb assertions
+//! that closed those *instances* were themselves per-verb copies of
+//! a check; `spec::tests` holds the invariant over every declared
+//! level instead, in both directions — a form naming a key its level
+//! does not declare, and a key no form prints.
 //!
-//! What holds the generalization up is not reach. `KEYS` is a free
-//! const per module with no field on [`Command`] to read it
-//! through, but [`Command::complete`] *is* a field, and driving
-//! each registry entry's own completer at a kv-key slot and
-//! collecting the rows it emits ending in `=` recovers the same
-//! vocabulary for all eleven — no new field, and no need to parse
-//! anything. (`baumhard::util::source_scan` is the `syn`-backed
-//! machinery this class of repository check already uses, and its
-//! `RUST_ROOTS` covers `src`, so the source-reading route is open
-//! too.)
-//!
-//! What holds it up is that the answer such a walk returns is not
-//! yet a rule. It reports `canvas` offering `top= bottom= left=
-//! right= tl= tr= bl= br=` and `section` offering `font= color=
-//! palette= field= padding= top= …`, and neither verb names one of
-//! those in its `usage` or `tags` — correctly, because neither
-//! owns them: both borrow the whole `border` keyset and say so as
-//! `<key>=<value>`, pointing at the vocabulary documented under
-//! `border` rather than transcribing it. A check that fails those
-//! two is wrong; a check that exempts them by name is a list
-//! rather than a rule. The missing piece is therefore a per-verb
-//! policy — spells its keys out, versus delegates to a documented
-//! keyset — and that decision belongs with the declarative-grammar
-//! work #27 tracks, where `usage` stops being hand-written at all.
-//! Until then: a key added to any verb's `KEYS` is added to that
-//! verb's `usage` and `tags` by hand, in the same edit.
+//! **Migration in flight.** [`Command::grammar`] is an `Option` and
+//! the three literal fields are still read where it is `None`. That
+//! is the length of one branch, not a supported state: a framework
+//! with two adopters leaves two grammars in the tree, which is worse
+//! than the one hand-rolled grammar it replaces, so the branch that
+//! introduces the engine migrates every verb before it merges.
 
 use super::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::console::completion::{Completion, CompletionState};
 use crate::application::console::parser::Args;
+use crate::application::console::spec::{self, Grammar};
 
 pub mod anchor;
 pub mod body;
@@ -118,11 +105,32 @@ pub struct Command {
     pub summary: &'static str,
     /// Full usage line shown in `help <cmd>`. Conventionally starts
     /// with the command name: `"anchor set <from|to> <side>"`.
+    ///
+    /// Read only while [`Self::grammar`] is `None`. A migrated verb
+    /// derives its usage from the grammar, which is what makes a
+    /// key added to the table documented by the same edit.
     pub usage: &'static str,
     /// Extra search tokens printed by `help <cmd>` so a user
     /// grepping the command list can find "pick" under `color`
-    /// even though the name doesn't include it.
+    /// even though the name doesn't include it. Read only while
+    /// [`Self::grammar`] is `None`; a migrated verb derives its
+    /// tags from the grammar and declares only [`Self::synonyms`].
     pub tags: &'static [&'static str],
+    /// The verb's declarative grammar (`console::spec`). `Some`
+    /// once the verb is migrated, and then the single source of its
+    /// usage forms, its tags, its completion popup, its kv parse
+    /// loop and its hint surface.
+    ///
+    /// `Option` only for the length of the migration: the branch
+    /// that introduces the engine migrates every verb, because a
+    /// framework with two adopters leaves two grammars in the tree
+    /// and that is worse than the one hand-rolled grammar it
+    /// replaces.
+    pub grammar: Option<&'static Grammar>,
+    /// Search words the grammar does not contain — `wheel` under
+    /// `color`, `lod` under `zoom`. Every structural word (subverb
+    /// names, kv keys) is derived; this is only what is neither.
+    pub synonyms: &'static [&'static str],
     /// Returns `true` when the command should appear in the filtered
     /// `help` list and in completion. Commands whose args are
     /// context-specific but whose verb is always meaningful should
@@ -131,10 +139,56 @@ pub struct Command {
     /// Build completion candidates for the token currently under the
     /// cursor. Return an empty `Vec` when the command can't offer
     /// any useful completion for that position.
-    pub complete: fn(&CompletionState, &ConsoleContext) -> Vec<Completion>,
+    ///
+    /// Read only while [`Self::grammar`] is `None`. A migrated verb
+    /// has no hand-written completer at all — the engine's one walk
+    /// answers every slot, which is what stops a verb's completion
+    /// copy of its grammar from drifting away from its execute copy.
+    pub complete: Option<fn(&CompletionState, &ConsoleContext) -> Vec<Completion>>,
     /// Run the command. The dispatcher clears the scene cache and
     /// rebuilds after every non-`Err` result.
     pub execute: fn(&Args, &mut ConsoleEffects) -> ExecResult,
+}
+
+impl Command {
+    /// The usage lines `help <cmd>` prints, one per form.
+    pub fn usage_forms(&self) -> Vec<String> {
+        match self.grammar {
+            Some(grammar) => spec::usage::forms(grammar),
+            None => help::split_usage_forms(self.usage)
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .collect(),
+        }
+    }
+
+    /// One line per kv key the verb declares, printed by
+    /// `help <cmd>` under a `keys:` block. Empty for a verb whose
+    /// grammar has not been declared yet, and for one that has no
+    /// keys.
+    pub fn key_lines(&self) -> Vec<String> {
+        match self.grammar {
+            Some(grammar) => spec::usage::key_lines(grammar),
+            None => Vec::new(),
+        }
+    }
+
+    /// The search words `help <cmd>` publishes.
+    pub fn tag_list(&self) -> Vec<&'static str> {
+        match self.grammar {
+            Some(grammar) => spec::usage::tags(grammar, self.synonyms),
+            None => self.tags.to_vec(),
+        }
+    }
+
+    /// The completion popup for one cursor position.
+    pub fn completions(&self, state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
+        match (self.grammar, self.complete) {
+            (Some(grammar), _) => spec::complete::completions(grammar, state, ctx),
+            (None, Some(complete)) => complete(state, ctx),
+            (None, None) => Vec::new(),
+        }
+    }
 }
 
 /// The global command registry. Order matters only for `help` — the

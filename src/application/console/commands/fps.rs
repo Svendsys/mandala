@@ -30,7 +30,9 @@ pub const COMMAND: Command = Command {
     usage: "fps on | fps off | fps debug",
     tags: &["fps", "debug", "overlay", "hud", "perf"],
     applicable: always,
-    complete: complete_fps,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_fps),
     execute: execute_fps,
 };
 

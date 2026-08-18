@@ -56,7 +56,9 @@ pub const COMMAND: Command = Command {
         "lod",
     ],
     applicable: always,
-    complete: complete_zoom,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_zoom),
     execute: execute_zoom,
 };
 

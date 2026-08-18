@@ -37,7 +37,9 @@ pub const COMMAND: Command = Command {
         "node-edit",
     ],
     applicable: always,
-    complete: complete_node,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_node),
     execute: execute_node,
 };
 

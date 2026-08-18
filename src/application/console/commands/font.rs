@@ -75,7 +75,9 @@ pub const COMMAND: Command = Command {
         "section", "range",
     ],
     applicable: always,
-    complete: complete_font,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_font),
     execute: execute_font,
 };
 

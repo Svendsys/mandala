@@ -25,7 +25,9 @@ pub const COMMAND: Command = Command {
     usage: "spacing value=<tight|normal|wide | <float>>",
     tags: &["edge", "spacing", "tight", "wide"],
     applicable: edge_selected,
-    complete: complete_spacing,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_spacing),
     execute: execute_spacing,
 };
 

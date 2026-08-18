@@ -23,7 +23,9 @@ pub const COMMAND: Command = Command {
     usage: "cap from=<arrow|circle|diamond|none> to=<arrow|circle|diamond|none>",
     tags: &["edge", "cap", "arrow", "end", "start"],
     applicable: edge_selected,
-    complete: complete_cap,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_cap),
     execute: execute_cap,
 };
 

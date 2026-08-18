@@ -61,7 +61,9 @@ pub const COMMAND: Command = Command {
         "link",
     ],
     applicable: edge_or_portal_label_selected,
-    complete: complete_edge,
+    grammar: None,
+    synonyms: &[],
+    complete: Some(complete_edge),
     execute: execute_edge,
 };
 

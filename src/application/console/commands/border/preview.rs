@@ -20,91 +20,78 @@
 //! through) or `cancel` (discards).
 
 use crate::application::console::parser::Args;
+use crate::application::console::spec::descent::{unquoted_multiword_hint, Stop};
+use crate::application::console::spec::{kvs, usage, Descent};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{BorderConfigEdits, BorderEditOutcome, BorderPreviewTarget, OptionEdit};
 
 use super::execute::{custom_preset_hint, edits_has_glyph_field, stage_kv};
 
-/// Entry point for the per-node `border preview …` verb. The
-/// args' positional(0) is `"preview"` (consumed by the parent
-/// `border` dispatch); positional(1) is `commit` / `cancel` /
-/// the first kv. Resolves the target from the live selection
-/// (every selected node id), stages edits via `stage_kv_for_preview`,
-/// and routes to `set_border_preview`.
-pub(crate) fn execute_border_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    dispatch_border_preview(
-        args,
-        eff,
-        "border preview",
-        /* subverb_pos */ 1,
-        /* target_for_verb */
-        |sel| super::nodes_in_selection(sel, "border preview").map(BorderPreviewTarget::Nodes),
-    )
+/// Entry point for the per-node `border preview …` verb.
+///
+/// The descent has already stepped into the `border preview` level,
+/// so its `slot` is where the `commit` / `cancel` terminator sits
+/// and its `level.label` is the words every message here leads
+/// with. Both used to be hand-counted parameters — `subverb_pos`
+/// as a literal `1` / `2` / `3` per surface, and a `verb_label`
+/// string beside it.
+pub(crate) fn execute_border_preview(descent: &Descent, args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    dispatch_border_preview(descent, args, eff, |sel| {
+        super::nodes_in_selection(sel, "border preview").map(BorderPreviewTarget::Nodes)
+    })
 }
 
 /// Shared dispatch for the four border-preview verbs. Caller
 /// supplies a `target_for_verb` closure that resolves the live
-/// selection into a `BorderPreviewTarget`, plus a `verb_label`
-/// used in error / hint messages, plus the `subverb_pos` —
-/// which positional index holds the `commit` / `cancel` /
-/// first-kv token. `border preview …` puts it at index 1;
-/// `section frame preview …` puts it at index 2; `canvas border
-/// preview …` at index 2; `canvas section-frame [focused]
-/// preview …` at index 2 or 3.
+/// selection into a `BorderPreviewTarget`; everything else — which
+/// slot the terminator sits in, which words the messages lead with,
+/// which keys the staging form reads — comes off the descent.
 ///
-/// Generic over the four verbs so the per-verb file is the
-/// minimum unique surface (target resolver + label + offset).
+/// Generic over the four verbs so the per-verb file is the minimum
+/// unique surface: one target resolver.
 pub(crate) fn dispatch_border_preview<F>(
+    descent: &Descent,
     args: &Args,
     eff: &mut ConsoleEffects,
-    verb_label: &'static str,
-    subverb_pos: usize,
     target_for_verb: F,
 ) -> ExecResult
 where
     F: FnOnce(&crate::application::document::SelectionState) -> Result<BorderPreviewTarget, ExecResult>,
 {
-    // Subverb dispatch: `commit` / `cancel` are case-insensitive
-    // terminators; everything else is the kv-form path.
-    if let Some(verb) = args.positional(subverb_pos) {
-        // The same discriminator the committing surfaces apply,
-        // read at *this* verb's subverb slot — which is why
-        // `subverb_pos` is a parameter rather than a constant.
-        let positional_form = super::subverb_slot_is_positional(args.tokens(), subverb_pos);
-        match verb.to_ascii_lowercase().as_str() {
-            "commit" => return commit_border_preview_verb(eff, verb_label),
-            "cancel" => return cancel_border_preview_verb(eff, verb_label),
-            // `other` is the *normalized* spelling the match arms
-            // above needed; every message quotes `verb`, which is
-            // what the user actually typed. Echoing `other` here
-            // answered `border preview NOPE` with `unknown subverb
-            // 'nope'` — a word the user never wrote. The two canvas
-            // subjects had the same defect one call deeper, handing
-            // the lowercased token to `apply_positional` for
-            // `unknown_canvas_subverb_message` to quote; all six
-            // subverb rejections across the border family read the
-            // user's own spelling back now, and the corpus carries
-            // an upper-case row for each.
-            other if !other.contains('=') => {
-                if !positional_form {
-                    return ExecResult::err(super::unquoted_multiword_hint(
-                        verb_label,
-                        args.tokens(),
-                        subverb_pos,
-                        verb,
-                    ));
-                }
-                return ExecResult::err(format!(
-                    "{}: unknown subverb '{}'; use 'commit', 'cancel', or kv form",
-                    verb_label, verb
-                ));
+    let level = descent.level;
+    match descent.stop {
+        Stop::Matched(subverb) => {
+            if let Err(msg) = kvs::read_strict(descent, args) {
+                return ExecResult::err(msg);
             }
-            _ => {}
+            return match subverb.name {
+                "commit" => commit_border_preview_verb(eff, level.label),
+                _ => cancel_border_preview_verb(eff, level.label),
+            };
         }
+        // Every rejection quotes what the user typed rather than the
+        // normalized copy the match ran on — echoing the normalized
+        // one answered `border preview NOPE` with `unknown subverb
+        // 'nope'`, a word the user never wrote.
+        Stop::Unknown => {
+            return ExecResult::err(usage::unknown_subverb_message(
+                level,
+                descent.typed.unwrap_or_default(),
+            ))
+        }
+        Stop::KvForm => {
+            return ExecResult::err(unquoted_multiword_hint(
+                level.label,
+                args.tokens(),
+                descent.slot,
+                descent.typed.unwrap_or_default(),
+            ))
+        }
+        Stop::Bare => {}
     }
 
     // Kv-form: stage edits, resolve target, set preview.
-    let edits = match stage_kv_for_preview(args, verb_label) {
+    let edits = match stage_kv_for_preview(descent, args) {
         Ok(e) => e,
         Err(err) => return ExecResult::err(err),
     };
@@ -119,37 +106,35 @@ where
     ) && !edits_has_glyph_field(&edits);
 
     let outcome: BorderEditOutcome = eff.document_mut().set_border_preview(target, edits);
-    finish_preview(outcome, verb_label, bare_custom)
+    finish_preview(outcome, level.label, bare_custom)
 }
 
-/// Stage every recognised kv on `args` into a fresh
+/// Stage every kv the staging form reads into a fresh
 /// `BorderConfigEdits`, skipping the `section=K` kv (consumed by
 /// the per-section verb's target resolver, not a border field).
-/// Mirrors the kv-staging block at `border/execute.rs:86-96` and
-/// `section/frame.rs::execute_section_frame`'s loop — extracted
-/// here so the four preview verbs share the same parser. Returns
-/// the parser error with the verb's label prefixed (C13: tells
-/// the user *which* verb they were running when the parse
-/// failed; the prior shape returned the raw `stage_kv` message
-/// and confused users running the same kv vocabulary across
-/// four verbs).
-pub(crate) fn stage_kv_for_preview(args: &Args, verb_label: &str) -> Result<BorderConfigEdits, String> {
+/// One parser for all four preview verbs. The error carries the
+/// level's own label so a user running the same kv vocabulary
+/// across four surfaces knows which one answered.
+pub(crate) fn stage_kv_for_preview(descent: &Descent, args: &Args) -> Result<BorderConfigEdits, String> {
+    let label = descent.level.label;
+    let pairs = kvs::read_strict(descent, args).map_err(|e| format!("{}: {}", label, e))?;
     let mut edits = BorderConfigEdits::default();
     let mut saw_any = false;
-    for (k, v) in args.kvs() {
-        if k == "section" {
+    for pair in &pairs {
+        // `section=` targets the per-section surface's resolver
+        // rather than naming a border field, so the staging loop
+        // skips it while the level still declares it — which is
+        // what keeps it offered and documented.
+        if pair.key.name == "section" {
             continue;
         }
         saw_any = true;
-        if let Err(e) = stage_kv(&mut edits, k, v) {
-            return Err(format!("{}: {}", verb_label, e));
+        if let Err(e) = stage_kv(&mut edits, pair.key.name, pair.value) {
+            return Err(format!("{}: {}", label, e));
         }
     }
     if !saw_any {
-        return Err(format!(
-            "usage: {} <key>=<value> … | {} commit | {} cancel",
-            verb_label, verb_label, verb_label,
-        ));
+        return Err(usage::no_arguments_message(descent.level));
     }
     Ok(edits)
 }
