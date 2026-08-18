@@ -632,20 +632,17 @@ impl InitState {
             picker_hover.clear_pending();
         }
 
-        if let DragState::SelectingRect {
-            start_canvas,
-            current_canvas,
-        } = &self.drag_state
-        {
-            drain_frame::drain_selecting_rect(
-                *start_canvas,
-                *current_canvas,
-                &mut self.document,
-                &self.interaction_mode,
-                &mut self.mindmap_tree,
-                &mut self.renderer,
-            );
-        }
+        // Unconditional, and takes the whole drag state: this drain
+        // holds the rubber band's on-screen state to the state that
+        // authorizes it, so the frames where no rubber band is live
+        // are exactly the frames it has to run on to notice that.
+        drain_frame::drain_rect_select(
+            &self.drag_state,
+            &mut self.document,
+            &self.interaction_mode,
+            &mut self.mindmap_tree,
+            &mut self.renderer,
+        );
 
         drain_frame::drain_camera_geometry_rebuild(
             is_moving_node,

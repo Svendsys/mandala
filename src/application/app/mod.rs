@@ -738,6 +738,15 @@ enum DragState {
     /// when the covered set changes. This comment used to claim the
     /// preview was "cheap enough to run every frame"; it was a full
     /// arena build plus a text-buffer rebuild (#37).
+    ///
+    /// **This variant is the authority for both.** The overlay
+    /// rectangle and the covered set are its projection, and
+    /// `drain_frame::drain_rect_select` re-derives them from it
+    /// every frame rather than trusting each exit from this state to
+    /// clean up after itself — which matters because the covered set
+    /// is document state *every* node-tree rebuild in the app reads,
+    /// and this variant has more ways out than the release arm that
+    /// used to be the only one dropping it.
     SelectingRect {
         /// Canvas-space corner where the drag started.
         start_canvas: Vec2,

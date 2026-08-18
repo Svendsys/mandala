@@ -11,6 +11,7 @@ use crate::application::platform::input::{ElementState, MouseButton};
 use super::click::handle_click;
 use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_click, PickerClick};
 use super::console_input::save_console_history;
+use super::drain_frame::end_rect_select_gesture;
 use super::input_context::InputHandlerContext;
 use super::modal_editor::commit_modal_editors_on_release;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
@@ -561,16 +562,15 @@ pub(super) fn handle_mouse_input(
                         start_canvas,
                         current_canvas,
                     } => {
-                        // Finalize: select all nodes in the rectangle
-                        ctx.renderer.clear_overlay_buffers();
+                        // Finalize: select all nodes in the rectangle.
+                        // Ending the gesture first, and above the
+                        // document / tree checks, so the `rebuild_all`
+                        // below cannot paint the preview one last
+                        // time on its way out. The drain would end it
+                        // anyway on the next frame — that is where the
+                        // invariant lives, not here — but a frame late.
+                        end_rect_select_gesture(ctx.document, ctx.renderer);
                         if let Some(doc) = ctx.document.as_mut() {
-                            // Ending the preview is unconditional, and
-                            // sits above the tree check on purpose: it
-                            // is document state every rebuild path
-                            // reads, so a gesture that ended without
-                            // clearing it would leave the whole canvas
-                            // painting a rectangle the user let go of.
-                            doc.take_rect_select_preview();
                             // Re-hit-test rather than reuse the
                             // preview: the last `CursorMoved` may have
                             // moved `current_canvas` after the final

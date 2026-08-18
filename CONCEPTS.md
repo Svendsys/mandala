@@ -2374,7 +2374,7 @@ widest variant left and stays unboxed.
 **`SelectingRect` splits its per-frame work in two, and only one
 half runs every frame.** The overlay rectangle tracks the pointer
 and is redrawn unconditionally. The covered-node preview is
-memoized: `drain_selecting_rect` hit-tests against the *installed*
+memoized: `drain_rect_select` hit-tests against the *installed*
 tree (a rubber-band drag mutates nothing, so its geometry is
 current) and repaints only when `set_rect_select_preview` reports
 the covered set actually moved. The set itself lives on
@@ -2385,6 +2385,30 @@ stamped onto a tree the drain had built for itself. Before #37 the
 drain ran `doc.build_tree()` plus a full text-buffer rebuild on
 every frame of the gesture, under a comment calling it a
 "lightweight overlay redraw".
+
+**The variant is the authority; both artifacts are its
+projection.** Because the covered set is document state that every
+node-tree rebuild reads, a gesture that ended without it being
+dropped leaves the whole canvas painting a rectangle the user let
+go of — and `SelectingRect` has more ways out than the left-release
+arm that used to be the only one dropping it (a left press
+overwrote it with `Pending`, `Action::PanCanvas` with `Panning`,
+and a target-picker mode swallowed the release entirely). So the
+drain runs on *every* frame, not only the gesture's, and
+re-derives the overlay rectangle and the covered set from the drag
+state it finds; the two eager calls that remain (the release arm,
+the target-picker mode entries) exist only so the rebuild they run
+in the same breath does not paint the set one last time. Nothing
+has to enumerate the exits, so a new one cannot strand it.
+
+One consequence of hit-testing the installed tree is worth naming:
+the drain runs *before* the animation tick in the same frame, so a
+node an animation is advancing is hit-tested one tick behind where
+it is drawn. The window is a single frame and only opens while an
+animation and a rubber band are live at once; closing it would
+mean either ordering the animation tick first (which would make
+the rectangle lag the pointer) or going back to a per-frame arena
+build.
 
 `src/application/app/mod.rs`. Native-only today.
 

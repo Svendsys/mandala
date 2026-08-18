@@ -183,7 +183,7 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
 /// `mindmap_tree` and must overlay it: [`rebuild_all`],
 /// `click::rebuild_all_with_mode`, and
 /// [`rebuild_selection_highlight`] — the last of which is also how
-/// `drain_frame::drain_selecting_rect` repaints, so the rubber-band
+/// `drain_frame::drain_rect_select` repaints, so the rubber-band
 /// preview inherits the overlay order rather than restating it.
 /// Before this helper each open-coded its own subset — two silently
 /// omitted the `NodeEdit` dim (a section drag mid-edit snapped every

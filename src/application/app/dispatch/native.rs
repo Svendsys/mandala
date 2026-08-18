@@ -112,6 +112,36 @@ fn route_pan_canvas(drag_state: &DragState) -> PanCanvasRoute {
     }
 }
 
+/// End a rubber band that is live when a target-picker mode
+/// (`Reparent` / `Connect`) takes the pointer.
+///
+/// The two modes swallow both halves of the left button —
+/// `handle_mouse_input` consumes the release as "choose target" and
+/// never reaches the `mem::replace` that ends a `SelectingRect`, and
+/// `handle_cursor_moved` returns before the drag-state ladder — so a
+/// band entered mid-gesture would otherwise sit frozen on the canvas
+/// for the whole picker session, and its covered set would be painted
+/// by every hover rebuild the mode runs.
+///
+/// Only `SelectingRect` is ended. The other states a picker mode can
+/// interrupt are not this function's call: `Throttled(..)` owes the
+/// model a commit that its own release still performs, and dropping
+/// it here would be the silent loss #37 item 5 is about.
+fn end_target_picker_rubber_band(
+    drag_state: &mut DragState,
+    document: &mut Option<crate::application::document::MindMapDocument>,
+    renderer: &mut crate::application::renderer::Renderer,
+) {
+    if !matches!(drag_state, DragState::SelectingRect { .. }) {
+        return;
+    }
+    *drag_state = DragState::None;
+    // The per-frame drain would end it on its own next frame — that
+    // is where the invariant lives — but the mode entry rebuilds
+    // immediately, and that rebuild would paint the abandoned set.
+    super::super::drain_frame::end_rect_select_gesture(document, renderer);
+}
+
 /// Run an `Action` against the live application context. The body of
 /// every Document-level action lives here; handlers (`event_keyboard`,
 /// `event_mouse_click`, the macro runtime via `dispatch_macro`)
@@ -328,17 +358,27 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::EnterReparentMode => {
-            if let Some(doc) = ctx.document.as_ref() {
-                let sel: Vec<String> = doc
-                    .selection
-                    .selected_ids()
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                if !sel.is_empty() {
-                    *ctx.interaction_mode = InteractionMode::Reparent { sources: sel };
-                    *ctx.hovered_node = None;
-                    *ctx.last_click = None;
+            // `sel` is collected out of the borrow rather than held
+            // across the block: `end_target_picker_rubber_band` takes
+            // `&mut Option<MindMapDocument>`, and the rebuild below
+            // re-resolves the document afterwards.
+            let sel: Vec<String> = ctx
+                .document
+                .as_ref()
+                .map(|doc| {
+                    doc.selection
+                        .selected_ids()
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !sel.is_empty() {
+                *ctx.interaction_mode = InteractionMode::Reparent { sources: sel };
+                *ctx.hovered_node = None;
+                *ctx.last_click = None;
+                end_target_picker_rubber_band(ctx.drag_state, ctx.document, ctx.renderer);
+                if let Some(doc) = ctx.document.as_ref() {
                     rebuild_all_with_mode(
                         doc,
                         ctx.interaction_mode,
@@ -353,13 +393,16 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::EnterConnectMode => {
-            if let Some(doc) = ctx.document.as_ref() {
-                if let SelectionState::Single(source) = &doc.selection {
-                    *ctx.interaction_mode = InteractionMode::Connect {
-                        source: source.clone(),
-                    };
-                    *ctx.hovered_node = None;
-                    *ctx.last_click = None;
+            let source = match ctx.document.as_ref().map(|doc| &doc.selection) {
+                Some(SelectionState::Single(source)) => Some(source.clone()),
+                _ => None,
+            };
+            if let Some(source) = source {
+                *ctx.interaction_mode = InteractionMode::Connect { source };
+                *ctx.hovered_node = None;
+                *ctx.last_click = None;
+                end_target_picker_rubber_band(ctx.drag_state, ctx.document, ctx.renderer);
+                if let Some(doc) = ctx.document.as_ref() {
                     rebuild_all_with_mode(
                         doc,
                         ctx.interaction_mode,

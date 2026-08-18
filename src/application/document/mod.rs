@@ -219,6 +219,16 @@ pub struct MindMapDocument {
     /// landing mid-gesture — its `rebuild_all` runs in the same
     /// frame, after the drain — wiped the preview until the next
     /// drain rebuilt it.
+    ///
+    /// **Derived, not owned.** Living here is what makes it visible
+    /// to every rebuild, and *also* what would make it survive the
+    /// gesture that authorized it — `DragState::SelectingRect` has
+    /// more than one way out, and only one of them ever ran a
+    /// `take`. So the authority stays on the drag state and this is
+    /// its projection: `app::drain_frame::drain_rect_select` — a
+    /// plain code span because `app` is a private module and rustdoc
+    /// cannot resolve a link into one — re-derives the two from each
+    /// other on every frame, so no exit has to remember.
     pub rect_select_preview: Option<Vec<String>>,
 }
 
