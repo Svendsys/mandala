@@ -1730,18 +1730,28 @@ cheap `point_inside_any_node` clip filter.
 
 `lib/baumhard/src/mindmap/scene_cache.rs`.
 
-An entry holds sampled geometry, the resolved body color, and the
-`SampleParams` — effective font size, glyph spacing, per-path sample
-budget — that the geometry was produced under. It holds nothing the
-frame *draws* with: body glyph, cap glyphs, font family and font size
-are read from the live `GlyphConnectionConfig` on every path, so a
-glyph edit cannot be served stale. The two reuse doors, `reusable`
-and `reusable_mut`, compare the whole `SampleParams`, so a
-font-size or spacing edit resamples without the mutating site having
-to remember `clear()`. What the caller still owes: an endpoint that
-moved in the model without appearing in the drag `offsets` map, an
-anchor or control-point edit, a node resize, and a theme-variable
-edit.
+An entry holds the sampled geometry, the endpoints it was sampled at,
+and the `SampleParams` — effective font size, glyph spacing, per-path
+sample budget — it was sampled under. It holds nothing the frame
+*draws* with, and there is no exception: body glyph, cap glyphs, font
+family, font size and body color are all read from the live model on
+every path, so no styling edit can be served stale. The two reuse
+doors, `reusable` and `reusable_mut`, compare the whole
+`SampleParams`, so a font-size or spacing edit resamples without the
+mutating site having to remember `clear()`.
+
+What the caller still owes is geometry the params cannot see, and only
+that: an endpoint that moved in the model without appearing in the
+drag `offsets` map, an anchor or control-point edit, and a node
+resize. Nothing about color is on that list — neither a theme-variable
+edit nor a direct `edge.color` edit.
+
+`refill` is the cache's only writer, and it hands the sampler the
+buffer the entry already holds rather than a new one, so an edge that
+resamples while cached allocates nothing. A refill that fills nothing
+evicts, so an entry with no points — which the reuse doors would
+otherwise serve as an edge that draws nothing, forever — cannot
+exist.
 
 Liveness is a generation stamp rather than a per-frame set of keys:
 `begin_pass` opens a pass, every route that hands out or writes an

@@ -24,18 +24,19 @@
 //! third nodes that moved through its path this frame.
 //!
 //! Every styling value on the emitted element — body glyph, cap
-//! glyphs, font family, font size — is read from the live
-//! `GlyphConnectionConfig` on all three paths, so a glyph edit is
-//! visible on the next frame whether or not the cache was hit.
-//! Both reuse paths additionally ask the cache for an entry sampled
-//! under this frame's [`SampleParams`] and get nothing when the
-//! answer is a different one, so a font-size or spacing edit
-//! resamples on its own. **What the caller still owes the cache**
-//! is everything neither mechanism can see: an endpoint that moved
-//! in the model without appearing in `offsets`, an anchor /
-//! control-point edit, a node resize, and a theme-variable edit.
-//! Those are `SceneConnectionCache::invalidate_edge` or `::clear`;
-//! this header used to name the glyph config among them.
+//! glyphs, font family, font size, body color — is read from the
+//! live model on all three paths, so a styling edit is visible on
+//! the next frame whether or not the cache was hit. Both reuse paths
+//! additionally ask the cache for an entry sampled under this
+//! frame's [`SampleParams`] and get nothing when the answer is a
+//! different one, so a font-size or spacing edit resamples on its
+//! own. **What the caller still owes the cache** is geometry neither
+//! mechanism can see, and only that: an endpoint that moved in the
+//! model without appearing in `offsets`, an anchor / control-point
+//! edit, and a node resize. Those are
+//! `SceneConnectionCache::invalidate_edge` or `::clear`; this header
+//! used to name the glyph config among them, and then the theme
+//! variables.
 //!
 //! Cache lifecycle: `ensure_zoom` is caller-managed (the caller
 //! flushes on zoom change before any pass starts). The liveness
