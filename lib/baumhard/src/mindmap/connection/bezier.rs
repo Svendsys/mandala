@@ -7,8 +7,6 @@
 
 use glam::Vec2;
 
-use super::SampledPoint;
-
 /// Number of subdivisions for arc-length approximation on Bezier curves.
 pub(super) const ARC_LENGTH_SUBDIVISIONS: usize = 256;
 
@@ -116,10 +114,10 @@ pub(super) fn cubic_bezier_length(start: Vec2, control1: Vec2, control2: Vec2, e
 /// answers [`position`](CubicSamples::position) for each index in
 /// `0..len()`. Two callers want the same sequence for different
 /// reasons and this is what keeps one copy of the math between them:
-/// [`sample_cubic_bezier`] collects it into a `Vec<SampledPoint>`
-/// because the connection pass needs the points to outlive the walk,
-/// while [`super::distance_to_path`] consumes each point as it
-/// arrives and needs no vector at all.
+/// [`extend_cubic_samples`] appends it to a buffer the connection
+/// pass owns, because that pass needs the points to outlive the
+/// walk, while [`super::distance_to_path`] consumes each point as it
+/// arrives and needs no buffer at all.
 ///
 /// The struct is a plain value carrying an [`ArcLengthTable`]; it
 /// owns no heap allocation and is meant to live on the stack of the
@@ -196,28 +194,34 @@ impl CubicSamples {
     }
 }
 
-/// Collect the whole sample sequence of a cubic Bezier into a
-/// vector, for callers that need the points to outlive the walk.
+/// Append the whole sample sequence of a cubic Bezier to `out`, for
+/// callers that need the points to outlive the walk.
 ///
-/// Cost: one [`plan_cubic_samples`] plus one allocation of exactly
-/// the returned length. A caller that only reads each point once
-/// should plan the sequence and walk it instead.
-pub(super) fn sample_cubic_bezier(
+/// Writes into a caller-owned buffer rather than returning one: the
+/// connection pass refills the same edge's buffer every resampling
+/// frame, and a buffer that already has the capacity does not
+/// allocate at all. `out` is reserved for the exact number of points
+/// about to be pushed, so a fresh buffer takes one allocation and no
+/// growth sequence.
+///
+/// Cost: one [`plan_cubic_samples`] — `ARC_LENGTH_SUBDIVISIONS`
+/// curve evaluations — plus one binary search and one curve
+/// evaluation per point. A caller that only reads each point once
+/// should plan the sequence and walk it instead of buffering it.
+pub(super) fn extend_cubic_samples(
     start: Vec2,
     control1: Vec2,
     control2: Vec2,
     end: Vec2,
     spacing: f32,
     cap: usize,
-) -> Vec<SampledPoint> {
+    out: &mut Vec<Vec2>,
+) {
     let plan = plan_cubic_samples(start, control1, control2, end, spacing, cap);
-    let mut points = Vec::with_capacity(plan.len());
+    out.reserve(plan.len());
     for index in 0..plan.len() {
-        points.push(SampledPoint {
-            position: plan.position(index),
-        });
+        out.push(plan.position(index));
     }
-    points
 }
 
 /// Binary search the arc-length table to find the t value for a given arc length.

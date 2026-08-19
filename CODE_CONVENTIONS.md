@@ -423,6 +423,45 @@ industrial cost/benefit reasoning. This is not license for speculation.
   targets and fail the run (#134); PR #133 established the
   stripped-side half of this rule, the #134 incident the live-side
   half.
+- **A module `//!` header whose `mod` item also carries an outer
+  `///` writes its intra-doc links crate-absolute.** rustdoc merges
+  the two into one doc block, and a *relative* link inside the merged
+  block resolves against no module — `[`Foo`]` fails even where `Foo`
+  is declared in that very file. Both halves of the pair are the
+  house style here (`lib/baumhard/src/mindmap/mod.rs` puts a one-line
+  summary on every `pub mod` it declares, and each of those files
+  opens with its own `//!`), so the combination is normal and the
+  hazard is latent in every one of them. What makes it worth a rule
+  rather than a fix-when-it-bites: the error names neither a file nor
+  a line, so the only way to locate it is to bisect the doc comments.
+  `[`Foo`](crate::path::to::Foo)` resolves.
+- **Prose must not name an item the same change deleted, and a
+  rename sweep is what catches it — with two blind spots worth
+  knowing before you trust one.** A doc that says "which the first
+  `insert` overwrites" after `insert` is gone reads as a pointer and
+  is a dead end; the same sentence inside a *control instruction* is
+  worse, because the next reader runs it. The sweep is: extract every
+  `fn` / `struct` / field name the change removed from its own diff,
+  grep the tree for each, then triage. It found four such sentences in
+  one series. What it does **not** find: (1) removed field names that
+  are ordinary English words — `color`, `font`, `position` — where the
+  prose is in a file the change never touched, so no qualified
+  spelling and no file-locality narrows the grep; (2) a sentence whose
+  every identifier still exists but whose *claim* went false, which
+  needs reading rather than matching. Both were real misses. A
+  deliberate mention of a removed item is fine and sometimes required
+  — naming the input that made a regression test fail, or the shape a
+  rewrite replaced — but it carries its own disclosure that the thing
+  is gone, so a reader is never sent looking.
+- **A figure derived from a recorded constant belongs beside the
+  constant, not copied into prose.** Name the constant and state the
+  relation; a number restated in a doc comment goes stale silently
+  while still reading as authority.
+  `MEASURED_WORST_ESCAPE_ULPS` in
+  `lib/baumhard/src/mindmap/connection/tests.rs` carries the canonical
+  statement of this and the incident that produced it. It has since
+  been broken once more, in prose about that same constant, which is
+  why it is repeated here where the doc rules live.
 - **A comment may assert what the standard says and what this
   repository does; a claim about what a *named engine* does at
   runtime needs either a device or a hedge.** The proved-vs-observed

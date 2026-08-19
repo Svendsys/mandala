@@ -450,7 +450,9 @@ fn test_connection_label_tree_hit_matches_a_linear_scan_over_the_same_rectangles
     // laid out by the real loader — swept against the oracle.
     let map = crate::mindmap::loader::load_from_file(&test_map_path()).expect("testament map loads");
     let hidden = map.fold_hidden_set();
-    let elements = build_label_elements(&map, &HashMap::new(), None, None, None, 1.0, &hidden);
+    let offsets = HashMap::new();
+    let mut paths = super::super::EdgePathCache::new(&map, &offsets);
+    let elements = build_label_elements(&map, None, None, None, &mut paths, 1.0, &hidden);
     assert!(
         elements.len() >= 10,
         "fixture should carry labels; got {}",
@@ -522,7 +524,9 @@ fn crossing_labels_map() -> MindMap {
 fn test_crossing_edge_labels_resolve_to_the_smaller_label() {
     let map = crossing_labels_map();
     let hidden = map.fold_hidden_set();
-    let elements = build_label_elements(&map, &HashMap::new(), None, None, None, 1.0, &hidden);
+    let offsets = HashMap::new();
+    let mut paths = super::super::EdgePathCache::new(&map, &offsets);
+    let elements = build_label_elements(&map, None, None, None, &mut paths, 1.0, &hidden);
     assert_eq!(elements.len(), 2);
 
     let mut labels = build_connection_label_tree(&elements);

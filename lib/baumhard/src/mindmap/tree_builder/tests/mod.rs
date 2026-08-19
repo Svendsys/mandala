@@ -58,6 +58,10 @@
 //!   `map.palettes`, `starts_at_root`, level clamping,
 //!   `connections_colored`, and the palette edit that moves them
 //!   all at once.
+//! - [`edge_path`] — the per-frame `EdgePathCache` the sampler, the
+//!   grab-handles and the label layout share: one build per edge,
+//!   none for an edge no pass asks about, and the offset-applied
+//!   endpoint rects underneath it.
 
 mod fixtures;
 
@@ -69,6 +73,7 @@ mod connection_clipping;
 mod connection_label_emit;
 mod edge_handle;
 mod edge_handle_emit;
+mod edge_path;
 mod node_background;
 mod node_basic;
 mod node_clip;

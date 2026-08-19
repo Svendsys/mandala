@@ -215,12 +215,12 @@ fn test_hit_test_edge_finds_an_axis_aligned_curved_edge_far_from_the_origin() {
             // knife edge and starts dropping the click outright.
             for tolerance in [0.02f32, 0.1, 0.5, 4.0, 8.0, 12.0] {
                 for probe in [
-                    sample.position,
+                    *sample,
                     // Just inside the tolerance on either side, which
                     // is the other half of the failure: a click the
                     // reference accepts by a hair.
-                    sample.position + Vec2::new(tolerance * 0.999, 0.0),
-                    sample.position - Vec2::new(tolerance * 0.999, 0.0),
+                    *sample + Vec2::new(tolerance * 0.999, 0.0),
+                    *sample - Vec2::new(tolerance * 0.999, 0.0),
                 ] {
                     let expected_hit = reference_hit(probe, &doc.mindmap, tolerance);
                     assert_eq!(
@@ -320,7 +320,7 @@ fn test_hit_test_edge_agrees_with_the_unbounded_distance_filter() {
             &edge.control_points,
         );
         for sample in connection::sample_path(&path, 4.0, connection::MAX_PATH_SAMPLES) {
-            compare(sample.position, 1.0);
+            compare(sample, 1.0);
             curved_probes += 1;
         }
     }

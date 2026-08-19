@@ -69,6 +69,10 @@ fn project_all_roles(
     cache.ensure_zoom(camera_zoom);
     let hidden = map.fold_hidden_set();
     let node_aabbs = tree_builder::node_clip_aabbs(map, offsets, None, &hidden);
+    // One memo across both connection passes, as `CanvasFrame` owns
+    // one across its `update_*` methods — measuring them with a memo
+    // each would measure a shape the app does not run.
+    let mut paths = tree_builder::EdgePathCache::new(map, offsets);
     let _ = tree_builder::build_connection_elements(
         map,
         offsets,
@@ -76,6 +80,7 @@ fn project_all_roles(
         selection.edge,
         None,
         cache,
+        &mut paths,
         camera_zoom,
         &hidden,
     );
@@ -85,10 +90,10 @@ fn project_all_roles(
         .or_else(|| selection.edge.map(|(f, t, ty)| EdgeKey::new(f, t, ty)));
     let _ = tree_builder::build_label_elements(
         map,
-        offsets,
         selection.label_edit,
         None,
         highlight_key.as_ref(),
+        &mut paths,
         camera_zoom,
         &hidden,
     );
@@ -2161,7 +2166,8 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
             .push(bench_edge("n0", &format!("n{}", i + 1), false, Some("label")));
     }
     let label_hidden = label_map.fold_hidden_set();
-    let elements = build_label_elements(&label_map, &offsets, None, None, None, 1.0, &label_hidden);
+    let mut label_paths = tree_builder::EdgePathCache::new(&label_map, &offsets);
+    let elements = build_label_elements(&label_map, None, None, None, &mut label_paths, 1.0, &label_hidden);
     assert_eq!(elements.len(), PAIRS, "label bench fixture did not build");
     let labels = build_connection_label_tree(&elements);
     let last_label = labels
@@ -2205,15 +2211,23 @@ fn dewey_cmp_benchmark(c: &mut Criterion) {
 /// The edge hit-test's path geometry, one path per row rather than
 /// through a whole projection pass.
 ///
-/// Three rows because the caller composes three answers:
-/// `path_bounds` is the control-polygon box, `distance_to_path` is
-/// the sampled walk that box protects, and `distance_to_path_within`
-/// is the pair as `document::hit_test::hit_test_edge` calls it —
-/// driven here at a point the box rejects, which is the case the
-/// composition exists for.
+/// Four rows. Three because the hit-test caller composes three
+/// answers: `path_bounds` is the control-polygon box,
+/// `distance_to_path` is the sampled walk that box protects, and
+/// `distance_to_path_within` is the pair as
+/// `document::hit_test::hit_test_edge` calls it — driven here at a
+/// point the box rejects, which is the case the composition exists
+/// for.
+///
+/// The fourth is `sample_path_into`, which is the connection pass's
+/// side of the same geometry rather than the hit test's. It is
+/// driven with a buffer that is cleared but not freed between
+/// iterations, because that is the shape the pass runs: the scene
+/// cache hands back the buffer this edge filled last frame.
 fn connection_geometry_benchmark(c: &mut Criterion) {
     use baumhard::mindmap::connection::{
-        distance_to_path, distance_to_path_within, path_bounds, ConnectionPath,
+        distance_to_path, distance_to_path_within, path_bounds, sample_path_into, ConnectionPath,
+        MAX_PATH_SAMPLES,
     };
     use glam::Vec2;
 
@@ -2232,6 +2246,14 @@ fn connection_geometry_benchmark(c: &mut Criterion) {
     });
     c.bench_function("connection_distance_to_path_within_rejects", |b| {
         b.iter(|| distance_to_path_within(far, &path, 12.0))
+    });
+    let mut samples: Vec<Vec2> = Vec::new();
+    c.bench_function("connection_sample_path_into", |b| {
+        b.iter(|| {
+            samples.clear();
+            sample_path_into(&path, 12.0, MAX_PATH_SAMPLES, &mut samples);
+            samples.len()
+        })
     });
 }
 

@@ -14,6 +14,16 @@
 //! resolved exactly once, in the data pass; the projections never
 //! re-resolve it.
 //!
+//! Two inputs cross role boundaries rather than belonging to one:
+//! [`node_clip_aabbs`](crate::mindmap::tree_builder::node_clip_aabbs),
+//! which the connection sampler clips glyph samples against, and
+//! [`EdgePathCache`](crate::mindmap::tree_builder::EdgePathCache),
+//! which holds one `ConnectionPath` per edge per frame for the three
+//! passes that each used to build their own. (Spelled absolute —
+//! `mod.rs` merges an outer `///` into this header and a relative
+//! link in the merged block resolves against no module; see
+//! `CODE_CONVENTIONS.md` §8.)
+//!
 //! `MindMapTree` and `build_mindmap_tree` live here; per-role
 //! builders are re-exported from the sibling files.
 
@@ -30,6 +40,7 @@ mod border;
 mod connection;
 mod connection_label;
 mod edge_handle;
+mod edge_path;
 mod handle;
 mod node;
 mod node_clip;
@@ -59,6 +70,7 @@ pub use connection_label::{
     ConnectionLabelMutator, ConnectionLabelTree,
 };
 pub use edge_handle::{build_edge_handles, edge_handle_channel_for, EdgeHandleElement, EdgeHandleKind};
+pub use edge_path::{edge_endpoint_rects, offset_node_rect, EdgePathCache};
 pub use handle::{build_handle_mutator_tree, build_handle_tree, handle_identity_sequence, HandleVisual};
 pub use node::{
     effective_section_scale, section_default_regions, DEFAULT_SECTION_FONT_SCALE, LINE_HEIGHT_FACTOR,

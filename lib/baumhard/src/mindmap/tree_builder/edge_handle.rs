@@ -113,10 +113,18 @@ impl HandleVisual for EdgeHandleElement {
     }
 }
 
-/// Build the grab-handle set for a single selected edge, given the
-/// current (offset-applied) positions and sizes of its endpoint
-/// nodes. Called once per scene build (for the selected edge only),
-/// so the cost is trivial and needs no cache.
+/// Build the grab-handle set for a single selected edge, given its
+/// path plus the current (offset-applied) positions and sizes of its
+/// endpoint nodes. Called once per scene build (for the selected
+/// edge only), so the emission itself needs no cache.
+///
+/// `path` is taken rather than built because the connection pass
+/// wants the same edge's path a few lines later on a cache miss and
+/// the label pass wants it again — one
+/// [`EdgePathCache`](super::edge_path::EdgePathCache) answers all three
+/// (#36 item 6). The endpoint rectangles stay separate arguments
+/// because the control-point handles sit at offsets from the node
+/// *centers*, which the path does not carry.
 ///
 /// Always emits AnchorFrom + AnchorTo. On top of that:
 /// - an edge with 0 control points gets a `Midpoint` handle
@@ -126,21 +134,13 @@ impl HandleVisual for EdgeHandleElement {
 pub fn build_edge_handles(
     edge: &crate::mindmap::model::MindEdge,
     edge_key: &EdgeKey,
+    path: &connection::ConnectionPath,
     from_pos: Vec2,
     from_size: Vec2,
     to_pos: Vec2,
     to_size: Vec2,
 ) -> Vec<EdgeHandleElement> {
-    let path = connection::build_connection_path(
-        from_pos,
-        from_size,
-        &edge.anchor_from,
-        to_pos,
-        to_size,
-        &edge.anchor_to,
-        &edge.control_points,
-    );
-    let (start, end) = match &path {
+    let (start, end) = match path {
         connection::ConnectionPath::Straight { start, end } => (*start, *end),
         connection::ConnectionPath::CubicBezier { start, end, .. } => (*start, *end),
     };

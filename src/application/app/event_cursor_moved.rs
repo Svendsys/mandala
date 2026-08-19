@@ -855,7 +855,7 @@ mod tests {
         EdgeRef, GraphemeRange, PortalLabelSel, SectionSel, SectionSpan, SelectionState,
     };
     use crate::application::platform::window::CursorIcon;
-    use baumhard::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCache};
+    use baumhard::mindmap::scene_cache::{EdgeKey, SampleParams, SceneConnectionCache};
     use baumhard::mindmap::tree_builder::ResizeHandleSide;
     use baumhard::util::rust_source::{braced_block_after, production_code, statements};
 
@@ -872,20 +872,20 @@ mod tests {
         let mut drag_state = DragState::None;
         let mut scene_cache = SceneConnectionCache::default();
         // Seed one entry so a `clear()` is visible as `0` rather than
-        // being indistinguishable from "was empty anyway".
-        scene_cache.insert(
-            edge_key.clone(),
-            CachedConnection {
-                pre_clip_positions: Vec::new(),
-                cap_start: None,
-                cap_end: None,
-                body_glyph: "\u{b7}".to_string(),
-                font: None,
+        // being indistinguishable from "was empty anyway". One sample
+        // rather than none: an entry with no points is not something
+        // the cache will store, since a refill that fills nothing
+        // evicts instead.
+        scene_cache.refill(
+            &edge_key,
+            SampleParams {
                 font_size_pt: 12.0,
-                color: "#ffffff".to_string(),
-                base_from: glam::Vec2::ZERO,
-                base_to: glam::Vec2::ZERO,
+                spacing: 0.0,
+                sample_budget: 1000,
             },
+            glam::Vec2::ZERO,
+            glam::Vec2::ZERO,
+            |out| out.push(glam::Vec2::ZERO),
         );
         let original = crate::application::document::defaults::default_parent_child_edge("a", "b");
         let tier = arm_label_drag(

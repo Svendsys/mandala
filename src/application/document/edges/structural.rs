@@ -8,6 +8,7 @@
 
 use glam::Vec2;
 
+use baumhard::mindmap::connection;
 use baumhard::mindmap::model::{
     portal_endpoint_state_mut, Canvas, EdgeLabelConfig, MindEdge, PortalEndpointState,
 };
@@ -52,7 +53,20 @@ impl MindMapDocument {
         let to_size = to_node.size_vec2();
 
         let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(edge);
-        let handles = tree_builder::build_edge_handles(edge, &edge_key, from_pos, from_size, to_pos, to_size);
+        // A hit test is not a frame, so there is no shared
+        // `EdgePathCache` to read from: this one call builds its own
+        // path and drops it.
+        let path = connection::build_connection_path(
+            from_pos,
+            from_size,
+            &edge.anchor_from,
+            to_pos,
+            to_size,
+            &edge.anchor_to,
+            &edge.control_points,
+        );
+        let handles =
+            tree_builder::build_edge_handles(edge, &edge_key, &path, from_pos, from_size, to_pos, to_size);
 
         let mut best: Option<(tree_builder::EdgeHandleKind, Vec2, f32)> = None;
         for h in handles {
@@ -218,7 +232,6 @@ impl MindMapDocument {
     /// a relative vector from the source node's center (matching
     /// the `control_points[0]` encoding the scene builder expects).
     pub fn curve_straight_edge(&mut self, edge_ref: &EdgeRef) -> bool {
-        use baumhard::mindmap::connection;
         use baumhard::mindmap::model::ControlPoint;
         let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
             Some(i) => i,
