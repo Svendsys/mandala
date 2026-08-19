@@ -8,7 +8,7 @@
 use super::super::{EdgePathCache, SceneSelectionContext};
 use super::fixtures::*;
 use crate::mindmap::connection::ConnectionPath;
-use crate::mindmap::model::{GlyphConnectionConfig, MindMap};
+use crate::mindmap::model::{ControlPoint, GlyphConnectionConfig, MindMap};
 use crate::mindmap::scene_cache::SceneConnectionCache;
 use crate::mindmap::test_helpers::synthetic_edge;
 use glam::Vec2;
@@ -20,6 +20,200 @@ fn labeled_edge_map() -> MindMap {
     let mut map = two_node_edge_map();
     map.edges[0].label = Some("hello".to_string());
     map
+}
+
+/// Y of the straight chord between the fixture's two anchors — a's
+/// right edge at (40, 20), b's left edge at (400, 20).
+const CHORD_Y: f32 = 20.0;
+
+/// The control-point offsets [`curved_edge_map`] installs, as offsets
+/// from the respective node centers — which is how the format stores
+/// them and how `build_connection_path` reads them.
+const CURVE_OFFSET_Y: f64 = 180.0;
+
+/// [`two_node_edge_map`] whose single edge carries two control
+/// points, so its path is a cubic Bezier rather than a straight
+/// chord.
+///
+/// Every other fixture in this file is straight and axis-aligned and
+/// control-point-free, which means none of them can see a path that
+/// dropped its control points on the way through. Node centers are
+/// (20, 20) and (420, 20), so with both offsets at `+180` in y the
+/// control points land at (20, 200) and (420, 200) and the curve
+/// bulges to `y = 155` at its midpoint — 135 units off the chord,
+/// which no rounding can explain away.
+fn curved_edge_map() -> MindMap {
+    let mut map = two_node_edge_map();
+    map.edges[0].control_points = vec![
+        ControlPoint {
+            x: 0.0,
+            y: CURVE_OFFSET_Y,
+        },
+        ControlPoint {
+            x: 0.0,
+            y: CURVE_OFFSET_Y,
+        },
+    ];
+    map
+}
+
+/// [`curved_edge_map`] with a label, for the label-layout half.
+fn curved_labeled_edge_map() -> MindMap {
+    let mut map = curved_edge_map();
+    map.edges[0].label = Some("hello".to_string());
+    map
+}
+
+/// The memo hands out the edge's *curve*, control points and all.
+///
+/// Input that makes it fail: `EdgePathCache::path` passing `&[]` for
+/// `control_points`, which is a one-token slip that turns every
+/// curved edge in the document into a straight chord.
+#[test]
+fn test_the_shared_path_carries_the_edges_control_points() {
+    let map = curved_edge_map();
+    let offsets = HashMap::new();
+    let mut paths = EdgePathCache::new(&map, &offsets);
+
+    let ConnectionPath::CubicBezier {
+        start,
+        control1,
+        control2,
+        end,
+    } = paths.path(0).expect("the fixture edge resolves").clone()
+    else {
+        panic!("an edge with two control points must project to a cubic, not a straight chord");
+    };
+    // Anchors are unchanged by the curve — a's right edge and b's
+    // left edge — which is why the anchors alone cannot detect the
+    // slip and the control points have to be read.
+    assert_eq!(start, Vec2::new(40.0, CHORD_Y));
+    assert_eq!(end, Vec2::new(400.0, CHORD_Y));
+    // Offsets from the node centers (20, 20) and (420, 20).
+    assert_eq!(control1, Vec2::new(20.0, 20.0 + CURVE_OFFSET_Y as f32));
+    assert_eq!(control2, Vec2::new(420.0, 20.0 + CURVE_OFFSET_Y as f32));
+}
+
+/// The samples the connection pass draws follow the curve.
+///
+/// The chord is flat at `y = 20`, so a path that lost its control
+/// points puts every sample there. Asserting on the *emitted element*
+/// rather than on the memo is the point: this is the sampler reading
+/// the shared path, which is the consumer the sharing introduced.
+#[test]
+fn test_the_sampler_draws_the_curve_the_shared_path_carries() {
+    let map = curved_edge_map();
+    let scene = project(&map, 1.0);
+    assert_eq!(scene.connection_elements.len(), 1);
+    let off_chord = scene.connection_elements[0]
+        .glyph_positions
+        .iter()
+        .filter(|(_, y)| (y - CHORD_Y).abs() > 10.0)
+        .count();
+    assert!(
+        off_chord > 5,
+        "a curved edge must sample off its chord; {} of {} points left y={CHORD_Y}",
+        off_chord,
+        scene.connection_elements[0].glyph_positions.len()
+    );
+}
+
+/// The label sits on the curve, not on the chord.
+///
+/// `point_at_t(path, 0.5)` is the whole of the label's dependency on
+/// the shared path, and for this fixture the two answers are 135
+/// canvas units apart.
+#[test]
+fn test_the_label_layout_follows_the_curve_the_shared_path_carries() {
+    let map = curved_labeled_edge_map();
+    let scene = project(&map, 1.0);
+    assert_eq!(scene.connection_label_elements.len(), 1);
+    let label = &scene.connection_label_elements[0];
+    let center_y = label.position.1 + label.bounds.1 * 0.5;
+    // B(0.5) of this curve is (220, 155): (start + 3c1 + 3c2 + end)/8.
+    assert!(
+        crate::util::geometry::almost_equal(center_y, 155.0),
+        "the label belongs at the curve's midpoint y=155, got {center_y}"
+    );
+}
+
+/// The grab-handles are **not** in this set, and that is a fact about
+/// the code rather than a gap in the corpus.
+///
+/// `build_edge_handles` reads the shared path only for its `start`
+/// and `end`, and `build_connection_path` gives a cubic the same
+/// anchors it gives the straight form — so dropping the control
+/// points cannot move a handle. What decides the handle *set* is
+/// `edge.control_points`, which the emitter reads off the edge
+/// directly and not through the memo. This test pins both halves, so
+/// a future change that routes the handle set through the path has to
+/// notice it is doing so.
+#[test]
+fn test_the_grab_handles_read_the_shared_path_only_for_its_endpoints() {
+    let straight = project_with_overrides(
+        &two_node_edge_map(),
+        &HashMap::new(),
+        SceneSelectionContext {
+            edge: Some(("a", "b", "cross_link")),
+            ..Default::default()
+        },
+        None,
+        None,
+        None,
+        1.0,
+    );
+    let curved = project_with_overrides(
+        &curved_edge_map(),
+        &HashMap::new(),
+        SceneSelectionContext {
+            edge: Some(("a", "b", "cross_link")),
+            ..Default::default()
+        },
+        None,
+        None,
+        None,
+        1.0,
+    );
+
+    let anchors = |roles: &ProjectedRoles| -> Vec<(f32, f32)> {
+        roles
+            .edge_handles
+            .iter()
+            .filter(|h| {
+                matches!(
+                    h.kind,
+                    super::super::EdgeHandleKind::AnchorFrom | super::super::EdgeHandleKind::AnchorTo
+                )
+            })
+            .map(|h| h.position)
+            .collect()
+    };
+    assert_eq!(
+        anchors(&straight).len(),
+        2,
+        "precondition: both anchors are emitted"
+    );
+    assert_eq!(
+        anchors(&straight),
+        anchors(&curved),
+        "the anchors a handle reads off the path are the same for a chord and its curve"
+    );
+    // And the handle *set* differs, because that half comes off the
+    // edge rather than off the path.
+    assert!(
+        straight
+            .edge_handles
+            .iter()
+            .any(|h| h.kind == super::super::EdgeHandleKind::Midpoint),
+        "a straight edge offers the drag-to-curve midpoint"
+    );
+    assert!(
+        curved
+            .edge_handles
+            .iter()
+            .any(|h| h.kind == super::super::EdgeHandleKind::ControlPoint(1)),
+        "a two-control-point edge offers a handle for the second one"
+    );
 }
 
 /// One connection path per edge per frame, however many passes want
