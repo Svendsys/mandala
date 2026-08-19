@@ -1826,6 +1826,36 @@ mod canvas_pass_granularity {
         .update_all(cache, app_scene);
     }
 
+    /// Walk positions each named role contributes, one `refresh` per
+    /// role into a cache of its own.
+    ///
+    /// Used as a precondition, never as a claim. A canvas role with
+    /// nothing to draw is still a registered tree, and its `Void`
+    /// root is one walk position that shapes to nothing and matches
+    /// `(None, None)` for free — so a "none of these re-shaped"
+    /// assertion covering it is true of that role for a reason that
+    /// has nothing to do with the reuse rule. Which roles carry a
+    /// given aggregate zero is therefore part of what that zero
+    /// means, and the aggregate cannot show it.
+    fn walked_per_role(app_scene: &AppScene, roles: &[CanvasRole]) -> Vec<(CanvasRole, usize)> {
+        roles
+            .iter()
+            .map(|role| {
+                let id = app_scene
+                    .canvas_id(*role)
+                    .expect("every canvas role is registered by update_all");
+                let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+                let counts = refresh(
+                    app_scene.canvas_scene(),
+                    &[id],
+                    &mut shaped,
+                    ScenePassKind::Canvas,
+                );
+                (*role, counts.walked)
+            })
+            .collect()
+    }
+
     /// Project the connection-label role alone — what the edge-label
     /// drag drain does on every drained frame
     /// (`throttled_interaction/edge_label.rs`), because a label move
@@ -1943,6 +1973,32 @@ mod canvas_pass_granularity {
         );
         project_label_role_only(&doc, &mut app_scene);
 
+        // What the zero below is worth, role by role. Two of the
+        // seven carry it on this fixture and five hold a bare `Void`
+        // root apiece — nothing is selected, so no handles emit, and
+        // Default mode emits no section frames. Named rather than
+        // left to the aggregate, which cannot show the difference.
+        let untouched_roles = [
+            CanvasRole::Connections,
+            CanvasRole::Borders,
+            CanvasRole::Portals,
+            CanvasRole::EdgeHandles,
+            CanvasRole::SectionFrames,
+            CanvasRole::NodeResizeHandles,
+            CanvasRole::SectionResizeHandles,
+        ];
+        let per_role = walked_per_role(&app_scene, &untouched_roles);
+        assert_eq!(
+            per_role.len(),
+            other_ids.len(),
+            "the named roles must be exactly the ones the label role is not"
+        );
+        assert!(
+            per_role.iter().filter(|(_, walked)| *walked > 1).count() >= 2,
+            "at least two of the untouched roles must hold more than their `Void` root, or the \
+             zero below is mostly a statement about empty trees: {per_role:?}"
+        );
+
         let untouched = refresh(
             app_scene.canvas_scene(),
             &other_ids,
@@ -1986,7 +2042,7 @@ mod canvas_pass_granularity {
     }
 
     /// A camera move re-projects four of the eight roles, and the
-    /// other four keep every buffer they hold.
+    /// four it leaves alone keep every buffer they hold.
     ///
     /// `rebuild_camera_geometry` is the other production caller that
     /// deliberately narrows to a subset, and it narrows for a reason
@@ -1994,6 +2050,15 @@ mod canvas_pass_granularity {
     /// resize-handle roles are canvas-space and zoom-independent.
     /// Before the reuse rule that narrowing stopped at the
     /// projection and the flush re-shaped all eight anyway.
+    ///
+    /// **What the fixture supplies is one of those four**, and the
+    /// test says so out loud rather than letting the aggregate imply
+    /// four roles' worth of coverage: at rest, with nothing selected
+    /// and no `NodeEdit` mode, the section-frame role and both
+    /// resize-handle roles hold a bare `Void` root each, so the zero
+    /// below is carried by `Borders` and says only "an empty role
+    /// stays empty" about the other three. The per-role precondition
+    /// is what fires the day a fixture change empties `Borders` too.
     #[test]
     fn test_camera_geometry_rebuild_leaves_the_zoom_independent_roles_shaped() {
         baumhard::font::fonts::init();
@@ -2018,10 +2083,18 @@ mod canvas_pass_granularity {
             })
             .collect();
 
+        // `EdgeHandles` belongs here: `update_connection_trees` ends
+        // by dispatching the handle slice the connection pass emitted
+        // alongside its samples, so a camera move re-projects it too
+        // — which is what makes the count in the name four rather
+        // than three. It walks only its `Void` root at rest, so it
+        // contributes nothing to the assertion; listing it anyway is
+        // what stops a later reader filing it under zoom-independent.
         let moved_roles = [
             CanvasRole::Connections,
             CanvasRole::ConnectionLabels,
             CanvasRole::Portals,
+            CanvasRole::EdgeHandles,
         ];
         let moved_ids: Vec<SceneTreeId> = moved_roles
             .iter()
@@ -2031,6 +2104,21 @@ mod canvas_pass_granularity {
                     .expect("every canvas role is registered by update_all")
             })
             .collect();
+
+        // Which of the four the fixture actually exercises. See the
+        // docstring: one, and the test refuses to imply otherwise.
+        let per_role = walked_per_role(&app_scene, &zoom_independent);
+        assert!(
+            per_role[0].1 > 50,
+            "`Borders` is the role that carries this test's zero; if it empties, the assertion \
+             below stops proving anything: {per_role:?}"
+        );
+        assert!(
+            per_role[1..].iter().all(|(_, walked)| *walked == 1),
+            "the other three zoom-independent roles are expected to hold only their `Void` root \
+             at rest — if one of them has filled, this test now covers it and the docstring \
+             needs re-reading: {per_role:?}"
+        );
 
         let mut shaped: Vec<ShapedSceneElement> = Vec::new();
         let mut moved_shaped: Vec<ShapedSceneElement> = Vec::new();

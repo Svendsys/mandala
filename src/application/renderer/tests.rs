@@ -964,7 +964,18 @@ type NamedAreaMutation = (&'static str, fn(&mut GlyphArea));
 /// shaper's walker emits) and reachable by no `GlyphAreaField`
 /// mutator variant, so the sibling
 /// `test_scene_shape_cache_invalidates_on_every_writable_area_field`
-/// cannot see them. This is where they are covered.
+/// cannot see them. **This test is not where they are covered**, and
+/// the sentence that used to say so was wrong in a way worth naming:
+/// `GlyphArea::==` and the reuse key are two different subjects, and
+/// a field can be visible to the first while no test holds the
+/// second against it. All three are covered against the key by name
+/// — the two fill inputs in
+/// [`test_canvas_fill_inputs_are_all_visible_to_the_reuse_key`], the
+/// one text input in
+/// [`test_canvas_text_inputs_are_all_visible_to_the_reuse_key`].
+/// What *this* test covers is the property those two rest on: that
+/// `==` is a real discriminator over every field but `hitbox`, so
+/// the key does not have to enumerate them.
 #[test]
 fn test_glyph_area_equality_ignores_only_the_hitbox() {
     use baumhard::gfx_structs::area::EdgePadding;
@@ -1552,6 +1563,265 @@ fn test_canvas_pass_drops_entries_a_shortened_tree_no_longer_walks() {
     let mut full: Vec<ShapedSceneElement> = Vec::new();
     scene_shape_cache::refresh(&scene, &ids, &mut full, ScenePassKind::Canvas);
     assert_eq!(canvas_fill_stream(&shaped), canvas_fill_stream(&full));
+}
+
+/// Every glyph offset cosmic-text lays out for `element`, across
+/// every buffer the walker emits for it, in emission order.
+///
+/// The shaped output read straight off the shaper, without going
+/// anywhere near the reuse key — which is what lets it serve as the
+/// independent first step of
+/// [`test_canvas_text_inputs_are_all_visible_to_the_reuse_key`].
+fn shaped_glyph_offsets(element: &GfxElement) -> Vec<f32> {
+    let mut font_system = baumhard::font::fonts::acquire_font_system_write("renderer::tests (glyph offsets)");
+    let mut offsets = Vec::new();
+    super::tree_walker::shape_one_element_into_buffers(
+        element,
+        Vec2::ZERO,
+        &mut font_system,
+        &mut |_unique_id, buffer| {
+            offsets.extend(
+                buffer
+                    .buffer
+                    .layout_runs()
+                    .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.x)),
+            );
+        },
+        &mut |_rect| {},
+    );
+    offsets
+}
+
+/// One named single-field mutation of a `GlyphArea`, for the
+/// text-input table below. Same shape as [`NamedFillMutation`], for
+/// the other half of what the shaper emits.
+type NamedTextMutation = (&'static str, fn(&mut GlyphArea));
+
+/// Every input the *laid-out glyphs* depend on that no
+/// `GlyphAreaField` mutator can reach is an input the reuse key can
+/// see.
+///
+/// The area fields a mutator *can* write are covered by
+/// [`test_scene_shape_cache_invalidates_on_every_writable_area_field`],
+/// which iterates the strum-derived tag enum and is therefore
+/// exhaustive over them by construction. Three fields sit outside
+/// that loop because no variant writes them, and they split by which
+/// of the walker's two outputs they feed: `background_color` and
+/// `background_padding` feed the fill and are
+/// [`test_canvas_fill_inputs_are_all_visible_to_the_reuse_key`]'s;
+/// `align_center` feeds the *text*, and is this table's — the row
+/// that had no home, and the only component of the whole reuse key
+/// that could be removed with the suite still green.
+///
+/// It is a table with one row on purpose rather than a test named
+/// after the field: the classification it encodes — mutator-reachable,
+/// or fill input, or text input — is what the next unreachable field
+/// has to be sorted into, and a table is where that sorting is
+/// visible.
+///
+/// Two steps, and the first is what stops the second being vacuous:
+/// the mutation must actually move the glyphs cosmic-text lays out,
+/// asked of `shape_one_element_into_buffers` rather than of anything
+/// in the cache, so a field that turns out not to reach the shaper
+/// fails here instead of passing quietly. Only then must the key
+/// refuse to reuse. A row that passes step one and fails step two is
+/// text left stale on screen at the wrong alignment, which no test
+/// in this repo could otherwise see (§T8).
+#[test]
+fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
+    baumhard::font::fonts::init();
+
+    // Deliberately *not* centered, and deliberately narrower than
+    // its bounds: centering can only move a glyph that has room to
+    // move, so a fixture whose text filled its box would make the
+    // step-one assertion unprovable.
+    let mut base = canvas_fill_fixture_area("fill", 3.0);
+    base.align_center = false;
+
+    let mut scene = Scene::new();
+    let id = scene.insert(Tree::new_non_indexed(), 0, Vec2::ZERO);
+
+    let inputs: [NamedTextMutation; 1] = [("align_center", |a| a.align_center = !a.align_center)];
+
+    for (name, mutate) in inputs {
+        let element = GfxElement::new_area_non_indexed_with_id(base.clone(), 1, 1);
+        let mut changed = element.clone();
+        mutate(changed.glyph_area_mut().expect("fixture is an area element"));
+
+        let before = shaped_glyph_offsets(&element);
+        let after = shaped_glyph_offsets(&changed);
+        assert!(
+            !before.is_empty(),
+            "the fixture must lay out glyphs, or `{name}` has nothing to move"
+        );
+        assert_eq!(
+            before.len(),
+            after.len(),
+            "`GlyphArea::{name}` changed how many glyphs are laid out, which this row does not \
+             expect — re-read it before trusting the shift below"
+        );
+        let shift = before
+            .iter()
+            .zip(&after)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            shift > 1.0,
+            "`GlyphArea::{name}` is listed as a text-shaping input but changing it moved no \
+             glyph by more than {shift} — the row proves nothing as written"
+        );
+
+        let cached = ShapedSceneElement::new(id, &element, Vec2::ZERO, Vec::new(), None);
+        assert!(
+            !cached.still_matches(id, &changed, Vec2::ZERO),
+            "`GlyphArea::{name}` re-laid-out the glyphs but the scene shape cache would have \
+             kept the old buffers — the text would render at the old alignment"
+        );
+    }
+}
+
+// ====================================================================
+// Draw order out of the shared flatteners
+// ====================================================================
+//
+// `render.rs` reaches all four order-sensitive streams through
+// exactly two functions — `background_fills(&canvas_scene_elements)`
+// for the rect pipeline, and `text_buffers` over each of the two
+// sub-scenes for the two glyphon passes. That consolidation is new
+// with this pass (the canvas half used to be a flat `Vec` nobody had
+// to flatten), and it makes these two functions the single place
+// draw order is decided for both sub-scenes at once.
+//
+// Which is why the order is asserted here *absolutely*, against
+// hand-written expectations, and not by comparing two passes with
+// each other. `test_canvas_partial_reshape_matches_a_full_one_stream_for_stream`
+// reads both of its sides through these same functions, so it is
+// blind to any reordering they apply uniformly — reversing either
+// one leaves that test, and the whole suite before these two, green.
+// That is a real boundary of a comparison-shaped assertion rather
+// than a flaw in it, and the answer is an assertion of a different
+// shape, which is what these are.
+
+/// The two flatteners hand the render pass their streams in walk
+/// order, element for element.
+///
+/// The expectations are literals read off the fixture's own
+/// construction — `unique_id` 1 and 2 in the first tree, 11 and 12
+/// in the second, at four known anchors — not a second call to the
+/// thing under test.
+#[test]
+fn test_the_draw_streams_come_out_in_walk_order() {
+    baumhard::font::fonts::init();
+
+    let (scene, ids) = canvas_fill_fixture_scene();
+    let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+    scene_shape_cache::refresh(&scene, &ids, &mut shaped, ScenePassKind::Canvas);
+
+    let fill_ids: Vec<usize> = scene_shape_cache::background_fills(&shaped)
+        .map(|rect| rect.unique_id)
+        .collect();
+    assert_eq!(
+        fill_ids,
+        vec![1, 2, 11, 12],
+        "the rect pipeline paints in index order, so the fills must arrive in the order the \
+         scene walks them: both of the first tree's, then both of the second's"
+    );
+
+    assert_eq!(
+        canvas_text_stream(&shaped),
+        vec![(0.0, 4.0), (60.0, 4.0), (500.0, 4.0), (560.0, 4.0)],
+        "and the glyphon pass is handed its text areas in the same order, at the anchors the \
+         fixture put them at"
+    );
+}
+
+/// Inside one element, every halo stamp is yielded before the glyph
+/// it rings.
+///
+/// The walker emits them that way on purpose — glyphon draws later
+/// text areas on top, so halos first is what puts them *behind*
+/// (`tree_walker.rs`'s "Halos first" note) — and the flattener is
+/// what carries that ordering to the render pass now. Reversing the
+/// inner half of `text_buffers` inverts the halo of every outlined
+/// element on both sub-scenes; nothing noticed before this test.
+///
+/// Read through emission offsets rather than glyph positions: the
+/// main stamp is the one at `(0, 0)`, by the walker's own
+/// bookkeeping, which
+/// `test_walker_records_the_stamp_offset_of_every_emitted_buffer`
+/// pins independently.
+#[test]
+fn test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings() {
+    baumhard::font::fonts::init();
+
+    let outline = OutlineStyle {
+        color: [255, 0, 0, 255],
+        px: 3.0,
+    };
+    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    for (unique_id, ring) in [(1usize, true), (2usize, false)] {
+        let mut area = canvas_fill_fixture_area(&format!("h{unique_id}"), 40.0 * unique_id as f32);
+        area.outline = ring.then_some(outline);
+        let leaf = tree
+            .arena
+            .new_node(GfxElement::new_area_non_indexed_with_id(area, 1, unique_id));
+        tree.root.append(leaf, &mut tree.arena);
+    }
+    let mut scene = Scene::new();
+    let id = scene.insert(tree, 0, Vec2::ZERO);
+
+    let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+    scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Canvas);
+
+    let stamps: Vec<(f32, f32)> = scene_shape_cache::text_buffers(&shaped)
+        .map(|buffer| buffer.emission_offset)
+        .collect();
+    let halo_count = outline.offsets().count();
+    assert_eq!(
+        halo_count, 8,
+        "the halo technique is eight stamps; this test's shape assumes it"
+    );
+    assert_eq!(
+        stamps.len(),
+        halo_count + 2,
+        "one outlined element's stamps plus its glyph, then the plain element's glyph"
+    );
+
+    // The outlined element: eight rings, then the glyph at the
+    // anchor. Every stamp before the last must be off-anchor, or
+    // "halos first" is being read off an accident.
+    assert!(
+        stamps[..halo_count].iter().all(|off| *off != (0.0, 0.0)),
+        "the first {halo_count} buffers of an outlined element are its halo stamps, so none of \
+         them sits at the anchor: {stamps:?}"
+    );
+    assert_eq!(
+        stamps[halo_count],
+        (0.0, 0.0),
+        "the glyph the halos ring is emitted last, so it draws on top of them: {stamps:?}"
+    );
+    assert_eq!(
+        stamps[halo_count + 1],
+        (0.0, 0.0),
+        "and the plain element that follows contributes its single glyph after all of that"
+    );
+
+    // Element order across the stream, so a reversal that kept each
+    // element's internals intact is caught here too.
+    assert_eq!(
+        canvas_text_stream(&shaped)
+            .iter()
+            .map(|pos| pos.0)
+            .collect::<Vec<_>>(),
+        vec![40.0; halo_count]
+            .into_iter()
+            .zip(outline.offsets())
+            .map(|(anchor, (dx, _))| anchor + dx)
+            .chain(std::iter::once(40.0))
+            .chain(std::iter::once(80.0))
+            .collect::<Vec<_>>(),
+        "the outlined element's buffers all precede the plain one's"
+    );
 }
 
 // ====================================================================

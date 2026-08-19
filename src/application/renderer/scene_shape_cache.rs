@@ -112,6 +112,30 @@
 //! bookkeeping one — there is no removal for an insertion point to
 //! be lost across.
 //!
+//! Two functions carry that order to the render pass, and between
+//! them they decide it for **all four** order-sensitive streams:
+//! [`background_fills`] for the rect pipeline, and [`text_buffers`]
+//! for each of the two glyphon passes. `text_buffers` carries a
+//! second ordering besides the one between elements — the walker
+//! emits an element's halo stamps before the glyph they ring, so
+//! that the glyph draws on top — which makes its inner order
+//! load-bearing too.
+//!
+//! Both are pinned **absolutely**, by
+//! `test_the_draw_streams_come_out_in_walk_order` and
+//! `test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings`,
+//! and the reason they have to be is worth stating rather than
+//! rediscovering. The natural assertion for a reuse cache is that a
+//! partial pass produces what a full one does —
+//! `test_canvas_partial_reshape_matches_a_full_one_stream_for_stream`
+//! is that assertion, and it catches a per-entry difference the
+//! in-place path introduces. What it cannot catch is a reordering
+//! these two functions apply *uniformly*, because it reads both of
+//! its sides through them: reverse either one and that test, and
+//! every other test of this module, stays green. A comparison
+//! between two runs of the same reader can only see what the reader
+//! is not doing to both.
+//!
 //! The reuse rule is pinned by
 //! `test_scene_shape_cache_invalidates_on_every_writable_area_field`
 //! and its neighbors in `renderer::tests`.
