@@ -855,7 +855,7 @@ mod tests {
         EdgeRef, GraphemeRange, PortalLabelSel, SectionSel, SectionSpan, SelectionState,
     };
     use crate::application::platform::window::CursorIcon;
-    use baumhard::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCache};
+    use baumhard::mindmap::scene_cache::{CachedConnection, EdgeKey, SampleParams, SceneConnectionCache};
     use baumhard::mindmap::tree_builder::ResizeHandleSide;
     use baumhard::util::rust_source::{braced_block_after, production_code, statements};
 
@@ -877,11 +877,11 @@ mod tests {
             edge_key.clone(),
             CachedConnection {
                 pre_clip_positions: Vec::new(),
-                cap_start: None,
-                cap_end: None,
-                body_glyph: "\u{b7}".to_string(),
-                font: None,
-                font_size_pt: 12.0,
+                sample_params: SampleParams {
+                    font_size_pt: 12.0,
+                    spacing: 0.0,
+                    sample_budget: 1000,
+                },
                 color: "#ffffff".to_string(),
                 base_from: glam::Vec2::ZERO,
                 base_to: glam::Vec2::ZERO,

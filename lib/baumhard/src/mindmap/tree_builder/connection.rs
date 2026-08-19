@@ -12,8 +12,8 @@
 //!   cached pre-clip samples verbatim; rerun only the cheap
 //!   `node_aabbs` clip filter.
 //! - **Translate path** (both endpoints in `offsets` with the same
-//!   delta, cache hit at matching font size): shift the cached
-//!   samples by the shared delta and rerun the clip filter. Skips
+//!   delta, cache hit): shift the cached samples by the shared
+//!   delta and rerun the clip filter. Skips
 //!   `build_connection_path` + `sample_path` entirely — the
 //!   subtree-drag hot path.
 //! - **Slow path** (otherwise): build the path, resample, write
@@ -22,6 +22,20 @@
 //! The clip filter runs against the current frame's `node_aabbs`
 //! on all three paths so a stable edge correctly clips around
 //! third nodes that moved through its path this frame.
+//!
+//! Every styling value on the emitted element — body glyph, cap
+//! glyphs, font family, font size — is read from the live
+//! `GlyphConnectionConfig` on all three paths, so a glyph edit is
+//! visible on the next frame whether or not the cache was hit.
+//! Both reuse paths additionally ask the cache for an entry sampled
+//! under this frame's [`SampleParams`] and get nothing when the
+//! answer is a different one, so a font-size or spacing edit
+//! resamples on its own. **What the caller still owes the cache**
+//! is everything neither mechanism can see: an endpoint that moved
+//! in the model without appearing in `offsets`, an anchor /
+//! control-point edit, a node resize, and a theme-variable edit.
+//! Those are `SceneConnectionCache::invalidate_edge` or `::clear`;
+//! this header used to name the glyph config among them.
 //!
 //! Cache lifecycle: `ensure_zoom` is caller-managed (the caller
 //! flushes on zoom change before any pass starts); `retain_keys`
@@ -43,14 +57,13 @@ use std::collections::{HashMap, HashSet};
 use glam::Vec2;
 
 use crate::core::primitives::ColorFontRegions;
-use crate::font::metrics::monospace_advance;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::tree::Tree;
 use crate::mindmap::connection;
 use crate::mindmap::model::{GlyphConnectionConfig, MindMap};
-use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCache};
+use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SampleParams, SceneConnectionCache};
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::util::color;
 use crate::util::color::resolve_var;
@@ -96,33 +109,48 @@ pub struct ConnectionElement {
 const TRANSLATE_DELTA_EPSILON_SQ: f32 = 1.0e-6;
 
 /// Build + push one `ConnectionElement` to `out`. Single source
-/// for the three previous emit sites (cache-hit fast path,
-/// translate path, slow rebuild) — they each filtered cap_start /
-/// cap_end / glyph_positions against `node_aabbs`, applied the
-/// "all-clipped → skip" rule, and pushed an identical struct
-/// literal. Returns `true` iff an element was actually pushed
-/// (callers don't currently use it; a future "did this edge clip
-/// out?" check would).
+/// for the three emit sites (cache-hit fast path, translate path,
+/// slow rebuild) — they each filtered cap_start / cap_end /
+/// glyph_positions against `node_aabbs`, applied the "all-clipped →
+/// skip" rule, and pushed an identical struct literal. Returns
+/// `true` iff an element was actually pushed (callers don't
+/// currently use it; a future "did this edge clip out?" check
+/// would).
+///
+/// Every styling value comes from the live `config` and `params`
+/// rather than from whatever the cache happens to hold, which is
+/// what makes a glyph edit visible on the next frame from all three
+/// sites at once instead of from one of them (#36 item 7).
+// `clippy::too_many_arguments`: eight, down from eleven. What is
+// left is the frame's inputs (`config`, `params`, `color`,
+// `zoom_visibility`, `node_clip`), the geometry, and the two
+// out-parameters; bundling any of them would hide from the call
+// site which values are per-edge and which are per-frame, which is
+// the distinction the three paths differ on.
 #[allow(clippy::too_many_arguments)]
 fn emit_connection_element(
     out: &mut Vec<ConnectionElement>,
     edge_key: EdgeKey,
-    body_glyph: String,
-    font: Option<String>,
-    font_size_pt: f32,
+    config: &GlyphConnectionConfig,
+    params: &SampleParams,
     color: String,
     zoom_visibility: crate::gfx_structs::zoom_visibility::ZoomVisibility,
-    cap_start_raw: Option<(String, Vec2)>,
-    cap_end_raw: Option<(String, Vec2)>,
     pre_clip_positions: &[Vec2],
     node_clip: &NodeClipIndex,
 ) -> bool {
-    let cap_start = cap_start_raw
-        .filter(|(_, p)| !node_clip.contains(*p))
-        .map(|(g, p)| (g, (p.x, p.y)));
-    let cap_end = cap_end_raw
-        .filter(|(_, p)| !node_clip.contains(*p))
-        .map(|(g, p)| (g, (p.x, p.y)));
+    let cap_at = |glyph: Option<&String>, point: Option<&Vec2>| {
+        glyph
+            .zip(point)
+            .filter(|(_, p)| !node_clip.contains(**p))
+            .map(|(g, p)| (g.clone(), (p.x, p.y)))
+    };
+    // `sample_path` walks the path from the source anchor to the
+    // target anchor, so the first sample is where the start cap
+    // belongs and the last is where the end cap does. Reading the
+    // ends here rather than storing two more points is what lets
+    // `CachedConnection::translate` move the caps by moving nothing.
+    let cap_start = cap_at(config.cap_start.as_ref(), pre_clip_positions.first());
+    let cap_end = cap_at(config.cap_end.as_ref(), pre_clip_positions.last());
     let glyph_positions: Vec<(f32, f32)> = pre_clip_positions
         .iter()
         .filter(|p| !node_clip.contains(**p))
@@ -134,11 +162,11 @@ fn emit_connection_element(
     out.push(ConnectionElement {
         edge_key,
         glyph_positions,
-        body_glyph,
+        body_glyph: config.body.clone(),
         cap_start,
         cap_end,
-        font,
-        font_size_pt,
+        font: config.font.clone(),
+        font_size_pt: params.font_size_pt,
         color,
         zoom_visibility,
     });
@@ -249,14 +277,25 @@ pub fn build_connection_elements(
         // Did either endpoint of THIS edge move this frame?
         let endpoint_moved = offsets.contains_key(&from_node.id) || offsets.contains_key(&to_node.id);
 
-        // --- Fast path: cached geometry is still valid ---
+        // The sampling snapshot this frame wants for this edge.
+        // `SampleParams::font_size_pt` is the canvas-space size clamped
+        // to keep the on-screen glyph size inside
+        // [min_font_size_pt, max_font_size_pt]. At extreme zoom-out
+        // that inflates the canvas-space size so sample spacing grows
+        // and the per-edge glyph count falls — the LOD mechanism that
+        // keeps zoomed-out connections from becoming a dust cloud.
+        // Inversely, at extreme zoom-in the effective font size
+        // shrinks, spacing shrinks, and per-edge sample count rises
+        // linearly with zoom — which is what blows the drag drain
+        // budget at high zoom. The translate path below is what keeps
+        // subtree-drag cost bounded there.
         //
-        // If the endpoints haven't moved and we have a cached entry for
-        // this edge, reuse the cached pre-clip samples and skip
-        // `build_connection_path` / `sample_path` entirely. The cheap
-        // clip filter still runs against THIS frame's `node_aabbs` so a
-        // stable edge correctly clips around a third node that moved
-        // through its path.
+        // Both reuse paths hand this to the cache, which refuses any
+        // entry sampled under different params. That is what keeps a
+        // font-size or spacing edit from depending on the mutating site
+        // to remember `SceneConnectionCache::clear` (#36 item 7).
+        let want = SampleParams::snapshot(config, camera_zoom, per_path_samples);
+
         // Color picker preview: resolve once here so both the cached
         // and slow paths pick it up. Preview beats selection on the
         // previewed edge so the user's live feedback is visible on the
@@ -269,8 +308,16 @@ pub fn build_connection_elements(
             }
         });
 
+        // --- Fast path: cached geometry is still valid ---
+        //
+        // If the endpoints haven't moved and we have a cached entry for
+        // this edge sampled under `want`, reuse the cached pre-clip
+        // samples and skip `build_connection_path` / `sample_path`
+        // entirely. The cheap clip filter still runs against THIS
+        // frame's `node_aabbs` so a stable edge correctly clips around
+        // a third node that moved through its path.
         if !endpoint_moved {
-            if let Some(cached) = cache.get(&edge_key) {
+            if let Some(cached) = cache.reusable(&edge_key, &want) {
                 let color = if let Some(p) = preview_for_this_edge {
                     resolve_var(p, vars).to_string()
                 } else if is_selected {
@@ -281,33 +328,16 @@ pub fn build_connection_elements(
                 emit_connection_element(
                     &mut connection_elements,
                     edge_key,
-                    cached.body_glyph.clone(),
-                    cached.font.clone(),
-                    cached.font_size_pt,
+                    config,
+                    &want,
                     color,
                     edge.zoom_window(),
-                    cached.cap_start.clone(),
-                    cached.cap_end.clone(),
                     &cached.pre_clip_positions,
                     &node_clip,
                 );
                 continue;
             }
         }
-
-        // Canvas-space font size clamped to keep the on-screen glyph
-        // size inside [min_font_size_pt, max_font_size_pt]. At extreme
-        // zoom-out this inflates the canvas-space size so sample
-        // spacing grows and the per-edge glyph count falls — the LOD
-        // mechanism that keeps zoomed-out connections from becoming a
-        // dust cloud. Inversely, at extreme zoom-in the effective font
-        // size shrinks, spacing shrinks, and per-edge sample count
-        // rises linearly with zoom — which is what blows the drag
-        // drain budget at high zoom. The translate path below is what
-        // keeps subtree-drag cost bounded there.
-        let font_size = config.effective_font_size_pt(camera_zoom);
-        let approx_glyph_width = monospace_advance(font_size);
-        let effective_spacing = approx_glyph_width + config.spacing;
 
         let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
         let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
@@ -322,38 +352,29 @@ pub fn build_connection_elements(
         // The common case inside a subtree drag: both endpoints of an
         // internal edge are in `offsets` with the SAME delta, so the
         // edge is a pure translation of its last-sampled geometry.
-        // When the cache has a fresh entry at the same font size AND
-        // the same glyph-config snapshot (body / font), we can skip
+        // When the cache has an entry sampled under `want`, we can skip
         // `build_connection_path` + `sample_path` entirely and shift
         // the cached samples by the shared delta.
         //
         // Fall-throughs to the slow path:
         // - Boundary edges (one endpoint moved, one not; or both moved
         //   by different deltas — a rotating / stretching edge).
-        // - Zoom-change frames (`font_size != cached.font_size_pt`).
-        // - Glyph-config mutation mid-drag (console edits to
-        //   `edge.glyph_connection.body` / `font`) — cached values are
-        //   frozen at sample time, so the slow path resamples and
-        //   re-caches with the new config.
+        // - Zoom-change frames and mid-drag `font_size_pt` / `spacing`
+        //   edits, both of which move `want` away from the entry's
+        //   stored params. A body / cap / font-family edit does *not*
+        //   land here, and does not need to: none of them can move a
+        //   sample, and the element is emitted from the live config
+        //   either way.
         //
-        // Probe and mutation are one phase, on one borrow: `get_mut`
-        // hands out the cached entry, the three rejections and the
-        // delta are read off it, `translate` shifts it in place (no
-        // `by_node` reindex, no string clones on the hot path), and
-        // the same borrow is reborrowed as shared to emit the
-        // element. One hash lookup covers the whole path, and there
-        // is no re-lookup whose success has to be asserted after the
-        // guard that already proved it.
-        let translated = cache.get_mut(&edge_key).and_then(|cached| {
-            if crate::util::geometry::pretty_inequal(cached.font_size_pt, font_size) {
-                return None;
-            }
-            if cached.body_glyph != config.body {
-                return None;
-            }
-            if cached.font != config.font {
-                return None;
-            }
+        // Probe and mutation are one phase, on one borrow:
+        // `reusable_mut` hands out the cached entry only if its params
+        // match, the delta is read off it, `translate` shifts it in
+        // place (no `by_node` reindex, no string clones on the hot
+        // path), and the same borrow is reborrowed as shared to emit
+        // the element. One hash lookup covers the whole path, and
+        // there is no re-lookup whose success has to be asserted after
+        // the guard that already proved it.
+        let translated = cache.reusable_mut(&edge_key, &want).and_then(|cached| {
             let delta_from = from_pos - cached.base_from;
             let delta_to = to_pos - cached.base_to;
             if (delta_from - delta_to).length_squared() >= TRANSLATE_DELTA_EPSILON_SQ {
@@ -379,13 +400,10 @@ pub fn build_connection_elements(
             emit_connection_element(
                 &mut connection_elements,
                 edge_key,
-                entry.body_glyph.clone(),
-                entry.font.clone(),
-                font_size,
+                config,
+                &want,
                 color,
                 edge.zoom_window(),
-                entry.cap_start.clone(),
-                entry.cap_end.clone(),
                 &entry.pre_clip_positions,
                 &node_clip,
             );
@@ -416,7 +434,7 @@ pub fn build_connection_elements(
             &edge.anchor_to,
             &edge.control_points,
         );
-        let samples = connection::sample_path(&path, effective_spacing, per_path_samples);
+        let samples = connection::sample_path(&path, want.sample_spacing(), want.sample_budget);
         if samples.is_empty() {
             // Edge produces no samples; make sure any stale cache entry is
             // dropped so we re-try next frame.
@@ -424,21 +442,15 @@ pub fn build_connection_elements(
             continue;
         }
 
-        // Caps live at the ORIGINAL first and last sample positions (the
-        // anchor points resolved from the source/target node bounds).
-        // Those points sit on the raw node edge — which is ON the clip
-        // AABB boundary for an unframed node (so they survive clipping)
-        // but INSIDE the expanded clip AABB for a framed node (so they
-        // get dropped along with the body glyphs that would also render
-        // inside the frame area).
-        let first_pos = samples[0].position;
-        let last_pos = samples
-            .last()
-            .expect("connection invariant: the empty-sample case continued above")
-            .position;
-        let cached_cap_start = config.cap_start.as_ref().map(|g| (g.clone(), first_pos));
-        let cached_cap_end = config.cap_end.as_ref().map(|g| (g.clone(), last_pos));
-
+        // Caps live at the first and last sample positions (the anchor
+        // points resolved from the source/target node bounds), which is
+        // why nothing here computes them: `emit_connection_element`
+        // reads both ends of this array. Those points sit on the raw
+        // node edge — which is ON the clip AABB boundary for an
+        // unframed node (so they survive clipping) but INSIDE the
+        // expanded clip AABB for a framed node (so they get dropped
+        // along with the body glyphs that would also render inside the
+        // frame area).
         let pre_clip_positions: Vec<Vec2> = samples.iter().map(|s| s.position).collect();
 
         // Write fresh geometry back into the cache BEFORE applying the
@@ -447,11 +459,7 @@ pub fn build_connection_elements(
             edge_key.clone(),
             CachedConnection {
                 pre_clip_positions: pre_clip_positions.clone(),
-                cap_start: cached_cap_start.clone(),
-                cap_end: cached_cap_end.clone(),
-                body_glyph: config.body.clone(),
-                font: config.font.clone(),
-                font_size_pt: font_size,
+                sample_params: want,
                 color: stored_color,
                 base_from: from_pos,
                 base_to: to_pos,
@@ -462,13 +470,10 @@ pub fn build_connection_elements(
         emit_connection_element(
             &mut connection_elements,
             edge_key,
-            config.body.clone(),
-            config.font.clone(),
-            font_size,
+            config,
+            &want,
             color,
             edge.zoom_window(),
-            cached_cap_start,
-            cached_cap_end,
             &pre_clip_positions,
             &node_clip,
         );
@@ -893,7 +898,7 @@ mod clip_index_tests {
             for _ in 0..200 {
                 // Half free points, half points aimed at a box's
                 // corners and edges, where the epsilon rule decides.
-                let point = if rng.next() % 2 == 0 {
+                let point = if rng.next().is_multiple_of(2) {
                     Vec2::new(rng.f32_in(-5000.0, 5000.0), rng.f32_in(-5000.0, 5000.0))
                 } else {
                     let (pos, size) = aabbs[(rng.next() as usize) % aabbs.len()];

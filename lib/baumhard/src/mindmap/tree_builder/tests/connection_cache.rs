@@ -5,10 +5,94 @@
 use super::super::*;
 use super::fixtures::*;
 use crate::mindmap::loader;
-use crate::mindmap::model::GlyphConnectionConfig;
-use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCache};
+use crate::mindmap::model::{GlyphConnectionConfig, MindMap};
+use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SampleParams, SceneConnectionCache};
 use glam::Vec2;
 use std::collections::HashMap;
+
+/// A canvas position no fixture in this file can sample: every path
+/// here runs between nodes laid out in `y ∈ [0, 340]`, so a point 999
+/// units above the canvas is unmistakably planted rather than
+/// computed. It also sits outside every fixture node's clip AABB, so
+/// it survives the clip filter and reaches the emitted element where
+/// an assertion can see it.
+const SENTINEL_POINT: Vec2 = Vec2::new(200.0, -999.0);
+
+/// Below this `y`, geometry is planted rather than sampled. Every
+/// real sample in these fixtures lands in `y ∈ [0, 340]`, and the
+/// largest drag delta any of them applies is a few tens of units, so
+/// the band is wide on both sides.
+const SENTINEL_Y_FLOOR: f32 = -500.0;
+
+// The plant and the predicate that recognises it are one decision;
+// this is what keeps moving either of them from silently making
+// `drew_sentinel` answer `false` for every input.
+const _: () = assert!(SENTINEL_POINT.y < SENTINEL_Y_FLOOR);
+
+/// The [`SampleParams`] `build_connection_elements` snapshots for
+/// `map`'s edge `edge_index` at `camera_zoom`.
+///
+/// Used only to *plant* an entry the reuse doors will accept — never
+/// to compute a value an assertion then compares against, which would
+/// be the code under test grading its own homework. A test that wants
+/// a door to *refuse* names the mismatched field itself.
+fn live_params(map: &MindMap, edge_index: usize, camera_zoom: f32) -> SampleParams {
+    let default_config = GlyphConnectionConfig::default();
+    let config = map.edges[edge_index]
+        .glyph_connection
+        .as_ref()
+        .or(map.canvas.default_connection.as_ref())
+        .unwrap_or(&default_config);
+    SampleParams::snapshot(
+        config,
+        camera_zoom,
+        crate::mindmap::connection::per_path_sample_budget(map.edges.len()),
+    )
+}
+
+/// A cache entry holding one sample the sampler could not have
+/// produced, under params the reuse doors accept for `map`'s edge
+/// `edge_index`.
+///
+/// This is the probe every "did the builder read the cache?" test in
+/// this file uses, and it is *geometry* rather than styling on
+/// purpose. Styling no longer travels through the cache at all — body
+/// glyph, cap glyphs, font family and font size are read from the live
+/// `GlyphConnectionConfig` on all three paths — so a styling sentinel
+/// would be served identically whether the cache was consulted or not,
+/// and would prove nothing.
+fn sentinel_entry(
+    map: &MindMap,
+    edge_index: usize,
+    camera_zoom: f32,
+    at: Vec2,
+    color: &str,
+) -> CachedConnection {
+    CachedConnection {
+        pre_clip_positions: vec![at],
+        sample_params: live_params(map, edge_index, camera_zoom),
+        color: color.into(),
+        base_from: Vec2::ZERO,
+        base_to: Vec2::ZERO,
+    }
+}
+
+/// Whether `elem` is drawing geometry derived from the planted
+/// sentinel — i.e. whether the pass reused the cache entry rather
+/// than resampling.
+///
+/// The test is the y band rather than the exact point, because the
+/// translate path reuses an entry *and shifts it*, and every drag
+/// delta in this file is at most a few tens of units. An exact-point
+/// predicate reported "did not reuse" for a translated sentinel,
+/// which is the wrong answer to the question every caller is asking;
+/// the negative control for
+/// `test_translate_path_falls_through_on_a_sampling_config_change` is
+/// what surfaced that. Every real sample in these fixtures lands in
+/// `y ∈ [0, 340]`, so anything below `SENTINEL_Y_FLOOR` is planted.
+fn drew_sentinel(elem: &ConnectionElement) -> bool {
+    elem.glyph_positions.iter().any(|&(_, y)| y < SENTINEL_Y_FLOOR)
+}
 
 #[test]
 fn test_cache_populated_on_first_build() {
@@ -28,7 +112,7 @@ fn test_cache_populated_on_first_build() {
     assert_eq!(scene.connection_elements.len(), 1);
     assert_eq!(cache.len(), 1);
     let key = EdgeKey::new("a", "b", "cross_link");
-    assert!(cache.get(&key).is_some());
+    assert!(cache.inspect(&key).is_some());
     assert_eq!(cache.edges_touching("a"), std::slice::from_ref(&key));
     assert_eq!(cache.edges_touching("b"), std::slice::from_ref(&key));
 }
@@ -55,22 +139,12 @@ fn test_cache_hit_preserves_sample_identity() {
 
     // Mutate the cached entry so we can see whether build #2 read it.
     let key = EdgeKey::new("a", "b", "cross_link");
-    // Replace with a sentinel entry with no positions and a unique
-    // body glyph. If the cache is used, the second build's
-    // ConnectionElement body_glyph will match.
+    // Replace with an entry whose single sample is somewhere the
+    // sampler would never place one. If the cache is used, that point
+    // is what the second build draws.
     cache.insert(
         key.clone(),
-        CachedConnection {
-            pre_clip_positions: vec![Vec2::new(200.0, 20.0)],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "SENTINEL".into(),
-            font: None,
-            font_size_pt: 12.0,
-            color: "#ff00ff".into(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-        },
+        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"),
     );
 
     let second = project_with_cache(
@@ -85,9 +159,10 @@ fn test_cache_hit_preserves_sample_identity() {
     );
     assert_eq!(second.connection_elements.len(), 1);
     let conn = &second.connection_elements[0];
-    assert_eq!(
-        conn.body_glyph, "SENTINEL",
-        "cache-hit path should have used the stored entry"
+    assert!(
+        drew_sentinel(conn),
+        "cache-hit path should have used the stored entry, drew {:?}",
+        conn.glyph_positions
     );
     assert_eq!(conn.color, "#ff00ff");
     // Single cached pre-clip point should have survived the clip
@@ -98,8 +173,8 @@ fn test_cache_hit_preserves_sample_identity() {
 #[test]
 fn test_cache_invalidated_on_endpoint_offset() {
     // If endpoint `a` moves, the a↔b edge must be re-sampled — we
-    // should observe fresh `body_glyph` on the element, not the
-    // sentinel we stashed in the cache.
+    // should observe fresh geometry on the element, not the sentinel
+    // point we stashed in the cache.
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
     let _first = project_with_cache(
@@ -116,19 +191,12 @@ fn test_cache_invalidated_on_endpoint_offset() {
     let key = EdgeKey::new("a", "b", "cross_link");
     cache.insert(
         key.clone(),
-        CachedConnection {
-            pre_clip_positions: vec![],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "SENTINEL".into(),
-            font: None,
-            font_size_pt: 12.0,
-            color: "#ff00ff".into(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-        },
+        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"),
     );
 
+    // Only `a` moves, so the deltas differ and the translate path
+    // cannot take this edge either — the slow path is the only route
+    // left, which is the point.
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (10.0, 0.0));
     let second = project_with_cache(
@@ -142,13 +210,23 @@ fn test_cache_invalidated_on_endpoint_offset() {
         1.0,
     );
     let conn = &second.connection_elements[0];
-    assert_ne!(
-        conn.body_glyph, "SENTINEL",
-        "endpoint-moved edge should have been re-sampled"
+    assert!(
+        !drew_sentinel(conn),
+        "endpoint-moved edge should have been re-sampled, still drawing the sentinel"
+    );
+    assert!(
+        conn.glyph_positions.len() > 1,
+        "a resample of this edge yields many samples, not the planted one"
     );
     // The cache should contain the freshly-resampled entry now.
-    let refreshed = cache.get(&key).unwrap();
-    assert_ne!(refreshed.body_glyph, "SENTINEL");
+    let refreshed = cache.inspect(&key).unwrap();
+    assert!(
+        !refreshed
+            .pre_clip_positions
+            .iter()
+            .any(|p| crate::util::geometry::almost_equal_vec2(*p, SENTINEL_POINT)),
+        "the resample must have overwritten the planted entry"
+    );
     assert!(!refreshed.pre_clip_positions.is_empty());
 }
 
@@ -170,7 +248,7 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
         ],
     );
     let mut cache = SceneConnectionCache::new();
-    let _first = project_with_cache(
+    let first = project_with_cache(
         &map,
         &HashMap::new(),
         SceneSelectionContext::default(),
@@ -181,20 +259,24 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
         1.0,
     );
 
+    let ab_key = EdgeKey::new("a", "b", "cross_link");
     let cd_key = EdgeKey::new("c", "d", "cross_link");
+    let leftmost = |roles: &ProjectedRoles, key: &EdgeKey| -> f32 {
+        roles
+            .connection_elements
+            .iter()
+            .find(|e| &e.edge_key == key)
+            .expect("element should exist")
+            .glyph_positions
+            .iter()
+            .map(|&(x, _)| x)
+            .fold(f32::INFINITY, f32::min)
+    };
+    let ab_left_before = leftmost(&first, &ab_key);
+
     cache.insert(
         cd_key.clone(),
-        CachedConnection {
-            pre_clip_positions: vec![Vec2::new(200.0, 320.0)],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "STABLE_SENTINEL".into(),
-            font: None,
-            font_size_pt: 12.0,
-            color: "#00ff00".into(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-        },
+        sentinel_entry(&map, 1, 1.0, SENTINEL_POINT, "#00ff00"),
     );
 
     let mut offsets = HashMap::new();
@@ -217,19 +299,24 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
         .iter()
         .find(|e| e.edge_key == cd_key)
         .expect("c↔d element should exist");
-    assert_eq!(
-        cd_elem.body_glyph, "STABLE_SENTINEL",
-        "unrelated edge should have been served from cache, not re-sampled"
+    assert!(
+        drew_sentinel(cd_elem),
+        "unrelated edge should have been served from cache, not re-sampled; drew {:?}",
+        cd_elem.glyph_positions
     );
 
-    // The a↔b edge should have been re-sampled.
-    let ab_key = EdgeKey::new("a", "b", "cross_link");
-    let ab_elem = second
-        .connection_elements
-        .iter()
-        .find(|e| e.edge_key == ab_key)
-        .expect("a↔b element should exist");
-    assert_ne!(ab_elem.body_glyph, "SENTINEL");
+    // The a↔b edge should have been re-sampled, and the +5 x offset on
+    // `a` is what says so: its source anchor sits on a's right edge, so
+    // the leftmost surviving sample moves with it. Asserting the shift
+    // rather than merely "not the sentinel" gives the clause an input
+    // that can fail — nothing ever planted a sentinel on this edge.
+    let ab_left_after = leftmost(&second, &ab_key);
+    assert!(
+        crate::util::geometry::almost_equal(ab_left_after - ab_left_before, 5.0),
+        "a↔b should have been re-sampled from a's moved right edge: {} -> {}",
+        ab_left_before,
+        ab_left_after
+    );
 }
 
 #[test]
@@ -317,7 +404,7 @@ fn test_cache_evicts_deleted_edges() {
         1.0,
     );
     let key = EdgeKey::new("a", "b", "cross_link");
-    assert!(cache.get(&key).is_some());
+    assert!(cache.inspect(&key).is_some());
 
     // Remove the edge from the model and rebuild.
     map.edges.clear();
@@ -333,7 +420,7 @@ fn test_cache_evicts_deleted_edges() {
     );
     assert!(second.connection_elements.is_empty());
     assert!(
-        cache.get(&key).is_none(),
+        cache.inspect(&key).is_none(),
         "deleted edge should be evicted from cache"
     );
 }
@@ -469,23 +556,13 @@ fn test_cache_selection_change_does_not_invalidate() {
         1.0,
     );
     let key = EdgeKey::new("a", "b", "cross_link");
-    let stored_color = cache.get(&key).unwrap().color.clone();
+    let stored_color = cache.inspect(&key).unwrap().color.clone();
 
-    // Inject a sentinel body_glyph into the cache so we can detect
+    // Inject sentinel geometry into the cache so we can detect
     // whether the cache path was taken on the second build.
     cache.insert(
         key.clone(),
-        CachedConnection {
-            pre_clip_positions: vec![Vec2::new(200.0, 20.0)],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "SENTINEL".into(),
-            font: None,
-            font_size_pt: 12.0,
-            color: stored_color.clone(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-        },
+        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, &stored_color),
     );
 
     let second = project_with_cache(
@@ -502,9 +579,10 @@ fn test_cache_selection_change_does_not_invalidate() {
         1.0,
     );
     let conn = &second.connection_elements[0];
-    assert_eq!(
-        conn.body_glyph, "SENTINEL",
-        "selection change should not have dropped the cache"
+    assert!(
+        drew_sentinel(conn),
+        "selection change should not have dropped the cache; drew {:?}",
+        conn.glyph_positions
     );
     assert_eq!(
         conn.color,
@@ -513,7 +591,7 @@ fn test_cache_selection_change_does_not_invalidate() {
     );
     // And the cache's stored color should be unchanged (still the
     // pre-selection value).
-    assert_eq!(cache.get(&key).unwrap().color, stored_color);
+    assert_eq!(cache.inspect(&key).unwrap().color, stored_color);
 }
 
 #[test]
@@ -559,17 +637,7 @@ fn test_cache_fast_path_serves_stale_when_model_moved_without_offsets() {
     let key = EdgeKey::new("a", "b", "cross_link");
     cache.insert(
         key.clone(),
-        CachedConnection {
-            pre_clip_positions: vec![Vec2::new(123.0, 456.0)],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "STALE_SENTINEL".into(),
-            font: None,
-            font_size_pt: 12.0,
-            color: "#ff00ff".into(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-        },
+        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"),
     );
 
     // Simulate release: `apply_move_multiple` commits the full
@@ -591,10 +659,11 @@ fn test_cache_fast_path_serves_stale_when_model_moved_without_offsets() {
         &mut cache,
         1.0,
     );
-    assert_eq!(
-        without_clear.connection_elements[0].body_glyph, "STALE_SENTINEL",
+    assert!(
+        drew_sentinel(&without_clear.connection_elements[0]),
         "cache fast-path serves cached samples when neither endpoint appears in offsets, \
-         even if the model endpoint has moved since the entry was written"
+         even if the model endpoint has moved since the entry was written; drew {:?}",
+        without_clear.connection_elements[0].glyph_positions
     );
 
     // The fix: the release-side caller must clear the cache so the
@@ -610,8 +679,8 @@ fn test_cache_fast_path_serves_stale_when_model_moved_without_offsets() {
         &mut cache,
         1.0,
     );
-    assert_ne!(
-        after_clear.connection_elements[0].body_glyph, "STALE_SENTINEL",
+    assert!(
+        !drew_sentinel(&after_clear.connection_elements[0]),
         "after scene_cache.clear() the rebuild must resample from the committed model"
     );
     assert!(
@@ -629,9 +698,9 @@ fn test_translate_path_reuses_cache_on_shared_delta_subtree_drag() {
     // last-sampled geometry. The translate path must skip the Bezier
     // sampler and just shift the cached samples.
     //
-    // Sentinel body_glyph tells us whether the builder re-sampled
+    // Sentinel geometry tells us whether the builder re-sampled
     // (sentinel gone → slow path fired) or translated (sentinel
-    // survives → translate path fired).
+    // survives, shifted by the shared delta → translate path fired).
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
     let _first = project_with_cache(
@@ -649,27 +718,22 @@ fn test_translate_path_reuses_cache_on_shared_delta_subtree_drag() {
     // match the first-build endpoint positions so the translate path's
     // delta check gets clean numbers to compare.
     let key = EdgeKey::new("a", "b", "cross_link");
-    let real = cache.get(&key).unwrap().clone();
+    let real = cache.inspect(&key).unwrap().clone();
     let sample_count = real.pre_clip_positions.len();
     // Overwrite `pre_clip_positions` with a distinctive uniform
     // value so we can prove the translate path fired: if the slow
     // path had resampled, positions would spread along the edge
     // from (0,0)-ish to (400,0)-ish, not cluster at (215, 207).
-    // `body_glyph` / `font` must match the live config so the new
-    // glyph-config guard doesn't force a fall-through here — the
-    // guard is exercised by `test_translate_path_falls_through_on_glyph_config_change`.
+    // `sample_params` is carried over from the real entry so the
+    // reuse door accepts it — the door's refusal is exercised by
+    // `test_translate_path_falls_through_on_a_sampling_config_change`.
     // Position choice: (200, 200) + (15, 7) = (215, 207) is between
     // the nodes on X and well below them on Y — clears both AABBs.
-    let live_config = GlyphConnectionConfig::default();
     cache.insert(
         key.clone(),
         CachedConnection {
             pre_clip_positions: vec![Vec2::new(200.0, 200.0); sample_count],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: live_config.body.clone(),
-            font: live_config.font.clone(),
-            font_size_pt: real.font_size_pt,
+            sample_params: real.sample_params,
             color: "#abcdef".into(),
             base_from: real.base_from,
             base_to: real.base_to,
@@ -708,7 +772,7 @@ fn test_translate_path_reuses_cache_on_shared_delta_subtree_drag() {
 
     // The cache's base positions must advance to the current endpoints
     // so the NEXT drain's translate check sees the new reference.
-    let after = cache.get(&key).unwrap();
+    let after = cache.inspect(&key).unwrap();
     let from_node = map.nodes.get("a").unwrap();
     let to_node = map.nodes.get("b").unwrap();
     let expected_from = Vec2::new(
@@ -740,16 +804,12 @@ fn test_translate_path_falls_through_on_mismatched_deltas() {
     );
 
     let key = EdgeKey::new("a", "b", "cross_link");
-    let real = cache.get(&key).unwrap().clone();
+    let real = cache.inspect(&key).unwrap().clone();
     cache.insert(
         key.clone(),
         CachedConnection {
-            pre_clip_positions: vec![Vec2::new(999.0, 999.0); real.pre_clip_positions.len()],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "NO_TRANSLATE_SENTINEL".into(),
-            font: None,
-            font_size_pt: real.font_size_pt,
+            pre_clip_positions: vec![SENTINEL_POINT; real.pre_clip_positions.len()],
+            sample_params: real.sample_params,
             color: "#deadbe".into(),
             base_from: real.base_from,
             base_to: real.base_to,
@@ -772,21 +832,26 @@ fn test_translate_path_falls_through_on_mismatched_deltas() {
         1.0,
     );
 
-    assert_ne!(
-        second.connection_elements[0].body_glyph, "NO_TRANSLATE_SENTINEL",
+    assert!(
+        !drew_sentinel(&second.connection_elements[0]),
         "mismatched endpoint deltas must fall through to the slow path"
     );
 }
 
 #[test]
-fn test_translate_path_falls_through_on_glyph_config_change() {
-    // Edge-case guard for a mid-drag glyph-config mutation (a
-    // console edit that flips `glyph_connection.body` while a drag
-    // is in flight). The cached entry is frozen at the pre-edit
-    // glyph, so serving it on the next translate frame would emit
-    // a stale glyph. The translate path must notice `cached.body_glyph
-    // != config.body` and fall through to the slow path, which
-    // resamples and caches with the new glyph.
+fn test_translate_path_falls_through_on_a_sampling_config_change() {
+    // Edge-case guard for a mid-drag config mutation (a console
+    // `edge font size` edit while a drag is in flight). The cached
+    // samples are spaced for the pre-edit size, so translating them
+    // on the next frame would draw the new glyphs at the old stride.
+    // The translate path must find no reusable entry and fall through
+    // to the slow path, which resamples at the new stride.
+    //
+    // The mismatch is planted on the *entry* rather than on the model
+    // so the drag offsets stay a clean shared delta: if the deltas
+    // were what differed, this test would be a duplicate of
+    // `test_translate_path_falls_through_on_mismatched_deltas` and
+    // would pass with the params check deleted.
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
     let _first = project_with_cache(
@@ -801,28 +866,22 @@ fn test_translate_path_falls_through_on_glyph_config_change() {
     );
 
     let key = EdgeKey::new("a", "b", "cross_link");
-    let real = cache.get(&key).unwrap().clone();
-    // Overwrite with a body_glyph that DIFFERS from what the live
-    // config (defaulted `·`) would resolve to. The delta + font
-    // guards would otherwise pass — only the glyph mismatch should
-    // cause the fall-through.
+    let real = cache.inspect(&key).unwrap().clone();
+    let mut stale_params = real.sample_params;
+    stale_params.font_size_pt *= 2.0;
     cache.insert(
         key.clone(),
         CachedConnection {
-            pre_clip_positions: vec![Vec2::new(999.0, 999.0); real.pre_clip_positions.len()],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "X".into(),
-            font: None,
-            font_size_pt: real.font_size_pt,
+            pre_clip_positions: vec![SENTINEL_POINT; real.pre_clip_positions.len()],
+            sample_params: stale_params,
             color: real.color.clone(),
             base_from: real.base_from,
             base_to: real.base_to,
         },
     );
 
-    // Subtree drag with matching deltas — would hit translate path
-    // if the glyph-guard weren't in place.
+    // Subtree drag with matching deltas — would hit the translate
+    // path if the params check weren't in place.
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (5.0, 0.0));
     offsets.insert("b".to_string(), (5.0, 0.0));
@@ -837,24 +896,24 @@ fn test_translate_path_falls_through_on_glyph_config_change() {
         1.0,
     );
 
-    // Emitted body_glyph must be the live config's, not the cached
-    // "X" — proves the slow path resampled instead of translating.
-    assert_ne!(
-        second.connection_elements[0].body_glyph, "X",
-        "mid-drag body_glyph change must force the slow path so the emitted glyph tracks the live config"
+    assert!(
+        !drew_sentinel(&second.connection_elements[0]),
+        "a mid-drag sampling-config change must force the slow path; drew {:?}",
+        second.connection_elements[0].glyph_positions
     );
-    // And the cache entry must now reflect the fresh resample.
-    let refreshed = cache.get(&key).unwrap();
-    assert_ne!(
-        refreshed.body_glyph, "X",
-        "slow path resample must overwrite the stale body_glyph"
+    // And the cache entry must now reflect the fresh resample, at the
+    // params this frame actually asked for.
+    let refreshed = cache.inspect(&key).unwrap();
+    assert!(
+        refreshed.pre_clip_positions.iter().all(|p| *p != SENTINEL_POINT),
+        "slow path must overwrite the planted sentinel positions"
     );
     assert!(
-        refreshed
-            .pre_clip_positions
-            .iter()
-            .all(|p| *p != Vec2::new(999.0, 999.0)),
-        "slow path must overwrite the placeholder sentinel positions"
+        crate::util::geometry::almost_equal(
+            refreshed.sample_params.font_size_pt,
+            real.sample_params.font_size_pt
+        ),
+        "the re-cached entry must carry this frame's params, not the planted ones"
     );
 }
 
@@ -938,5 +997,276 @@ fn test_scene_build_still_works_on_real_map() {
     assert!(
         any_with_glyphs,
         "at least one connection should have un-clipped glyphs"
+    );
+}
+
+// --- #36 item 7: a cache entry must never outlive the config it was
+// --- sampled and styled under -----------------------------------------
+
+/// [`two_node_edge_map`] whose single edge carries an explicit
+/// [`GlyphConnectionConfig`], so a test can edit exactly one field of
+/// it between two builds and have that edit be the only difference
+/// the second build sees.
+fn map_with_connection_config(config: GlyphConnectionConfig) -> crate::mindmap::model::MindMap {
+    let mut map = two_node_edge_map();
+    map.edges[0].glyph_connection = Some(config);
+    map
+}
+
+/// The starting config for the stale-config tests: every field the
+/// sampler or the emitter reads is written out, so the edit under
+/// test reads as a one-field diff rather than as a fall-through to
+/// a different cascade tier.
+fn baseline_connection_config() -> GlyphConnectionConfig {
+    GlyphConnectionConfig {
+        body: "\u{00B7}".into(),
+        cap_start: Some("\u{25BA}".into()),
+        cap_end: Some("\u{25C4}".into()),
+        font: None,
+        font_size_pt: 12.0,
+        color: None,
+        spacing: 0.0,
+        ..GlyphConnectionConfig::default()
+    }
+}
+
+/// Mutably reach the edge's own `GlyphConnectionConfig`. Every
+/// caller built the map through [`map_with_connection_config`], so
+/// the `Option` is populated by construction.
+fn edge_config_mut(map: &mut crate::mindmap::model::MindMap) -> &mut GlyphConnectionConfig {
+    map.edges[0]
+        .glyph_connection
+        .as_mut()
+        .expect("fixture invariant: map_with_connection_config installs the config")
+}
+
+/// Two builds, one config edit between them, no flush and no
+/// offsets — so the second build is a cache-hit build. Returns
+/// `(first, second)` element pairs.
+fn build_twice_across_config_edit(
+    edit: impl FnOnce(&mut GlyphConnectionConfig),
+) -> (super::super::ConnectionElement, super::super::ConnectionElement) {
+    let mut map = map_with_connection_config(baseline_connection_config());
+    let mut cache = SceneConnectionCache::new();
+    let first = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert_eq!(
+        cache.len(),
+        1,
+        "precondition: the first build must populate the cache, or the second build is not \
+         exercising the cache-hit path this test is about"
+    );
+    edit(edge_config_mut(&mut map));
+    let second = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert_eq!(first.connection_elements.len(), 1);
+    assert_eq!(second.connection_elements.len(), 1);
+    let mut first = first;
+    let mut second = second;
+    (
+        first.connection_elements.remove(0),
+        second.connection_elements.remove(0),
+    )
+}
+
+/// The body glyph the frame renders has to be the one the *model*
+/// carries now, not the one the cache happened to be filled with.
+///
+/// Input that makes it fail: any `glyph_connection.body` edit that
+/// reaches a rebuild without a `SceneConnectionCache::clear()` in
+/// between — a console `edge glyph` edit, a `CustomMutation`, an
+/// undo. The cache-hit fast path served `cached.body_glyph`, so the
+/// canvas kept drawing the previous glyph until something unrelated
+/// flushed the cache.
+#[test]
+fn test_cache_fast_path_tracks_a_body_glyph_edit_without_a_flush() {
+    let (first, second) = build_twice_across_config_edit(|c| c.body = "X".into());
+    assert_eq!(
+        first.body_glyph, "\u{00B7}",
+        "precondition: the first build renders the baseline glyph"
+    );
+    assert_eq!(
+        second.body_glyph, "X",
+        "a body-glyph edit with no cache flush must reach the canvas on the next rebuild"
+    );
+}
+
+/// Same for the cap glyphs, which sit on the same config and reach
+/// the element through the same cache entry.
+#[test]
+fn test_cache_fast_path_tracks_a_cap_glyph_edit_without_a_flush() {
+    let (first, second) = build_twice_across_config_edit(|c| {
+        c.cap_start = Some("S".into());
+        c.cap_end = Some("E".into());
+    });
+    assert_eq!(
+        first.cap_start.as_ref().map(|(g, _)| g.as_str()),
+        Some("\u{25BA}"),
+        "precondition: the first build renders the baseline start cap"
+    );
+    assert_eq!(second.cap_start.as_ref().map(|(g, _)| g.as_str()), Some("S"));
+    assert_eq!(second.cap_end.as_ref().map(|(g, _)| g.as_str()), Some("E"));
+}
+
+/// A font-size edit changes two things at once and both have to
+/// land: the size the element reports, and the arc-length step the
+/// samples were taken at. Asserting only the first would pass on a
+/// fix that copied the live size across but kept stale geometry.
+///
+/// Input that makes it fail: `font_size_pt` 12 -> 48 with no flush.
+/// The cache-hit fast path reported `cached.font_size_pt` (12) and
+/// reused samples spaced for a 12pt glyph, so 48pt glyphs drew four
+/// deep on top of each other.
+#[test]
+fn test_cache_fast_path_resamples_when_the_font_size_changes() {
+    let (first, second) = build_twice_across_config_edit(|c| c.font_size_pt = 48.0);
+    assert!(
+        crate::util::geometry::almost_equal(first.font_size_pt, 12.0),
+        "precondition: the first build sampled at 12pt, got {}",
+        first.font_size_pt
+    );
+    assert!(
+        crate::util::geometry::almost_equal(second.font_size_pt, 48.0),
+        "the element must report the live effective font size, got {}",
+        second.font_size_pt
+    );
+    assert!(
+        second.glyph_positions.len() < first.glyph_positions.len(),
+        "4x the glyph size is 4x the arc-length step, so the resampled path must carry \
+         strictly fewer body glyphs: {} -> {}",
+        first.glyph_positions.len(),
+        second.glyph_positions.len()
+    );
+}
+
+/// `spacing` is the other addend of the arc-length step, and
+/// neither reuse path compared it. Same shape as the font-size case
+/// but with no presentational field to hide behind: the *only*
+/// observable is the sample count.
+#[test]
+fn test_cache_fast_path_resamples_when_glyph_spacing_changes() {
+    let (first, second) = build_twice_across_config_edit(|c| c.spacing = 60.0);
+    assert!(
+        second.glyph_positions.len() < first.glyph_positions.len(),
+        "60 canvas units of extra spacing per glyph must thin the sampled path: {} -> {}",
+        first.glyph_positions.len(),
+        second.glyph_positions.len()
+    );
+}
+
+/// The two caps belong to the two *ends* of the path, and which end
+/// is which must not depend on how the element reached the frame.
+///
+/// The fixture puts `a` at x=0 and `b` at x=400 and anchors the edge
+/// right-to-left, so the start cap sits at a's right edge and the end
+/// cap at b's left edge — hundreds of canvas units apart, in that
+/// order. A transposition of the two survives any assertion that only
+/// counts caps or only checks one of them, which is why this asserts
+/// the ordering on all three routes an element can take out of this
+/// pass: fresh sample, cache hit, and rigid translate.
+#[test]
+fn test_caps_land_on_the_two_ends_of_the_path_on_every_cache_path() {
+    fn assert_cap_order(elem: &super::super::ConnectionElement, route: &str) {
+        let (_, (sx, _)) = elem
+            .cap_start
+            .as_ref()
+            .unwrap_or_else(|| panic!("{route}: start cap should have survived clipping"));
+        let (_, (ex, _)) = elem
+            .cap_end
+            .as_ref()
+            .unwrap_or_else(|| panic!("{route}: end cap should have survived clipping"));
+        assert!(
+            *sx < *ex,
+            "{route}: the start cap must sit left of the end cap on a left-to-right edge, \
+             got start x={sx}, end x={ex}"
+        );
+        assert!(
+            *sx < 200.0,
+            "{route}: the start cap belongs at source node `a`'s right edge (x~40), got {sx}"
+        );
+        assert!(
+            *ex > 200.0,
+            "{route}: the end cap belongs at target node `b`'s left edge (x~400), got {ex}"
+        );
+    }
+
+    let map = map_with_connection_config(baseline_connection_config());
+    let mut cache = SceneConnectionCache::new();
+
+    // Route 1 — slow path: nothing cached yet, so this samples fresh.
+    let fresh = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert_eq!(cache.len(), 1, "precondition: route 1 must have filled the cache");
+    assert_cap_order(&fresh.connection_elements[0], "slow path");
+
+    // Route 2 — fast path: same map, no offsets, cache warm.
+    let hit = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert_cap_order(&hit.connection_elements[0], "cache-hit fast path");
+
+    // Route 3 — translate path: both endpoints move by one shared
+    // delta, which is the subtree-drag shape.
+    let mut offsets = HashMap::new();
+    offsets.insert("a".to_string(), (0.0, 25.0));
+    offsets.insert("b".to_string(), (0.0, 25.0));
+    let translated = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert_cap_order(&translated.connection_elements[0], "translate path");
+    // The delta actually applied, or route 3 proved nothing about a
+    // translate: the caps must have moved down with their endpoints.
+    let before_y = fresh.connection_elements[0]
+        .cap_start
+        .as_ref()
+        .map(|(_, (_, y))| *y)
+        .expect("route 1 start cap");
+    let after_y = translated.connection_elements[0]
+        .cap_start
+        .as_ref()
+        .map(|(_, (_, y))| *y)
+        .expect("route 3 start cap");
+    assert!(
+        crate::util::geometry::almost_equal(after_y - before_y, 25.0),
+        "precondition: the shared +25 y offset must have reached the caps, got {}",
+        after_y - before_y
     );
 }

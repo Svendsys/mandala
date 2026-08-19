@@ -48,7 +48,7 @@
 
 use glam::Vec2;
 
-use baumhard::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCache};
+use baumhard::mindmap::scene_cache::{CachedConnection, EdgeKey, SampleParams, SceneConnectionCache};
 use baumhard::mindmap::tree_builder::{MindMapTree, ResizeHandleSide};
 
 use crate::application::document::{apply_drag_delta, EdgeRef, MindMapDocument};
@@ -159,11 +159,11 @@ fn line(refresh: Option<ReleaseRefresh>, pending: &str, model: &str, world: &Wor
 fn seed_connection() -> CachedConnection {
     CachedConnection {
         pre_clip_positions: Vec::new(),
-        cap_start: None,
-        cap_end: None,
-        body_glyph: "·".to_string(),
-        font: None,
-        font_size_pt: 12.0,
+        sample_params: SampleParams {
+            font_size_pt: 12.0,
+            spacing: 0.0,
+            sample_budget: 1000,
+        },
         color: "#ffffff".to_string(),
         base_from: Vec2::ZERO,
         base_to: Vec2::ZERO,

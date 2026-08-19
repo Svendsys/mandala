@@ -423,6 +423,18 @@ industrial cost/benefit reasoning. This is not license for speculation.
   targets and fail the run (#134); PR #133 established the
   stripped-side half of this rule, the #134 incident the live-side
   half.
+- **A module `//!` header whose `mod` item also carries an outer
+  `///` writes its intra-doc links crate-absolute.** rustdoc merges
+  the two into one doc block, and a *relative* link inside the merged
+  block resolves against no module — `[`Foo`]` fails even where `Foo`
+  is declared in that very file. Both halves of the pair are the
+  house style here (`lib/baumhard/src/mindmap/mod.rs` puts a one-line
+  summary on every `pub mod` it declares, and each of those files
+  opens with its own `//!`), so the combination is normal and the
+  hazard is latent in every one of them. What makes it worth a rule
+  rather than a fix-when-it-bites: the error names neither a file nor
+  a line, so the only way to locate it is to bisect the doc comments.
+  `[`Foo`](crate::path::to::Foo)` resolves.
 - **A comment may assert what the standard says and what this
   repository does; a claim about what a *named engine* does at
   runtime needs either a device or a hedge.** The proved-vs-observed

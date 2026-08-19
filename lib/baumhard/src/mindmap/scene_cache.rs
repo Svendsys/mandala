@@ -28,16 +28,39 @@
 //!   force a full re-sample. This is enforced automatically by
 //!   `ensure_zoom`, which the scene builder calls on entry — callers
 //!   don't need to remember to flush the cache on zoom themselves.
-//! - Structural edge changes (add/remove, endpoint change, control points,
-//!   glyph config) are handled by the caller clearing the relevant entries
-//!   (`invalidate_edge`) or dropping the whole cache (`clear`). Selection
-//!   changes do NOT require invalidation — the color override is applied
-//!   at scene-build time from the cached entry.
+//! - **An entry holds no styling the frame could read back.** What a
+//!   connection *looks like* — its body glyph, its cap glyphs, its font
+//!   and its size — is resolved from the live `GlyphConnectionConfig` on
+//!   every path, so no glyph edit can be served stale out of this
+//!   module: there is nothing here to serve. What an entry does hold is
+//!   the geometry plus the
+//!   [`SampleParams`](crate::mindmap::scene_cache::SampleParams) that
+//!   geometry was produced under, and both reuse doors —
+//!   [`reusable`](crate::mindmap::scene_cache::SceneConnectionCache::reusable)
+//!   and
+//!   [`reusable_mut`](crate::mindmap::scene_cache::SceneConnectionCache::reusable_mut)
+//!   — refuse an entry whose params no longer match the frame's.
+//!
+//! (Those three links are spelled crate-absolute on purpose. `mod.rs`
+//! carries an outer `///` summary on `pub mod scene_cache;`, rustdoc
+//! merges it with this header, and a relative link in the merged block
+//! resolves against no module — the failure reports no file or line, so
+//! it costs more to find than to avoid.)
+//! - Structural edge changes the params cannot see — endpoint moves
+//!   outside the drag `offsets` map, anchor and control-point edits,
+//!   node resizes — are still handled by the caller clearing the
+//!   relevant entries (`invalidate_edge`) or dropping the whole cache
+//!   (`clear`), as is a theme-variable edit, since `color` is the one
+//!   resolved value an entry still carries. Selection changes need
+//!   neither — the selection override is applied per frame and never
+//!   enters the cache.
 
 use glam::Vec2;
 use std::collections::HashMap;
 
-use crate::mindmap::model::MindEdge;
+use crate::font::metrics::monospace_advance;
+use crate::mindmap::model::{GlyphConnectionConfig, MindEdge};
+use crate::util::geometry::almost_equal;
 
 /// Stable identity of a connection. Mirrors the `(from_id, to_id, edge_type)`
 /// triple that the rest of the codebase uses to identify edges
@@ -68,14 +91,124 @@ impl EdgeKey {
     }
 }
 
-/// The cached geometry + styling for a single edge, sufficient to rebuild
-/// its `ConnectionElement` without recomputing the path.
+/// Every input to a connection's glyph sampling that comes from
+/// configuration rather than from geometry — which is to say,
+/// everything that decides *where along the path* the samples land
+/// and how many of them there are.
 ///
-/// `pre_clip_positions` / `cap_*` are the raw sampled points BEFORE the
+/// The list is short because the sampler's is:
+/// `sample_path(&path, effective_spacing, budget)` reads a step and a
+/// cap, `build_connection_path` reads only geometry, and
+/// [`monospace_advance`] scales the font size by a constant with no
+/// glyph input at all. So the *body glyph*, the *cap glyphs* and the
+/// *font family* are absent on purpose — none of them can move a
+/// sample, and a struct that compared them would refuse reuse of
+/// geometry that is in fact still correct.
+///
+/// The point of having the type is that the cache's two reuse doors
+/// compare *this whole value* rather than a hand-listed subset of an
+/// entry's fields. Before it existed the translate path compared three
+/// fields and the cache-hit fast path compared none, which is the same
+/// defect one level down: whichever list is shorter is the one that
+/// serves stale geometry. A field added here is compared by both doors
+/// or by neither, and never by one (#36 item 7).
+///
+/// Plain `Copy` data — two floats and a `usize`, no allocation.
+#[derive(Clone, Copy, Debug)]
+pub struct SampleParams {
+    /// `GlyphConnectionConfig::effective_font_size_pt(camera_zoom)`:
+    /// the canvas-space size after the screen-space clamp. A camera
+    /// zoom change and a `font_size_pt` / `min_` / `max_` edit both
+    /// land here, which is why the field is the *effective* size
+    /// rather than the authored one.
+    pub font_size_pt: f32,
+    /// `GlyphConnectionConfig::spacing` — added to the glyph advance
+    /// to get the arc-length step between consecutive body glyphs.
+    pub spacing: f32,
+    /// The per-path allowance
+    /// [`crate::mindmap::connection::per_path_sample_budget`] handed
+    /// this pass. Scene-wide in origin but per-edge in effect: it caps
+    /// *this* edge's sample count, so a map whose edge count changed
+    /// can produce a different sample sequence from identical per-edge
+    /// config.
+    pub sample_budget: usize,
+}
+
+impl SampleParams {
+    /// Snapshot the sampling inputs one pass is about to read for one
+    /// edge.
+    ///
+    /// Takes `camera_zoom` rather than a pre-computed size so the
+    /// screen-space clamp is applied in exactly one place; a caller
+    /// that needs the canvas-space size reads [`Self::font_size_pt`]
+    /// back off the result.
+    ///
+    /// Cost: the arithmetic of
+    /// `GlyphConnectionConfig::effective_font_size_pt`. No allocation.
+    pub fn snapshot(config: &GlyphConnectionConfig, camera_zoom: f32, sample_budget: usize) -> Self {
+        Self {
+            font_size_pt: config.effective_font_size_pt(camera_zoom),
+            spacing: config.spacing,
+            sample_budget,
+        }
+    }
+
+    /// Arc-length step between consecutive body glyphs: one monospace
+    /// advance at [`Self::font_size_pt`] plus [`Self::spacing`].
+    ///
+    /// The sampler reads its step through this method so the step and
+    /// the value the cache compares cannot be derived two different
+    /// ways. Cost: O(1).
+    pub fn sample_spacing(&self) -> f32 {
+        monospace_advance(self.font_size_pt) + self.spacing
+    }
+
+    /// Whether samples taken under `self` are the ones `other` would
+    /// produce — the whole freshness test for cached geometry, in one
+    /// place.
+    ///
+    /// Deliberately **not** a `PartialEq` impl. Both float fields are
+    /// compared with [`almost_equal`] rather than `==`, and
+    /// almost-equality is not transitive, so it is not an equivalence
+    /// relation and writing it as `==` would promise a contract this
+    /// cannot keep. The tolerance is wanted on both: `font_size_pt` is
+    /// an arithmetic result that drifts in its last bits under the
+    /// sub-`ZOOM_EPSILON` zoom wobble `ensure_zoom` deliberately
+    /// tolerates, and a `spacing` difference below the tolerance moves
+    /// no sample by more than the same tolerance.
+    ///
+    /// Cost: O(1).
+    pub fn matches(&self, other: &Self) -> bool {
+        self.sample_budget == other.sample_budget
+            && almost_equal(self.font_size_pt, other.font_size_pt)
+            && almost_equal(self.spacing, other.spacing)
+    }
+}
+
+/// The cached geometry for a single edge, plus the [`SampleParams`]
+/// it was produced under — together sufficient to rebuild the edge's
+/// `ConnectionElement` without recomputing the path.
+///
+/// `pre_clip_positions` holds the raw sampled points BEFORE the
 /// `point_inside_any_node` clip filter runs. We keep them pre-clip so a
 /// moved-but-unrelated node's AABB can still push glyphs out of the
 /// connection on the next frame: the clip filter is cheap (arithmetic over
 /// cached `Vec2`s), the sampler is not.
+///
+/// **The caps are not stored, because they were never separate data.**
+/// A cap sits at the first or last sampled position and carries a glyph
+/// named in the live `GlyphConnectionConfig`, so [`Self::cap_positions`]
+/// reads both ends of `pre_clip_positions` and the emitting pass pairs
+/// them with the glyphs. Storing them was a second copy of both halves
+/// that [`Self::translate`] then had to keep in step.
+///
+/// **Nor is anything else the frame draws with.** Body glyph, font
+/// family and font size were held here and read back by the reuse
+/// paths, which is what made a glyph edit invisible until something
+/// flushed the cache. `color` is the exception and stays, because
+/// resolving it walks the edge's theme cascade rather than reading one
+/// config field; a theme-variable edit is correspondingly still the
+/// caller's to invalidate.
 ///
 /// `base_from` / `base_to` record the endpoint canvas positions that the
 /// samples were taken at (i.e. `model.pos + offset_at_write`). When the next
@@ -88,46 +221,52 @@ impl EdgeKey {
 #[derive(Clone, Debug)]
 pub struct CachedConnection {
     pub pre_clip_positions: Vec<Vec2>,
-    pub cap_start: Option<(String, Vec2)>,
-    pub cap_end: Option<(String, Vec2)>,
-    pub body_glyph: String,
-    pub font: Option<String>,
-    pub font_size_pt: f32,
+    pub sample_params: SampleParams,
     pub color: String,
     pub base_from: Vec2,
     pub base_to: Vec2,
 }
 
 impl CachedConnection {
+    /// The canvas positions the start and end caps occupy: the first
+    /// and last sampled points, in that order.
+    ///
+    /// The order is not a convention — `sample_path` walks the path
+    /// from the source anchor to the target anchor, so the first
+    /// sample *is* where the start cap belongs. Both are `None` for an
+    /// entry with no samples: the production path never stores one (an
+    /// edge that samples to nothing is dropped from the cache
+    /// instead), but the type is `pub` and a consumer can build one, so
+    /// the ends are read rather than assumed. Cost: O(1).
+    pub fn cap_positions(&self) -> (Option<Vec2>, Option<Vec2>) {
+        (
+            self.pre_clip_positions.first().copied(),
+            self.pre_clip_positions.last().copied(),
+        )
+    }
+
     /// Rigid-body translate of this entry's geometry in place.
-    /// Shifts `pre_clip_positions` and both caps by `delta`, stamps
-    /// `base_from` / `base_to` to the new reference endpoints.
+    /// Shifts `pre_clip_positions` by `delta` and stamps `base_from` /
+    /// `base_to` to the new reference endpoints. The caps ride along
+    /// because [`Self::cap_positions`] reads them off those same
+    /// points.
     ///
     /// Why the whole entry is mutated instead of being rebuilt and
     /// handed back to [`SceneConnectionCache::insert`]: this runs on
     /// every internal edge of a subtree drag every drain. Routing
     /// through `insert` would reindex both `by_node` buckets (two
-    /// `retain` scans + two `push` calls per edge) and clone
-    /// `body_glyph` / `font` / `color` — none of which change under
-    /// a pure translation. On a 500-edge drag that's ~1000 bucket
-    /// scans and ~1500 string clones per drain the translate path is
-    /// specifically trying to avoid.
+    /// `retain` scans + two `push` calls per edge) and clone `color` —
+    /// none of which change under a pure translation.
     ///
-    /// The fields a translation leaves alone are the ones that
-    /// describe how the samples were taken — `font_size_pt`,
-    /// `body_glyph`, `font` — and `color`. Keeping them is the
-    /// caller's business: it has already rejected any entry whose
-    /// sampling config moved, and it resolves the color per frame.
+    /// [`Self::sample_params`] is left alone by design: a rigid
+    /// translation changes where the samples are, never what they were
+    /// sampled under, and the caller reached this method only by
+    /// presenting matching params to
+    /// [`SceneConnectionCache::reusable_mut`].
     ///
     /// Cost: one pass over `pre_clip_positions`.
     pub fn translate(&mut self, delta: Vec2, new_base_from: Vec2, new_base_to: Vec2) {
         for p in &mut self.pre_clip_positions {
-            *p += delta;
-        }
-        if let Some((_, p)) = self.cap_start.as_mut() {
-            *p += delta;
-        }
-        if let Some((_, p)) = self.cap_end.as_mut() {
             *p += delta;
         }
         self.base_from = new_base_from;
@@ -211,9 +350,57 @@ impl SceneConnectionCache {
         self.entries.len()
     }
 
-    /// Look up a cached entry. Scene-builder reads go through this.
-    pub fn get(&self, key: &EdgeKey) -> Option<&CachedConnection> {
+    /// Look up a cached entry **whatever it was sampled under** — for
+    /// diagnostics, tests, and any consumer that wants to see what is
+    /// held rather than to reuse it.
+    ///
+    /// Reuse goes through [`Self::reusable`] / [`Self::reusable_mut`],
+    /// which is why this is not called `get`: a call site that reads
+    /// geometry out of *this* method and draws with it is skipping the
+    /// freshness check, and the name should say so where it is
+    /// written. Cost: one hash lookup.
+    pub fn inspect(&self, key: &EdgeKey) -> Option<&CachedConnection> {
         self.entries.get(key)
+    }
+
+    /// The read-only reuse door: the entry for `key`, but only if its
+    /// samples were taken under `want`.
+    ///
+    /// This is what the scene builder's cache-hit fast path holds. A
+    /// `None` here means "resample", never "no such edge" — the two
+    /// are indistinguishable to the caller on purpose, because the
+    /// correct response to both is the same and a caller that could
+    /// tell them apart could act on the difference.
+    ///
+    /// Cost: one hash lookup plus [`SampleParams::matches`].
+    pub fn reusable(&self, key: &EdgeKey, want: &SampleParams) -> Option<&CachedConnection> {
+        self.entries
+            .get(key)
+            .filter(|entry| entry.sample_params.matches(want))
+    }
+
+    /// The mutating reuse door: as [`Self::reusable`], but handing out
+    /// the `&mut` that [`CachedConnection::translate`] needs.
+    ///
+    /// This is what the scene builder's translate path holds: the same
+    /// borrow answers "is this edge cached and sampled the way this
+    /// frame wants?", performs the translate, and is reborrowed as
+    /// shared to emit the element — one hash lookup for the whole
+    /// path, and no re-lookup whose success has to be asserted after
+    /// the fact.
+    ///
+    /// Leaving `by_node` alone is sound rather than a shortcut: that
+    /// index maps a node id to the edges that touch it, and the node
+    /// ids live in the [`EdgeKey`], not in the entry this borrow
+    /// reaches. Changing *which* nodes an edge connects is therefore
+    /// changing its key, which is [`Self::invalidate_edge`] followed
+    /// by [`Self::insert`] — the two paths that do re-index.
+    ///
+    /// Cost: one hash lookup plus [`SampleParams::matches`].
+    pub fn reusable_mut(&mut self, key: &EdgeKey, want: &SampleParams) -> Option<&mut CachedConnection> {
+        self.entries
+            .get_mut(key)
+            .filter(|entry| entry.sample_params.matches(want))
     }
 
     /// Insert or replace an entry, keeping the `by_node` reverse index in
@@ -264,26 +451,6 @@ impl SceneConnectionCache {
         }
     }
 
-    /// Look up a cached entry for mutation, leaving the `by_node`
-    /// reverse index alone. `None` if the key isn't cached.
-    ///
-    /// This is what the scene builder's translate path holds: the
-    /// same borrow answers "is this edge cached, fresh, and moving
-    /// rigidly?", performs [`CachedConnection::translate`], and is
-    /// reborrowed as shared to emit the element — one hash lookup
-    /// for the whole path, and no re-lookup whose success has to be
-    /// asserted after the fact.
-    ///
-    /// Leaving `by_node` alone is sound rather than a shortcut:
-    /// that index maps a node id to the edges that touch it, and
-    /// the node ids live in the [`EdgeKey`], not in the entry this
-    /// borrow reaches. Changing *which* nodes an edge connects is
-    /// therefore changing its key, which is [`Self::invalidate_edge`]
-    /// followed by [`Self::insert`] — the two paths that do re-index.
-    pub fn get_mut(&mut self, key: &EdgeKey) -> Option<&mut CachedConnection> {
-        self.entries.get_mut(key)
-    }
-
     /// After a scene build, evict any cache entries whose keys are not in
     /// the "seen this frame" set. Handles edges that were deleted from the
     /// model between builds.
@@ -304,14 +471,21 @@ impl SceneConnectionCache {
 mod tests {
     use super::*;
 
+    /// The params every fixture entry in this module is sampled
+    /// under, so a test that wants a reuse *hit* asks with this and a
+    /// test that wants a *miss* asks with something else.
+    fn mk_params() -> SampleParams {
+        SampleParams {
+            font_size_pt: 12.0,
+            spacing: 0.0,
+            sample_budget: 1000,
+        }
+    }
+
     fn mk_entry(color: &str) -> CachedConnection {
         CachedConnection {
             pre_clip_positions: vec![Vec2::new(1.0, 2.0), Vec2::new(3.0, 4.0)],
-            cap_start: None,
-            cap_end: None,
-            body_glyph: "·".into(),
-            font: None,
-            font_size_pt: 12.0,
+            sample_params: mk_params(),
             color: color.into(),
             base_from: Vec2::ZERO,
             base_to: Vec2::ZERO,
@@ -323,7 +497,7 @@ mod tests {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
         cache.insert(key.clone(), mk_entry("#fff"));
-        assert_eq!(cache.get(&key).unwrap().color, "#fff");
+        assert_eq!(cache.inspect(&key).unwrap().color, "#fff");
         assert_eq!(cache.len(), 1);
     }
 
@@ -360,7 +534,7 @@ mod tests {
         let key = EdgeKey::new("a", "b", "cross_link");
         cache.insert(key.clone(), mk_entry("#fff"));
         cache.invalidate_edge(&key);
-        assert!(cache.get(&key).is_none());
+        assert!(cache.inspect(&key).is_none());
         assert!(cache.edges_touching("a").is_empty());
         assert!(cache.edges_touching("b").is_empty());
     }
@@ -389,8 +563,8 @@ mod tests {
         seen.insert(kept.clone());
         cache.retain_keys(&seen);
 
-        assert!(cache.get(&kept).is_some());
-        assert!(cache.get(&evicted).is_none());
+        assert!(cache.inspect(&kept).is_some());
+        assert!(cache.inspect(&evicted).is_none());
         assert!(cache.edges_touching("c").is_empty());
         assert!(cache.edges_touching("d").is_empty());
     }
@@ -404,7 +578,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.edges_touching("a").len(), 1);
         assert_eq!(cache.edges_touching("b").len(), 1);
-        assert_eq!(cache.get(&key).unwrap().color, "#222");
+        assert_eq!(cache.inspect(&key).unwrap().color, "#222");
     }
 
     #[test]
@@ -415,7 +589,7 @@ mod tests {
         cache.ensure_zoom(1.0);
         // Same zoom again — nothing should change.
         cache.ensure_zoom(1.0);
-        assert!(cache.get(&key).is_some());
+        assert!(cache.inspect(&key).is_some());
         assert_eq!(cache.len(), 1);
     }
 
@@ -427,7 +601,7 @@ mod tests {
         cache.ensure_zoom(1.0);
         // Wheel-tick to 1.1 — entries must be dropped.
         cache.ensure_zoom(1.1);
-        assert!(cache.get(&key).is_none());
+        assert!(cache.inspect(&key).is_none());
         assert!(cache.edges_touching("a").is_empty());
     }
 
@@ -439,7 +613,10 @@ mod tests {
         cache.ensure_zoom(1.0);
         // Tiny floating-point drift well below ZOOM_EPSILON (1e-3).
         cache.ensure_zoom(1.0 + 1.0e-6);
-        assert!(cache.get(&key).is_some(), "sub-epsilon drift should not flush");
+        assert!(
+            cache.inspect(&key).is_some(),
+            "sub-epsilon drift should not flush"
+        );
     }
 
     #[test]
@@ -508,9 +685,9 @@ mod tests {
         // Other endpoint's bucket is now empty.
         assert!(cache.edges_touching("b").is_empty());
         // Forward lookup is gone too.
-        assert!(cache.get(&evicted).is_none());
+        assert!(cache.inspect(&evicted).is_none());
         // Sibling edge is untouched.
-        assert!(cache.get(&kept).is_some());
+        assert!(cache.inspect(&kept).is_some());
     }
 
     /// Cache-miss semantics: `get` on an unknown key returns
@@ -526,12 +703,205 @@ mod tests {
         let len_before = cache.len();
 
         let missing = EdgeKey::new("x", "y", "cross_link");
-        assert!(cache.get(&missing).is_none());
+        assert!(cache.inspect(&missing).is_none());
 
         // No phantom insertion on miss; reverse index untouched.
         assert_eq!(cache.len(), len_before);
         assert!(cache.edges_touching("x").is_empty());
         assert!(cache.edges_touching("y").is_empty());
-        assert!(cache.get(&known).is_some());
+        assert!(cache.inspect(&known).is_some());
+    }
+
+    /// Rename guard for the miss-semantics test above: the accessor
+    /// it names is `inspect`, and `inspect` deliberately answers
+    /// "what is stored" rather than "what may be reused".
+    #[test]
+    fn inspect_returns_an_entry_the_reuse_doors_would_refuse() {
+        let mut cache = SceneConnectionCache::new();
+        let key = EdgeKey::new("a", "b", "cross_link");
+        cache.insert(key.clone(), mk_entry("#fff"));
+
+        let mut other = mk_params();
+        other.font_size_pt += 10.0;
+
+        assert!(
+            cache.inspect(&key).is_some(),
+            "inspect answers regardless of what the entry was sampled under"
+        );
+        assert!(
+            cache.reusable(&key, &other).is_none(),
+            "the reuse door must refuse the same entry"
+        );
+    }
+
+    /// The whole of item 7's guard in one assertion per field: an
+    /// entry sampled under one set of params is not reusable under
+    /// any other.
+    ///
+    /// Each case names the edit that produces it — a zoom step or an
+    /// `edge font size` verb for the first, an `edge spacing` verb
+    /// for the second, adding or deleting an edge for the third.
+    #[test]
+    fn reusable_refuses_an_entry_sampled_under_different_params() {
+        let mut cache = SceneConnectionCache::new();
+        let key = EdgeKey::new("a", "b", "cross_link");
+        cache.insert(key.clone(), mk_entry("#fff"));
+        let same = mk_params();
+        assert!(
+            cache.reusable(&key, &same).is_some(),
+            "precondition: matching params must be reusable, or every case below is vacuous"
+        );
+
+        for (label, mutate) in [
+            (
+                "font_size_pt",
+                (|p: &mut SampleParams| p.font_size_pt += 1.0) as fn(&mut SampleParams),
+            ),
+            ("spacing", |p: &mut SampleParams| p.spacing += 1.0),
+            ("sample_budget", |p: &mut SampleParams| p.sample_budget += 1),
+        ] {
+            let mut want = mk_params();
+            mutate(&mut want);
+            assert!(
+                cache.reusable(&key, &want).is_none(),
+                "a changed `{label}` must make the entry non-reusable"
+            );
+            assert!(
+                cache.reusable_mut(&key, &want).is_none(),
+                "the mutating door must refuse a changed `{label}` too"
+            );
+        }
+    }
+
+    /// Sub-tolerance drift is not a config change. `ensure_zoom`
+    /// deliberately keeps the cache across a zoom wobble below
+    /// `ZOOM_EPSILON`; a params check that used `==` would then
+    /// resample every one of those frames anyway, undoing the
+    /// tolerance one level up.
+    #[test]
+    fn reusable_tolerates_sub_epsilon_params_drift() {
+        let mut cache = SceneConnectionCache::new();
+        let key = EdgeKey::new("a", "b", "cross_link");
+        cache.insert(key.clone(), mk_entry("#fff"));
+
+        let mut wobbled = mk_params();
+        wobbled.font_size_pt += 1.0e-7;
+        wobbled.spacing += 1.0e-7;
+        assert!(
+            cache.reusable(&key, &wobbled).is_some(),
+            "drift far below the almost-equal tolerance must not force a resample"
+        );
+    }
+
+    /// The caps are the ends of the sample array, in order — the
+    /// invariant `emit_connection_element` reads them under.
+    #[test]
+    fn cap_positions_reports_the_first_and_last_sample_in_that_order() {
+        let entry = CachedConnection {
+            pre_clip_positions: vec![Vec2::new(1.0, 2.0), Vec2::new(50.0, 2.0), Vec2::new(99.0, 2.0)],
+            sample_params: mk_params(),
+            color: "#fff".into(),
+            base_from: Vec2::ZERO,
+            base_to: Vec2::ZERO,
+        };
+        assert_eq!(
+            entry.cap_positions(),
+            (Some(Vec2::new(1.0, 2.0)), Some(Vec2::new(99.0, 2.0)))
+        );
+    }
+
+    /// A one-sample entry puts both caps on the same point rather
+    /// than dropping one, and an empty one reports neither. Neither
+    /// shape is reachable from the production sampler, which is why
+    /// the method reads the ends instead of indexing them.
+    #[test]
+    fn cap_positions_handles_one_sample_and_none() {
+        let mut entry = CachedConnection {
+            pre_clip_positions: vec![Vec2::new(7.0, 7.0)],
+            sample_params: mk_params(),
+            color: "#fff".into(),
+            base_from: Vec2::ZERO,
+            base_to: Vec2::ZERO,
+        };
+        assert_eq!(
+            entry.cap_positions(),
+            (Some(Vec2::new(7.0, 7.0)), Some(Vec2::new(7.0, 7.0)))
+        );
+        entry.pre_clip_positions.clear();
+        assert_eq!(entry.cap_positions(), (None, None));
+    }
+
+    /// `translate` moves the caps because it moves the points they
+    /// are read off, and leaves the sampling params alone because a
+    /// rigid shift changes where samples are, not what they were
+    /// taken under.
+    #[test]
+    fn translate_carries_the_caps_and_leaves_the_params_alone() {
+        let mut entry = CachedConnection {
+            pre_clip_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)],
+            sample_params: mk_params(),
+            color: "#fff".into(),
+            base_from: Vec2::new(0.0, 0.0),
+            base_to: Vec2::new(10.0, 0.0),
+        };
+        let before = entry.sample_params;
+
+        entry.translate(Vec2::new(3.0, -4.0), Vec2::new(3.0, -4.0), Vec2::new(13.0, -4.0));
+
+        assert_eq!(
+            entry.cap_positions(),
+            (Some(Vec2::new(3.0, -4.0)), Some(Vec2::new(13.0, -4.0))),
+            "both caps must ride the translation"
+        );
+        assert_eq!(entry.base_from, Vec2::new(3.0, -4.0));
+        assert_eq!(entry.base_to, Vec2::new(13.0, -4.0));
+        assert!(
+            before.matches(&entry.sample_params),
+            "a translation must not disturb the params the entry is keyed on for reuse"
+        );
+    }
+
+    /// `sample_spacing` is the arc-length step the sampler walks and
+    /// the value the cache compares, derived once. Computed here
+    /// from the documented ratio rather than by calling
+    /// `monospace_advance` again, so a change to that ratio has to
+    /// be a decision rather than a silent agreement.
+    #[test]
+    fn sample_spacing_is_the_glyph_advance_plus_the_configured_gap() {
+        let params = SampleParams {
+            font_size_pt: 10.0,
+            spacing: 2.5,
+            sample_budget: 100,
+        };
+        // MONOSPACE_ADVANCE_RATIO is 0.6, so 10pt advances 6.0.
+        assert!(
+            almost_equal(params.sample_spacing(), 8.5),
+            "expected 6.0 + 2.5, got {}",
+            params.sample_spacing()
+        );
+    }
+
+    /// `snapshot` reads the *effective* font size, so the
+    /// screen-space clamp is inside the value the cache compares
+    /// rather than outside it. At zoom 4 a 12pt authored size wants
+    /// 48pt on screen; a 20pt ceiling pulls it back to 20 on screen,
+    /// which is 5pt in canvas space.
+    #[test]
+    fn snapshot_records_the_clamped_effective_font_size() {
+        let config = GlyphConnectionConfig {
+            font_size_pt: 12.0,
+            min_font_size_pt: 8.0,
+            max_font_size_pt: 20.0,
+            spacing: 1.5,
+            ..GlyphConnectionConfig::default()
+        };
+        let params = SampleParams::snapshot(&config, 4.0, 77);
+        assert!(
+            almost_equal(params.font_size_pt, 5.0),
+            "expected the 20pt screen ceiling divided back through zoom 4, got {}",
+            params.font_size_pt
+        );
+        assert!(almost_equal(params.spacing, 1.5));
+        assert_eq!(params.sample_budget, 77);
     }
 }
