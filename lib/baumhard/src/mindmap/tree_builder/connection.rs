@@ -152,11 +152,18 @@ fn emit_connection_element(
     // `CachedConnection::translate` move the caps by moving nothing.
     let cap_start = cap_at(config.cap_start.as_ref(), pre_clip_positions.first());
     let cap_end = cap_at(config.cap_end.as_ref(), pre_clip_positions.last());
-    let glyph_positions: Vec<(f32, f32)> = pre_clip_positions
-        .iter()
-        .filter(|p| !node_clip.contains(**p))
-        .map(|p| (p.x, p.y))
-        .collect();
+    // Sized for the unclipped case, which is the common one and the
+    // largest: `collect` over a `Filter` has no exact size hint, so it
+    // starts empty and grows. One over-sized allocation beats a growth
+    // sequence here — the surviving count is a filter away from the
+    // input count, never above it.
+    let mut glyph_positions: Vec<(f32, f32)> = Vec::with_capacity(pre_clip_positions.len());
+    glyph_positions.extend(
+        pre_clip_positions
+            .iter()
+            .filter(|p| !node_clip.contains(**p))
+            .map(|p| (p.x, p.y)),
+    );
     if glyph_positions.is_empty() && cap_start.is_none() && cap_end.is_none() {
         return false;
     }
@@ -437,31 +444,41 @@ pub fn build_connection_elements(
         let Some(path) = paths.path(edge_index) else {
             continue;
         };
-        let samples = connection::sample_path(path, want.sample_spacing(), want.sample_budget);
-        if samples.is_empty() {
-            // Edge produces no samples; make sure any stale cache entry is
-            // dropped so we re-try next frame.
-            cache.invalidate_edge(&edge_key);
+
+        // The buffer this edge filled last time, emptied. The entry
+        // is evicted by the taking, which is why the empty-sample
+        // branch below needs no `invalidate_edge`: an edge that
+        // samples to nothing has already been dropped from the cache.
+        //
+        // Caps live at the first and last positions this fills (the
+        // anchor points resolved from the source/target node bounds),
+        // which is why nothing here computes them:
+        // `emit_connection_element` reads both ends of the array.
+        // Those points sit on the raw node edge — which is ON the clip
+        // AABB boundary for an unframed node (so they survive
+        // clipping) but INSIDE the expanded clip AABB for a framed one
+        // (so they get dropped along with the body glyphs that would
+        // also render inside the frame area).
+        let mut pre_clip_positions = cache.reclaim_sample_buffer(&edge_key);
+        connection::sample_path_into(
+            path,
+            want.sample_spacing(),
+            want.sample_budget,
+            &mut pre_clip_positions,
+        );
+        if pre_clip_positions.is_empty() {
             continue;
         }
 
-        // Caps live at the first and last sample positions (the anchor
-        // points resolved from the source/target node bounds), which is
-        // why nothing here computes them: `emit_connection_element`
-        // reads both ends of this array. Those points sit on the raw
-        // node edge — which is ON the clip AABB boundary for an
-        // unframed node (so they survive clipping) but INSIDE the
-        // expanded clip AABB for a framed node (so they get dropped
-        // along with the body glyphs that would also render inside the
-        // frame area).
-        let pre_clip_positions: Vec<Vec2> = samples.iter().map(|s| s.position).collect();
-
         // Write fresh geometry back into the cache BEFORE applying the
-        // frame-specific clip filter so next frame can reuse it.
-        cache.insert(
+        // frame-specific clip filter so next frame can reuse it, and
+        // read the emitter's slice back out of the entry — the samples
+        // are stored once and filtered from where they are stored,
+        // rather than cloned so that one copy can be each.
+        let entry = cache.insert(
             edge_key.clone(),
             CachedConnection {
-                pre_clip_positions: pre_clip_positions.clone(),
+                pre_clip_positions,
                 sample_params: want,
                 color: stored_color,
                 base_from: from_pos,
@@ -477,7 +494,7 @@ pub fn build_connection_elements(
             &want,
             color,
             edge.zoom_window(),
-            &pre_clip_positions,
+            &entry.pre_clip_positions,
             &node_clip,
         );
     }

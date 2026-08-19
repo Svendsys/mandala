@@ -2211,15 +2211,23 @@ fn dewey_cmp_benchmark(c: &mut Criterion) {
 /// The edge hit-test's path geometry, one path per row rather than
 /// through a whole projection pass.
 ///
-/// Three rows because the caller composes three answers:
-/// `path_bounds` is the control-polygon box, `distance_to_path` is
-/// the sampled walk that box protects, and `distance_to_path_within`
-/// is the pair as `document::hit_test::hit_test_edge` calls it —
-/// driven here at a point the box rejects, which is the case the
-/// composition exists for.
+/// Four rows. Three because the hit-test caller composes three
+/// answers: `path_bounds` is the control-polygon box,
+/// `distance_to_path` is the sampled walk that box protects, and
+/// `distance_to_path_within` is the pair as
+/// `document::hit_test::hit_test_edge` calls it — driven here at a
+/// point the box rejects, which is the case the composition exists
+/// for.
+///
+/// The fourth is `sample_path_into`, which is the connection pass's
+/// side of the same geometry rather than the hit test's. It is
+/// driven with a buffer that is cleared but not freed between
+/// iterations, because that is the shape the pass runs: the scene
+/// cache hands back the buffer this edge filled last frame.
 fn connection_geometry_benchmark(c: &mut Criterion) {
     use baumhard::mindmap::connection::{
-        distance_to_path, distance_to_path_within, path_bounds, ConnectionPath,
+        distance_to_path, distance_to_path_within, path_bounds, sample_path_into, ConnectionPath,
+        MAX_PATH_SAMPLES,
     };
     use glam::Vec2;
 
@@ -2238,6 +2246,14 @@ fn connection_geometry_benchmark(c: &mut Criterion) {
     });
     c.bench_function("connection_distance_to_path_within_rejects", |b| {
         b.iter(|| distance_to_path_within(far, &path, 12.0))
+    });
+    let mut samples: Vec<Vec2> = Vec::new();
+    c.bench_function("connection_sample_path_into", |b| {
+        b.iter(|| {
+            samples.clear();
+            sample_path_into(&path, 12.0, MAX_PATH_SAMPLES, &mut samples);
+            samples.len()
+        })
     });
 }
 

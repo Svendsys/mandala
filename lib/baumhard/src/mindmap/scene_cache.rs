@@ -406,7 +406,17 @@ impl SceneConnectionCache {
     /// Insert or replace an entry, keeping the `by_node` reverse index in
     /// sync. Scene-builder writes (both "fresh sample" and "resample because
     /// endpoint moved") go through this.
-    pub fn insert(&mut self, key: EdgeKey, entry: CachedConnection) {
+    ///
+    /// Returns a borrow of the entry just stored, so the emitting
+    /// pass can read the geometry it wrote without keeping a second
+    /// copy to hand to the emitter. That is the whole reason for the
+    /// return value: the slow path used to clone its sample vector,
+    /// move one copy in here and filter the other.
+    ///
+    /// Cost: one hash insert plus two `by_node` bucket scans, and
+    /// three `EdgeKey` clones for the index. No sample data is
+    /// copied — the entry is moved in.
+    pub fn insert(&mut self, key: EdgeKey, entry: CachedConnection) -> &CachedConnection {
         // Remove the key from any stale `by_node` bucket first — we can't
         // know the old endpoints without looking at the previous entry, so
         // the simplest correct thing is to strip the key from both new
@@ -422,13 +432,50 @@ impl SceneConnectionCache {
             .or_default()
             .retain(|k| k != &key);
 
-        self.entries.insert(key.clone(), entry);
-
         self.by_node
             .entry(key.from_id.clone())
             .or_default()
             .push(key.clone());
-        self.by_node.entry(key.to_id.clone()).or_default().push(key);
+        self.by_node
+            .entry(key.to_id.clone())
+            .or_default()
+            .push(key.clone());
+
+        // Inserted last so the `by_node` writes above are done with
+        // `key` before it is moved into `entries`, and so this call's
+        // return value is the borrow handed back.
+        self.entries.entry(key).insert_entry(entry).into_mut()
+    }
+
+    /// Evict the entry for `key` and hand back its sample vector,
+    /// emptied but with its capacity intact, for the caller to refill
+    /// and store again.
+    ///
+    /// Returns an empty `Vec` when nothing was cached. This is how the
+    /// connection pass's resample path avoids allocating: an edge
+    /// whose endpoint is being dragged is re-sampled every frame at
+    /// nearly the same point count, so the buffer it filled last frame
+    /// already has the room.
+    ///
+    /// **Dropping the returned buffer instead of re-inserting costs a
+    /// re-sample on the next build and nothing else** — this module's
+    /// first invariant is that the cache is always safe to drop — so
+    /// there is no leak to guard against, only work to repeat.
+    ///
+    /// Cost: one hash removal plus two `by_node` bucket scans. No
+    /// sample data is copied or freed.
+    pub fn reclaim_sample_buffer(&mut self, key: &EdgeKey) -> Vec<Vec2> {
+        let Some(mut entry) = self.entries.remove(key) else {
+            return Vec::new();
+        };
+        if let Some(bucket) = self.by_node.get_mut(&key.from_id) {
+            bucket.retain(|k| k != key);
+        }
+        if let Some(bucket) = self.by_node.get_mut(&key.to_id) {
+            bucket.retain(|k| k != key);
+        }
+        entry.pre_clip_positions.clear();
+        std::mem::take(&mut entry.pre_clip_positions)
     }
 
     /// Which edges touch the given node? Used by the drag drain to mark
@@ -879,6 +926,80 @@ mod tests {
             "expected 6.0 + 2.5, got {}",
             params.sample_spacing()
         );
+    }
+
+    /// The reclaimed buffer is empty and keeps its capacity — the
+    /// two halves of "refill this instead of allocating a new one".
+    ///
+    /// Input that makes the first half fail: dropping the `clear()`,
+    /// which would leave last frame's points in front of this
+    /// frame's and draw the edge twice. Input for the second: any
+    /// implementation that hands back a fresh `Vec`, which would make
+    /// the whole method a slower `invalidate_edge`.
+    #[test]
+    fn reclaim_sample_buffer_returns_the_old_allocation_emptied() {
+        let mut cache = SceneConnectionCache::new();
+        let key = EdgeKey::new("a", "b", "cross_link");
+        let mut entry = mk_entry("#fff");
+        entry.pre_clip_positions = (0..64).map(|i| Vec2::new(i as f32, 0.0)).collect();
+        let held = entry.pre_clip_positions.capacity();
+        assert!(held >= 64, "precondition: the fixture entry holds a real buffer");
+        cache.insert(key.clone(), entry);
+
+        let buffer = cache.reclaim_sample_buffer(&key);
+        assert!(buffer.is_empty(), "a refillable buffer must arrive empty");
+        assert_eq!(
+            buffer.capacity(),
+            held,
+            "the point is to hand back the allocation, not to make a new one"
+        );
+    }
+
+    /// Reclaiming evicts, including from the reverse index, so an
+    /// edge whose resample yields nothing does not leave a key
+    /// pointing at an entry that is no longer there.
+    #[test]
+    fn reclaim_sample_buffer_evicts_the_entry_and_its_index() {
+        let mut cache = SceneConnectionCache::new();
+        let kept = EdgeKey::new("hub", "a", "cross_link");
+        let taken = EdgeKey::new("hub", "b", "cross_link");
+        cache.insert(kept.clone(), mk_entry("#111"));
+        cache.insert(taken.clone(), mk_entry("#222"));
+
+        let _ = cache.reclaim_sample_buffer(&taken);
+
+        assert!(cache.inspect(&taken).is_none());
+        assert!(cache.edges_touching("b").is_empty());
+        assert_eq!(cache.edges_touching("hub"), std::slice::from_ref(&kept));
+        assert!(cache.inspect(&kept).is_some(), "the sibling edge is untouched");
+    }
+
+    /// Reclaiming an edge that was never cached is a plain empty
+    /// buffer, not a panic — the connection pass's first frame takes
+    /// this branch for every edge.
+    #[test]
+    fn reclaim_sample_buffer_on_an_unknown_key_is_an_empty_buffer() {
+        let mut cache = SceneConnectionCache::new();
+        let buffer = cache.reclaim_sample_buffer(&EdgeKey::new("x", "y", "cross_link"));
+        assert!(buffer.is_empty());
+        assert_eq!(cache.len(), 0);
+    }
+
+    /// `insert` hands back the entry it just stored, which is what
+    /// lets the slow path filter the samples out of the cache rather
+    /// than out of a second copy it kept.
+    #[test]
+    fn insert_returns_a_borrow_of_the_entry_it_stored() {
+        let mut cache = SceneConnectionCache::new();
+        let key = EdgeKey::new("a", "b", "cross_link");
+        let mut entry = mk_entry("#abc");
+        entry.pre_clip_positions = vec![Vec2::new(7.0, 8.0)];
+
+        let stored = cache.insert(key.clone(), entry);
+        assert_eq!(stored.color, "#abc");
+        assert_eq!(stored.pre_clip_positions, vec![Vec2::new(7.0, 8.0)]);
+        // And it really is the stored one, not a temporary.
+        assert_eq!(cache.inspect(&key).unwrap().color, "#abc");
     }
 
     /// `snapshot` reads the *effective* font size, so the

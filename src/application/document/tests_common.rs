@@ -327,7 +327,7 @@ pub(crate) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Ve
         4.0,
         baumhard::mindmap::connection::MAX_PATH_SAMPLES,
     );
-    let midpoint = samples[samples.len() / 2].position;
+    let midpoint = samples[samples.len() / 2];
     let edge_ref = super::EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
     (edge_ref, midpoint)
 }

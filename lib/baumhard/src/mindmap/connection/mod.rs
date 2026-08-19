@@ -5,9 +5,13 @@
 //!
 //! - `build_connection_path` turns an edge's anchors + control points
 //!   into a `ConnectionPath` (straight or cubic Bezier).
-//! - `sample_path` walks evenly-spaced points along a path —
-//!   the connection pass uses these to place per-glyph anchors along a
-//!   rendered connection.
+//! - `sample_path_into` walks evenly-spaced points along a path into
+//!   a buffer the caller owns — the connection pass uses these to
+//!   place per-glyph anchors along a rendered connection, and the
+//!   buffer it passes is the one the scene cache already holds for
+//!   that edge, so a resampling frame refills an allocation rather
+//!   than making one. `sample_path` is the allocating wrapper, for
+//!   callers with no buffer to reuse.
 //! - `distance_to_path` measures a point against a path;
 //!   `distance_to_path_within` is the tolerance-bounded form the edge
 //!   hit-test uses, which rejects a far-away path from its bounding
@@ -30,16 +34,8 @@ use crate::util::geometry::aabb_center;
 
 use self::bezier::{
     cubic_bezier_length, cubic_bezier_point, cubic_bezier_second_derivative, cubic_bezier_tangent,
-    plan_cubic_samples, sample_cubic_bezier,
+    extend_cubic_samples, plan_cubic_samples,
 };
-
-/// A single sampled point along a connection path, produced by
-/// [`sample_path`] in canvas-space coordinates. Plain data; no
-/// runtime cost beyond the `Vec2` copy.
-#[derive(Debug, Clone)]
-pub struct SampledPoint {
-    pub position: Vec2,
-}
 
 /// Geometric shape of a connection between two nodes, returned by
 /// [`build_connection_path`]. Either a straight segment (no control
@@ -361,25 +357,53 @@ pub fn path_length(path: &ConnectionPath) -> f32 {
     }
 }
 
-/// Samples points along a connection path at the given spacing.
+/// Append evenly-spaced canvas-space points along `path` to `out`,
+/// including the start point. The last point may be slightly before
+/// the path endpoint if the remaining distance is less than
+/// `spacing`. A non-positive `spacing` appends nothing.
 ///
-/// Returns evenly-spaced points including the start point. The last point
-/// may be slightly before the path endpoint if the remaining distance is
-/// less than `spacing`.
-pub fn sample_path(path: &ConnectionPath, spacing: f32, cap: usize) -> Vec<SampledPoint> {
+/// **`out` is not cleared.** A caller refilling a buffer clears it
+/// first; a caller concatenating several paths does not, and that is
+/// the reason the choice is the caller's rather than baked in here.
+///
+/// This is the shape the connection pass uses, because the buffer it
+/// fills is the one the scene cache already owns for that edge: a
+/// resampling frame reuses the allocation instead of making a new
+/// vector and copying into the cache. [`sample_path`] is the
+/// allocating convenience wrapper over it.
+///
+/// # Costs
+///
+/// One curve evaluation per point, plus — for a cubic — the
+/// `ARC_LENGTH_SUBDIVISIONS` evaluations of the arc-length table and
+/// one binary search of it per point. `out` is reserved once for the
+/// exact number of points about to be pushed, so an empty buffer
+/// takes one allocation and no growth sequence, and a buffer with
+/// room takes none.
+pub fn sample_path_into(path: &ConnectionPath, spacing: f32, cap: usize, out: &mut Vec<Vec2>) {
     if spacing <= 0.0 {
-        return Vec::new();
+        return;
     }
 
     match path {
-        ConnectionPath::Straight { start, end } => sample_straight(*start, *end, spacing, cap),
+        ConnectionPath::Straight { start, end } => extend_straight_samples(*start, *end, spacing, cap, out),
         ConnectionPath::CubicBezier {
             start,
             control1,
             control2,
             end,
-        } => sample_cubic_bezier(*start, *control1, *control2, *end, spacing, cap),
+        } => extend_cubic_samples(*start, *control1, *control2, *end, spacing, cap, out),
     }
+}
+
+/// [`sample_path_into`] into a freshly allocated vector, for callers
+/// with no buffer to reuse.
+///
+/// Cost: as [`sample_path_into`], plus the one allocation it makes.
+pub fn sample_path(path: &ConnectionPath, spacing: f32, cap: usize) -> Vec<Vec2> {
+    let mut out = Vec::new();
+    sample_path_into(path, spacing, cap, &mut out);
+    out
 }
 
 /// Hard ceiling on the number of glyph samples one connection path
@@ -396,7 +420,7 @@ pub fn sample_path(path: &ConnectionPath, spacing: f32, cap: usize) -> Vec<Sampl
 /// the second wall, so a future path that reaches the sampler
 /// without passing the loader still cannot ask for terabytes.
 ///
-/// **The `SampledPoint` vector is not what this bounds.** Each
+/// **The sample vector is not what this bounds.** Each
 /// sample becomes a repeat of the connection's body glyph
 /// downstream: an owned clone of that string, a grapheme walk over
 /// it, a `GlyphArea` in the arena, and a shaped cosmic-text buffer.
@@ -483,20 +507,19 @@ fn sample_count(total_length: f32, spacing: f32, cap: usize) -> usize {
     (count as usize).saturating_add(1).min(cap.max(1))
 }
 
-fn sample_straight(start: Vec2, end: Vec2, spacing: f32, cap: usize) -> Vec<SampledPoint> {
+fn extend_straight_samples(start: Vec2, end: Vec2, spacing: f32, cap: usize, out: &mut Vec<Vec2>) {
     let total_length = start.distance(end);
     if total_length < f32::EPSILON {
-        return vec![SampledPoint { position: start }];
+        out.push(start);
+        return;
     }
     let count = sample_count(total_length, spacing, cap);
-    let mut points = Vec::with_capacity(count);
+    out.reserve(count);
     for i in 0..count {
         let t = (i as f32 * spacing) / total_length;
         let t = t.min(1.0);
-        let position = start.lerp(end, t);
-        points.push(SampledPoint { position });
+        out.push(start.lerp(end, t));
     }
-    points
 }
 
 /// Returns the squared distance from `point` to the line segment `a`—`b`.

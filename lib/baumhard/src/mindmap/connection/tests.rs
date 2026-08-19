@@ -133,12 +133,12 @@ fn test_straight_sampling() {
     let points = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
     assert_eq!(points.len(), 11); // 0, 10, 20, ..., 100
                                   // First point at start
-    assert!((points[0].position.x - 0.0).abs() < 0.01);
+    assert!((points[0].x - 0.0).abs() < 0.01);
     // Last point at or near 100
-    assert!((points[10].position.x - 100.0).abs() < 0.01);
+    assert!((points[10].x - 100.0).abs() < 0.01);
     // All y should be 0
     for p in &points {
-        assert!((p.position.y).abs() < 0.01);
+        assert!((p.y).abs() < 0.01);
     }
 }
 
@@ -196,7 +196,7 @@ fn test_curved_bezier_sampling() {
     // Curved path is longer than 100, so should have more than 11 points
     assert!(points.len() > 11, "Expected >11 points, got {}", points.len());
     // First point near start
-    assert!(points[0].position.distance(Vec2::ZERO) < 1.0);
+    assert!(points[0].distance(Vec2::ZERO) < 1.0);
 }
 
 #[test]
@@ -218,6 +218,115 @@ fn test_sample_path_degenerate() {
     };
     let points = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
     assert_eq!(points.len(), 1);
+}
+
+/// `sample_path_into` appends. It does not clear, and the doc says
+/// so, because a caller refilling a buffer clears it and a caller
+/// concatenating paths must not.
+///
+/// Input that makes it fail: adding a `clear()` inside — the seeded
+/// point vanishes and the length drops to the sample count.
+#[test]
+fn test_sample_path_into_appends_to_what_the_caller_already_has() {
+    let path = ConnectionPath::Straight {
+        start: Vec2::new(0.0, 0.0),
+        end: Vec2::new(100.0, 0.0),
+    };
+    let fresh = sample_path(&path, 10.0, super::MAX_PATH_SAMPLES);
+    assert!(
+        fresh.len() > 5,
+        "precondition: this path samples to several points"
+    );
+
+    let seed = Vec2::new(-999.0, -999.0);
+    let mut out = vec![seed];
+    super::sample_path_into(&path, 10.0, super::MAX_PATH_SAMPLES, &mut out);
+    assert_eq!(out.len(), fresh.len() + 1, "the seeded point must survive");
+    assert_eq!(out[0], seed);
+    assert_eq!(
+        &out[1..],
+        &fresh[..],
+        "and the appended run must be the whole sequence"
+    );
+}
+
+/// Filling an empty buffer takes one allocation of exactly the right
+/// size, not a growth sequence.
+///
+/// The observable is slack: `Vec` grows by doubling, so pushing `n`
+/// points into an empty buffer without reserving first lands on the
+/// next power of two above `n`, while one exact reserve lands on `n`.
+/// Input that makes it fail: dropping the `reserve` inside
+/// `sample_path_into`'s two arms.
+#[test]
+fn test_sample_path_into_reserves_the_exact_count_rather_than_growing() {
+    let path = ConnectionPath::Straight {
+        start: Vec2::new(0.0, 0.0),
+        end: Vec2::new(1_000.0, 0.0),
+    };
+    let mut out: Vec<Vec2> = Vec::new();
+    super::sample_path_into(&path, 7.0, super::MAX_PATH_SAMPLES, &mut out);
+    assert!(
+        !out.len().is_power_of_two(),
+        "precondition: pick a count doubling would not land on anyway; got {}",
+        out.len()
+    );
+    assert_eq!(
+        out.capacity(),
+        out.len(),
+        "an exact reserve leaves no slack; a growth sequence from empty would not"
+    );
+}
+
+/// A refilled buffer produces the same points as a fresh one, and
+/// reuses its allocation to do it.
+///
+/// This is the contract the connection pass's resample path rests on:
+/// it clears the buffer the scene cache handed back and samples into
+/// it. Input that makes the first half fail: the pass forgetting the
+/// clear, which is the defect this pairing exists to catch.
+#[test]
+fn test_sample_path_into_refills_a_reused_buffer_without_reallocating() {
+    let path = ConnectionPath::CubicBezier {
+        start: Vec2::new(0.0, 0.0),
+        control1: Vec2::new(30.0, 80.0),
+        control2: Vec2::new(70.0, -80.0),
+        end: Vec2::new(100.0, 0.0),
+    };
+    let mut buffer: Vec<Vec2> = Vec::new();
+    super::sample_path_into(&path, 6.0, super::MAX_PATH_SAMPLES, &mut buffer);
+    let first = buffer.clone();
+    let capacity = buffer.capacity();
+    assert!(
+        first.len() > 5,
+        "precondition: this curve samples to several points"
+    );
+
+    buffer.clear();
+    super::sample_path_into(&path, 6.0, super::MAX_PATH_SAMPLES, &mut buffer);
+
+    assert_eq!(buffer, first, "a refill must reproduce the sequence exactly");
+    assert_eq!(
+        buffer.capacity(),
+        capacity,
+        "refilling a buffer that already has the room must not reallocate"
+    );
+}
+
+/// A non-positive spacing appends nothing and leaves what was there
+/// alone — the guard the pass leans on to detect "this edge produces
+/// no samples" by asking whether the buffer is still empty.
+#[test]
+fn test_sample_path_into_appends_nothing_for_a_non_positive_spacing() {
+    let path = ConnectionPath::Straight {
+        start: Vec2::new(0.0, 0.0),
+        end: Vec2::new(100.0, 0.0),
+    };
+    for spacing in [0.0f32, -1.0, -0.0] {
+        let mut out: Vec<Vec2> = Vec::new();
+        super::sample_path_into(&path, spacing, super::MAX_PATH_SAMPLES, &mut out);
+        assert!(out.is_empty(), "spacing {spacing} must append nothing");
+    }
 }
 
 #[test]
@@ -407,10 +516,10 @@ fn test_sample_path_monotonic_along_straight() {
     assert!(points.len() > 2);
     for pair in points.windows(2) {
         assert!(
-            pair[1].position.x >= pair[0].position.x - 1e-4,
+            pair[1].x >= pair[0].x - 1e-4,
             "samples not monotonic: {:?} -> {:?}",
-            pair[0].position,
-            pair[1].position
+            pair[0],
+            pair[1]
         );
     }
 }
@@ -433,7 +542,7 @@ fn test_sample_path_even_spacing_within_tolerance() {
     let n = points.len();
     assert!(n >= 3);
     for i in 0..(n - 2) {
-        let d = points[i + 1].position.distance(points[i].position);
+        let d = points[i + 1].distance(points[i]);
         assert!(
             (d - spacing).abs() < 0.01,
             "sample spacing {} at i={} deviates from {}",
@@ -486,7 +595,7 @@ fn test_sample_path_huge_spacing_returns_start_only() {
     };
     let points = sample_path(&path, 10_000.0, super::MAX_PATH_SAMPLES);
     assert_eq!(points.len(), 1);
-    assert_eq!(points[0].position, Vec2::new(0.0, 0.0));
+    assert_eq!(points[0], Vec2::new(0.0, 0.0));
 }
 
 /// Two calls to `sample_path` with the same inputs must produce
@@ -505,7 +614,7 @@ fn test_sample_path_deterministic_across_calls() {
     let b = sample_path(&path, 5.0, super::MAX_PATH_SAMPLES);
     assert_eq!(a.len(), b.len());
     for (pa, pb) in a.iter().zip(b.iter()) {
-        assert_eq!(pa.position, pb.position);
+        assert_eq!(pa, pb);
     }
 }
 
@@ -574,7 +683,7 @@ fn point_at_t_clamps_out_of_range() {
 
 // ── Bezier math (bezier.rs) ────────────────────────────────────────
 
-use super::bezier::{cubic_bezier_length, cubic_bezier_point, sample_cubic_bezier};
+use super::bezier::{cubic_bezier_length, cubic_bezier_point, extend_cubic_samples};
 use crate::util::geometry::almost_equal;
 
 #[test]
@@ -635,7 +744,8 @@ fn test_bezier_sample_produces_points() {
     let p3 = Vec2::new(100.0, 0.0);
     let spacing = 10.0;
 
-    let samples = sample_cubic_bezier(p0, p1, p2, p3, spacing, super::MAX_PATH_SAMPLES);
+    let mut samples: Vec<Vec2> = Vec::new();
+    extend_cubic_samples(p0, p1, p2, p3, spacing, super::MAX_PATH_SAMPLES, &mut samples);
     assert!(
         samples.len() > 5,
         "a 100-unit curve at spacing 10 should produce >5 samples; got {}",
@@ -643,17 +753,18 @@ fn test_bezier_sample_produces_points() {
     );
 
     // First sample should be at p0
-    assert!(almost_equal(samples[0].position.x, 0.0));
-    assert!(almost_equal(samples[0].position.y, 0.0));
+    assert!(almost_equal(samples[0].x, 0.0));
+    assert!(almost_equal(samples[0].y, 0.0));
 }
 
 #[test]
 fn test_bezier_sample_degenerate_returns_single_point() {
     // A zero-length curve (all points identical)
     let pt = Vec2::new(42.0, 42.0);
-    let samples = sample_cubic_bezier(pt, pt, pt, pt, 10.0, super::MAX_PATH_SAMPLES);
+    let mut samples: Vec<Vec2> = Vec::new();
+    extend_cubic_samples(pt, pt, pt, pt, 10.0, super::MAX_PATH_SAMPLES, &mut samples);
     assert_eq!(samples.len(), 1, "degenerate curve should produce single sample");
-    assert!(almost_equal(samples[0].position.x, 42.0));
+    assert!(almost_equal(samples[0].x, 42.0));
 }
 
 // ---- tangent / normal helpers ----
@@ -1472,7 +1583,7 @@ fn test_bezier_length_equals_the_arc_length_table_total() {
 /// same order, bit for bit.
 ///
 /// The reference is [`reference_cubic_samples`], the pre-change body.
-/// Comparing the *planned* walk against `sample_cubic_bezier` would
+/// Comparing the *planned* walk against `extend_cubic_samples` would
 /// prove nothing: the collector is now written in terms of the plan,
 /// so the two share every line that could be wrong. That mirror was
 /// the first draft of this test, and an off-by-one planted in
@@ -1482,7 +1593,7 @@ fn test_bezier_length_equals_the_arc_length_table_total() {
 /// connection pass still calls the collecting one.
 #[test]
 fn test_cubic_sampling_matches_the_pre_plan_reference() {
-    use super::bezier::{plan_cubic_samples, sample_cubic_bezier};
+    use super::bezier::{extend_cubic_samples, plan_cubic_samples};
 
     let mut compared = 0usize;
     for path in cubic_corpus() {
@@ -1497,7 +1608,16 @@ fn test_cubic_sampling_matches_the_pre_plan_reference() {
         };
         for spacing in [0.5f32, 4.0, 17.5, 1_000.0] {
             let expected = reference_cubic_samples(start, control1, control2, end, spacing, MAX_PATH_SAMPLES);
-            let collected = sample_cubic_bezier(start, control1, control2, end, spacing, MAX_PATH_SAMPLES);
+            let mut collected: Vec<Vec2> = Vec::new();
+            extend_cubic_samples(
+                start,
+                control1,
+                control2,
+                end,
+                spacing,
+                MAX_PATH_SAMPLES,
+                &mut collected,
+            );
             let planned = plan_cubic_samples(start, control1, control2, end, spacing, MAX_PATH_SAMPLES);
             assert_eq!(
                 collected.len(),
@@ -1511,7 +1631,7 @@ fn test_cubic_sampling_matches_the_pre_plan_reference() {
             );
             for (index, want) in expected.iter().enumerate() {
                 for (label, got) in [
-                    ("collected", collected[index].position),
+                    ("collected", collected[index]),
                     ("planned", planned.position(index)),
                 ] {
                     assert_eq!(
@@ -1559,11 +1679,11 @@ fn test_distance_to_path_matches_a_collected_sample_walk() {
             return f32::INFINITY;
         }
         if samples.len() == 1 {
-            return point.distance(samples[0].position);
+            return point.distance(samples[0]);
         }
         let mut min_sq = f32::INFINITY;
         for pair in samples.windows(2) {
-            let d = point_to_segment_distance_squared(point, pair[0].position, pair[1].position);
+            let d = point_to_segment_distance_squared(point, pair[0], pair[1]);
             if d < min_sq {
                 min_sq = d;
             }
@@ -1626,7 +1746,7 @@ fn test_path_bounds_contains_every_sampled_point() {
             ConnectionPath::CubicBezier { start, end, .. } => (start.min(end), start.max(end)),
         };
         for sample in sample_path(&path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES) {
-            let p = sample.position;
+            let p = sample;
             assert!(
                 contains_with_escape_slack(p, min, max),
                 "sample {p:?} escaped the control-point box {min:?}..{max:?} of {path:?} \
@@ -1747,7 +1867,7 @@ fn test_path_bounds_slack_covers_the_sampler_escape() {
         let (min, max) = path_bounds(&path);
         let magnitude = Vec2::new(min.x.abs().max(max.x.abs()), min.y.abs().max(max.y.abs()));
         for sample in sample_path(&path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES) {
-            let p = sample.position;
+            let p = sample;
             for (value, lo, hi, scale) in [(p.x, min.x, max.x, magnitude.x), (p.y, min.y, max.y, magnitude.y)]
             {
                 if let Some(ratio) = escape_ulps(value, lo, hi, scale) {
@@ -1892,15 +2012,15 @@ fn test_distance_to_path_within_agrees_with_the_unbounded_form() {
         // Family 3: real hits, and near-misses beside them.
         let samples = sample_path(&path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES);
         let step = (samples.len() / 8).max(1);
-        for sample in samples.iter().step_by(step).take(9) {
-            points.push(sample.position);
+        for &sample in samples.iter().step_by(step).take(9) {
+            points.push(sample);
             for nudge in [
                 Vec2::new(3.0, 0.0),
                 Vec2::new(-3.0, 0.0),
                 Vec2::new(0.0, 3.0),
                 Vec2::new(0.0, -7.5),
             ] {
-                points.push(sample.position + nudge);
+                points.push(sample + nudge);
             }
             on_path += 1;
         }
@@ -2097,8 +2217,8 @@ fn test_distance_to_path_within_rejects_a_point_outside_the_box() {
 /// The rewrites in this section remove work that no runtime
 /// assertion can observe, so the removal is pinned in the source
 /// text: the arc-length table is an array, the length path does not
-/// build a table at all, and the hit-test path does not collect its
-/// samples.
+/// build a table at all, the sampling file allocates no vector at
+/// all, and the hit-test path does not collect its samples.
 ///
 /// Each clause is scoped to one function body through
 /// `braced_block_after`, and each is paired with the assertion that
@@ -2106,16 +2226,24 @@ fn test_distance_to_path_within_rejects_a_point_outside_the_box() {
 /// file. Without that pairing a scan that resolved to the empty
 /// string would report all three as clean.
 ///
-/// **What it does not catch, stated where the gap is widest.** These
-/// are absence-of-token clauses over one body, so a one-line wrapper
-/// defeats them: a `fn collect_samples(path) -> Vec<SampledPoint>`
-/// calling `sample_path`, called from `distance_to_path`, leaves this
-/// test green and puts the vector back. That evasion has been
-/// demonstrated rather than assumed. The clause is a guard against
-/// the shape drifting back, not a proof that no allocation remains —
-/// and it is weaker here than in its `grapheme_chad` sibling, because
-/// two of these three clauses forbid a *call* rather than a
-/// construction, and a call is the easiest thing to rename.
+/// **What it does not catch, stated where the gap is widest.** The
+/// two body-scoped clauses are absence-of-token over one body, so a
+/// one-line wrapper defeats them: a
+/// `fn collect_samples(path) -> Vec<Vec2>` calling `sample_path`,
+/// called from `distance_to_path`, leaves this test green and puts
+/// the vector back. That evasion has been demonstrated rather than
+/// assumed. Those clauses are a guard against the shape drifting
+/// back, not a proof that no allocation remains — and they are weaker
+/// than their `grapheme_chad` sibling, because they forbid a *call*
+/// rather than a construction, and a call is the easiest thing to
+/// rename.
+///
+/// The file-scoped clause is the exception and the reason to read the
+/// three differently: a wrapper cannot help there, because the
+/// wrapper would have to live in the same file to be called from it,
+/// and the token it spells is the one being forbidden. It still says
+/// nothing about `Vec` values reaching this file from elsewhere —
+/// `sample_path_into`'s `out` parameter is exactly that, by design.
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_the_sampling_hot_paths_carry_no_collected_vector() {
@@ -2140,18 +2268,31 @@ fn test_the_sampling_hot_paths_carry_no_collected_vector() {
         block.to_string()
     };
 
-    // The table is an array. `Vec::` still occurs in this file — the
-    // collecting `sample_cubic_bezier` pre-sizes one — so the absence
-    // below is a property of the body, not of the file.
-    assert!(bezier.contains("Vec::"), "the scan must be able to see a `Vec::`");
-    let table = body(&bezier, "fn build_arc_length_table(");
+    // Nothing in this file allocates a vector at all: the arc-length
+    // table is an array, the length path keeps a running sum, and the
+    // sampler appends into a buffer its caller owns.
+    //
+    // This clause used to be scoped to `build_arc_length_table`'s body
+    // and paired with a `bezier.contains("Vec::")` guard proving the
+    // scan could see one somewhere — the collecting sampler owned it.
+    // That sampler is gone (#36 item 1b), so the claim is now the
+    // whole file, which is strictly stronger: the old form could not
+    // fail on a *different* body allocating, and this one does. The
+    // pairing it replaces is not lost, only moved: the token asserted
+    // present below is one this file must contain for any reason at
+    // all, so a `production_code` that returned nothing useful still
+    // fails rather than reading as clean.
     assert!(
-        !table.contains("Vec::") && !table.contains("vec!"),
-        "the arc-length table must not allocate: {table}"
+        bezier.contains("ArcLengthTable"),
+        "the scan must have read real declarations out of {BEZIER}"
+    );
+    assert!(
+        !bezier.contains("Vec::") && !bezier.contains("vec!"),
+        "no body in {BEZIER} may allocate a vector: {bezier}"
     );
 
     // The length path does not build the table. The name still
-    // occurs in the file, in the sampler that does build one.
+    // occurs in the file, in the sample planner that does build one.
     assert!(
         bezier.matches("build_arc_length_table").count() >= 2,
         "the scan must be able to see the table builder named elsewhere"

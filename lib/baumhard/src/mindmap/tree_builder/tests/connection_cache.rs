@@ -1000,6 +1000,176 @@ fn test_scene_build_still_works_on_real_map() {
     );
 }
 
+/// A resample refills the buffer the cache handed back rather than
+/// appending to it.
+///
+/// The slow path no longer allocates a sample vector: it reclaims the
+/// one this edge filled last frame, which arrives emptied but with
+/// its capacity. If the emptying were ever dropped, every resampling
+/// frame would render the edge with last frame's points still in
+/// front of this frame's — the glyphs would trail behind the drag and
+/// the count would grow without bound.
+///
+/// The expectation comes from a **cold cache**, which reaches the same
+/// slow path with an empty buffer. That is the whole difference
+/// between the two runs, so a disagreement can only be the reuse.
+#[test]
+fn test_a_resample_refills_the_reclaimed_buffer_rather_than_appending() {
+    let map = two_node_edge_map();
+    let mut offsets = HashMap::new();
+    offsets.insert("a".to_string(), (10.0, 0.0));
+
+    // Warm: build once with no offsets so the edge is cached, then
+    // move one endpoint so it must resample through the buffer the
+    // cache hands back.
+    let mut warm = SceneConnectionCache::new();
+    let _fill = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut warm,
+        1.0,
+    );
+    assert_eq!(warm.len(), 1, "precondition: the first build filled the cache");
+    let reused = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut warm,
+        1.0,
+    );
+
+    // Cold: the same resample with nothing to reclaim.
+    let mut cold = SceneConnectionCache::new();
+    let fresh = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cold,
+        1.0,
+    );
+
+    assert!(
+        !fresh.connection_elements[0].glyph_positions.is_empty(),
+        "precondition: the resampled edge draws something"
+    );
+    assert_eq!(
+        reused.connection_elements[0].glyph_positions, fresh.connection_elements[0].glyph_positions,
+        "a resample through a reclaimed buffer must produce what a cold one does"
+    );
+    assert_eq!(
+        warm.inspect(&EdgeKey::new("a", "b", "cross_link"))
+            .expect("warm entry")
+            .pre_clip_positions,
+        cold.inspect(&EdgeKey::new("a", "b", "cross_link"))
+            .expect("cold entry")
+            .pre_clip_positions,
+        "and the re-cached geometry must match too"
+    );
+}
+
+/// A resample refills the buffer *this edge's own cache entry* was
+/// holding, rather than allocating a new one.
+///
+/// The observable is spare capacity. Fill at a geometry that samples
+/// to N points, then resample at one that wants fewer: a reclaimed
+/// buffer keeps the capacity it already had, while a freshly
+/// allocated one is reserved to the smaller count exactly. So the
+/// warm run's entry ends up with slack and the cold run's does not,
+/// and the two numbers are what tell the paths apart.
+///
+/// This test exists because the correctness test above does **not**
+/// distinguish them — it was green with the reclamation replaced by
+/// `Vec::new()`, which is the right answer for correctness and the
+/// wrong one for the item. Without this, "the slow path reuses the
+/// buffer" would be a claim only the diff could support.
+#[test]
+fn test_a_resample_reuses_the_cached_edges_own_buffer() {
+    let map = two_node_edge_map();
+    // Move `a` most of the way to `b`, so the edge is much shorter and
+    // samples to far fewer points.
+    let mut offsets = HashMap::new();
+    offsets.insert("a".to_string(), (280.0, 0.0));
+    let key = EdgeKey::new("a", "b", "cross_link");
+
+    let mut warm = SceneConnectionCache::new();
+    let _fill = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut warm,
+        1.0,
+    );
+    let filled = warm.inspect(&key).expect("first build caches the edge");
+    let filled_len = filled.pre_clip_positions.len();
+    let filled_capacity = filled.pre_clip_positions.capacity();
+    assert!(
+        filled_len > 10,
+        "precondition: the long edge samples to many points"
+    );
+
+    let _reused = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut warm,
+        1.0,
+    );
+    let mut cold = SceneConnectionCache::new();
+    let _fresh = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cold,
+        1.0,
+    );
+
+    let warm_entry = warm.inspect(&key).expect("resample re-caches the edge");
+    let cold_entry = cold.inspect(&key).expect("cold build caches the edge");
+    assert!(
+        warm_entry.pre_clip_positions.len() < filled_len,
+        "precondition: the shortened edge must want fewer points ({} -> {}), or capacity \
+         cannot tell a reused buffer from a fresh one",
+        filled_len,
+        warm_entry.pre_clip_positions.len()
+    );
+    assert_eq!(
+        warm_entry.pre_clip_positions.len(),
+        cold_entry.pre_clip_positions.len(),
+        "precondition: both runs resample the same geometry"
+    );
+
+    assert_eq!(
+        warm_entry.pre_clip_positions.capacity(),
+        filled_capacity,
+        "the resample must have refilled the buffer the cache handed back, keeping its capacity"
+    );
+    assert!(
+        cold_entry.pre_clip_positions.capacity() < filled_capacity,
+        "and a build with nothing to reclaim reserves only what it needs: {} vs {}",
+        cold_entry.pre_clip_positions.capacity(),
+        filled_capacity
+    );
+}
+
 // --- #36 item 7: a cache entry must never outlive the config it was
 // --- sampled and styled under -----------------------------------------
 
