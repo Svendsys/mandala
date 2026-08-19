@@ -329,7 +329,7 @@ fn test_build_quadratic_promotion() {
 // Performance regression guards
 //
 // These tests do not assert wall-clock timings (flaky under CI load).
-// They assert the behavioural invariant the drag-frame sampler
+// They assert the behavioral invariant the drag-frame sampler
 // relies on: long paths must emit a sample count proportional to
 // `length / spacing`, not capped at the arc-length subdivision
 // table size. Breaking this reintroduces the long-connection drag
@@ -445,8 +445,8 @@ fn test_sample_path_even_spacing_within_tolerance() {
 }
 
 /// Negative spacing must not produce an infinite loop or a panic.
-/// Current behaviour: empty Vec (matches the existing zero-spacing
-/// behaviour). WASM crash guard.
+/// Current behavior: empty Vec (matches the existing zero-spacing
+/// behavior). WASM crash guard.
 #[test]
 fn test_sample_path_rejects_negative_spacing() {
     let path = ConnectionPath::Straight {
@@ -660,7 +660,7 @@ fn test_bezier_sample_degenerate_returns_single_point() {
 
 #[test]
 fn tangent_at_t_straight_path_returns_endpoint_direction() {
-    // For a straight path, the tangent is the normalised
+    // For a straight path, the tangent is the normalized
     // end-minus-start vector regardless of `t`.
     let path = ConnectionPath::Straight {
         start: Vec2::new(0.0, 0.0),
@@ -697,7 +697,7 @@ fn tangent_at_t_cubic_bezier_at_endpoints_uses_analytical_derivative() {
         control2: p2,
         end: p3,
     };
-    // t = 0: tangent ∝ (p1 - p0) = (10, 0) → normalised (1, 0).
+    // t = 0: tangent ∝ (p1 - p0) = (10, 0) → normalized (1, 0).
     let t0 = tangent_at_t(&path, 0.0);
     assert!(almost_equal(t0.x, 1.0));
     assert!(almost_equal(t0.y, 0.0));
@@ -726,7 +726,7 @@ fn normal_at_t_rotates_canvas_90_clockwise_into_screen_space() {
     // A tangent pointing +X in canvas space rotates to (-0, +1)
     // by the `(x, y) → (-y, x)` formula, i.e. +Y — which on a
     // Y-down canvas lands *below* the path (the right-hand side
-    // of travel in screen space). Pin the behaviour so a future
+    // of travel in screen space). Pin the behavior so a future
     // flip of the formula or a coordinate-system change breaks
     // this test instead of silently inverting label positioning.
     let path = ConnectionPath::Straight {

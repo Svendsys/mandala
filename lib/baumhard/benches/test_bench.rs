@@ -899,6 +899,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("glyph_ink_with_cold_key_under_held_guard", |b| {
         b.iter(do_glyph_ink_with_cold_key_under_held_guard)
     });
+    c.bench_function("glyph_advance_distinct_per_face", |b| {
+        b.iter(do_glyph_advance_distinct_per_face)
+    });
+    // Reads one module's source per iteration, the same shape as
+    // `every_hex_entry_point_is_downstream_of_the_one_parser` above:
+    // after the first iteration what moves is the parse and the
+    // brace walk, not the disk.
+    c.bench_function("the_metric_cache_probes_without_owning_the_cluster", |b| {
+        b.iter(do_the_metric_cache_probes_without_owning_the_cluster)
+    });
     // font / name rules //
     c.bench_function("decode_name_record_utf16_be_ascii", |b| {
         b.iter(do_decode_name_record_utf16_be_ascii)

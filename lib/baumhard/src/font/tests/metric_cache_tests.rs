@@ -287,3 +287,132 @@ fn test_glyph_advance_miss_under_held_guard_panics_not_hangs() {
         "panic must name the metric-cache site; got: {msg:?}"
     );
 }
+
+#[test]
+fn test_glyph_advance_distinct_per_face() {
+    do_glyph_advance_distinct_per_face();
+}
+
+/// The face pin is part of the cache key, and until this test
+/// nothing said so: every other body here measures with `face =
+/// None`, so a key that dropped its face component answered all of
+/// them from one entry and left them green.
+///
+/// The assertion is "at least two of these faces disagree" rather
+/// than "face A differs from face B", because which pair differs is
+/// a property of the shipped font files rather than of the cache.
+/// A key without its face component collapses the whole set to one
+/// value, which is the input that makes this fail.
+///
+/// One test rather than two: [`glyph_ink`] and [`glyph_advance`]
+/// build their keys through the same shared `probe` / `store` pair,
+/// so a face-dropping key would be in code both reach.
+pub fn do_glyph_advance_distinct_per_face() {
+    use crate::font::fonts::AppFont;
+    use std::collections::HashSet;
+
+    fonts::init();
+    // (33.5, "M") is warmed by no other test, so every call below
+    // shapes rather than reading a neighbor's entry.
+    const FACES: [AppFont; 5] = [
+        AppFont::PublicPixel,
+        AppFont::CarnivaleeFreakshow,
+        AppFont::XTypewriter,
+        AppFont::Norse,
+        AppFont::African,
+    ];
+    let widths: Vec<f32> = FACES.iter().map(|f| glyph_advance(Some(*f), 33.5, "M")).collect();
+    for (face, width) in FACES.iter().zip(&widths) {
+        assert!(
+            *width > 0.0,
+            "{face:?} should advance `M` by something, got {width}"
+        );
+    }
+    let distinct: HashSet<u32> = widths.iter().map(|w| w.to_bits()).collect();
+    assert!(
+        distinct.len() >= 2,
+        "five pinned faces produced one advance for `M` at 33.5pt ({widths:?}); \
+         a cache key without its face component answers every call from one entry"
+    );
+
+    // And the key still separates them on a second pass, which is
+    // the read path rather than the shape path.
+    let again: Vec<f32> = FACES.iter().map(|f| glyph_advance(Some(*f), 33.5, "M")).collect();
+    assert_eq!(
+        widths, again,
+        "cached reads must reproduce the shaped values per face"
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_the_metric_cache_probes_without_owning_the_cluster() {
+    do_the_metric_cache_probes_without_owning_the_cluster();
+}
+
+/// The point of the two-level key is invisible to every assertion
+/// above: a cache that allocates a `String` on each probe returns
+/// exactly the same numbers as one that does not. So the claim is
+/// pinned in the source text instead.
+///
+/// Each of the four probing entry points must reach the cache
+/// through `probe`, which takes the cluster as `&str`, and must not
+/// spell `to_string()` at all. The public `glyph_advance` wrapper
+/// forwards its `&str` and must not spell it either.
+///
+/// **The control is the other half of the same scan**: `store` — the
+/// one place an owned key is built — must still contain
+/// `to_string()`. Without that clause a scan that resolved to the
+/// empty string would report every body clean.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn do_the_metric_cache_probes_without_owning_the_cluster() {
+    use crate::util::rust_source::{braced_block_after, production_code};
+
+    const FILE: &str = "lib/baumhard/src/font/metric_cache.rs";
+    let code = production_code(FILE);
+    assert!(
+        code.len() > 2_000,
+        "{FILE} must have read as real production code; got {} bytes",
+        code.len()
+    );
+
+    let body = |header: &str| -> &str {
+        let block = braced_block_after(&code, header)
+            .unwrap_or_else(|| panic!("`{header}` must still be declared with a body"));
+        assert!(block.len() > 40, "`{header}` resolved to an empty-looking body");
+        block
+    };
+
+    // The one owning site, asserted first: it is what makes the
+    // absences below a property of those bodies rather than of the
+    // scan.
+    let store = body("fn store<V>(");
+    assert!(
+        store.contains("to_string()"),
+        "`store` is the single place an owned cluster key is built; it must still build one: {store}"
+    );
+
+    const PROBING: [&str; 4] = [
+        "fn glyph_advance_with_timeout(",
+        "pub fn glyph_advance_with(",
+        "pub fn glyph_ink(",
+        "pub fn glyph_ink_with(",
+    ];
+    for header in PROBING {
+        let block = body(header);
+        assert!(
+            block.contains("probe("),
+            "`{header}` must reach the cache through the borrowing `probe`: {block}"
+        );
+        assert!(
+            !block.contains("to_string()"),
+            "`{header}` must not build an owned cluster key to look one up: {block}"
+        );
+    }
+
+    let wrapper = body("pub fn glyph_advance(");
+    assert!(
+        !wrapper.contains("to_string()"),
+        "`glyph_advance` forwards a `&str` and must not own it: {wrapper}"
+    );
+}
