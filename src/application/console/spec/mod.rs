@@ -440,12 +440,19 @@ impl Subverb {
     /// keys *this* line may carry. See [`Form::admits_prefix`].
     ///
     /// An empty `committed` is the union — every key the subverb
-    /// reads in *some* shape — because [`Form::admits_prefix`] is
-    /// unconditionally true against it: `0 <= slots.len()`, and the
-    /// `all` runs over a zip with an empty slice. Ask for the union
-    /// that way rather than by a second method; there used to be
-    /// one, and it computed the same list under a name that made it
-    /// look like the other half of a pair.
+    /// reads in *some* shape — and both halves of [`eligible_forms`]
+    /// have to say so for that to hold. The filter does:
+    /// [`Form::admits_prefix`] is unconditionally true against an
+    /// empty prefix — `0 <= slots.len()`, and the `all` runs over a
+    /// zip with an empty slice — so nothing is narrowed away. The
+    /// `narrowed.is_empty()` fallback beneath it does too, and only
+    /// reachably in one case: an empty prefix can leave `narrowed`
+    /// empty only when `forms` was empty to begin with ([`NO_FORMS`]),
+    /// where the fallback hands back the very slice the filter just
+    /// produced. Ask for the union that way rather than by a second
+    /// method; there used to be one, and it computed the same list
+    /// under a name that made it look like the other half of a
+    /// pair.
     pub fn readable_keys_for(&self, committed: &[&str]) -> Vec<&'static str> {
         dedup_names(&eligible_forms(self.forms, committed))
     }

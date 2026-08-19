@@ -124,17 +124,21 @@
 //! Both are pinned **absolutely**, by
 //! `test_the_draw_streams_come_out_in_walk_order` and
 //! `test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings`,
-//! and the reason they have to be is worth stating rather than
-//! rediscovering. The natural assertion for a reuse cache is that a
-//! partial pass produces what a full one does —
+//! and the reason they have to be — rather than the comparison a
+//! reuse cache invites — is worth stating instead of rediscovering.
+//! That comparison is "a partial pass produces what a full one
+//! does", and
 //! `test_canvas_partial_reshape_matches_a_full_one_stream_for_stream`
-//! is that assertion, and it catches a per-entry difference the
-//! in-place path introduces. What it cannot catch is a reordering
-//! these two functions apply *uniformly*, because it reads both of
-//! its sides through them: reverse either one and that test, and
-//! every other test of this module, stays green. A comparison
-//! between two runs of the same reader can only see what the reader
-//! is not doing to both.
+//! makes it; it catches a per-entry difference the in-place path
+//! introduces. What it cannot catch is a reordering these two
+//! functions apply *uniformly*, because it reads both of its sides
+//! through them — a comparison between two runs of one reader can
+//! only see what the reader is not doing to both. Before the two
+//! absolute assertions existed, reversing either function left that
+//! test and every other test in the workspace green; they are what
+//! closed that, and the boundary is recorded here because it is a
+//! property of the comparison's *shape* and will hold again for the
+//! next assertion built that way.
 //!
 //! The reuse rule is pinned by
 //! `test_scene_shape_cache_invalidates_on_every_writable_area_field`

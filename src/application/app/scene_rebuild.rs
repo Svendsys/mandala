@@ -1988,10 +1988,28 @@ mod canvas_pass_granularity {
             CanvasRole::SectionResizeHandles,
         ];
         let per_role = walked_per_role(&app_scene, &untouched_roles);
+        // Identity, not cardinality, and identity *alone*: a length
+        // check would let the literal swap one role for another and
+        // go on describing a set the pass below does not walk, while
+        // a dedup check next to this one could never fire on its own
+        // — seven slots holding a repeat is seven slots missing a
+        // role, which is a set difference this assertion already
+        // sees.
         assert_eq!(
-            per_role.len(),
-            other_ids.len(),
-            "the named roles must be exactly the ones the label role is not"
+            untouched_roles
+                .iter()
+                .map(|role| {
+                    app_scene
+                        .canvas_id(*role)
+                        .expect("every canvas role is registered by update_all")
+                })
+                .collect::<std::collections::HashSet<_>>(),
+            other_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>(),
+            "the roles named above must be exactly the ones the label role is not, so the \
+             per-role counts describe the set the pass below walks: {untouched_roles:?}"
         );
         assert!(
             per_role.iter().filter(|(_, walked)| *walked > 1).count() >= 2,
@@ -2160,8 +2178,8 @@ mod canvas_pass_granularity {
         );
         assert!(
             moved.reshaped > 0,
-            "re-projecting connections, labels and portals at a different zoom must move \
-             something, or this test is measuring a camera that stood still"
+            "re-projecting {moved_roles:?} at a different zoom must move something, or this \
+             test is measuring a camera that stood still"
         );
 
         let after = refresh(app_scene.canvas_scene(), &ids, &mut shaped, ScenePassKind::Canvas);
