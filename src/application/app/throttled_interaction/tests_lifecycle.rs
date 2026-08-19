@@ -104,7 +104,7 @@ impl World {
     /// indistinguishable from "was empty anyway".
     fn seed_cache(&mut self) {
         self.scene_cache
-            .insert(EdgeKey::new("seed", "seed", "parent_child"), seed_connection());
+            .insert(&EdgeKey::new("seed", "seed", "parent_child"), seed_connection());
     }
 }
 
@@ -167,6 +167,7 @@ fn seed_connection() -> CachedConnection {
         color: "#ffffff".to_string(),
         base_from: Vec2::ZERO,
         base_to: Vec2::ZERO,
+        last_seen: 0,
     }
 }
 

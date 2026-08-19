@@ -38,9 +38,12 @@
 //! this header used to name the glyph config among them.
 //!
 //! Cache lifecycle: `ensure_zoom` is caller-managed (the caller
-//! flushes on zoom change before any pass starts); `retain_keys`
-//! runs here at the end of the loop so eviction of deleted edges
-//! stays colocated with the keys-seen bookkeeping.
+//! flushes on zoom change before any pass starts). The liveness
+//! generation is not: `begin_pass` opens it here and `evict_unseen`
+//! closes it at the end of the loop, so eviction of deleted edges
+//! stays where the touching happens. The pass keeps no record of
+//! which edges it saw — reaching an entry through either reuse door,
+//! or writing one through `insert`, is what marks it.
 //!
 //! Selected-edge handle emission rides along in the same loop:
 //! single-edge selection means at most one handle batch per
@@ -183,8 +186,9 @@ fn emit_connection_element(
 
 /// Emit connection elements + edge-handle elements. Consumes
 /// `node_aabbs` from [`super::node_clip_aabbs`] for the clip filter;
-/// mutates `cache` on slow-path edges and after the loop
-/// (`retain_keys` evicts deleted edges).
+/// mutates `cache` on every edge it reaches — reuse marks liveness —
+/// and after the loop, where `evict_unseen` drops the edges the model
+/// lost since the previous build.
 ///
 /// `paths` is this frame's shared [`EdgePathCache`]; both the
 /// selected edge's handles and the slow path read the same entry
@@ -228,13 +232,21 @@ pub fn build_connection_elements(
     // the result cannot depend on iteration order and no edge renders
     // while a later one vanishes. See `MAX_TOTAL_PATH_SAMPLES`.
     let per_path_samples = connection::per_path_sample_budget(map.edges.len());
-    let mut connection_elements = Vec::new();
+    // One slot per edge is the ceiling — portal, hidden and dangling
+    // edges emit nothing — so this over-reserves on a map that is
+    // mostly portals and never grows on any other.
+    let mut connection_elements = Vec::with_capacity(map.edges.len());
     // Grab-handles for the currently selected edge. Populated at most
-    // once per scene build (selection is single-edge); empty otherwise.
+    // once per scene build (selection is single-edge); empty
+    // otherwise, which is why this one is *not* pre-sized: reserving
+    // for a selection that is usually absent would allocate on every
+    // frame to hold nothing.
     let mut edge_handles: Vec<EdgeHandleElement> = Vec::new();
-    // Keys seen this frame — used after the loop to evict stale cache
-    // entries for edges that were removed from the model between builds.
-    let mut seen_keys: HashSet<EdgeKey> = HashSet::with_capacity(map.edges.len());
+    // Open the liveness generation. Every entry this pass hands out or
+    // writes is stamped with it, and `evict_unseen` below drops
+    // whatever still carries an older one — the edges the model lost
+    // between builds. Nothing here has to keep a set of what it saw.
+    cache.begin_pass();
 
     for (edge_index, edge) in map.edges.iter().enumerate() {
         if !edge.visible {
@@ -260,7 +272,6 @@ pub fn build_connection_elements(
         }
 
         let edge_key = EdgeKey::from_edge(edge);
-        seen_keys.insert(edge_key.clone());
 
         // Resolve glyph config: edge override > canvas default > hardcoded default
         let config = edge
@@ -476,13 +487,14 @@ pub fn build_connection_elements(
         // are stored once and filtered from where they are stored,
         // rather than cloned so that one copy can be each.
         let entry = cache.insert(
-            edge_key.clone(),
+            &edge_key,
             CachedConnection {
                 pre_clip_positions,
                 sample_params: want,
                 color: stored_color,
                 base_from: from_pos,
                 base_to: to_pos,
+                last_seen: 0,
             },
         );
 
@@ -501,7 +513,7 @@ pub fn build_connection_elements(
 
     // Evict any cache entries for edges that were in the cache but NOT in
     // the map this frame — handles edges that were deleted between builds.
-    cache.retain_keys(&seen_keys);
+    cache.evict_unseen();
 
     (connection_elements, edge_handles)
 }

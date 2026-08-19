@@ -874,7 +874,7 @@ mod tests {
         // Seed one entry so a `clear()` is visible as `0` rather than
         // being indistinguishable from "was empty anyway".
         scene_cache.insert(
-            edge_key.clone(),
+            &edge_key,
             CachedConnection {
                 pre_clip_positions: Vec::new(),
                 sample_params: SampleParams {
@@ -885,6 +885,7 @@ mod tests {
                 color: "#ffffff".to_string(),
                 base_from: glam::Vec2::ZERO,
                 base_to: glam::Vec2::ZERO,
+                last_seen: 0,
             },
         );
         let original = crate::application::document::defaults::default_parent_child_edge("a", "b");

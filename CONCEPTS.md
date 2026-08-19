@@ -1743,6 +1743,12 @@ moved in the model without appearing in the drag `offsets` map, an
 anchor or control-point edit, a node resize, and a theme-variable
 edit.
 
+Liveness is a generation stamp rather than a per-frame set of keys:
+`begin_pass` opens a pass, every route that hands out or writes an
+entry stamps it, and `evict_unseen` drops what still carries an older
+stamp. Reaching an entry *is* marking it, so a route cannot draw an
+edge and then forget to record that it saw one.
+
 ### Edge path cache
 
 A per-frame memo of `ConnectionPath`s, keyed by index into

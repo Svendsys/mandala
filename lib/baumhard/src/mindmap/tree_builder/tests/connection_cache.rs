@@ -74,6 +74,7 @@ fn sentinel_entry(
         color: color.into(),
         base_from: Vec2::ZERO,
         base_to: Vec2::ZERO,
+        last_seen: 0,
     }
 }
 
@@ -142,10 +143,7 @@ fn test_cache_hit_preserves_sample_identity() {
     // Replace with an entry whose single sample is somewhere the
     // sampler would never place one. If the cache is used, that point
     // is what the second build draws.
-    cache.insert(
-        key.clone(),
-        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"),
-    );
+    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"));
 
     let second = project_with_cache(
         &map,
@@ -189,10 +187,7 @@ fn test_cache_invalidated_on_endpoint_offset() {
     );
 
     let key = EdgeKey::new("a", "b", "cross_link");
-    cache.insert(
-        key.clone(),
-        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"),
-    );
+    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"));
 
     // Only `a` moves, so the deltas differ and the translate path
     // cannot take this edge either — the slow path is the only route
@@ -274,10 +269,7 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
     };
     let ab_left_before = leftmost(&first, &ab_key);
 
-    cache.insert(
-        cd_key.clone(),
-        sentinel_entry(&map, 1, 1.0, SENTINEL_POINT, "#00ff00"),
-    );
+    cache.insert(&cd_key, sentinel_entry(&map, 1, 1.0, SENTINEL_POINT, "#00ff00"));
 
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (5.0, 0.0));
@@ -560,10 +552,7 @@ fn test_cache_selection_change_does_not_invalidate() {
 
     // Inject sentinel geometry into the cache so we can detect
     // whether the cache path was taken on the second build.
-    cache.insert(
-        key.clone(),
-        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, &stored_color),
-    );
+    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, &stored_color));
 
     let second = project_with_cache(
         &map,
@@ -635,10 +624,7 @@ fn test_cache_fast_path_serves_stale_when_model_moved_without_offsets() {
     // whether the next build read through the cache (sentinel) or
     // re-sampled (non-sentinel).
     let key = EdgeKey::new("a", "b", "cross_link");
-    cache.insert(
-        key.clone(),
-        sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"),
-    );
+    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"));
 
     // Simulate release: `apply_move_multiple` commits the full
     // `total_delta = drain_offset + pending_delta` to the model,
@@ -730,13 +716,14 @@ fn test_translate_path_reuses_cache_on_shared_delta_subtree_drag() {
     // Position choice: (200, 200) + (15, 7) = (215, 207) is between
     // the nodes on X and well below them on Y — clears both AABBs.
     cache.insert(
-        key.clone(),
+        &key,
         CachedConnection {
             pre_clip_positions: vec![Vec2::new(200.0, 200.0); sample_count],
             sample_params: real.sample_params,
             color: "#abcdef".into(),
             base_from: real.base_from,
             base_to: real.base_to,
+            last_seen: 0,
         },
     );
 
@@ -806,13 +793,14 @@ fn test_translate_path_falls_through_on_mismatched_deltas() {
     let key = EdgeKey::new("a", "b", "cross_link");
     let real = cache.inspect(&key).unwrap().clone();
     cache.insert(
-        key.clone(),
+        &key,
         CachedConnection {
             pre_clip_positions: vec![SENTINEL_POINT; real.pre_clip_positions.len()],
             sample_params: real.sample_params,
             color: "#deadbe".into(),
             base_from: real.base_from,
             base_to: real.base_to,
+            last_seen: 0,
         },
     );
 
@@ -870,13 +858,14 @@ fn test_translate_path_falls_through_on_a_sampling_config_change() {
     let mut stale_params = real.sample_params;
     stale_params.font_size_pt *= 2.0;
     cache.insert(
-        key.clone(),
+        &key,
         CachedConnection {
             pre_clip_positions: vec![SENTINEL_POINT; real.pre_clip_positions.len()],
             sample_params: stale_params,
             color: real.color.clone(),
             base_from: real.base_from,
             base_to: real.base_to,
+            last_seen: 0,
         },
     );
 
@@ -1074,6 +1063,117 @@ fn test_a_resample_refills_the_reclaimed_buffer_rather_than_appending() {
             .expect("cold entry")
             .pre_clip_positions,
         "and the re-cached geometry must match too"
+    );
+}
+
+/// Every route an edge can take out of the connection pass marks it
+/// seen, so the eviction at the end of that same pass keeps it.
+///
+/// The pass's liveness bookkeeping is a generation stamp rather than
+/// a set of keys built per frame, and the failure mode of a stamp is
+/// a route that forgets to apply it: that edge is written or reused,
+/// drawn, and then evicted at the bottom of the very build that drew
+/// it — so the next frame resamples it, forever, and the cache holds
+/// nothing.
+///
+/// Input that makes it fail: dropping the stamp from `insert` (route
+/// 1), from `reusable` (route 2) or from `reusable_mut` (route 3).
+/// Each is one line, and each fails exactly one assertion below.
+#[test]
+fn test_every_route_out_of_the_connection_pass_keeps_its_edge_cached() {
+    let map = two_node_edge_map();
+    let key = EdgeKey::new("a", "b", "cross_link");
+    let mut cache = SceneConnectionCache::new();
+
+    // Route 1 — slow path: nothing cached, so this samples and writes.
+    let _fresh = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert!(
+        cache.inspect(&key).is_some(),
+        "slow path: the edge it just sampled must survive the same pass's eviction"
+    );
+
+    // Route 2 — fast path: cache warm, no offsets.
+    let _hit = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert!(
+        cache.inspect(&key).is_some(),
+        "cache-hit fast path: reusing an entry must count as touching it"
+    );
+
+    // Route 3 — translate path: both endpoints move by one delta.
+    let mut offsets = HashMap::new();
+    offsets.insert("a".to_string(), (0.0, 12.0));
+    offsets.insert("b".to_string(), (0.0, 12.0));
+    let _translated = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert!(
+        cache.inspect(&key).is_some(),
+        "translate path: shifting an entry in place must count as touching it"
+    );
+}
+
+/// The element vector is reserved for the edge list rather than grown
+/// from empty.
+///
+/// The observable is spare capacity on a map where most edges emit
+/// nothing: portal-mode edges render in the portal pass, so eleven of
+/// these twelve produce no `ConnectionElement` at all. A reserved
+/// vector ends the pass with room for twelve; one grown from empty
+/// ends it at `Vec`'s first non-zero capacity, which for an element
+/// this size is four.
+#[test]
+fn test_the_element_vector_is_reserved_for_the_edge_list() {
+    use crate::mindmap::test_helpers::synthetic_portal_edge;
+
+    let mut nodes = vec![
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 400.0, 0.0, 40.0, 40.0, false),
+    ];
+    let mut edges = vec![synthetic_edge("a", "b", "right", "left")];
+    for i in 0..11 {
+        let id = format!("p{i}");
+        nodes.push(sized_node(&id, 0.0, 600.0 + i as f64 * 60.0, 40.0, 40.0, false));
+        edges.push(synthetic_portal_edge("a", &id, "#ffffff"));
+    }
+    let edge_count = edges.len();
+    let map = synthetic_map(nodes, edges);
+
+    let scene = project(&map, 1.0);
+    assert_eq!(
+        scene.connection_elements.len(),
+        1,
+        "precondition: only the one line edge emits, or capacity says nothing"
+    );
+    assert!(
+        scene.connection_elements.capacity() >= edge_count,
+        "the pass must reserve for the edge list: capacity {} for {} edges",
+        scene.connection_elements.capacity(),
+        edge_count
     );
 }
 
