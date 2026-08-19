@@ -300,7 +300,7 @@ pub(in crate::application) fn pinned_two_section_node() -> (MindMapDocument, Str
 
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
 /// on-path sample point. Used by hit-test edge tests.
-pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {
+pub(crate) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {
     let edge = doc
         .mindmap
         .edges

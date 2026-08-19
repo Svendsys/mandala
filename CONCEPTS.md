@@ -1959,8 +1959,14 @@ operates on).
 
 Defined in
 `lib/baumhard/src/mindmap/custom_mutation`. Today the variant is
-chosen at compile time (`Desktop` on native, `Web` on WASM); the
-`Touch` variant exists but no input path dispatches on it yet.
+chosen at compile time (`Desktop` on native, `Web` on WASM,
+through `app::PLATFORM_CONTEXT`); the `Touch` variant exists but
+no input path dispatches on it yet — including the tap path,
+which reports the build's platform like every other input.
+Relabeling a gesture would silently stop every `["Web"]`-gated
+trigger from firing under a finger in the browser, so which
+platform a build *is* stays a build fact until the authoring
+format decides otherwise (`format/mutations.md`).
 Embedded in `MutationApplicabilityGate.contexts:
 Vec<PlatformContext>` so a mutation can declare which platforms
 it applies to.
@@ -2317,8 +2323,9 @@ the user is *doing right now*.
   target (a `ResizeTarget::Node(id)` or
   `ResizeTarget::Section { node_id, section_idx }`). Drag a
   handle to resize; Esc returns to `Default`. Triggered by `r`
-  keybind on a selectable AABB or by `mode resize`. Touch peer
-  shipped in Batch 7: `LongPress`.
+  keybind on a selectable AABB or by `mode resize`. Touch peer:
+  `LongPress` — deliberately native-only, see
+  `TouchGestureRecognizer` below.
 - `NodeEdit { node_id }` — chrome dims sibling nodes and frames
   the active node's sections in cyan. Click a section to lift
   it into a `Section` selection; Enter (or `section edit`)
@@ -2332,10 +2339,13 @@ platform (compiles + the field plumbs through `InitState` /
 (`EnterResizeMode`, `EnterNodeEdit{,Clean}`, `EnterSectionEdit`,
 `FastResizeStart`) are NativeOnly today because they depend on
 the cursor-driven modal-stealer + DragState machinery that's
-native-gated — the `LongPress` / `TwoFingerDrag` touch defaults
-shipped in Batch 7 dispatch the same NativeOnly Actions and
-therefore drop silently on WASM, an acknowledged limitation
-(see `SECTIONS_BORDERS_RESIZE_PLAN.md` "Open follow-ups").
+native-gated — the `LongPress` touch default dispatches the same
+NativeOnly `EnterResizeMode` and so reports `Unhandled` on WASM,
+where a one-shot warn names it rather than the gesture vanishing.
+That one is a deliberate posture, not a pending port; the rest of
+the touch vocabulary (tap, one-finger pan, pinch) reaches no
+`Action` at all and works on both targets. See
+`TouchGestureRecognizer` below.
 Modal-stealer cascades route keystrokes per active mode (the
 keybind resolver keys on `(InputContext, key)` and the modal
 stealer can intercept e.g. Esc before normal dispatch).
@@ -2534,6 +2544,92 @@ rather than a guard: the variant would have to carry its origin,
 and a keyboard-armed pan has no button to name, so "momentary or
 modal" has to be answered first.
 
+### `TouchGestureRecognizer`
+
+The touch half of the pointer vocabulary, and `DragState`'s
+peer rather than its consumer: a plain-value state machine
+that turns raw `(phase, finger_id, position, now)` tuples into
+a typed `RecognizedGesture`.
+
+A finger is not a mouse, and winit's mouse synthesis
+does not cover a hold, a second finger, or a drag that never
+pressed a button. Without a recognizer the browser — the
+surface `run_wasm/mod.rs` calls the *primary* one this
+project targets — has no input path at all on a phone.
+`Idle ↔ OneFinger ↔ TwoFingers` with four emit points:
+
+- **`Tap`** on the lift of a finger that never left
+  `POINTER_DRAG_THRESHOLD_PX` and was down for less than
+  `LONG_PRESS_MS`.
+- **`LongPress`** from `tick(now)` — "held for 350 ms" is a
+  wall-clock transition, not an event — once per episode.
+- **`Pan { pos, delta }`** on every `Moved` from the threshold
+  crossing onward. The first emission carries the travel since
+  the finger *landed*, so summing an episode's deltas gives
+  the finger's net displacement and the threshold's slop is not
+  lost.
+- **`PinchStep { center, pan, scale }`** while two fingers are
+  down, whenever their midpoint or their separation has moved
+  past the threshold since the last emission. Both halves ride
+  every emission, because two fingers moving describe a
+  translation and a scale at once; a parallel two-finger drag
+  therefore reports steps whose `scale` multiplies to 1.0, and
+  a symmetric spread steps whose `pan` sums to zero.
+
+**No clock is read and no I/O happens inside it** — time is a
+parameter — which is what makes every rule above provable on a
+machine with no touchscreen (`TEST_CONVENTIONS §T9`). What
+cannot be proved that way is the layer below: that a real
+digitizer delivers the phases in the order the machine assumes.
+
+**Two routes out, and the split is the point.** `LongPress`
+resolves through `MouseGesture::LongPress` and the keybind
+table, exactly as a mouse gesture does — it is the only touch
+gesture that reaches the table. The other three carry no
+`Action` at all: they take the two carve-outs CODE_CONVENTIONS
+§3 already grants the mouse, the pre-funnel selection
+bookkeeping a single click runs and the per-frame camera delta
+a drag runs, through one cross-platform
+`dispatch::apply_touch_effect`. That is why tap, pan and pinch
+cannot be dead on one target: an `Action` can be `NativeOnly`,
+and a `RenderDecree` cannot.
+
+`Action::PanCanvas` is *not* on that path and could not have
+been. It does not move the camera — it arms `DragState::Panning`
+(`dispatch::native`'s `route_pan_canvas`), which is native-only,
+so dispatching it from the browser returns `Unhandled` and warns.
+
+`src/application/app/touch_gesture.rs` for the machine;
+`dispatch/cross_dispatch/pointer.rs` for `drive_touch_event`
+(recognize → route) and `apply_touch_effect` (run). Both
+runtimes call both: `run_native.rs::dispatch_touch_event` and
+`run_wasm/event_touch.rs`.
+
+**What is native-only, and what that costs.** `LongPress`
+ships bound to `EnterResizeMode`, which is `NativeOnly`, so on
+the browser it dispatches, returns `Unhandled` and fires a
+one-shot warn naming the remedy. That is deliberate rather than
+pending: long-press is the touch peer of the keyboard's `r`,
+and rebinding the browser's long-press to some unrelated
+Compatible Action would make one gesture mean two different
+things on two targets — a worse §4 outcome than a gesture that
+is honestly unavailable and says so. Its parity rides on
+`InteractionMode::Resize`'s chrome and handle-drag reaching the
+browser. `TwoFingerDrag` used to sit beside it, bound to
+`FastResizeStart` and equally dead there; two fingers now drive
+the camera instead, and the variant is gone rather than
+default-unbound, because a binding firing on the same event as
+the camera step would be a conflict rather than a choice.
+
+Two consequences of that deletion, neither fixed: a user whose
+only pointer is a touchscreen loses `FastResizeStart` (it ships
+bound to `Ctrl+RightDrag` alone, which needs a mouse), and an
+existing `keybinds.json` naming `"TwoFingerDrag"` is silently
+accepted and never matches, because `KeyBind::parse` takes any
+non-modifier word and cannot tell a retired gesture name from an
+ordinary key. `test_two_finger_drag_is_not_a_bindable_gesture`
+carries the reasoning.
+
 ### `ThrottledInteraction` and `ThrottledDrag`
 
 A trait pair + seven-variant enum providing one uniform
@@ -2619,9 +2715,15 @@ in the crate: `event_cursor_moved`'s accumulate arm,
 `event_mouse_click`'s left-release arm and its right-release arm
 are each a single call through them.
 
-Touch gestures are the next obvious user — pinch
-zoom, two-finger pan, long-press selection — each a new
-`ThrottledDrag` variant with the same shape.
+Touch does **not** ride this ladder. Pinch-zoom, one-finger pan
+and tap-select ship as `TouchGestureRecognizer` emissions that
+reach the camera and the selection directly, because the
+recognizer already is the state machine `ThrottledDrag` would
+have supplied and the camera work is `CODE_CONVENTIONS §3`'s
+continuous-gesture carve-out. What would earn a variant here is
+a touch gesture that *mutates the document* per frame — dragging
+a node with a finger — and that wants the browser to have a
+drag-state machine first.
 
 ### `MutationFrequencyThrottle` (and `frame_throttle`)
 

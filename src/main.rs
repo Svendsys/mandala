@@ -225,6 +225,73 @@ mod tests {
         );
     }
 
+    /// The browser canvas declares `touch-action: none`, which is a
+    /// prerequisite of the touch vocabulary rather than a style.
+    ///
+    /// Without it the user agent claims a touch sequence for its own
+    /// scrolling and pinch-zooming before the app sees it — it fires
+    /// `pointercancel` and winit stops delivering
+    /// `WindowEvent::Touch` — so `TouchGestureRecognizer` never
+    /// receives the one-finger pan or the pinch it exists to
+    /// recognize. Nothing else supplies the declaration: neither
+    /// this repository nor winit 0.30's web backend sets
+    /// `touch-action` anywhere, which the second assertion below
+    /// keeps true of the repository half.
+    ///
+    /// **This is checkable and nothing else checks it.** No Rust
+    /// type mentions it, `cargo doc` cannot see it, and every
+    /// recognizer test passes without it because none of them go
+    /// through a browser. Deleting the declaration would leave the
+    /// whole suite green and the browser feature dead, which is why
+    /// the rule is pinned here rather than trusted to the comment
+    /// beside it.
+    ///
+    /// Fails when: the declaration is dropped or reworded; when it
+    /// is weakened to a value that hands part of the gesture back to
+    /// the user agent (`manipulation`, `pan-x`, `pan-y`, `auto`);
+    /// or when it lands on some other rule than the canvas's.
+    #[test]
+    fn test_the_browser_canvas_keeps_touch_gestures_from_the_user_agent() {
+        let shell = std::fs::read_to_string(repo_root().join("web/index.html"))
+            .expect("the browser shell must be readable");
+
+        // The declaration has to be on the *canvas* rule, so the rule
+        // is located first and only its body is searched. Comments
+        // are stripped, or the prose explaining the rule would
+        // satisfy the assertion about the rule.
+        let mut css = String::new();
+        let mut rest = shell.as_str();
+        while let Some(open) = rest.find("/*") {
+            css.push_str(&rest[..open]);
+            match rest[open..].find("*/") {
+                Some(close) => rest = &rest[open + close + 2..],
+                None => panic!("unterminated CSS comment in web/index.html"),
+            }
+        }
+        css.push_str(rest);
+
+        let canvas_body = css
+            .split("canvas {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("web/index.html must carry a `canvas { … }` rule");
+        assert!(
+            canvas_body.contains("touch-action: none"),
+            "the canvas rule must declare `touch-action: none` or the browser eats \
+             the pan and the pinch before winit sees them; rule body was: {canvas_body:?}"
+        );
+
+        // The claim the comment makes about *why* it has to live
+        // here: this repository sets `touch-action` in exactly one
+        // place. A second one would mean the rule had grown a
+        // competitor whose cascade nobody had reasoned about.
+        let declarations = css.matches("touch-action").count();
+        assert_eq!(
+            declarations, 1,
+            "`touch-action` must be declared exactly once, on the canvas rule"
+        );
+    }
+
     /// Every `.mindmap.json` in `maps/` is named by a `copy-file`
     /// entry in the browser shell, and nothing else in that
     /// directory is.

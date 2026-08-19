@@ -121,6 +121,26 @@ the parity trajectory (or why none is owed):
   observable. Parity unblocks `Action::DoubleClickActivate` and
   `Action::EditSelection*` flipping to `Compatible`; tracked in
   `work_plans/WASM_CONVERGENCE.md`.
+- **`LongPress` → `EnterResizeMode`** (`src/application/keybinds/config.rs`,
+  `src/application/app/run_wasm/event_touch.rs`) — the one touch
+  gesture that resolves through the keybind table, and the one that
+  is native-only. Its default `Action` is `NativeOnly`, so on the
+  browser the dispatch returns `Unhandled` and a one-shot `warn!`
+  names the remedy; the gesture is *recognized* identically on both
+  targets, and only the `Action` it reaches is not. Deliberate rather
+  than pending: long-press is the touch peer of the keyboard's `r`,
+  so rebinding the browser's long-press to some unrelated
+  `Compatible` Action would make one gesture mean two different
+  things on two targets — a worse §4 outcome than a gesture that is
+  honestly unavailable and says so. **The rest of the touch
+  vocabulary is not affected**: tap, one-finger pan and pinch-zoom
+  resolve to no `Action` at all and run on both targets through
+  `dispatch::apply_touch_effect`, which is what makes the browser
+  usable by finger without this entry being closed. Parity is the
+  `InteractionMode::Resize` chrome plus its handle-drag reaching the
+  browser — the same drag-state machine **Rubber-band select** below
+  is parked on — and flips this `Action` to `Compatible` when it
+  lands.
 - **Rubber-band select** (`DragState::SelectingRect`,
   `src/application/app/drain_frame.rs`,
   `scene_rebuild::rebuild_selection_highlight`,
@@ -138,9 +158,15 @@ the parity trajectory (or why none is owed):
   `rebuild_selection_highlight` is not native *by nature* —
   whichever browser-side gesture first needs a highlight-only
   repaint takes the `cfg` off it. Parity for the gesture itself
-  rides on the browser gaining a drag-state machine, which is
-  the same prerequisite the per-frame animation drain below
-  names; not yet scheduled.
+  rides on the browser gaining a drag-state machine — a press
+  needs somewhere to be pending before it can promote — and is
+  not yet scheduled. **That is not the same prerequisite the
+  per-frame animation drain below names**, which is a rAF-driven
+  tick pump; this sentence claimed it was until #35's registry
+  work read the two entries side by side. What the two do share
+  is the *shape*: a per-frame mechanism native has and the
+  browser does not, so either one landing makes the other
+  cheaper without supplying it.
 - **Per-frame animation drain**
   (`src/application/app/drain_frame.rs`) — native-only, so
   *animated* `CustomMutation`s (`timing.duration_ms > 0`) start on

@@ -60,6 +60,18 @@ pub(in crate::application::app) fn fire_onclick_triggers(
             doc.apply_custom_mutation(&cm, hit_node_id, Some(tree));
             scene_cache.clear();
         }
+        // **A `DocumentAction` gate belongs here too.** This is the
+        // second of the three routes from a map to
+        // `apply_document_actions`, and the only one that carries no
+        // `SourceTier` — the mutation was authored in the
+        // `.mindmap.json`, which this project treats as untrusted
+        // (`macros::SourceTier`'s "hostile shared mindmap"). Both
+        // shipped variants are in-memory theme writes, so there is
+        // nothing to gate today; the first variant that touches the
+        // filesystem, the network or another process must be refused
+        // here as well as at `dispatch_macro`, or it stays reachable
+        // from any node's `OnClick`. CODE_CONVENTIONS §3 carries the
+        // rule and enumerates the three sites.
         doc.apply_document_actions(&cm);
     }
     fired

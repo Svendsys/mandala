@@ -53,8 +53,7 @@ impl super::WasmApp {
     ///
     /// `DragState::PendingRight` and the `Action::FastResizeStart`
     /// gesture pipeline are `cfg(not(target_arch = "wasm32"))` —
-    /// the throttled-drag machinery doesn't exist on WASM yet
-    /// (pending §6.6 touch parity / `TwoFingerDrag`). What this
+    /// the throttled-drag machinery doesn't exist on WASM yet. What this
     /// shim *does* do is prevent the right-button event from being
     /// silently dropped, and surface a one-time warn so a user
     /// who tries Ctrl+RightDrag on WASM sees evidence in the
@@ -70,8 +69,8 @@ impl super::WasmApp {
         if state == ElementState::Released && !WARNED.swap(true, Ordering::Relaxed) {
             log::warn!(
                 "right-button gesture on WASM is currently a no-op \
-                 (Action::FastResizeStart is NativeOnly until §6.6 \
-                 touch parity ships TwoFingerDrag); browser context \
+                 (Action::FastResizeStart is NativeOnly until the \
+                 browser gains a drag-state machine); browser context \
                  menu suppressed via canvas oncontextmenu, \
                  Shift+RightClick bypasses the suppression"
             );
@@ -330,10 +329,35 @@ impl super::WasmApp {
                 &mut input.scene_cache,
                 id,
                 trigger_section_idx,
-                baumhard::mindmap::custom_mutation::PlatformContext::Web,
+                crate::application::app::PLATFORM_CONTEXT,
                 now_ms() as u64,
             ),
             None => false,
+        };
+
+        // The last rung of the hit ladder, and the one the press
+        // could not capture: a connection path is a curve, not an
+        // AABB, so `compute_click_hit` never resolves one and
+        // `PendingClick::Empty` means "nothing with a box under the
+        // pointer", not "nothing at all". Native's click router has
+        // always run it and this one never did, so a browser user
+        // could not select an edge by clicking it — while the touch
+        // tap, which runs the same shared rung, could. Resolved at
+        // release against the release position, exactly as native's
+        // `handle_click` does.
+        let empty_hit_selection = if matches!(pending, PendingClick::Empty) {
+            let renderer_borrow = self.renderer.borrow();
+            renderer_borrow.as_ref().map(|renderer| {
+                let canvas_pos =
+                    renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
+                dispatch::edge_under_pointer(
+                    canvas_pos,
+                    &input.document.mindmap,
+                    dispatch::CanvasPerPixel::of(renderer),
+                )
+            })
+        } else {
+            None
         };
 
         // Plain selection click. Snapshot the previous
@@ -371,7 +395,12 @@ impl super::WasmApp {
                 );
                 SelectionState::EdgeLabel(EdgeLabelSel::new(er))
             }
-            _ => SelectionState::None,
+            // `Empty` carries whatever the edge rung above found,
+            // or `None`. `PendingClick::None` cannot reach here —
+            // the function returned on it — so the fallback is the
+            // unreachable arm rather than the empty-canvas one.
+            PendingClick::Empty => empty_hit_selection.unwrap_or(SelectionState::None),
+            PendingClick::None => SelectionState::None,
         };
         // The selection delta is only the whole story when no
         // trigger fired. This arm used to run

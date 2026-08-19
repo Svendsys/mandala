@@ -74,13 +74,18 @@ pub use hit_test::hit_test;
 pub use hit_test::{
     apply_inactive_node_dimming, apply_tree_highlights, hit_test_target, point_in_node_aabb, HitTarget,
 };
+// Cross-platform: a connection path is the last rung of the tap's
+// hit chain (`dispatch::cross_dispatch::pointer`), which is one body
+// on both targets. It was in the native-only group below for as long
+// as native's click router was its only caller.
+pub use hit_test::hit_test_edge;
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::{
     apply_drag_delta, apply_drag_delta_and_collect_patches, apply_node_resize_to_tree,
-    apply_section_drag_delta_and_collect_patches, apply_section_resize_to_tree, hit_test_edge,
-    hit_test_node_resize_handle, hit_test_section_resize_handle, rect_select,
+    apply_section_drag_delta_and_collect_patches, apply_section_resize_to_tree, hit_test_node_resize_handle,
+    hit_test_section_resize_handle, rect_select,
 };
 pub use nodes::{
     BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderPreviewTarget, BorderSide, OptionEdit,

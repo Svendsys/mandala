@@ -232,11 +232,10 @@ pub(super) struct InitState {
     /// queried at dispatch time via `keybinds.macro_for(...)`.
     pub(super) macros: crate::application::macros::MacroRegistry,
     /// Touch gesture state machine. Fed by `WindowEvent::Touch`
-    /// events (winit), emits `MouseGesture::LongPress` /
-    /// `TwoFingerDrag` when one of the supported gestures fires.
-    /// Cross-platform peer of WASM's `WasmInputState.touch_recognizer`.
-    /// See `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.6 for the gesture
-    /// vocabulary and `app/touch_gesture.rs` for the state machine.
+    /// events (winit); emits a tap, a long-press, a one-finger pan
+    /// step or a two-finger pinch step. Cross-platform peer of WASM's
+    /// `WasmInputState.touch_recognizer`. See `app/touch_gesture.rs`
+    /// for the machine and CONCEPTS §5 for where each emission goes.
     pub(super) touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
     /// Wall-clock at which the current tree-mutating drag began
     /// suppressing the animation tick — `Some(now_ms)` while a
@@ -283,13 +282,12 @@ impl InitState {
         }
     }
 
-    /// Translate a winit `Touch` event into a recognizer ingest +
-    /// tick + dispatch step. Returns true when the event drove
-    /// any state transition or dispatched a gesture (the caller
-    /// should request a redraw on true). Modifier state is fixed
-    /// at all-false — touch devices have no modifier keys; the
-    /// keybind table's `LongPress` / `TwoFingerDrag` bindings
-    /// don't carry Ctrl/Shift/Alt either.
+    /// Translate a winit `Touch` event into a recognizer step and
+    /// run it. Returns true when the event drove any state
+    /// transition or ran a gesture (the caller should request a
+    /// redraw on true). Modifier state is fixed at all-false —
+    /// touch devices have no modifier keys, and the keybind table's
+    /// `LongPress` binding doesn't carry Ctrl/Shift/Alt either.
     ///
     /// **Long-press timing wake-up gap**: `tick` is called only
     /// from the events themselves (not on a wall-clock timer),
@@ -297,42 +295,59 @@ impl InitState {
     /// between Started and Ended would miss the long-press
     /// emission. In practice touch hardware emits sub-pixel
     /// jitter `Moved` events constantly while a finger is down,
-    /// so the gap is theoretical. A future improvement would set
-    /// `ControlFlow::WaitUntil(started_at + LONG_PRESS_MS)` from
-    /// the recognizer's `OneFinger` state — deferred to keep
-    /// Batch 7's diff small.
+    /// so the gap is theoretical — and the recognizer refuses to
+    /// call such a hold a tap either way, on the elapsed time
+    /// rather than on the emission having happened. A future
+    /// improvement would set `ControlFlow::WaitUntil(started_at +
+    /// LONG_PRESS_MS)` from the recognizer's `OneFinger` state.
     pub(super) fn dispatch_touch_event(&mut self, touch: winit::event::Touch) -> bool {
         use super::touch_gesture::Phase;
         use web_time::Instant;
         // Phase translation, recognizer ingest + tick, and the
-        // gesture-to-Action lookup are `cross_dispatch::pointer`'s
-        // `drive_touch_event`; the browser runs the same body. Only
-        // the dispatch below is native's own — it goes through
-        // `dispatch_action` so `NativeOnly` gesture Actions
-        // (`EnterResizeMode`, `FastResizeStart`) reach their arms.
+        // routing of what it recognized are `cross_dispatch::pointer`'s
+        // `drive_touch_event`; the browser runs the same body, and so
+        // does `apply_touch_effect` below. What is native's own is the
+        // `Dispatch` arm — it goes through `dispatch_action` so a
+        // `NativeOnly` Action bound to a gesture (`EnterResizeMode`)
+        // reaches its arm.
         let phase = super::dispatch::touch_phase(touch.phase);
         let pos = (touch.location.x, touch.location.y);
-        if let Some(d) = super::dispatch::drive_touch_event(
+        // No gesture recognized — but the recognizer may have moved
+        // its internal state (e.g. Started → OneFinger). The caller
+        // still wants a redraw on Started/Moved so any
+        // cursor-following overlay updates.
+        let idle_redraw = matches!(phase, Phase::Started | Phase::Moved);
+        let Some(step) = super::dispatch::drive_touch_event(
             &mut self.touch_recognizer,
             &self.keybinds,
             phase,
             touch.id,
             pos,
             Instant::now(),
-        ) {
-            self.cursor_pos = d.cursor_pos;
-            if let Some(a) = d.action {
+        ) else {
+            return idle_redraw;
+        };
+        match step {
+            super::dispatch::TouchStep::Dispatch(d) => {
+                self.cursor_pos = d.cursor_pos;
+                let Some(a) = d.action else {
+                    return idle_redraw;
+                };
                 let mut ctx = self.input_context();
                 let _ = super::dispatch::dispatch_action(a, &mut ctx, None);
-                return true;
+                true
+            }
+            super::dispatch::TouchStep::Effect(effect) => {
+                let mut ctx = self.input_context();
+                let (mut core, _native) = ctx.split_borrow();
+                super::dispatch::apply_touch_effect(effect, &mut core);
+                // The camera-geometry reprojection a pinch owes is
+                // picked up by `drain_camera_geometry_rebuild` in the
+                // frame this redraw requests, under the same
+                // renderer-side dirty flag the wheel path uses.
+                true
             }
         }
-        // No gesture recognized — but the recognizer may have
-        // moved its internal state (e.g. Started → OneFinger).
-        // The caller still wants a redraw on Started/Moved so
-        // any cursor-following overlay (long-press preview,
-        // future gesture chrome) updates.
-        matches!(phase, Phase::Started | Phase::Moved)
     }
 
     /// Per-event dispatch. Most of the per-event work lives in

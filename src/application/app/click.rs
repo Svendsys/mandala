@@ -7,14 +7,14 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use baumhard::mindmap::custom_mutation::PlatformContext;
 use baumhard::mindmap::tree_builder::PortalPart;
 
 use super::click_triggers::fire_onclick_triggers;
+use super::dispatch::compute_node_click_selection;
 use super::scene_rebuild::{build_overlaid_tree, rebuild_scene_only, RebuildTier};
-use super::{now_ms, InteractionMode, EDGE_HIT_TOLERANCE_PX};
+use super::{now_ms, InteractionMode};
 use crate::application::document::{
-    hit_test_edge, MindMapDocument, SectionSel, SelectionState, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
+    MindMapDocument, SelectionState, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
 
@@ -50,9 +50,11 @@ pub(super) struct ClickCore<'a> {
 ///
 /// The two renderer-derived inputs arrive as plain values:
 /// `canvas_pos` is the press point already through
-/// `Renderer::screen_to_canvas`, and `edge_hit_tolerance` is
-/// `EDGE_HIT_TOLERANCE_PX` already scaled by
-/// `Renderer::canvas_per_pixel`. Both are pure camera math, which is
+/// `Renderer::screen_to_canvas`, and `canvas_per_pixel` is
+/// `Renderer::canvas_per_pixel` — the scaling `EDGE_HIT_TOLERANCE_PX`
+/// needs is applied once, inside the shared last rung
+/// [`dispatch::edge_under_pointer`](super::dispatch::edge_under_pointer),
+/// rather than at each of its three callers. Both are pure camera math, which is
 /// why this split leaves nothing renderer-shaped behind — the same
 /// shape `ReleaseCommit` / `ReleaseRefresh` gave the drag-release
 /// path, and for the same reason: it makes "which tier does this
@@ -62,7 +64,7 @@ pub(super) fn handle_click_core(
     hit: Option<String>,
     hit_section: Option<usize>,
     canvas_pos: glam::Vec2,
-    edge_hit_tolerance: f32,
+    canvas_per_pixel: super::dispatch::CanvasPerPixel,
     shift_pressed: bool,
     ctx: ClickCore<'_>,
 ) -> RebuildTier {
@@ -84,7 +86,7 @@ pub(super) fn handle_click_core(
             scene_cache,
             id,
             hit_section,
-            PlatformContext::Desktop,
+            super::PLATFORM_CONTEXT,
             now_ms() as u64,
         ),
         None => false,
@@ -128,11 +130,11 @@ pub(super) fn handle_click_core(
                     PortalPart::Icon => SelectionState::PortalLabel(sel),
                 };
             } else {
-                let edge_hit = hit_test_edge(canvas_pos, &doc.mindmap, edge_hit_tolerance);
-                doc.selection = match edge_hit {
-                    Some(edge_ref) => SelectionState::Edge(edge_ref),
-                    None => SelectionState::None,
-                };
+                // The same last rung the browser's click release and
+                // the touch tap run, through the one body all three
+                // share.
+                doc.selection =
+                    super::dispatch::edge_under_pointer(canvas_pos, &doc.mindmap, canvas_per_pixel);
             }
         }
         (None, true) => {
@@ -171,12 +173,11 @@ pub(super) fn handle_click(
         None => return,
     };
     let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
-    let edge_hit_tolerance = EDGE_HIT_TOLERANCE_PX * renderer.canvas_per_pixel();
     let tier = handle_click_core(
         hit,
         hit_section,
         canvas_pos,
-        edge_hit_tolerance,
+        super::dispatch::CanvasPerPixel::of(renderer),
         shift_pressed,
         ClickCore {
             document: doc,
@@ -263,108 +264,6 @@ pub(super) fn rebuild_all_with_mode(
     *mindmap_tree = Some(new_tree);
 }
 
-/// Pure selection-update helper for "click landed on a node."
-///
-/// Resolves the new [`SelectionState`] given the previous selection,
-/// the click hit (node id + optional section index), the shift modifier,
-/// and the current [`InteractionMode`]. Section routing is gated by
-/// [`InteractionMode::click_resolves_to_section`]: outside `NodeEdit { id }`
-/// (or in NodeEdit on a different node) every click on a multi-section
-/// node folds to whole-node `Single` / `Multi`. Single-section nodes
-/// always fold via `hit_test_target`'s short-circuit (they never
-/// produce `hit_section = Some(_)`), so their click behavior is
-/// unchanged from pre-Batch-3.
-///
-/// Plain click:
-/// - `route_to_section` true → `Section { node_id, section_idx }`.
-/// - else → `Single(node_id)`.
-///
-/// Shift+click, section-routed:
-/// - `Section(s)` matching the new (node, idx) → `None` (toggle off).
-/// - `Section(s)` mismatching → promote to `MultiSection`.
-/// - `MultiSection` → toggle the (node, idx) pair in or out, narrowing
-///   back to `Section` when one remains.
-/// - any non-section starting state → start a fresh `Section`.
-///
-/// Shift+click, whole-node (route_to_section false):
-/// - `Single(existing)` matching → `None` (toggle off).
-/// - `Single(existing)` mismatching → `Multi(vec![existing, new])`.
-/// - `Multi` → toggle id in or out, narrowing back to `Single`.
-/// - any non-node starting state → fresh `Single`.
-pub(super) fn compute_node_click_selection(
-    existing: &SelectionState,
-    hit_id: &str,
-    hit_section: Option<usize>,
-    shift_pressed: bool,
-    interaction_mode: &InteractionMode,
-) -> SelectionState {
-    // The routing decision and the value it routes are one thing, so
-    // they are bound together: an `is_some()` test followed by a
-    // re-`expect` further down is two chances for the two to drift.
-    let routed_section = hit_section.filter(|_| interaction_mode.click_resolves_to_section(hit_id));
-
-    if !shift_pressed {
-        return match routed_section {
-            Some(section_idx) => SelectionState::Section(SectionSel {
-                node_id: hit_id.to_string(),
-                section_idx,
-            }),
-            None => SelectionState::Single(hit_id.to_string()),
-        };
-    }
-
-    if let Some(section_idx) = routed_section {
-        let new_sec = SectionSel {
-            node_id: hit_id.to_string(),
-            section_idx,
-        };
-        return match existing {
-            SelectionState::Section(prev) if prev == &new_sec => SelectionState::None,
-            SelectionState::Section(prev) => SelectionState::MultiSection(vec![prev.clone(), new_sec]),
-            SelectionState::MultiSection(prev) => {
-                let mut secs = prev.clone();
-                if let Some(pos) = secs.iter().position(|s| s == &new_sec) {
-                    secs.remove(pos);
-                    SelectionState::from_sections(secs)
-                } else {
-                    secs.push(new_sec);
-                    SelectionState::MultiSection(secs)
-                }
-            }
-            _ => SelectionState::Section(new_sec),
-        };
-    }
-
-    // Whole-node shift+click: existing behavior (toggle node in/out of Multi).
-    match existing {
-        SelectionState::None
-        | SelectionState::Edge(_)
-        | SelectionState::EdgeLabel(_)
-        | SelectionState::PortalLabel(_)
-        | SelectionState::PortalText(_)
-        | SelectionState::Section(_)
-        | SelectionState::MultiSection(_)
-        | SelectionState::SectionRange { .. } => SelectionState::Single(hit_id.to_string()),
-        SelectionState::Single(prev) => {
-            if prev == hit_id {
-                SelectionState::None
-            } else {
-                SelectionState::Multi(vec![prev.clone(), hit_id.to_string()])
-            }
-        }
-        SelectionState::Multi(prev) => {
-            let mut ids = prev.clone();
-            if let Some(pos) = ids.iter().position(|i| i == hit_id) {
-                ids.remove(pos);
-                SelectionState::from_ids(ids)
-            } else {
-                ids.push(hit_id.to_string());
-                SelectionState::Multi(ids)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,9 +310,11 @@ mod tests {
     /// make the assertions depend on which edge happens to sit there.
     const FAR_OFF_CANVAS: glam::Vec2 = glam::Vec2::new(1.0e6, 1.0e6);
 
-    /// The tolerance a 1:1 camera hands the core
-    /// (`EDGE_HIT_TOLERANCE_PX * canvas_per_pixel()` at `zoom == 1`).
-    const UNZOOMED_EDGE_TOLERANCE: f32 = EDGE_HIT_TOLERANCE_PX;
+    /// What a 1:1 camera reports for `canvas_per_pixel()`, which is
+    /// what the core scales `EDGE_HIT_TOLERANCE_PX` by.
+    fn unzoomed() -> crate::application::app::dispatch::CanvasPerPixel {
+        crate::application::app::dispatch::CanvasPerPixel::from_ratio(1.0)
+    }
 
     fn first_node_id(doc: &MindMapDocument) -> String {
         doc.mindmap
@@ -443,14 +344,7 @@ mod tests {
     fn test_click_core_selection_only_change_asks_for_the_scene_tier() {
         let mut world = CoreWorld::new();
         world.doc.selection = SelectionState::Edge(EdgeRef::new("a", "b", "cross_link"));
-        let tier = handle_click_core(
-            None,
-            None,
-            FAR_OFF_CANVAS,
-            UNZOOMED_EDGE_TOLERANCE,
-            false,
-            world.core(),
-        );
+        let tier = handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), false, world.core());
         assert!(
             matches!(world.doc.selection, SelectionState::None),
             "precondition: the click must land on empty canvas, or this pins the wrong \
@@ -466,14 +360,7 @@ mod tests {
         let mut from_node = CoreWorld::new();
         let node_id = first_node_id(&from_node.doc);
         from_node.doc.selection = SelectionState::Single(node_id);
-        let tier = handle_click_core(
-            None,
-            None,
-            FAR_OFF_CANVAS,
-            UNZOOMED_EDGE_TOLERANCE,
-            false,
-            from_node.core(),
-        );
+        let tier = handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), false, from_node.core());
         assert_eq!(
             tier,
             RebuildTier::All,
@@ -495,7 +382,7 @@ mod tests {
             Some(node_id.clone()),
             None,
             FAR_OFF_CANVAS,
-            UNZOOMED_EDGE_TOLERANCE,
+            unzoomed(),
             false,
             world.core(),
         );
