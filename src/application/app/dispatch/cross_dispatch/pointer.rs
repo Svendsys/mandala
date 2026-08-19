@@ -581,6 +581,34 @@ pub(in crate::application::app) fn apply_touch_effect(effect: TouchEffect, core:
     }
 }
 
+/// The selection a pointer commit lands on once the hit chain has
+/// come up empty: the connection path under the pointer, or nothing.
+///
+/// The last rung of the ladder, and the one `compute_click_hit`
+/// cannot answer — a connection path is a curve, not an AABB, so it
+/// is hit with a tolerance in canvas units rather than through the
+/// scene's bounding-volume descent. `canvas_per_pixel` is the
+/// renderer's, passed as a plain value so the rung has no renderer
+/// in it.
+///
+/// Shared rather than inlined because three pointer paths reach it
+/// and two of them used to disagree: native's click router
+/// (`click::handle_click_core`) has always run it, the browser's
+/// click release never did, and the touch tap needs it on both
+/// targets. Before this the browser could *tap* a connection path
+/// and select it while a *mouse click* on the same path selected
+/// nothing (CODE_CONVENTIONS §4 — the two are peers).
+pub(in crate::application::app) fn edge_under_pointer(
+    canvas_pos: Vec2,
+    map: &baumhard::mindmap::model::MindMap,
+    canvas_per_pixel: f32,
+) -> SelectionState {
+    match hit_test_edge(canvas_pos, map, EDGE_HIT_TOLERANCE_PX * canvas_per_pixel) {
+        Some(edge_ref) => SelectionState::Edge(edge_ref),
+        None => SelectionState::None,
+    }
+}
+
 /// The decrees one [`TouchEffect::CameraStep`] asks the renderer for,
 /// in order: always a translation, and a zoom only when the step
 /// actually scaled.
@@ -683,15 +711,7 @@ fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
             key.edge_type.as_str(),
         )))
     } else {
-        // Last rung, and the one `compute_click_hit` cannot answer:
-        // a connection path is a curve, not an AABB, so it is hit
-        // with a tolerance in canvas units rather than through the
-        // scene's bounding-volume descent.
-        let tolerance = EDGE_HIT_TOLERANCE_PX * core.renderer.canvas_per_pixel();
-        match hit_test_edge(canvas_pos, &doc.mindmap, tolerance) {
-            Some(edge_ref) => SelectionState::Edge(edge_ref),
-            None => SelectionState::None,
-        }
+        edge_under_pointer(canvas_pos, &doc.mindmap, core.renderer.canvas_per_pixel())
     };
 
     RebuildTier::for_click(triggers_fired, &prev_selection, &doc.selection).execute(
@@ -1273,10 +1293,17 @@ mod tests {
         }
     }
 
-    /// A config with every gesture-defaulted binding cleared. The
-    /// control for "this route does not consult the table": under it,
-    /// anything that resolves through `action_for_gesture` comes back
-    /// `None`, and only the routes that never ask still work.
+    /// A config with **every** gesture-defaulted binding cleared —
+    /// the whole set `KeybindConfig::default()` ships pointing at a
+    /// `MouseGesture`, not a convenient subset.
+    ///
+    /// The control for "this route does not consult the table":
+    /// under it anything resolving through `action_for_gesture`
+    /// comes back `None`, so only the routes that never ask still
+    /// work. `double_click_activate` is in the list because the doc
+    /// says *every*: touch never looks `"doubleclick"` up, so
+    /// leaving it bound would have been harmless and the sentence
+    /// would still have been false.
     fn keybinds_with_no_gesture_bindings() -> ResolvedKeybinds {
         KeybindConfig {
             enter_resize_mode: vec![],
@@ -1284,6 +1311,7 @@ mod tests {
             pan_canvas: vec![],
             zoom_in: vec![],
             zoom_out: vec![],
+            double_click_activate: vec![],
             ..Default::default()
         }
         .resolve()
@@ -1477,6 +1505,42 @@ mod tests {
         assert_eq!(anchor, (25.0, 0.0));
         assert_eq!(pan, (20.0, 0.0));
         assert_eq!(scale, 3.0);
+    }
+
+    /// The shared last rung scales `EDGE_HIT_TOLERANCE_PX` by the
+    /// camera's `canvas_per_pixel`, so the same click hits or misses
+    /// the same connection path depending on the zoom — which is the
+    /// whole reason the rung takes a camera number rather than a
+    /// canvas distance.
+    ///
+    /// The offset is 50 canvas units off the path, and the two
+    /// factors bracket it: `EDGE_HIT_TOLERANCE_PX` is 8, so `0.1`
+    /// gives a 0.8-unit budget (miss) and `50.0` gives 400 (hit).
+    /// Both are computed from the constant here rather than from the
+    /// code under test.
+    ///
+    /// Fails if the rung stops scaling — passing the raw
+    /// `EDGE_HIT_TOLERANCE_PX` makes the zoomed-in case miss too —
+    /// or if it stops returning `SelectionState::Edge` for a hit.
+    #[test]
+    fn test_edge_under_pointer_scales_its_tolerance_by_the_camera() {
+        use crate::application::document::tests_common::{load_test_doc, pick_test_edge};
+        let doc = load_test_doc();
+        let (expected, on_path) = pick_test_edge(&doc);
+        let off_path = on_path + Vec2::new(0.0, 50.0);
+
+        // 8 * 0.1 = 0.8 canvas units of slop: far inside 50.
+        assert_eq!(
+            edge_under_pointer(off_path, &doc.mindmap, 0.1),
+            SelectionState::None,
+            "a tight camera must not reach a path 50 units away"
+        );
+        // 8 * 50 = 400 canvas units: far outside 50.
+        assert_eq!(
+            edge_under_pointer(off_path, &doc.mindmap, 50.0),
+            SelectionState::Edge(expected),
+            "a loose camera must reach the same path"
+        );
     }
 
     /// A pure pan asks the renderer to translate and nothing else.

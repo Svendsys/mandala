@@ -2621,6 +2621,15 @@ the camera instead, and the variant is gone rather than
 default-unbound, because a binding firing on the same event as
 the camera step would be a conflict rather than a choice.
 
+Two consequences of that deletion, neither fixed: a user whose
+only pointer is a touchscreen loses `FastResizeStart` (it ships
+bound to `Ctrl+RightDrag` alone, which needs a mouse), and an
+existing `keybinds.json` naming `"TwoFingerDrag"` is silently
+accepted and never matches, because `KeyBind::parse` takes any
+non-modifier word and cannot tell a retired gesture name from an
+ordinary key. `test_two_finger_drag_is_not_a_bindable_gesture`
+carries the reasoning.
+
 ### `ThrottledInteraction` and `ThrottledDrag`
 
 A trait pair + seven-variant enum providing one uniform

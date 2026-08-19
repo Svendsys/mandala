@@ -1049,6 +1049,26 @@ fn test_default_long_press_resolves_to_enter_resize_mode() {
 /// binding list: `KeyBind::parse` accepts any non-modifier word, so
 /// the entry would resolve and this lookup would come back `Some`
 /// while the recognizer went on moving the camera underneath it.
+///
+/// **Two consequences of the deletion, recorded because neither is
+/// visible from the assertions below and neither is fixed here:**
+///
+/// 1. A user whose only pointer is a touchscreen loses
+///    `FastResizeStart` outright. It ships bound to `Ctrl+RightDrag`
+///    alone now, and that needs a mouse. The touch route back is
+///    `LongPress` → `EnterResizeMode` plus a resize-handle drag,
+///    which is native-only today (CLAUDE.md's Dual-target registry).
+/// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` is
+///    **silently accepted and never matches** — the same
+///    `KeyBind::parse` permissiveness that makes the first assertion
+///    below meaningful also means a retired token parses into a
+///    binding for a key nothing will ever press. There is no warning
+///    and no migration note. Warning on it would mean the resolver
+///    could tell "a gesture name that no longer exists" from "an
+///    ordinary key", which it cannot: every single letter is a valid
+///    key name. The honest fix is a known-gesture check at parse
+///    time, which is a keybind-surface change rather than a touch
+///    one, so it is written down here instead of half-done.
 #[test]
 fn test_two_finger_drag_is_not_a_bindable_gesture() {
     use strum::IntoEnumIterator;

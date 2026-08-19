@@ -84,7 +84,7 @@
 //!
 //! ## Why a typed emission rather than a synthetic mouse event
 //!
-//! A literal "synthesise `(ElementState, MouseButton)` and call the
+//! A literal "synthesize `(ElementState, MouseButton)` and call the
 //! mouse handler" would make the dispatch funnel see
 //! `MouseButton::Left` rather than the gesture, so a long-press
 //! would run the left-click binding. Emitting the recognized
@@ -98,7 +98,7 @@ use web_time::Instant;
 
 /// Long-press fires after this much time with no significant
 /// movement. 350ms is the convention from iOS' UILongPressGesture
-/// recogniser default and from Android's `ViewConfiguration`.
+/// recognizer default and from Android's `ViewConfiguration`.
 /// Shorter than this and accidental holds during scrolling fire;
 /// longer than this and the gesture feels sluggish.
 pub const LONG_PRESS_MS: u64 = 350;
@@ -112,7 +112,7 @@ pub const LONG_PRESS_MS: u64 = 350;
 /// digitizer cannot fling the camera to `MIN_ZOOM` or to NaN.
 const MIN_PINCH_SPAN_PX: f64 = 1.0;
 
-/// What the recogniser's `ingest` / `tick` returns when a gesture is
+/// What the recognizer's `ingest` / `tick` returns when a gesture is
 /// identified. Every position is in whatever space went in —
 /// physical pixels, the space `WindowEvent::Touch` reports and the
 /// space `cursor_pos` holds — so the runtime can move the cursor to
@@ -173,9 +173,9 @@ pub enum RecognizedGesture {
     },
 }
 
-/// What the runtime feeds the recogniser. winit's
+/// What the runtime feeds the recognizer. winit's
 /// `event::TouchPhase` doesn't impl `Hash`/`Copy` reliably across
-/// versions, and we don't want the recogniser to depend on a
+/// versions, and we don't want the recognizer to depend on a
 /// specific winit version, so the runtime translates phases into
 /// this stable enum at the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +288,7 @@ enum State {
     },
 }
 
-/// Touch gesture recogniser. One per app instance. Fed by the
+/// Touch gesture recognizer. One per app instance. Fed by the
 /// runtime's `WindowEvent::Touch` handler; consulted at frame
 /// boundaries via [`Self::tick`] for time-based gestures
 /// (long-press) that don't fire on the touch event itself.
@@ -322,7 +322,7 @@ impl Default for TouchGestureRecognizer {
 }
 
 impl TouchGestureRecognizer {
-    /// New recogniser at production thresholds.
+    /// New recognizer at production thresholds.
     pub fn new() -> Self {
         Self {
             state: State::Idle,
@@ -499,7 +499,7 @@ impl TouchGestureRecognizer {
                 // fingers translating in parallel change the
                 // separation not at all. Gating on the midpoint
                 // alone — which is what the pre-#35 two-finger
-                // check did — makes a pure pinch unrecognisable.
+                // check did — makes a pure pinch unrecognizable.
                 if pan.0 * pan.0 + pan.1 * pan.1 <= move_threshold_sq
                     && span_step * span_step <= move_threshold_sq
                 {
@@ -598,7 +598,7 @@ mod tests {
 
     /// Test thresholds. Tight long-press (10ms) so tests don't
     /// sleep; same move threshold as production so distance math
-    /// matches the real recogniser.
+    /// matches the real recognizer.
     const TEST_LONG_PRESS: Duration = Duration::from_millis(10);
 
     fn r() -> TouchGestureRecognizer {
@@ -743,7 +743,7 @@ mod tests {
     /// moved, is a tap — and the episode is over, so a later tick
     /// produces nothing.
     ///
-    /// Fails if `on_ended` stops emitting (assertion 1) or stops
+    /// Fails if `on_lifted` stops emitting (assertion 1) or stops
     /// returning to `Idle` (assertion 2 — a `OneFinger` left
     /// standing would fire a stale `LongPress`).
     #[test]
@@ -762,7 +762,7 @@ mod tests {
     /// landed — a 2px drift inside the budget still taps, at the
     /// drifted point.
     ///
-    /// Fails if `on_ended` reports `started_pos`: the position in
+    /// Fails if `on_lifted` reports `started_pos`: the position in
     /// the assertion then comes back as `(100.0, 200.0)`.
     #[test]
     fn test_tap_reports_the_position_the_finger_rested_at() {
@@ -781,7 +781,7 @@ mod tests {
     /// change — otherwise every one-finger canvas drag would also
     /// reselect whatever it finished over.
     ///
-    /// Fails if `on_ended` stops consulting `has_moved`.
+    /// Fails if `on_lifted` stops consulting `has_moved`.
     #[test]
     fn test_tap_is_refused_when_the_finger_moved_past_the_threshold() {
         let mut rec = r();
@@ -797,7 +797,7 @@ mod tests {
     /// The hold already emitted a `LongPress`; the lift must not
     /// also select.
     ///
-    /// Fails if `on_ended` stops consulting `discrete_emitted`.
+    /// Fails if `on_lifted` stops consulting `discrete_emitted`.
     #[test]
     fn test_tap_is_refused_after_a_long_press_fired() {
         let mut rec = r();
@@ -815,7 +815,7 @@ mod tests {
     /// `discrete_emitted`, so only the duration clause is left to
     /// refuse this, and it must.
     ///
-    /// Fails if `on_ended` drops the `< self.long_press` clause —
+    /// Fails if `on_lifted` drops the `< self.long_press` clause —
     /// a finger parked for a full second then lifted would select.
     #[test]
     fn test_tap_is_refused_for_a_long_hold_whose_timer_never_ran() {
@@ -832,7 +832,7 @@ mod tests {
     /// claim strictly less. Exactly at the budget, the lift is not
     /// a tap.
     ///
-    /// Fails if `on_ended` uses `<=`.
+    /// Fails if `on_lifted` uses `<=`.
     #[test]
     fn test_tap_and_long_press_windows_do_not_overlap_at_the_boundary() {
         let mut rec = r();
@@ -987,6 +987,72 @@ mod tests {
         assert_eq!(g, RecognizedGesture::LongPress { pos: (100.0, 100.0) });
     }
 
+    /// An `Ended` for a finger the machine never saw start is
+    /// ignored — the peer of the `Moved` case above, on the lift
+    /// path, and the one that was missing.
+    ///
+    /// Two things go wrong without the guard, and both are asserted:
+    /// the stale lift **emits a phantom `Tap`** at the tracked
+    /// finger's position, committing a selection the user never
+    /// asked for; and it drops the machine to `Idle` while a finger
+    /// is still on the glass, so the very next real sample from that
+    /// finger produces nothing and an in-flight pan dies mid-gesture.
+    ///
+    /// Fails if `on_lifted`'s `OneFinger` arm drops `if track.id !=
+    /// id`. The whole suite stayed green without it until this test
+    /// existed — `on_moved`'s identical guard was covered and this
+    /// one was not.
+    #[test]
+    fn test_a_lift_for_an_untracked_finger_is_ignored() {
+        let mut rec = r();
+        let t = t0();
+        rec.ingest(Phase::Started, 1, (100.0, 100.0), t);
+        assert!(
+            rec.ingest(Phase::Ended, 999, (500.0, 500.0), t + Duration::from_millis(1))
+                .is_none(),
+            "a lift for a finger that never landed must not emit a Tap"
+        );
+        // The tracked finger is still down: it can still pan, which
+        // it could not if the stale lift had cleared the slot.
+        assert_eq!(
+            rec.ingest(Phase::Moved, 1, (120.0, 100.0), t + Duration::from_millis(2)),
+            Some(RecognizedGesture::Pan {
+                pos: (120.0, 100.0),
+                delta: (20.0, 0.0),
+            }),
+            "the tracked finger must still be tracked after a stranger's lift"
+        );
+    }
+
+    /// The reachable sequence the guard exists for, end to end: a
+    /// third finger lands during a two-finger gesture and is
+    /// deliberately ignored, one of the pair lifts, and then the
+    /// **third** finger's own lift arrives. It must change nothing —
+    /// the survivor of the pinch is still panning.
+    ///
+    /// Fails the same way as the test above, and this is the shape a
+    /// real hand produces: a stray finger resting on the glass
+    /// during a pinch outlives the gesture it was never part of.
+    #[test]
+    fn test_a_stray_third_finger_lifting_does_not_end_the_survivors_pan() {
+        let (mut rec, t) = two_fingers_down((0.0, 0.0), (100.0, 0.0));
+        rec.ingest(Phase::Started, 3, (500.0, 500.0), t);
+        rec.ingest(Phase::Moved, 1, (0.0, 30.0), t);
+        rec.ingest(Phase::Ended, 2, (100.0, 0.0), t);
+        assert!(
+            rec.ingest(Phase::Ended, 3, (500.0, 500.0), t).is_none(),
+            "the stray finger's lift must emit nothing"
+        );
+        assert_eq!(
+            rec.ingest(Phase::Moved, 1, (0.0, 40.0), t),
+            Some(RecognizedGesture::Pan {
+                pos: (0.0, 40.0),
+                delta: (0.0, 10.0),
+            }),
+            "the surviving finger must go on panning across the stray lift"
+        );
+    }
+
     // ── Two-finger pinch / pan ──────────────────────────────────
 
     /// **A spread is zoom without net translation.** Two fingers
@@ -1130,7 +1196,7 @@ mod tests {
     /// gesture to the first. Which finger leaves changes which
     /// `FingerTrack` survives, and both must.
     ///
-    /// Fails if `on_ended`'s `TwoFingers` arm handles only one of
+    /// Fails if `on_lifted`'s `TwoFingers` arm handles only one of
     /// the two ids.
     #[test]
     fn test_lifting_the_second_finger_leaves_the_first_panning() {
@@ -1174,10 +1240,10 @@ mod tests {
         assert!(rec.tick(t + Duration::from_millis(50)).is_none());
     }
 
-    /// Lifting both fingers returns the recogniser to Idle, and a
+    /// Lifting both fingers returns the recognizer to Idle, and a
     /// fresh finger after that is an ordinary long-press candidate.
     ///
-    /// Fails if `on_ended` leaves `discrete_emitted` set across the
+    /// Fails if `on_lifted` leaves `discrete_emitted` set across the
     /// return to `Idle` — the new episode would inherit a spent
     /// latch and never fire.
     #[test]
@@ -1193,9 +1259,17 @@ mod tests {
         );
     }
 
-    /// `reset()` clears state regardless of variant. Covers
-    /// the runtime path that responds to context loss / window
-    /// minimisation by aborting the in-flight gesture.
+    /// `reset()` clears state regardless of variant.
+    ///
+    /// It covers **no runtime path** — this doc used to claim it
+    /// covered "the runtime path that responds to context loss /
+    /// window minimization", the same claim the method's own doc
+    /// carried and that was corrected there while this copy was
+    /// left standing. Neither run loop has ever called `reset`, on
+    /// either target. What the test is for is stated on the method:
+    /// the contract stays pinned so the day a suspend /
+    /// visibility-change handler lands, the behavior it needs is
+    /// already specified.
     #[test]
     fn test_reset_clears_state_from_any_variant() {
         let mut rec = r();

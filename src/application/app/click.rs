@@ -12,9 +12,9 @@ use baumhard::mindmap::tree_builder::PortalPart;
 use super::click_triggers::fire_onclick_triggers;
 use super::dispatch::compute_node_click_selection;
 use super::scene_rebuild::{build_overlaid_tree, rebuild_scene_only, RebuildTier};
-use super::{now_ms, InteractionMode, EDGE_HIT_TOLERANCE_PX};
+use super::{now_ms, InteractionMode};
 use crate::application::document::{
-    hit_test_edge, MindMapDocument, SelectionState, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
+    MindMapDocument, SelectionState, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
 
@@ -50,9 +50,11 @@ pub(super) struct ClickCore<'a> {
 ///
 /// The two renderer-derived inputs arrive as plain values:
 /// `canvas_pos` is the press point already through
-/// `Renderer::screen_to_canvas`, and `edge_hit_tolerance` is
-/// `EDGE_HIT_TOLERANCE_PX` already scaled by
-/// `Renderer::canvas_per_pixel`. Both are pure camera math, which is
+/// `Renderer::screen_to_canvas`, and `canvas_per_pixel` is
+/// `Renderer::canvas_per_pixel` — the scaling `EDGE_HIT_TOLERANCE_PX`
+/// needs is applied once, inside the shared last rung
+/// [`dispatch::edge_under_pointer`](super::dispatch::edge_under_pointer),
+/// rather than at each of its three callers. Both are pure camera math, which is
 /// why this split leaves nothing renderer-shaped behind — the same
 /// shape `ReleaseCommit` / `ReleaseRefresh` gave the drag-release
 /// path, and for the same reason: it makes "which tier does this
@@ -62,7 +64,7 @@ pub(super) fn handle_click_core(
     hit: Option<String>,
     hit_section: Option<usize>,
     canvas_pos: glam::Vec2,
-    edge_hit_tolerance: f32,
+    canvas_per_pixel: f32,
     shift_pressed: bool,
     ctx: ClickCore<'_>,
 ) -> RebuildTier {
@@ -128,11 +130,11 @@ pub(super) fn handle_click_core(
                     PortalPart::Icon => SelectionState::PortalLabel(sel),
                 };
             } else {
-                let edge_hit = hit_test_edge(canvas_pos, &doc.mindmap, edge_hit_tolerance);
-                doc.selection = match edge_hit {
-                    Some(edge_ref) => SelectionState::Edge(edge_ref),
-                    None => SelectionState::None,
-                };
+                // The same last rung the browser's click release and
+                // the touch tap run, through the one body all three
+                // share.
+                doc.selection =
+                    super::dispatch::edge_under_pointer(canvas_pos, &doc.mindmap, canvas_per_pixel);
             }
         }
         (None, true) => {
@@ -171,12 +173,11 @@ pub(super) fn handle_click(
         None => return,
     };
     let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
-    let edge_hit_tolerance = EDGE_HIT_TOLERANCE_PX * renderer.canvas_per_pixel();
     let tier = handle_click_core(
         hit,
         hit_section,
         canvas_pos,
-        edge_hit_tolerance,
+        renderer.canvas_per_pixel(),
         shift_pressed,
         ClickCore {
             document: doc,
@@ -309,9 +310,9 @@ mod tests {
     /// make the assertions depend on which edge happens to sit there.
     const FAR_OFF_CANVAS: glam::Vec2 = glam::Vec2::new(1.0e6, 1.0e6);
 
-    /// The tolerance a 1:1 camera hands the core
-    /// (`EDGE_HIT_TOLERANCE_PX * canvas_per_pixel()` at `zoom == 1`).
-    const UNZOOMED_EDGE_TOLERANCE: f32 = EDGE_HIT_TOLERANCE_PX;
+    /// What a 1:1 camera reports for `canvas_per_pixel()`, which is
+    /// what the core scales `EDGE_HIT_TOLERANCE_PX` by.
+    const UNZOOMED_CANVAS_PER_PIXEL: f32 = 1.0;
 
     fn first_node_id(doc: &MindMapDocument) -> String {
         doc.mindmap
@@ -345,7 +346,7 @@ mod tests {
             None,
             None,
             FAR_OFF_CANVAS,
-            UNZOOMED_EDGE_TOLERANCE,
+            UNZOOMED_CANVAS_PER_PIXEL,
             false,
             world.core(),
         );
@@ -368,7 +369,7 @@ mod tests {
             None,
             None,
             FAR_OFF_CANVAS,
-            UNZOOMED_EDGE_TOLERANCE,
+            UNZOOMED_CANVAS_PER_PIXEL,
             false,
             from_node.core(),
         );
@@ -393,7 +394,7 @@ mod tests {
             Some(node_id.clone()),
             None,
             FAR_OFF_CANVAS,
-            UNZOOMED_EDGE_TOLERANCE,
+            UNZOOMED_CANVAS_PER_PIXEL,
             false,
             world.core(),
         );

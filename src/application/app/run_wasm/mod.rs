@@ -178,9 +178,7 @@ impl WasmInputState {
             interaction_mode: &mut self.interaction_mode,
         }
     }
-}
 
-impl WasmInputState {
     /// Reproject the camera-dependent canvas roles, when the work
     /// that just ran moved the camera.
     ///

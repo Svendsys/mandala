@@ -21,7 +21,7 @@ use std::sync::atomic::AtomicBool;
 use web_time::Instant;
 use winit::event::Touch;
 
-/// One-shot warn-log latch: fires the first time a recognised
+/// One-shot warn-log latch: fires the first time a recognized
 /// touch gesture maps to an Action whose body is `NativeOnly`,
 /// so a mobile-browser user who taps-and-holds (default-bound to
 /// `EnterResizeMode`) sees evidence in the dev console rather

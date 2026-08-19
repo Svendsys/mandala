@@ -224,7 +224,7 @@ impl KeyBind {
         if self.alt {
             parts.push("Alt");
         }
-        // Recognised mouse gestures emit in PascalCase so a parsed-
+        // Recognized mouse gestures emit in PascalCase so a parsed-
         // then-emitted binding string round-trips to its canonical
         // form. Other keys emit lowercase as stored.
         let key_display: String = gesture_emit_form(&self.key)

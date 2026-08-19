@@ -192,9 +192,30 @@ decision, not a drive-by edit.
     machinery the funnel rests on.
   - **Per-frame continuous-gesture state.** A drag's per-cursor-move
     delta (e.g. `RenderDecree::CameraPan(dx, dy)` in `event_cursor_moved`)
-    legitimately stays inline. The funnel covers the discrete entry
-    + exit (the press → `Action::PanCanvas`); the per-frame body
-    is not a discrete-action concern.
+    legitimately stays inline. For a *mouse* drag the funnel still
+    covers the discrete entry + exit (the press → `Action::PanCanvas`);
+    the per-frame body is not a discrete-action concern.
+
+    **A touch pan or pinch has no funnel entry at all**, and that is
+    the sanctioned shape rather than an omission. The entry a mouse
+    funnels is `Action::PanCanvas`, which does not move the camera —
+    it arms `DragState::Panning`, which exists only on native — so
+    routing a finger through it would dispatch, return `Unhandled`
+    and warn in the browser. There is also nothing left for an entry
+    to decide: `TouchGestureRecognizer` is the state machine
+    `DragState` is for the mouse, and by the time it emits, the
+    gesture is already identified. So the whole of a touch pan /
+    pinch is per-frame body, reaching the camera through
+    `RenderDecree`s (`dispatch::apply_touch_effect`). A *discrete*
+    touch gesture still goes through the funnel — `LongPress`
+    resolves through `MouseGesture` and `action_for_gesture` like any
+    mouse gesture.
+
+    The line this carve-out draws is therefore "is the effect a
+    continuous camera delta?", not "did a funnelled press start it".
+    A continuous gesture that *mutates the document* per frame is a
+    different question and is not covered here — see the
+    `ThrottledDrag` ladder.
 
   Anything else — a new gesture or a new console-verb behavior that
   mutates document state or changes view state — must go through the
