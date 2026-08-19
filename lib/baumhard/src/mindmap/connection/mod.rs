@@ -728,22 +728,64 @@ const BOUNDS_REJECT_SLACK: f32 = 32.0 * f32::EPSILON;
 /// `|x| × f32::EPSILON`, and at a canvas x of 10⁴ that is already
 /// larger than a click tolerance at high zoom.
 ///
-/// 32 × [`f32::EPSILON`] is chosen against a measurement rather than
-/// a guess. `test_path_bounds_slack_covers_the_sampler_escape`
-/// re-measures the escape on the corpus every run and reports it in
-/// units of `max|coordinate| × f32::EPSILON`; the worst it finds is
-/// **1.86**, on the axis-aligned entry at x = 1100, leaving about
-/// seventeen times that in hand. A standalone sweep over eight
-/// magnitude decades and roughly 64 000 control polygons —
-/// clustered, spread, axis-aligned, negative — put the worst at
-/// **1.64**, so the two agree on the order and the corpus is the
-/// more pessimistic of them.
+/// **The term applies to `Straight` paths as well, and there its
+/// status is different — say so rather than bank it.**
+/// [`path_bounds`] is *exact* for a straight segment (it is the two
+/// endpoints), so no hull escape exists there. What remains is
+/// [`distance_to_path`]'s straight branch, which reaches its answer
+/// through `point_to_segment_distance_squared`: the accept side
+/// compares that computed distance against `tolerance` while the
+/// reject side compares an exact axis overhang, and the projection
+/// `a + ab * t` rounds relative to the coordinate. So the same
+/// disagreement is *available* in principle.
+///
+/// It has not been exhibited. The window is narrow by construction —
+/// a correctly-rounded `a + ab * t` cannot put the closest point more
+/// than half an ulp of the coordinate outside the box, so a
+/// disagreement needs the true distance to sit inside that half-ulp
+/// of `tolerance` — and a search aimed straight at it found nothing:
+/// 96 000 000 probes over five magnitudes (10³–10⁷), six tolerances
+/// from 0.02 to 12, segment orientations swept from near-vertical to
+/// near-horizontal, and offsets stepped finely through the tolerance
+/// boundary on the escaping face, produced **zero** disagreements
+/// against a tolerance-only margin. The straight corpus entries added
+/// alongside this note likewise pass with the term removed.
+///
+/// So this paragraph is an argument, not a measurement, and it is
+/// labeled as one on purpose: promoting it to a demonstrated effect
+/// would be the same move — a claim outrunning its evidence — that
+/// put the defect this constant fixes into the tree. The term covers
+/// straight paths because it is cheaper to apply it uniformly than to
+/// reason about which branch needs it, and that is the whole of the
+/// claim.
+///
+/// **What 32 is chosen against, and what that does and does not
+/// mean.** No closed-form bound on the escape is derived anywhere in
+/// this tree, so every figure available is a measured maximum over a
+/// finite sweep — a sample, not a ceiling. Successive denser sweeps
+/// have each found a larger number than the one before, which is the
+/// honest shape of that situation rather than a reason to distrust
+/// any of them. The largest figure any sweep has produced is
+/// recorded once, in `MEASURED_WORST_ESCAPE_ULPS` beside
+/// `test_path_bounds_slack_covers_the_sampler_escape`, together with
+/// the methods that produced it; it is deliberately not restated
+/// here, because a figure copied into a second place is a figure
+/// that goes stale silently. That test asserts in both directions —
+/// no sweep may exceed the record, and this constant must stay at
+/// least four times above it — so the two cannot drift apart.
+///
+/// **What the sweeps establish that a number could not** is that the
+/// escape is *magnitude-invariant* in these units: the worst per
+/// decade varies by well under a factor of two from 10⁰ to 10²⁰.
+/// That is the finding this constant actually rests on, because it
+/// is what makes `|coordinate|` the right quantity to scale by at
+/// all; the particular ulp count only sets where to put the ceiling.
+/// The invariance is asserted rather than quoted, in the same test.
 ///
 /// The asymmetry is what makes generous the right side to err on:
 /// over-covering costs a failure to reject, which spends the full
 /// computation and returns the right answer, while under-covering
-/// drops a click. The test fails if the measured escape ever comes
-/// within a factor of four of this constant.
+/// drops a click.
 const HULL_ESCAPE_SLACK: f32 = 32.0 * f32::EPSILON;
 
 /// [`distance_to_path`], answered only when the answer is within

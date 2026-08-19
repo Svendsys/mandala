@@ -1318,6 +1318,24 @@ fn path_corpus() -> Vec<ConnectionPath> {
             end: Vec2::new(900.0, -30.0),
         },
     ];
+    // Straight segments far from the origin. `path_bounds` is exact
+    // for these — it is the two endpoints — so the hull escape is not
+    // what they exercise. What they exercise is the *other* half of
+    // the magnitude term: `point_to_segment_distance_squared` computes
+    // its projection through a chain whose rounding also scales with
+    // the coordinate, so the distance the accept side compares can sit
+    // that far from the one the reject side implies. The corpus had
+    // nothing above ~900 units and so could not see it.
+    for magnitude in [1.0e4f32, 1.0e5, 1.0e6] {
+        paths.push(ConnectionPath::Straight {
+            start: Vec2::new(magnitude, -magnitude),
+            end: Vec2::new(magnitude + 700.0, magnitude),
+        });
+        paths.push(ConnectionPath::Straight {
+            start: Vec2::new(-magnitude, magnitude),
+            end: Vec2::new(magnitude, magnitude + 400.0),
+        });
+    }
     paths.extend(cubic_corpus());
     paths
 }
@@ -1628,29 +1646,103 @@ fn test_path_bounds_contains_every_sampled_point() {
     );
 }
 
-/// `HULL_ESCAPE_SLACK` re-measured against the sampler on every run.
+/// The largest escape **any** sweep has measured, in units of
+/// `max|coordinate| × f32::EPSILON`.
 ///
-/// The constant exists because `cubic_bezier_point` evaluates a
-/// Bernstein form whose coefficients sum to one only exactly, so a
-/// sampled point is a nearly-convex combination and can leave the
-/// control-point box. This test measures how far, in units of
-/// `max|coordinate| × f32::EPSILON`, and holds the constant above it.
+/// **This is a record of measurements, not a bound**, and the
+/// distinction is the reason it is written down this way. Three
+/// sweeps have produced a figure, by three different methods, and
+/// they disagree in the direction that matters — each denser probe
+/// found a larger number than the last:
 ///
-/// Both directions matter and both are asserted:
+/// | sweep | method | worst |
+/// |---|---|---|
+/// | the corpus walk below | `path_corpus`, sampled as `distance_to_path` samples | ~1.86 |
+/// | the dense `t` sweep below | 11 magnitudes × 26 polygons × 20 001 `t` values | ~2.46 |
+/// | a wider off-tree sweep | 21 magnitudes × ~80 polygons × 200 001 `t` values | 2.77 |
+/// | review's polygon sweep | 64 800 polygons | 2.88 |
 ///
-/// - **The escape is real.** If the worst ratio came back at zero the
-///   slack would be dead weight, and this test would be the place
-///   that noticed. The axis-aligned corpus entries are what guarantee
-///   a non-zero answer — with the box zero-width on one axis there is
-///   nowhere for the rounding to hide.
-/// - **The constant still covers it, with room.** A ratio that grew
-///   to within a factor of four of the constant is a warning shot
-///   fired here rather than a dropped click found by a user.
+/// So the constant is set to the largest of them, and no claim is
+/// made that a denser sweep could not find more. The escape has no
+/// closed-form bound written down anywhere in this tree; if one is
+/// ever derived it belongs beside `HULL_ESCAPE_SLACK` and this
+/// constant becomes a cross-check on it.
+///
+/// The two-directional assertions in
+/// `test_path_bounds_slack_covers_the_sampler_escape` are what keep
+/// this honest: no sweep may exceed this value, and
+/// `HULL_ESCAPE_SLACK` must stay at least four times above it. The
+/// number lives here and nowhere else — prose that wants it names
+/// this constant rather than restating the digits, because a figure
+/// copied into a doc comment is a figure that goes stale silently.
+/// That is exactly how the first version of this area shipped a
+/// defect.
+const MEASURED_WORST_ESCAPE_ULPS: f32 = 2.88;
+
+/// The escape `HULL_ESCAPE_SLACK` covers, re-measured on every run,
+/// and the record of the largest measurement kept where exactly one
+/// copy of it exists.
+///
+/// **No closed-form bound is offered here, and none is implied.**
+/// Every figure below is a measured maximum over a finite sweep — a
+/// sample, not a ceiling. That distinction is the whole reason this
+/// test exists in this shape: the first version of
+/// `test_path_bounds_contains_every_sampled_point` generalised a
+/// sample ("many orders below the tolerance margin") into a bound,
+/// and it cost a shipping defect. An operation count over the
+/// Bernstein form — four coefficient products, four term products,
+/// three sums, so roughly eight roundings each relative to
+/// `max|coordinate|` — puts the error in the same handful-of-ulps
+/// range the sweeps find, which is why the numbers cluster where they
+/// do. That is an order-of-magnitude sanity check on the sweeps, not
+/// a proof, and no proof is offered.
+///
+/// Two sweeps, because they answer different questions:
+///
+/// 1. **The corpus walk** — every path `path_corpus` yields, sampled
+///    the way `distance_to_path` samples it. This is the escape as the
+///    production path actually produces it, and it is the smaller
+///    number: `sample_path` visits arc-length-uniform `t` values,
+///    which is a sparse and shape-dependent subset of `[0, 1]`.
+/// 2. **A dense `t` sweep** across many magnitudes, over the polygon
+///    families the escape is largest for. The worst escape lives at
+///    particular `t`, so sweeping `t` densely at fixed control points
+///    is a strictly better probe of it than sweeping shapes and taking
+///    whatever `t` the sampler happened to visit. This is where
+///    [`MEASURED_WORST_ESCAPE_ULPS`] comes from.
+///
+/// **The measurement is not circular.** The expectation is
+/// `path_bounds`'s `min`/`max` over four given control points, which
+/// is exact — no rounding to speak of and nothing from the code under
+/// test. Measuring the sampler's rounding *with* the sampler is the
+/// measurement; a mirror would recompute the escape and compare it to
+/// itself.
+///
+/// Three assertions, and each has a direction:
+///
+/// - the escape is **real** — a zero worst would mean the slack is
+///   dead weight, and this is where that would be noticed;
+/// - the record is **not stale** — a sweep that exceeds
+///   [`MEASURED_WORST_ESCAPE_ULPS`] fails here rather than being
+///   quietly absorbed, which is what keeps the recorded figure and
+///   the sweeps that produced it from drifting apart;
+/// - the constant still **covers the record with room** — a headroom
+///   under four is a warning shot fired here rather than a dropped
+///   click found by a user.
 #[test]
 fn test_path_bounds_slack_covers_the_sampler_escape() {
-    let mut worst_ratio = 0.0f32;
-    let mut worst_path = String::new();
-    let mut measured = 0usize;
+    use super::bezier::cubic_bezier_point;
+
+    fn escape_ulps(value: f32, lo: f32, hi: f32, scale: f32) -> Option<f32> {
+        if scale <= 0.0 || !scale.is_finite() {
+            return None;
+        }
+        Some((lo - value).max(value - hi).max(0.0) / (scale * f32::EPSILON))
+    }
+
+    // 1. The corpus walk, through the production sampler.
+    let mut corpus_worst = 0.0f32;
+    let mut corpus_measured = 0usize;
     for path in path_corpus() {
         let (min, max) = path_bounds(&path);
         let magnitude = Vec2::new(min.x.abs().max(max.x.abs()), min.y.abs().max(max.y.abs()));
@@ -1658,33 +1750,113 @@ fn test_path_bounds_slack_covers_the_sampler_escape() {
             let p = sample.position;
             for (value, lo, hi, scale) in [(p.x, min.x, max.x, magnitude.x), (p.y, min.y, max.y, magnitude.y)]
             {
-                if scale <= 0.0 {
-                    continue;
+                if let Some(ratio) = escape_ulps(value, lo, hi, scale) {
+                    corpus_worst = corpus_worst.max(ratio);
+                    corpus_measured += 1;
                 }
-                let escape = (lo - value).max(value - hi).max(0.0);
-                let ratio = escape / (scale * f32::EPSILON);
-                if ratio > worst_ratio {
-                    worst_ratio = ratio;
-                    worst_path = format!("{path:?} at {p:?}");
-                }
-                measured += 1;
             }
         }
     }
+
+    // 2. The dense `t` sweep. The escape lives at particular `t`, so
+    //    sweeping `t` finely at fixed control points probes it far
+    //    better than sweeping shapes and reading whatever `t` the
+    //    arc-length sampler happened to land on. Eleven magnitudes
+    //    from 1 to 10^20, and the families the escape is largest for:
+    //    the degenerate box (every control point equal, so the box is
+    //    a point and nothing can hide) and thin boxes made by nudging
+    //    one control point off it.
+    const T_STEPS: usize = 20_000;
+    let mut sweep_worst = 0.0f32;
+    let mut sweep_worst_case = String::new();
+    let mut sweep_measured = 0usize;
+    let mut per_magnitude: Vec<(f32, f32)> = Vec::new();
+    for exponent in (0..=20i32).step_by(2) {
+        let m = 10f32.powi(exponent);
+        let mut families: Vec<[f32; 4]> = vec![[m, m, m, m], [-m, -m, -m, -m]];
+        for rel in [1.0e-6f32, 1.0e-3, 0.1] {
+            for slot in 0..4 {
+                let mut up = [m; 4];
+                up[slot] = m * (1.0 + rel);
+                families.push(up);
+                let mut down = [m; 4];
+                down[slot] = m * (1.0 - rel);
+                families.push(down);
+            }
+        }
+        let mut worst_here = 0.0f32;
+        for family in &families {
+            let lo = family.iter().copied().fold(f32::INFINITY, f32::min);
+            let hi = family.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let scale = family.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+            for step in 0..=T_STEPS {
+                let t = step as f32 / T_STEPS as f32;
+                // One axis at a time: a y component cannot affect an
+                // x-axis escape, so the same four numbers go through
+                // both slots and only the x is read.
+                let value = cubic_bezier_point(
+                    t,
+                    Vec2::new(family[0], family[0]),
+                    Vec2::new(family[1], family[1]),
+                    Vec2::new(family[2], family[2]),
+                    Vec2::new(family[3], family[3]),
+                )
+                .x;
+                if let Some(ratio) = escape_ulps(value, lo, hi, scale) {
+                    if ratio > sweep_worst {
+                        sweep_worst = ratio;
+                        sweep_worst_case = format!("{family:?} at t={t}");
+                    }
+                    worst_here = worst_here.max(ratio);
+                    sweep_measured += 1;
+                }
+            }
+        }
+        per_magnitude.push((m, worst_here));
+    }
+
     assert!(
-        measured > 2_000,
-        "the sweep must actually run; measured {measured}"
+        corpus_measured > 2_000 && sweep_measured > 400_000,
+        "both sweeps must actually run; {corpus_measured} corpus / {sweep_measured} dense"
     );
     assert!(
-        worst_ratio > 0.5,
-        "no sample left the control-point box at all (worst ratio {worst_ratio}); either the \
-         corpus lost its axis-aligned entries or HULL_ESCAPE_SLACK guards nothing"
+        corpus_worst > 0.5 && sweep_worst > 0.5,
+        "no sample left the control-point box at all (corpus {corpus_worst}, dense \
+         {sweep_worst}); either the corpus lost its axis-aligned entries or \
+         HULL_ESCAPE_SLACK guards nothing"
     );
-    let headroom = (HULL_ESCAPE_SLACK / f32::EPSILON) / worst_ratio;
+
+    // The escape does not grow with the coordinate — that is *why*
+    // scaling the margin by the coordinate is the right move, and it
+    // is a property rather than a number, so it is asserted rather
+    // than quoted.
+    let spread = per_magnitude
+        .iter()
+        .map(|(_, w)| *w)
+        .fold(f32::NEG_INFINITY, f32::max)
+        / per_magnitude
+            .iter()
+            .map(|(_, w)| *w)
+            .fold(f32::INFINITY, f32::min);
+    assert!(
+        spread < 4.0,
+        "the escape must be magnitude-invariant in these units, or coordinate-relative is \
+         the wrong quantity to scale by; worst-per-magnitude spread {spread}x over \
+         {per_magnitude:?}"
+    );
+
+    let worst = corpus_worst.max(sweep_worst);
+    assert!(
+        worst <= MEASURED_WORST_ESCAPE_ULPS,
+        "a sweep found {worst} ulps of escape, above the recorded worst of \
+         {MEASURED_WORST_ESCAPE_ULPS}. Raise the record (and re-check the headroom below) \
+         rather than lowering the sweep. Worst: {sweep_worst_case}"
+    );
+    let headroom = (HULL_ESCAPE_SLACK / f32::EPSILON) / MEASURED_WORST_ESCAPE_ULPS;
     assert!(
         headroom >= 4.0,
-        "HULL_ESCAPE_SLACK is {} ulps and the worst measured escape is {worst_ratio} ulps \
-         ({headroom}x headroom) — raise the constant. Worst: {worst_path}",
+        "HULL_ESCAPE_SLACK is {} ulps against a recorded worst of \
+         {MEASURED_WORST_ESCAPE_ULPS} ({headroom}x headroom) — raise the constant",
         HULL_ESCAPE_SLACK / f32::EPSILON
     );
 }
@@ -1771,7 +1943,7 @@ fn test_distance_to_path_within_agrees_with_the_unbounded_form() {
     );
 }
 
-/// The contract holds over non-finite geometry too, which is the one
+/// The contract holds over non-finite geometry too, which is the one/// The contract holds over non-finite geometry too, which is the one
 /// place the early-out and the full computation could plausibly
 /// disagree by construction rather than by rounding.
 ///
