@@ -379,22 +379,36 @@ pub fn byte_indices_of_graphemes(s: &str, ascending: &[usize]) -> Vec<Option<usi
 ///
 /// `i` and `n` are **byte** offsets. The contract is that both land
 /// on a UTF-8 character boundary of `s`, with `i <= n <= s.len()`.
-/// Both call sites — the two branches of
-/// [`replace_graphemes_until_newline`] — satisfy it by construction:
-/// `i` comes from [`find_byte_index_of_grapheme`] (a cumulative sum
-/// of cluster lengths, and a cluster boundary is always a character
-/// boundary) or from `s.len()`; `n` is either another such cluster
-/// offset or the end of `slice_to_newline`'s borrowed subslice of
-/// `s`, which is a character boundary because it is the end of a
-/// `&str`. `s` is not mutated between computing them and arriving
-/// here, and `i <= n` holds because cluster offsets rise with
-/// cluster index.
+///
+/// **The two production call sites satisfy it by construction** —
+/// the two branches of [`replace_graphemes_until_newline`], in this
+/// module. `i` comes from [`find_byte_index_of_grapheme`] (a
+/// cumulative sum of cluster lengths, and a cluster boundary is
+/// always a character boundary) or from `s.len()`; `n` is either
+/// another such cluster offset or the end of `slice_to_newline`'s
+/// borrowed subslice of `s`, which is a character boundary because it
+/// is the end of a `&str`. `s` is not mutated between computing them
+/// and arriving here, and `i <= n` holds because cluster offsets rise
+/// with cluster index.
+///
+/// **That is an argument about two callers, not about this
+/// function.** It is `pub(crate)`, so the precondition is not
+/// enclosed by this module: the crate's own tests reach it, and four
+/// of their call sites pass out-of-contract offsets *on purpose*,
+/// because driving the degrade is what they exist to do. Any future
+/// in-crate caller reaches it on the same terms. The guard below is
+/// therefore the contract's enforcement rather than a formality
+/// about today's two production callers, and the argument above is
+/// what says those two never reach it.
 ///
 /// **Out of contract it degrades rather than panics.**
-/// `String::replace_range` panics on a mid-character offset, and
-/// this is the per-keystroke edit path, where CODE_CONVENTIONS §9
-/// does not allow one. So the offsets are checked in O(1) first, and
-/// a bad pair logs and leaves `s` untouched.
+/// `String::replace_range` has exactly three panic conditions — a
+/// start off a character boundary, an end off one (which subsumes an
+/// end past the length, since `is_char_boundary` is false there), and
+/// a start after the end — and the check below covers all three. This
+/// is the per-keystroke edit path, where CODE_CONVENTIONS §9 does not
+/// allow a panic, so a bad triple logs and leaves `s` untouched
+/// instead.
 ///
 /// That check is **sharper** than the `String::from_utf8` it
 /// replaces, not a weaker stand-in for it. The old body copied `s`

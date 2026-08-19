@@ -593,15 +593,35 @@ pub fn distance_to_path(point: Vec2, path: &ConnectionPath) -> f32 {
 /// convex set stays inside it. So no segment it tests can leave this
 /// box.
 ///
+/// **Both statements are exact in real arithmetic and approximate in
+/// `f32`, and the difference is load-bearing.** `cubic_bezier_point`
+/// evaluates the Bernstein form, whose coefficients sum to one only
+/// exactly, so a sampled point is a *nearly* convex combination and
+/// can land outside this box by about `|coordinate| × f32::EPSILON`.
+/// An axis-aligned control polygon — every control point on one x —
+/// makes the box zero-width on that axis and every sample escape it.
+/// A caller comparing a distance against this box must therefore
+/// allow for that; `distance_to_path_within` does, through
+/// `HULL_ESCAPE_SLACK`, and is the reason to reach for it rather than
+/// to hand-roll the comparison.
+///
 /// The box is not tight — an S-curve's control points can sit well
 /// outside the curve's own extent — which is the trade: four
 /// component-wise `min`/`max` pairs and no root-finding on the
 /// derivative.
 ///
 /// Cost: O(1), no allocation. A non-finite control point is not
-/// screened here; `f32::min` / `f32::max` return the other operand
-/// against a `NaN`, so a partly-`NaN` path yields the box of its
-/// finite points.
+/// screened here, and what comes back for one is deliberately not
+/// promised: `Vec2::min` returns whichever operand its comparison
+/// falls through to, so whether a `NaN` survives into the bound
+/// depends on which side of the fold it lands, while an infinity
+/// always survives. Callers must not read a finite box as evidence
+/// that the path is finite. `distance_to_path_within` does not — it
+/// answers `None` either way, because the measured distance is
+/// non-finite and fails its `<=` test —  and
+/// `test_distance_to_path_within_holds_over_non_finite_geometry`
+/// drives every placement of every non-finite value across all four
+/// control points.
 pub fn path_bounds(path: &ConnectionPath) -> (Vec2, Vec2) {
     match path {
         ConnectionPath::Straight { start, end } => (start.min(*end), start.max(*end)),
@@ -633,11 +653,16 @@ pub fn path_bounds(path: &ConnectionPath) -> (Vec2, Vec2) {
 /// A `NaN` anywhere makes every comparison false, so the answer is
 /// "not outside" — the safe direction, since the caller then does
 /// the full computation instead of trusting this.
-fn outside_bounds_by(point: Vec2, min: Vec2, max: Vec2, tolerance: f32) -> bool {
-    min.x - point.x > tolerance
-        || point.x - max.x > tolerance
-        || min.y - point.y > tolerance
-        || point.y - max.y > tolerance
+///
+/// `margin` is per-axis because the slack the caller needs is not:
+/// one term of it scales with the coordinate magnitude, and a path
+/// can be a thousand units from the origin on one axis and a million
+/// on the other.
+fn outside_bounds_by(point: Vec2, min: Vec2, max: Vec2, margin: Vec2) -> bool {
+    min.x - point.x > margin.x
+        || point.x - max.x > margin.x
+        || min.y - point.y > margin.y
+        || point.y - max.y > margin.y
 }
 
 /// Relative slack added to [`distance_to_path_within`]'s reject
@@ -673,7 +698,53 @@ fn outside_bounds_by(point: Vec2, min: Vec2, max: Vec2, tolerance: f32) -> bool 
 /// is not what a hit test should rest on. The same test fails when
 /// the margin is *inverted*, which is what says the sweep can
 /// resolve a shift of this size at all.
+///
+/// **It covers the comparison and nothing else.** The larger error —
+/// the curve evaluation leaving the control-point box at all — does
+/// not scale with `tolerance` and is covered by
+/// [`HULL_ESCAPE_SLACK`], which is a separate term for a separate
+/// reason. Scaling one margin to `tolerance` and expecting it to
+/// absorb both is the defect that shipped in the first version of
+/// this function.
 const BOUNDS_REJECT_SLACK: f32 = 32.0 * f32::EPSILON;
+
+/// Slack, relative to the path's **coordinate magnitude**, covering
+/// how far a sampled point can fall outside [`path_bounds`]'s box.
+///
+/// [`path_bounds`]'s containment claim is exact in real arithmetic
+/// and false in `f32`, and the reason is in `cubic_bezier_point`: the
+/// Bernstein coefficients sum to one only exactly, so the evaluated
+/// point is a *nearly* convex combination and can land a rounding
+/// step outside the box its control points span. The error is
+/// relative to the coordinate — around `|coordinate| × f32::EPSILON`
+/// — and so has nothing to do with `tolerance`.
+///
+/// **The shape that makes it visible is an axis-aligned control
+/// polygon**, which is ordinary content rather than a corner case:
+/// two nodes stacked vertically with control offsets whose x is zero
+/// — "curve this edge straight up" — puts all four control points on
+/// one x, and the box is then zero-width on that axis with nowhere
+/// for the rounding to hide. Every sample escapes, by
+/// `|x| × f32::EPSILON`, and at a canvas x of 10⁴ that is already
+/// larger than a click tolerance at high zoom.
+///
+/// 32 × [`f32::EPSILON`] is chosen against a measurement rather than
+/// a guess. `test_path_bounds_slack_covers_the_sampler_escape`
+/// re-measures the escape on the corpus every run and reports it in
+/// units of `max|coordinate| × f32::EPSILON`; the worst it finds is
+/// **1.86**, on the axis-aligned entry at x = 1100, leaving about
+/// seventeen times that in hand. A standalone sweep over eight
+/// magnitude decades and roughly 64 000 control polygons —
+/// clustered, spread, axis-aligned, negative — put the worst at
+/// **1.64**, so the two agree on the order and the corpus is the
+/// more pessimistic of them.
+///
+/// The asymmetry is what makes generous the right side to err on:
+/// over-covering costs a failure to reject, which spends the full
+/// computation and returns the right answer, while under-covering
+/// drops a click. The test fails if the measured escape ever comes
+/// within a factor of four of this constant.
+const HULL_ESCAPE_SLACK: f32 = 32.0 * f32::EPSILON;
 
 /// [`distance_to_path`], answered only when the answer is within
 /// `tolerance` — the shape a hit test wants.
@@ -693,9 +764,17 @@ const BOUNDS_REJECT_SLACK: f32 = 32.0 * f32::EPSILON;
 /// full computation could only have returned a value the `<=` test
 /// would reject. The reject is therefore sound for *any* box that
 /// contains the path, which is what makes a loose one safe to use.
-/// The module-private `BOUNDS_REJECT_SLACK` carries that argument
-/// across float rounding, so the two routes cannot disagree even on
-/// a point sitting exactly `tolerance` away.
+/// Two module-private slacks carry that argument across float
+/// rounding, and they are separate because the two errors scale with
+/// different quantities. `BOUNDS_REJECT_SLACK` is relative to
+/// `tolerance` and covers the comparison itself, so the two routes
+/// cannot disagree on a point sitting exactly `tolerance` away.
+/// `HULL_ESCAPE_SLACK` is relative to the path's coordinate
+/// magnitude and covers the sampled points that fall outside the box
+/// — which they do, because the containment above is a
+/// real-arithmetic statement. Folding both into one `tolerance`-
+/// scaled margin is what the first version of this function did, and
+/// it dropped clicks on axis-aligned curves far from the origin.
 ///
 /// A `NaN` in `point` or in the path falls out of the contract
 /// rather than needing a case: `distance_to_path` is then `NaN`,
@@ -709,8 +788,13 @@ const BOUNDS_REJECT_SLACK: f32 = 32.0 * f32::EPSILON;
 /// that O(1). No allocation on either route.
 pub fn distance_to_path_within(point: Vec2, path: &ConnectionPath, tolerance: f32) -> Option<f32> {
     let (min, max) = path_bounds(path);
-    let reject_beyond = tolerance + tolerance.abs() * BOUNDS_REJECT_SLACK;
-    if outside_bounds_by(point, min, max, reject_beyond) {
+    // Two independent error terms, and they scale with different
+    // quantities: the comparison's own rounding with `tolerance`, the
+    // sampler's escape from the box with the coordinate magnitude.
+    let comparison = tolerance + tolerance.abs() * BOUNDS_REJECT_SLACK;
+    let magnitude = Vec2::new(min.x.abs().max(max.x.abs()), min.y.abs().max(max.y.abs()));
+    let margin = Vec2::splat(comparison) + magnitude * HULL_ESCAPE_SLACK;
+    if outside_bounds_by(point, min, max, margin) {
         return None;
     }
     let distance = distance_to_path(point, path);

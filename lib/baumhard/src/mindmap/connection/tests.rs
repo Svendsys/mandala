@@ -1195,6 +1195,48 @@ impl Lcg {
     }
 }
 
+/// Cubics whose control polygon is **axis-aligned**: all four
+/// control points sharing one x, or one y, at a range of canvas
+/// magnitudes.
+///
+/// This is the shape [`cubic_corpus`]'s generated half cannot
+/// produce, and it is the one that matters: with every control point
+/// on one x, the control-polygon box is zero-width on that axis, so
+/// any rounding in the curve evaluation leaves the box rather than
+/// hiding inside it. It is also entirely ordinary content — two
+/// nodes stacked vertically with control offsets whose x is 0 is
+/// what "curve this edge straight up" authors.
+///
+/// The magnitudes matter for the same reason: the escape scales with
+/// the coordinate, so a corpus centered on the origin cannot see it.
+fn axis_aligned_corpus() -> Vec<ConnectionPath> {
+    let mut out = Vec::new();
+    for magnitude in [1.0e2f32, 1.1e3, 1.0e4, 1.0e5, 1.0e6] {
+        // "Curve straight up": a zero-width box at x = magnitude.
+        out.push(ConnectionPath::CubicBezier {
+            start: Vec2::new(magnitude, 0.0),
+            control1: Vec2::new(magnitude, 120.0),
+            control2: Vec2::new(magnitude, 240.0),
+            end: Vec2::new(magnitude, 360.0),
+        });
+        // Transposed: a zero-height box at y = magnitude.
+        out.push(ConnectionPath::CubicBezier {
+            start: Vec2::new(0.0, magnitude),
+            control1: Vec2::new(120.0, magnitude),
+            control2: Vec2::new(240.0, magnitude),
+            end: Vec2::new(360.0, magnitude),
+        });
+        // Negative, because the magnitude term has to read |coord|.
+        out.push(ConnectionPath::CubicBezier {
+            start: Vec2::new(-magnitude, 0.0),
+            control1: Vec2::new(-magnitude, -120.0),
+            control2: Vec2::new(-magnitude, -240.0),
+            end: Vec2::new(-magnitude, -360.0),
+        });
+    }
+    out
+}
+
 /// Cubic paths spanning the shapes a document can author: a
 /// degenerate point, a curve whose controls lie on the chord, a
 /// single hump, an S-curve, one whose control points sit far outside
@@ -1255,6 +1297,7 @@ fn cubic_corpus() -> Vec<ConnectionPath> {
             rng.next_vec2(-500.0, 500.0),
         ));
     }
+    paths.extend(axis_aligned_corpus());
     paths
 }
 
@@ -1531,27 +1574,29 @@ fn test_distance_to_path_matches_a_collected_sample_walk() {
 /// The convex-hull property `path_bounds` rests on, checked against
 /// the points `distance_to_path` actually measures: every sample of
 /// every corpus path lies inside the box of that path's control
-/// points.
+/// points, **to within the slack the code itself allows**.
 ///
-/// Exact containment is a real-arithmetic statement — a curve
-/// evaluation is a rounded convex combination and may land a bit
-/// outside — so the assertion allows one ulp of the coordinate's own
-/// magnitude. That slack is many orders below the `tolerance`
-/// margin the early-out compares against, which is the quantity that
-/// matters downstream.
+/// That slack is `HULL_ESCAPE_SLACK × |coordinate|`, not one ulp.
+/// The first version of this test allowed one ulp of the coordinate
+/// and said the escape was "many orders below the tolerance margin",
+/// which is false: the escape is around `|coordinate| ×
+/// f32::EPSILON`, so it passes a canvas-space click tolerance
+/// somewhere around x = 200 and keeps going. That sentence was the
+/// premise that let a real defect ship, so the assertion is now
+/// written against the constant the production code compares with —
+/// if the two ever disagree, this test is what says so.
 ///
-/// **The control is inside the test.** The same sweep run against
-/// the *endpoint* box — the wrong box, which a hump escapes — must
-/// fail for at least one corpus path. Without it, an implementation
-/// of `path_bounds` returning an infinite box would pass.
+/// **The control is inside the test.** The same sweep run against the
+/// *endpoint* box — the wrong box, which a hump escapes — must fail
+/// for at least one corpus path. Without it, a `path_bounds`
+/// returning an infinite box would pass.
 #[test]
 fn test_path_bounds_contains_every_sampled_point() {
-    fn contains_with_ulp_slack(point: Vec2, min: Vec2, max: Vec2) -> bool {
-        let slack = |v: f32| v.abs().max(1.0) * f32::EPSILON;
-        point.x >= min.x - slack(min.x)
-            && point.x <= max.x + slack(max.x)
-            && point.y >= min.y - slack(min.y)
-            && point.y <= max.y + slack(max.y)
+    fn contains_with_escape_slack(point: Vec2, min: Vec2, max: Vec2) -> bool {
+        let slack = |lo: f32, hi: f32| lo.abs().max(hi.abs()).max(1.0) * HULL_ESCAPE_SLACK;
+        let sx = slack(min.x, max.x);
+        let sy = slack(min.y, max.y);
+        point.x >= min.x - sx && point.x <= max.x + sx && point.y >= min.y - sy && point.y <= max.y + sy
     }
 
     let mut escaped_the_endpoint_box = 0usize;
@@ -1565,10 +1610,11 @@ fn test_path_bounds_contains_every_sampled_point() {
         for sample in sample_path(&path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES) {
             let p = sample.position;
             assert!(
-                contains_with_ulp_slack(p, min, max),
-                "sample {p:?} escaped the control-point box {min:?}..{max:?} of {path:?}"
+                contains_with_escape_slack(p, min, max),
+                "sample {p:?} escaped the control-point box {min:?}..{max:?} of {path:?} \
+                 by more than HULL_ESCAPE_SLACK allows"
             );
-            if !contains_with_ulp_slack(p, chord_min, chord_max) {
+            if !contains_with_escape_slack(p, chord_min, chord_max) {
                 escaped_the_endpoint_box += 1;
             }
             sampled += 1;
@@ -1582,23 +1628,112 @@ fn test_path_bounds_contains_every_sampled_point() {
     );
 }
 
+/// `HULL_ESCAPE_SLACK` re-measured against the sampler on every run.
+///
+/// The constant exists because `cubic_bezier_point` evaluates a
+/// Bernstein form whose coefficients sum to one only exactly, so a
+/// sampled point is a nearly-convex combination and can leave the
+/// control-point box. This test measures how far, in units of
+/// `max|coordinate| × f32::EPSILON`, and holds the constant above it.
+///
+/// Both directions matter and both are asserted:
+///
+/// - **The escape is real.** If the worst ratio came back at zero the
+///   slack would be dead weight, and this test would be the place
+///   that noticed. The axis-aligned corpus entries are what guarantee
+///   a non-zero answer — with the box zero-width on one axis there is
+///   nowhere for the rounding to hide.
+/// - **The constant still covers it, with room.** A ratio that grew
+///   to within a factor of four of the constant is a warning shot
+///   fired here rather than a dropped click found by a user.
+#[test]
+fn test_path_bounds_slack_covers_the_sampler_escape() {
+    let mut worst_ratio = 0.0f32;
+    let mut worst_path = String::new();
+    let mut measured = 0usize;
+    for path in path_corpus() {
+        let (min, max) = path_bounds(&path);
+        let magnitude = Vec2::new(min.x.abs().max(max.x.abs()), min.y.abs().max(max.y.abs()));
+        for sample in sample_path(&path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES) {
+            let p = sample.position;
+            for (value, lo, hi, scale) in [(p.x, min.x, max.x, magnitude.x), (p.y, min.y, max.y, magnitude.y)]
+            {
+                if scale <= 0.0 {
+                    continue;
+                }
+                let escape = (lo - value).max(value - hi).max(0.0);
+                let ratio = escape / (scale * f32::EPSILON);
+                if ratio > worst_ratio {
+                    worst_ratio = ratio;
+                    worst_path = format!("{path:?} at {p:?}");
+                }
+                measured += 1;
+            }
+        }
+    }
+    assert!(
+        measured > 2_000,
+        "the sweep must actually run; measured {measured}"
+    );
+    assert!(
+        worst_ratio > 0.5,
+        "no sample left the control-point box at all (worst ratio {worst_ratio}); either the \
+         corpus lost its axis-aligned entries or HULL_ESCAPE_SLACK guards nothing"
+    );
+    let headroom = (HULL_ESCAPE_SLACK / f32::EPSILON) / worst_ratio;
+    assert!(
+        headroom >= 4.0,
+        "HULL_ESCAPE_SLACK is {} ulps and the worst measured escape is {worst_ratio} ulps \
+         ({headroom}x headroom) — raise the constant. Worst: {worst_path}",
+        HULL_ESCAPE_SLACK / f32::EPSILON
+    );
+}
+
 /// `distance_to_path_within`'s contract: `Some(d)` exactly when
 /// `distance_to_path` returns a `d` with `d <= tolerance`.
 ///
-/// The sweep drives every corpus path against points inside, beside
-/// and far from it, at tolerances chosen *relative to the answer* —
-/// including `tolerance` equal to the distance itself, which is the
-/// knife edge the reject's rounding slack exists for. A reject that
-/// fired one ulp early would be visible exactly there and nowhere
-/// else.
+/// The sweep drives every corpus path against three families of
+/// points, and the third is the one that earns its place:
+///
+/// 1. random points across the canvas, which mostly sit far away and
+///    exercise the reject;
+/// 2. `tolerance` chosen *relative to the answer* — including equal
+///    to the distance itself, the knife edge the reject's rounding
+///    slack exists for;
+/// 3. **points taken off the path itself**, nudged by a fraction of
+///    the tolerance. A point that is genuinely on an edge is the only
+///    input that can expose a reject which is too tight, and family 1
+///    almost never produces one: a random point in a 3000-unit square
+///    is not within 12 units of a specific curve. Without this family
+///    the sweep agreed with itself while the early-out silently
+///    dropped hits — see `axis_aligned_corpus` for the shape that
+///    made that visible.
 #[test]
 fn test_distance_to_path_within_agrees_with_the_unbounded_form() {
     let mut rng = Lcg(0x0bad_f00d);
     let mut accepted = 0usize;
     let mut rejected = 0usize;
+    let mut on_path = 0usize;
     for path in path_corpus() {
-        for _ in 0..16 {
-            let point = rng.next_vec2(-1_500.0, 1_500.0);
+        let mut points: Vec<Vec2> = (0..16).map(|_| rng.next_vec2(-1_500.0, 1_500.0)).collect();
+
+        // Family 3: real hits, and near-misses beside them.
+        let samples = sample_path(&path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES);
+        let step = (samples.len() / 8).max(1);
+        for sample in samples.iter().step_by(step).take(9) {
+            points.push(sample.position);
+            for nudge in [
+                Vec2::new(3.0, 0.0),
+                Vec2::new(-3.0, 0.0),
+                Vec2::new(0.0, 3.0),
+                Vec2::new(0.0, -7.5),
+            ] {
+                points.push(sample.position + nudge);
+            }
+            on_path += 1;
+        }
+
+        for point in points {
             let distance = distance_to_path(point, &path);
             let tolerances = [
                 0.0,
@@ -1607,6 +1742,7 @@ fn test_distance_to_path_within_agrees_with_the_unbounded_form() {
                 distance * 1.000_01,
                 distance + 1.0,
                 1.0,
+                8.0,
                 12.0,
                 1.0e9,
             ];
@@ -1625,10 +1761,136 @@ fn test_distance_to_path_within_agrees_with_the_unbounded_form() {
             }
         }
     }
-    // Both outcomes have to occur, or the sweep is only testing one
-    // branch of the function.
+    // All three families have to have run, or the sweep is testing one
+    // branch of the function and calling it two.
     assert!(accepted > 200, "no accepting case exercised; accepted {accepted}");
     assert!(rejected > 200, "no rejecting case exercised; rejected {rejected}");
+    assert!(
+        on_path > 200,
+        "no on-path point exercised; {on_path} sample anchors"
+    );
+}
+
+/// The contract holds over non-finite geometry too, which is the one
+/// place the early-out and the full computation could plausibly
+/// disagree by construction rather than by rounding.
+///
+/// Both routes have to answer `None`, and they get there differently:
+/// `outside_bounds_by`'s comparisons are all false against a `NaN`, so
+/// nothing rejects early and the full computation runs; that
+/// computation yields `NaN`, and `NaN <= tolerance` is false. The
+/// interesting part is that `path_bounds` does **not** reliably become
+/// `NaN` — `Vec2::min` returns whichever operand its comparison falls
+/// through to, so whether a `NaN` survives into the bound depends on
+/// which side it is written — and the agreement therefore has to hold
+/// for a finite box over poisoned geometry as well as for a poisoned
+/// one. Both occur here and both are asserted.
+///
+/// A related thing I had wrong in prose before this test existed: the
+/// sample plan does not collapse to `B(0) == start`. It collapses to
+/// `NaN` whenever the non-finite component is in `control1`,
+/// `control2` or `end`, because the Bernstein form multiplies those by
+/// a literal `0.0` at `t = 0` and `0.0 * NaN` is `NaN`. The conclusion
+/// was right and the reason was not, which is exactly the kind of
+/// claim that should be a test instead of a sentence.
+#[test]
+fn test_distance_to_path_within_holds_over_non_finite_geometry() {
+    const POISONS: [f32; 3] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+    let base = ConnectionPath::CubicBezier {
+        start: Vec2::new(10.0, 20.0),
+        control1: Vec2::new(40.0, 120.0),
+        control2: Vec2::new(90.0, 120.0),
+        end: Vec2::new(130.0, 20.0),
+    };
+    let probes = [
+        Vec2::new(70.0, 80.0),
+        Vec2::new(10.0, 20.0),
+        Vec2::new(-4_000.0, 9_000.0),
+        Vec2::new(f32::NAN, 0.0),
+        Vec2::splat(f32::INFINITY),
+    ];
+
+    let mut checked = 0usize;
+    let mut finite_boxes = 0usize;
+    let mut non_finite_boxes = 0usize;
+    let mut non_finite_answers = 0usize;
+    for slot in 0..4usize {
+        for component in 0..2usize {
+            for poison in POISONS {
+                let ConnectionPath::CubicBezier {
+                    mut start,
+                    mut control1,
+                    mut control2,
+                    mut end,
+                } = base
+                else {
+                    unreachable!("base is a cubic");
+                };
+                {
+                    let target = match slot {
+                        0 => &mut start,
+                        1 => &mut control1,
+                        2 => &mut control2,
+                        _ => &mut end,
+                    };
+                    if component == 0 {
+                        target.x = poison;
+                    } else {
+                        target.y = poison;
+                    }
+                }
+                let path = ConnectionPath::CubicBezier {
+                    start,
+                    control1,
+                    control2,
+                    end,
+                };
+                let (min, max) = path_bounds(&path);
+                if min.is_finite() && max.is_finite() {
+                    finite_boxes += 1;
+                } else {
+                    non_finite_boxes += 1;
+                }
+                for probe in probes {
+                    let distance = distance_to_path(probe, &path);
+                    if !distance.is_finite() {
+                        non_finite_answers += 1;
+                    }
+                    for tolerance in [0.0f32, 1.0, 12.0, 1.0e9, f32::INFINITY] {
+                        let expected = (distance <= tolerance).then_some(distance);
+                        let actual = distance_to_path_within(probe, &path, tolerance);
+                        assert_eq!(
+                            actual, expected,
+                            "slot {slot} component {component} poison {poison} probe {probe:?} \
+                             tolerance {tolerance}: got {actual:?}, unbounded form says {distance}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked > 500, "the sweep must actually run; checked {checked}");
+    // Both kinds of box have to occur, because the agreement has to
+    // hold for both. Which poison produces which is not something to
+    // assert: `Vec2::min` returns whichever operand its comparison
+    // falls through to, so a `NaN` survives into the bound or does not
+    // depending on which side of the fold it lands, and this sweep
+    // produces both from `NaN` alone. If only one kind appeared the
+    // sweep would be agreeing about one shape while claiming two.
+    assert!(
+        finite_boxes > 0,
+        "no poisoned path kept a finite box; the agreement is only being checked against a \
+         bound that is itself non-finite"
+    );
+    assert!(
+        non_finite_boxes > 0,
+        "no poisoned path produced a non-finite box; the non-finite bound is unexercised"
+    );
+    assert!(
+        non_finite_answers > 50,
+        "the geometry must actually poison the measured distance; {non_finite_answers} did"
+    );
 }
 
 /// The reject must actually reject: a point far outside a path's box
@@ -1671,6 +1933,17 @@ fn test_distance_to_path_within_rejects_a_point_outside_the_box() {
 /// the token it forbids *does* still occur elsewhere in the same
 /// file. Without that pairing a scan that resolved to the empty
 /// string would report all three as clean.
+///
+/// **What it does not catch, stated where the gap is widest.** These
+/// are absence-of-token clauses over one body, so a one-line wrapper
+/// defeats them: a `fn collect_samples(path) -> Vec<SampledPoint>`
+/// calling `sample_path`, called from `distance_to_path`, leaves this
+/// test green and puts the vector back. That evasion has been
+/// demonstrated rather than assumed. The clause is a guard against
+/// the shape drifting back, not a proof that no allocation remains —
+/// and it is weaker here than in its `grapheme_chad` sibling, because
+/// two of these three clauses forbid a *call* rather than a
+/// construction, and a call is the easiest thing to rename.
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_the_sampling_hot_paths_carry_no_collected_vector() {

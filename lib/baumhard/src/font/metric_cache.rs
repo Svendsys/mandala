@@ -82,6 +82,15 @@
 //! (§B5). A hit is a hash lookup under a **read** guard: it takes
 //! no write lock, reaches no font system, and allocates nothing.
 //!
+//! **The lock round-trip per lookup is untouched by this**, and the
+//! issue that motivated the key change (#36 item 3) names it in the
+//! same breath as the allocation. A hit still acquires the read guard
+//! once per call, so an N-cluster border pattern going through
+//! [`cluster_width`](crate::font::metric_cache::cluster_width) is
+//! still N acquires. Removing that needs a batching entry point that
+//! holds one guard across a run of clusters — a new surface rather
+//! than a key change — and it has not been built.
+//!
 //! That difference is stated in operations rather than in times on
 //! purpose. This paragraph used to carry three numbers — "~100µs"
 //! to shape, "~100 ns" per hit, and a "~1000× speedup" derived

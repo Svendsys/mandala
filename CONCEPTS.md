@@ -1586,11 +1586,14 @@ points), `resolve_anchor_point` (auto / top / right / bottom /
 left), `point_at_t`, `tangent_at_t`, `closest_point_on_path`
 (uniform-t sampling + Newton refinement for cubics, direct
 projection for straight lines), `sample_path` (arc-length-uniform
-glyph placement), `distance_to_path`, and the pair the edge
-hit-test actually calls — `path_bounds` (the control polygon's
-AABB, which contains the curve by the Bezier convex-hull property)
-and `distance_to_path_within`, which uses that box to answer "no"
-without sampling the curve at all. Quadratics get promoted to
+glyph placement), `distance_to_path`, and the pair behind the edge hit-test —
+`distance_to_path_within`, which `hit_test_edge` calls, and
+`path_bounds`, which it calls in turn. `path_bounds` is the
+control polygon's AABB, which contains the curve by the Bezier
+convex-hull property *in real arithmetic*; the f32 escape from
+that box is what `distance_to_path_within`'s slack allows for, and
+it is the reason to reach for that function rather than to compare
+against the box by hand. Quadratics get promoted to
 cubic at build time, so the apply path is always one of two
 shapes.
 
