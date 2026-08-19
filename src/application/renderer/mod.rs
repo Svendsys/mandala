@@ -60,9 +60,19 @@ mod decree;
 // as `console_pass` and `color_picker`.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod overlay_dispatch;
-mod overlay_shape_cache;
 mod pipeline;
 mod render;
+mod scene_shape_cache;
+// Test-only reach-through to the shared scene shape pass. The pass
+// takes a `&Scene` rather than a `&mut Renderer` precisely so its
+// granularity can be asserted without a live device (§T8), and that
+// only helps if the assertion can name it: the canvas half's fixture
+// is a real `AppScene` projected by `app::scene_rebuild`'s
+// `CanvasFrame`, which lives outside this module. The module stays
+// private in a shipped build, so nothing here widens the renderer's
+// production surface.
+#[cfg(test)]
+pub(crate) use scene_shape_cache::{refresh, ScenePassKind, ShapedSceneElement};
 // Rubber-band selection rectangle. Driven by the native-gated
 // drag state machine.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -527,7 +537,8 @@ pub struct Renderer {
     /// shapings per drag tick. `None` whenever the overlay is
     /// cleared or holds a non-selection-rect shape.
     selection_rect_shape_cache: Option<(usize, usize)>,
-    /// Screen-space buffers produced by walking the app's
+    /// Screen-space output produced by walking the overlay sub-scene
+    /// of the app's
     /// [`AppScene`](crate::application::scene_host::AppScene), in
     /// draw order, one entry per walked element. Populated by
     /// [`Self::rebuild_overlay_scene_buffers`] and drawn alongside
@@ -536,23 +547,26 @@ pub struct Renderer {
     ///
     /// Each entry carries the shaping inputs its buffers came from
     /// so the next pass can reuse them unchanged; see
-    /// [`overlay_shape_cache`] for the reuse rule. That is also why
+    /// [`scene_shape_cache`] for the reuse rule. That is also why
     /// this is a `Vec` of per-element groups rather than one flat
     /// buffer list — the grouping is what a walk position can be
     /// checked against.
-    overlay_scene_buffers: Vec<overlay_shape_cache::ShapedOverlayElement>,
-    /// Canvas-space buffers for the app's
+    overlay_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
+    /// Canvas-space output for the same
     /// [`AppScene`](crate::application::scene_host::AppScene)'s
-    /// canvas sub-scene (borders, connections, portals, etc.).
-    /// Populated by [`Self::rebuild_canvas_scene_buffers`]. Drawn
-    /// in the main camera-transformed pass. Empty until a canvas
-    /// component migrates to a tree.
-    canvas_scene_buffers: Vec<MindMapTextBuffer>,
-    /// Background-rect instances collected while walking the
-    /// canvas sub-scene — forwarded to the camera-transformed
-    /// rect pipeline so GlyphArea fills on migrated components
-    /// render beneath their glyphs.
-    canvas_scene_background_rects: Vec<NodeBackgroundRect>,
+    /// canvas sub-scene (borders, connections, portals, etc.),
+    /// grouped and reused by the same rule. Populated by
+    /// [`Self::rebuild_canvas_scene_buffers`]. Drawn in the main
+    /// camera-transformed pass. Empty until a canvas component
+    /// migrates to a tree.
+    ///
+    /// Unlike the overlay half, these entries carry the walker's
+    /// background fills as well as its buffers: canvas fills *are*
+    /// wired to the camera-transformed rect pipeline. Holding each
+    /// element's fill inside the element's own entry is what keeps
+    /// that index-ordered draw stream stable while only part of the
+    /// scene re-shapes.
+    canvas_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
     /// Set whenever the camera *zoom* changes. The document-side
     /// `SceneConnectionCache` stores pre-clip samples whose spacing
     /// depends on `GlyphConnectionConfig::effective_font_size_pt`, which
@@ -829,9 +843,8 @@ impl Renderer {
             color_picker_backdrop: None,
             overlay_buffers: Vec::new(),
             selection_rect_shape_cache: None,
-            overlay_scene_buffers: Vec::new(),
-            canvas_scene_buffers: Vec::new(),
-            canvas_scene_background_rects: Vec::new(),
+            overlay_scene_elements: Vec::new(),
+            canvas_scene_elements: Vec::new(),
             connection_geometry_dirty: false,
             rect_pipeline,
             rect_vertex_buffer,

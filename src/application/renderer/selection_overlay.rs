@@ -4,7 +4,7 @@
 //! frame the rubber-band select draws in canvas space. Every other
 //! canvas visual (nodes, borders, connections, labels, portals,
 //! handles) reaches the GPU through the Baumhard tree pipeline
-//! (`tree_walker.rs` → `canvas_scene_buffers`); this overlay is the
+//! (`tree_walker.rs` → `canvas_scene_elements`); this overlay is the
 //! one transient rectangle that has no model behind it, so it
 //! shapes its own buffers directly.
 

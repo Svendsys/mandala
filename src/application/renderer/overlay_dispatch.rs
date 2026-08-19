@@ -12,7 +12,7 @@
 //!
 //! There is a second, finer granularity underneath this one, and the
 //! two are independent. This module's dispatch decides whether the
-//! *arena* is rebuilt; [`super::overlay_shape_cache`] decides, per
+//! *arena* is rebuilt; [`super::scene_shape_cache`] decides, per
 //! element, whether its *shaped buffers* are rebuilt. A mutator apply
 //! reaches every slot by design, so without the second decision the
 //! §B2 win — mutate, don't rebuild — stopped at the arena and the
@@ -36,7 +36,7 @@ impl Renderer {
     /// optional completion popup, and the prompt line with cursor.
     ///
     /// Everything is positioned in screen coordinates (the walk
-    /// lands in `overlay_scene_buffers`, which the render pass
+    /// lands in `overlay_scene_elements`, which the render pass
     /// draws with `scale = 1.0`), so the console stays a fixed size
     /// regardless of canvas zoom.
     pub fn rebuild_console_overlay_buffers(
@@ -98,7 +98,7 @@ impl Renderer {
     /// Build the picker's overlay tree from `geometry`, register
     /// it under [`OverlayRole::ColorPicker`](crate::application::scene_host::OverlayRole),
     /// and walk the overlay sub-scene into
-    /// `overlay_scene_buffers`. `None` means the picker is closed
+    /// `overlay_scene_elements`. `None` means the picker is closed
     /// — drops the backdrop, unregisters the tree, refreshes
     /// overlay buffers so it disappears.
     ///
@@ -112,7 +112,7 @@ impl Renderer {
     /// — they mutate the registered arena in place and re-shape
     /// only the cells whose `GlyphArea` actually moved; see
     /// [`Self::apply_color_picker_overlay_dynamic_mutator`] and
-    /// [`super::overlay_shape_cache`].
+    /// [`super::scene_shape_cache`].
     pub fn rebuild_color_picker_overlay_buffers(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,
@@ -142,7 +142,7 @@ impl Renderer {
     /// `rebuild_overlay_scene_buffers` afterward, which re-shapes
     /// the cells this mutator actually moved and leaves the rest of
     /// the wheel's buffers as they are — see
-    /// [`super::overlay_shape_cache`] for how it tells them apart.
+    /// [`super::scene_shape_cache`] for how it tells them apart.
     /// A layout-phase mutator typically moves all of them, since a
     /// resize or a reposition writes new positions everywhere.
     pub fn apply_color_picker_overlay_mutator(
@@ -169,7 +169,7 @@ impl Renderer {
     /// actually changed. The mutator writes every slot's fields
     /// whether or not the value moved, so "what changed" is decided
     /// downstream, by comparison against what each cell was last
-    /// shaped from ([`super::overlay_shape_cache`]) — including the
+    /// shaped from ([`super::scene_shape_cache`]) — including the
     /// per-region colors that a hover moves and `GlyphArea`'s own
     /// `==` cannot see.
     pub fn apply_color_picker_overlay_dynamic_mutator(

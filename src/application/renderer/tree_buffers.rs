@@ -10,7 +10,7 @@ use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
 use glam::Vec2;
 
-use super::overlay_shape_cache::ShapedOverlayElement;
+use super::scene_shape_cache::{self, ScenePassKind};
 use super::tree_walker::{shape_one_element_into_buffers, walk_tree_into_buffers};
 use super::{NodeBackgroundRect, Renderer};
 
@@ -223,142 +223,67 @@ impl Renderer {
         }
     }
 
-    /// Refresh the screen-space buffer list for every tree the app
-    /// has registered into [`crate::application::scene_host::AppScene`].
-    /// Walks the scene in layer order and produces one list in draw
-    /// order; callers do not need to know about individual overlays.
+    /// Refresh the screen-space shaped output for every tree the app
+    /// has registered into [`crate::application::scene_host::AppScene`]'s
+    /// overlay sub-scene. Walks the scene in layer order and produces
+    /// one entry per walked element in draw order; callers do not need
+    /// to know about individual overlays.
     ///
     /// **Only elements whose shaping inputs changed are re-shaped.**
-    /// Each walk position is checked against the
-    /// [`ShapedOverlayElement`] that occupied it last pass, and a
-    /// match keeps the existing buffers untouched. Every overlay
-    /// mutator apply routes here — picker hover, picker HSV drag,
-    /// console keystroke, console scrollback — and each of those
-    /// writes every slot's fields whether or not the value moved, so
-    /// before this check the pass re-shaped the picker's ~58 outlined
-    /// cells (9 buffers each) or the console's ~50 rows on every
-    /// event. It now shapes the cells whose `GlyphArea` differs from
-    /// the one it was last shaped from. See
-    /// [`super::overlay_shape_cache`] for the reuse rule and why it
-    /// needs no cooperation from the writers.
+    /// Every overlay mutator apply routes here — picker hover, picker
+    /// HSV drag, console keystroke, console scrollback — and each of
+    /// those writes every slot's fields whether or not the value
+    /// moved, so before the reuse check the pass re-shaped the
+    /// picker's ~58 outlined cells (9 buffers each) or the console's
+    /// ~50 rows on every event. See [`super::scene_shape_cache`] for
+    /// the reuse rule and why it needs no cooperation from the
+    /// writers.
     ///
     /// # Costs
     ///
-    /// O(sum of descendants) across every tree in the scene for the
-    /// walk and the equality checks, plus one `cosmic_text::Buffer`
-    /// allocation and shaping per *changed* non-empty `GlyphArea`
-    /// (times `halos + 1`). The `FONT_SYSTEM` write guard is
-    /// acquired lazily on the first element that actually needs
-    /// shaping, so an all-hit pass takes no lock at all. Empty
-    /// scenes short-circuit cheaply.
+    /// [`scene_shape_cache::refresh`]'s, over the overlay sub-scene.
     pub fn rebuild_overlay_scene_buffers(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
-        // Taken out of `self` so the per-element shaping closures can
-        // borrow it mutably while `self`'s other fields stay
-        // reachable; put back unconditionally below.
-        let mut shaped = std::mem::take(&mut self.overlay_scene_buffers);
         let ids = app_scene.overlay_ids_in_layer_order();
-        if ids.is_empty() {
-            shaped.clear();
-            self.overlay_scene_buffers = shaped;
-            return;
-        }
-        // Lazily acquired: a pass in which every element still
-        // matches its cached inputs never touches the lock.
-        let mut font_system: Option<std::sync::RwLockWriteGuard<'static, baumhard::font::FontSystem>> = None;
-        let mut slot = 0usize;
-        for id in ids {
-            let Some(entry) = app_scene.overlay_scene().get(id) else {
-                continue;
-            };
-            if !entry.visible() {
-                continue;
-            }
-            let tree = entry.tree();
-            let offset = entry.offset();
-            for descendant_id in tree.root().descendants(&tree.arena) {
-                let Some(element) = tree.arena.get(descendant_id).map(|n| n.get()) else {
-                    continue;
-                };
-                if shaped
-                    .get(slot)
-                    .is_some_and(|cached| cached.still_matches(id, element, offset))
-                {
-                    slot += 1;
-                    continue;
-                }
-                let font_system = font_system
-                    .get_or_insert_with(|| fonts::acquire_font_system_write("rebuild_overlay_scene_buffers"));
-                let mut buffers = Vec::new();
-                shape_one_element_into_buffers(
-                    element,
-                    offset,
-                    font_system,
-                    &mut |_unique_id, buffer| buffers.push(buffer),
-                    &mut |_rect| {
-                        // Overlay-tree background fills aren't wired to
-                        // a screen-space rect pipeline yet. When a
-                        // screen-space overlay actually needs background
-                        // fills, add a dedicated
-                        // `overlay_scene_background_rects` field and a
-                        // screen-space draw pass.
-                    },
-                );
-                let fresh = ShapedOverlayElement::new(id, element, offset, buffers);
-                match shaped.get_mut(slot) {
-                    Some(existing) => *existing = fresh,
-                    None => shaped.push(fresh),
-                }
-                slot += 1;
-            }
-        }
-        // Anything past the last walked position belongs to an
-        // overlay that has since been unregistered or shortened.
-        shaped.truncate(slot);
-        self.overlay_scene_buffers = shaped;
+        scene_shape_cache::refresh(
+            app_scene.overlay_scene(),
+            &ids,
+            &mut self.overlay_scene_elements,
+            ScenePassKind::Overlay,
+        );
     }
 
-    /// Rebuild the canvas-space buffer list for every tree the app
+    /// Refresh the canvas-space shaped output for every tree the app
     /// has registered into
-    /// [`crate::application::scene_host::AppScene`]'s canvas sub-scene
-    /// (borders, connections, portals, edge handles, connection
-    /// labels — whichever have migrated). These buffers feed the
-    /// camera-transformed main pass alongside the mindmap's own
-    /// buffer map.
+    /// [`crate::application::scene_host::AppScene`]'s canvas
+    /// sub-scene — borders, connections, portals, edge handles,
+    /// connection labels, section frames and the two resize-handle
+    /// roles. These buffers and fills feed the camera-transformed
+    /// main pass alongside the mindmap's own.
+    ///
+    /// **Only elements whose shaping inputs changed are re-shaped**,
+    /// by the same rule and the same body the overlay pass above
+    /// uses. That is what makes the ten
+    /// `flush_canvas_scene_buffers` call sites cost what they
+    /// changed rather than what the canvas holds: each of them
+    /// re-projects the roles its interaction can move and then
+    /// flushes, and a role no `update_*` touched presents the walk
+    /// with the elements it already shaped. An edge-label drag
+    /// re-projects one role of the eight; a camera move re-projects
+    /// four.
     ///
     /// # Costs
     ///
-    /// O(sum of descendants) across every canvas tree. Allocates a
-    /// `cosmic_text::Buffer` per non-empty `GlyphArea`. Empty
-    /// sub-scenes short-circuit cheaply.
+    /// [`scene_shape_cache::refresh`]'s, over the canvas sub-scene.
     pub fn rebuild_canvas_scene_buffers(&mut self, app_scene: &mut crate::application::scene_host::AppScene) {
-        self.canvas_scene_buffers.clear();
-        self.canvas_scene_background_rects.clear();
         let ids = app_scene.canvas_ids_in_layer_order();
-        if ids.is_empty() {
-            return;
-        }
-        let mut font_system = fonts::acquire_font_system_write("rebuild_canvas_scene_buffers");
-        for id in ids {
-            let Some(entry) = app_scene.canvas_scene().get(id) else {
-                continue;
-            };
-            if !entry.visible() {
-                continue;
-            }
-            walk_tree_into_buffers(
-                entry.tree(),
-                entry.offset(),
-                &mut font_system,
-                |_unique_id, buffer| {
-                    self.canvas_scene_buffers.push(buffer);
-                },
-                |rect| {
-                    self.canvas_scene_background_rects.push(rect);
-                },
-            );
-        }
+        scene_shape_cache::refresh(
+            app_scene.canvas_scene(),
+            &ids,
+            &mut self.canvas_scene_elements,
+            ScenePassKind::Canvas,
+        );
     }
 }

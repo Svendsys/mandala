@@ -2761,6 +2761,52 @@ mutator registry. The same idiom drives both canvas-role
 rebuilds (in `scene_rebuild.rs`) and overlay-role rebuilds
 (console text changes, color picker re-layout).
 
+### Scene shape cache
+
+The rule that decides, per walked element, whether
+its cosmic-text buffers and background fill are re-shaped or
+reused — one mechanism serving both of
+[`AppScene`](#appscene-and-scene-host)'s sub-scenes.
+
+Rebuild dispatch stops at the arena. A mutator
+apply reaches every slot of a role by design, and every writer
+above it assigns every field whether or not the value moved, so
+"mutate, don't rebuild" bought a reused arena and then paid for a
+full re-shape of it anyway: a picker hover shaped all 59 overlay
+elements, a console keystroke all ~50 rows, and every one of the
+ten `flush_canvas_scene_buffers` call sites shaped every buffer of
+all eight canvas roles no matter which one it had re-projected.
+
+`src/application/renderer/scene_shape_cache.rs`.
+`refresh(scene, ids, shaped, kind)` walks the sub-scene in layer
+order and keeps, per walk position, a `ShapedSceneElement` holding
+the output *and a verbatim copy of every input it was shaped from*
+— tree id, `unique_id`, registered offset, and the `GlyphArea`.
+Nothing announces a change: the pass re-validates against the live
+tree, which is why a new writer of scene-tree state cannot make it
+stale by forgetting to notify anyone, and why the ten canvas call
+sites are answered as a class rather than one at a time.
+
+Two details are load-bearing. `GlyphArea`'s derived equality is
+blind to a region *recolor* — `ColorFontRegion`'s `Eq` is set
+identity by range — which is exactly what a picker hover changes,
+so the check adds `ColorFontRegions::same_content` on top of `==`.
+And each element's background fill lives inside that element's own
+entry rather than in a flat list, so a partial re-shape cannot
+disturb the index order the rect pipeline paints in; the mindmap's
+own keyed re-shape, whose fills *are* flat, needs
+`BackgroundRectSlot` to hold that line by bookkeeping instead
+(`renderer/tree_buffers.rs`).
+
+`ScenePassKind` is the whole difference between the two passes:
+the canvas keeps the walker's fills because they reach a draw
+pass, the overlay discards them because no screen-space rect
+pipeline exists yet. `refresh` takes a `&Scene` rather than a
+`&mut Renderer` so its granularity can be asserted without a live
+device (TEST_CONVENTIONS §T8) — the same reason
+[`RebuildTier`](#scene-rebuild-granularity) is a value rather than
+a statement.
+
 ### Scene rebuild granularity
 
 Five tiered rebuild functions, each scoped to a
