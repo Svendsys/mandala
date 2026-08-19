@@ -231,7 +231,8 @@ pub struct CachedConnection {
     /// in — see [`SceneConnectionCache::begin_pass`]. Set by the cache
     /// on every route that touches the entry, and read only by
     /// [`SceneConnectionCache::evict_unseen`]; a caller constructing
-    /// an entry may leave it at zero, which the first `insert`
+    /// an entry may leave it at zero, which the
+    /// [`refill`](SceneConnectionCache::refill) that stores it
     /// overwrites.
     pub last_seen: u64,
 }
@@ -360,10 +361,10 @@ impl SceneConnectionCache {
     /// held rather than to reuse it.
     ///
     /// Reuse goes through [`Self::reusable`] / [`Self::reusable_mut`],
-    /// which is why this is not called `get`: a call site that reads
-    /// geometry out of *this* method and draws with it is skipping the
-    /// freshness check, and the name should say so where it is
-    /// written. Cost: one hash lookup.
+    /// which is why this is named for *looking* rather than for
+    /// getting: a call site that reads geometry out of this method and
+    /// draws with it is skipping the freshness check, and the name
+    /// should say so where it is written. Cost: one hash lookup.
     pub fn inspect(&self, key: &EdgeKey) -> Option<&CachedConnection> {
         self.entries.get(key)
     }
@@ -442,7 +443,9 @@ impl SceneConnectionCache {
     /// hand its vector back, followed by an `insert` that put a new one
     /// in; the eviction made the "already cached" branch of `insert`
     /// unreachable from the pass, so the allocation the reuse existed
-    /// to avoid was made on every resample after all. Here the entry
+    /// to avoid was made on every resample after all. (Both of those
+    /// are gone — named here as the history this shape exists to
+    /// close, not as functions a reader will find.) Here the entry
     /// and both its `by_node` memberships stay put, and **an edge that
     /// resamples while already cached allocates nothing at all**: no
     /// `EdgeKey` clone, no `String` for a bucket that exists, and no
@@ -546,9 +549,9 @@ impl SceneConnectionCache {
     /// Drop every entry not touched since the last [`Self::begin_pass`]
     /// — the edges that were removed from the model between builds.
     ///
-    /// Replaces a `retain_keys(&HashSet<EdgeKey>)` the pass filled by
-    /// cloning one owned key per visible edge, every frame, to hand
-    /// the cache a set it could derive itself.
+    /// Replaces a since-deleted `retain_keys(&HashSet<EdgeKey>)` that
+    /// the pass filled by cloning one owned key per visible edge,
+    /// every frame, to hand the cache a set it could derive itself.
     ///
     /// Cost: one pass over the entries, plus the bucket maintenance of
     /// whatever it drops. Allocation-free when nothing is evicted,
@@ -624,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_and_get_round_trips() {
+    fn refill_and_inspect_round_trip() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
         plant(&mut cache, &key, 1.0);
@@ -829,13 +832,14 @@ mod tests {
         assert!(cache.inspect(&kept).is_some());
     }
 
-    /// Cache-miss semantics: `get` on an unknown key returns
-    /// `None` cleanly without mutating cache state. The drag-tick
+    /// Cache-miss semantics: [`SceneConnectionCache::inspect`] on an
+    /// unknown key returns `None` cleanly without mutating cache
+    /// state. The drag-tick
     /// hot path asks the cache "do you know this edge?" hundreds
     /// of times per frame; a miss must be cheap and side-effect
     /// free.
     #[test]
-    fn get_on_missing_key_returns_none_without_side_effects() {
+    fn inspect_on_missing_key_returns_none_without_side_effects() {
         let mut cache = SceneConnectionCache::new();
         let known = EdgeKey::new("a", "b", "cross_link");
         plant(&mut cache, &known, 1.0);
@@ -851,9 +855,10 @@ mod tests {
         assert!(cache.inspect(&known).is_some());
     }
 
-    /// Rename guard for the miss-semantics test above: the accessor
-    /// it names is `inspect`, and `inspect` deliberately answers
-    /// "what is stored" rather than "what may be reused".
+    /// The other half of the miss-semantics test above: `inspect`
+    /// answers "what is stored", and deliberately not "what may be
+    /// reused" — so a present entry and a *reusable* one are two
+    /// different questions.
     #[test]
     fn inspect_returns_an_entry_the_reuse_doors_would_refuse() {
         let mut cache = SceneConnectionCache::new();
@@ -1067,15 +1072,16 @@ mod tests {
         assert_eq!(cache.edges_touching("y"), std::slice::from_ref(&key));
     }
 
-    /// `insert` marks the entry seen, so an edge sampled fresh in a
-    /// pass survives that same pass's eviction.
+    /// [`SceneConnectionCache::refill`] marks the entry seen, so an
+    /// edge sampled fresh in a pass survives that same pass's
+    /// eviction.
     ///
-    /// Input that makes it fail: `insert` not stamping. Every edge on
+    /// Input that makes it fail: `refill` not stamping. Every edge on
     /// the slow path would then be written and immediately dropped,
     /// and the cache would never hold anything for longer than the
     /// build that filled it.
     #[test]
-    fn insert_marks_the_entry_seen_in_the_current_pass() {
+    fn refill_marks_the_entry_seen_in_the_current_pass() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
         cache.begin_pass();

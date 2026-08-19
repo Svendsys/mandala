@@ -44,7 +44,7 @@
 //! closes it at the end of the loop, so eviction of deleted edges
 //! stays where the touching happens. The pass keeps no record of
 //! which edges it saw — reaching an entry through either reuse door,
-//! or writing one through `insert`, is what marks it.
+//! or writing one through `refill`, is what marks it.
 //!
 //! Selected-edge handle emission rides along in the same loop:
 //! single-edge selection means at most one handle batch per
