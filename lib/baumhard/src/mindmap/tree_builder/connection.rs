@@ -514,6 +514,34 @@ pub fn build_connection_elements(
 /// node the size of the canvas from inserting itself into millions of
 /// buckets — the failure this structure would otherwise introduce
 /// while fixing another.
+///
+/// **Why there is no path-level pre-bound**, since
+/// [`connection::path_bounds`] is sitting right there and the idea
+/// recurs: skip the per-sample queries for an edge whose whole path
+/// misses every node. Four reasons, none of which is the f32 hull
+/// escape:
+///
+/// 1. [`Self::contains`] is **not** O(1) — it linear-scans
+///    `oversized` before it touches the grid. A pre-bound does not
+///    remove that floor, because it would have to test the path box
+///    against every oversized AABB too. What it removes is one bucket
+///    hash per sample.
+/// 2. `path_bounds` is the **control-polygon** box, not the curve's
+///    extent, and for an S-curve those differ a lot. So the early-out
+///    would fire least often on exactly the curved edges whose
+///    sampling costs most.
+/// 3. This index has no box query, and adding one is not obviously
+///    cheap: a long cross-link's box can span the canvas, which is
+///    the same unbounded cell coverage [`Self::MAX_CELLS_PER_AABB`]
+///    exists to bound on the insertion side.
+/// 4. The hull escape is a real term but no longer an argument by
+///    itself — `distance_to_path_within` ships `HULL_ESCAPE_SLACK`
+///    for it. Its size is `|coordinate| × f32::EPSILON`: about
+///    `4.8e-4` at a coordinate of 4 000, roughly a thousandth of this
+///    filter's own `EDGE_EPSILON` of `0.5` — but about `119` units at
+///    `MAX_CANVAS_COORD`, which is 238 times it. So a pre-bound would
+///    owe the same coordinate-scaled slack rather than being able to
+///    ignore the question. A cost, not a blocker.
 pub struct NodeClipIndex {
     cell: f32,
     buckets: std::collections::HashMap<(i32, i32), Vec<(Vec2, Vec2)>>,

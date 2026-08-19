@@ -103,14 +103,13 @@ fn plant_geometry(
 /// than resampling.
 ///
 /// The test is the y band rather than the exact point, because the
-/// translate path reuses an entry *and shifts it*, and every drag
-/// delta in this file is at most a few tens of units. An exact-point
+/// translate path reuses an entry *and shifts it*. An exact-point
 /// predicate reported "did not reuse" for a translated sentinel,
 /// which is the wrong answer to the question every caller is asking;
 /// the negative control for
 /// `test_translate_path_falls_through_on_a_sampling_config_change` is
-/// what surfaced that. Every real sample in these fixtures lands in
-/// `y ∈ [0, 340]`, so anything below `SENTINEL_Y_FLOOR` is planted.
+/// what surfaced that. See [`SENTINEL_Y_FLOOR`] for why the band is
+/// wide enough on both sides.
 fn drew_sentinel(elem: &ConnectionElement) -> bool {
     elem.glyph_positions.iter().any(|&(_, y)| y < SENTINEL_Y_FLOOR)
 }
@@ -1148,8 +1147,10 @@ fn test_every_route_out_of_the_connection_pass_keeps_its_edge_cached() {
 /// nothing: portal-mode edges render in the portal pass, so eleven of
 /// these twelve produce no `ConnectionElement` at all. A reserved
 /// vector ends the pass with room for twelve; one grown from empty
-/// ends it at `Vec`'s first non-zero capacity, which for an element
-/// this size is four.
+/// ends it at `Vec`'s first non-zero capacity, observed to be four
+/// for an element this size when the negative control was run. The
+/// assertion is `>= 12` rather than `== 12` so it does not rest on
+/// that number.
 #[test]
 fn test_the_element_vector_is_reserved_for_the_edge_list() {
     use crate::mindmap::test_helpers::synthetic_portal_edge;

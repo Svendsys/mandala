@@ -650,7 +650,9 @@ pub(in crate::application::app) struct CanvasFrame<'a> {
     /// This frame's connection paths, built at most once per edge and
     /// shared by the three passes that want them: the connection
     /// sampler, the selected edge's grab-handles, and the label
-    /// layout. Empty until a pass asks (#36 item 6).
+    /// layout. No path is built until a pass asks (#36 item 6) —
+    /// though the slot table itself is sized here, so a frame that
+    /// builds no path still allocates one `Option` per edge.
     ///
     /// It lives on the frame because the frame is exactly its
     /// validity window — a path is a pure function of `doc.mindmap`

@@ -198,10 +198,10 @@ impl SampleParams {
 ///
 /// **The caps are not stored, because they were never separate data.**
 /// A cap sits at the first or last sampled position and carries a glyph
-/// named in the live `GlyphConnectionConfig`, so [`Self::cap_positions`]
-/// reads both ends of `pre_clip_positions` and the emitting pass pairs
-/// them with the glyphs. Storing them was a second copy of both halves
-/// that [`Self::translate`] then had to keep in step.
+/// named in the live `GlyphConnectionConfig`, so the emitting pass
+/// reads both ends of `pre_clip_positions` and pairs them with the
+/// glyphs itself. Storing them was a second copy of both halves that
+/// [`Self::translate`] then had to keep in step.
 ///
 /// **Nor is anything else the frame draws with, and there is no
 /// exception.** Body glyph, font family, font size and the body color
@@ -237,27 +237,10 @@ pub struct CachedConnection {
 }
 
 impl CachedConnection {
-    /// The canvas positions the start and end caps occupy: the first
-    /// and last sampled points, in that order.
-    ///
-    /// The order is not a convention — `sample_path` walks the path
-    /// from the source anchor to the target anchor, so the first
-    /// sample *is* where the start cap belongs. Both are `None` for an
-    /// entry with no samples: the production path never stores one (an
-    /// edge that samples to nothing is dropped from the cache
-    /// instead), but the type is `pub` and a consumer can build one, so
-    /// the ends are read rather than assumed. Cost: O(1).
-    pub fn cap_positions(&self) -> (Option<Vec2>, Option<Vec2>) {
-        (
-            self.pre_clip_positions.first().copied(),
-            self.pre_clip_positions.last().copied(),
-        )
-    }
-
     /// Rigid-body translate of this entry's geometry in place.
     /// Shifts `pre_clip_positions` by `delta` and stamps `base_from` /
     /// `base_to` to the new reference endpoints. The caps ride along
-    /// because [`Self::cap_positions`] reads them off those same
+    /// because the emitting pass reads them off the ends of those same
     /// points.
     ///
     /// Why the whole entry is mutated in place instead of being
@@ -465,8 +448,10 @@ impl SceneConnectionCache {
     /// `EdgeKey` clone, no `String` for a bucket that exists, and no
     /// sample vector for a buffer with the room.
     ///
-    /// Cost: two or three hash lookups, plus whatever `fill` does. On
-    /// the first sample of an edge, additionally one `EdgeKey` clone
+    /// Cost: four hash lookups on an edge that is already cached —
+    /// the presence test, the buffer borrow, the emptiness check and
+    /// the stamp — plus whatever `fill` does. On the first sample of
+    /// an edge, additionally the insert itself, one `EdgeKey` clone,
     /// and up to two `String`s for buckets that do not exist yet.
     pub fn refill(
         &mut self,
@@ -530,10 +515,11 @@ impl SceneConnectionCache {
     ///
     /// Written as contains-then-branch rather than `entry(..)` because
     /// `HashMap::entry` needs an owned key whether or not it ends up
-    /// storing one, and this is called twice per re-insert on a path
-    /// where the bucket almost always already exists. Cost: one hash
-    /// lookup on the common path, two plus one `String` allocation on
-    /// the first edge to touch a node.
+    /// storing one, and it is called twice for every edge that reaches
+    /// the cache for the first time. Cost: two hash lookups when the
+    /// bucket exists — the presence test and the borrow — and on the
+    /// first edge to touch a node, a third plus one `String`
+    /// allocation.
     fn bucket_mut<'m>(by_node: &'m mut HashMap<String, Vec<EdgeKey>>, node: &str) -> &'m mut Vec<EdgeKey> {
         if by_node.contains_key(node) {
             return by_node.get_mut(node).expect("checked immediately above");
@@ -946,50 +932,12 @@ mod tests {
         );
     }
 
-    /// The caps are the ends of the sample array, in order — the
-    /// invariant `emit_connection_element` reads them under.
+    /// `translate` moves the ends of the sample array — which is
+    /// where the emitting pass reads the caps from — and leaves the
+    /// sampling params alone, because a rigid shift changes where
+    /// samples are, not what they were taken under.
     #[test]
-    fn cap_positions_reports_the_first_and_last_sample_in_that_order() {
-        let entry = CachedConnection {
-            pre_clip_positions: vec![Vec2::new(1.0, 2.0), Vec2::new(50.0, 2.0), Vec2::new(99.0, 2.0)],
-            sample_params: mk_params(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-            last_seen: 0,
-        };
-        assert_eq!(
-            entry.cap_positions(),
-            (Some(Vec2::new(1.0, 2.0)), Some(Vec2::new(99.0, 2.0)))
-        );
-    }
-
-    /// A one-sample entry puts both caps on the same point rather
-    /// than dropping one, and an empty one reports neither. Neither
-    /// shape is reachable from the production sampler, which is why
-    /// the method reads the ends instead of indexing them.
-    #[test]
-    fn cap_positions_handles_one_sample_and_none() {
-        let mut entry = CachedConnection {
-            pre_clip_positions: vec![Vec2::new(7.0, 7.0)],
-            sample_params: mk_params(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-            last_seen: 0,
-        };
-        assert_eq!(
-            entry.cap_positions(),
-            (Some(Vec2::new(7.0, 7.0)), Some(Vec2::new(7.0, 7.0)))
-        );
-        entry.pre_clip_positions.clear();
-        assert_eq!(entry.cap_positions(), (None, None));
-    }
-
-    /// `translate` moves the caps because it moves the points they
-    /// are read off, and leaves the sampling params alone because a
-    /// rigid shift changes where samples are, not what they were
-    /// taken under.
-    #[test]
-    fn translate_carries_the_caps_and_leaves_the_params_alone() {
+    fn translate_carries_the_sample_ends_and_leaves_the_params_alone() {
         let mut entry = CachedConnection {
             pre_clip_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)],
             sample_params: mk_params(),
@@ -1002,9 +950,12 @@ mod tests {
         entry.translate(Vec2::new(3.0, -4.0), Vec2::new(3.0, -4.0), Vec2::new(13.0, -4.0));
 
         assert_eq!(
-            entry.cap_positions(),
+            (
+                entry.pre_clip_positions.first().copied(),
+                entry.pre_clip_positions.last().copied()
+            ),
             (Some(Vec2::new(3.0, -4.0)), Some(Vec2::new(13.0, -4.0))),
-            "both caps must ride the translation"
+            "both ends — and so both caps — must ride the translation"
         );
         assert_eq!(entry.base_from, Vec2::new(3.0, -4.0));
         assert_eq!(entry.base_to, Vec2::new(13.0, -4.0));
