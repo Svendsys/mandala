@@ -80,6 +80,163 @@ fn test_hit_test_edge_respects_tolerance() {
     assert!(hit_test_edge(shifted, &doc.mindmap, 100.0).is_some());
 }
 
+/// The bounding-box early-out `hit_test_edge` now opens with must
+/// not change which edge it picks, on any point.
+///
+/// The reference is the filter it replaced — `distance_to_path`
+/// against the tolerance — run over the same visibility-filtered
+/// edge set and the same "nearest wins" rule, spelled out here
+/// rather than called so the two derivations do not share the line
+/// that could be wrong.
+///
+/// The sweep walks a grid over the fixture's own node extent at
+/// several tolerances, so it covers points on an edge, points beside
+/// one, points between two, and points nowhere near any. The input
+/// that makes it fail is a box that does not contain its path — the
+/// early-out then rejects an edge the reference accepts.
+#[test]
+fn test_hit_test_edge_agrees_with_the_unbounded_distance_filter() {
+    use baumhard::mindmap::connection;
+
+    fn reference_hit(
+        canvas_pos: Vec2,
+        map: &baumhard::mindmap::model::MindMap,
+        tolerance: f32,
+    ) -> Option<EdgeRef> {
+        let mut best: Option<(EdgeRef, f32)> = None;
+        for edge in &map.edges {
+            if !edge.visible {
+                continue;
+            }
+            let (Some(from_node), Some(to_node)) = (map.nodes.get(&edge.from_id), map.nodes.get(&edge.to_id))
+            else {
+                continue;
+            };
+            if map.is_hidden_by_fold(from_node) || map.is_hidden_by_fold(to_node) {
+                continue;
+            }
+            let path = connection::build_connection_path(
+                from_node.pos_vec2(),
+                from_node.size_vec2(),
+                &edge.anchor_from,
+                to_node.pos_vec2(),
+                to_node.size_vec2(),
+                &edge.anchor_to,
+                &edge.control_points,
+            );
+            let dist = connection::distance_to_path(canvas_pos, &path);
+            if dist > tolerance {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(_, best_dist)| dist < *best_dist) {
+                best = Some((EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type), dist));
+            }
+        }
+        best.map(|(e, _)| e)
+    }
+
+    let doc = load_test_doc();
+    // Anchor the grid on the fixture's own geometry rather than on
+    // round numbers, so the points land where the edges are.
+    let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for node in doc.mindmap.nodes.values() {
+        min = min.min(node.pos_vec2());
+        max = max.max(node.pos_vec2() + node.size_vec2());
+    }
+    assert!(min.x < max.x && min.y < max.y, "the fixture must have an extent");
+
+    let mut hits = 0usize;
+    let mut probes = 0usize;
+    let mut compare = |point: Vec2, tolerance: f32| {
+        let expected = reference_hit(point, &doc.mindmap, tolerance);
+        let actual = hit_test_edge(point, &doc.mindmap, tolerance);
+        assert_eq!(actual, expected, "at {point:?} with tolerance {tolerance}");
+        if expected.is_some() {
+            hits += 1;
+        }
+        probes += 1;
+    };
+
+    const STEPS: usize = 24;
+    for tolerance in [1.0f32, 8.0, 40.0] {
+        for ix in 0..=STEPS {
+            for iy in 0..=STEPS {
+                let t = |i: usize, lo: f32, hi: f32| lo + (hi - lo) * (i as f32 / STEPS as f32);
+                compare(Vec2::new(t(ix, min.x, max.x), t(iy, min.y, max.y)), tolerance);
+            }
+        }
+    }
+
+    // A grid is blind to the case that matters most: a point sitting
+    // *on* a curved edge, where a bounding box drawn from the two
+    // anchors instead of the four control points would wrongly reject
+    // the edge it belongs to. Probe every visible edge's own samples.
+    let mut curved_probes = 0usize;
+    for edge in &doc.mindmap.edges {
+        if !edge.visible || edge.control_points.is_empty() {
+            continue;
+        }
+        let (Some(from_node), Some(to_node)) = (
+            doc.mindmap.nodes.get(&edge.from_id),
+            doc.mindmap.nodes.get(&edge.to_id),
+        ) else {
+            continue;
+        };
+        let path = connection::build_connection_path(
+            from_node.pos_vec2(),
+            from_node.size_vec2(),
+            &edge.anchor_from,
+            to_node.pos_vec2(),
+            to_node.size_vec2(),
+            &edge.anchor_to,
+            &edge.control_points,
+        );
+        for sample in connection::sample_path(&path, 4.0, connection::MAX_PATH_SAMPLES) {
+            compare(sample.position, 1.0);
+            curved_probes += 1;
+        }
+    }
+
+    assert!(probes > 1_500, "the sweep must actually run; probed {probes}");
+    assert!(
+        curved_probes > 100,
+        "the fixture must still carry curved edges for the on-path probes to mean anything;          probed {curved_probes}"
+    );
+    // Without a hit somewhere the sweep only proves both forms agree
+    // on saying "nothing", which every implementation does.
+    assert!(hits > 20, "the sweep must land on edges; hit {hits} times");
+}
+
+/// A non-finite cursor selects no edge.
+///
+/// This is a deliberate change of behavior, not a preserved one. The
+/// filter this replaced was `distance > tolerance { continue }`, and
+/// `NaN > tolerance` is false — so a `NaN` cursor fell through the
+/// filter and became a candidate at an unordered distance, taking
+/// whichever eligible edge came first. The tolerance-bounded form
+/// asks `distance <= tolerance`, which `NaN` fails, so there is no
+/// candidate at all.
+#[test]
+fn test_hit_test_edge_rejects_a_non_finite_cursor() {
+    let doc = load_test_doc();
+    // The fixture has visible edges, so "no hit" here is a decision
+    // about the cursor rather than about an empty map.
+    let (_, on_path) = pick_test_edge(&doc);
+    assert!(hit_test_edge(on_path, &doc.mindmap, 2.0).is_some());
+
+    for cursor in [
+        Vec2::new(f32::NAN, 0.0),
+        Vec2::new(0.0, f32::NAN),
+        Vec2::splat(f32::NAN),
+    ] {
+        assert_eq!(
+            hit_test_edge(cursor, &doc.mindmap, 1.0e9),
+            None,
+            "a non-finite cursor at {cursor:?} must select no edge"
+        );
+    }
+}
+
 #[test]
 fn test_remove_edge_returns_index_and_edge() {
     let mut doc = load_test_doc();

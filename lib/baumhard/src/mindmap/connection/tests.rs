@@ -1164,3 +1164,570 @@ fn test_the_scene_wide_glyph_budget_is_shared_equally_and_never_zero() {
         "the budget must not thin the repository's own worst-case map"
     );
 }
+
+// ── Allocation-free sampling, and the bounding-box early-out ───────
+//
+// The three rewrites this section covers — an arc-length table that
+// is an array, a length that is a running sum, and a
+// `distance_to_path` that consumes samples instead of collecting
+// them — are all invisible to a behavioral test: each produces the
+// same numbers it produced before. What the tests below hold is
+// therefore *equivalence* against an independently written form of
+// the old computation, and, for the parts no runtime assertion can
+// see at all, the source text itself. The new surface
+// (`path_bounds`, `distance_to_path_within`) is the exception: its
+// contract is a claim about behavior and is tested as one.
+
+/// A 32-bit linear congruential generator, so the corpora below are
+/// a fixed sequence rather than a fresh one per run. The constants
+/// are Numerical Recipes'; the high bits are the ones used.
+struct Lcg(u32);
+
+impl Lcg {
+    fn next_f32(&mut self, lo: f32, hi: f32) -> f32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let unit = (self.0 >> 8) as f32 / (1u32 << 24) as f32;
+        lo + unit * (hi - lo)
+    }
+
+    fn next_vec2(&mut self, lo: f32, hi: f32) -> Vec2 {
+        Vec2::new(self.next_f32(lo, hi), self.next_f32(lo, hi))
+    }
+}
+
+/// Cubic paths spanning the shapes a document can author: a
+/// degenerate point, a curve whose controls lie on the chord, a
+/// single hump, an S-curve, one whose control points sit far outside
+/// the curve's own extent (the case a control-polygon box bounds
+/// most loosely), a long one, and thirty generated ones.
+fn cubic_corpus() -> Vec<ConnectionPath> {
+    let cubic = |s: Vec2, c1: Vec2, c2: Vec2, e: Vec2| ConnectionPath::CubicBezier {
+        start: s,
+        control1: c1,
+        control2: c2,
+        end: e,
+    };
+    let mut paths = vec![
+        // Degenerate: every control point coincident.
+        cubic(Vec2::ZERO, Vec2::ZERO, Vec2::ZERO, Vec2::ZERO),
+        // Collinear controls — a curve that draws as a straight line.
+        cubic(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(33.0, 0.0),
+            Vec2::new(66.0, 0.0),
+            Vec2::new(100.0, 0.0),
+        ),
+        // Single hump.
+        cubic(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(25.0, 100.0),
+            Vec2::new(75.0, 100.0),
+            Vec2::new(100.0, 0.0),
+        ),
+        // S-curve: the controls straddle the chord.
+        cubic(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(30.0, 80.0),
+            Vec2::new(70.0, -80.0),
+            Vec2::new(100.0, 0.0),
+        ),
+        // Controls far outside the curve's own extent.
+        cubic(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(-400.0, 900.0),
+            Vec2::new(500.0, -900.0),
+            Vec2::new(100.0, 0.0),
+        ),
+        // Long, the shape `stress_long_edges` is made of.
+        cubic(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(25_000.0, 10_000.0),
+            Vec2::new(75_000.0, -10_000.0),
+            Vec2::new(100_000.0, 0.0),
+        ),
+    ];
+    let mut rng = Lcg(0x5eed_1234);
+    for _ in 0..30 {
+        paths.push(cubic(
+            rng.next_vec2(-500.0, 500.0),
+            rng.next_vec2(-500.0, 500.0),
+            rng.next_vec2(-500.0, 500.0),
+            rng.next_vec2(-500.0, 500.0),
+        ));
+    }
+    paths
+}
+
+/// The corpus above plus straight paths, for the tests whose subject
+/// is the whole `ConnectionPath` surface rather than the Bezier math.
+fn path_corpus() -> Vec<ConnectionPath> {
+    let mut paths = vec![
+        ConnectionPath::Straight {
+            start: Vec2::new(0.0, 0.0),
+            end: Vec2::new(100.0, 0.0),
+        },
+        ConnectionPath::Straight {
+            start: Vec2::new(-40.0, 60.0),
+            end: Vec2::new(-40.0, 60.0),
+        },
+        ConnectionPath::Straight {
+            start: Vec2::new(-250.0, 700.0),
+            end: Vec2::new(900.0, -30.0),
+        },
+    ];
+    paths.extend(cubic_corpus());
+    paths
+}
+
+/// The cumulative arc-length table exactly as it was built before
+/// this change: a `Vec` grown by pushing
+/// `table[i - 1] + prev.distance(pt)`. Written out here rather than
+/// called, so the tests below compare the new shape against the old
+/// computation instead of against itself.
+fn reference_arc_length_table(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2) -> Vec<f32> {
+    let n = super::bezier::ARC_LENGTH_SUBDIVISIONS;
+    let mut arc_lengths = Vec::with_capacity(n + 1);
+    arc_lengths.push(0.0f32);
+    let mut prev = start;
+    for i in 1..=n {
+        let t = i as f32 / n as f32;
+        let pt = cubic_bezier_point(t, start, control1, control2, end);
+        arc_lengths.push(arc_lengths[i - 1] + prev.distance(pt));
+        prev = pt;
+    }
+    arc_lengths
+}
+
+/// The pre-change arc-length inversion, likewise written out rather
+/// than called.
+fn reference_arc_length_to_t(arc_lengths: &[f32], target_len: f32, n: usize) -> f32 {
+    let mut lo = 0usize;
+    let mut hi = n;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if arc_lengths[mid] < target_len {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo == 0 {
+        return 0.0;
+    }
+    let seg_start = arc_lengths[lo - 1];
+    let seg_end = arc_lengths[lo];
+    let seg_len = seg_end - seg_start;
+    let frac = if seg_len > f32::EPSILON {
+        (target_len - seg_start) / seg_len
+    } else {
+        0.0
+    };
+    ((lo - 1) as f32 + frac) / n as f32
+}
+
+/// The pre-change cubic sampler: `Vec` table, total read off its
+/// last entry, one binary search per point.
+///
+/// The one thing it borrows from the code under test is
+/// `sample_count`, which this change does not touch — reimplementing
+/// its saturation rules here would put a second, unrelated
+/// derivation in the test's way.
+fn reference_cubic_samples(
+    start: Vec2,
+    control1: Vec2,
+    control2: Vec2,
+    end: Vec2,
+    spacing: f32,
+    cap: usize,
+) -> Vec<Vec2> {
+    let arc_lengths = reference_arc_length_table(start, control1, control2, end);
+    let total_length = *arc_lengths.last().expect("the table carries its leading 0.0");
+    if total_length < f32::EPSILON {
+        return vec![start];
+    }
+    let n = super::bezier::ARC_LENGTH_SUBDIVISIONS;
+    let count = sample_count(total_length, spacing, cap);
+    let mut points = Vec::with_capacity(count);
+    for i in 0..count {
+        let target_len = (i as f32 * spacing).min(total_length);
+        let t = reference_arc_length_to_t(&arc_lengths, target_len, n);
+        points.push(cubic_bezier_point(t, start, control1, control2, end));
+    }
+    points
+}
+
+/// `cubic_bezier_length` no longer builds the cumulative table it
+/// used to read the last entry of. The claim that replaces the table
+/// is that a running sum reaches the *same float*, not merely a
+/// close one — the additions happen in the order the table's
+/// recurrence used them.
+///
+/// The reference is [`reference_arc_length_table`], the pre-change
+/// body. Nothing it uses comes from the code under test except
+/// `cubic_bezier_point`, which this change did not touch.
+///
+/// The input that makes this fail is any reassociation of the sum —
+/// accumulating from the far end, or summing in pairs — which is
+/// exactly the kind of "equivalent" rewrite that would silently move
+/// every label along every curved edge by a fraction of a unit.
+#[test]
+fn test_bezier_length_equals_the_arc_length_table_total() {
+    let corpus = cubic_corpus();
+    assert!(corpus.len() > 30, "the corpus must not have shrunk to nothing");
+    let mut curved = 0usize;
+    for path in &corpus {
+        let ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } = path
+        else {
+            unreachable!("cubic_corpus yields cubics only");
+        };
+        let table = reference_arc_length_table(*start, *control1, *control2, *end);
+        let expected = *table.last().expect("the table carries its leading 0.0");
+        let actual = cubic_bezier_length(*start, *control1, *control2, *end);
+        assert_eq!(
+            actual.to_bits(),
+            expected.to_bits(),
+            "running sum must be bit-identical to the table's last entry for {path:?}: \
+             got {actual}, table says {expected}"
+        );
+        if expected > 1.0 {
+            curved += 1;
+        }
+    }
+    // Without this the assertion above would be satisfied by a corpus
+    // of degenerate zero-length curves, where both sides are 0.0.
+    assert!(
+        curved >= 30,
+        "the corpus must contain curves with real length, not just degenerate ones; found {curved}"
+    );
+}
+
+/// The sample sequence the new plan produces is the sequence the old
+/// `Vec`-table sampler produced — same count, same points, in the
+/// same order, bit for bit.
+///
+/// The reference is [`reference_cubic_samples`], the pre-change body.
+/// Comparing the *planned* walk against `sample_cubic_bezier` would
+/// prove nothing: the collector is now written in terms of the plan,
+/// so the two share every line that could be wrong. That mirror was
+/// the first draft of this test, and an off-by-one planted in
+/// `CubicSamples::position` left it green.
+///
+/// Both forms are checked against the reference, because the
+/// connection pass still calls the collecting one.
+#[test]
+fn test_cubic_sampling_matches_the_pre_plan_reference() {
+    use super::bezier::{plan_cubic_samples, sample_cubic_bezier};
+
+    let mut compared = 0usize;
+    for path in cubic_corpus() {
+        let ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } = path
+        else {
+            unreachable!("cubic_corpus yields cubics only");
+        };
+        for spacing in [0.5f32, 4.0, 17.5, 1_000.0] {
+            let expected = reference_cubic_samples(start, control1, control2, end, spacing, MAX_PATH_SAMPLES);
+            let collected = sample_cubic_bezier(start, control1, control2, end, spacing, MAX_PATH_SAMPLES);
+            let planned = plan_cubic_samples(start, control1, control2, end, spacing, MAX_PATH_SAMPLES);
+            assert_eq!(
+                collected.len(),
+                expected.len(),
+                "collected sample count diverged at spacing {spacing} for {path:?}"
+            );
+            assert_eq!(
+                planned.len(),
+                expected.len(),
+                "planned sample count diverged at spacing {spacing} for {path:?}"
+            );
+            for (index, want) in expected.iter().enumerate() {
+                for (label, got) in [
+                    ("collected", collected[index].position),
+                    ("planned", planned.position(index)),
+                ] {
+                    assert_eq!(
+                        got.x.to_bits(),
+                        want.x.to_bits(),
+                        "{label} sample {index} x diverged at spacing {spacing} for {path:?}: \
+                         got {}, reference says {}",
+                        got.x,
+                        want.x
+                    );
+                    assert_eq!(
+                        got.y.to_bits(),
+                        want.y.to_bits(),
+                        "{label} sample {index} y diverged at spacing {spacing} for {path:?}: \
+                         got {}, reference says {}",
+                        got.y,
+                        want.y
+                    );
+                }
+                compared += 1;
+            }
+        }
+    }
+    // A reference that reported zero samples everywhere would satisfy
+    // the loop above without comparing anything.
+    assert!(
+        compared > 10_000,
+        "expected the corpus to produce a substantial number of samples; compared {compared}"
+    );
+}
+
+/// `distance_to_path` now walks the samples instead of collecting
+/// them into a `Vec`. The answer must not have moved by a bit.
+///
+/// The reference collects, exactly as the previous body did, and
+/// reduces with the same private segment helper — which this change
+/// did not touch. What is being compared is therefore the walk, not
+/// the arithmetic: a dropped first or last segment, a stale `prev`,
+/// or a `min` taken over the wrong pairs all show up here.
+#[test]
+fn test_distance_to_path_matches_a_collected_sample_walk() {
+    fn reference_distance(point: Vec2, path: &ConnectionPath) -> f32 {
+        let samples = sample_path(path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES);
+        if samples.is_empty() {
+            return f32::INFINITY;
+        }
+        if samples.len() == 1 {
+            return point.distance(samples[0].position);
+        }
+        let mut min_sq = f32::INFINITY;
+        for pair in samples.windows(2) {
+            let d = point_to_segment_distance_squared(point, pair[0].position, pair[1].position);
+            if d < min_sq {
+                min_sq = d;
+            }
+        }
+        min_sq.sqrt()
+    }
+
+    let mut rng = Lcg(0x1234_5eed);
+    let mut checked = 0usize;
+    for path in cubic_corpus() {
+        for _ in 0..12 {
+            let point = rng.next_vec2(-800.0, 800.0);
+            let expected = reference_distance(point, &path);
+            let actual = distance_to_path(point, &path);
+            assert_eq!(
+                actual.to_bits(),
+                expected.to_bits(),
+                "streamed distance {actual} != collected {expected} at {point:?} on {path:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 400, "the sweep must actually run; checked {checked}");
+}
+
+/// The convex-hull property `path_bounds` rests on, checked against
+/// the points `distance_to_path` actually measures: every sample of
+/// every corpus path lies inside the box of that path's control
+/// points.
+///
+/// Exact containment is a real-arithmetic statement — a curve
+/// evaluation is a rounded convex combination and may land a bit
+/// outside — so the assertion allows one ulp of the coordinate's own
+/// magnitude. That slack is many orders below the `tolerance`
+/// margin the early-out compares against, which is the quantity that
+/// matters downstream.
+///
+/// **The control is inside the test.** The same sweep run against
+/// the *endpoint* box — the wrong box, which a hump escapes — must
+/// fail for at least one corpus path. Without it, an implementation
+/// of `path_bounds` returning an infinite box would pass.
+#[test]
+fn test_path_bounds_contains_every_sampled_point() {
+    fn contains_with_ulp_slack(point: Vec2, min: Vec2, max: Vec2) -> bool {
+        let slack = |v: f32| v.abs().max(1.0) * f32::EPSILON;
+        point.x >= min.x - slack(min.x)
+            && point.x <= max.x + slack(max.x)
+            && point.y >= min.y - slack(min.y)
+            && point.y <= max.y + slack(max.y)
+    }
+
+    let mut escaped_the_endpoint_box = 0usize;
+    let mut sampled = 0usize;
+    for path in path_corpus() {
+        let (min, max) = path_bounds(&path);
+        let (chord_min, chord_max) = match path {
+            ConnectionPath::Straight { start, end } => (start.min(end), start.max(end)),
+            ConnectionPath::CubicBezier { start, end, .. } => (start.min(end), start.max(end)),
+        };
+        for sample in sample_path(&path, DISTANCE_SAMPLE_SPACING, MAX_PATH_SAMPLES) {
+            let p = sample.position;
+            assert!(
+                contains_with_ulp_slack(p, min, max),
+                "sample {p:?} escaped the control-point box {min:?}..{max:?} of {path:?}"
+            );
+            if !contains_with_ulp_slack(p, chord_min, chord_max) {
+                escaped_the_endpoint_box += 1;
+            }
+            sampled += 1;
+        }
+    }
+    assert!(sampled > 1_000, "the sweep must actually run; sampled {sampled}");
+    assert!(
+        escaped_the_endpoint_box > 100,
+        "the containment assertion has no teeth unless a wrong box fails it: \
+         {escaped_the_endpoint_box} samples escaped the endpoint box"
+    );
+}
+
+/// `distance_to_path_within`'s contract: `Some(d)` exactly when
+/// `distance_to_path` returns a `d` with `d <= tolerance`.
+///
+/// The sweep drives every corpus path against points inside, beside
+/// and far from it, at tolerances chosen *relative to the answer* —
+/// including `tolerance` equal to the distance itself, which is the
+/// knife edge the reject's rounding slack exists for. A reject that
+/// fired one ulp early would be visible exactly there and nowhere
+/// else.
+#[test]
+fn test_distance_to_path_within_agrees_with_the_unbounded_form() {
+    let mut rng = Lcg(0x0bad_f00d);
+    let mut accepted = 0usize;
+    let mut rejected = 0usize;
+    for path in path_corpus() {
+        for _ in 0..16 {
+            let point = rng.next_vec2(-1_500.0, 1_500.0);
+            let distance = distance_to_path(point, &path);
+            let tolerances = [
+                0.0,
+                distance * 0.5,
+                distance,
+                distance * 1.000_01,
+                distance + 1.0,
+                1.0,
+                12.0,
+                1.0e9,
+            ];
+            for tolerance in tolerances {
+                let expected = (distance <= tolerance).then_some(distance);
+                let actual = distance_to_path_within(point, &path, tolerance);
+                assert_eq!(
+                    actual, expected,
+                    "within({point:?}, {tolerance}) on {path:?}: got {actual:?}, \
+                     unbounded form says {distance}"
+                );
+                match expected {
+                    Some(_) => accepted += 1,
+                    None => rejected += 1,
+                }
+            }
+        }
+    }
+    // Both outcomes have to occur, or the sweep is only testing one
+    // branch of the function.
+    assert!(accepted > 200, "no accepting case exercised; accepted {accepted}");
+    assert!(rejected > 200, "no rejecting case exercised; rejected {rejected}");
+}
+
+/// The reject must actually reject: a point far outside a path's box
+/// answers `None` without the sampling walk running at all.
+///
+/// A behavioral test cannot see "the walk did not run", so what this
+/// pins is the observable half — the answer — plus the arrangement
+/// that makes the early-out the only way to reach it: a path whose
+/// sample count is in the thousands, and a point a hundred thousand
+/// units away from it.
+#[test]
+fn test_distance_to_path_within_rejects_a_point_outside_the_box() {
+    let path = ConnectionPath::CubicBezier {
+        start: Vec2::new(0.0, 0.0),
+        control1: Vec2::new(25_000.0, 10_000.0),
+        control2: Vec2::new(75_000.0, -10_000.0),
+        end: Vec2::new(100_000.0, 0.0),
+    };
+    let (min, max) = path_bounds(&path);
+    let far = Vec2::new(max.x + 100_000.0, min.y - 100_000.0);
+    assert_eq!(distance_to_path_within(far, &path, 12.0), None);
+    // And the same point is not rejected once the tolerance covers
+    // the gap, which is what says the reject is tolerance-driven
+    // rather than unconditional.
+    let generous = distance_to_path_within(far, &path, 1.0e9);
+    assert!(
+        generous.is_some(),
+        "a tolerance larger than the whole canvas must not reject"
+    );
+}
+
+/// The rewrites in this section remove work that no runtime
+/// assertion can observe, so the removal is pinned in the source
+/// text: the arc-length table is an array, the length path does not
+/// build a table at all, and the hit-test path does not collect its
+/// samples.
+///
+/// Each clause is scoped to one function body through
+/// `braced_block_after`, and each is paired with the assertion that
+/// the token it forbids *does* still occur elsewhere in the same
+/// file. Without that pairing a scan that resolved to the empty
+/// string would report all three as clean.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_the_sampling_hot_paths_carry_no_collected_vector() {
+    use crate::util::rust_source::{braced_block_after, production_code};
+
+    const BEZIER: &str = "lib/baumhard/src/mindmap/connection/bezier.rs";
+    const CONNECTION: &str = "lib/baumhard/src/mindmap/connection/mod.rs";
+
+    let bezier = production_code(BEZIER);
+    let connection = production_code(CONNECTION);
+    assert!(
+        bezier.len() > 2_000 && connection.len() > 2_000,
+        "both files must have read as real production code; got {} and {} bytes",
+        bezier.len(),
+        connection.len()
+    );
+
+    let body = |code: &str, header: &str| -> String {
+        let block = braced_block_after(code, header)
+            .unwrap_or_else(|| panic!("`{header}` must still be declared with a body"));
+        assert!(block.len() > 80, "`{header}` resolved to an empty-looking body");
+        block.to_string()
+    };
+
+    // The table is an array. `Vec::` still occurs in this file — the
+    // collecting `sample_cubic_bezier` pre-sizes one — so the absence
+    // below is a property of the body, not of the file.
+    assert!(bezier.contains("Vec::"), "the scan must be able to see a `Vec::`");
+    let table = body(&bezier, "fn build_arc_length_table(");
+    assert!(
+        !table.contains("Vec::") && !table.contains("vec!"),
+        "the arc-length table must not allocate: {table}"
+    );
+
+    // The length path does not build the table. The name still
+    // occurs in the file, in the sampler that does build one.
+    assert!(
+        bezier.matches("build_arc_length_table").count() >= 2,
+        "the scan must be able to see the table builder named elsewhere"
+    );
+    let length = body(&bezier, "fn cubic_bezier_length(");
+    assert!(
+        !length.contains("build_arc_length_table"),
+        "the length path must not build the cumulative table: {length}"
+    );
+
+    // The hit-test path does not collect its samples. `sample_path`
+    // is still declared in this same file — the connection pass calls
+    // it from another crate — so the absence below is again a
+    // property of the body rather than of the scan.
+    assert!(
+        connection.contains("sample_path"),
+        "the scan must be able to see `sample_path` named elsewhere"
+    );
+    let distance = body(&connection, "pub fn distance_to_path(");
+    assert!(
+        !distance.contains("sample_path"),
+        "the hit-test distance must not collect a sample vector: {distance}"
+    );
+}

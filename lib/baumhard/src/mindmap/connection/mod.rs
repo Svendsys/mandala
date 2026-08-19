@@ -8,7 +8,10 @@
 //! - `sample_path` walks evenly-spaced points along a path —
 //!   the connection pass uses these to place per-glyph anchors along a
 //!   rendered connection.
-//! - `distance_to_path` backs the edge hit-test.
+//! - `distance_to_path` measures a point against a path;
+//!   `distance_to_path_within` is the tolerance-bounded form the edge
+//!   hit-test uses, which rejects a far-away path from its bounding
+//!   box without sampling it.
 //!
 //! The cubic-Bezier internals (arc-length table, parameter binary
 //! search) live in the sibling `bezier` module; the tests live in
@@ -27,7 +30,7 @@ use crate::util::geometry::aabb_center;
 
 use self::bezier::{
     cubic_bezier_length, cubic_bezier_point, cubic_bezier_second_derivative, cubic_bezier_tangent,
-    sample_cubic_bezier,
+    plan_cubic_samples, sample_cubic_bezier,
 };
 
 /// A single sampled point along a connection path, produced by
@@ -508,34 +511,208 @@ fn point_to_segment_distance_squared(point: Vec2, a: Vec2, b: Vec2) -> f32 {
     point.distance_squared(closest)
 }
 
+/// Sample spacing, in canvas units, used when measuring a cubic
+/// Bezier's distance to a point. Finer than the spacing the
+/// connection pass renders at, because this polyline stands in for
+/// the curve in a comparison rather than carrying glyphs.
+const DISTANCE_SAMPLE_SPACING: f32 = 4.0;
+
 /// Returns the minimum distance from `point` to the given connection path.
 ///
 /// - `Straight`: exact point-to-segment distance.
-/// - `CubicBezier`: samples the curve and returns the minimum distance over
-///   all resulting polyline segments. This is an approximation; at default
-///   sampling density (4.0 canvas units) the error is below one canvas unit
-///   for typical connection paths — well within a click tolerance.
+/// - `CubicBezier`: walks the curve's sample sequence and returns the
+///   minimum distance over all resulting polyline segments. This is an
+///   approximation; at the module-private `DISTANCE_SAMPLE_SPACING`
+///   the error is below one canvas unit for typical connection paths
+///   — well within a click tolerance.
+///
+/// Cost: straight is O(1). Cubic is one arc-length table plus one
+/// curve evaluation and one point-to-segment test per sample, and
+/// **allocates nothing** — the samples are consumed as they are
+/// produced rather than collected (contrast [`sample_path`], whose
+/// caller needs the points afterwards).
+///
+/// A caller that only wants to know whether the path is within some
+/// radius should ask [`distance_to_path_within`], which can answer
+/// "no" from the path's bounding box without sampling at all.
 pub fn distance_to_path(point: Vec2, path: &ConnectionPath) -> f32 {
     match path {
         ConnectionPath::Straight { start, end } => {
             point_to_segment_distance_squared(point, *start, *end).sqrt()
         }
-        ConnectionPath::CubicBezier { .. } => {
-            let samples = sample_path(path, 4.0, MAX_PATH_SAMPLES);
-            if samples.is_empty() {
-                return f32::INFINITY;
-            }
-            if samples.len() == 1 {
-                return point.distance(samples[0].position);
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => {
+            let plan = plan_cubic_samples(
+                *start,
+                *control1,
+                *control2,
+                *end,
+                DISTANCE_SAMPLE_SPACING,
+                MAX_PATH_SAMPLES,
+            );
+            // `CubicSamples::len` is never zero, so index 0 always
+            // resolves; a one-point sequence has no segment to
+            // measure against and answers with the point itself.
+            let mut prev = plan.position(0);
+            if plan.len() == 1 {
+                return point.distance(prev);
             }
             let mut min_sq = f32::INFINITY;
-            for pair in samples.windows(2) {
-                let d = point_to_segment_distance_squared(point, pair[0].position, pair[1].position);
+            for index in 1..plan.len() {
+                let next = plan.position(index);
+                let d = point_to_segment_distance_squared(point, prev, next);
                 if d < min_sq {
                     min_sq = d;
                 }
+                prev = next;
             }
             min_sq.sqrt()
         }
     }
+}
+
+/// Axis-aligned bounding box of `path`'s control polygon, as
+/// `(min, max)`.
+///
+/// **The box contains the path.** A cubic Bezier lies within the
+/// convex hull of its four control points — its Bernstein basis is
+/// non-negative and sums to one over `[0, 1]`, so every point of the
+/// curve is a convex combination of `p0…p3` — and a convex hull lies
+/// within the axis-aligned box of the points that generate it. A
+/// straight path's two endpoints bound it the same way, with the
+/// hull degenerated to the segment itself.
+///
+/// **It also contains what [`distance_to_path`] measures against**,
+/// which is the stronger statement an early-out needs: that
+/// function's cubic branch answers with the distance to a *polyline*
+/// through sampled curve points, and a chord between two points of a
+/// convex set stays inside it. So no segment it tests can leave this
+/// box.
+///
+/// The box is not tight — an S-curve's control points can sit well
+/// outside the curve's own extent — which is the trade: four
+/// component-wise `min`/`max` pairs and no root-finding on the
+/// derivative.
+///
+/// Cost: O(1), no allocation. A non-finite control point is not
+/// screened here; `f32::min` / `f32::max` return the other operand
+/// against a `NaN`, so a partly-`NaN` path yields the box of its
+/// finite points.
+pub fn path_bounds(path: &ConnectionPath) -> (Vec2, Vec2) {
+    match path {
+        ConnectionPath::Straight { start, end } => (start.min(*end), start.max(*end)),
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => (
+            start.min(*control1).min(control2.min(*end)),
+            start.max(*control1).max(control2.max(*end)),
+        ),
+    }
+}
+
+/// Whether `point` sits further than `tolerance` outside the box
+/// `[min, max]` on at least one axis.
+///
+/// Written as a subtraction compared against `tolerance` rather than
+/// as a containment test against a box inflated by `tolerance`, and
+/// the reason is float precision rather than style. Inflating rounds
+/// `max + tolerance` at the magnitude of a *canvas coordinate*,
+/// which on a large map is a coarse place to round; subtracting
+/// rounds at the magnitude of the *result*, which is the tolerance
+/// itself. Both forms decide the same thing in exact arithmetic; the
+/// second keeps the rounding error small relative to the quantity
+/// being compared.
+///
+/// A `NaN` anywhere makes every comparison false, so the answer is
+/// "not outside" — the safe direction, since the caller then does
+/// the full computation instead of trusting this.
+fn outside_bounds_by(point: Vec2, min: Vec2, max: Vec2, tolerance: f32) -> bool {
+    min.x - point.x > tolerance
+        || point.x - max.x > tolerance
+        || min.y - point.y > tolerance
+        || point.y - max.y > tolerance
+}
+
+/// Relative slack added to [`distance_to_path_within`]'s reject
+/// threshold, so the early-out stays conservative **after** float
+/// rounding and not only in exact arithmetic.
+///
+/// The reject compares an axis overhang — one correctly-rounded
+/// subtraction — against `tolerance`, while the value it is
+/// protecting comes out of [`distance_to_path`]'s longer chain of
+/// dot products, a clamp, and a square root. Each sits within a few
+/// ulps of the exact quantity it approximates, and a few ulps on
+/// either side of a strict `>` is enough for the two to disagree
+/// about a point lying exactly `tolerance` from the path. Widening
+/// the reject by more ulps than either chain can lose removes the
+/// disagreement rather than making it unlikely: a rejected point's
+/// overhang then exceeds `tolerance` by more than the combined
+/// rounding of both computations, so its measured distance does too.
+///
+/// 32 × [`f32::EPSILON`] is 2⁻¹⁸ — a relative 4 × 10⁻⁶, orders of
+/// magnitude above the handful of ulps in play and orders below
+/// anything a canvas-space click radius can tell apart. The points
+/// it changes the outcome for are exactly those whose distance falls
+/// inside that band around `tolerance`, and for those the full
+/// computation runs and decides.
+///
+/// **This margin is argued, not observed.** No input is known that
+/// needs it: `test_distance_to_path_within_agrees_with_the_unbounded_form`
+/// drives the corpus at `tolerance` exactly equal to the measured
+/// distance — the knife edge — and passes with the margin removed.
+/// What the margin buys is that the soundness argument above stops
+/// depending on that: without it the argument holds in real
+/// arithmetic and is merely very likely in `f32`, and "very likely"
+/// is not what a hit test should rest on. The same test fails when
+/// the margin is *inverted*, which is what says the sweep can
+/// resolve a shift of this size at all.
+const BOUNDS_REJECT_SLACK: f32 = 32.0 * f32::EPSILON;
+
+/// [`distance_to_path`], answered only when the answer is within
+/// `tolerance` — the shape a hit test wants.
+///
+/// **Contract:** returns `Some(d)` exactly when
+/// `distance_to_path(point, path)` is a `d` satisfying
+/// `d <= tolerance`, and `None` otherwise. The bounding-box test it
+/// opens with is an optimization inside that contract, not a
+/// relaxation of it.
+///
+/// **Why the early-out cannot reject a true hit.**
+/// [`path_bounds`] returns a box containing every segment
+/// [`distance_to_path`] measures against (see its doc for why). If
+/// `point` lies more than `tolerance` outside that box on some axis,
+/// then its distance to every point of the box — and so to every
+/// segment inside it — exceeds `tolerance` on that axis alone, so the
+/// full computation could only have returned a value the `<=` test
+/// would reject. The reject is therefore sound for *any* box that
+/// contains the path, which is what makes a loose one safe to use.
+/// The module-private `BOUNDS_REJECT_SLACK` carries that argument
+/// across float rounding, so the two routes cannot disagree even on
+/// a point sitting exactly `tolerance` away.
+///
+/// A `NaN` in `point` or in the path falls out of the contract
+/// rather than needing a case: `distance_to_path` is then `NaN`,
+/// `NaN <= tolerance` is false, and `None` is the answer both routes
+/// give. That differs from a caller that spelled its own filter
+/// `distance > tolerance` — `NaN > tolerance` is *also* false, so
+/// such a caller kept the path as a candidate at an unordered
+/// distance.
+///
+/// Cost: O(1) to reject. Otherwise [`distance_to_path`]'s cost plus
+/// that O(1). No allocation on either route.
+pub fn distance_to_path_within(point: Vec2, path: &ConnectionPath, tolerance: f32) -> Option<f32> {
+    let (min, max) = path_bounds(path);
+    let reject_beyond = tolerance + tolerance.abs() * BOUNDS_REJECT_SLACK;
+    if outside_bounds_by(point, min, max, reject_beyond) {
+        return None;
+    }
+    let distance = distance_to_path(point, path);
+    (distance <= tolerance).then_some(distance)
 }

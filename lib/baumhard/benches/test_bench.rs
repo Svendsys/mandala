@@ -2175,6 +2175,39 @@ fn dewey_cmp_benchmark(c: &mut Criterion) {
     });
 }
 
+/// The edge hit-test's path geometry, one path per row rather than
+/// through a whole projection pass.
+///
+/// Three rows because the caller composes three answers:
+/// `path_bounds` is the control-polygon box, `distance_to_path` is
+/// the sampled walk that box protects, and `distance_to_path_within`
+/// is the pair as `document::hit_test::hit_test_edge` calls it —
+/// driven here at a point the box rejects, which is the case the
+/// composition exists for.
+fn connection_geometry_benchmark(c: &mut Criterion) {
+    use baumhard::mindmap::connection::{
+        distance_to_path, distance_to_path_within, path_bounds, ConnectionPath,
+    };
+    use glam::Vec2;
+
+    let path = ConnectionPath::CubicBezier {
+        start: Vec2::new(0.0, 0.0),
+        control1: Vec2::new(2_500.0, 1_000.0),
+        control2: Vec2::new(7_500.0, -1_000.0),
+        end: Vec2::new(10_000.0, 0.0),
+    };
+    let near = Vec2::new(5_000.0, 20.0);
+    let far = Vec2::new(60_000.0, 60_000.0);
+
+    c.bench_function("connection_path_bounds", |b| b.iter(|| path_bounds(&path)));
+    c.bench_function("connection_distance_to_path", |b| {
+        b.iter(|| distance_to_path(near, &path))
+    });
+    c.bench_function("connection_distance_to_path_within_rejects", |b| {
+        b.iter(|| distance_to_path_within(far, &path, 12.0))
+    });
+}
+
 criterion_group!(
     benches,
     criterion_benchmark,
@@ -2185,5 +2218,6 @@ criterion_group!(
     fast_resize_anchor_inference_benchmark,
     section_frame_emission_benchmark,
     hit_index_resolve_benchmark,
+    connection_geometry_benchmark,
 );
 criterion_main!(benches);
