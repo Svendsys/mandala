@@ -779,6 +779,23 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("replace_graphemes_until_newline", |b| {
         b.iter(do_replace_graphemes_until_newline)
     });
+    c.bench_function("replace_substring_matches_the_byte_splice_reference", |b| {
+        b.iter(do_replace_substring_matches_the_byte_splice_reference)
+    });
+    c.bench_function("replace_substring_refuses_a_mid_character_range", |b| {
+        b.iter(do_replace_substring_refuses_a_mid_character_range)
+    });
+    c.bench_function(
+        "split_off_graphemes_matches_the_collect_and_concat_reference",
+        |b| b.iter(do_split_off_graphemes_matches_the_collect_and_concat_reference),
+    );
+    // Reads one module's source per iteration, the same shape as
+    // `the_metric_cache_probes_without_owning_the_cluster` below:
+    // after the first iteration what moves is the parse and the brace
+    // walk, not the disk.
+    c.bench_function("the_text_edit_primitives_carry_no_whole_buffer_copy", |b| {
+        b.iter(do_the_text_edit_primitives_carry_no_whole_buffer_copy)
+    });
     c.bench_function("count_grapheme_clusters", |b| b.iter(do_count_grapheme_clusters));
     c.bench_function("first_non_whitespace_grapheme", |b| {
         b.iter(do_first_non_whitespace_grapheme)

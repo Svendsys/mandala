@@ -214,11 +214,9 @@ pub struct LineReplacement {
 /// `at`-consistency `debug_assert`. On top of that: one bounded `find_byte_index_of_grapheme`
 /// walk for the write position, one `count_grapheme_clusters` of the
 /// line tail, one `count_number_lines` byte scan over `source`, and one
-/// `replace_substring`, which itself allocates a fresh `Vec<u8>` copy
-/// of the whole target and re-validates it as UTF-8 — a known hot-path
-/// allocation tracked alongside the rest of the "no-alloc text edit"
-/// work. Every term is O(target length); the function was already in
-/// that class before the measurement was added.
+/// crate-private `replace_substring`, which splices in place. Every
+/// term is O(target length); the function was already in that class
+/// before the measurement was added.
 pub fn replace_graphemes_until_newline(target: &mut String, g_index: usize, source: &str) -> LineReplacement {
     let insert_num_graphemes = count_grapheme_clusters(source);
     // `count_number_lines` is "newlines + 1", so the count of `\n`
@@ -377,21 +375,55 @@ pub fn byte_indices_of_graphemes(s: &str, ascending: &[usize]) -> Vec<Option<usi
     out
 }
 
-fn replace_substring(s: &mut String, i: usize, n: usize, source: &str) {
-    let mut bytes = s.as_bytes().to_vec();
-    let source_bytes = source.as_bytes();
-
-    bytes.drain(i..n);
-    bytes.splice(i..i, source_bytes.iter().cloned());
-
-    // Invalid UTF-8 after the splice would be a caller-level bug
-    // (passed a byte offset mid-codepoint); log and leave `s` alone
-    // rather than panic inside the text-edit hot path.
-    if let Ok(modified_string) = String::from_utf8(bytes) {
-        *s = modified_string;
-    } else {
-        error!("Failed to convert bytes to UTF-8 String.");
+/// Replace the bytes `i..n` of `s` with `source`, in place.
+///
+/// `i` and `n` are **byte** offsets. The contract is that both land
+/// on a UTF-8 character boundary of `s`, with `i <= n <= s.len()`.
+/// Both call sites — the two branches of
+/// [`replace_graphemes_until_newline`] — satisfy it by construction:
+/// `i` comes from [`find_byte_index_of_grapheme`] (a cumulative sum
+/// of cluster lengths, and a cluster boundary is always a character
+/// boundary) or from `s.len()`; `n` is either another such cluster
+/// offset or the end of `slice_to_newline`'s borrowed subslice of
+/// `s`, which is a character boundary because it is the end of a
+/// `&str`. `s` is not mutated between computing them and arriving
+/// here, and `i <= n` holds because cluster offsets rise with
+/// cluster index.
+///
+/// **Out of contract it degrades rather than panics.**
+/// `String::replace_range` panics on a mid-character offset, and
+/// this is the per-keystroke edit path, where CODE_CONVENTIONS §9
+/// does not allow one. So the offsets are checked in O(1) first, and
+/// a bad pair logs and leaves `s` untouched.
+///
+/// That check is **sharper** than the `String::from_utf8` it
+/// replaces, not a weaker stand-in for it. The old body copied `s`
+/// into a `Vec<u8>`, spliced the bytes, and re-validated the result
+/// — a check that runs after the damage and that a mid-character cut
+/// can pass: draining bytes `1..3` of `"éé"` leaves `[C3 A9]`, which
+/// is valid UTF-8 and is the wrong string. `is_char_boundary`
+/// refuses that same call before `s` is touched.
+/// `do_replace_substring_refuses_a_mid_character_range` pins both
+/// halves of that comparison.
+///
+/// Cost: two O(1) boundary probes and one `String::replace_range`,
+/// which shifts the tail in place and grows the buffer only when
+/// `source` is longer than the range it replaces. No copy of `s`, no
+/// revalidation.
+///
+/// `pub(crate)` rather than private so the out-of-contract
+/// regression test can drive the degrade — the same reason
+/// `metric_cache::glyph_advance_with_timeout` is.
+pub(crate) fn replace_substring(s: &mut String, i: usize, n: usize, source: &str) {
+    if i > n || !s.is_char_boundary(i) || !s.is_char_boundary(n) {
+        error!(
+            "grapheme_chad: replace_substring got byte range {i}..{n}, which is not a \
+             character-boundary range of a {}-byte buffer; leaving it unedited",
+            s.len()
+        );
+        return;
     }
+    s.replace_range(i..n, source);
 }
 
 /// Grapheme-aware analogue of `String::split_off`. Splits `original`
@@ -400,22 +432,20 @@ fn replace_substring(s: &mut String, i: usize, n: usize, source: &str) {
 /// exceeds the grapheme count, returns an empty `String` and leaves
 /// `original` unchanged.
 ///
-/// Cost: O(n) grapheme walk + two `concat` calls (the implementation
-/// collects through a `Vec<&str>` and rebuilds both halves). Allocates
-/// the new prefix and the returned suffix; the original buffer is
-/// reassigned.
+/// Cost: one O(n) grapheme walk to find the split offset — short-
+/// circuiting at cluster `at` — then one `String::split_off`. That is
+/// a single allocation, for the returned suffix; `original` keeps its
+/// own buffer and truncates in place. The implementation this
+/// replaced collected every cluster into a `Vec<&str>` and rebuilt
+/// *both* halves with `concat()`, so it allocated three times and
+/// reassigned `original` to a fresh buffer.
 pub fn split_off_graphemes(original: &mut String, at: usize) -> String {
-    let graphemes = original.graphemes(true).collect::<Vec<&str>>();
-
-    if at >= graphemes.len() {
-        return original.split_off(original.len());
+    match find_byte_index_of_grapheme(original, at) {
+        Some(byte_index) => original.split_off(byte_index),
+        // `at` is at or past the cluster count, so there is no
+        // cluster to split at and nothing to hand back.
+        None => String::new(),
     }
-
-    let (left, right) = graphemes.split_at(at);
-    let right_str = right.concat();
-
-    *original = left.concat();
-    right_str
 }
 
 /// Grapheme-cluster index of the first cluster in `s` that carries any
