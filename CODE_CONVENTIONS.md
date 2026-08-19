@@ -200,9 +200,21 @@ decision, not a drive-by edit.
     reifies behaviors the *application* names — one `Action` per
     user-facing verb, bindable by key — whereas these are named per
     node in the document and reach the model through the mutation
-    pipeline instead. That is also why `SourceTier`'s macro
-    privilege gates do not apply to them: the trust boundary for
-    document content is the loader, not the dispatcher.
+    pipeline instead.
+
+    **They carry no `SourceTier`, and that is a gap rather than a
+    sanction.** An earlier draft of this bullet explained their
+    ungated-ness by saying the trust boundary for document content
+    is the loader — which contradicts this project's actual stated
+    threat model, where a `.mindmap.json` is *untrusted* and a
+    "hostile shared mindmap" is named as the adversary
+    (`src/application/macros/mod.rs`). The loader validates shape,
+    not intent. The correct statement is that `OnClick` triggers
+    are outside the *dispatch funnel*, not outside the security
+    posture: they are a second route from map content to
+    `apply_document_actions` that never passes `dispatch_macro`,
+    which is exactly why the gating rule below says *every* apply
+    site rather than that one.
   - **Per-frame continuous-gesture state.** A drag's per-cursor-move
     delta (e.g. `RenderDecree::CameraPan(dx, dy)` in `event_cursor_moved`)
     legitimately stays inline. For a *mouse* drag the funnel still
@@ -256,9 +268,33 @@ decision, not a drive-by edit.
   `#[non_exhaustive]`. Today every variant is a pure in-memory
   canvas-theme write, safe to expose. **Any new variant that
   performs file I/O, network access, arbitrary content load, or
-  cross-process side effects MUST add a parallel gate at the
-  `dispatch_macro` site** (look up the existing `allows_*` pattern
-  on `SourceTier` and extend it).
+  cross-process side effects MUST be gated at *every site that
+  applies a `DocumentAction`*** (look up the existing `allows_*`
+  pattern on `SourceTier` and extend it).
+
+  **"Every site" is the load-bearing phrase, and this paragraph
+  used to say "at the `dispatch_macro` site" instead — which is
+  wrong in the direction that matters.** `dispatch_macro` is not
+  the only route from a `.mindmap.json` to
+  `MindMapDocument::apply_document_actions`. There are three, and
+  the second is the one a hostile map would take:
+
+  1. `dispatch::apply_keybind_custom_mutation`
+     (`cross_dispatch/mod.rs`) — the keybind / macro tier, which
+     is the route `dispatch_macro`'s gates cover.
+  2. `click_triggers::fire_onclick_triggers` — a node's `OnClick`
+     binding, authored **in the map**, fired by a click or a touch
+     tap. It carries no `SourceTier` at all, because it is document
+     content rather than a dispatch surface. A variant gated only
+     at `dispatch_macro` stays fully reachable here.
+  3. `console::commands::mutation` — the `mutation` console verb,
+     User tier by construction, since the user typed it.
+
+  Nothing turns on this today: both shipped variants
+  (`SetThemeVariant`, `SetThemeVariables`) are in-memory theme
+  writes and route 2 is harmless for them. The instruction is
+  written down correctly now so the first dangerous variant does
+  not get gated at one site and shipped as though it were gated.
 
   Source-tier assignment is loader-pinned. Each loader call site
   hardcodes the tier; nothing in the on-disk format can affect it.
@@ -387,6 +423,20 @@ industrial cost/benefit reasoning. This is not license for speculation.
   targets and fail the run (#134); PR #133 established the
   stripped-side half of this rule, the #134 incident the live-side
   half.
+- **A comment may assert what the standard says and what this
+  repository does; a claim about what a *named engine* does at
+  runtime needs either a device or a hedge.** The proved-vs-observed
+  discipline, applied to prose. "`touch-action: none` is what the
+  spec says a canvas needs" and "nothing in this repository sets it"
+  are both checkable from a checkout. "Safari ignores
+  `user-scalable=no`" is not — no browser runs in CI, so the claim
+  can only be inherited from memory, and inherited browser trivia
+  goes stale silently and is then quoted as though it were tested.
+  Write the checkable half, and where behavior genuinely varies say
+  it varies and name who owns confirming it. The rule earned its
+  place: `web/index.html` shipped a per-engine claim that a reviewer
+  said was backwards, and neither the author nor the reviewer could
+  settle it from a checkout.
 - **Inline `//` comments explain *why*, never *what*.** `// increment
   counter` on `counter += 1` is noise; `// clamp to canvas bounds so
   the palette cannot scroll off-screen during zoom` is signal.

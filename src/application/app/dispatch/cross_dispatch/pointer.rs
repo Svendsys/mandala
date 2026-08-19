@@ -34,9 +34,9 @@ use crate::application::app::{
     compute_click_hit, now_ms, ClickHit, ClickHitParts, InteractionMode, EDGE_HIT_TOLERANCE_PX,
     PLATFORM_CONTEXT,
 };
-use crate::application::renderer::Renderer;
 
 use super::apply_create_orphan_node_and_edit;
+use super::canvas_per_pixel::CanvasPerPixel;
 
 /// Per-event payload that pointer-driven Actions need but keyboard
 /// dispatch doesn't. Populated by the mouse handlers on both
@@ -607,48 +607,6 @@ pub(in crate::application::app) fn edge_under_pointer(
     match hit_test_edge(canvas_pos, map, canvas_per_pixel.scale(EDGE_HIT_TOLERANCE_PX)) {
         Some(edge_ref) => SelectionState::Edge(edge_ref),
         None => SelectionState::None,
-    }
-}
-
-/// A camera's canvas-units-per-screen-pixel ratio.
-///
-/// A newtype rather than the `f32` it wraps, because the parameter it
-/// occupies **changed meaning without changing type**. Before the
-/// shared last rung existed, `handle_click_core`'s fourth argument was
-/// `EDGE_HIT_TOLERANCE_PX` *already multiplied by* this ratio — a
-/// distance in canvas units. It is now the ratio itself, and the
-/// multiplication happens once, inside [`edge_under_pointer`].
-///
-/// Both spellings are `f32`, so passing the old one still compiled and
-/// still type-checked, and the only symptom was every click on this
-/// target getting an `EDGE_HIT_TOLERANCE_PX`-times-too-large grab
-/// radius — silently, because the click tests probe a point far
-/// outside the map rather than the boundary. A review planted exactly
-/// that and the suite stayed green.
-///
-/// [`Self::of`] is the only constructor a shipped build can reach, so
-/// the wrong value is no longer expressible: there is nothing to hand
-/// it but a camera.
-#[derive(Debug, Clone, Copy)]
-pub(in crate::application::app) struct CanvasPerPixel(f32);
-
-impl CanvasPerPixel {
-    /// Read the ratio off the live camera. The only way production
-    /// code makes one.
-    pub(in crate::application::app) fn of(renderer: &Renderer) -> Self {
-        Self(renderer.canvas_per_pixel())
-    }
-
-    /// Test-only constructor, for the cases that pin the scaling
-    /// itself and therefore have to name both sides of it.
-    #[cfg(test)]
-    pub(in crate::application::app) fn from_ratio(ratio: f32) -> Self {
-        Self(ratio)
-    }
-
-    /// Convert a screen-pixel measurement to canvas units.
-    fn scale(self, screen_px: f32) -> f32 {
-        screen_px * self.0
     }
 }
 
