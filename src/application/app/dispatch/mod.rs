@@ -47,7 +47,7 @@ pub(in crate::application::app) use native::{
 // `super::dispatch::*` form.
 pub(in crate::application::app) use cross_dispatch::{
     apply_touch_effect, dispatch_custom_mutation_for_key, drive_touch_event, edge_under_pointer, touch_phase,
-    DispatchHit, DispatchOutcome, TouchStep,
+    CanvasPerPixel, DispatchHit, DispatchOutcome, TouchStep,
 };
 // One-target consumers of cross-platform items. Each body lives in
 // `cross_dispatch` and is unit-tested on the host (§T9); only the

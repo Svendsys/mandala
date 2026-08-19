@@ -28,15 +28,25 @@
           there is nothing to scroll and no chrome underneath.
 
           Deliberately NOT paired with `user-scalable=no` in the
-          viewport meta: modern Safari and Chrome ignore it as an
-          accessibility measure, so writing it would claim a
-          guarantee the platform does not honor, and where it is
-          honored it takes pinch-to-magnify away from users who
-          need it. iOS Safari is also the known gap for this rule —
-          it honors `touch-action` for scrolling but has
-          historically kept page pinch-zoom on regardless — which is
-          a browser fact this file cannot fix and #158 owns
-          confirming.
+          viewport meta. Two reasons, and only the second is a claim
+          this repository can stand behind. **Whether it is obeyed at
+          all varies by browser and by the user's accessibility
+          settings** — it is widely reported to be ignored outright
+          by some engines and honored by others — so writing it would
+          rest the gesture on a suppression that is not guaranteed.
+          And **wherever it IS obeyed it takes pinch-to-magnify away
+          from users who need it**, which is a cost paid by exactly
+          the people least able to absorb it. The second reason
+          settles the decision on its own, which is why the first is
+          stated as varying rather than as a per-browser fact: no
+          browser runs in this session, so per-engine behavior is not
+          something this file can assert from here.
+
+          Same boundary applies to the rule above. `touch-action:
+          none` is what the standard says a canvas needs; whether a
+          given engine honors it for *page pinch-zoom* as well as for
+          scrolling is a browser fact nothing here can check, and
+          #158 owns confirming it on a device.
 
           `test_the_browser_canvas_keeps_touch_gestures_from_the_user_agent`
           holds this declaration.

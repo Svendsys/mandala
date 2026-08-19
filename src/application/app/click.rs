@@ -64,7 +64,7 @@ pub(super) fn handle_click_core(
     hit: Option<String>,
     hit_section: Option<usize>,
     canvas_pos: glam::Vec2,
-    canvas_per_pixel: f32,
+    canvas_per_pixel: super::dispatch::CanvasPerPixel,
     shift_pressed: bool,
     ctx: ClickCore<'_>,
 ) -> RebuildTier {
@@ -177,7 +177,7 @@ pub(super) fn handle_click(
         hit,
         hit_section,
         canvas_pos,
-        renderer.canvas_per_pixel(),
+        super::dispatch::CanvasPerPixel::of(renderer),
         shift_pressed,
         ClickCore {
             document: doc,
@@ -312,7 +312,9 @@ mod tests {
 
     /// What a 1:1 camera reports for `canvas_per_pixel()`, which is
     /// what the core scales `EDGE_HIT_TOLERANCE_PX` by.
-    const UNZOOMED_CANVAS_PER_PIXEL: f32 = 1.0;
+    fn unzoomed() -> crate::application::app::dispatch::CanvasPerPixel {
+        crate::application::app::dispatch::CanvasPerPixel::from_ratio(1.0)
+    }
 
     fn first_node_id(doc: &MindMapDocument) -> String {
         doc.mindmap
@@ -342,14 +344,7 @@ mod tests {
     fn test_click_core_selection_only_change_asks_for_the_scene_tier() {
         let mut world = CoreWorld::new();
         world.doc.selection = SelectionState::Edge(EdgeRef::new("a", "b", "cross_link"));
-        let tier = handle_click_core(
-            None,
-            None,
-            FAR_OFF_CANVAS,
-            UNZOOMED_CANVAS_PER_PIXEL,
-            false,
-            world.core(),
-        );
+        let tier = handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), false, world.core());
         assert!(
             matches!(world.doc.selection, SelectionState::None),
             "precondition: the click must land on empty canvas, or this pins the wrong \
@@ -365,14 +360,7 @@ mod tests {
         let mut from_node = CoreWorld::new();
         let node_id = first_node_id(&from_node.doc);
         from_node.doc.selection = SelectionState::Single(node_id);
-        let tier = handle_click_core(
-            None,
-            None,
-            FAR_OFF_CANVAS,
-            UNZOOMED_CANVAS_PER_PIXEL,
-            false,
-            from_node.core(),
-        );
+        let tier = handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), false, from_node.core());
         assert_eq!(
             tier,
             RebuildTier::All,
@@ -394,7 +382,7 @@ mod tests {
             Some(node_id.clone()),
             None,
             FAR_OFF_CANVAS,
-            UNZOOMED_CANVAS_PER_PIXEL,
+            unzoomed(),
             false,
             world.core(),
         );

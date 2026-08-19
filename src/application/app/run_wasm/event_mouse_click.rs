@@ -350,7 +350,11 @@ impl super::WasmApp {
             renderer_borrow.as_ref().map(|renderer| {
                 let canvas_pos =
                     renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
-                dispatch::edge_under_pointer(canvas_pos, &input.document.mindmap, renderer.canvas_per_pixel())
+                dispatch::edge_under_pointer(
+                    canvas_pos,
+                    &input.document.mindmap,
+                    dispatch::CanvasPerPixel::of(renderer),
+                )
             })
         } else {
             None

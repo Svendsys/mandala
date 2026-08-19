@@ -277,7 +277,8 @@ mod tests {
             .expect("web/index.html must carry a `canvas { … }` rule");
         assert!(
             canvas_body.contains("touch-action: none"),
-            "the canvas rule must declare `touch-action: none` or the browser eats the              pan and the pinch before winit sees them; rule body was: {canvas_body:?}"
+            "the canvas rule must declare `touch-action: none` or the browser eats \
+             the pan and the pinch before winit sees them; rule body was: {canvas_body:?}"
         );
 
         // The claim the comment makes about *why* it has to live

@@ -186,10 +186,23 @@ decision, not a drive-by edit.
     `winit::Key` payload (character insertion, IME sequences) which
     `Action` discards.
   - **Pre-funnel state-machine bookkeeping.** Selection updates on
-    single-click, drag-state cleanup on release, double-click time +
-    distance + hit detection, and the `last_click` tracker run
-    before the funnel. They're not user-named effects; they're
-    machinery the funnel rests on.
+    single-click (and on a touch `Tap`), drag-state cleanup on
+    release, double-click time + distance + hit detection, and the
+    `last_click` tracker run before the funnel. They're not
+    user-named effects; they're machinery the funnel rests on.
+
+    **One thing on that same path is a user-named effect, and it is
+    deliberately not an `Action`:** a click or tap that lands on a
+    node runs `click_triggers::fire_onclick_triggers`, which applies
+    whatever `OnClick` `CustomMutation`s the *map author* bound to
+    it, plus their document actions. Those are authored effects by
+    definition. They stay outside the funnel because the funnel
+    reifies behaviors the *application* names — one `Action` per
+    user-facing verb, bindable by key — whereas these are named per
+    node in the document and reach the model through the mutation
+    pipeline instead. That is also why `SourceTier`'s macro
+    privilege gates do not apply to them: the trust boundary for
+    document content is the loader, not the dispatcher.
   - **Per-frame continuous-gesture state.** A drag's per-cursor-move
     delta (e.g. `RenderDecree::CameraPan(dx, dy)` in `event_cursor_moved`)
     legitimately stays inline. For a *mouse* drag the funnel still
