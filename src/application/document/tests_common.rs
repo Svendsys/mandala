@@ -477,6 +477,9 @@ pub(crate) fn project_roles(
     let mut cache = SceneConnectionCache::new();
     cache.ensure_zoom(camera_zoom);
     let node_aabbs = tb::node_clip_aabbs(&doc.mindmap, &offsets, overrides.border, &hidden);
+    // One memo across both connection passes, as `CanvasFrame` owns
+    // one across its `update_*` methods.
+    let mut paths = tb::EdgePathCache::new(&doc.mindmap, &offsets);
     let (connection_elements, edge_handles) = tb::build_connection_elements(
         &doc.mindmap,
         &offsets,
@@ -484,6 +487,7 @@ pub(crate) fn project_roles(
         overrides.selection.edge,
         overrides.edge_color,
         &mut cache,
+        &mut paths,
         camera_zoom,
         &hidden,
     );
@@ -497,10 +501,10 @@ pub(crate) fn project_roles(
         edge_handles,
         connection_label_elements: tb::build_label_elements(
             &doc.mindmap,
-            &offsets,
             overrides.selection.label_edit,
             overrides.edge_color,
             highlight_key.as_ref(),
+            &mut paths,
             camera_zoom,
             &hidden,
         ),

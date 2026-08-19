@@ -493,7 +493,7 @@ pub(in crate::application::app) fn rebuild_scene_only(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let offsets = std::collections::HashMap::new();
-    let frame = CanvasFrame::new(
+    let mut frame = CanvasFrame::new(
         doc,
         &offsets,
         interaction_mode.resize_handle_overrides(),
@@ -531,7 +531,7 @@ pub(in crate::application::app) fn rebuild_camera_geometry(
 ) {
     scene_cache.clear();
     let offsets = std::collections::HashMap::new();
-    let frame = CanvasFrame::new(
+    let mut frame = CanvasFrame::new(
         doc,
         &offsets,
         interaction_mode.resize_handle_overrides(),
@@ -588,7 +588,7 @@ pub(in crate::application::app) fn warm_scene_at_load(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let init_offsets = std::collections::HashMap::new();
-    let frame = CanvasFrame::new(
+    let mut frame = CanvasFrame::new(
         doc,
         &init_offsets,
         crate::application::document::InteractionModeOverrides::none(),
@@ -647,6 +647,16 @@ pub(in crate::application::app) struct CanvasFrame<'a> {
     /// `MindMap::fold_hidden_set` for this frame — borrowed from
     /// `doc.mindmap`, shared by every pass below.
     hidden: std::collections::HashSet<&'a str>,
+    /// This frame's connection paths, built at most once per edge and
+    /// shared by the three passes that want them: the connection
+    /// sampler, the selected edge's grab-handles, and the label
+    /// layout. Empty until a pass asks (#36 item 6).
+    ///
+    /// It lives on the frame because the frame is exactly its
+    /// validity window — a path is a pure function of `doc.mindmap`
+    /// and `offsets`, both of which this type holds by shared
+    /// reference for as long as it exists.
+    paths: baumhard::mindmap::tree_builder::EdgePathCache<'a>,
     camera_zoom: f32,
 }
 
@@ -669,6 +679,7 @@ impl<'a> CanvasFrame<'a> {
             offsets,
             overrides: doc.frame_overrides(mode_overrides),
             hidden: doc.mindmap.fold_hidden_set(),
+            paths: baumhard::mindmap::tree_builder::EdgePathCache::new(&doc.mindmap, offsets),
             camera_zoom,
         }
     }
@@ -695,7 +706,7 @@ impl<'a> CanvasFrame<'a> {
     /// midpoint drag that spawns a control point shifts it and
     /// forces a rebuild.
     pub(in crate::application::app) fn update_connection_trees(
-        &self,
+        &mut self,
         cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
@@ -709,21 +720,27 @@ impl<'a> CanvasFrame<'a> {
         // which is a function of zoom — flush stale samples before
         // the pass reads them.
         cache.ensure_zoom(self.camera_zoom);
-        let node_aabbs = node_clip_aabbs(
-            &self.doc.mindmap,
-            self.offsets,
-            self.overrides.border,
-            &self.hidden,
-        );
+        // Destructured so the shared `paths` memo can be mut-borrowed
+        // beside the frame's other fields, which the pass reads.
+        let Self {
+            doc,
+            offsets,
+            overrides,
+            hidden,
+            paths,
+            camera_zoom,
+        } = self;
+        let node_aabbs = node_clip_aabbs(&doc.mindmap, offsets, overrides.border, hidden);
         let (connections, edge_handles) = build_connection_elements(
-            &self.doc.mindmap,
-            self.offsets,
+            &doc.mindmap,
+            offsets,
             &node_aabbs,
-            self.overrides.selection.edge,
-            self.overrides.edge_color,
+            overrides.selection.edge,
+            overrides.edge_color,
             cache,
-            self.camera_zoom,
-            &self.hidden,
+            paths,
+            *camera_zoom,
+            hidden,
         );
 
         let signature = hash_canvas_signature(&connection_identity_sequence(&connections));
@@ -877,7 +894,7 @@ impl<'a> CanvasFrame<'a> {
     /// selection-edge reorderings, change the identity and trigger a
     /// full rebuild.
     pub(in crate::application::app) fn update_connection_label_tree(
-        &self,
+        &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
         use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
@@ -899,10 +916,10 @@ impl<'a> CanvasFrame<'a> {
         });
         let elements = build_label_elements(
             &self.doc.mindmap,
-            self.offsets,
             self.overrides.selection.label_edit,
             self.overrides.edge_color,
             highlight_key.as_ref(),
+            &mut self.paths,
             self.camera_zoom,
             &self.hidden,
         );
@@ -1024,7 +1041,7 @@ impl<'a> CanvasFrame<'a> {
     /// once at the end of the caller's batch (see
     /// [`flush_canvas_scene_buffers`]).
     pub(in crate::application::app) fn update_all(
-        &self,
+        &mut self,
         cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
@@ -2158,7 +2175,7 @@ mod canvas_pass_granularity {
         // connection pass has to resample for.
         let offsets = std::collections::HashMap::new();
         cache.clear();
-        let frame = super::CanvasFrame::new(
+        let mut frame = super::CanvasFrame::new(
             &doc,
             &offsets,
             InteractionMode::Default.resize_handle_overrides(),

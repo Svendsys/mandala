@@ -139,7 +139,7 @@ impl ThrottledInteraction for MovingNodeInteraction {
                 }
             }
 
-            let frame = CanvasFrame::new(
+            let mut frame = CanvasFrame::new(
                 doc,
                 &offsets,
                 interaction_mode.resize_handle_overrides(),

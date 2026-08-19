@@ -69,6 +69,10 @@ fn project_all_roles(
     cache.ensure_zoom(camera_zoom);
     let hidden = map.fold_hidden_set();
     let node_aabbs = tree_builder::node_clip_aabbs(map, offsets, None, &hidden);
+    // One memo across both connection passes, as `CanvasFrame` owns
+    // one across its `update_*` methods — measuring them with a memo
+    // each would measure a shape the app does not run.
+    let mut paths = tree_builder::EdgePathCache::new(map, offsets);
     let _ = tree_builder::build_connection_elements(
         map,
         offsets,
@@ -76,6 +80,7 @@ fn project_all_roles(
         selection.edge,
         None,
         cache,
+        &mut paths,
         camera_zoom,
         &hidden,
     );
@@ -85,10 +90,10 @@ fn project_all_roles(
         .or_else(|| selection.edge.map(|(f, t, ty)| EdgeKey::new(f, t, ty)));
     let _ = tree_builder::build_label_elements(
         map,
-        offsets,
         selection.label_edit,
         None,
         highlight_key.as_ref(),
+        &mut paths,
         camera_zoom,
         &hidden,
     );
@@ -2161,7 +2166,8 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
             .push(bench_edge("n0", &format!("n{}", i + 1), false, Some("label")));
     }
     let label_hidden = label_map.fold_hidden_set();
-    let elements = build_label_elements(&label_map, &offsets, None, None, None, 1.0, &label_hidden);
+    let mut label_paths = tree_builder::EdgePathCache::new(&label_map, &offsets);
+    let elements = build_label_elements(&label_map, None, None, None, &mut label_paths, 1.0, &label_hidden);
     assert_eq!(elements.len(), PAIRS, "label bench fixture did not build");
     let labels = build_connection_label_tree(&elements);
     let last_label = labels

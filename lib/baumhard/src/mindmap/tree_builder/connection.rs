@@ -69,6 +69,7 @@ use crate::util::color;
 use crate::util::color::resolve_var;
 
 use super::edge_handle::{build_edge_handles, EdgeHandleElement};
+use super::edge_path::{offset_node_rect, EdgePathCache};
 use super::overrides::EdgeColorPreview;
 
 /// A connection (edge) between two nodes, with pre-computed glyph positions.
@@ -178,19 +179,25 @@ fn emit_connection_element(
 /// mutates `cache` on slow-path edges and after the loop
 /// (`retain_keys` evicts deleted edges).
 ///
+/// `paths` is this frame's shared [`EdgePathCache`]; both the
+/// selected edge's handles and the slow path read the same entry
+/// out of it, and the label pass reads it again afterwards
+/// (#36 item 6).
+///
 /// # Costs
 ///
 /// O(visible edges). Each edge takes the fast, translate, or slow
-/// path (see the module header); only the slow path runs
-/// `build_connection_path` + `sample_path`. The clip filter is
+/// path (see the module header); only the slow path asks `paths` for
+/// a path and runs `sample_path`. The clip filter is
 /// O(samples x visible nodes) on every path.
 // `clippy::too_many_arguments`: each argument has a different
 // caller-vs-pass lifetime relationship — `map` / `offsets` borrow
 // the persisted document, `node_aabbs` is this frame's clip input,
 // the selection and preview are per-frame snapshots, `cache` is
-// mut-borrowed across frames for memoization, and `camera_zoom` is
-// by-value. Bundling them would either duplicate every field's
-// lifetime annotation or hide the borrow shape from the caller.
+// mut-borrowed across frames for memoization, `paths` is
+// mut-borrowed for this frame only, and `camera_zoom` is by-value.
+// Bundling them would either duplicate every field's lifetime
+// annotation or hide the borrow shape from the caller.
 #[allow(clippy::too_many_arguments)]
 pub fn build_connection_elements(
     map: &MindMap,
@@ -199,6 +206,7 @@ pub fn build_connection_elements(
     selected_edge: Option<(&str, &str, &str)>,
     edge_color_preview: Option<EdgeColorPreview<'_>>,
     cache: &mut SceneConnectionCache,
+    paths: &mut EdgePathCache<'_>,
     camera_zoom: f32,
     hidden_set: &HashSet<&str>,
 ) -> (Vec<ConnectionElement>, Vec<EdgeHandleElement>) {
@@ -221,7 +229,7 @@ pub fn build_connection_elements(
     // entries for edges that were removed from the model between builds.
     let mut seen_keys: HashSet<EdgeKey> = HashSet::with_capacity(map.edges.len());
 
-    for edge in &map.edges {
+    for (edge_index, edge) in map.edges.iter().enumerate() {
         if !edge.visible {
             continue;
         }
@@ -263,15 +271,13 @@ pub fn build_connection_elements(
         // positions have to track that live state. Cost is bounded
         // (one edge per build) so no cache.
         if is_selected {
-            let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
-            let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
-            let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
-            let from_size = from_node.size_vec2();
-            let to_pos = to_node.pos_vec2() + Vec2::new(tox, toy);
-            let to_size = to_node.size_vec2();
-            edge_handles.extend(build_edge_handles(
-                edge, &edge_key, from_pos, from_size, to_pos, to_size,
-            ));
+            let (from_pos, from_size) = offset_node_rect(from_node, offsets);
+            let (to_pos, to_size) = offset_node_rect(to_node, offsets);
+            if let Some(path) = paths.path(edge_index) {
+                edge_handles.extend(build_edge_handles(
+                    edge, &edge_key, path, from_pos, from_size, to_pos, to_size,
+                ));
+            }
         }
 
         // Did either endpoint of THIS edge move this frame?
@@ -339,13 +345,13 @@ pub fn build_connection_elements(
             }
         }
 
-        let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
-        let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
-
-        let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
-        let from_size = from_node.size_vec2();
-        let to_pos = to_node.pos_vec2() + Vec2::new(tox, toy);
-        let to_size = to_node.size_vec2();
+        // Resolved here rather than above the fast path on purpose: a
+        // cache-hit edge needs none of this, and hoisting it would put
+        // four hash lookups on every edge of every static frame. Only
+        // the positions are wanted — the sizes reach the path through
+        // `paths`, which resolves them the same way.
+        let (from_pos, _) = offset_node_rect(from_node, offsets);
+        let (to_pos, _) = offset_node_rect(to_node, offsets);
 
         // --- Translate path: rigid-body subtree-drag optimization ---
         //
@@ -425,16 +431,13 @@ pub fn build_connection_elements(
             stored_color.clone()
         };
 
-        let path = connection::build_connection_path(
-            from_pos,
-            from_size,
-            &edge.anchor_from,
-            to_pos,
-            to_size,
-            &edge.anchor_to,
-            &edge.control_points,
-        );
-        let samples = connection::sample_path(&path, want.sample_spacing(), want.sample_budget);
+        // Shared with the handle emission above and with the label
+        // pass afterwards: whichever of the three asks first pays for
+        // the anchor resolution, and the other two do not.
+        let Some(path) = paths.path(edge_index) else {
+            continue;
+        };
+        let samples = connection::sample_path(path, want.sample_spacing(), want.sample_budget);
         if samples.is_empty() {
             // Edge produces no samples; make sure any stale cache entry is
             // dropped so we re-try next frame.

@@ -891,7 +891,9 @@ pub(in crate::application) mod tests {
         )))
         .expect("testament map loads");
         let hidden = map.fold_hidden_set();
-        let elements = build_label_elements(&map, &HashMap::new(), None, None, None, 1.0, &hidden);
+        let offsets = HashMap::new();
+        let mut paths = baumhard::mindmap::tree_builder::EdgePathCache::new(&map, &offsets);
+        let elements = build_label_elements(&map, None, None, None, &mut paths, 1.0, &hidden);
         assert!(!elements.is_empty(), "fixture should carry labels");
         let built = build_connection_label_tree(&elements);
 

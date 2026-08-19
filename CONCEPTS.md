@@ -1681,9 +1681,13 @@ follows the same **courier** shape:
    projection* (`build_*_mutator_tree`) over that data.
 
 Style is resolved exactly once, in the data pass; neither
-projection re-resolves it. `node_clip::node_clip_aabbs` is the one
-cross-role input — the connection sampler clips glyph samples
-against it, and it reads only the resolved border `font_size_pt`.
+projection re-resolves it. Two inputs cross role boundaries.
+`node_clip::node_clip_aabbs` is the one the connection sampler
+clips glyph samples against; it reads only the resolved border
+`font_size_pt`. [`EdgePathCache`](#edge-path-cache) is the other:
+the sampler, the selected edge's grab-handles and the label layout
+all want the same edge's `ConnectionPath`, and it is built once per
+edge per frame for whichever of them asks first.
 
 The application layer drives the sequence through
 `CanvasFrame` (`src/application/app/scene_rebuild.rs`), which owns
@@ -1725,6 +1729,39 @@ change. Otherwise the previous frame's samples are reused with a
 cheap `point_inside_any_node` clip filter.
 
 `lib/baumhard/src/mindmap/scene_cache.rs`.
+
+An entry holds sampled geometry, the resolved body color, and the
+`SampleParams` — effective font size, glyph spacing, per-path sample
+budget — that the geometry was produced under. It holds nothing the
+frame *draws* with: body glyph, cap glyphs, font family and font size
+are read from the live `GlyphConnectionConfig` on every path, so a
+glyph edit cannot be served stale. The two reuse doors, `reusable`
+and `reusable_mut`, compare the whole `SampleParams`, so a
+font-size or spacing edit resamples without the mutating site having
+to remember `clear()`. What the caller still owes: an endpoint that
+moved in the model without appearing in the drag `offsets` map, an
+anchor or control-point edit, a node resize, and a theme-variable
+edit.
+
+### Edge path cache
+
+A per-frame memo of `ConnectionPath`s, keyed by index into
+`map.edges` and filled on first ask.
+
+Three passes want the same edge's path in one rebuild: the
+connection sampler on a scene-cache miss, the label layout for
+every labeled edge, and the grab-handles for the selected edge.
+Each used to build its own.
+
+It is **lazy** rather than precomputed, which is the load-bearing
+half: an unlabeled, unselected edge that hits the scene cache asks
+for no path and none is built. It borrows the `MindMap` and the
+drag-offset map it resolves against, so a memo cannot outlive the
+inputs it is keyed on — nothing has to remember to invalidate it.
+`CanvasFrame` owns one per rebuild and threads it through both
+connection passes.
+
+`lib/baumhard/src/mindmap/tree_builder/edge_path.rs`.
 
 ### Trigger bindings
 

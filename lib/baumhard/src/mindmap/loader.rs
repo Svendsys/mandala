@@ -1727,7 +1727,7 @@ mod tests {
     #[test]
     fn test_testament_scene_has_connections() {
         use crate::mindmap::scene_cache::SceneConnectionCache;
-        use crate::mindmap::tree_builder::{build_connection_elements, node_clip_aabbs};
+        use crate::mindmap::tree_builder::{build_connection_elements, node_clip_aabbs, EdgePathCache};
 
         let path = test_map_path();
         let map = load_from_file(&path).unwrap();
@@ -1735,8 +1735,10 @@ mod tests {
         let offsets = std::collections::HashMap::new();
         let aabbs = node_clip_aabbs(&map, &offsets, None, &hidden);
         let mut cache = SceneConnectionCache::new();
-        let (connection_elements, _handles) =
-            build_connection_elements(&map, &offsets, &aabbs, None, None, &mut cache, 1.0, &hidden);
+        let mut paths = EdgePathCache::new(&map, &offsets);
+        let (connection_elements, _handles) = build_connection_elements(
+            &map, &offsets, &aabbs, None, None, &mut cache, &mut paths, 1.0, &hidden,
+        );
 
         // All visible edges should produce connection elements
         let visible_edges = map.edges.iter().filter(|e| e.visible).count();
