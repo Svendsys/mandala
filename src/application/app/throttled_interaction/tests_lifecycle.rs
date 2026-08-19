@@ -48,7 +48,7 @@
 
 use glam::Vec2;
 
-use baumhard::mindmap::scene_cache::{CachedConnection, EdgeKey, SampleParams, SceneConnectionCache};
+use baumhard::mindmap::scene_cache::{EdgeKey, SampleParams, SceneConnectionCache};
 use baumhard::mindmap::tree_builder::{MindMapTree, ResizeHandleSide};
 
 use crate::application::document::{apply_drag_delta, EdgeRef, MindMapDocument};
@@ -103,8 +103,10 @@ impl World {
     /// commit body is visible as `cache=0` rather than being
     /// indistinguishable from "was empty anyway".
     fn seed_cache(&mut self) {
-        self.scene_cache
-            .insert(&EdgeKey::new("seed", "seed", "parent_child"), seed_connection());
+        seed_connection(
+            &mut self.scene_cache,
+            &EdgeKey::new("seed", "seed", "parent_child"),
+        );
     }
 }
 
@@ -156,19 +158,22 @@ fn line(refresh: Option<ReleaseRefresh>, pending: &str, model: &str, world: &Wor
 /// One entry so a `clear()` inside a commit body is observable as
 /// `cache=0` rather than being indistinguishable from "was empty
 /// anyway".
-fn seed_connection() -> CachedConnection {
-    CachedConnection {
-        pre_clip_positions: Vec::new(),
-        sample_params: SampleParams {
+///
+/// One sample rather than none: an entry with no points is not
+/// something the cache will store, since a refill that fills nothing
+/// evicts instead.
+fn seed_connection(cache: &mut SceneConnectionCache, key: &EdgeKey) {
+    cache.refill(
+        key,
+        SampleParams {
             font_size_pt: 12.0,
             spacing: 0.0,
             sample_budget: 1000,
         },
-        color: "#ffffff".to_string(),
-        base_from: Vec2::ZERO,
-        base_to: Vec2::ZERO,
-        last_seen: 0,
-    }
+        Vec2::ZERO,
+        Vec2::ZERO,
+        |out| out.push(Vec2::ZERO),
+    );
 }
 
 /// Drive `script` against one gesture, rendering one trace line per

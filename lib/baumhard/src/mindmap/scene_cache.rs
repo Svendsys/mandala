@@ -29,9 +29,9 @@
 //!   `ensure_zoom`, which the scene builder calls on entry — callers
 //!   don't need to remember to flush the cache on zoom themselves.
 //! - **An entry holds no styling the frame could read back.** What a
-//!   connection *looks like* — its body glyph, its cap glyphs, its font
-//!   and its size — is resolved from the live `GlyphConnectionConfig` on
-//!   every path, so no glyph edit can be served stale out of this
+//!   connection *looks like* — its body glyph, its cap glyphs, its
+//!   font, its size and its color — is resolved from the live model on
+//!   every path, so no styling edit can be served stale out of this
 //!   module: there is nothing here to serve. What an entry does hold is
 //!   the geometry plus the
 //!   [`SampleParams`](crate::mindmap::scene_cache::SampleParams) that
@@ -46,14 +46,15 @@
 //! merges it with this header, and a relative link in the merged block
 //! resolves against no module — the failure reports no file or line, so
 //! it costs more to find than to avoid.)
-//! - Structural edge changes the params cannot see — endpoint moves
-//!   outside the drag `offsets` map, anchor and control-point edits,
-//!   node resizes — are still handled by the caller clearing the
-//!   relevant entries (`invalidate_edge`) or dropping the whole cache
-//!   (`clear`), as is a theme-variable edit, since `color` is the one
-//!   resolved value an entry still carries. Selection changes need
-//!   neither — the selection override is applied per frame and never
-//!   enters the cache.
+//! - What the caller still owes is **geometry the params cannot see**,
+//!   and only that: an endpoint that moved in the model without
+//!   appearing in the drag `offsets` map, an anchor or control-point
+//!   edit, and a node resize. Those are `invalidate_edge` or `clear`.
+//!   Nothing about *color* is on that list any more — neither a
+//!   theme-variable edit nor a direct `edge.color` / `glyph_connection.color`
+//!   edit, because the color is resolved from the model on every
+//!   frame and never enters the cache. Selection changes need nothing
+//!   either, for the same reason.
 
 use glam::Vec2;
 use std::collections::HashMap;
@@ -202,13 +203,15 @@ impl SampleParams {
 /// them with the glyphs. Storing them was a second copy of both halves
 /// that [`Self::translate`] then had to keep in step.
 ///
-/// **Nor is anything else the frame draws with.** Body glyph, font
-/// family and font size were held here and read back by the reuse
-/// paths, which is what made a glyph edit invisible until something
-/// flushed the cache. `color` is the exception and stays, because
-/// resolving it walks the edge's theme cascade rather than reading one
-/// config field; a theme-variable edit is correspondingly still the
-/// caller's to invalidate.
+/// **Nor is anything else the frame draws with, and there is no
+/// exception.** Body glyph, font family, font size and the body color
+/// were all held here and read back by the reuse paths, which is what
+/// made a styling edit invisible until something flushed the cache.
+/// The color was the last of them and was removed for the same reason
+/// as the other four: it was handed back by both reuse doors and
+/// compared by neither, so its freshness rested on a caller
+/// remembering. What is left is the sampled geometry, the params it
+/// was taken under, and the endpoints it was taken at.
 ///
 /// `base_from` / `base_to` record the endpoint canvas positions that the
 /// samples were taken at (i.e. `model.pos + offset_at_write`). When the next
@@ -222,7 +225,6 @@ impl SampleParams {
 pub struct CachedConnection {
     pub pre_clip_positions: Vec<Vec2>,
     pub sample_params: SampleParams,
-    pub color: String,
     pub base_from: Vec2,
     pub base_to: Vec2,
     /// The pass generation this entry was last handed out or written
@@ -258,12 +260,12 @@ impl CachedConnection {
     /// because [`Self::cap_positions`] reads them off those same
     /// points.
     ///
-    /// Why the whole entry is mutated instead of being rebuilt and
-    /// handed back to [`SceneConnectionCache::insert`]: this runs on
-    /// every internal edge of a subtree drag every drain. Routing
-    /// through `insert` would reindex both `by_node` buckets (two
-    /// `retain` scans + two `push` calls per edge) and clone `color` —
-    /// none of which change under a pure translation.
+    /// Why the whole entry is mutated in place instead of being
+    /// rewritten through [`SceneConnectionCache::refill`]: this runs on
+    /// every internal edge of a subtree drag every drain, and a
+    /// translation is one pass over points the entry already holds.
+    /// Going through `refill` would re-derive them from the path
+    /// instead — which is the sampling this path exists to skip.
     ///
     /// [`Self::sample_params`] is left alone by design: a rigid
     /// translation changes where the samples are, never what they were
@@ -426,7 +428,7 @@ impl SceneConnectionCache {
     /// ids live in the [`EdgeKey`], not in the entry this borrow
     /// reaches. Changing *which* nodes an edge connects is therefore
     /// changing its key, which is [`Self::invalidate_edge`] followed
-    /// by [`Self::insert`] — the two paths that do re-index.
+    /// by a fresh [`Self::refill`] — the two paths that do re-index.
     ///
     /// Stamps the entry with the current pass generation, as
     /// [`Self::reusable`] does and for the same reason.
@@ -442,49 +444,86 @@ impl SceneConnectionCache {
         Some(entry)
     }
 
-    /// Insert or replace the entry for `key`, keeping the `by_node`
-    /// reverse index in sync and stamping the entry with the current
-    /// pass generation. Scene-builder writes — both "fresh sample" and
-    /// "resample because endpoint moved" — go through this.
+    /// Re-sample the entry for `key` in place: hand `fill` the buffer
+    /// this edge filled last time — emptied, capacity kept — then
+    /// stamp the result with `params`, the new base endpoints and the
+    /// current pass generation.
     ///
-    /// Returns a borrow of the entry just stored, so the emitting
-    /// pass can read the geometry it wrote without keeping a second
-    /// copy to hand to the emitter. That is the whole reason for the
-    /// return value: the slow path used to clone its sample vector,
-    /// move one copy in here and filter the other.
+    /// Returns the stored entry, so the emitting pass can read the
+    /// geometry it just wrote without keeping a second copy to hand to
+    /// the emitter. Returns `None` — and evicts — when `fill` leaves
+    /// the buffer empty, which is an edge that samples to nothing.
     ///
-    /// Takes `key` by reference and clones only what it has to store.
-    /// **Re-inserting an edge that is already cached — which is what a
-    /// drag does to a boundary edge every frame — allocates nothing at
-    /// all**: the `entries` key is already there, and so is the
-    /// `by_node` bucket entry, so the only work is overwriting the
-    /// value.
+    /// **The whole write is one operation on purpose.** The earlier
+    /// shape was a `reclaim_sample_buffer` that evicted the entry to
+    /// hand its vector back, followed by an `insert` that put a new one
+    /// in; the eviction made the "already cached" branch of `insert`
+    /// unreachable from the pass, so the allocation the reuse existed
+    /// to avoid was made on every resample after all. Here the entry
+    /// and both its `by_node` memberships stay put, and **an edge that
+    /// resamples while already cached allocates nothing at all**: no
+    /// `EdgeKey` clone, no `String` for a bucket that exists, and no
+    /// sample vector for a buffer with the room.
     ///
-    /// Cost: one hash lookup for `entries` plus one per endpoint
-    /// bucket, and a linear scan of each bucket (the number of edges
-    /// touching that node). No sample data is copied — the entry is
-    /// moved in.
-    pub fn insert(&mut self, key: &EdgeKey, mut entry: CachedConnection) -> &CachedConnection {
-        entry.last_seen = self.generation;
-        // The reverse index maps a node id to the edges touching it,
-        // and `key` names both of this edge's endpoints, so the only
-        // question per bucket is whether this key is in it already. It
-        // usually is: an edge is re-inserted every time it resamples,
-        // and its endpoints do not change without its key changing —
-        // which is `invalidate_edge` followed by a fresh `insert`, not
-        // this path.
-        for node in [&key.from_id, &key.to_id] {
-            let bucket = Self::bucket_mut(&mut self.by_node, node);
-            if !bucket.iter().any(|k| k == key) {
-                bucket.push(key.clone());
+    /// Cost: two or three hash lookups, plus whatever `fill` does. On
+    /// the first sample of an edge, additionally one `EdgeKey` clone
+    /// and up to two `String`s for buckets that do not exist yet.
+    pub fn refill(
+        &mut self,
+        key: &EdgeKey,
+        params: SampleParams,
+        base_from: Vec2,
+        base_to: Vec2,
+        fill: impl FnOnce(&mut Vec<Vec2>),
+    ) -> Option<&CachedConnection> {
+        let generation = self.generation;
+        if !self.entries.contains_key(key) {
+            // The reverse index maps a node id to the edges touching
+            // it, and `key` names both of this edge's endpoints, so the
+            // only question per bucket is whether this key is in it
+            // already.
+            for node in [&key.from_id, &key.to_id] {
+                let bucket = Self::bucket_mut(&mut self.by_node, node);
+                if !bucket.iter().any(|k| k == key) {
+                    bucket.push(key.clone());
+                }
             }
+            self.entries.insert(
+                key.clone(),
+                CachedConnection {
+                    pre_clip_positions: Vec::new(),
+                    sample_params: params,
+                    base_from,
+                    base_to,
+                    last_seen: generation,
+                },
+            );
         }
 
-        if let Some(slot) = self.entries.get_mut(key) {
-            *slot = entry;
-            return self.entries.get(key).expect("just written above");
+        {
+            let entry = self
+                .entries
+                .get_mut(key)
+                .expect("created immediately above if absent");
+            entry.pre_clip_positions.clear();
+            fill(&mut entry.pre_clip_positions);
         }
-        self.entries.entry(key.clone()).insert_entry(entry).into_mut()
+
+        // An edge that samples to nothing leaves no entry behind, so
+        // the next build retries it rather than serving an entry with
+        // no points — which the reuse doors would happily hand out,
+        // since its params still match.
+        if self.entries[key].pre_clip_positions.is_empty() {
+            self.invalidate_edge(key);
+            return None;
+        }
+
+        let entry = self.entries.get_mut(key).expect("present and non-empty");
+        entry.sample_params = params;
+        entry.base_from = base_from;
+        entry.base_to = base_to;
+        entry.last_seen = generation;
+        Some(&*entry)
     }
 
     /// The bucket for `node`, created empty if absent.
@@ -544,37 +583,6 @@ impl SceneConnectionCache {
         }
     }
 
-    /// Evict the entry for `key` and hand back its sample vector,
-    /// emptied but with its capacity intact, for the caller to refill
-    /// and store again.
-    ///
-    /// Returns an empty `Vec` when nothing was cached. This is how the
-    /// connection pass's resample path avoids allocating: an edge
-    /// whose endpoint is being dragged is re-sampled every frame at
-    /// nearly the same point count, so the buffer it filled last frame
-    /// already has the room.
-    ///
-    /// **Dropping the returned buffer instead of re-inserting costs a
-    /// re-sample on the next build and nothing else** — this module's
-    /// first invariant is that the cache is always safe to drop — so
-    /// there is no leak to guard against, only work to repeat.
-    ///
-    /// Cost: one hash removal plus two `by_node` bucket scans. No
-    /// sample data is copied or freed.
-    pub fn reclaim_sample_buffer(&mut self, key: &EdgeKey) -> Vec<Vec2> {
-        let Some(mut entry) = self.entries.remove(key) else {
-            return Vec::new();
-        };
-        if let Some(bucket) = self.by_node.get_mut(&key.from_id) {
-            bucket.retain(|k| k != key);
-        }
-        if let Some(bucket) = self.by_node.get_mut(&key.to_id) {
-            bucket.retain(|k| k != key);
-        }
-        entry.pre_clip_positions.clear();
-        std::mem::take(&mut entry.pre_clip_positions)
-    }
-
     /// Which edges touch the given node? Used by the drag drain to mark
     /// dirty edges.
     pub fn edges_touching(&self, node_id: &str) -> &[EdgeKey] {
@@ -611,23 +619,30 @@ mod tests {
         }
     }
 
-    fn mk_entry(color: &str) -> CachedConnection {
-        CachedConnection {
-            pre_clip_positions: vec![Vec2::new(1.0, 2.0), Vec2::new(3.0, 4.0)],
-            sample_params: mk_params(),
-            color: color.into(),
-            base_from: Vec2::ZERO,
-            base_to: Vec2::ZERO,
-            last_seen: 0,
-        }
+    /// Plant an entry for `key` whose only distinguishing feature is
+    /// its geometry — there is no styling field left to tell two
+    /// entries apart by, which is the point of the type.
+    ///
+    /// Goes through [`SceneConnectionCache::refill`] because that is
+    /// the cache's one writer; a fixture that reached past it would be
+    /// exercising a shape production cannot produce.
+    fn plant(cache: &mut SceneConnectionCache, key: &EdgeKey, mark: f32) {
+        plant_points(cache, key, &[Vec2::new(mark, 2.0), Vec2::new(3.0, 4.0)]);
+    }
+
+    /// [`plant`] with the geometry spelled out.
+    fn plant_points(cache: &mut SceneConnectionCache, key: &EdgeKey, points: &[Vec2]) {
+        cache.refill(key, mk_params(), Vec2::ZERO, Vec2::ZERO, |out| {
+            out.extend_from_slice(points);
+        });
     }
 
     #[test]
     fn insert_and_get_round_trips() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
-        assert_eq!(cache.inspect(&key).unwrap().color, "#fff");
+        plant(&mut cache, &key, 1.0);
+        assert_eq!(cache.inspect(&key).unwrap().pre_clip_positions[0].x, 1.0);
         assert_eq!(cache.len(), 1);
     }
 
@@ -635,7 +650,7 @@ mod tests {
     fn edges_touching_indexes_both_endpoints() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         assert_eq!(cache.edges_touching("a"), std::slice::from_ref(&key));
         assert_eq!(cache.edges_touching("b"), std::slice::from_ref(&key));
         assert!(cache.edges_touching("c").is_empty());
@@ -647,9 +662,9 @@ mod tests {
         let k1 = EdgeKey::new("hub", "a", "cross_link");
         let k2 = EdgeKey::new("hub", "b", "cross_link");
         let k3 = EdgeKey::new("c", "hub", "parent_child");
-        cache.insert(&k1, mk_entry("#111"));
-        cache.insert(&k2, mk_entry("#222"));
-        cache.insert(&k3, mk_entry("#333"));
+        plant(&mut cache, &k1, 2.0);
+        plant(&mut cache, &k2, 3.0);
+        plant(&mut cache, &k3, 4.0);
 
         let touching: std::collections::HashSet<&EdgeKey> = cache.edges_touching("hub").iter().collect();
         assert_eq!(touching.len(), 3);
@@ -662,7 +677,7 @@ mod tests {
     fn invalidate_edge_removes_from_entries_and_index() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         cache.invalidate_edge(&key);
         assert!(cache.inspect(&key).is_none());
         assert!(cache.edges_touching("a").is_empty());
@@ -672,8 +687,8 @@ mod tests {
     #[test]
     fn clear_empties_everything() {
         let mut cache = SceneConnectionCache::new();
-        cache.insert(&EdgeKey::new("a", "b", "cross_link"), mk_entry("#fff"));
-        cache.insert(&EdgeKey::new("b", "c", "cross_link"), mk_entry("#000"));
+        plant(&mut cache, &EdgeKey::new("a", "b", "cross_link"), 1.0);
+        plant(&mut cache, &EdgeKey::new("b", "c", "cross_link"), 5.0);
         cache.clear();
         assert!(cache.is_empty());
         assert!(cache.edges_touching("a").is_empty());
@@ -686,8 +701,8 @@ mod tests {
         let kept = EdgeKey::new("a", "b", "cross_link");
         let evicted = EdgeKey::new("c", "d", "cross_link");
         cache.begin_pass();
-        cache.insert(&kept, mk_entry("#111"));
-        cache.insert(&evicted, mk_entry("#222"));
+        plant(&mut cache, &kept, 2.0);
+        plant(&mut cache, &evicted, 3.0);
 
         // A second pass touches only one of them.
         cache.begin_pass();
@@ -707,19 +722,23 @@ mod tests {
     fn reinsert_same_key_does_not_duplicate_index_entries() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#111"));
-        cache.insert(&key, mk_entry("#222"));
+        plant(&mut cache, &key, 2.0);
+        plant(&mut cache, &key, 3.0);
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.edges_touching("a").len(), 1);
         assert_eq!(cache.edges_touching("b").len(), 1);
-        assert_eq!(cache.inspect(&key).unwrap().color, "#222");
+        assert_eq!(
+            cache.inspect(&key).unwrap().pre_clip_positions[0].x,
+            3.0,
+            "the later insert is the one that survives"
+        );
     }
 
     #[test]
     fn ensure_zoom_preserves_cache_on_matching_zoom() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         cache.ensure_zoom(1.0);
         // Same zoom again — nothing should change.
         cache.ensure_zoom(1.0);
@@ -731,7 +750,7 @@ mod tests {
     fn ensure_zoom_invalidates_on_zoom_change() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         cache.ensure_zoom(1.0);
         // Wheel-tick to 1.1 — entries must be dropped.
         cache.ensure_zoom(1.1);
@@ -743,7 +762,7 @@ mod tests {
     fn ensure_zoom_tolerates_sub_epsilon_drift() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         cache.ensure_zoom(1.0);
         // Tiny floating-point drift well below ZOOM_EPSILON (1e-3).
         cache.ensure_zoom(1.0 + 1.0e-6);
@@ -759,7 +778,7 @@ mod tests {
         // Empty cache + ensure_zoom should just stamp, not panic or
         // touch anything.
         cache.ensure_zoom(0.5);
-        cache.insert(&EdgeKey::new("a", "b", "cross_link"), mk_entry("#111"));
+        plant(&mut cache, &EdgeKey::new("a", "b", "cross_link"), 2.0);
         // Same zoom — preserved.
         cache.ensure_zoom(0.5);
         assert_eq!(cache.len(), 1);
@@ -807,8 +826,8 @@ mod tests {
         let mut cache = SceneConnectionCache::new();
         let kept = EdgeKey::new("hub", "a", "cross_link");
         let evicted = EdgeKey::new("hub", "b", "cross_link");
-        cache.insert(&kept, mk_entry("#111"));
-        cache.insert(&evicted, mk_entry("#222"));
+        plant(&mut cache, &kept, 2.0);
+        plant(&mut cache, &evicted, 3.0);
 
         cache.invalidate_edge(&evicted);
 
@@ -833,7 +852,7 @@ mod tests {
     fn get_on_missing_key_returns_none_without_side_effects() {
         let mut cache = SceneConnectionCache::new();
         let known = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&known, mk_entry("#fff"));
+        plant(&mut cache, &known, 1.0);
         let len_before = cache.len();
 
         let missing = EdgeKey::new("x", "y", "cross_link");
@@ -853,7 +872,7 @@ mod tests {
     fn inspect_returns_an_entry_the_reuse_doors_would_refuse() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
 
         let mut other = mk_params();
         other.font_size_pt += 10.0;
@@ -879,7 +898,7 @@ mod tests {
     fn reusable_refuses_an_entry_sampled_under_different_params() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         let same = mk_params();
         assert!(
             cache.reusable(&key, &same).is_some(),
@@ -916,7 +935,7 @@ mod tests {
     fn reusable_tolerates_sub_epsilon_params_drift() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
 
         let mut wobbled = mk_params();
         wobbled.font_size_pt += 1.0e-7;
@@ -934,7 +953,6 @@ mod tests {
         let entry = CachedConnection {
             pre_clip_positions: vec![Vec2::new(1.0, 2.0), Vec2::new(50.0, 2.0), Vec2::new(99.0, 2.0)],
             sample_params: mk_params(),
-            color: "#fff".into(),
             base_from: Vec2::ZERO,
             base_to: Vec2::ZERO,
             last_seen: 0,
@@ -954,7 +972,6 @@ mod tests {
         let mut entry = CachedConnection {
             pre_clip_positions: vec![Vec2::new(7.0, 7.0)],
             sample_params: mk_params(),
-            color: "#fff".into(),
             base_from: Vec2::ZERO,
             base_to: Vec2::ZERO,
             last_seen: 0,
@@ -976,7 +993,6 @@ mod tests {
         let mut entry = CachedConnection {
             pre_clip_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)],
             sample_params: mk_params(),
-            color: "#fff".into(),
             base_from: Vec2::new(0.0, 0.0),
             base_to: Vec2::new(10.0, 0.0),
             last_seen: 0,
@@ -1018,45 +1034,60 @@ mod tests {
         );
     }
 
-    /// The reclaimed buffer is empty and keeps its capacity — the
-    /// two halves of "refill this instead of allocating a new one".
+    /// `refill` hands the closure the buffer that was already there,
+    /// emptied — the two halves of "refill this instead of allocating
+    /// a new one".
     ///
     /// Input that makes the first half fail: dropping the `clear()`,
-    /// which would leave last frame's points in front of this
-    /// frame's and draw the edge twice. Input for the second: any
-    /// implementation that hands back a fresh `Vec`, which would make
-    /// the whole method a slower `invalidate_edge`.
+    /// which would leave last frame's points in front of this frame's
+    /// and draw the edge twice. Input for the second: any
+    /// implementation that hands over a fresh `Vec`, which would make
+    /// the reuse a no-op.
     #[test]
-    fn reclaim_sample_buffer_returns_the_old_allocation_emptied() {
+    fn refill_hands_over_the_old_allocation_emptied() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        let mut entry = mk_entry("#fff");
-        entry.pre_clip_positions = (0..64).map(|i| Vec2::new(i as f32, 0.0)).collect();
-        let held = entry.pre_clip_positions.capacity();
+        let wide: Vec<Vec2> = (0..64).map(|i| Vec2::new(i as f32, 0.0)).collect();
+        plant_points(&mut cache, &key, &wide);
+        let held = cache
+            .inspect(&key)
+            .expect("planted")
+            .pre_clip_positions
+            .capacity();
         assert!(held >= 64, "precondition: the fixture entry holds a real buffer");
-        cache.insert(&key, entry);
 
-        let buffer = cache.reclaim_sample_buffer(&key);
-        assert!(buffer.is_empty(), "a refillable buffer must arrive empty");
+        let mut seen_len = usize::MAX;
+        let mut seen_capacity = 0usize;
+        cache.refill(&key, mk_params(), Vec2::ZERO, Vec2::ZERO, |out| {
+            seen_len = out.len();
+            seen_capacity = out.capacity();
+            out.push(Vec2::ZERO);
+        });
+        assert_eq!(seen_len, 0, "a refillable buffer must arrive empty");
         assert_eq!(
-            buffer.capacity(),
-            held,
-            "the point is to hand back the allocation, not to make a new one"
+            seen_capacity, held,
+            "the point is to hand over the allocation, not to make a new one"
         );
     }
 
-    /// Reclaiming evicts, including from the reverse index, so an
-    /// edge whose resample yields nothing does not leave a key
-    /// pointing at an entry that is no longer there.
+    /// A refill that fills nothing evicts, including from the reverse
+    /// index, so an edge that samples to nothing does not leave a key
+    /// pointing at an entry that is no longer there — or, worse, an
+    /// entry with no points that the reuse doors would happily serve.
     #[test]
-    fn reclaim_sample_buffer_evicts_the_entry_and_its_index() {
+    fn refill_that_fills_nothing_evicts_the_entry_and_its_index() {
         let mut cache = SceneConnectionCache::new();
         let kept = EdgeKey::new("hub", "a", "cross_link");
         let taken = EdgeKey::new("hub", "b", "cross_link");
-        cache.insert(&kept, mk_entry("#111"));
-        cache.insert(&taken, mk_entry("#222"));
+        plant(&mut cache, &kept, 2.0);
+        plant(&mut cache, &taken, 3.0);
 
-        let _ = cache.reclaim_sample_buffer(&taken);
+        assert!(
+            cache
+                .refill(&taken, mk_params(), Vec2::ZERO, Vec2::ZERO, |_| {})
+                .is_none(),
+            "a refill that appends nothing reports nothing"
+        );
 
         assert!(cache.inspect(&taken).is_none());
         assert!(cache.edges_touching("b").is_empty());
@@ -1064,15 +1095,25 @@ mod tests {
         assert!(cache.inspect(&kept).is_some(), "the sibling edge is untouched");
     }
 
-    /// Reclaiming an edge that was never cached is a plain empty
-    /// buffer, not a panic — the connection pass's first frame takes
-    /// this branch for every edge.
+    /// Refilling an edge that was never cached creates it — the
+    /// connection pass's first frame takes this branch for every edge.
+    /// The closure gets an empty buffer, and the entry lands indexed.
     #[test]
-    fn reclaim_sample_buffer_on_an_unknown_key_is_an_empty_buffer() {
+    fn refill_of_an_unknown_key_creates_and_indexes_the_entry() {
         let mut cache = SceneConnectionCache::new();
-        let buffer = cache.reclaim_sample_buffer(&EdgeKey::new("x", "y", "cross_link"));
-        assert!(buffer.is_empty());
-        assert_eq!(cache.len(), 0);
+        let key = EdgeKey::new("x", "y", "cross_link");
+        let mut arrived_empty = false;
+        let stored = cache
+            .refill(&key, mk_params(), Vec2::ZERO, Vec2::ZERO, |out| {
+                arrived_empty = out.is_empty();
+                out.push(Vec2::new(4.0, 5.0));
+            })
+            .expect("a filled refill reports its entry");
+        assert_eq!(stored.pre_clip_positions, vec![Vec2::new(4.0, 5.0)]);
+        assert!(arrived_empty, "a first fill starts from nothing");
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.edges_touching("x"), std::slice::from_ref(&key));
+        assert_eq!(cache.edges_touching("y"), std::slice::from_ref(&key));
     }
 
     /// `insert` marks the entry seen, so an edge sampled fresh in a
@@ -1087,7 +1128,7 @@ mod tests {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
         cache.begin_pass();
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         cache.evict_unseen();
         assert!(
             cache.inspect(&key).is_some(),
@@ -1104,7 +1145,7 @@ mod tests {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
         cache.begin_pass();
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
 
         cache.begin_pass();
         let mut other = mk_params();
@@ -1127,26 +1168,69 @@ mod tests {
     fn evict_unseen_before_any_pass_drops_nothing() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        cache.insert(&key, mk_entry("#fff"));
+        plant(&mut cache, &key, 1.0);
         cache.evict_unseen();
         assert_eq!(cache.len(), 1);
     }
 
-    /// `insert` hands back the entry it just stored, which is what
-    /// lets the slow path filter the samples out of the cache rather
-    /// than out of a second copy it kept.
+    /// `refill` hands back the entry it just wrote, which is what lets
+    /// the slow path filter the samples out of the cache rather than
+    /// out of a second copy it kept.
     #[test]
-    fn insert_returns_a_borrow_of_the_entry_it_stored() {
+    fn refill_returns_a_borrow_of_the_entry_it_stored() {
         let mut cache = SceneConnectionCache::new();
         let key = EdgeKey::new("a", "b", "cross_link");
-        let mut entry = mk_entry("#abc");
-        entry.pre_clip_positions = vec![Vec2::new(7.0, 8.0)];
 
-        let stored = cache.insert(&key, entry);
-        assert_eq!(stored.color, "#abc");
+        let stored = cache
+            .refill(&key, mk_params(), Vec2::ZERO, Vec2::ZERO, |out| {
+                out.push(Vec2::new(7.0, 8.0));
+            })
+            .expect("a refill that filled something reports the entry");
         assert_eq!(stored.pre_clip_positions, vec![Vec2::new(7.0, 8.0)]);
         // And it really is the stored one, not a temporary.
-        assert_eq!(cache.inspect(&key).unwrap().color, "#abc");
+        assert_eq!(
+            cache.inspect(&key).unwrap().pre_clip_positions,
+            vec![Vec2::new(7.0, 8.0)]
+        );
+    }
+
+    /// The claim `refill` exists to make true: an edge that resamples
+    /// while already cached does not allocate.
+    ///
+    /// The observable is the buffer's identity across the two calls —
+    /// its capacity, from a first fill wide enough that a second,
+    /// narrower one cannot need to grow. A `refill` that evicted and
+    /// re-created (which is what the earlier reclaim-then-insert pair
+    /// did, making this branch unreachable from the pass) would hand
+    /// the second fill a fresh `Vec` and land on its exact reserve.
+    #[test]
+    fn refill_of_a_cached_edge_reuses_the_buffer_it_already_had() {
+        let mut cache = SceneConnectionCache::new();
+        let key = EdgeKey::new("a", "b", "cross_link");
+        let wide: Vec<Vec2> = (0..96).map(|i| Vec2::new(i as f32, 0.0)).collect();
+        plant_points(&mut cache, &key, &wide);
+        let held = cache
+            .inspect(&key)
+            .expect("planted")
+            .pre_clip_positions
+            .capacity();
+
+        cache.refill(&key, mk_params(), Vec2::ZERO, Vec2::ZERO, |out| {
+            out.reserve(8);
+            out.extend((0..8).map(|i| Vec2::new(i as f32, 1.0)));
+        });
+
+        let entry = cache.inspect(&key).expect("still cached");
+        assert_eq!(
+            entry.pre_clip_positions.len(),
+            8,
+            "precondition: the refill is narrower"
+        );
+        assert_eq!(
+            entry.pre_clip_positions.capacity(),
+            held,
+            "a cached edge's resample must reuse the buffer it already had"
+        );
     }
 
     /// `snapshot` reads the *effective* font size, so the

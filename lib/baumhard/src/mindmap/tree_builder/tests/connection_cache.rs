@@ -6,7 +6,7 @@ use super::super::*;
 use super::fixtures::*;
 use crate::mindmap::loader;
 use crate::mindmap::model::{GlyphConnectionConfig, MindMap};
-use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SampleParams, SceneConnectionCache};
+use crate::mindmap::scene_cache::{EdgeKey, SampleParams, SceneConnectionCache};
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -57,25 +57,45 @@ fn live_params(map: &MindMap, edge_index: usize, camera_zoom: f32) -> SamplePara
 /// This is the probe every "did the builder read the cache?" test in
 /// this file uses, and it is *geometry* rather than styling on
 /// purpose. Styling no longer travels through the cache at all — body
-/// glyph, cap glyphs, font family and font size are read from the live
-/// `GlyphConnectionConfig` on all three paths — so a styling sentinel
+/// glyph, cap glyphs, font family, font size and body color are all
+/// read from the live model on all three paths — so a styling sentinel
 /// would be served identically whether the cache was consulted or not,
-/// and would prove nothing.
-fn sentinel_entry(
+/// and would prove nothing. Since the removal of `color` there is no
+/// styling field left to plant one in even if it did.
+fn plant_sentinel(
+    cache: &mut SceneConnectionCache,
     map: &MindMap,
     edge_index: usize,
     camera_zoom: f32,
     at: Vec2,
-    color: &str,
-) -> CachedConnection {
-    CachedConnection {
-        pre_clip_positions: vec![at],
-        sample_params: live_params(map, edge_index, camera_zoom),
-        color: color.into(),
-        base_from: Vec2::ZERO,
-        base_to: Vec2::ZERO,
-        last_seen: 0,
-    }
+) {
+    plant_geometry(cache, map, edge_index, camera_zoom, &[at], Vec2::ZERO, Vec2::ZERO);
+}
+
+/// [`plant_sentinel`] with the geometry and base endpoints spelled
+/// out, for the tests that need the translate path's delta check to
+/// see sane reference points.
+///
+/// Goes through `SceneConnectionCache::refill` because that is the
+/// cache's one writer; a fixture that reached past it would be
+/// exercising a shape production cannot produce.
+fn plant_geometry(
+    cache: &mut SceneConnectionCache,
+    map: &MindMap,
+    edge_index: usize,
+    camera_zoom: f32,
+    points: &[Vec2],
+    base_from: Vec2,
+    base_to: Vec2,
+) {
+    let params = live_params(map, edge_index, camera_zoom);
+    cache.refill(
+        &EdgeKey::from_edge(&map.edges[edge_index]),
+        params,
+        base_from,
+        base_to,
+        |out| out.extend_from_slice(points),
+    );
 }
 
 /// Whether `elem` is drawing geometry derived from the planted
@@ -138,12 +158,11 @@ fn test_cache_hit_preserves_sample_identity() {
         1.0,
     );
 
-    // Mutate the cached entry so we can see whether build #2 read it.
-    let key = EdgeKey::new("a", "b", "cross_link");
-    // Replace with an entry whose single sample is somewhere the
-    // sampler would never place one. If the cache is used, that point
-    // is what the second build draws.
-    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"));
+    // Overwrite the cached entry with one whose single sample is
+    // somewhere the sampler would never place one, so we can see
+    // whether build #2 read it: if the cache is used, that point is
+    // what the second build draws.
+    plant_sentinel(&mut cache, &map, 0, 1.0, SENTINEL_POINT);
 
     let second = project_with_cache(
         &map,
@@ -162,10 +181,13 @@ fn test_cache_hit_preserves_sample_identity() {
         "cache-hit path should have used the stored entry, drew {:?}",
         conn.glyph_positions
     );
-    assert_eq!(conn.color, "#ff00ff");
     // Single cached pre-clip point should have survived the clip
     // filter (it's outside both nodes).
     assert_eq!(conn.glyph_positions.len(), 1);
+    // The color is the *model's*, not anything the cache holds —
+    // `synthetic_edge` writes `#fff` and nothing overrides it here.
+    // The cache carries no color to serve instead.
+    assert_eq!(conn.color, "#fff");
 }
 
 #[test]
@@ -187,7 +209,7 @@ fn test_cache_invalidated_on_endpoint_offset() {
     );
 
     let key = EdgeKey::new("a", "b", "cross_link");
-    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"));
+    plant_sentinel(&mut cache, &map, 0, 1.0, SENTINEL_POINT);
 
     // Only `a` moves, so the deltas differ and the translate path
     // cannot take this edge either — the slow path is the only route
@@ -269,7 +291,7 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
     };
     let ab_left_before = leftmost(&first, &ab_key);
 
-    cache.insert(&cd_key, sentinel_entry(&map, 1, 1.0, SENTINEL_POINT, "#00ff00"));
+    plant_sentinel(&mut cache, &map, 1, 1.0, SENTINEL_POINT);
 
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (5.0, 0.0));
@@ -548,11 +570,10 @@ fn test_cache_selection_change_does_not_invalidate() {
         1.0,
     );
     let key = EdgeKey::new("a", "b", "cross_link");
-    let stored_color = cache.inspect(&key).unwrap().color.clone();
 
     // Inject sentinel geometry into the cache so we can detect
     // whether the cache path was taken on the second build.
-    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, &stored_color));
+    plant_sentinel(&mut cache, &map, 0, 1.0, SENTINEL_POINT);
 
     let second = project_with_cache(
         &map,
@@ -578,9 +599,14 @@ fn test_cache_selection_change_does_not_invalidate() {
         crate::mindmap::SELECTION_HIGHLIGHT_HEX,
         "selected element should pick up the highlight color"
     );
-    // And the cache's stored color should be unchanged (still the
-    // pre-selection value).
-    assert_eq!(cache.inspect(&key).unwrap().color, stored_color);
+    // And the entry itself is untouched — a selection change must not
+    // provoke a resample, which is what would have overwritten the
+    // planted geometry.
+    assert_eq!(
+        cache.inspect(&key).unwrap().pre_clip_positions,
+        vec![SENTINEL_POINT],
+        "the entry must survive the selection change unrewritten"
+    );
 }
 
 #[test]
@@ -623,8 +649,7 @@ fn test_cache_fast_path_serves_stale_when_model_moved_without_offsets() {
     // Overwrite the cache entry with a sentinel so we can observe
     // whether the next build read through the cache (sentinel) or
     // re-sampled (non-sentinel).
-    let key = EdgeKey::new("a", "b", "cross_link");
-    cache.insert(&key, sentinel_entry(&map, 0, 1.0, SENTINEL_POINT, "#ff00ff"));
+    plant_sentinel(&mut cache, &map, 0, 1.0, SENTINEL_POINT);
 
     // Simulate release: `apply_move_multiple` commits the full
     // `total_delta = drain_offset + pending_delta` to the model,
@@ -715,17 +740,10 @@ fn test_translate_path_reuses_cache_on_shared_delta_subtree_drag() {
     // `test_translate_path_falls_through_on_a_sampling_config_change`.
     // Position choice: (200, 200) + (15, 7) = (215, 207) is between
     // the nodes on X and well below them on Y — clears both AABBs.
-    cache.insert(
-        &key,
-        CachedConnection {
-            pre_clip_positions: vec![Vec2::new(200.0, 200.0); sample_count],
-            sample_params: real.sample_params,
-            color: "#abcdef".into(),
-            base_from: real.base_from,
-            base_to: real.base_to,
-            last_seen: 0,
-        },
-    );
+    let uniform = vec![Vec2::new(200.0, 200.0); sample_count];
+    cache.refill(&key, real.sample_params, real.base_from, real.base_to, |out| {
+        out.extend_from_slice(&uniform)
+    });
 
     // Subtree drag: both endpoints move by the same (dx, dy).
     let mut offsets = HashMap::new();
@@ -792,17 +810,10 @@ fn test_translate_path_falls_through_on_mismatched_deltas() {
 
     let key = EdgeKey::new("a", "b", "cross_link");
     let real = cache.inspect(&key).unwrap().clone();
-    cache.insert(
-        &key,
-        CachedConnection {
-            pre_clip_positions: vec![SENTINEL_POINT; real.pre_clip_positions.len()],
-            sample_params: real.sample_params,
-            color: "#deadbe".into(),
-            base_from: real.base_from,
-            base_to: real.base_to,
-            last_seen: 0,
-        },
-    );
+    let planted = vec![SENTINEL_POINT; real.pre_clip_positions.len()];
+    cache.refill(&key, real.sample_params, real.base_from, real.base_to, |out| {
+        out.extend_from_slice(&planted)
+    });
 
     // Different deltas on each endpoint — a rotating / stretching edge,
     // not a translation.
@@ -857,17 +868,10 @@ fn test_translate_path_falls_through_on_a_sampling_config_change() {
     let real = cache.inspect(&key).unwrap().clone();
     let mut stale_params = real.sample_params;
     stale_params.font_size_pt *= 2.0;
-    cache.insert(
-        &key,
-        CachedConnection {
-            pre_clip_positions: vec![SENTINEL_POINT; real.pre_clip_positions.len()],
-            sample_params: stale_params,
-            color: real.color.clone(),
-            base_from: real.base_from,
-            base_to: real.base_to,
-            last_seen: 0,
-        },
-    );
+    let planted = vec![SENTINEL_POINT; real.pre_clip_positions.len()];
+    cache.refill(&key, stale_params, real.base_from, real.base_to, |out| {
+        out.extend_from_slice(&planted)
+    });
 
     // Subtree drag with matching deltas — would hit the translate
     // path if the params check weren't in place.
@@ -989,11 +993,11 @@ fn test_scene_build_still_works_on_real_map() {
     );
 }
 
-/// A resample refills the buffer the cache handed back rather than
-/// appending to it.
+/// A resample refills the entry's own buffer rather than appending to
+/// it.
 ///
-/// The slow path no longer allocates a sample vector: it reclaims the
-/// one this edge filled last frame, which arrives emptied but with
+/// The slow path no longer allocates a sample vector: it samples into
+/// the one this edge filled last frame, which arrives emptied but with
 /// its capacity. If the emptying were ever dropped, every resampling
 /// frame would render the edge with last frame's points still in
 /// front of this frame's — the glyphs would trail behind the drag and
@@ -1003,7 +1007,7 @@ fn test_scene_build_still_works_on_real_map() {
 /// slow path with an empty buffer. That is the whole difference
 /// between the two runs, so a disagreement can only be the reuse.
 #[test]
-fn test_a_resample_refills_the_reclaimed_buffer_rather_than_appending() {
+fn test_a_resample_refills_the_reused_buffer_rather_than_appending() {
     let map = two_node_edge_map();
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (10.0, 0.0));
@@ -1034,7 +1038,7 @@ fn test_a_resample_refills_the_reclaimed_buffer_rather_than_appending() {
         1.0,
     );
 
-    // Cold: the same resample with nothing to reclaim.
+    // Cold: the same resample with no cached buffer to reuse.
     let mut cold = SceneConnectionCache::new();
     let fresh = project_with_cache(
         &map,
@@ -1053,7 +1057,7 @@ fn test_a_resample_refills_the_reclaimed_buffer_rather_than_appending() {
     );
     assert_eq!(
         reused.connection_elements[0].glyph_positions, fresh.connection_elements[0].glyph_positions,
-        "a resample through a reclaimed buffer must produce what a cold one does"
+        "a resample through a reused buffer must produce what a cold one does"
     );
     assert_eq!(
         warm.inspect(&EdgeKey::new("a", "b", "cross_link"))
@@ -1181,14 +1185,20 @@ fn test_the_element_vector_is_reserved_for_the_edge_list() {
 /// holding, rather than allocating a new one.
 ///
 /// The observable is spare capacity. Fill at a geometry that samples
-/// to N points, then resample at one that wants fewer: a reclaimed
-/// buffer keeps the capacity it already had, while a freshly
-/// allocated one is reserved to the smaller count exactly. So the
-/// warm run's entry ends up with slack and the cold run's does not,
-/// and the two numbers are what tell the paths apart.
+/// to N points, then resample at one that wants fewer: the buffer
+/// already there keeps the capacity it had, while a freshly allocated
+/// one is reserved to the smaller count exactly. So the warm run's
+/// entry ends up with slack and the cold run's does not, and the two
+/// numbers are what tell the paths apart.
+///
+/// `SceneConnectionCache::refill` creates a missing entry with an
+/// empty `Vec`, so preserved capacity is only reachable through the
+/// already-cached branch — which makes this assertion also the
+/// statement that the pass **reaches** that branch, and not only that
+/// the branch would reuse a buffer if anything called it.
 ///
 /// This test exists because the correctness test above does **not**
-/// distinguish them — it was green with the reclamation replaced by
+/// distinguish them — it was green with the buffer reuse replaced by
 /// `Vec::new()`, which is the right answer for correctness and the
 /// wrong one for the item. Without this, "the slow path reuses the
 /// buffer" would be a claim only the diff could support.
@@ -1260,11 +1270,11 @@ fn test_a_resample_reuses_the_cached_edges_own_buffer() {
     assert_eq!(
         warm_entry.pre_clip_positions.capacity(),
         filled_capacity,
-        "the resample must have refilled the buffer the cache handed back, keeping its capacity"
+        "the resample must have refilled the entry's own buffer, keeping its capacity"
     );
     assert!(
         cold_entry.pre_clip_positions.capacity() < filled_capacity,
-        "and a build with nothing to reclaim reserves only what it needs: {} vs {}",
+        "and a build with no buffer to reuse reserves only what it needs: {} vs {}",
         cold_entry.pre_clip_positions.capacity(),
         filled_capacity
     );
@@ -1392,6 +1402,103 @@ fn test_cache_fast_path_tracks_a_cap_glyph_edit_without_a_flush() {
     );
     assert_eq!(second.cap_start.as_ref().map(|(g, _)| g.as_str()), Some("S"));
     assert_eq!(second.cap_end.as_ref().map(|(g, _)| g.as_str()), Some("E"));
+}
+
+/// The body color the frame renders is the one the *model* carries
+/// now, like the four styling fields beside it.
+///
+/// This was the fifth field and the last one left: the cache held it,
+/// both reuse doors handed it back, and neither compared it — the
+/// exact shape the other four were removed for. A direct
+/// `edge.color` edit reaching a rebuild without a
+/// `SceneConnectionCache::clear()` kept the previous color on the
+/// canvas.
+///
+/// Note this edits `edge.color` rather than a theme variable. The
+/// caller-owed list named only theme variables, so the direct edit was
+/// the case nothing covered in either direction — not the code, not
+/// the documentation.
+#[test]
+fn test_cache_fast_path_tracks_an_edge_color_edit_without_a_flush() {
+    let mut map = map_with_connection_config(baseline_connection_config());
+    map.edges[0].color = "#112233".into();
+    let mut cache = SceneConnectionCache::new();
+    let first = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert_eq!(
+        first.connection_elements[0].color, "#112233",
+        "precondition: the first build renders the authored color"
+    );
+    assert_eq!(cache.len(), 1, "precondition: the first build filled the cache");
+
+    // The only edit. No flush, no offsets, no zoom change — the second
+    // build takes the cache-hit fast path.
+    map.edges[0].color = "#445566".into();
+    let second = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert!(
+        drew_sentinel(&second.connection_elements[0]) || cache.len() == 1,
+        "precondition: the edge is still cached"
+    );
+    assert_eq!(
+        second.connection_elements[0].color, "#445566",
+        "an edge-color edit with no cache flush must reach the canvas on the next rebuild"
+    );
+}
+
+/// The same for the translate path, which served the cached color on
+/// its own line fifty below the fast path's.
+#[test]
+fn test_translate_path_tracks_an_edge_color_edit_without_a_flush() {
+    let mut map = map_with_connection_config(baseline_connection_config());
+    map.edges[0].color = "#112233".into();
+    let mut cache = SceneConnectionCache::new();
+    let _first = project_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+
+    map.edges[0].color = "#445566".into();
+    // A shared delta on both endpoints is the translate path's shape.
+    let mut offsets = HashMap::new();
+    offsets.insert("a".to_string(), (0.0, 9.0));
+    offsets.insert("b".to_string(), (0.0, 9.0));
+    let second = project_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert_eq!(
+        second.connection_elements[0].color, "#445566",
+        "the translate path must read the live color too"
+    );
 }
 
 /// A font-size edit changes two things at once and both have to

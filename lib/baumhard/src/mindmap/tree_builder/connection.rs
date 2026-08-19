@@ -66,7 +66,7 @@ use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::tree::Tree;
 use crate::mindmap::connection;
 use crate::mindmap::model::{GlyphConnectionConfig, MindMap};
-use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SampleParams, SceneConnectionCache};
+use crate::mindmap::scene_cache::{EdgeKey, SampleParams, SceneConnectionCache};
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::util::color;
 use crate::util::color::resolve_var;
@@ -320,17 +320,30 @@ pub fn build_connection_elements(
         // to remember `SceneConnectionCache::clear` (#36 item 7).
         let want = SampleParams::snapshot(config, camera_zoom, per_path_samples);
 
-        // Color picker preview: resolve once here so both the cached
-        // and slow paths pick it up. Preview beats selection on the
-        // previewed edge so the user's live feedback is visible on the
-        // connection body, not masked by the cyan selection highlight.
-        let preview_for_this_edge: Option<&str> = edge_color_preview.and_then(|p| {
-            if *p.edge_key == edge_key {
-                Some(p.color)
-            } else {
-                None
-            }
-        });
+        // Body color, resolved once for all three paths, highest
+        // priority first: the color-picker preview (so the user's live
+        // feedback is visible on the connection body rather than
+        // masked by the cyan selection highlight), then the selection
+        // highlight, then the committed cascade.
+        //
+        // Resolved per frame rather than cached. It used to be the one
+        // styling value the cache still held, handed back by both
+        // reuse doors without either comparing it — which is the shape
+        // #36 item 7 removed for the body glyph, the caps, the font
+        // family and the font size, left standing on the fifth field.
+        // The cascade underneath is a node lookup the pass has already
+        // done, an `Option` test, at most one palette lookup and a
+        // `Vec::get`; the `to_string` at the end is the same single
+        // allocation `cached.color.clone()` used to cost.
+        let color = if let Some(preview) =
+            edge_color_preview.and_then(|p| (*p.edge_key == edge_key).then_some(p.color))
+        {
+            resolve_var(preview, vars).to_string()
+        } else if is_selected {
+            SELECTION_HIGHLIGHT_HEX.to_string()
+        } else {
+            resolve_var(map.edge_body_color(edge), vars).to_string()
+        };
 
         // --- Fast path: cached geometry is still valid ---
         //
@@ -342,13 +355,6 @@ pub fn build_connection_elements(
         // a third node that moved through its path.
         if !endpoint_moved {
             if let Some(cached) = cache.reusable(&edge_key, &want) {
-                let color = if let Some(p) = preview_for_this_edge {
-                    resolve_var(p, vars).to_string()
-                } else if is_selected {
-                    SELECTION_HIGHLIGHT_HEX.to_string()
-                } else {
-                    cached.color.clone()
-                };
                 emit_connection_element(
                     &mut connection_elements,
                     edge_key,
@@ -409,14 +415,6 @@ pub fn build_connection_elements(
         });
 
         if let Some(entry) = translated {
-            let color = if let Some(p) = preview_for_this_edge {
-                resolve_var(p, vars).to_string()
-            } else if is_selected {
-                SELECTION_HIGHLIGHT_HEX.to_string()
-            } else {
-                entry.color.clone()
-            };
-
             // Clip filter runs every frame against this frame's
             // node_aabbs — an unrelated moved node passing through
             // a translated edge must still clip out the glyphs
@@ -435,20 +433,6 @@ pub fn build_connection_elements(
         }
 
         // --- Slow path: sample fresh and update the cache ---
-        let stored_color = {
-            // The color we STORE in the cache is the resolved-but-unselected
-            // color. Selection overrides are applied at read time above so
-            // selection changes don't invalidate the cache.
-            resolve_var(map.edge_body_color(edge), vars).to_string()
-        };
-        let color = if let Some(p) = preview_for_this_edge {
-            resolve_var(p, vars).to_string()
-        } else if is_selected {
-            SELECTION_HIGHLIGHT_HEX.to_string()
-        } else {
-            stored_color.clone()
-        };
-
         // Shared with the handle emission above and with the label
         // pass afterwards: whichever of the three asks first pays for
         // the anchor resolution, and the other two do not.
@@ -456,10 +440,12 @@ pub fn build_connection_elements(
             continue;
         };
 
-        // The buffer this edge filled last time, emptied. The entry
-        // is evicted by the taking, which is why the empty-sample
-        // branch below needs no `invalidate_edge`: an edge that
-        // samples to nothing has already been dropped from the cache.
+        // Sample straight into the entry's own buffer. The whole write
+        // is one call so the entry and both its `by_node` memberships
+        // stay in place across it — an edge that resamples while
+        // already cached does not allocate. `None` means the edge
+        // sampled to nothing, in which case `refill` has already
+        // evicted it and the next build will retry.
         //
         // Caps live at the first and last positions this fills (the
         // anchor points resolved from the source/target node bounds),
@@ -470,33 +456,15 @@ pub fn build_connection_elements(
         // clipping) but INSIDE the expanded clip AABB for a framed one
         // (so they get dropped along with the body glyphs that would
         // also render inside the frame area).
-        let mut pre_clip_positions = cache.reclaim_sample_buffer(&edge_key);
-        connection::sample_path_into(
-            path,
-            want.sample_spacing(),
-            want.sample_budget,
-            &mut pre_clip_positions,
-        );
-        if pre_clip_positions.is_empty() {
+        //
+        // The emitter's slice is read back out of the entry, so the
+        // samples are stored once and filtered from where they are
+        // stored rather than cloned so one copy can be each.
+        let Some(entry) = cache.refill(&edge_key, want, from_pos, to_pos, |out| {
+            connection::sample_path_into(path, want.sample_spacing(), want.sample_budget, out)
+        }) else {
             continue;
-        }
-
-        // Write fresh geometry back into the cache BEFORE applying the
-        // frame-specific clip filter so next frame can reuse it, and
-        // read the emitter's slice back out of the entry — the samples
-        // are stored once and filtered from where they are stored,
-        // rather than cloned so that one copy can be each.
-        let entry = cache.insert(
-            &edge_key,
-            CachedConnection {
-                pre_clip_positions,
-                sample_params: want,
-                color: stored_color,
-                base_from: from_pos,
-                base_to: to_pos,
-                last_seen: 0,
-            },
-        );
+        };
 
         // Now produce the post-clip element for THIS frame.
         emit_connection_element(
