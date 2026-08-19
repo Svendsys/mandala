@@ -334,7 +334,7 @@ fn test_a_subverb_that_reads_no_keys_refuses_one_by_name() {
     for (verb, grammar) in all_levels() {
         let Some(key) = grammar.keys().next() else { continue };
         for subverb in grammar.subverbs() {
-            if subverb.child.is_some() || !subverb.readable_keys().is_empty() {
+            if subverb.child.is_some() || !subverb.readable_keys_for(&[]).is_empty() {
                 continue;
             }
             // Enter this level directly so the probe is one
@@ -863,7 +863,7 @@ fn test_every_hinted_alternation_names_values_its_vocabulary_accepts() {
             }
             vocabs.extend(
                 subverb
-                    .readable_keys()
+                    .readable_keys_for(&[])
                     .iter()
                     .filter_map(|n| grammar.key(n))
                     .map(|k| k.vocab),
@@ -994,7 +994,6 @@ fn test_a_committed_positional_narrows_a_subverb_to_the_form_that_declares_it() 
     ];
     static SIZED: Subverb = Subverb::bare("resize", "geometry", "two shapes").taking(FORMS);
 
-    assert_eq!(SIZED.readable_keys(), vec!["w", "h", "target"]);
     assert_eq!(SIZED.readable_keys_for(&[]), vec!["w", "h", "target"]);
     assert_eq!(SIZED.readable_keys_for(&["fill"]), vec!["target"]);
     assert_eq!(SIZED.readable_keys_for(&["FILL"]), vec!["target"]);
