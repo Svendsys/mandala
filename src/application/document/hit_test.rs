@@ -213,10 +213,16 @@ pub fn hit_test_edge(canvas_pos: Vec2, map: &MindMap, tolerance: f32) -> Option<
             &edge.anchor_to,
             &edge.control_points,
         );
-        let dist = connection::distance_to_path(canvas_pos, &path);
-        if dist > tolerance {
+        // The tolerance-bounded form: an edge whose bounding box is
+        // further than `tolerance` away is rejected without sampling
+        // the curve. It also decides `NaN` the way a hit test should
+        // — `Some` requires `distance <= tolerance`, so a non-finite
+        // cursor or edge geometry yields no candidate, where the
+        // `distance > tolerance` filter this replaced kept one at an
+        // unordered distance.
+        let Some(dist) = connection::distance_to_path_within(canvas_pos, &path, tolerance) else {
             continue;
-        }
+        };
         if best.as_ref().is_none_or(|(_, best_dist)| dist < *best_dist) {
             best = Some((EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type), dist));
         }

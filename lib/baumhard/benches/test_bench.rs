@@ -779,6 +779,23 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("replace_graphemes_until_newline", |b| {
         b.iter(do_replace_graphemes_until_newline)
     });
+    c.bench_function("replace_substring_matches_the_byte_splice_reference", |b| {
+        b.iter(do_replace_substring_matches_the_byte_splice_reference)
+    });
+    c.bench_function("replace_substring_refuses_a_mid_character_range", |b| {
+        b.iter(do_replace_substring_refuses_a_mid_character_range)
+    });
+    c.bench_function(
+        "split_off_graphemes_matches_the_collect_and_concat_reference",
+        |b| b.iter(do_split_off_graphemes_matches_the_collect_and_concat_reference),
+    );
+    // Reads one module's source per iteration, the same shape as
+    // `the_metric_cache_probes_without_owning_the_cluster` below:
+    // after the first iteration what moves is the parse and the brace
+    // walk, not the disk.
+    c.bench_function("the_text_edit_primitives_carry_no_whole_buffer_copy", |b| {
+        b.iter(do_the_text_edit_primitives_carry_no_whole_buffer_copy)
+    });
     c.bench_function("count_grapheme_clusters", |b| b.iter(do_count_grapheme_clusters));
     c.bench_function("first_non_whitespace_grapheme", |b| {
         b.iter(do_first_non_whitespace_grapheme)
@@ -898,6 +915,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("glyph_ink_with_cold_key_under_held_guard", |b| {
         b.iter(do_glyph_ink_with_cold_key_under_held_guard)
+    });
+    c.bench_function("glyph_advance_distinct_per_face", |b| {
+        b.iter(do_glyph_advance_distinct_per_face)
+    });
+    // Reads one module's source per iteration, the same shape as
+    // `every_hex_entry_point_is_downstream_of_the_one_parser` above:
+    // after the first iteration what moves is the parse and the
+    // brace walk, not the disk.
+    c.bench_function("the_metric_cache_probes_without_owning_the_cluster", |b| {
+        b.iter(do_the_metric_cache_probes_without_owning_the_cluster)
     });
     // font / name rules //
     c.bench_function("decode_name_record_utf16_be_ascii", |b| {
@@ -2175,6 +2202,39 @@ fn dewey_cmp_benchmark(c: &mut Criterion) {
     });
 }
 
+/// The edge hit-test's path geometry, one path per row rather than
+/// through a whole projection pass.
+///
+/// Three rows because the caller composes three answers:
+/// `path_bounds` is the control-polygon box, `distance_to_path` is
+/// the sampled walk that box protects, and `distance_to_path_within`
+/// is the pair as `document::hit_test::hit_test_edge` calls it —
+/// driven here at a point the box rejects, which is the case the
+/// composition exists for.
+fn connection_geometry_benchmark(c: &mut Criterion) {
+    use baumhard::mindmap::connection::{
+        distance_to_path, distance_to_path_within, path_bounds, ConnectionPath,
+    };
+    use glam::Vec2;
+
+    let path = ConnectionPath::CubicBezier {
+        start: Vec2::new(0.0, 0.0),
+        control1: Vec2::new(2_500.0, 1_000.0),
+        control2: Vec2::new(7_500.0, -1_000.0),
+        end: Vec2::new(10_000.0, 0.0),
+    };
+    let near = Vec2::new(5_000.0, 20.0);
+    let far = Vec2::new(60_000.0, 60_000.0);
+
+    c.bench_function("connection_path_bounds", |b| b.iter(|| path_bounds(&path)));
+    c.bench_function("connection_distance_to_path", |b| {
+        b.iter(|| distance_to_path(near, &path))
+    });
+    c.bench_function("connection_distance_to_path_within_rejects", |b| {
+        b.iter(|| distance_to_path_within(far, &path, 12.0))
+    });
+}
+
 criterion_group!(
     benches,
     criterion_benchmark,
@@ -2185,5 +2245,6 @@ criterion_group!(
     fast_resize_anchor_inference_benchmark,
     section_frame_emission_benchmark,
     hit_index_resolve_benchmark,
+    connection_geometry_benchmark,
 );
 criterion_main!(benches);
