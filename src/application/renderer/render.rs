@@ -99,7 +99,9 @@ impl Renderer {
         for rect in self
             .node_background_rects
             .iter()
-            .chain(self.canvas_scene_background_rects.iter())
+            .chain(super::scene_shape_cache::background_fills(
+                &self.canvas_scene_elements,
+            ))
         {
             if !rect.visible_at(&self.camera) {
                 continue;
@@ -301,12 +303,14 @@ impl Renderer {
     /// Shared between `render()` (steady-state) and `prewarm()`
     /// (one-shot at load) so the warm-up sees exactly the same
     /// glyph set the next real frame will draw.
-    /// Note: this performs disjoint mutable borrows of `text_renderer`
-    /// + `atlas` + `swash_cache` while holding immutable borrows of
-    /// the buffer-map fields; the borrow checker permits this within
-    /// a single `&mut self` body but would reject it across a method
-    /// boundary, which is why the prepare call lives in this method
-    /// rather than splitting into a `collect_text_areas` helper.
+    ///
+    /// Note: this performs disjoint mutable borrows of
+    /// `text_renderer`, `atlas` and `swash_cache` while holding
+    /// immutable borrows of the buffer-map fields; the borrow
+    /// checker permits this within a single `&mut self` body but
+    /// would reject it across a method boundary, which is why the
+    /// prepare call lives in this method rather than splitting into
+    /// a `collect_text_areas` helper.
     fn prepare_text_for_pass(&mut self) -> bool {
         let vp_w = self.config.width as i32;
         let vp_h = self.config.height as i32;
@@ -331,14 +335,16 @@ impl Renderer {
         // is still cheaper than `push` reallocations.
         let main_capacity = self.mindmap_buffers.values().map(|v| v.len()).sum::<usize>()
             + self.overlay_buffers.len()
-            + self.canvas_scene_buffers.len();
+            + super::scene_shape_cache::buffer_count(&self.canvas_scene_elements);
         let mut main_text_areas: Vec<TextArea> = Vec::with_capacity(main_capacity);
         main_text_areas.extend(
             self.mindmap_buffers
                 .values()
                 .flat_map(|v| v.iter())
                 .chain(self.overlay_buffers.iter())
-                .chain(self.canvas_scene_buffers.iter())
+                .chain(super::scene_shape_cache::text_buffers(
+                    &self.canvas_scene_elements,
+                ))
                 .filter_map(|tb| {
                     if !tb.visible_at(&self.camera) {
                         return None;
@@ -361,22 +367,16 @@ impl Renderer {
         // glyphon pass so the rect-pipeline backdrop can be
         // interleaved between the main text and this one. Both the
         // console and the glyph-wheel color picker put their glyph
-        // buffers in `overlay_scene_buffers` (populated by
+        // buffers in `overlay_scene_elements` (populated by
         // `rebuild_overlay_scene_buffers` from the respective
         // overlay tree in `AppScene`) — they are mutually exclusive
         // screen-space modals sharing this one pass.
-        let palette_capacity = self
-            .overlay_scene_buffers
-            .iter()
-            .map(|e| e.buffers.len())
-            .sum::<usize>()
+        let palette_capacity = super::scene_shape_cache::buffer_count(&self.overlay_scene_elements)
             + self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len();
         let mut palette_text_areas: Vec<TextArea> = Vec::with_capacity(palette_capacity);
         palette_text_areas.extend(
-            self.overlay_scene_buffers
-                .iter()
-                .flat_map(|e| e.buffers.iter())
+            super::scene_shape_cache::text_buffers(&self.overlay_scene_elements)
                 .chain(self.fps_overlay_buffers.iter())
                 .chain(self.mode_status_overlay_buffers.iter())
                 .map(|tb| TextArea {

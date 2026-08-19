@@ -436,17 +436,23 @@ impl Subverb {
         self
     }
 
-    /// Every kv key this subverb reads, across all its forms, in
-    /// declaration order with duplicates dropped.
-    ///
-    /// The union — what the subverb reads in *some* shape. What the
-    /// line in front of it reads is [`Self::readable_keys_for`].
-    pub fn readable_keys(&self) -> Vec<&'static str> {
-        dedup_names(&self.forms.iter().collect::<Vec<_>>())
-    }
-
     /// Every kv key the forms `committed` still admits read — the
     /// keys *this* line may carry. See [`Form::admits_prefix`].
+    ///
+    /// An empty `committed` is the union — every key the subverb
+    /// reads in *some* shape — and both halves of [`eligible_forms`]
+    /// have to say so for that to hold. The filter does:
+    /// [`Form::admits_prefix`] is unconditionally true against an
+    /// empty prefix — `0 <= slots.len()`, and the `all` runs over a
+    /// zip with an empty slice — so nothing is narrowed away. The
+    /// `narrowed.is_empty()` fallback beneath it does too, and only
+    /// reachably in one case: an empty prefix can leave `narrowed`
+    /// empty only when `forms` was empty to begin with ([`NO_FORMS`]),
+    /// where the fallback hands back the very slice the filter just
+    /// produced. Ask for the union that way rather than by a second
+    /// method; there used to be one, and it computed the same list
+    /// under a name that made it look like the other half of a
+    /// pair.
     pub fn readable_keys_for(&self, committed: &[&str]) -> Vec<&'static str> {
         dedup_names(&eligible_forms(self.forms, committed))
     }
@@ -507,8 +513,14 @@ impl Bare {
     }
 
     /// Every kv key the bare form reads, across all its forms.
+    ///
+    /// Delegates rather than collecting `forms` itself:
+    /// [`Self::readable_keys_for`] with nothing committed *is* the
+    /// union, for the reason spelled out on
+    /// [`Subverb::readable_keys_for`], and two bodies computing one
+    /// list is how a synonym starts looking like a distinction.
     pub fn readable_keys(&self) -> Vec<&'static str> {
-        dedup_names(&self.forms.iter().collect::<Vec<_>>())
+        self.readable_keys_for(&[])
     }
 
     /// Every kv key the bare forms `committed` still admits read.

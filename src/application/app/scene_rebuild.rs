@@ -1120,11 +1120,19 @@ fn update_handle_canvas_role<E: baumhard::mindmap::tree_builder::HandleVisual>(
     }
 }
 
-/// Walk every canvas-scene tree once and rebuild the renderer's
-/// `canvas_scene_buffers`. Call this **once** after a batch of
-/// `update_*_tree` invocations — calling it inside each helper
-/// would multiply the per-frame shaping cost by the number of
-/// roles touched.
+/// Walk every canvas-scene tree once and bring the renderer's
+/// canvas-scene shaped output back in step with it. Call this
+/// **once** after a batch of `update_*_tree` invocations — calling
+/// it inside each helper would multiply the per-frame *walk* by the
+/// number of roles touched.
+///
+/// The walk is all it would multiply: the pass underneath re-shapes
+/// only the elements whose shaping inputs moved, so the roles a
+/// caller left alone cost the walk and the comparison and nothing
+/// else. What that buys the callers of this function is that
+/// projecting a subset of the roles now *stays* a subset all the way
+/// to the GPU — before it, every one of them paid a full re-shape of
+/// every registered role no matter how little it had changed.
 pub(in crate::application::app) fn flush_canvas_scene_buffers(
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -1766,6 +1774,419 @@ mod tests {
         assert!(
             (first_alpha(&tree, &other) - CYAN[3]).abs() < 1e-3,
             "an inactive-but-selected node reads as selected, not faded"
+        );
+    }
+}
+
+// -----------------------------------------------------------------
+// Canvas-pass granularity
+//
+// `flush_canvas_scene_buffers` used to re-shape every buffer of
+// every registered canvas role, so a caller that re-projected one
+// role still paid for all eight. It no longer does, and this is
+// where that is asserted end to end: real roles projected by the
+// real `CanvasFrame` off the canonical fixture, then the real pass
+// run over them.
+//
+// The pass lives on `Renderer`, which no test may construct
+// (§T8) — but it takes a `&Scene`, so it can be run here without
+// one. That is what `renderer`'s `#[cfg(test)]` reach-through
+// exists for.
+// -----------------------------------------------------------------
+
+#[cfg(test)]
+mod canvas_pass_granularity {
+    use crate::application::app::InteractionMode;
+    use crate::application::document::{tests_common::load_test_doc, EdgeRef, MindMapDocument};
+    use crate::application::renderer::{refresh, ScenePassKind, ShapedSceneElement};
+    use crate::application::scene_host::{AppScene, CanvasRole};
+    use baumhard::gfx_structs::scene::SceneTreeId;
+    use baumhard::mindmap::scene_cache::SceneConnectionCache;
+    use glam::Vec2;
+
+    /// A labeled edge of the canonical fixture, as
+    /// `(from_id, to_id, edge_type)`. That it still carries a label
+    /// — and so still emits an element the label role can move — is
+    /// asserted rather than assumed: `apply_edge_label_drag` returns
+    /// `false` for an edge it could not move, and the test refuses
+    /// to continue on that.
+    const LABELED_EDGE: (&str, &str, &str) = ("1", "1.2", "parent_child");
+
+    /// Project every canvas role, exactly as `rebuild_scene_only`
+    /// does — the frame is rebuilt per call because it borrows the
+    /// document.
+    fn project_all_roles(doc: &MindMapDocument, app_scene: &mut AppScene, cache: &mut SceneConnectionCache) {
+        let offsets = std::collections::HashMap::new();
+        super::CanvasFrame::new(
+            doc,
+            &offsets,
+            InteractionMode::Default.resize_handle_overrides(),
+            1.0,
+        )
+        .update_all(cache, app_scene);
+    }
+
+    /// Walk positions each named role contributes, one `refresh` per
+    /// role into a cache of its own.
+    ///
+    /// Used as a precondition, never as a claim. A canvas role with
+    /// nothing to draw is still a registered tree, and its `Void`
+    /// root is one walk position that shapes to nothing and matches
+    /// `(None, None)` for free — so a "none of these re-shaped"
+    /// assertion covering it is true of that role for a reason that
+    /// has nothing to do with the reuse rule. Which roles carry a
+    /// given aggregate zero is therefore part of what that zero
+    /// means, and the aggregate cannot show it.
+    fn walked_per_role(app_scene: &AppScene, roles: &[CanvasRole]) -> Vec<(CanvasRole, usize)> {
+        roles
+            .iter()
+            .map(|role| {
+                let id = app_scene
+                    .canvas_id(*role)
+                    .expect("every canvas role is registered by update_all");
+                let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+                let counts = refresh(
+                    app_scene.canvas_scene(),
+                    &[id],
+                    &mut shaped,
+                    ScenePassKind::Canvas,
+                );
+                (*role, counts.walked)
+            })
+            .collect()
+    }
+
+    /// Project the connection-label role alone — what the edge-label
+    /// drag drain does on every drained frame
+    /// (`throttled_interaction/edge_label.rs`), because a label move
+    /// cannot touch any other role.
+    fn project_label_role_only(doc: &MindMapDocument, app_scene: &mut AppScene) {
+        let offsets = std::collections::HashMap::new();
+        super::CanvasFrame::new(
+            doc,
+            &offsets,
+            InteractionMode::Default.resize_handle_overrides(),
+            1.0,
+        )
+        .update_connection_label_tree(app_scene);
+    }
+
+    /// A drained frame of an edge-label drag re-shapes the label it
+    /// moved, and nothing else on the canvas.
+    ///
+    /// The claim is asserted the way it is actually load-bearing —
+    /// as a zero. The seven roles the drain does not re-project are
+    /// walked into their own cache, and after the drag that pass
+    /// re-shapes **none** of them; before the reuse rule it
+    /// re-shaped every one, because the flush cleared and re-walked
+    /// the whole canvas. Nothing here computes an expected value
+    /// with the code under test: the zero is a zero, and the count
+    /// on the label side is a literal that is meant to be re-read if
+    /// the label projection ever changes what one move touches.
+    ///
+    /// The idempotence step before the drag is not ceremony. It is
+    /// what makes the zero afterwards mean anything: if projecting
+    /// the same document twice already produced differing elements,
+    /// a later "nothing changed" would be measuring the fixture
+    /// rather than the pass.
+    #[test]
+    fn test_edge_label_drain_reshapes_only_the_label_it_moved() {
+        baumhard::font::fonts::init();
+
+        let mut doc = load_test_doc();
+        let mut app_scene = AppScene::new();
+        let mut cache = SceneConnectionCache::new();
+        project_all_roles(&doc, &mut app_scene, &mut cache);
+
+        let all_ids = app_scene.canvas_ids_in_layer_order();
+        let label_id = app_scene
+            .canvas_id(CanvasRole::ConnectionLabels)
+            .expect("the label role is registered by update_all");
+        let other_ids: Vec<SceneTreeId> = all_ids.iter().copied().filter(|id| *id != label_id).collect();
+        assert_eq!(
+            other_ids.len(),
+            all_ids.len() - 1,
+            "exactly one of the registered roles is the label role"
+        );
+        assert_eq!(all_ids.len(), 8, "every canvas role is registered by update_all");
+
+        // Three caches: the whole canvas as production keeps it, and
+        // the two halves the claim is about.
+        let mut all: Vec<ShapedSceneElement> = Vec::new();
+        let mut labels: Vec<ShapedSceneElement> = Vec::new();
+        let mut others: Vec<ShapedSceneElement> = Vec::new();
+        let cold = refresh(
+            app_scene.canvas_scene(),
+            &all_ids,
+            &mut all,
+            ScenePassKind::Canvas,
+        );
+        assert_eq!(
+            cold.reshaped, cold.walked,
+            "an empty cache shapes everything it walks"
+        );
+        let cold_labels = refresh(
+            app_scene.canvas_scene(),
+            &[label_id],
+            &mut labels,
+            ScenePassKind::Canvas,
+        );
+        refresh(
+            app_scene.canvas_scene(),
+            &other_ids,
+            &mut others,
+            ScenePassKind::Canvas,
+        );
+        assert!(
+            cold.walked > 10 * cold_labels.walked,
+            "the label role must be a small part of the canvas, or \"only the labels\" says \
+             nothing: {} label positions of {} walked",
+            cold_labels.walked,
+            cold.walked
+        );
+
+        // Precondition: projecting the same document twice is
+        // element-for-element stable, so the zeroes below are the
+        // pass's doing and not the fixture's.
+        project_all_roles(&doc, &mut app_scene, &mut cache);
+        let idempotent = refresh(
+            app_scene.canvas_scene(),
+            &all_ids,
+            &mut all,
+            ScenePassKind::Canvas,
+        );
+        assert_eq!(
+            idempotent.reshaped, 0,
+            "re-projecting an unchanged document must not re-shape a single element"
+        );
+
+        // The drag: one label moves, and only the label role is
+        // re-projected — the two statements the drain makes.
+        let edge_ref = EdgeRef::new(LABELED_EDGE.0, LABELED_EDGE.1, LABELED_EDGE.2);
+        assert!(
+            crate::application::app::edge_label_drag::apply_edge_label_drag(
+                &mut doc,
+                &edge_ref,
+                Vec2::new(120.0, 260.0),
+            ),
+            "the fixture edge must actually accept the drag, or nothing below is being measured"
+        );
+        project_label_role_only(&doc, &mut app_scene);
+
+        // What the zero below is worth, role by role. Two of the
+        // seven carry it on this fixture and five hold a bare `Void`
+        // root apiece — nothing is selected, so no handles emit, and
+        // Default mode emits no section frames. Named rather than
+        // left to the aggregate, which cannot show the difference.
+        let untouched_roles = [
+            CanvasRole::Connections,
+            CanvasRole::Borders,
+            CanvasRole::Portals,
+            CanvasRole::EdgeHandles,
+            CanvasRole::SectionFrames,
+            CanvasRole::NodeResizeHandles,
+            CanvasRole::SectionResizeHandles,
+        ];
+        let per_role = walked_per_role(&app_scene, &untouched_roles);
+        // Identity, not cardinality, and identity *alone*: a length
+        // check would let the literal swap one role for another and
+        // go on describing a set the pass below does not walk, while
+        // a dedup check next to this one could never fire on its own
+        // — seven slots holding a repeat is seven slots missing a
+        // role, which is a set difference this assertion already
+        // sees.
+        assert_eq!(
+            untouched_roles
+                .iter()
+                .map(|role| {
+                    app_scene
+                        .canvas_id(*role)
+                        .expect("every canvas role is registered by update_all")
+                })
+                .collect::<std::collections::HashSet<_>>(),
+            other_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>(),
+            "the roles named above must be exactly the ones the label role is not, so the \
+             per-role counts describe the set the pass below walks: {untouched_roles:?}"
+        );
+        assert!(
+            per_role.iter().filter(|(_, walked)| *walked > 1).count() >= 2,
+            "at least two of the untouched roles must hold more than their `Void` root, or the \
+             zero below is mostly a statement about empty trees: {per_role:?}"
+        );
+
+        let untouched = refresh(
+            app_scene.canvas_scene(),
+            &other_ids,
+            &mut others,
+            ScenePassKind::Canvas,
+        );
+        assert_eq!(
+            untouched.reshaped, 0,
+            "a label move re-projects no other role, so the other {} walked positions must \
+             keep the buffers they already have",
+            untouched.walked
+        );
+
+        let moved = refresh(
+            app_scene.canvas_scene(),
+            &[label_id],
+            &mut labels,
+            ScenePassKind::Canvas,
+        );
+        assert_eq!(
+            moved.reshaped, 1,
+            "one label moved, so one of the label role's {} walked positions may re-shape",
+            moved.walked
+        );
+
+        // And the same, through the one cache production actually
+        // keeps: the whole canvas walked, one element re-shaped.
+        let production = refresh(
+            app_scene.canvas_scene(),
+            &all_ids,
+            &mut all,
+            ScenePassKind::Canvas,
+        );
+        assert_eq!(production.walked, cold.walked);
+        assert_eq!(
+            production.reshaped, 1,
+            "the whole-canvas pass a drained frame runs re-shapes the moved label and nothing \
+             else, out of {} walked positions",
+            production.walked
+        );
+    }
+
+    /// A camera move re-projects four of the eight roles, and the
+    /// four it leaves alone keep every buffer they hold.
+    ///
+    /// `rebuild_camera_geometry` is the other production caller that
+    /// deliberately narrows to a subset, and it narrows for a reason
+    /// worth pinning: borders, section frames and the two
+    /// resize-handle roles are canvas-space and zoom-independent.
+    /// Before the reuse rule that narrowing stopped at the
+    /// projection and the flush re-shaped all eight anyway.
+    ///
+    /// **What the fixture supplies is one of those four**, and the
+    /// test says so out loud rather than letting the aggregate imply
+    /// four roles' worth of coverage: at rest, with nothing selected
+    /// and no `NodeEdit` mode, the section-frame role and both
+    /// resize-handle roles hold a bare `Void` root each, so the zero
+    /// below is carried by `Borders` and says only "an empty role
+    /// stays empty" about the other three. The per-role precondition
+    /// is what fires the day a fixture change empties `Borders` too.
+    #[test]
+    fn test_camera_geometry_rebuild_leaves_the_zoom_independent_roles_shaped() {
+        baumhard::font::fonts::init();
+
+        let doc = load_test_doc();
+        let mut app_scene = AppScene::new();
+        let mut cache = SceneConnectionCache::new();
+        project_all_roles(&doc, &mut app_scene, &mut cache);
+
+        let zoom_independent = [
+            CanvasRole::Borders,
+            CanvasRole::SectionFrames,
+            CanvasRole::NodeResizeHandles,
+            CanvasRole::SectionResizeHandles,
+        ];
+        let ids: Vec<SceneTreeId> = zoom_independent
+            .iter()
+            .map(|role| {
+                app_scene
+                    .canvas_id(*role)
+                    .expect("every canvas role is registered by update_all")
+            })
+            .collect();
+
+        // `EdgeHandles` belongs here: `update_connection_trees` ends
+        // by dispatching the handle slice the connection pass emitted
+        // alongside its samples, so a camera move re-projects it too
+        // — which is what makes the count in the name four rather
+        // than three. It walks only its `Void` root at rest, so it
+        // contributes nothing to the assertion; listing it anyway is
+        // what stops a later reader filing it under zoom-independent.
+        let moved_roles = [
+            CanvasRole::Connections,
+            CanvasRole::ConnectionLabels,
+            CanvasRole::Portals,
+            CanvasRole::EdgeHandles,
+        ];
+        let moved_ids: Vec<SceneTreeId> = moved_roles
+            .iter()
+            .map(|role| {
+                app_scene
+                    .canvas_id(*role)
+                    .expect("every canvas role is registered by update_all")
+            })
+            .collect();
+
+        // Which of the four the fixture actually exercises. See the
+        // docstring: one, and the test refuses to imply otherwise.
+        let per_role = walked_per_role(&app_scene, &zoom_independent);
+        assert!(
+            per_role[0].1 > 50,
+            "`Borders` is the role that carries this test's zero; if it empties, the assertion \
+             below stops proving anything: {per_role:?}"
+        );
+        assert!(
+            per_role[1..].iter().all(|(_, walked)| *walked == 1),
+            "the other three zoom-independent roles are expected to hold only their `Void` root \
+             at rest — if one of them has filled, this test now covers it and the docstring \
+             needs re-reading: {per_role:?}"
+        );
+
+        let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+        let mut moved_shaped: Vec<ShapedSceneElement> = Vec::new();
+        let cold = refresh(app_scene.canvas_scene(), &ids, &mut shaped, ScenePassKind::Canvas);
+        refresh(
+            app_scene.canvas_scene(),
+            &moved_ids,
+            &mut moved_shaped,
+            ScenePassKind::Canvas,
+        );
+        assert!(
+            cold.walked > 50,
+            "the zoom-independent roles must carry real content, or the zero below is empty: \
+             {} positions",
+            cold.walked
+        );
+
+        // What `rebuild_camera_geometry` re-projects, at a zoom the
+        // connection pass has to resample for.
+        let offsets = std::collections::HashMap::new();
+        cache.clear();
+        let frame = super::CanvasFrame::new(
+            &doc,
+            &offsets,
+            InteractionMode::Default.resize_handle_overrides(),
+            2.5,
+        );
+        frame.update_connection_trees(&mut cache, &mut app_scene);
+        frame.update_connection_label_tree(&mut app_scene);
+        frame.update_portal_tree(&mut app_scene);
+
+        // The zoom has to have actually moved something, or the zero
+        // below is a camera change that never happened.
+        let moved = refresh(
+            app_scene.canvas_scene(),
+            &moved_ids,
+            &mut moved_shaped,
+            ScenePassKind::Canvas,
+        );
+        assert!(
+            moved.reshaped > 0,
+            "re-projecting {moved_roles:?} at a different zoom must move something, or this \
+             test is measuring a camera that stood still"
+        );
+
+        let after = refresh(app_scene.canvas_scene(), &ids, &mut shaped, ScenePassKind::Canvas);
+        assert_eq!(
+            (after.walked, after.reshaped),
+            (cold.walked, 0),
+            "the four zoom-independent roles were not re-projected, so none of them re-shapes"
         );
     }
 }
