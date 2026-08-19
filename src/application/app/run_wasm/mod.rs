@@ -180,6 +180,58 @@ impl WasmInputState {
     }
 }
 
+impl WasmInputState {
+    /// Reproject the camera-dependent canvas roles, when the work
+    /// that just ran moved the camera.
+    ///
+    /// Native picks this up in its per-frame drain
+    /// (`drain_frame::drain_camera_geometry_rebuild`); the browser has
+    /// no drain loop, so every browser-side camera mover — the wheel,
+    /// and a touch pan or pinch — runs the same body here under the
+    /// same renderer-side dirty flag. Gating on the flag rather than
+    /// rebuilding unconditionally is what keeps a non-camera Action
+    /// bound to the wheel from paying for a reprojection it did not
+    /// cause.
+    ///
+    /// Three things a reader of a *shared* body will otherwise assume
+    /// are identical to native's drain, and are not:
+    ///
+    /// 1. **Narrower than the browser's old behavior.** Base WASM ran
+    ///    `rebuild_scene_only` here — all seven canvas roles.
+    ///    `rebuild_camera_geometry` reprojects three (connections,
+    ///    connection labels, portals). The other four — borders,
+    ///    section frames, and both resize-handle trees — are
+    ///    canvas-space and zoom-independent, so a zoom cannot move
+    ///    them; native has always taken the narrow set, and §4's
+    ///    mobile budget is the reason to converge on the narrow one.
+    /// 2. **`CameraPan` does not set the flag** (`renderer/decree.rs`)
+    ///    — only `CameraZoom` does, because zoom is what changes the
+    ///    effective font size and therefore the sample spacing along a
+    ///    connection path. So a pure pan, whether from a finger or
+    ///    from `WheelUp` rebound to `PanCameraNorth`, moves the camera
+    ///    with no reprojection at all. Native's drain has exactly the
+    ///    same shape, so "the two targets behave identically" holds —
+    ///    this is the one place where identical means identically
+    ///    incomplete.
+    /// 3. **No `!is_moving_node` term.** Native's drain guards with
+    ///    `geometry_dirty && !is_moving_node` so a mid-node-drag frame
+    ///    does not reproject. There is no equivalent here, and none is
+    ///    needed only because `WasmInputState` carries no
+    ///    `drag_state`. Whoever ports the drag machinery owns adding
+    ///    it.
+    pub(super) fn reproject_after_camera_change(&mut self, renderer: &mut Renderer) {
+        if renderer.take_connection_geometry_dirty() {
+            super::scene_rebuild::rebuild_camera_geometry(
+                &self.document,
+                &self.interaction_mode,
+                &mut self.app_scene,
+                renderer,
+                &mut self.scene_cache,
+            );
+        }
+    }
+}
+
 /// WASM impl of `MacroDispatchTarget`. Wraps
 /// `&mut WasmInputState` + `&mut Renderer` and forwards each
 /// operation to the same helpers the keyboard handler uses.
@@ -459,7 +511,8 @@ impl WasmApp {
                 // WASM right-button: `DragState` machinery is
                 // `cfg(not(target_arch = "wasm32"))` so there's no
                 // `PendingRight` → `FastResizeStart` pipeline yet
-                // (lands with §6.6 touch parity / `TwoFingerDrag`).
+                // (it lands with the browser's drag-state machine;
+                // the touch vocabulary no longer waits on it).
                 // What we *can* do today is dispatch the bound
                 // `MouseGesture::RightClick` action on release —
                 // single-press right-click is just an action lookup,

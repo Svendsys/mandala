@@ -90,25 +90,28 @@ pub enum MouseGesture {
     /// significant movement. Emitted by `TouchGestureRecognizer`
     /// (in `app/touch_gesture.rs` — private module, intra-doc
     /// link omitted) from `WindowEvent::Touch` events.
-    /// Default-bound to `Action::EnterResizeMode` per
-    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.6 — long-press is
+    /// Default-bound to `Action::EnterResizeMode` — long-press is
     /// the touch peer of the keyboard's `r` for entering Resize
     /// mode on the selected target. The "no significant movement"
     /// half is the cancel rule: any drag past
     /// `POINTER_DRAG_THRESHOLD_PX` (5 physical pixels — the same
     /// budget a mouse press gets before it promotes to a drag)
-    /// before the timer fires aborts the long-press candidate.
+    /// before the timer fires aborts the long-press candidate,
+    /// because that gesture is a one-finger pan instead.
+    ///
+    /// **The only touch gesture that reaches this table**, and
+    /// deliberately so. Tap, one-finger pan and pinch-zoom are the
+    /// other three the recognizer emits; each takes a carve-out
+    /// `CODE_CONVENTIONS §3` already grants the mouse (selection
+    /// bookkeeping, per-frame camera deltas) rather than resolving
+    /// to an `Action`, so none of them can be dead on one target.
+    /// `TwoFingerDrag` used to sit beside this variant, bound to
+    /// `FastResizeStart`; two fingers on a canvas is a viewport
+    /// manipulation on every touch platform, so it now drives the
+    /// camera directly, and a binding that fired on the same event
+    /// would have been a conflict rather than a choice.
     #[strum(serialize = "longpress")]
     LongPress,
-    /// Touch: two fingers down with the midpoint travelling past
-    /// the drag threshold. Same dispatch shape as `RightDrag` —
-    /// the recogniser emits the gesture when the second finger
-    /// lands and the centroid moves; the bound Action runs once
-    /// per recognition. Default-bound to `Action::FastResizeStart`
-    /// alongside `Ctrl+RightDrag` so the fast-resize anchor-from-
-    /// quadrant math sees both inputs identically.
-    #[strum(serialize = "twofingerdrag")]
-    TwoFingerDrag,
 }
 
 impl MouseGesture {
@@ -137,7 +140,6 @@ impl MouseGesture {
             MouseGesture::RightClick => "RightClick",
             MouseGesture::RightDrag => "RightDrag",
             MouseGesture::LongPress => "LongPress",
-            MouseGesture::TwoFingerDrag => "TwoFingerDrag",
         }
     }
 }

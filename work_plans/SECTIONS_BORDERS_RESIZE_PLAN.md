@@ -2885,17 +2885,26 @@ this commit are the BLOCKER tier (3) plus the high-value
 CRITICALs / HIGHs (10 fixes; 3 new test pins; cargo doc clean).
 The remainder are deferred here:
 
-- [ ] **WASM touch lift** (touch deep-dive CRITICAL + cross-
+- [x] **WASM touch lift** (touch deep-dive CRITICAL + cross-
       platform B1 / C1): the shipped Batch 7 default keybinds
       (`LongPress → EnterResizeMode`, `TwoFingerDrag →
-      FastResizeStart`) bind to NativeOnly Actions. WASM
-      dispatches them through `dispatch_compatible` which
-      returns `Unhandled` and silently drops. A warn-log latch
-      shipped in this commit at least surfaces the failure to
-      the dev console. The real fix is lifting `EnterResizeMode`
-      / `FastResizeStart` to `Compatible` (porting the
-      DragState + modal-stealer machinery cross-platform); a
-      cross-cutting refactor not done in this PR.
+      FastResizeStart`) both bound to NativeOnly Actions, so the
+      browser dispatched them, got `Unhandled`, and dropped them.
+      **Closed by #35, and not by the lift this item proposed.**
+      The vocabulary grew a tap, a one-finger pan and a pinch step,
+      and those three resolve to no `Action` at all — they take the
+      selection-bookkeeping and continuous-camera carve-outs
+      CODE_CONVENTIONS §3 already grants the mouse, through one
+      cross-platform `dispatch::apply_touch_effect`. So the browser
+      is usable by finger without any of the DragState /
+      modal-stealer port. `TwoFingerDrag` is gone from the
+      `MouseGesture` table: two fingers now drive the camera, and a
+      binding firing on the same event would be a conflict.
+      `LongPress → EnterResizeMode` stays NativeOnly *deliberately*
+      — it is the touch peer of the keyboard's `r`, and rebinding it
+      to something Compatible on one target only would make one
+      gesture mean two things — and keeps its warn-log. Lifting it
+      is the `InteractionMode::Resize` chrome port, still open below.
 - [ ] **WASM resize-handle hit-test** (cross-platform C2): even
       if `EnterResizeMode` were Compatible, WASM's left-click
       handler (`run_wasm/event_mouse_click.rs::handle_mouse_pressed`)
@@ -2911,7 +2920,12 @@ The remainder are deferred here:
       `WindowEvent::Touch` events. iOS Safari coalesces events so
       a finger held with no Moved between Started and Ended will
       not fire LongPress. Wire `ControlFlow::WaitUntil(started_at +
-      LONG_PRESS_MS)` on native or `setTimeout` on WASM.
+      LONG_PRESS_MS)` on native or `setTimeout` on WASM. Still open
+      for the long-press. It does **not** leak into #35's tap: the
+      tap's refusal reads the elapsed time rather than whether the
+      long-press emission happened, so a hold whose `tick` never ran
+      is refused on duration —
+      `test_tap_is_refused_for_a_long_hold_whose_timer_never_ran`.
 - [ ] **Touch coordinate-space drift** (touch deep-dive HIGH):
       `winit::Touch.location` is `PhysicalPosition<f64>` but
       `POINTER_DRAG_THRESHOLD_PX` was doc-claimed as logical pixels.
@@ -2933,16 +2947,27 @@ The remainder are deferred here:
       HiDPI machine and wants its own change. The mouse side is
       equally affected, so the fix is per-pointer-path, not
       touch-only.
-- [ ] **Touch clock-skew vulnerability** (touch deep-dive HIGH):
-      `tick()`'s `now.duration_since(track.started_at)` panics or
-      saturates if `now < started_at`. `web_time::Instant` on
-      Firefox bfcache restore can produce regressed timestamps.
-      Use `saturating_duration_since`.
-- [ ] **Touch `Cancelled` handling** (touch deep-dive HIGH): a
-      system-Cancelled secondary finger leaves the recogniser in a
-      latched OneFinger state; treat `Phase::Cancelled` (winit) as
-      `reset()`-equivalent for the affected finger rather than
-      collapsing into `Phase::Ended`.
+- [x] **Touch clock-skew vulnerability** (touch deep-dive HIGH):
+      both readers of the elapsed hold — `tick`'s long-press test
+      and the tap's duration clause — now use
+      `saturating_duration_since`. (The panic half of the report was
+      already wrong: `web_time`'s `duration_since` is
+      `checked_duration_since(..).unwrap_or_default()`, so it
+      saturated too. What the explicit spelling buys is that the
+      guarantee is written down at the call site rather than
+      inherited from a dependency's choice.) A regressed timestamp
+      now reads as a zero-length hold, which is the right answer for
+      both: too short to be a long-press, short enough to be a tap.
+- [x] **Touch `Cancelled` handling** (touch deep-dive HIGH):
+      `Phase` now carries its own `Cancelled`, and `touch_phase` no
+      longer folds winit's onto `Ended`. The cancelled finger clears
+      its slot exactly as a lift does — the survivor of a pair goes
+      on being tracked — and emits nothing. Folding was harmless
+      while no gesture fired on a lift; #35's tap made it a bug in
+      which the operating system commits a selection every time it
+      interrupts a finger, which is what
+      `test_a_cancelled_touch_neither_taps_nor_leaves_state_behind`
+      pins.
 - [x] **Touch `sqrt` on input hot path** (touch deep-dive MEDIUM
       + CONVENTIONS violation): `update_pos` did
       `(dx*dx+dy*dy).sqrt() > MOVE_THRESHOLD_PX`. Both touch emit
@@ -2951,12 +2976,28 @@ The remainder are deferred here:
       use (#46).
 - [ ] **Touch demote latch overcorrects** (touch deep-dive MEDIUM):
       "two fingers down, lift one quickly, hold survivor 350ms" is
-      plausibly long-press intent but currently latches
-      `long_press_emitted: true` so survivor never fires.
-- [ ] **Native + WASM touch dispatch near-duplication** (architecture
+      plausibly long-press intent but the demotion latches
+      `discrete_emitted: true` so the survivor never fires. Open,
+      and deliberately so for now: #35 widened the latch's job — it
+      also refuses the survivor's *tap*, which is what stops a
+      two-finger gesture from ending in a selection change — and
+      narrowing it wants a rule that distinguishes "lifted one
+      finger to keep holding" from "finished pinching", which the
+      machine does not have. What #35 did change is that the latch
+      is now the whole mechanism: the demotion used to also
+      back-date the survivor's `started_at` under a comment claiming
+      *that* was what blocked the long-press, which was one
+      mechanism plus a decoy.
+- [x] **Native + WASM touch dispatch near-duplication** (architecture
       MEDIUM): `InitState::dispatch_touch_event` and
-      `WasmApp::handle_touch_event` carry near-identical 25-line
-      bodies. Generic-ify via a shared helper.
+      `WasmApp::handle_touch_event` carried near-identical bodies.
+      #29 lifted the recognize-and-resolve half into
+      `dispatch::drive_touch_event`; #35 lifted the *act* half into
+      `dispatch::apply_touch_effect`, which both call. What is left
+      per-target is the one thing that genuinely differs: native
+      dispatches a keybind-routed Action through `dispatch_action`
+      with its native context, the browser through
+      `dispatch_compatible` plus the `NativeOnly` warn-log.
 - [ ] **DOS resource caps** (security CRITICALs):
       `MindMapDocument.undo_stack`, `MindNode.inline_macros`,
       `MindMap.macros`, `Palette.groups`, and section/node text

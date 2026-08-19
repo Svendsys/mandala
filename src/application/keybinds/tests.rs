@@ -1038,15 +1038,29 @@ fn test_default_long_press_resolves_to_enter_resize_mode() {
     );
 }
 
-/// `TwoFingerDrag` resolves to `FastResizeStart` by default —
-/// the touch peer of `Ctrl+RightDrag`. Plan §6.6 / Batch 7.
+/// **Two fingers reach no binding at all**, and that is the shape
+/// this pins. `twofingerdrag` was a `MouseGesture` variant bound to
+/// `FastResizeStart`; a two-finger move now drives the camera
+/// directly through `dispatch::apply_touch_effect`, so a binding
+/// firing on the same event would be a second effect on one gesture
+/// rather than a user choice.
+///
+/// The input that makes it fail is re-adding the token to any
+/// binding list: `KeyBind::parse` accepts any non-modifier word, so
+/// the entry would resolve and this lookup would come back `Some`
+/// while the recognizer went on moving the camera underneath it.
 #[test]
-fn test_default_two_finger_drag_resolves_to_fast_resize_start() {
+fn test_two_finger_drag_is_not_a_bindable_gesture() {
+    use strum::IntoEnumIterator;
     let r = KeybindConfig::default().resolve();
     assert_eq!(
         r.action_for_gesture("twofingerdrag", false, false, false),
-        Some(Action::FastResizeStart),
-        "TwoFingerDrag should be the touch peer of Ctrl+RightDrag"
+        None,
+        "two-finger motion drives the camera, so it must not resolve to an Action"
+    );
+    assert!(
+        !MouseGesture::iter().any(|g| g.key_name() == "twofingerdrag"),
+        "twofingerdrag must not be back in the gesture vocabulary"
     );
 }
 
@@ -1069,18 +1083,16 @@ fn test_default_enter_resize_mode_includes_long_press() {
     );
 }
 
+/// `fast_resize_start` keeps its mouse gesture and has no touch
+/// entry: the touch peer it used to carry, `TwoFingerDrag`, is gone
+/// (see `test_two_finger_drag_is_not_a_bindable_gesture`).
 #[test]
-fn test_default_fast_resize_start_includes_two_finger_drag() {
+fn test_default_fast_resize_start_is_the_right_drag_only() {
     let cfg = KeybindConfig::default();
-    assert!(
-        cfg.fast_resize_start.iter().any(|s| s == "TwoFingerDrag"),
-        "default fast_resize_start must include TwoFingerDrag; got: {:?}",
-        cfg.fast_resize_start
-    );
-    assert!(
-        cfg.fast_resize_start.iter().any(|s| s == "Ctrl+RightDrag"),
-        "default fast_resize_start must still include Ctrl+RightDrag; got: {:?}",
-        cfg.fast_resize_start
+    assert_eq!(
+        cfg.fast_resize_start,
+        vec!["Ctrl+RightDrag".to_string()],
+        "fast_resize_start ships bound to Ctrl+RightDrag and nothing else"
     );
 }
 

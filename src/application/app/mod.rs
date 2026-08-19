@@ -128,8 +128,37 @@ pub(crate) use crate::application::common::now_ms;
 /// Screen-space click tolerance (in pixels) for edge hit testing. Converted
 /// to canvas units via `Renderer::canvas_per_pixel()` so the click target
 /// stays visually stable across zoom levels.
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// Cross-platform: a connection path is the last rung of the tap's
+/// hit chain (`dispatch::cross_dispatch::pointer`'s tap body) on
+/// both targets, and a curve cannot be hit by the scene's
+/// bounding-volume descent — it needs a tolerance. The constant was
+/// native-gated for as long as native's click handler was its only
+/// reader.
 const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
+
+/// Which [`PlatformContext`](baumhard::mindmap::custom_mutation::PlatformContext)
+/// this build's input paths report when they fire a node's `OnClick`
+/// triggers, so an authored mutation gated on `["Desktop"]` or
+/// `["Web"]` fires where its author said it should.
+///
+/// Chosen at compile time, which is why it is a constant rather than
+/// a parameter — and why the `Touch` variant is *not* selected here
+/// even by the tap path. Which platform a build is remains a build
+/// fact; whether an individual gesture should re-label it is a
+/// question about the authoring format (`format/mutations.md`), not
+/// about the input vocabulary, and answering it "yes" would silently
+/// stop every `["Web"]`-gated trigger from firing under a finger in
+/// the browser.
+#[cfg(not(target_arch = "wasm32"))]
+const PLATFORM_CONTEXT: baumhard::mindmap::custom_mutation::PlatformContext =
+    baumhard::mindmap::custom_mutation::PlatformContext::Desktop;
+
+/// WASM peer of the native `PLATFORM_CONTEXT` above; see its doc for
+/// why the choice is a build fact.
+#[cfg(target_arch = "wasm32")]
+const PLATFORM_CONTEXT: baumhard::mindmap::custom_mutation::PlatformContext =
+    baumhard::mindmap::custom_mutation::PlatformContext::Web;
 
 /// Screen-space click tolerance (in pixels) for grab-handle hit
 /// testing — applies uniformly to edge handles and section / node

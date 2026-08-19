@@ -52,7 +52,7 @@ keybind_surface! {
         /// standard modifier-fallback applies — a user who clears
         /// the default and binds bare `["RightDrag"]` gets
         /// fast-resize on plain right-drag, no Ctrl required.
-        FastResizeStart => fast_resize_start = ["Ctrl+RightDrag", "TwoFingerDrag"],
+        FastResizeStart => fast_resize_start = ["Ctrl+RightDrag"],
         /// Delete the current selection.
         DeleteSelection => delete_selection = ["Delete"],
         /// Leave the active interaction mode. Also cancels an active

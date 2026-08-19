@@ -347,8 +347,11 @@ pub enum Action {
     /// **WASM: NativeOnly** — the gesture relies on the
     /// `DragState` machinery in `event_mouse_click.rs` /
     /// `event_cursor_moved.rs` which is `cfg(not(target_arch =
-    /// "wasm32"))`. WASM gets fast-resize when the touch parity
-    /// batch (§6.6) lands the `TwoFingerDrag` synthetic gesture.
+    /// "wasm32"))`. It ships bound to `Ctrl+RightDrag` alone: the
+    /// `TwoFingerDrag` touch peer it used to carry is gone, because
+    /// two fingers on a canvas now drive the camera directly. WASM
+    /// gets fast-resize when the browser gains a drag-state
+    /// machine.
     ///
     /// Marked `destructive` so the macro privilege gate
     /// (`SourceTier::allows_action`) blocks System / Plugin /
