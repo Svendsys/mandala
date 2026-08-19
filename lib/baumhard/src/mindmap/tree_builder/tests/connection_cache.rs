@@ -18,10 +18,25 @@ use std::collections::HashMap;
 /// an assertion can see it.
 const SENTINEL_POINT: Vec2 = Vec2::new(200.0, -999.0);
 
-/// Below this `y`, geometry is planted rather than sampled. Every
-/// real sample in these fixtures lands in `y ∈ [0, 340]`, and the
-/// largest drag delta any of them applies is a few tens of units, so
-/// the band is wide on both sides.
+/// Below this `y`, geometry is planted rather than sampled.
+///
+/// The band has to be clear on both sides, and the two sides are
+/// bounded by different things.
+///
+/// *Sampled side*: every real sample in these fixtures lands in
+/// `y ∈ [0, 340]`, so this floor sits 500 units below the lowest of
+/// them.
+///
+/// *Planted side*: the translate path reuses an entry **and shifts
+/// it**, so a planted point moves by the drag delta, and the margin
+/// between [`SENTINEL_POINT`] and this floor has to cover that. The
+/// largest `y` offset any test in this file applies **to an edge
+/// endpoint** is 25 — a measured maximum over the offsets currently
+/// in the file, `grep 'offsets.insert'`, not a bound on what a future
+/// test may add. Two larger numbers in the file are not endpoint `y`
+/// offsets: the 500 and 520 go to node `c`, a blocker that is never
+/// an endpoint of the edge under test, and the 280 is in `x`, which
+/// this band does not read.
 const SENTINEL_Y_FLOOR: f32 = -500.0;
 
 // The plant and the predicate that recognises it are one decision;
@@ -1079,9 +1094,30 @@ fn test_a_resample_refills_the_reused_buffer_rather_than_appending() {
 /// it — so the next frame resamples it, forever, and the cache holds
 /// nothing.
 ///
-/// Input that makes it fail: dropping the stamp from `insert` (route
-/// 1), from `reusable` (route 2) or from `reusable_mut` (route 3).
-/// Each is one line, and each fails exactly one assertion below.
+/// Input that makes it fail: dropping the one `last_seen = generation`
+/// line from `SceneConnectionCache::refill` (route 1), from
+/// `reusable` (route 2) or from `reusable_mut` (route 3). Each is one
+/// line and each reddens this test, though never only this test.
+/// Measured with `cargo test -p baumhard --lib mindmap::`, one
+/// mutation at a time:
+///
+/// | line dropped | also reddens | count when measured |
+/// |---|---|---|
+/// | `refill`'s | 15 others, incl. `test_cache_populated_on_first_build` | 16 failed |
+/// | `reusable`'s | `evict_unseen_drops_what_this_pass_did_not_touch` +2 | 4 failed |
+/// | `reusable_mut`'s | `test_translate_path_reuses_cache_on_shared_delta_subtree_drag` | 2 failed |
+///
+/// The named tests are the durable half — a rename breaks
+/// `test_no_doc_cites_a_test_that_does_not_exist` and this comment
+/// with it. The counts are a snapshot and will drift as tests are
+/// added; they are here to show the mutations were run, not to be
+/// re-asserted.
+///
+/// The earlier version of this paragraph named `insert`, a function
+/// deleted two commits before it was written, and claimed each
+/// mutation fails "exactly one assertion below". A stated control
+/// that does not reproduce is worse than none, because the next
+/// reader trusts it; these three were run.
 #[test]
 fn test_every_route_out_of_the_connection_pass_keeps_its_edge_cached() {
     let map = two_node_edge_map();

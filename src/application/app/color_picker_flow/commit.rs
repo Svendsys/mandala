@@ -209,10 +209,26 @@ pub(in crate::application::app) fn commit_color_picker(
     }
 
     renderer.rebuild_color_picker_overlay_buffers(app_scene, None);
-    // `set_edge_color` / `set_node_*_color` mutate edge/node color
-    // fields the connection pass caches per-edge (body glyph, color,
-    // font). Clear so the rebuild re-samples against the committed
-    // model.
+    // A conservative flush, and no longer a required one. This used to
+    // say the setters below mutate "fields the connection pass caches
+    // per-edge (body glyph, color, font)"; none of those are cached
+    // any more — the connection cache holds sampled geometry, the
+    // `SampleParams` it was sampled under, and the endpoints, and
+    // resolves every styling value from the live model on every path.
+    //
+    // Checked rather than assumed: the six setters this function
+    // reaches (`set_edge_color`, `set_node_bg_color`,
+    // `set_node_border_color`, `set_node_text_color`,
+    // `set_section_text_color`, `set_section_text_color_range`) write
+    // color fields only, and none of them moves a node position or
+    // size, an anchor, a control point, or the border *size* that
+    // `node_clip_aabbs` reads — which is the whole of what the cache
+    // still depends on the caller for.
+    //
+    // Left in place deliberately: dropping it is a behavior change to
+    // the picker's commit path (edges would reuse their samples
+    // instead of resampling) and belongs in its own commit with its
+    // own test, not in a documentation round.
     scene_cache.clear();
     rebuild_all(
         doc,
@@ -367,9 +383,10 @@ pub(in crate::application::app) fn commit_color_picker_to_selection(
     }
 
     if any_accepted {
-        // Same rationale as `commit_color_picker`: the wheel-color
-        // writes land on cached edge fields, so clear before the
-        // rebuild.
+        // Same situation as `commit_color_picker` above, including
+        // that the stated reason was false: the wheel-color writes do
+        // not land on cached edge fields, because no styling field is
+        // cached any more. Conservative flush, same deferral.
         scene_cache.clear();
         // Rebuild the whole scene so the newly-colored items repaint
         // next frame. The picker itself stays open — no state change

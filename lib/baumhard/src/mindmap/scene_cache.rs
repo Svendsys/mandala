@@ -483,7 +483,13 @@ impl SceneConnectionCache {
                     sample_params: params,
                     base_from,
                     base_to,
-                    last_seen: generation,
+                    // Placeholder. The single stamp is at the tail of
+                    // this function, which every entry that survives
+                    // reaches; writing `generation` here as well was a
+                    // second write nothing could observe, so removing
+                    // it is what makes "one stamp site per route" true
+                    // of the code and not only of the sentence.
+                    last_seen: 0,
                 },
             );
         }

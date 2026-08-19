@@ -537,12 +537,26 @@ pub fn build_connection_elements(
 ///    exists to bound on the insertion side.
 /// 4. The hull escape is a real term but no longer an argument by
 ///    itself — `distance_to_path_within` ships `HULL_ESCAPE_SLACK`
-///    for it. Its size is `|coordinate| × f32::EPSILON`: about
-///    `4.8e-4` at a coordinate of 4 000, roughly a thousandth of this
-///    filter's own `EDGE_EPSILON` of `0.5` — but about `119` units at
-///    `MAX_CANVAS_COORD`, which is 238 times it. So a pre-bound would
-///    owe the same coordinate-scaled slack rather than being able to
-///    ignore the question. A cost, not a blocker.
+///    for it. Its size is
+///    `|coordinate| × MEASURED_WORST_ESCAPE_ULPS × f32::EPSILON`;
+///    that constant lives beside
+///    `test_path_bounds_slack_covers_the_sampler_escape` in
+///    `connection/tests.rs`, and it is a measured maximum over a
+///    finite sweep rather than a bound. What matters here is the
+///    *shape* of the expression: the escape scales with the
+///    coordinate and this filter's own `EDGE_EPSILON` does not, so
+///    which of the two is larger depends on where on the canvas the
+///    edge sits — below it at ordinary magnitudes, above it at the
+///    coordinates `MAX_CANVAS_COORD` admits. A pre-bound would
+///    therefore owe the same coordinate-scaled slack rather than get
+///    to ignore the question. A cost and an obligation, not a
+///    blocker.
+///
+///    (Deliberately no digits. That constant's own doc asks prose to
+///    name it instead of restating it, because a figure copied into a
+///    comment goes stale silently — and the first version of this
+///    paragraph did exactly that, with a one-ulp premise that made
+///    all three of its numbers wrong.)
 pub struct NodeClipIndex {
     cell: f32,
     buckets: std::collections::HashMap<(i32, i32), Vec<(Vec2, Vec2)>>,
