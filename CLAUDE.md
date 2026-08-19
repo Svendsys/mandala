@@ -121,6 +121,26 @@ the parity trajectory (or why none is owed):
   observable. Parity unblocks `Action::DoubleClickActivate` and
   `Action::EditSelection*` flipping to `Compatible`; tracked in
   `work_plans/WASM_CONVERGENCE.md`.
+- **`LongPress` → `EnterResizeMode`** (`src/application/keybinds/config.rs`,
+  `src/application/app/run_wasm/event_touch.rs`) — the one touch
+  gesture that resolves through the keybind table, and the one that
+  is native-only. Its default `Action` is `NativeOnly`, so on the
+  browser the dispatch returns `Unhandled` and a one-shot `warn!`
+  names the remedy; the gesture is *recognized* identically on both
+  targets, and only the `Action` it reaches is not. Deliberate rather
+  than pending: long-press is the touch peer of the keyboard's `r`,
+  so rebinding the browser's long-press to some unrelated
+  `Compatible` Action would make one gesture mean two different
+  things on two targets — a worse §4 outcome than a gesture that is
+  honestly unavailable and says so. **The rest of the touch
+  vocabulary is not affected**: tap, one-finger pan and pinch-zoom
+  resolve to no `Action` at all and run on both targets through
+  `dispatch::apply_touch_effect`, which is what makes the browser
+  usable by finger without this entry being closed. Parity is the
+  `InteractionMode::Resize` chrome plus its handle-drag reaching the
+  browser — the same drag-state machine **Rubber-band select** below
+  is parked on — and flips this `Action` to `Compatible` when it
+  lands.
 - **Rubber-band select** (`DragState::SelectingRect`,
   `src/application/app/drain_frame.rs`,
   `scene_rebuild::rebuild_selection_highlight`,
