@@ -86,7 +86,7 @@ than to the constant directly; since row 4 is pinned to the constant,
 the chain still closes.
 
 Today, `show_frame = true` only emits the glyph border when
-`shape == "rectangle"` — the four-run frame layout assumes an
+`shape == "rectangle"` — the eight-run frame layout assumes an
 axis-aligned box. Non-rectangular nodes drop the frame until a
 shape-aware border lands.
 

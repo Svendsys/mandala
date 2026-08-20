@@ -90,6 +90,28 @@ pub enum CanvasDispatch {
     FullRebuild,
 }
 
+/// The two signatures a canvas role that records both hands to
+/// its dispatch, as named fields rather than a positional pair.
+///
+/// The order of the two questions *is* the design — structure
+/// first, content second — and swapping them still renders
+/// correctly while undoing the point, which makes it the kind of
+/// mistake a reviewer will not see. Two `u64` parameters are
+/// swappable by typo; two named fields are not. The remaining
+/// bare-`u64` sites read `signatures.structure` /
+/// `signatures.content` at the call, so the field is named there
+/// too.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct CanvasSignatures {
+    /// Covers only what fixes the tree's channel layout — the
+    /// question "can a mutator align against the registered arena
+    /// at all?".
+    pub structure: u64,
+    /// Covers every field either projection reads — the question
+    /// "given that it aligns, has anything it would write moved?".
+    pub content: u64,
+}
+
 /// Three arms of the §B2 canvas-tree dispatch for a role that
 /// records a content signature beside its structural one.
 ///
@@ -434,10 +456,12 @@ impl AppScene {
     ///
     /// Passing these two the other way round still *renders*
     /// correctly and does the work the in-place arm exists to
-    /// avoid, which is why nothing but a test catches it:
-    /// `test_border_dispatch_records_the_structural_signature_not_the_content_one`
-    /// and its portal twin pin the order by reading back what the
-    /// rebuild path recorded.
+    /// avoid, which is why nothing but a test catches it. Two
+    /// mechanisms keep it from happening: [`CanvasSignatures`]'
+    /// named fields, so there is no positional pair to transpose;
+    /// and, for the case where somebody writes the wrong field
+    /// name anyway, the sentinel tests in `scene_rebuild`, which
+    /// see the skip stop firing.
     ///
     /// The caller then runs the matching build path and, on
     /// `FullRebuild`, calls `register_canvas` +
@@ -447,12 +471,11 @@ impl AppScene {
     pub fn canvas_dispatch_with_content(
         &self,
         role: CanvasRole,
-        structure: u64,
-        content: u64,
+        signatures: &CanvasSignatures,
     ) -> CanvasContentDispatch {
-        match self.canvas_dispatch(role, structure) {
+        match self.canvas_dispatch(role, signatures.structure) {
             CanvasDispatch::FullRebuild => CanvasContentDispatch::FullRebuild,
-            CanvasDispatch::InPlaceMutator if self.canvas_content_unchanged(role, content) => {
+            CanvasDispatch::InPlaceMutator if self.canvas_content_unchanged(role, signatures.content) => {
                 CanvasContentDispatch::Skip
             }
             CanvasDispatch::InPlaceMutator => CanvasContentDispatch::InPlaceMutator,

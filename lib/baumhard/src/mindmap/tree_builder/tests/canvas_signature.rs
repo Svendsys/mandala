@@ -239,7 +239,7 @@ fn theme_schema(map: &mut MindMap) -> &mut ColorSchema {
 /// `overrides` — `node_edit_for` and all three shapes of
 /// `preview`; and `hidden_set` through a fold.
 ///
-/// Two deliberate non-rows. `BorderPreview.edits` has seventeen
+/// Two deliberate non-rows. `BorderPreview.edits` has sixteen
 /// fields, and every one of them is folded by `apply_view_to_slot`
 /// into the same `GlyphBorderConfig` whose axes the direct-config
 /// rows above already vary — two are exercised here to prove the

@@ -806,7 +806,7 @@ impl<'a> CanvasFrame<'a> {
         &self,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
-        use crate::application::scene_host::{CanvasContentDispatch, CanvasRole};
+        use crate::application::scene_host::{CanvasContentDispatch, CanvasRole, CanvasSignatures};
         use baumhard::mindmap::tree_builder::{
             border_content_signature, border_node_data, border_structure_signature,
             build_border_mutator_tree_from_nodes, build_border_tree_from_nodes, BorderChromeOverrides,
@@ -821,10 +821,12 @@ impl<'a> CanvasFrame<'a> {
             },
             &self.hidden,
         );
-        let structure = border_structure_signature(&nodes);
-        let content = border_content_signature(&nodes);
+        let signatures = CanvasSignatures {
+            structure: border_structure_signature(&nodes),
+            content: border_content_signature(&nodes),
+        };
 
-        match app_scene.canvas_dispatch_with_content(CanvasRole::Borders, structure, content) {
+        match app_scene.canvas_dispatch_with_content(CanvasRole::Borders, &signatures) {
             CanvasContentDispatch::Skip => {
                 // Every field the border tree is built from is
                 // unchanged, so the registered tree already holds
@@ -837,13 +839,13 @@ impl<'a> CanvasFrame<'a> {
             CanvasContentDispatch::FullRebuild => {
                 let tree = build_border_tree_from_nodes(&nodes);
                 app_scene.register_canvas(CanvasRole::Borders, tree, glam::Vec2::ZERO);
-                app_scene.set_canvas_signature(CanvasRole::Borders, structure);
+                app_scene.set_canvas_signature(CanvasRole::Borders, signatures.structure);
             }
         }
         // Outside the match on purpose: correct after all three
         // outcomes, so no arm can be the one that forgets and
         // leaves a later frame skipping against a stale value.
-        app_scene.set_canvas_content_signature(CanvasRole::Borders, content);
+        app_scene.set_canvas_content_signature(CanvasRole::Borders, signatures.content);
     }
 
     /// Build or in-place update the portal tree under
@@ -891,7 +893,7 @@ impl<'a> CanvasFrame<'a> {
         &self,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
-        use crate::application::scene_host::{CanvasContentDispatch, CanvasRole};
+        use crate::application::scene_host::{CanvasContentDispatch, CanvasRole, CanvasSignatures};
         use baumhard::mindmap::tree_builder::{
             build_portal_mutator_tree_from_pairs, build_portal_tree_from_pairs, portal_content_signature,
             portal_pair_data, portal_structure_signature,
@@ -919,10 +921,12 @@ impl<'a> CanvasFrame<'a> {
             self.camera_zoom,
             &self.hidden,
         );
-        let structure = portal_structure_signature(&pairs);
-        let content = portal_content_signature(&pairs);
+        let signatures = CanvasSignatures {
+            structure: portal_structure_signature(&pairs),
+            content: portal_content_signature(&pairs),
+        };
 
-        match app_scene.canvas_dispatch_with_content(CanvasRole::Portals, structure, content) {
+        match app_scene.canvas_dispatch_with_content(CanvasRole::Portals, &signatures) {
             CanvasContentDispatch::Skip => {
                 // Every field the portal tree and its hit index are
                 // built from is unchanged, so both already hold what
@@ -937,13 +941,13 @@ impl<'a> CanvasFrame<'a> {
                 let result = build_portal_tree_from_pairs(&pairs);
                 app_scene.set_portal_hit_index(result.hit_index);
                 app_scene.register_canvas(CanvasRole::Portals, result.tree, glam::Vec2::ZERO);
-                app_scene.set_canvas_signature(CanvasRole::Portals, structure);
+                app_scene.set_canvas_signature(CanvasRole::Portals, signatures.structure);
             }
         }
         // Outside the match on purpose: correct after all three
         // outcomes, so no arm can be the one that forgets and
         // leaves a later frame skipping against a stale value.
-        app_scene.set_canvas_content_signature(CanvasRole::Portals, content);
+        app_scene.set_canvas_content_signature(CanvasRole::Portals, signatures.content);
     }
 
     /// Build or in-place update the connection-label tree under
@@ -2296,7 +2300,7 @@ mod content_signature_dispatch {
 
     use crate::application::app::InteractionMode;
     use crate::application::document::{tests_common::load_test_doc, MindMapDocument};
-    use crate::application::scene_host::{AppScene, CanvasRole};
+    use crate::application::scene_host::{AppScene, CanvasRole, CanvasSignatures};
     use baumhard::core::primitives::ApplyOperation;
     use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
     use baumhard::gfx_structs::mutator::{GfxMutator, Mutation};
@@ -2447,7 +2451,7 @@ mod content_signature_dispatch {
     /// The pair of signatures the border role computes for a
     /// document, in the order `update_border_tree` computes them:
     /// `(structure, content)`.
-    fn border_signatures(doc: &MindMapDocument, offsets: &Offsets) -> (u64, u64) {
+    fn border_signatures(doc: &MindMapDocument, offsets: &Offsets) -> CanvasSignatures {
         use baumhard::mindmap::tree_builder::{
             border_content_signature, border_node_data, border_structure_signature, BorderChromeOverrides,
         };
@@ -2457,14 +2461,14 @@ mod content_signature_dispatch {
             BorderChromeOverrides::default(),
             &doc.mindmap.fold_hidden_set(),
         );
-        (
-            border_structure_signature(&nodes),
-            border_content_signature(&nodes),
-        )
+        CanvasSignatures {
+            structure: border_structure_signature(&nodes),
+            content: border_content_signature(&nodes),
+        }
     }
 
     /// The portal equivalent of [`border_signatures`].
-    fn portal_signatures(doc: &MindMapDocument, offsets: &Offsets) -> (u64, u64) {
+    fn portal_signatures(doc: &MindMapDocument, offsets: &Offsets) -> CanvasSignatures {
         use baumhard::mindmap::tree_builder::{
             portal_content_signature, portal_pair_data, portal_structure_signature,
         };
@@ -2478,10 +2482,10 @@ mod content_signature_dispatch {
             1.0,
             &doc.mindmap.fold_hidden_set(),
         );
-        (
-            portal_structure_signature(&pairs),
-            portal_content_signature(&pairs),
-        )
+        CanvasSignatures {
+            structure: portal_structure_signature(&pairs),
+            content: portal_content_signature(&pairs),
+        }
     }
 
     /// **Which** signature the rebuild path hands to dispatch, read
@@ -2501,9 +2505,29 @@ mod content_signature_dispatch {
     /// indices, so a `canvas_id` that did not change is not
     /// evidence that no rebuild happened.
     ///
-    /// Failing input: swap the two arguments at the
-    /// `canvas_dispatch_with_content` call in `update_border_tree`,
-    /// or pass `content` to `set_canvas_signature`.
+    /// **Failing inputs, run rather than reasoned about.** Two
+    /// redden this test: recording the wrong half —
+    /// `set_canvas_signature(CanvasRole::Borders, signatures.content)`
+    /// on the rebuild arm — and swapping the two fields where
+    /// `CanvasSignatures` is built, which reaches the same record
+    /// through the struct. The reviewed revert, which does both,
+    /// reddens it too.
+    ///
+    /// **What it does *not* catch is worth naming, because the
+    /// first version of this sentence named exactly that and was
+    /// wrong.** Making the *dispatch* read the wrong field while
+    /// the record stays right — `canvas_dispatch(role,
+    /// signatures.content)` inside `canvas_dispatch_with_content`
+    /// — leaves this test green: the stored value is still the
+    /// structural signature, which is all this test reads. The
+    /// skip simply stops firing, and
+    /// [`test_border_dispatch_writes_nothing_when_no_input_moved`]
+    /// is what sees that.
+    ///
+    /// So the two tests are a **pair**, and neither is redundant:
+    /// this one guards what is *recorded*, its sibling guards what
+    /// is *dispatched on*, and the four plants between them are
+    /// covered only by both.
     #[test]
     fn test_border_dispatch_records_the_structural_signature_not_the_content_one() {
         baumhard::font::fonts::init();
@@ -2511,9 +2535,9 @@ mod content_signature_dispatch {
         let mut app_scene = AppScene::new();
         let offsets = Offsets::new();
 
-        let (structure, content) = border_signatures(&doc, &offsets);
+        let signatures = border_signatures(&doc, &offsets);
         assert_ne!(
-            structure, content,
+            signatures.structure, signatures.content,
             "the fixture must produce two different signatures, or 'the stored one is not \
              the content one' is true of any implementation"
         );
@@ -2521,14 +2545,14 @@ mod content_signature_dispatch {
         project_border(&doc, &mut app_scene, &offsets);
         assert_eq!(
             app_scene.canvas_signature(CanvasRole::Borders),
-            Some(structure),
+            Some(signatures.structure),
             "the border role must dispatch and record on the structural signature — the \
              subset that says a mutator can align, not the one that says it has something \
              to write"
         );
         assert_ne!(
             app_scene.canvas_signature(CanvasRole::Borders),
-            Some(content),
+            Some(signatures.content),
             "recording the content signature here is the collapse this design exists to \
              avoid: every color change would then take the full-rebuild arm"
         );
@@ -2538,28 +2562,33 @@ mod content_signature_dispatch {
         // structural signature with anything either.
         let mut dragged = Offsets::new();
         dragged.insert(first_framed_node(&doc), (17.0, -9.0));
-        let (drag_structure, drag_content) = border_signatures(&doc, &dragged);
+        let dragged_signatures = border_signatures(&doc, &dragged);
         assert_eq!(
-            drag_structure, structure,
+            dragged_signatures.structure, signatures.structure,
             "a drag offset must leave the structural signature alone, or this step is \
              exercising the rebuild arm rather than the in-place one"
         );
         assert_ne!(
-            drag_content, content,
+            dragged_signatures.content, signatures.content,
             "a drag offset must move the content signature"
         );
 
         project_border(&doc, &mut app_scene, &dragged);
         assert_eq!(
             app_scene.canvas_signature(CanvasRole::Borders),
-            Some(structure),
+            Some(signatures.structure),
             "the in-place arm must leave the recorded structural signature as it found it"
         );
     }
 
-    /// The portal half of the same claim.
+    /// The portal half of the same claim, with the same pairing:
+    /// this test reads what was *recorded*, and
+    /// [`test_portal_dispatch_writes_nothing_when_no_input_moved`]
+    /// sees what was *dispatched on*.
     ///
-    /// Failing input: the same swap, in `update_portal_tree`.
+    /// Failing input: record `signatures.content` on the rebuild
+    /// arm of `update_portal_tree`, or swap the two fields where
+    /// its `CanvasSignatures` is built.
     #[test]
     fn test_portal_dispatch_records_the_structural_signature_not_the_content_one() {
         baumhard::font::fonts::init();
@@ -2567,9 +2596,9 @@ mod content_signature_dispatch {
         let mut app_scene = AppScene::new();
         let offsets = Offsets::new();
 
-        let (structure, content) = portal_signatures(&doc, &offsets);
+        let signatures = portal_signatures(&doc, &offsets);
         assert_ne!(
-            structure, content,
+            signatures.structure, signatures.content,
             "the fixture must produce two different signatures, or 'the stored one is not \
              the content one' is true of any implementation"
         );
@@ -2577,33 +2606,33 @@ mod content_signature_dispatch {
         project_portal(&doc, &mut app_scene, &offsets);
         assert_eq!(
             app_scene.canvas_signature(CanvasRole::Portals),
-            Some(structure),
+            Some(signatures.structure),
             "the portal role must dispatch and record on the structural signature"
         );
         assert_ne!(
             app_scene.canvas_signature(CanvasRole::Portals),
-            Some(content),
+            Some(signatures.content),
             "recording the content signature here would send every portal color hover and \
              every inline-edit keystroke down the full-rebuild arm"
         );
 
         let mut dragged = Offsets::new();
         dragged.insert(first_portal_endpoint(&doc), (23.0, 11.0));
-        let (drag_structure, drag_content) = portal_signatures(&doc, &dragged);
+        let dragged_signatures = portal_signatures(&doc, &dragged);
         assert_eq!(
-            drag_structure, structure,
+            dragged_signatures.structure, signatures.structure,
             "a drag offset must leave the structural signature alone, or this step is \
              exercising the rebuild arm rather than the in-place one"
         );
         assert_ne!(
-            drag_content, content,
+            dragged_signatures.content, signatures.content,
             "a drag offset must move the content signature"
         );
 
         project_portal(&doc, &mut app_scene, &dragged);
         assert_eq!(
             app_scene.canvas_signature(CanvasRole::Portals),
-            Some(structure),
+            Some(signatures.structure),
             "the in-place arm must leave the recorded structural signature as it found it"
         );
     }
@@ -2616,12 +2645,21 @@ mod content_signature_dispatch {
     /// would overwrite it. It survives, so the mutator was never
     /// built.
     ///
-    /// Failing input: delete the
-    /// `if !app_scene.canvas_content_unchanged(...)` guard in
-    /// `update_border_tree` — the sentinel is overwritten and this
-    /// assertion fires. Deleting `set_canvas_content_signature`
-    /// instead fires it too, since nothing is then recorded to
-    /// match against.
+    /// **Failing inputs.** Anything that stops the `Skip` arm
+    /// firing: make `AppScene::canvas_dispatch_with_content` never
+    /// return [`CanvasContentDispatch::Skip`](crate::application::scene_host::CanvasContentDispatch::Skip);
+    /// have it ask its first question on `signatures.content`
+    /// instead of `signatures.structure`, so the two comparisons
+    /// collapse into one; or delete the
+    /// `set_canvas_content_signature` call below the match, since
+    /// nothing is then recorded to match against. Each overwrites
+    /// the sentinel and fires this assertion.
+    ///
+    /// This test is the half of the pair that watches the
+    /// *dispatch*; its sibling
+    /// [`test_border_dispatch_records_the_structural_signature_not_the_content_one`]
+    /// watches what gets *recorded*, and the middle plant above is
+    /// invisible to that one.
     #[test]
     fn test_border_dispatch_writes_nothing_when_no_input_moved() {
         baumhard::font::fonts::init();
@@ -2684,7 +2722,10 @@ mod content_signature_dispatch {
     /// levels down — pair void, endpoint void, icon slot — matching
     /// the portal tree's shape.
     ///
-    /// Failing input: the same guard, in `update_portal_tree`.
+    /// Failing input: the same three, reaching the portal role —
+    /// they all live in `canvas_dispatch_with_content`, which both
+    /// roles share, except the `set_canvas_content_signature` call,
+    /// which is per role.
     #[test]
     fn test_portal_dispatch_writes_nothing_when_no_input_moved() {
         baumhard::font::fonts::init();
