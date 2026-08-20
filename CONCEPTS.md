@@ -492,7 +492,8 @@ decides whether to recurse.
 `lib/baumhard/src/gfx_structs/predicate.rs`.
 Pure data (serializable); typical predicates carry one or two
 fields, so evaluation is effectively `O(1)`. Float comparisons
-use `almost_equal` with a `1e-5` epsilon
+use `almost_equal`, whose tolerance is
+`ERROR_TOLERANCE_ALMOST_EQUAL`
 ([`util/geometry.rs`](#utilities--grapheme_chad-color-geometry)). The
 `Comparator` uses a *negation flag* pattern: `Equals(false)` is
 `==`, `Equals(true)` is `!=`, halving the variant count.
@@ -784,8 +785,8 @@ says "pan by 10 pixels" and an animation says "fit-to-bounds with
 
 `lib/baumhard/src/gfx_structs/camera.rs`.
 Position in canvas space (the point at the viewport center),
-`zoom: f32` clamped between `MIN_ZOOM = 0.05` and `MAX_ZOOM =
-5.0`. `CameraMutation` variants: `Pan { screen_delta }`,
+`zoom: f32` clamped to `Camera2D::MIN_ZOOM ..= MAX_ZOOM`, both
+associated constants on the camera. `CameraMutation` variants: `Pan { screen_delta }`,
 `ZoomAt { screen_focus, factor }`, `ZoomCenter { factor }`,
 `SetPosition { canvas_pos }`, `SetZoom { factor }`,
 `FitToBounds { min, max, padding_fraction }`. Projection
@@ -891,8 +892,8 @@ shared private resolver, both live in `attrs.rs`:
 
 Unknown fonts log a `warn!` and drop to a monospace / no-pin
 fallback rather than aborting — interactive paths must not panic
-([`CODE_CONVENTIONS.md §9`](./CODE_CONVENTIONS.md)). The 5-second timeout on the write lock is a re-entrancy
-bug detector: the single-threaded app should never wait on this
+([`CODE_CONVENTIONS.md §9`](./CODE_CONVENTIONS.md)). `FONT_SYSTEM_LOCK_TIMEOUT`, the bound on the write lock's
+blocking acquire, is a re-entrancy bug detector: the single-threaded app should never wait on this
 lock, so a timeout means the same thread is trying to acquire
 twice.
 
@@ -978,8 +979,10 @@ own take:
   color types, `Palette = Vec<FloatRgba>`, plus compile-time
   macros `rgb!`, `rgba!`, and (non-const) `hex!`. Channel-index
   constants for consistency.
-- **`geometry`** — `almost_equal` (`|a - b| ≤ 1e-5`, the
-  baumhard-wide epsilon), `clockwise_rotation_around_pivot`,
+- **`geometry`** — `almost_equal`
+  (`|a - b| <= ERROR_TOLERANCE_ALMOST_EQUAL`, the baumhard-wide
+  epsilon; `almost_equal_f64` is deliberately tighter),
+  `clockwise_rotation_around_pivot`,
   y-dominant `pixel_greater_than` and siblings (cursor-reading
   order), `vec2_area`. `Comparator` float equality uses
   `almost_equal`.
@@ -2060,8 +2063,8 @@ sync back, push undo. The sync-back
 position, section offset / size / text / color+font runs, and
 **font size** (the tree-side `scale` is distributed back across a
 section's run `size_pt` values as a delta, preserving relative
-run sizing); line-height is derived (`scale * 1.2`) so it needs no
-separate home. Fields with no reverse converter (outline, shape,
+run sizing); line-height is derived (`scale * LINE_HEIGHT_FACTOR`)
+so it needs no separate home. Fields with no reverse converter (outline, shape,
 zoom-visibility, line-height) are `warn!`-flagged at apply time
 rather than silently applied-then-reverted. The undo entry and the
 `dirty` flag are gated on the sync-back reporting an actual model
@@ -2976,11 +2979,20 @@ margin, it lowers `n` toward 1.
 
 `struct MutationFrequencyThrottle` in
 `src/application/frame_throttle.rs`.
-Default budget `14_000` µs (60 Hz minus safety), default
-window 8 frames, default hysteresis 30%. `n` clamps in
-`[1, 8]`. Each `ThrottledDrag` owns its own throttle, so
-per-gesture profiles tune independently — a 500-node move
-budget does not bias an edge-label drag's average.
+Three named constants carry the tuning:
+`DEFAULT_BUDGET` is the per-frame work budget (under a 60 Hz frame
+interval, which `test_default_budget_is_under_a_60hz_frame` pins),
+`WINDOW_SIZE` is the moving average's length, and `n` climbs to
+`MAX_N` and decays to 1.
+
+The relax threshold is the exception and worth knowing about: the
+hysteresis band is a bare literal in `record_work_duration` with no
+constant behind it, restated as a percentage in two of that file's
+own doc comments. Read it out of the arithmetic rather than out of
+prose — this entry included. Each `ThrottledDrag` owns its own
+throttle, so per-gesture profiles tune independently: a heavy
+multi-node move's budget does not bias an edge-label drag's
+average.
 
 ### `UndoAction`
 
