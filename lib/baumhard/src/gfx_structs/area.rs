@@ -217,6 +217,67 @@ impl Hash for GlyphArea {
 }
 
 impl GlyphArea {
+    /// Hash everything a renderer would draw this area from —
+    /// including the region colors and font pins that [`Hash`]
+    /// above cannot reach.
+    ///
+    /// `Hash` has to agree with this type's `PartialEq`, and that
+    /// equality runs through [`ColorFontRegions`], whose element
+    /// identity is the [`Range`] alone. So a recolored span leaves
+    /// both `==` and `hash` unmoved — which is exactly what a
+    /// color-picker hover produces. Anything folding "would a rebuild of this area
+    /// draw differently?" into one integer must call this instead;
+    /// the canvas-role dispatchers in `scene_rebuild` do, to decide
+    /// whether the registered tree is already correct.
+    ///
+    /// Floats go in as `to_bits`, so `-0.0` and `0.0` are distinct
+    /// values here while `==` calls them equal. That is the safe
+    /// direction for a reuse decision: it can only cost a redundant
+    /// update, never a skipped one.
+    ///
+    /// **`hitbox` is deliberately excluded**, matching `PartialEq`
+    /// (which marks it `ignore`) and `Hash` (which omits it): click
+    /// extents are scene-builder output rather than drawn state. A
+    /// consumer that skips work on a hash match therefore skips
+    /// re-stamping hit boxes too, so it owes its own proof that its
+    /// builder writes none — see
+    /// `test_border_and_portal_areas_carry_no_hitbox`.
+    ///
+    /// Cost: O(text bytes + region count); no allocation. The body
+    /// destructures `self`, so a field added to this struct will not
+    /// compile until it is accounted for here.
+    pub fn hash_content<H: Hasher>(&self, state: &mut H) {
+        let GlyphArea {
+            text,
+            scale,
+            line_height,
+            position,
+            render_bounds,
+            regions,
+            background_color,
+            background_padding,
+            align_center,
+            outline,
+            shape,
+            zoom_visibility,
+            hitbox: _,
+        } = self;
+        text.hash(state);
+        scale.to_bits().hash(state);
+        line_height.to_bits().hash(state);
+        position.x().to_bits().hash(state);
+        position.y().to_bits().hash(state);
+        render_bounds.x().to_bits().hash(state);
+        render_bounds.y().to_bits().hash(state);
+        regions.hash_content(state);
+        background_color.hash(state);
+        background_padding.hash(state);
+        align_center.hash(state);
+        outline.hash(state);
+        shape.hash(state);
+        zoom_visibility.hash(state);
+    }
+
     /// Construct an empty-text area with the given metrics and
     /// placement. Regions and hitbox start empty; `align_center`,
     /// `background_color`, `background_padding`, and `outline`

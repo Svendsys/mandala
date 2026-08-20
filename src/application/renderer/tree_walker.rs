@@ -33,7 +33,7 @@ pub(super) fn extract_background_rect(
 ) -> Option<NodeBackgroundRect> {
     let color = area.background_color?;
     // Inflate the fill rect outward by `background_padding` —
-    // per-edge values so framed nodes whose four border runs sit at
+    // per-edge values so framed nodes whose eight border runs sit at
     // different visible-stroke offsets get an asymmetric fill that
     // matches each side. The `is_zero` fast-path skips the four-add
     // arithmetic for unframed nodes (the common case);

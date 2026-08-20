@@ -129,6 +129,36 @@ impl ColorFontRegion {
         let ColorFontRegion { range, font, color } = self;
         *range == other.range && *font == other.font && *color == other.color
     }
+
+    /// Hash every field, including the font and color pins that
+    /// [`Hash`] deliberately ignores.
+    ///
+    /// The hashing counterpart of [`Self::same_content`], and it
+    /// exists for the same reason the comparison does: the derived
+    /// `Hash` on this type hashes the [`Range`] alone, because it
+    /// has to agree with a `PartialEq` that is set identity. A
+    /// consumer summarising "would this render differently?" into
+    /// one integer therefore cannot use `Hash` — a recolored span
+    /// hashes to the value it replaced.
+    ///
+    /// Colors go in through `f32::to_bits`, which makes this a
+    /// strictly *finer* equivalence than [`Self::same_content`]'s
+    /// `==` rather than the same one: `==` calls `0.0` and `-0.0`
+    /// equal and calls a `NaN` unequal to itself, and bits do
+    /// neither. Finer is the safe direction for a reuse decision —
+    /// it can cost a redundant update, never a skipped one — and
+    /// neither value reaches a region from any resolver here, since
+    /// colors arrive from hex parsing and palette lookup.
+    ///
+    /// Cost: three field hashes, no allocation. The body
+    /// destructures `self`, so a field added to this struct will not
+    /// compile until it is accounted for here.
+    pub fn hash_content<H: Hasher>(&self, state: &mut H) {
+        let ColorFontRegion { range, font, color } = self;
+        range.hash(state);
+        font.hash(state);
+        color.map(|c| c.map(f32::to_bits)).hash(state);
+    }
 }
 
 /// Ordered set of [`ColorFontRegion`]s keyed on `Range`. Acts as the
@@ -195,6 +225,36 @@ impl ColorFontRegions {
                 .iter()
                 .zip(other.regions.iter())
                 .all(|(a, b)| a.same_content(b))
+    }
+
+    /// Hash the whole styling table — every range, font pin and
+    /// color — into `state`.
+    ///
+    /// The set-level counterpart to
+    /// [`ColorFontRegion::hash_content`], and the hashing
+    /// counterpart of [`Self::same_content`]. The derived `Hash` on
+    /// this type reduces to hashing the `BTreeSet`, whose element
+    /// hash is range identity, so two tables that paint the same
+    /// spans in different colors hash the same. A consumer folding
+    /// "would this render differently?" into a signature has to
+    /// call this one instead.
+    ///
+    /// The length is hashed first so `[a]` and `[a, b]` cannot
+    /// collide through prefix ambiguity.
+    ///
+    /// Cost: O(n_regions) — one pass over a `BTreeSet`, which
+    /// iterates in `Range` order, so tables that `same_content`
+    /// each other are walked in the same order. No allocation. The
+    /// body destructures `self`, so a field added to this struct
+    /// will not compile until it is accounted for here — the same
+    /// guarantee every other link in this hashing chain gives, and
+    /// the property the callers' completeness argument rests on.
+    pub fn hash_content<H: Hasher>(&self, state: &mut H) {
+        let ColorFontRegions { regions } = self;
+        regions.len().hash(state);
+        for region in regions {
+            region.hash_content(state);
+        }
     }
 
     /// Build a `ColorFontRegions` containing a single region that

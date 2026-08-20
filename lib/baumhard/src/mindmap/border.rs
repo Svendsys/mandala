@@ -43,7 +43,7 @@ pub const BORDER_APPROX_CHAR_WIDTH_FRAC: f32 = 0.6;
 /// Defines which glyphs to use for rendering a node's border.
 /// Each field is a single character (glyph) from the selected font.
 /// The border is rendered as positioned text elements around the node content.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub struct BorderGlyphSet {
     /// Horizontal fill glyph used along the top edge between corners.
     pub top: char,
@@ -388,6 +388,49 @@ impl BorderStyle {
         build_vertical_text(&self.side_patterns.right, rows)
     }
 
+    /// Hash every resolved axis of this style into `state`.
+    ///
+    /// The one place a border's style is folded into a canvas-role
+    /// signature. Both consumers — `border_content_signature` and
+    /// `section_frame_content_signature` in
+    /// [`crate::mindmap::tree_builder`] — reach for this rather
+    /// than listing fields themselves, so a tenth axis on this
+    /// struct cannot reach [`border_run_specs`] while one of the
+    /// two signatures stays blind to it.
+    ///
+    /// Deliberately over-inclusive: `glyph_set` and `visible` reach
+    /// no glyph run that either signature guards, but hashing a
+    /// field the projection ignores can only cost a redundant
+    /// rebuild, while omitting one the projection reads serves a
+    /// stale frame. `font_size_pt` goes in as `to_bits`.
+    ///
+    /// Cost: O(total corner + pattern bytes); no allocation. The
+    /// body destructures `self`, so a field added to this struct
+    /// will not compile until it is accounted for here.
+    pub fn hash_content<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        let BorderStyle {
+            glyph_set,
+            corners,
+            side_patterns,
+            color_palette,
+            palette_field,
+            font_name,
+            font_size_pt,
+            color,
+            visible,
+        } = self;
+        glyph_set.hash(state);
+        corners.hash(state);
+        side_patterns.hash(state);
+        color_palette.hash(state);
+        palette_field.hash(state);
+        font_name.hash(state);
+        font_size_pt.to_bits().hash(state);
+        color.hash(state);
+        visible.hash(state);
+    }
+
     /// Cluster count of each corner — handed to the fitter and
     /// the auto-resize pass so they speak in the same units.
     pub fn corner_clusters(&self) -> CornerClusterCounts {
@@ -456,7 +499,8 @@ pub struct BorderRunSpec {
     pub cluster_count: usize,
 }
 
-/// Compute the four-side run geometry for one node's border.
+/// Compute the run geometry for one node's border — eight specs:
+/// four fill rails and four corners.
 /// Single source of truth for the per-side `(text, position,
 /// bounds, palette_offset)` arithmetic that the in-place mutator
 /// path, the initial-build tree path, and the section-frame tree
@@ -468,13 +512,29 @@ pub struct BorderRunSpec {
 /// [`border_run_specs_with`] instead, or the nested same-thread
 /// acquire deadlocks (issue P0-06).
 ///
-/// Channels:
-/// - `1` = top, `2` = bottom, `3` = left, `4` = right.
+/// Channels — the contract the in-place mutator path keys its
+/// leaves on, and the one [`BorderRunSpec::channel`] states
+/// field-side:
+/// - `1` = top fill, `2` = bottom fill, `3` = left fill,
+///   `4` = right fill,
+/// - `5` = top-left corner, `6` = top-right, `7` = bottom-left,
+///   `8` = bottom-right.
 ///
-/// Palette offsets (for a continuous top→right→bottom→left
-/// sweep) are `[0, top_clusters + right_clusters,
-/// top_clusters + right_clusters + bottom_clusters,
-/// top_clusters]`. Vertical text strings include `'\n'`
+/// The count is fixed at eight for every input: each spec is
+/// pushed unconditionally, an empty side yielding an empty run
+/// rather than no run. Callers rely on that — `tree_builder`'s
+/// structural signature covers the framed-node sequence and *not*
+/// a per-node run count, on the grounds that there is no input
+/// that can vary one.
+///
+/// Palette offsets place each run in one clockwise sweep starting
+/// at the top-left corner — TL, top fill, TR, right fill, BR,
+/// bottom fill, BL, left fill — each entry advancing by the
+/// cluster count of the run before it. The arithmetic is in the
+/// body rather than restated here, because a formula copied into
+/// prose is one that goes stale silently: the four-term version
+/// this paragraph used to carry predated the corners and was
+/// wrong by four terms. Vertical text strings include `'\n'`
 /// separators which the grapheme counter folds into one cluster
 /// per visible glyph, so the indices line up with the per-cluster
 /// regions [`build_border_regions`] emits.
