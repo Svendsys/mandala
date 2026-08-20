@@ -90,6 +90,28 @@ pub enum CanvasDispatch {
     FullRebuild,
 }
 
+/// Three arms of the §B2 canvas-tree dispatch for a role that
+/// records a content signature beside its structural one.
+///
+/// A superset of [`CanvasDispatch`], and a separate type rather
+/// than a third variant on it: the roles that record only a
+/// structural signature cannot produce [`Self::Skip`], and giving
+/// them an arm they can never reach would be an unreachable branch
+/// in three dispatchers. Returned by
+/// [`AppScene::canvas_dispatch_with_content`], which is the single
+/// place the two questions are asked in order.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CanvasContentDispatch {
+    /// Both signatures matched — the registered tree already holds
+    /// what a rebuild would produce, so the role does nothing.
+    Skip,
+    /// Structure matched, content did not — apply the mutator.
+    InPlaceMutator,
+    /// Structure mismatch (or nothing registered) — rebuild +
+    /// re-register.
+    FullRebuild,
+}
+
 /// Two arms of the §B2 overlay-tree dispatch — mirrors
 /// [`CanvasDispatch`] for the screen-space sub-scene. Returned by
 /// [`AppScene::overlay_dispatch`] so the console / color-picker
@@ -365,11 +387,13 @@ impl AppScene {
     ///
     /// `false` when no content signature has been recorded — the
     /// same "assume stale" posture [`Self::canvas_dispatch`] takes
-    /// for an unregistered tree. Callers pair this with
-    /// [`Self::canvas_dispatch`]: the dispatch decides whether a
-    /// mutator can align at all, this decides whether it has
-    /// anything to say.
-    pub fn canvas_content_unchanged(&self, role: CanvasRole, signature: u64) -> bool {
+    /// for an unregistered tree.
+    ///
+    /// Private on purpose: the only caller is
+    /// [`Self::canvas_dispatch_with_content`], so the two questions
+    /// are asked in one place and in one order rather than paired
+    /// by hand at each role.
+    fn canvas_content_unchanged(&self, role: CanvasRole, signature: u64) -> bool {
         self.canvas_content_signatures.get(&role) == Some(&signature)
     }
 
@@ -388,6 +412,50 @@ impl AppScene {
             CanvasDispatch::InPlaceMutator
         } else {
             CanvasDispatch::FullRebuild
+        }
+    }
+
+    /// Decide which of the three §B2 arms to take for a canvas role
+    /// that records both signatures.
+    ///
+    /// The two questions are different and are asked in this order,
+    /// which is the whole reason this is one function rather than
+    /// two calls at each site:
+    ///
+    /// 1. **`structure`** — can a mutator align against the
+    ///    registered arena at all? Only what fixes the tree's
+    ///    channel layout belongs here. A signature that also moved
+    ///    on every color change would send a color-picker hover
+    ///    down [`CanvasContentDispatch::FullRebuild`] and
+    ///    reallocate the arena the in-place path exists to reuse.
+    /// 2. **`content`** — given that it aligns, has anything it
+    ///    would write actually moved? If not, the role does
+    ///    nothing.
+    ///
+    /// Passing these two the other way round still *renders*
+    /// correctly and does the work the in-place arm exists to
+    /// avoid, which is why nothing but a test catches it:
+    /// `test_border_dispatch_records_the_structural_signature_not_the_content_one`
+    /// and its portal twin pin the order by reading back what the
+    /// rebuild path recorded.
+    ///
+    /// The caller then runs the matching build path and, on
+    /// `FullRebuild`, calls `register_canvas` +
+    /// [`Self::set_canvas_signature`]. [`Self::set_canvas_content_signature`]
+    /// is called on every arm — see its doc for why that belongs
+    /// outside the match.
+    pub fn canvas_dispatch_with_content(
+        &self,
+        role: CanvasRole,
+        structure: u64,
+        content: u64,
+    ) -> CanvasContentDispatch {
+        match self.canvas_dispatch(role, structure) {
+            CanvasDispatch::FullRebuild => CanvasContentDispatch::FullRebuild,
+            CanvasDispatch::InPlaceMutator if self.canvas_content_unchanged(role, content) => {
+                CanvasContentDispatch::Skip
+            }
+            CanvasDispatch::InPlaceMutator => CanvasContentDispatch::InPlaceMutator,
         }
     }
 

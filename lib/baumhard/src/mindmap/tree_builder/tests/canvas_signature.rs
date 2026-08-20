@@ -29,14 +29,15 @@ use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::tree::{BranchChannel, Tree};
 use crate::mindmap::model::{
-    ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindMap, Palette, PortalEndpointState,
+    ColorGroup, ColorOverrides, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindMap, Palette,
+    PortalEndpointState,
 };
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::tree_builder::{
     border_content_signature, border_node_data, border_structure_signature, build_border_tree_from_nodes,
     build_portal_tree_from_pairs, portal_content_signature, portal_pair_data, portal_structure_signature,
-    BorderChromeOverrides, BorderNodeData, PortalColorPreview, PortalPairData, PortalTextEditOverride,
-    SelectedPortalLabel,
+    BorderChromeOverrides, BorderConfigEditsView, BorderNodeData, BorderPreview, BorderPreviewTargetRef,
+    EditView, PortalColorPreview, PortalPairData, PortalTextEditOverride, SelectedPortalLabel,
 };
 
 use super::fixtures::{sized_node, synthetic_map, synthetic_node, synthetic_portal_edge};
@@ -142,7 +143,16 @@ fn base_border_map() -> MindMap {
         color_palette_field: Some("frame".into()),
     });
 
-    let mut map = synthetic_map(vec![a, b, c, d], vec![]);
+    let mut f = sized_node("f", 1000.0, 20.0, 100.0, 50.0, true);
+    f.color_schema = Some(ColorSchema {
+        palette: "warm".into(),
+        level: 0,
+        starts_at_root: true,
+        connections_colored: false,
+        overrides: ColorOverrides::default(),
+    });
+
+    let mut map = synthetic_map(vec![a, b, c, d, f], vec![]);
     map.canvas
         .theme_variables
         .insert("--frame".into(), "#1188ff".into());
@@ -203,14 +213,41 @@ fn node_border_cfg<'a>(map: &'a mut MindMap, id: &str) -> &'a mut GlyphBorderCon
     map.nodes.get_mut(id).unwrap().style.border.as_mut().unwrap()
 }
 
+/// Borrow node `f`'s `color_schema` — the palette-theme tier of
+/// the frame-color cascade.
+fn theme_schema(map: &mut MindMap) -> &mut ColorSchema {
+    map.nodes.get_mut("f").unwrap().color_schema.as_mut().unwrap()
+}
+
 /// One corpus row per input the border data pass reads, each
 /// carrying the node data that input's edit produces.
 ///
 /// The list is the enumeration the signature's completeness is
-/// argued from, so it is written out rather than generated: every
-/// value `border_node_data` consults appears here, and each row is
-/// checked against the tree before it is checked against the
-/// signature.
+/// argued from, so it is written out rather than generated, and
+/// each row is checked against the tree before it is checked
+/// against the signature.
+///
+/// **What "every input" means here, spelled out so the claim can
+/// be checked rather than believed.** `border_node_data`'s
+/// parameters are `(map, offsets, overrides, hidden_set)`, and the
+/// rows cover: from `map` — `canvas.theme_variables`,
+/// `canvas.default_border`, `palettes`, `node_frame_theme_tier`
+/// (both its rungs), and per node `style.show_frame`,
+/// `style.shape`, `style.frame_color`, `style.border`,
+/// `position`, `size`, `zoom_window`, plus membership of
+/// `map.nodes` itself; from `offsets` — a drag delta; from
+/// `overrides` — `node_edit_for` and all three shapes of
+/// `preview`; and `hidden_set` through a fold.
+///
+/// Two deliberate non-rows. `BorderPreview.edits` has seventeen
+/// fields, and every one of them is folded by `apply_view_to_slot`
+/// into the same `GlyphBorderConfig` whose axes the direct-config
+/// rows above already vary — two are exercised here to prove the
+/// preview *path* reaches the tree, not to re-cover the config.
+/// And the `Sections` / `CanvasSectionFrame*` preview targets
+/// belong to `build_section_frames`; `BorderChromeOverrides`
+/// documents that this pass ignores them, so a row would assert
+/// that nothing happens.
 fn border_rows() -> Vec<(&'static str, Vec<BorderNodeData>)> {
     let mut rows: Vec<(&'static str, Vec<BorderNodeData>)> = Vec::new();
     let none = HashMap::new();
@@ -280,6 +317,108 @@ fn border_rows() -> Vec<(&'static str, Vec<BorderNodeData>)> {
     rows.push((
         "NodeEdit dimming",
         border_nodes(&base_border_map(), &none, Some("a")),
+    ));
+
+    // The canvas-wide rung of the border cascade: nodes `b` and
+    // `c` carry no per-node config, so this is the layer their
+    // style resolves from.
+    let mut m = base_border_map();
+    m.canvas.default_border = Some(GlyphBorderConfig {
+        preset: "heavy".into(),
+        font: None,
+        font_size_pt: 15.0,
+        color: Some("#33ddaa".into()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    rows.push(("canvas default border", border_nodes(&m, &none, None)));
+
+    // The palette-theme rung, reached only through a node's
+    // `color_schema`. Two rows because it has two tiers of its own:
+    // the per-node channel override, and the palette group the
+    // schema's level selects.
+    let mut m = base_border_map();
+    theme_schema(&mut m).overrides.frame = Some("#7700bb".into());
+    rows.push(("node theme frame override", border_nodes(&m, &none, None)));
+
+    let mut m = base_border_map();
+    theme_schema(&mut m).level = 1;
+    rows.push(("node theme palette level", border_nodes(&m, &none, None)));
+
+    // `BorderChromeOverrides.preview` — the staged `border preview
+    // …` edit, and the border half of the very interaction this
+    // whole design is justified by. Three rows: a per-node target,
+    // the canvas-default target, and `force_show_frame`, which
+    // renders a preview against a node whose committed
+    // `show_frame` is off and so changes the framed-node set.
+    let preview_ids = ["a".to_string()];
+    let m = base_border_map();
+    rows.push((
+        "border preview on a node",
+        border_node_data(
+            &m,
+            &none,
+            BorderChromeOverrides {
+                preview: Some(BorderPreview {
+                    target: BorderPreviewTargetRef::Nodes(&preview_ids),
+                    edits: BorderConfigEditsView {
+                        color: EditView::Set("#eebb00"),
+                        ..BorderConfigEditsView::default()
+                    },
+                    force_show_frame: false,
+                }),
+                node_edit_for: None,
+            },
+            &m.fold_hidden_set(),
+        ),
+    ));
+
+    let m = base_border_map();
+    rows.push((
+        "border preview on the canvas default",
+        border_node_data(
+            &m,
+            &none,
+            BorderChromeOverrides {
+                preview: Some(BorderPreview {
+                    target: BorderPreviewTargetRef::CanvasDefault,
+                    edits: BorderConfigEditsView {
+                        preset: EditView::Set("heavy"),
+                        ..BorderConfigEditsView::default()
+                    },
+                    force_show_frame: false,
+                }),
+                node_edit_for: None,
+            },
+            &m.fold_hidden_set(),
+        ),
+    ));
+
+    let frameless_ids = ["g".to_string()];
+    let mut m = base_border_map();
+    let mut g = sized_node("g", 1300.0, 20.0, 90.0, 45.0, false);
+    g.style.frame_color = "#445566".into();
+    m.nodes.insert("g".into(), g);
+    rows.push((
+        "border preview force_show_frame",
+        border_node_data(
+            &m,
+            &none,
+            BorderChromeOverrides {
+                preview: Some(BorderPreview {
+                    target: BorderPreviewTargetRef::Nodes(&frameless_ids),
+                    edits: BorderConfigEditsView {
+                        color: EditView::Set("#eebb00"),
+                        ..BorderConfigEditsView::default()
+                    },
+                    force_show_frame: true,
+                }),
+                node_edit_for: None,
+            },
+            &m.fold_hidden_set(),
+        ),
     ));
 
     let mut m = base_border_map();
@@ -466,8 +605,21 @@ fn test_border_structure_signature_tracks_shape_and_ignores_content() {
         "palette group color",
         "node zoom window",
         "NodeEdit dimming",
+        "canvas default border",
+        "node theme frame override",
+        "node theme palette level",
+        "border preview on a node",
+        "border preview on the canvas default",
     ];
-    let shape_changing = ["show_frame toggle", "folded ancestor", "non-rectangular shape"];
+    // `force_show_frame` is the one preview axis that is structural:
+    // it frames a node whose committed `show_frame` is off, which is
+    // a node the mutator has no channel for.
+    let shape_changing = [
+        "show_frame toggle",
+        "folded ancestor",
+        "non-rectangular shape",
+        "border preview force_show_frame",
+    ];
 
     let rows = border_rows();
     assert_eq!(
@@ -505,12 +657,20 @@ fn test_border_structure_signature_tracks_shape_and_ignores_content() {
 
 /// The portal corpus's starting state.
 ///
-/// Two portal-mode edges: `a ↔ b` carries fully-authored endpoint
-/// state on both ends (color, text, text color, text size,
-/// perimeter position, perpendicular slide), so every per-endpoint
-/// axis has a value to move; `b ↔ q` hangs off a child of `p`, so
-/// folding `p` drops a pair and moves the *structure*. The edge
-/// color is a theme variable so the variable itself is an axis.
+/// Three portal-mode edges, because the edge color cascade
+/// shadows: a rung is only reachable on an edge whose higher rungs
+/// are unset.
+///
+/// `a ↔ b` carries fully-authored endpoint state on both ends
+/// (color, text, text color, text size, perimeter position,
+/// perpendicular slide) and a `glyph_connection.color` naming a
+/// theme variable, so every per-endpoint axis and the variable
+/// itself have values to move. `b ↔ q` hangs off a child of `p`,
+/// so folding `p` drops a pair and moves the *structure*; it
+/// carries no `glyph_connection.color`, which is what leaves node
+/// `b`'s `connections_colored` theme tier reachable on it.
+/// `r ↔ t` carries no `glyph_connection` at all, which is the only
+/// way down to `canvas.default_connection`.
 fn base_portal_map() -> MindMap {
     let a = sized_node("a", 0.0, 0.0, 80.0, 40.0, false);
     let b = sized_node("b", 400.0, 0.0, 80.0, 40.0, false);
@@ -535,9 +695,31 @@ fn base_portal_map() -> MindMap {
         ..PortalEndpointState::default()
     });
 
+    // No `glyph_connection.color`, so the themed rung below it is
+    // reachable — `b` is this edge's source node.
     let second = synthetic_portal_edge("b", "q", "#ffffff");
 
-    let mut map = synthetic_map(vec![a, b, p, q], vec![edge, second]);
+    // No `glyph_connection` at all, so `resolved_for` falls through
+    // to `canvas.default_connection`.
+    let mut third = synthetic_portal_edge("r", "t", "#ffffff");
+    third.glyph_connection = None;
+
+    let mut b_node = b;
+    b_node.color_schema = Some(ColorSchema {
+        palette: "warm".into(),
+        level: 0,
+        starts_at_root: true,
+        connections_colored: true,
+        overrides: ColorOverrides {
+            frame: Some("#22ccaa".into()),
+            ..ColorOverrides::default()
+        },
+    });
+
+    let r = sized_node("r", 0.0, 600.0, 80.0, 40.0, false);
+    let t = sized_node("t", 400.0, 600.0, 80.0, 40.0, false);
+
+    let mut map = synthetic_map(vec![a, b_node, p, q, r, t], vec![edge, second, third]);
     map.canvas
         .theme_variables
         .insert("--portal".into(), "#8800ff".into());
@@ -569,6 +751,29 @@ fn from_state(map: &mut MindMap) -> &mut PortalEndpointState {
 /// carrying the pair data that input's edit produces. Same
 /// contract as [`border_rows`]: each row is checked against the
 /// tree before it is checked against the signature.
+///
+/// **What "every input" means here.** `portal_pair_data`'s
+/// parameters are `(map, offsets, selected_edge,
+/// selected_portal_label, color_preview, portal_text_edit,
+/// camera_zoom, hidden_set)`, and each of the six non-map ones has
+/// a row of its own. From `map` the rows cover:
+/// `canvas.theme_variables`, `canvas.default_connection`,
+/// `edge_theme_stroke_color`, per edge `display_mode`, `visible`,
+/// `glyph_connection` (body / size / color), the edge zoom window,
+/// and per endpoint `color`, `text`, `text_color`,
+/// `text_font_size_pt`, the text font clamps, `border_t`,
+/// `perpendicular_offset` and the endpoint zoom window; plus the
+/// owner and partner nodes' `position` and `size`, and membership
+/// through a fold.
+///
+/// One deliberate non-row: `ResolvedPortalStyle.font`. The
+/// resolver produces it, but neither `layout_portal_label` nor the
+/// `GlyphArea` the projection builds carries a font pin, so no
+/// edit to it can reach the tree — the same shape as the border
+/// side's `font_name`, and pinned there by
+/// `test_border_content_signature_covers_font_name_the_tree_cannot_show`.
+/// The three cascade rungs above it are rows, so the resolver
+/// itself is exercised.
 fn portal_rows() -> Vec<(&'static str, Vec<PortalPairData>)> {
     let mut rows: Vec<(&'static str, Vec<PortalPairData>)> = Vec::new();
     let key = EdgeKey::new("a", "b", "cross_link");
@@ -731,9 +936,52 @@ fn portal_rows() -> Vec<(&'static str, Vec<PortalPairData>)> {
         ),
     ));
 
+    // The themed rung of the edge color cascade, reachable on the
+    // second edge because it names no `glyph_connection.color`.
+    // Its source node `b` is the one carrying `connections_colored`.
+    let mut m = base_portal_map();
+    m.nodes
+        .get_mut("b")
+        .unwrap()
+        .color_schema
+        .as_mut()
+        .unwrap()
+        .overrides
+        .frame = Some("#ff44aa".into());
+    rows.push(("edge theme stroke color", portal_pairs(&m)));
+
+    // The canvas-wide rung, reachable on the third edge because it
+    // carries no `glyph_connection` at all.
+    let mut m = base_portal_map();
+    m.canvas.default_connection = Some(crate::mindmap::model::GlyphConnectionConfig {
+        body: "\u{25A0}".into(),
+        font_size_pt: 21.0,
+        ..crate::mindmap::model::GlyphConnectionConfig::default()
+    });
+    rows.push(("canvas default connection", portal_pairs(&m)));
+
+    // The edge-level zoom window, which an endpoint's own window
+    // *replaces* rather than intersects — so it is only observable
+    // on an edge whose endpoints carry none. That is the second
+    // edge.
+    let mut m = base_portal_map();
+    m.edges[1].min_zoom_to_render = Some(0.4);
+    m.edges[1].max_zoom_to_render = Some(4.0);
+    rows.push(("edge zoom window", portal_pairs(&m)));
+
+    // The per-endpoint text font clamps, which bite only when they
+    // cross the authored size — 11 pt here, lifted to 20.
+    let mut m = base_portal_map();
+    from_state(&mut m).text_min_font_size_pt = Some(20.0);
+    rows.push(("endpoint text font clamp", portal_pairs(&m)));
+
     let mut m = base_portal_map();
     m.edges[1].visible = false;
     rows.push(("edge visibility", portal_pairs(&m)));
+
+    let mut m = base_portal_map();
+    m.edges[1].display_mode = None;
+    rows.push(("edge display mode", portal_pairs(&m)));
 
     let mut m = base_portal_map();
     m.nodes.get_mut("p").unwrap().folded = true;
@@ -796,7 +1044,7 @@ fn test_portal_structure_signature_tracks_shape_and_ignores_content() {
     let base = portal_pairs(&base_portal_map());
     let base_sig = portal_structure_signature(&base);
 
-    let shape_changing = ["edge visibility", "folded endpoint"];
+    let shape_changing = ["edge visibility", "edge display mode", "folded endpoint"];
     let rows = portal_rows();
     let content_only_count = rows.len() - shape_changing.len();
     let mut seen_content_only = 0;

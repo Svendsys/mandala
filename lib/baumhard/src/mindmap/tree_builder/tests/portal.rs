@@ -238,7 +238,7 @@ fn portal_mutator_round_trip_matches_full_rebuild() {
 /// purpose: a `u64` that moved says nothing about *which* pair
 /// left.
 #[test]
-fn portal_structure_signature_drops_folded_pairs() {
+fn test_portal_structure_signature_drops_folded_pairs() {
     let mut map = synthetic_map(
         vec![
             synthetic_node("a", None, 0.0, 0.0),

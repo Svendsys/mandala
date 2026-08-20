@@ -302,10 +302,13 @@ pub fn border_node_data(
 /// plus exactly the runs
 /// [`border_run_specs`](crate::mindmap::border::border_run_specs)
 /// emits, and that function pushes a fixed eight at channels
-/// 1..=8 on every input — asserted by
-/// `border_tree_has_one_void_parent_per_framed_node`. Should a
-/// future run count vary per node, it becomes part of the tree's
-/// *shape* and belongs in this hash.
+/// 1..=8 on every input. Both halves of that are asserted, by two
+/// tests rather than one:
+/// `border_tree_has_one_void_parent_per_framed_node` pins the
+/// count, and `border_tree_run_channels_are_stable_1_to_8` pins
+/// the channels the mutator aligns on. Should a future run count
+/// vary per node, it becomes part of the tree's *shape* and
+/// belongs in this hash.
 ///
 /// # Costs
 ///
@@ -524,7 +527,7 @@ pub fn build_border_mutator_tree_from_nodes(
     mt
 }
 
-/// Build one per-node sub-tree (Void parent + 4 GlyphArea runs) and
+/// Build one per-node sub-tree (Void parent + 8 GlyphArea runs) and
 /// append it under `tree.root`. Kept as a private helper so
 /// `build_border_tree` stays readable. `BorderNodeData.parent_channel`
 /// is the stable 1-based sorted-index channel — see
@@ -549,7 +552,7 @@ fn append_border_sub_tree(
     );
     *unique_id += 1;
 
-    // Stable channels 1..=4 inside each border sub-tree. The
+    // Stable channels 1..=8 inside each border sub-tree. The
     // per-node Void parent already disambiguates across nodes.
     // Palette offsets sweep top → right → bottom → left around
     // the rectangle so a color cycle wraps cleanly. See

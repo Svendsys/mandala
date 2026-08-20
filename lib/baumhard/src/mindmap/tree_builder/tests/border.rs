@@ -193,7 +193,7 @@ fn border_mutator_round_trip_matches_full_rebuild() {
     // the parity loop actually exercises the border mutator
     // delta's `GlyphAreaField::ZoomVisibility` write (§B2):
     // a regression dropping that field from the assign delta
-    // would leave `tree_a`'s four border runs at the unbounded
+    // would leave `tree_a`'s eight border runs at the unbounded
     // default while a fresh build picks up `{0.5, 2.0}`, and
     // the per-field assertion below trips on `zoom_visibility`.
     if let Some(node_a) = map.nodes.get_mut("a") {
@@ -245,8 +245,8 @@ fn border_mutator_round_trip_matches_full_rebuild() {
 }
 
 /// A node's zoom-visibility window is stamped onto every one
-/// of its four border `GlyphArea` runs — top, bottom, left,
-/// right — so the frame renders only when the owning node
+/// of its eight border `GlyphArea` runs — four fill rails and
+/// four corners — so the frame renders only when the owning node
 /// does. Without this assertion, a regression in
 /// `BorderNodeData::zoom_visibility` propagation (either at
 /// the initial-build stamp site in `border_node_data` or at
@@ -305,7 +305,7 @@ fn border_runs_default_to_unbounded_when_node_has_no_window() {
 /// framed-node set is the thing the signature is claiming to
 /// track.
 #[test]
-fn border_structure_signature_changes_on_show_frame_toggle() {
+fn test_border_structure_signature_changes_on_show_frame_toggle() {
     let mut map = synthetic_map(
         vec![
             synthetic_node("a", None, 0.0, 0.0),

@@ -2949,10 +2949,14 @@ abstracts that split; rebuild dispatch
 (`InPlaceMutator` for small mutator-able changes,
 `FullRebuild` for structural changes) flows through the same
 seam for both roles. Canvas roles that also record a *content*
-signature (`set_canvas_content_signature`) get a third outcome
-out of the same seam — do nothing, because the registered tree
-is already what a rebuild would produce; see
-[canvas-role projection](#canvas-role-projection).
+signature ask both questions through one entry point,
+`canvas_dispatch_with_content`, which returns a third outcome —
+do nothing, because the registered tree is already what a
+rebuild would produce. One function rather than two calls per
+role because the *order* is the design: structure first, content
+second, and swapping them still renders correctly while undoing
+the whole point (see
+[canvas-role projection](#canvas-role-projection)).
 
 `src/application/scene_host.rs:1-150`. Each
 role has named slots (`CanvasRole`, `OverlayRole`); each slot

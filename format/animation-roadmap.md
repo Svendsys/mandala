@@ -86,7 +86,7 @@ around a node's border" needs:
    `OnTimer { interval_ms }` or `OnLoad` (start once at map
    load, run forever).
 2. **A per-tick mutation surface for border `GlyphArea` leaves.**
-   Today `tree_builder/border.rs` rebuilds the four border runs
+   Today `tree_builder/border.rs` rebuilds the eight border runs
    from `node.style.border` on every scene rebuild. A per-tick
    animation either (a) dirties the model's `border` field and
    triggers `rebuild_all` every tick — expensive and wasteful —

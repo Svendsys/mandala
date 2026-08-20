@@ -15,10 +15,11 @@ mod tests {
     use crate::mindmap::border::{border_run_specs, resolve_border_style, BorderGlyphSet, BorderStyle};
     use crate::util::grapheme_chad::count_grapheme_clusters;
 
-    /// `border_run_specs` produces four runs in the contractually
-    /// required channel order (top=1, bottom=2, left=3, right=4)
-    /// and assigns palette offsets that sweep continuously
-    /// top→right→bottom→left. The invariant the three border
+    /// `border_run_specs` produces eight runs — four fill rails
+    /// then four corners — in the contractually required channel
+    /// order (top=1, bottom=2, left=3, right=4, then TL=5, TR=6,
+    /// BL=7, BR=8) and assigns palette offsets that sweep
+    /// continuously around the rectangle. The invariant the three border
     /// pipelines (initial-build tree, in-place mutator tree,
     /// section-frame tree) all rely on.
     #[test]

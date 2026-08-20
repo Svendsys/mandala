@@ -244,10 +244,15 @@ impl ColorFontRegions {
     ///
     /// Cost: O(n_regions) — one pass over a `BTreeSet`, which
     /// iterates in `Range` order, so tables that `same_content`
-    /// each other are walked in the same order. No allocation.
+    /// each other are walked in the same order. No allocation. The
+    /// body destructures `self`, so a field added to this struct
+    /// will not compile until it is accounted for here — the same
+    /// guarantee every other link in this hashing chain gives, and
+    /// the property the callers' completeness argument rests on.
     pub fn hash_content<H: Hasher>(&self, state: &mut H) {
-        self.regions.len().hash(state);
-        for region in &self.regions {
+        let ColorFontRegions { regions } = self;
+        regions.len().hash(state);
+        for region in regions {
             region.hash_content(state);
         }
     }

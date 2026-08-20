@@ -499,7 +499,8 @@ pub struct BorderRunSpec {
     pub cluster_count: usize,
 }
 
-/// Compute the four-side run geometry for one node's border.
+/// Compute the run geometry for one node's border — eight specs:
+/// four fill rails and four corners.
 /// Single source of truth for the per-side `(text, position,
 /// bounds, palette_offset)` arithmetic that the in-place mutator
 /// path, the initial-build tree path, and the section-frame tree
@@ -511,13 +512,29 @@ pub struct BorderRunSpec {
 /// [`border_run_specs_with`] instead, or the nested same-thread
 /// acquire deadlocks (issue P0-06).
 ///
-/// Channels:
-/// - `1` = top, `2` = bottom, `3` = left, `4` = right.
+/// Channels — the contract the in-place mutator path keys its
+/// leaves on, and the one [`BorderRunSpec::channel`] states
+/// field-side:
+/// - `1` = top fill, `2` = bottom fill, `3` = left fill,
+///   `4` = right fill,
+/// - `5` = top-left corner, `6` = top-right, `7` = bottom-left,
+///   `8` = bottom-right.
 ///
-/// Palette offsets (for a continuous top→right→bottom→left
-/// sweep) are `[0, top_clusters + right_clusters,
-/// top_clusters + right_clusters + bottom_clusters,
-/// top_clusters]`. Vertical text strings include `'\n'`
+/// The count is fixed at eight for every input: each spec is
+/// pushed unconditionally, an empty side yielding an empty run
+/// rather than no run. Callers rely on that — `tree_builder`'s
+/// structural signature covers the framed-node sequence and *not*
+/// a per-node run count, on the grounds that there is no input
+/// that can vary one.
+///
+/// Palette offsets place each run in one clockwise sweep starting
+/// at the top-left corner — TL, top fill, TR, right fill, BR,
+/// bottom fill, BL, left fill — each entry advancing by the
+/// cluster count of the run before it. The arithmetic is in the
+/// body rather than restated here, because a formula copied into
+/// prose is one that goes stale silently: the four-term version
+/// this paragraph used to carry predated the corners and was
+/// wrong by four terms. Vertical text strings include `'\n'`
 /// separators which the grapheme counter folds into one cluster
 /// per visible glyph, so the indices line up with the per-cluster
 /// regions [`build_border_regions`] emits.

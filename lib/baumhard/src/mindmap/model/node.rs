@@ -280,7 +280,7 @@ impl MindNode {
     ///
     /// Borders inherit this window verbatim via
     /// [`BorderNodeData::zoom_visibility`] in
-    /// `tree_builder/border.rs`, stamped onto all four runs in
+    /// `tree_builder/border.rs`, stamped onto all eight runs in
     /// `border_node_data`. No separate per-border override
     /// exists today; the floating-frame-fragment case a
     /// non-inheriting border would produce is prevented by

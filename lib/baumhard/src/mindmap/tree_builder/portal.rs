@@ -128,9 +128,11 @@ struct PortalPairIdentity {
 ///
 /// # Costs
 ///
-/// Construction is O(pairs) with two `String` clones per
-/// endpoint. [`Self::resolve`] is O(1): two parent hops in the
-/// arena plus one slice index.
+/// Construction is O(pairs) with **five** `String` clones per
+/// pair: an [`EdgeKey`] is three `String`s, and the two endpoint
+/// ids are one each. (This read "two per endpoint" for as long as
+/// nobody counted the `EdgeKey`.) [`Self::resolve`] is O(1): two
+/// parent hops in the arena plus one slice index.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PortalHitIndex {
     pairs: Vec<PortalPairIdentity>,
@@ -143,8 +145,9 @@ impl PortalHitIndex {
     ///
     /// # Costs
     ///
-    /// O(pairs); one allocation for the vector plus two `String`
-    /// clones per pair.
+    /// O(pairs); one allocation for the vector plus five `String`
+    /// clones per pair — the [`EdgeKey`]'s three and one per
+    /// endpoint id.
     pub fn from_pairs(pairs: &[PortalPairData]) -> Self {
         PortalHitIndex {
             pairs: pairs
@@ -194,8 +197,9 @@ impl PortalHitIndex {
     /// # Costs
     ///
     /// O(1) — two `parent()` hops plus a slice index. No
-    /// allocation beyond the two `String` clones in the returned
-    /// [`PortalHit`].
+    /// allocation beyond the four `String` clones in the returned
+    /// [`PortalHit`]: the [`EdgeKey`]'s three plus the endpoint
+    /// id.
     pub fn resolve(&self, tree: &Tree<GfxElement, GfxMutator>, hit: NodeId) -> Option<PortalHit> {
         let leaf = tree.arena.get(hit)?;
         let part = match leaf.get().channel() {

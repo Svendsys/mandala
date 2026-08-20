@@ -25,7 +25,8 @@
 //!
 //! The tree half emits one per-section Void parent and the eight
 //! `GlyphArea` runs — four fill rails plus four corners — per
-//! element. The four-side run geometry comes from
+//! element. The run geometry — four fill rails and four
+//! corners — comes from
 //! [`crate::mindmap::border::border_run_specs`] — the **same** path
 //! node borders use — so any preset, any per-side `SidePattern`,
 //! any per-corner glyph, any palette cycle that node borders
@@ -91,7 +92,7 @@ pub struct SectionFrameElement {
     /// corners, font, size, color, palette field. Mirrors
     /// [`super::BorderNodeData::border_style`]; consumers feed it
     /// to `crate::mindmap::border::border_run_specs` for the
-    /// four-side run geometry.
+    /// eight-run geometry.
     pub border_style: BorderStyle,
     /// Resolved per-cycle-position colors when the frame uses a
     /// `color_palette`; empty otherwise. Mirrors
@@ -397,8 +398,8 @@ pub fn section_frame_content_signature(elements: &[SectionFrameElement]) -> u64 
 /// Build a `Tree<GfxElement, GfxMutator>` from a slice of
 /// [`SectionFrameElement`]s. Each element's resolved
 /// [`crate::mindmap::border::BorderStyle`] is fed to
-/// [`crate::mindmap::border::border_run_specs`] for the four-side
-/// run geometry; the runs are appended via the same
+/// [`crate::mindmap::border::border_run_specs`] for the
+/// eight-run geometry; the runs are appended via the same
 /// `append_border_run` helper node borders use, so palette
 /// cycling, multi-cluster fills, custom corners, and any future
 /// border feature lights up on section frames automatically.
@@ -423,7 +424,7 @@ pub fn build_section_frame_tree(elements: &[SectionFrameElement]) -> Tree<GfxEle
     tree
 }
 
-/// Layout the four-side glyph runs for one section frame and
+/// Layout the eight glyph runs for one section frame and
 /// append them under `parent_id`. Delegates to
 /// [`crate::mindmap::border::border_run_specs`] for the run
 /// geometry and to
