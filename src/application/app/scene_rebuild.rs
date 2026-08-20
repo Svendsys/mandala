@@ -763,31 +763,53 @@ impl<'a> CanvasFrame<'a> {
     /// Build or in-place update the border tree under
     /// [`crate::application::scene_host::CanvasRole::Borders`].
     ///
-    /// **§B2 dispatch.** The hot path this closes: when the color
-    /// picker is open, every throttled `AboutToWait` drain calls
-    /// `rebuild_scene_only`, which runs this. Pre-dispatch, that
-    /// meant a fresh `Tree<GfxElement, GfxMutator>` allocation per
-    /// picker-hover frame plus a full canvas-scene buffer re-shape
-    /// — O(n_borders × per-glyph shape cost). With the
-    /// identity-sequence dispatch below, hover takes the in-place
-    /// mutator path (which walks the same per-node Void + 4 runs but
-    /// only overwrites variable fields) and the arena is reused.
+    /// **§B2 dispatch, on two signatures.** The hot path this
+    /// closes: when the color picker is open, every throttled
+    /// `AboutToWait` drain calls `rebuild_scene_only`, which runs
+    /// this. Pre-dispatch, that meant a fresh
+    /// `Tree<GfxElement, GfxMutator>` allocation per picker-hover
+    /// frame plus a full canvas-scene buffer re-shape —
+    /// O(n_borders × per-glyph shape cost). With the structural
+    /// dispatch below, hover takes the in-place mutator path (which
+    /// walks the same per-node Void + 8 runs but only overwrites
+    /// variable fields) and the arena is reused.
     ///
-    /// Structural identity: the sorted sequence of bordered
-    /// (non-folded, rectangular, `show_frame = true` or
-    /// force-shown by preview) node IDs. Drag, text-edit,
-    /// color-preview, `NodeEdit` dimming, and preset-swap all leave
-    /// this stable. Adding / removing a framed node, folding an
-    /// ancestor, or toggling `show_frame` shifts the sequence and
-    /// the dispatcher takes the full rebuild.
+    /// Structural signature
+    /// ([`border_structure_signature`](baumhard::mindmap::tree_builder::border_structure_signature)):
+    /// the sorted sequence of bordered (non-folded, rectangular,
+    /// `show_frame = true` or force-shown by preview) node IDs and
+    /// their channels. Drag, text-edit, color-preview, `NodeEdit`
+    /// dimming, and preset-swap all leave this stable. Adding /
+    /// removing a framed node, folding an ancestor, or toggling
+    /// `show_frame` shifts it and the dispatcher takes the full
+    /// rebuild.
+    ///
+    /// Content signature
+    /// ([`border_content_signature`](baumhard::mindmap::tree_builder::border_content_signature)):
+    /// every field of every [`BorderNodeData`](baumhard::mindmap::tree_builder::BorderNodeData).
+    /// A stable structure only says a mutator would *align*, not
+    /// that it would *write* anything, and the great majority of
+    /// rebuilds are triggered by something in another role — a
+    /// click on an edge label re-runs every canvas role. On a
+    /// content match the mutator is neither built nor applied, and
+    /// the work that removes is visible in the diff: one
+    /// `MutatorTree` arena, one
+    /// [`border_run_specs`](baumhard::mindmap::border::border_run_specs)
+    /// call per framed node — each of which takes the `FONT_SYSTEM`
+    /// write guard — eight `GlyphArea` + `DeltaGlyphArea` pairs per
+    /// framed node, and the walk that applies them.
+    ///
+    /// The data pass itself still runs unconditionally: the
+    /// signature is computed *from* its output, so there is nothing
+    /// cheaper to decide on. Section frames have the same shape.
     pub(in crate::application::app) fn update_border_tree(
         &self,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
-        use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+        use crate::application::scene_host::{CanvasDispatch, CanvasRole};
         use baumhard::mindmap::tree_builder::{
-            border_identity_sequence, border_node_data, build_border_mutator_tree_from_nodes,
-            build_border_tree_from_nodes, BorderChromeOverrides,
+            border_content_signature, border_node_data, border_structure_signature,
+            build_border_mutator_tree_from_nodes, build_border_tree_from_nodes, BorderChromeOverrides,
         };
 
         let nodes = border_node_data(
@@ -799,19 +821,29 @@ impl<'a> CanvasFrame<'a> {
             },
             &self.hidden,
         );
-        let signature = hash_canvas_signature(&border_identity_sequence(&nodes));
+        let structure = border_structure_signature(&nodes);
+        let content = border_content_signature(&nodes);
 
-        match app_scene.canvas_dispatch(CanvasRole::Borders, signature) {
+        match app_scene.canvas_dispatch(CanvasRole::Borders, structure) {
             CanvasDispatch::InPlaceMutator => {
-                let mutator = build_border_mutator_tree_from_nodes(&nodes);
-                app_scene.apply_canvas_mutator(CanvasRole::Borders, &mutator);
+                if !app_scene.canvas_content_unchanged(CanvasRole::Borders, content) {
+                    let mutator = build_border_mutator_tree_from_nodes(&nodes);
+                    app_scene.apply_canvas_mutator(CanvasRole::Borders, &mutator);
+                }
+                // Otherwise every field the border tree is built
+                // from is unchanged, so the registered tree already
+                // holds what the mutator would have written.
             }
             CanvasDispatch::FullRebuild => {
                 let tree = build_border_tree_from_nodes(&nodes);
                 app_scene.register_canvas(CanvasRole::Borders, tree, glam::Vec2::ZERO);
-                app_scene.set_canvas_signature(CanvasRole::Borders, signature);
+                app_scene.set_canvas_signature(CanvasRole::Borders, structure);
             }
         }
+        // Outside the match on purpose: correct after all three
+        // outcomes, so no arm can be the one that forgets and
+        // leaves a later frame skipping against a stale value.
+        app_scene.set_canvas_content_signature(CanvasRole::Borders, content);
     }
 
     /// Build or in-place update the portal tree under
@@ -823,23 +855,45 @@ impl<'a> CanvasFrame<'a> {
     /// can name a BVH hit. The index holds identity only; the
     /// clickable rectangles are the tree's own `GlyphArea`s.
     ///
-    /// **§B2 dispatch.** Drag, color-preview, portal-text edits, and
-    /// selection toggle all leave the visible-portal *identity
-    /// sequence* unchanged — the same pairs in the same order, only
-    /// their positions / colors / regions move. For those continuous
-    /// interactions we take the in-place mutator path, which reuses
-    /// the existing tree arena instead of allocating a new one each
-    /// frame. When portals are added, removed, or a fold
-    /// reveals/hides an endpoint, the identity sequence shifts and
-    /// we fall back to a full rebuild.
+    /// **§B2 dispatch, on two signatures.** Drag, color-preview,
+    /// portal-text edits, and selection toggle all leave the
+    /// visible-portal *structural signature* unchanged — the same
+    /// pairs in the same order, only their positions / colors /
+    /// regions move. For those continuous interactions we take the
+    /// in-place mutator path, which reuses the existing tree arena
+    /// instead of allocating a new one each frame. When portals are
+    /// added, removed, or a fold reveals/hides an endpoint, the
+    /// structural signature shifts and we fall back to a full
+    /// rebuild.
+    ///
+    /// A stable structure only says a mutator would *align*, not
+    /// that it would *write* anything — and every canvas role is
+    /// re-run by any interaction, including ones that cannot touch
+    /// a portal. So a second, finer
+    /// [`portal_content_signature`](baumhard::mindmap::tree_builder::portal_content_signature)
+    /// over every field of every
+    /// [`PortalPairData`](baumhard::mindmap::tree_builder::PortalPairData)
+    /// decides whether the in-place arm does anything at all. On a
+    /// match the mutator is neither built nor applied and the hit
+    /// index is not re-stamped — it is a pure function of the same
+    /// pair data, so the stamped one already matches. The work that
+    /// removes is visible in the diff: one `MutatorTree` arena,
+    /// four `DeltaGlyphArea::full_assign_from` clones per visible
+    /// pair, one [`PortalHitIndex`](baumhard::mindmap::tree_builder::PortalHitIndex)
+    /// with two `String` clones per pair, and the walk that applies
+    /// the mutator.
+    ///
+    /// The data pass itself still runs unconditionally: the
+    /// signatures are computed *from* its output, so there is
+    /// nothing cheaper to decide on.
     pub(in crate::application::app) fn update_portal_tree(
         &self,
         app_scene: &mut crate::application::scene_host::AppScene,
     ) {
-        use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+        use crate::application::scene_host::{CanvasDispatch, CanvasRole};
         use baumhard::mindmap::tree_builder::{
-            build_portal_mutator_tree_from_pairs, build_portal_tree_from_pairs, portal_identity_sequence,
-            portal_pair_data,
+            build_portal_mutator_tree_from_pairs, build_portal_tree_from_pairs, portal_content_signature,
+            portal_pair_data, portal_structure_signature,
         };
 
         let portal_text_edit = self
@@ -864,21 +918,31 @@ impl<'a> CanvasFrame<'a> {
             self.camera_zoom,
             &self.hidden,
         );
-        let signature = hash_canvas_signature(&portal_identity_sequence(&pairs));
+        let structure = portal_structure_signature(&pairs);
+        let content = portal_content_signature(&pairs);
 
-        match app_scene.canvas_dispatch(CanvasRole::Portals, signature) {
+        match app_scene.canvas_dispatch(CanvasRole::Portals, structure) {
             CanvasDispatch::InPlaceMutator => {
-                let result = build_portal_mutator_tree_from_pairs(&pairs);
-                app_scene.set_portal_hit_index(result.hit_index);
-                app_scene.apply_canvas_mutator(CanvasRole::Portals, &result.mutator);
+                if !app_scene.canvas_content_unchanged(CanvasRole::Portals, content) {
+                    let result = build_portal_mutator_tree_from_pairs(&pairs);
+                    app_scene.set_portal_hit_index(result.hit_index);
+                    app_scene.apply_canvas_mutator(CanvasRole::Portals, &result.mutator);
+                }
+                // Otherwise every field the portal tree and its hit
+                // index are built from is unchanged, so both already
+                // hold what this pass would have written.
             }
             CanvasDispatch::FullRebuild => {
                 let result = build_portal_tree_from_pairs(&pairs);
                 app_scene.set_portal_hit_index(result.hit_index);
                 app_scene.register_canvas(CanvasRole::Portals, result.tree, glam::Vec2::ZERO);
-                app_scene.set_canvas_signature(CanvasRole::Portals, signature);
+                app_scene.set_canvas_signature(CanvasRole::Portals, structure);
             }
         }
+        // Outside the match on purpose: correct after all three
+        // outcomes, so no arm can be the one that forgets and
+        // leaves a later frame skipping against a stale value.
+        app_scene.set_canvas_content_signature(CanvasRole::Portals, content);
     }
 
     /// Build or in-place update the connection-label tree under
@@ -949,13 +1013,16 @@ impl<'a> CanvasFrame<'a> {
     /// flush.
     ///
     /// Section-frame visibility is mode-driven (NodeEdit on / off),
-    /// not gesture-driven. The dispatch's structural signature is
-    /// the [`baumhard::mindmap::tree_builder::section_frame_identity_sequence`]
+    /// not gesture-driven. The dispatch keys on the
+    /// [`baumhard::mindmap::tree_builder::section_frame_content_signature`]
     /// output, which captures `(node_id, section_idx, focused,
     /// resolved style axes, position, bounds, palette cycle)`. Any
     /// visible change — preset, pattern, corner, color, focus
     /// toggle, node move — moves the signature, so the dispatch
-    /// triggers a full rebuild correctly.
+    /// triggers a full rebuild correctly. Borders and portals split
+    /// that one question into two, because they have an in-place
+    /// mutator arm to protect; this role does not, so one
+    /// content-covering signature serves.
     ///
     /// There's no §B2 in-place mutator path: section-frame style
     /// changes reshape the glyph runs entirely, and the focus toggle
@@ -970,7 +1037,7 @@ impl<'a> CanvasFrame<'a> {
     ) {
         use crate::application::scene_host::{CanvasDispatch, CanvasRole};
         use baumhard::mindmap::tree_builder::{
-            build_section_frame_tree, build_section_frames, section_frame_identity_sequence,
+            build_section_frame_tree, build_section_frames, section_frame_content_signature,
         };
 
         let elements = build_section_frames(
@@ -981,7 +1048,7 @@ impl<'a> CanvasFrame<'a> {
             self.overrides.border,
             &self.hidden,
         );
-        let signature = section_frame_identity_sequence(&elements);
+        let signature = section_frame_content_signature(&elements);
         match app_scene.canvas_dispatch(CanvasRole::SectionFrames, signature) {
             CanvasDispatch::InPlaceMutator => {
                 // Signature matched the registered tree — nothing
@@ -2206,6 +2273,296 @@ mod canvas_pass_granularity {
             (after.walked, after.reshaped),
             (cold.walked, 0),
             "the four zoom-independent roles were not re-projected, so none of them re-shapes"
+        );
+    }
+}
+
+// -----------------------------------------------------------------
+// The border / portal roles' third dispatch outcome: do nothing.
+//
+// `border_content_signature` / `portal_content_signature` are
+// tested in baumhard against the trees they guard
+// (`tree_builder::tests::canvas_signature`). What those cannot see
+// is whether this file actually consults them, so these tests
+// observe the *effect* rather than the decision: they write a
+// sentinel into the registered tree between two projections and
+// ask whether it survived.
+// -----------------------------------------------------------------
+
+#[cfg(test)]
+mod content_signature_dispatch {
+    use std::collections::HashMap;
+
+    use crate::application::app::InteractionMode;
+    use crate::application::document::{tests_common::load_test_doc, MindMapDocument};
+    use crate::application::scene_host::{AppScene, CanvasRole};
+    use baumhard::core::primitives::ApplyOperation;
+    use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
+    use baumhard::gfx_structs::mutator::{GfxMutator, Mutation};
+    use baumhard::gfx_structs::tree::MutatorTree;
+
+    /// Text no border run or portal marker can hold, written into
+    /// the registered tree so a later projection either overwrites
+    /// it (work happened) or does not (the skip fired).
+    const SENTINEL: &str = "\u{2620}stale-sentinel\u{2620}";
+
+    type Offsets = HashMap<String, (f32, f32)>;
+
+    fn project_border(doc: &MindMapDocument, app_scene: &mut AppScene, offsets: &Offsets) {
+        super::CanvasFrame::new(
+            doc,
+            offsets,
+            InteractionMode::Default.resize_handle_overrides(),
+            1.0,
+        )
+        .update_border_tree(app_scene);
+    }
+
+    fn project_portal(doc: &MindMapDocument, app_scene: &mut AppScene, offsets: &Offsets) {
+        super::CanvasFrame::new(
+            doc,
+            offsets,
+            InteractionMode::Default.resize_handle_overrides(),
+            1.0,
+        )
+        .update_portal_tree(app_scene);
+    }
+
+    /// A mutator that assigns [`SENTINEL`] to the leaf at the given
+    /// channel path under the root. Built by hand rather than
+    /// through a role's own builder so it cannot be confused with
+    /// the work the dispatcher does or does not do.
+    fn sentinel_mutator(channel_path: &[usize]) -> MutatorTree<GfxMutator> {
+        let (leaf_channel, void_channels) = channel_path
+            .split_last()
+            .expect("a sentinel path names at least the leaf");
+        let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
+        let mut parent = mt.root;
+        for channel in void_channels {
+            parent = parent.append_value(GfxMutator::new_void(*channel), &mut mt.arena);
+        }
+        let delta = DeltaGlyphArea::new(vec![
+            GlyphAreaField::Text(SENTINEL.to_string()),
+            GlyphAreaField::Operation(ApplyOperation::Assign),
+        ]);
+        parent.append_value(
+            GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), *leaf_channel),
+            &mut mt.arena,
+        );
+        mt
+    }
+
+    /// Whether any glyph area in a role's registered tree still
+    /// carries the sentinel.
+    fn sentinel_survives(app_scene: &AppScene, role: CanvasRole) -> bool {
+        let id = app_scene
+            .canvas_id(role)
+            .expect("the role is registered by its first projection");
+        let tree = app_scene
+            .canvas_scene()
+            .tree(id)
+            .expect("a registered role has a tree");
+        tree.root.descendants(&tree.arena).any(|node| {
+            tree.arena
+                .get(node)
+                .and_then(|n| n.get().glyph_area())
+                .is_some_and(|area| area.text == SENTINEL)
+        })
+    }
+
+    /// A canvas-space node id whose drag offset moves the border
+    /// tree: the first node the border data pass emits, taken from
+    /// that pass rather than hardcoded so the fixture cannot drift
+    /// out from under the test.
+    fn first_framed_node(doc: &MindMapDocument) -> String {
+        let hidden = doc.mindmap.fold_hidden_set();
+        let nodes = baumhard::mindmap::tree_builder::border_node_data(
+            &doc.mindmap,
+            &HashMap::new(),
+            baumhard::mindmap::tree_builder::BorderChromeOverrides::default(),
+            &hidden,
+        );
+        nodes
+            .first()
+            .map(|n| n.node_id.clone())
+            .expect("the canonical fixture must carry at least one framed node")
+    }
+
+    /// The canonical fixture carries **no** portal-mode edge, so
+    /// the portal tests build their document by flipping one of its
+    /// ordinary edges into portal mode.
+    ///
+    /// Written as a fixture step rather than left implicit because
+    /// the first draft of these tests used `load_test_doc` directly
+    /// and the precondition below caught it: an absent portal role
+    /// would have made "nothing was written" true for a reason that
+    /// has nothing to do with the dispatch.
+    fn portal_doc() -> MindMapDocument {
+        let mut doc = load_test_doc();
+        let hidden: Vec<String> = doc
+            .mindmap
+            .fold_hidden_set()
+            .iter()
+            .map(|id| (*id).to_string())
+            .collect();
+        let nodes = &doc.mindmap.nodes;
+        let flipped = doc
+            .mindmap
+            .edges
+            .iter()
+            .position(|e| {
+                e.visible
+                    && nodes.contains_key(&e.from_id)
+                    && nodes.contains_key(&e.to_id)
+                    && !hidden.contains(&e.from_id)
+                    && !hidden.contains(&e.to_id)
+            })
+            .expect("the canonical fixture must carry one visible edge between two visible nodes");
+        doc.mindmap.edges[flipped].display_mode =
+            Some(baumhard::mindmap::model::DISPLAY_MODE_PORTAL.to_string());
+        doc
+    }
+
+    /// The near-side node of the first visible portal pair, taken
+    /// from the portal data pass for the same reason.
+    fn first_portal_endpoint(doc: &MindMapDocument) -> String {
+        let hidden = doc.mindmap.fold_hidden_set();
+        let pairs = baumhard::mindmap::tree_builder::portal_pair_data(
+            &doc.mindmap,
+            &HashMap::new(),
+            None,
+            None,
+            None,
+            None,
+            1.0,
+            &hidden,
+        );
+        pairs
+            .first()
+            .map(|p| p.endpoints[0].endpoint_node_id.clone())
+            .expect("the canonical fixture must carry at least one visible portal pair")
+    }
+
+    /// A second projection with nothing changed writes nothing.
+    ///
+    /// The sentinel is applied to the registered border tree
+    /// between the two projections; if `update_border_tree` still
+    /// built and applied its mutator, the run's `Text::Assign`
+    /// would overwrite it. It survives, so the mutator was never
+    /// built.
+    ///
+    /// Failing input: delete the
+    /// `if !app_scene.canvas_content_unchanged(...)` guard in
+    /// `update_border_tree` — the sentinel is overwritten and this
+    /// assertion fires. Deleting `set_canvas_content_signature`
+    /// instead fires it too, since nothing is then recorded to
+    /// match against.
+    #[test]
+    fn test_border_dispatch_writes_nothing_when_no_input_moved() {
+        baumhard::font::fonts::init();
+        let doc = load_test_doc();
+        let mut app_scene = AppScene::new();
+        let offsets = Offsets::new();
+
+        project_border(&doc, &mut app_scene, &offsets);
+        app_scene.apply_canvas_mutator(CanvasRole::Borders, &sentinel_mutator(&[1, 1]));
+        assert!(
+            sentinel_survives(&app_scene, CanvasRole::Borders),
+            "the sentinel never reached the border tree, so what follows would be true \
+             of an empty tree as much as of a skipped update"
+        );
+
+        project_border(&doc, &mut app_scene, &offsets);
+        assert!(
+            sentinel_survives(&app_scene, CanvasRole::Borders),
+            "the border role rewrote its runs although every input it reads was unchanged"
+        );
+    }
+
+    /// The skip is not a stall: move one input and the same
+    /// projection writes again.
+    ///
+    /// A drag offset on a framed node moves `pos_x` / `pos_y` on
+    /// that node's [`BorderNodeData`](baumhard::mindmap::tree_builder::BorderNodeData)
+    /// while leaving the framed-node sequence alone, so this is the
+    /// in-place arm doing its job. Which arm ran is not asserted
+    /// here — that is what the structural-signature test in
+    /// baumhard pins; what is asserted is that the update happened.
+    ///
+    /// Failing input: drop `pos_x` / `pos_y` from
+    /// `border_content_signature`, and the second projection skips
+    /// a frame that moved.
+    #[test]
+    fn test_border_dispatch_writes_again_when_a_drag_offset_moves() {
+        baumhard::font::fonts::init();
+        let doc = load_test_doc();
+        let mut app_scene = AppScene::new();
+        let dragged = first_framed_node(&doc);
+
+        project_border(&doc, &mut app_scene, &Offsets::new());
+        app_scene.apply_canvas_mutator(CanvasRole::Borders, &sentinel_mutator(&[1, 1]));
+        assert!(
+            sentinel_survives(&app_scene, CanvasRole::Borders),
+            "the sentinel never reached the border tree"
+        );
+
+        let mut offsets = Offsets::new();
+        offsets.insert(dragged, (17.0, -9.0));
+        project_border(&doc, &mut app_scene, &offsets);
+        assert!(
+            !sentinel_survives(&app_scene, CanvasRole::Borders),
+            "the border role skipped an update although a node had moved"
+        );
+    }
+
+    /// The portal half of the same pair. The sentinel sits three
+    /// levels down — pair void, endpoint void, icon slot — matching
+    /// the portal tree's shape.
+    ///
+    /// Failing input: the same guard, in `update_portal_tree`.
+    #[test]
+    fn test_portal_dispatch_writes_nothing_when_no_input_moved() {
+        baumhard::font::fonts::init();
+        let doc = portal_doc();
+        let mut app_scene = AppScene::new();
+        let offsets = Offsets::new();
+
+        project_portal(&doc, &mut app_scene, &offsets);
+        app_scene.apply_canvas_mutator(CanvasRole::Portals, &sentinel_mutator(&[1, 1, 1]));
+        assert!(
+            sentinel_survives(&app_scene, CanvasRole::Portals),
+            "the sentinel never reached the portal tree, so what follows would be true \
+             of an empty tree as much as of a skipped update"
+        );
+
+        project_portal(&doc, &mut app_scene, &offsets);
+        assert!(
+            sentinel_survives(&app_scene, CanvasRole::Portals),
+            "the portal role rewrote its markers although every input it reads was unchanged"
+        );
+    }
+
+    /// The portal half of the moved-input pair.
+    #[test]
+    fn test_portal_dispatch_writes_again_when_a_drag_offset_moves() {
+        baumhard::font::fonts::init();
+        let doc = portal_doc();
+        let mut app_scene = AppScene::new();
+        let dragged = first_portal_endpoint(&doc);
+
+        project_portal(&doc, &mut app_scene, &Offsets::new());
+        app_scene.apply_canvas_mutator(CanvasRole::Portals, &sentinel_mutator(&[1, 1, 1]));
+        assert!(
+            sentinel_survives(&app_scene, CanvasRole::Portals),
+            "the sentinel never reached the portal tree"
+        );
+
+        let mut offsets = Offsets::new();
+        offsets.insert(dragged, (23.0, 11.0));
+        project_portal(&doc, &mut app_scene, &offsets);
+        assert!(
+            !sentinel_survives(&app_scene, CanvasRole::Portals),
+            "the portal role skipped an update although an endpoint had moved"
         );
     }
 }

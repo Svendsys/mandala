@@ -43,7 +43,7 @@ pub const BORDER_APPROX_CHAR_WIDTH_FRAC: f32 = 0.6;
 /// Defines which glyphs to use for rendering a node's border.
 /// Each field is a single character (glyph) from the selected font.
 /// The border is rendered as positioned text elements around the node content.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub struct BorderGlyphSet {
     /// Horizontal fill glyph used along the top edge between corners.
     pub top: char,
@@ -386,6 +386,49 @@ impl BorderStyle {
     /// Vertical column for the right side at `rows` rows.
     pub fn right_column_text(&self, rows: usize) -> String {
         build_vertical_text(&self.side_patterns.right, rows)
+    }
+
+    /// Hash every resolved axis of this style into `state`.
+    ///
+    /// The one place a border's style is folded into a canvas-role
+    /// signature. Both consumers — `border_content_signature` and
+    /// `section_frame_content_signature` in
+    /// [`crate::mindmap::tree_builder`] — reach for this rather
+    /// than listing fields themselves, so a tenth axis on this
+    /// struct cannot reach [`border_run_specs`] while one of the
+    /// two signatures stays blind to it.
+    ///
+    /// Deliberately over-inclusive: `glyph_set` and `visible` reach
+    /// no glyph run that either signature guards, but hashing a
+    /// field the projection ignores can only cost a redundant
+    /// rebuild, while omitting one the projection reads serves a
+    /// stale frame. `font_size_pt` goes in as `to_bits`.
+    ///
+    /// Cost: O(total corner + pattern bytes); no allocation. The
+    /// body destructures `self`, so a field added to this struct
+    /// will not compile until it is accounted for here.
+    pub fn hash_content<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        let BorderStyle {
+            glyph_set,
+            corners,
+            side_patterns,
+            color_palette,
+            palette_field,
+            font_name,
+            font_size_pt,
+            color,
+            visible,
+        } = self;
+        glyph_set.hash(state);
+        corners.hash(state);
+        side_patterns.hash(state);
+        color_palette.hash(state);
+        palette_field.hash(state);
+        font_name.hash(state);
+        font_size_pt.to_bits().hash(state);
+        color.hash(state);
+        visible.hash(state);
     }
 
     /// Cluster count of each corner — handed to the fitter and

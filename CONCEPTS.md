@@ -1680,6 +1680,40 @@ follows the same **courier** shape:
 2. a *full-rebuild projection* (`build_*_tree`) and an *in-place
    projection* (`build_*_mutator_tree`) over that data.
 
+Which projection runs is decided by hashing the data pass's
+output, because any interaction re-runs every role: clicking an
+edge label reaches the border and portal passes too. Two
+questions, and roles that can answer both ask both. The
+*structural* signature (`border_structure_signature`,
+`portal_structure_signature`, `connection_identity_sequence`,
+`handle_identity_sequence`, …) covers only what fixes the tree's
+channel layout, and answers *can a mutator align against the
+registered arena at all?* — a color change must leave it alone,
+or a color-picker hover would reallocate the arena every frame,
+which is the cost the in-place path exists to avoid. The
+*content* signature (`border_content_signature`,
+`portal_content_signature`) covers every field either projection
+reads, and answers *is there anything left for that mutator to
+write?* On a content match the role does nothing: the registered
+tree already holds what a rebuild would produce. Completeness
+runs the opposite way for the two — a structural signature is a
+deliberate subset, a content signature that misses a field
+serves a stale frame, so each content hasher destructures its
+element type exhaustively and a new field fails to compile until
+it is accounted for. Section frames, which have no in-place
+projection, carry only the content signature
+(`section_frame_content_signature`); the connection, label and
+handle roles carry only the structural one and always apply
+their mutator.
+
+Those three still spell theirs `*_identity_sequence` and return
+a `Vec` the caller hashes through `hash_canvas_signature`, which
+is the older shape of the same idea; borders and portals were
+converted to stream into the hasher when their content
+signatures landed. The two spellings mean the same thing and the
+conversion of the remaining three is unclaimed work, not a
+distinction.
+
 Style is resolved exactly once, in the data pass; neither
 projection re-resolves it. Two inputs cross role boundaries.
 `node_clip::node_clip_aabbs` is the one the connection sampler
@@ -2914,7 +2948,11 @@ the overlay role — fixed in screen space. The `AppScene`
 abstracts that split; rebuild dispatch
 (`InPlaceMutator` for small mutator-able changes,
 `FullRebuild` for structural changes) flows through the same
-seam for both roles.
+seam for both roles. Canvas roles that also record a *content*
+signature (`set_canvas_content_signature`) get a third outcome
+out of the same seam — do nothing, because the registered tree
+is already what a rebuild would produce; see
+[canvas-role projection](#canvas-role-projection).
 
 `src/application/scene_host.rs:1-150`. Each
 role has named slots (`CanvasRole`, `OverlayRole`); each slot
@@ -3409,15 +3447,18 @@ node's own `GfxElement` tree, so a node move or text rebuild
 doesn't re-emit the frames. The dedicated canvas role
 `CanvasRole::SectionFrames` registers its own
 `InPlaceMutator` slot; rebuild-or-skip dispatch keys on
-`section_frame_identity_sequence(elements) -> u64` which
-streams every identity-bearing field directly into a hasher
-(no intermediate Vec) so the signature comparison runs
-allocation-free per `Plan §7.4`.
+`section_frame_content_signature(elements) -> u64` which
+streams every field the projection reads directly into a
+hasher (no intermediate Vec) so the signature comparison runs
+allocation-free per `Plan §7.4`. This role needs only the one
+signature because it has no in-place mutator body to protect —
+see [canvas-role projection](#canvas-role-projection) for the
+two-signature shape borders and portals use instead.
 
 `lib/baumhard/src/mindmap/tree_builder/section_frame.rs` holds
 all three halves — the `SectionFrameElement` shape, the
 `build_section_frames` emission pass, and the tree builder +
-identity hasher. Three style cascades
+content hasher. Three style cascades
 feed the resolution: per-section `frame_border` →
 `canvas.default_section_frame_border` (or
 `default_focused_section_frame_border` for focused) →

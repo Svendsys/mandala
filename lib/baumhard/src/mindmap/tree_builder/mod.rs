@@ -56,7 +56,7 @@ pub mod overrides;
 mod tests;
 
 pub use border::{
-    border_identity_sequence, border_node_data, build_border_mutator_tree,
+    border_content_signature, border_node_data, border_structure_signature, build_border_mutator_tree,
     build_border_mutator_tree_from_nodes, build_border_tree, build_border_tree_from_nodes,
     BorderChromeOverrides, BorderNodeData,
 };
@@ -85,15 +85,16 @@ pub use overrides::{
 };
 pub use portal::{
     build_portal_mutator_tree, build_portal_mutator_tree_from_pairs, build_portal_tree,
-    build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, EndpointAreas, PortalHit,
-    PortalHitIndex, PortalIdentity, PortalMutator, PortalPairData, PortalPart, PortalTree, SelectedEdgeRef,
+    build_portal_tree_from_pairs, portal_content_signature, portal_pair_data, portal_structure_signature,
+    EndpointAreas, PortalHit, PortalHitIndex, PortalIdentity, PortalMutator, PortalPairData, PortalPart,
+    PortalTree, SelectedEdgeRef,
 };
 pub use portal_style::{
     resolve_portal_endpoint_style, resolve_portal_endpoint_text_style, ResolvedPortalStyle,
     ResolvedPortalTextStyle, SelectedPortalLabel,
 };
 pub use section_frame::{
-    build_section_frame_tree, build_section_frames, section_frame_identity_sequence, SectionFrameElement,
+    build_section_frame_tree, build_section_frames, section_frame_content_signature, SectionFrameElement,
 };
 pub use section_resize_handle::{
     build_section_resize_handles, build_selected_section_handles, infer_resize_anchor, ResizeHandleSide,

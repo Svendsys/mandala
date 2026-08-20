@@ -20,7 +20,7 @@
 //!   linear-scan oracle over the same rectangles.
 //! - [`portal`] — portal tree: marker pairs, fold filter,
 //!   selection highlight, ascending channels, mutator round-trip,
-//!   identity sequence.
+//!   structural signature.
 //! - [`connection`] — connection tree (edges + labels): per-edge
 //!   voids, cap filters, identity drift, mutator round-trips.
 //! - [`edge_handle`] — edge-handle tree: channel ordering, mutator
@@ -58,6 +58,9 @@
 //!   `map.palettes`, `starts_at_root`, level clamping,
 //!   `connections_colored`, and the palette edit that moves them
 //!   all at once.
+//! - [`canvas_signature`] — the border and portal dispatch
+//!   signatures: which inputs each covers, checked against the
+//!   tree the signature guards rather than against itself.
 //! - [`edge_path`] — the per-frame `EdgePathCache` the sampler, the
 //!   grab-handles and the label layout share: one build per edge,
 //!   none for an edge no pass asks about, and the offset-applied
@@ -67,6 +70,7 @@ mod fixtures;
 
 mod border;
 mod canvas_hit;
+mod canvas_signature;
 mod connection;
 mod connection_cache;
 mod connection_clipping;

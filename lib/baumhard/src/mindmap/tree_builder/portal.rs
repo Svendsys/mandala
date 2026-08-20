@@ -184,8 +184,12 @@ impl PortalHitIndex {
     /// portal — nothing in the data can catch that, so the
     /// contract is that the index is stamped in the same call that
     /// registers or mutates the tree (see
-    /// `CanvasFrame::update_portal_tree`, which does both on both
-    /// §B2 arms).
+    /// `CanvasFrame::update_portal_tree`, which does both on every
+    /// arm that touches the tree). The arm that touches nothing is
+    /// not an exception: it runs only when
+    /// [`portal_content_signature`] matches, and the index is a
+    /// pure function of the same pair data that signature covers,
+    /// so re-stamping would write the value already there.
     ///
     /// # Costs
     ///
@@ -216,9 +220,10 @@ impl PortalHitIndex {
 }
 
 /// Identity tuple for one portal-mode edge: the `EdgeKey` of the
-/// owning edge. Used to compare two consecutive [`portal_pair_data`]
-/// outputs and decide whether a registered portal tree's structure
-/// still matches — the prerequisite for the in-place
+/// owning edge. Folded by [`portal_structure_signature`] into the
+/// value two consecutive [`portal_pair_data`] outputs are compared
+/// on to decide whether a registered portal tree's structure still
+/// matches — the prerequisite for the in-place
 /// [`build_portal_mutator_tree`] path.
 pub type PortalIdentity = EdgeKey;
 
@@ -260,8 +265,10 @@ pub struct EndpointAreas {
 /// `pair_channel` is sequential by visible-portal index —
 /// stable across two calls **iff** their visible-portal
 /// sequences are identical (same identities in the same order).
-/// Callers detect drift by comparing identity slices and fall
-/// back to a full rebuild when they disagree.
+/// Callers detect drift through [`portal_structure_signature`]
+/// and fall back to a full rebuild when it moves; a second,
+/// finer [`portal_content_signature`] then decides whether the
+/// in-place update has anything left to write.
 #[derive(Clone, Debug)]
 pub struct PortalPairData {
     pub identity: PortalIdentity,
@@ -444,11 +451,107 @@ pub fn portal_pair_data(
     pairs
 }
 
-/// Identity sequence for a slice of [`PortalPairData`]. Compared
-/// element-wise against a cached sequence to decide whether the
-/// in-place [`build_portal_mutator_tree`] path is sound.
-pub fn portal_identity_sequence(pairs: &[PortalPairData]) -> Vec<PortalIdentity> {
-    pairs.iter().map(|p| p.identity.clone()).collect()
+/// Structural signature for a slice of [`PortalPairData`] — the
+/// `(identity, pair_channel)` sequence, hashed.
+///
+/// Two slices match iff the same portal-mode edges are visible, in
+/// the same order, under the same pair-void channels. That is what
+/// makes the in-place [`build_portal_mutator_tree`] path sound:
+/// its mutator aligns against the registered tree by channel, and
+/// [`PortalHitIndex`] indexes the same channels positionally, so a
+/// reordered pair sequence would name the wrong portal.
+///
+/// **Deliberately a subset of the fields.** A signature that moved
+/// whenever a marker's color or text did would push a color-picker
+/// hover and every keystroke of an inline portal-text edit down
+/// the full-rebuild arm, which is the arena reallocation the §B2
+/// mutator path exists to avoid. [`portal_content_signature`] asks
+/// the finer question second and carries the completeness
+/// obligation.
+///
+/// What the subset rests on: the per-pair sub-tree is a fixed
+/// shape — two endpoint voids at channels 1 and 2, each with an
+/// icon leaf and a text leaf — with no input that can vary it. The
+/// text leaf is emitted even for a text-less endpoint (at zero
+/// extent) precisely so this stays true.
+///
+/// # Costs
+///
+/// O(total edge-key bytes). No allocation: the fields stream into
+/// the hasher rather than materializing a `Vec<PortalIdentity>`
+/// (three `String` clones per pair) whose only consumer was the
+/// hash.
+pub fn portal_structure_signature(pairs: &[PortalPairData]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    pairs.len().hash(&mut h);
+    for pair in pairs {
+        let PortalPairData {
+            identity,
+            pair_channel,
+            ..
+        } = pair;
+        identity.hash(&mut h);
+        pair_channel.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Content signature for a slice of [`PortalPairData`] — every
+/// field the tree projection and [`PortalHitIndex`] read, hashed.
+///
+/// Answers the question the structural signature deliberately does
+/// not: *would rebuilding the portal tree from this slice produce
+/// anything different from what is registered?* When it says no,
+/// `CanvasFrame::update_portal_tree` skips building and applying
+/// the mutator, and skips re-stamping the hit index — so the
+/// completeness of this hash is load-bearing in the silent
+/// direction. A field that moves a marker but not this hash leaves
+/// a stale glyph on screen, or a click resolving to the wrong
+/// portal.
+///
+/// The endpoint areas go through
+/// [`GlyphArea::hash_content`](crate::gfx_structs::area::GlyphArea::hash_content)
+/// rather than their [`Hash`] impl, and that is the whole
+/// difference between this signature and a broken one: `Hash` on a
+/// `GlyphArea` runs through `ColorFontRegions`, whose element
+/// identity is the range alone, so a recolored marker hashes to
+/// the value it replaced. A portal color-picker hover changes
+/// exactly that and nothing else.
+///
+/// The body destructures [`PortalPairData`] and [`EndpointAreas`]
+/// exhaustively, so a new field on either does not compile until
+/// it is hashed here.
+///
+/// # Costs
+///
+/// O(total edge-key + marker-text bytes). No allocation.
+pub fn portal_content_signature(pairs: &[PortalPairData]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    pairs.len().hash(&mut h);
+    for pair in pairs {
+        let PortalPairData {
+            identity,
+            pair_channel,
+            endpoints,
+        } = pair;
+        identity.hash(&mut h);
+        pair_channel.hash(&mut h);
+        for endpoint in endpoints {
+            let EndpointAreas {
+                icon,
+                text,
+                endpoint_node_id,
+            } = endpoint;
+            icon.hash_content(&mut h);
+            text.hash_content(&mut h);
+            endpoint_node_id.as_str().hash(&mut h);
+        }
+    }
+    h.finish()
 }
 
 // Tree-shape channel constants — fixed by contract so the
