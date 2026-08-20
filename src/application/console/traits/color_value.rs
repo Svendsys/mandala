@@ -33,7 +33,15 @@ pub enum ColorValue {
 impl ColorValue {
     /// Parse `s` into a ColorValue. Accepts:
     /// - `"#rrggbb"` / `"#rrggbbaa"` / `"#rgb"` / `"#rgba"` — as hex
-    /// - `"accent"` / `"edge"` / `"fg"` / `"bg"` — as well-known vars
+    /// - `"accent"` / `"edge"` / `"fg"` — the three well-known vars
+    ///   this parser hard-codes, one per constant in
+    ///   `console::constants`. `"bg"` is **not** among them and this
+    ///   list used to say it was: there is no `VAR_BG`, so
+    ///   `color bg=bg` returns the unknown-color error. `bg` is a
+    ///   *channel* name on the `color` verb — the thing being set,
+    ///   not a value it accepts. These three are the whole
+    ///   vocabulary: a literal `var(--anything)` is not parsed
+    ///   either, it falls to the `other` arm like any other word.
     /// - `"reset"` — as Reset
     ///
     /// Returns `Err(msg)` on unrecognized input. Callers report the

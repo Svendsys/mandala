@@ -19,20 +19,35 @@
 //!    exhaustive, so step 1 does not compile until this one is
 //!    done — a new variant cannot silently stay on the
 //!    quiet-fallback path.
-//! 3. Add a `SHAPE_*` constant + a `case` arm to the rect pipeline's
+//! 3. Give it a wire id in
+//!    [`crate::gfx_structs::shape::NodeShape::shader_id`] — also an
+//!    exhaustive `match`, so also forced — and add the matching
+//!    `SHAPE_*` constant + `case` arm to the rect pipeline's
 //!    fragment shader (`src/application/renderer/mod.rs`,
-//!    `RECT_SHADER_WGSL`). Forced, not remembered:
+//!    `RECT_SHADER_WGSL`). The shader is text, so no `match` can
+//!    reach it;
 //!    `test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
-//!    in the mandala crate reads the shader as text and fails on a
-//!    variant with no constant, a constant carrying the wrong id, and
-//!    a non-default variant with no `case` arm — the last being the
+//!    in the mandala crate reads it as text and fails on a variant
+//!    with no constant, a constant carrying the wrong id, and a
+//!    non-default variant with no `case` arm — the last being the
 //!    silent one, where every node of the new shape draws as a
-//!    rectangle.
+//!    rectangle. That test learns the constant's *name* from
+//!    `wgsl_shape_const_name` beside it, which is a fifth exhaustive
+//!    `match` over this enum, so the text check cannot go vacuous on
+//!    a variant nobody named.
 //! 4. Add a branch in
 //!    [`crate::gfx_structs::shape::NodeShape::contains_local`] and
 //!    [`crate::gfx_structs::shape::NodeShape::intersects_local_aabb`].
 //!
 //! No new structs, no new mutation surfaces, no new mesh builders.
+//!
+//! **Check the whole workspace when you verify this.** Four of the
+//! five forced matches are in this file and the fifth is in a
+//! `#[cfg(test)]` module in the *mandala* crate, so `cargo check -p
+//! baumhard` reports four and stops — and even
+//! `cargo check --workspace --all-targets` only reveals the fifth
+//! once this file's four are answered, since a crate that fails to
+//! compile never lets its dependents be checked.
 //!
 //! The format's shape vocabulary is deliberately wider than the set
 //! this module can draw:

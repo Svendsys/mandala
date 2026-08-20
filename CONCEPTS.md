@@ -459,10 +459,11 @@ reaction, which is how reactive chains are built.
 `GlyphTreeEvent` is the enum of event kinds — `KeyboardEvent`,
 `MouseEvent(MouseEventData)` (the one that carries canvas-space
 coordinates), `AppEvent`, `CloseEvent`, `KillEvent`,
-`MutationEvent`, and `NoopEvent(usize)`. The last two are not
-constructed anywhere in either crate today: `MutationEvent` is the
-reserved peer of `Flag::MutationEvents`, and `NoopEvent` carries a
-`usize` so a test can tell two dispatches apart.
+`MutationEvent`, and `NoopEvent(usize)`. `MutationEvent` is
+reserved — the peer of `Flag::MutationEvents`, and constructed
+nowhere in either crate. `NoopEvent` is the test vehicle: its
+`usize` is how `tree_tests`' dispatch fixtures tell one delivery
+from another, and nothing in production builds one.
 `GlyphTreeEventInstance` wraps one with a timestamp;
 `EventSubscriber` is
 `Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance)
@@ -656,15 +657,28 @@ truth for "is this point inside?". Adding a new shape is a
 variant plus four match arms plus a shader case, and
 `shape.rs`'s own module header is the canonical recipe. What
 makes it safe to follow is that the arms are not remembered:
-four `match`es over `NodeShape` are exhaustive — `shader_id`,
-`style_spellings`, `contains_local` and `intersects_local_aabb`
-— so the variant does not compile until every one of them is
-answered, and the compiler names each. The shader `case` is the
-one half no `match` covers; it is held instead by
-`test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`,
-which reads `RECT_SHADER_WGSL` as text and fails on a variant
-with no constant, a constant carrying the wrong id, and — the
-silent one — a non-default variant with no `case` arm.
+**five** `match`es over `NodeShape` are exhaustive, so the
+variant does not compile until every one of them is answered and
+the compiler names each. Four are in `shape.rs` — `shader_id`,
+`style_spellings`, `contains_local`, `intersects_local_aabb` —
+and the fifth is `wgsl_shape_const_name` in the mandala crate's
+`renderer/tests.rs`, which is what tells
+`test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
+which constant name to look for. That test is the only thing
+holding the shader text, since no `match` can reach it: it reads
+`RECT_SHADER_WGSL` as a string and fails on a variant with no
+constant, a constant carrying the wrong id, and — the silent one
+— a non-default variant with no `case` arm.
+
+**The fifth is why a recipe like this has to be verified with
+`cargo check --workspace --all-targets`.** It lives in a
+`#[cfg(test)]` module in the *other* crate, so a check narrowed
+to baumhard reports four and stops; and even at workspace scope
+it stays hidden until baumhard's own four arms are answered,
+because a crate that fails to compile never lets its dependents
+be checked. A control run under a narrower selection than the
+claim covers is a control that has not reproduced — the same
+shape as `--benches` without `--workspace` (issue #148).
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
@@ -2204,9 +2218,9 @@ to `InitState` and stay there for the lifetime of the run.
 `NativeApp` exists only to satisfy winit's trait surface;
 everything substantive lives on `InitState`.
 
-All three in
-`src/application/app/run_native.rs`; `Application` itself is
-declared in `src/application/app/mod.rs`, once per target.
+`InitState` and `NativeApp` are in
+`src/application/app/run_native.rs`; `Application` is in
+`src/application/app/mod.rs`, declared once per target.
 `InitState` carries `window: Arc<Window>`, a
 `document: Option<MindMapDocument>`, the `mindmap_tree` the
 document does not own, `drag_state`, `interaction_mode`, modal UI
@@ -2381,7 +2395,10 @@ method here — it is the pure projection of the model that the
 `Persistent` custom-mutation path syncs back against — but the
 live `Option<MindMapTree>` it produces is held by the runtime, not
 the document: `InitState.mindmap_tree` on native and
-`WasmApp.mindmap_tree` on the browser. That is why every
+`WasmInputState.mindmap_tree` on the browser — the two per-target
+shells, of which `WasmApp` is the outer winit handler that holds
+one behind an `Rc<RefCell<Option<…>>>` rather than the shell
+itself. That is why every
 tree-touching call in the app takes the tree as a separate `&mut`
 argument beside `&mut MindMapDocument` rather than reaching
 through it.
@@ -2916,10 +2933,20 @@ Variants:
 `as_dyn_mut()` / `as_dyn()` widen to
 `&mut dyn ThrottledDragInteraction` — the drag trait, which has
 `ThrottledInteraction` as a supertrait, so one ladder serves all
-three phases. Those two matches are the only per-variant matches
-in the crate: `event_cursor_moved`'s accumulate arm,
+three phases. Those two are the only per-variant matches on the
+*production* path: `event_cursor_moved`'s accumulate arm,
 `event_mouse_click`'s left-release arm and its right-release arm
-are each a single call through them.
+are each a single call through them. Two more live in this file's
+`#[cfg(test)]` module and are there on purpose — `variant_name`
+and `latches_the_cursor` make a new variant answer "what is your
+fixture called?" and "which pending discipline are you?" as build
+errors rather than as coverage nobody notices is missing.
+
+The widening pair is also what makes the paragraph above bite. A
+new variant has to appear in both matches, which needs the payload
+to implement `ThrottledDragInteraction`, which has no default body
+for `commit_on_release_core` — so the chain from "added a variant"
+to "wrote a release commit" is `E0277`, not discipline.
 
 Touch does **not** ride this ladder. Pinch-zoom, one-finger pan
 and tap-select ship as `TouchGestureRecognizer` emissions that
@@ -3292,8 +3319,8 @@ state.
 `struct FreezeWatchdog` in
 `src/application/app/freeze_watchdog.rs`. Main thread
 calls `tick()` at every event-loop boundary; watchdog reads
-the atomic every second; if the gap exceeds `FREEZE_THRESHOLD`
-(10 seconds), prints diagnostics and aborts. Not present on
+the atomic every `WATCHDOG_POLL`; if the gap exceeds
+`FREEZE_THRESHOLD`, prints diagnostics and aborts. Not present on
 WASM — browsers already provide an "unresponsive tab" dialog
 for free.
 
@@ -3704,9 +3731,9 @@ Four things the shape is load-bearing for:
   `Rows` covers both the document-derived vocabularies (a
   map's palettes, a node's sections, the host's font families)
   and the *suggestion* lists too open-ended to print: `zoom
-  min=` accepts any positive float, so the popup gets the seven
-  levels `VALUE_PRESETS` names plus the `unset` sentinel, and the
-  usage line gets `<zoom|unset>`.
+  min=` accepts any positive float, so the popup gets whatever
+  `VALUE_PRESETS` names plus the `unset` sentinel, and the usage
+  line gets `<zoom|unset>`.
 - **A `Form` is (slots, keys), and a subverb may declare
   several.** `section move` takes `dx=`/`dy=` *or* `x=`/`y=`;
   `section resize` takes the `fill` literal *or* `w=`/`h=`.
@@ -3970,10 +3997,10 @@ The three user-owned JSON files (`keybinds.json`,
 the finding is written once in
 `src/application/user_config/`.
 
-- `MAX_USER_PAYLOAD_BYTES` (1 MiB) and `check_cap` are the single
+- `MAX_USER_PAYLOAD_BYTES` and `check_cap` are the single
   wording and enforcement of the size cap. A real config is a few
-  KB; a multi-megabyte one is accidental or hostile and is
-  rejected before serde ever sees it.
+  KB; one large enough to exceed the cap is accidental or hostile
+  and is rejected before serde ever sees it.
 - `read_capped(path)` is the native filesystem read: stat, cap,
   read. Native-only, like its neighbor `xdg_mandala_path` — the
   filesystem tier of a user config exists only on desktop.
@@ -4014,9 +4041,12 @@ on an id collision, which the derived `Ord` encodes) and **trust**
 (`App` ships with the binary and `User` is the user's own file,
 while `Map` and `Inline` arrive inside a possibly-shared
 `.mindmap.json`). The macro dispatcher's privilege gates —
-`allows_console_line`, `allows_action`, both `impl SourceTier`
-blocks in `src/application/macros/mod.rs` — key off exactly that
-trust split. Tier assignment is loader-pinned: nothing in an
+`allows_console_line` and `allows_action`, the two methods of the
+`impl SourceTier` block in `src/application/macros/mod.rs` — key
+off exactly that trust split. The ladder's own `impl` lives beside
+the type in `source_tier.rs`; the macro crate adds a second block
+rather than reaching into the first, which is what keeps the trust
+policy next to the dispatcher that enforces it. Tier assignment is loader-pinned: nothing in an
 on-disk file can raise its own tier.
 
 ### Clipboard
