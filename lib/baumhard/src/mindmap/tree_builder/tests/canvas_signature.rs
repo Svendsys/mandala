@@ -44,7 +44,7 @@ use super::fixtures::{sized_node, synthetic_map, synthetic_node, synthetic_porta
 /// Whether two built canvas trees would draw identically: same
 /// shape, same channels, and per `GlyphArea` every field —
 /// *including* the per-span colors `PartialEq` on a
-/// [`ColorFontRegions`] cannot see, since its element identity is
+/// `ColorFontRegions` cannot see, since its element identity is
 /// the range alone.
 ///
 /// Deliberately independent of the code under test. A comparison
@@ -386,23 +386,39 @@ fn test_border_structure_signature_moves_when_ids_change_at_a_fixed_count() {
     );
 }
 
-/// `font_name` is the one style axis carried in the signature that
-/// the corpus above cannot pair with a tree difference, and it is
-/// tested apart rather than quietly dropped.
+/// `font_name` is the one style axis carried in the content
+/// signature that the corpus above cannot pair with a tree
+/// difference, and it is tested apart rather than quietly dropped.
 ///
-/// `border_run_specs` resolves the family through
-/// `app_font_by_family`, so a name the font table does not know
-/// measures identically to no name at all and the runs land in the
-/// same place. Hashing it anyway is the over-inclusive direction —
-/// it can cost a redundant update, never a skipped one — and it is
-/// what makes the signature already correct on the day the
-/// renderer threads the field through.
+/// It reaches the runs only through `border_run_specs`'s per-glyph
+/// ink measurement, and *whether* that measurement moves depends
+/// on the glyphs as much as on the face: for this fixture's
+/// box-drawing borders it does not, so every run lands where it
+/// did. Which face the shaper ends up using for them is not
+/// asserted here — the observable is, below. Hashing the name
+/// anyway is the over-inclusive direction: it can cost a redundant
+/// update, never a skipped one.
+///
+/// Both halves are asserted, so the paragraph above reproduces
+/// rather than being taken on trust. If a font or glyph change
+/// ever makes the two trees differ, the first assertion fails and
+/// says to move this case into [`border_rows`], where the corpus
+/// would then cover it.
 #[test]
-fn test_border_content_signature_covers_font_name_even_where_the_tree_cannot_show_it() {
+fn test_border_content_signature_covers_font_name_the_tree_cannot_show() {
     let mut m = base_border_map();
     border_cfg(&mut m).font = Some("Liberation Mono".into());
     let named = border_nodes(&m, &HashMap::new(), None);
     let base = border_nodes(&base_border_map(), &HashMap::new(), None);
+
+    assert!(
+        trees_draw_identically(
+            &build_border_tree_from_nodes(&base),
+            &build_border_tree_from_nodes(&named)
+        ),
+        "the authored border font now moves the rendered tree — this case is no longer a \
+         can't-show-it one and belongs in the tree-paired corpus"
+    );
     assert_ne!(
         border_content_signature(&base),
         border_content_signature(&named),
@@ -813,7 +829,7 @@ fn test_portal_structure_signature_tracks_shape_and_ignores_content() {
 /// identically, under different `EdgeKey`s: the rendered tree
 /// cannot tell them apart, and the structural signature must.
 ///
-/// The stake here is sharper than glyphs. [`PortalHitIndex`] is
+/// The stake here is sharper than glyphs. `PortalHitIndex` is
 /// built from the same pair slice and indexed *positionally* by
 /// pair channel, so a pair sequence whose identities changed under
 /// a fixed count, with the signature holding still, would leave the
