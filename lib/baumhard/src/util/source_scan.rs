@@ -197,7 +197,7 @@ pub(crate) fn skip_unmodeled_option(meta: &syn::meta::ParseNestedMeta) -> syn::R
 /// neither the item walk below nor [`test_gated_module_files`] sees
 /// a gate anywhere and the inner attribute is the only one there is.
 /// `test_helpers.rs` is declared `#[cfg(test)] pub(crate) mod
-/// test_helpers;` (`crates/maptool/src/verify/mod.rs:23`), which
+/// test_helpers;` by `crates/maptool/src/verify/mod.rs`, which
 /// [`test_gated_module_files`] already resolves — this reader never
 /// sees the file, and blanking it is redundant rather than
 /// load-bearing.

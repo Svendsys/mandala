@@ -655,7 +655,8 @@ A node's visual silhouette and its clickable
 silhouette must agree. `NodeShape` names the two today
 (rectangle, ellipse) and gives both pipelines one source of
 truth for "is this point inside?". Adding a new shape is a
-variant plus four match arms plus a shader case, and
+variant plus five match arms plus two edits to the fragment
+shader's text — a `SHAPE_*` constant and a `case` arm — and
 `shape.rs`'s own module header is the canonical recipe. What
 makes it safe to follow is that the arms are not remembered:
 **five** `match`es over `NodeShape` are exhaustive, so the
@@ -1945,7 +1946,9 @@ each id, so `mutation help <id>` can report it.
 
 WASM:
 - App from the same embedded JSON.
-- User from `?mutations=` query param or `localStorage`.
+- User from `localStorage["mandala_mutations"]`. There is
+  deliberately no `?mutations=` layer, for the reason the
+  "User-tier config loading" entry gives below.
 
 Map and inline are loaded from the document on every load. Each
 layer is best-effort — user file parse failures log a warning
@@ -4028,19 +4031,35 @@ the finding is written once in
   composition wrapper that sits on the driver:
   `desktop::load_desktop_layered(label, filename, explicit, parse)`
   for the explicit CLI path before the XDG path, and
-  `web_storage::load_web_layered(label, param, key, parse)` for
-  `?<param>=<json>` before `localStorage[key]`. All six platform
-  loaders (three configs × two targets) are now a filename and a
-  parser.
-- The one deliberate asymmetry lives in the desktop wrapper: only
-  the XDG layer is filtered on `exists()`. An absent user config
-  is the normal case and stays silent, whereas an explicit
-  `--keybinds <path>` that does not resolve is a user error worth
-  a warning. Changing that is a change to one function.
+  `web_storage::load_web_storage_only(label, key, parse)` for
+  `localStorage[key]` and nothing else. All six platform loaders
+  (three configs × two targets) are now a filename and a parser.
+- **The browser chain is one layer, not two, and that is a trust
+  boundary rather than an omission.** `web_storage` also holds
+  `load_web_layered`, which reads `?<param>=<json>` before
+  `localStorage[key]` — it compiles and it is `pub`, and **no
+  loader calls it**. A query param is owned by whoever composed
+  the link rather than by the user, so it must not arrive at
+  `SourceTier::User`, the rung `allows_console_line` checks
+  before letting a `MacroStep::ConsoleLine` run an arbitrary
+  console verb. All three browser loaders
+  (`keybinds/platform_web.rs`, `macros/loader/platform_web.rs`,
+  `document/mutations_loader/platform_web.rs`) therefore call
+  `load_web_storage_only`; the two-layer wrapper is kept rather
+  than deleted because reaching it is a decision about what URL
+  surface the app offers, and `web_storage.rs`'s module header
+  records it as built-and-unreached. The keybinds entry above
+  states the same policy from the other end.
+- The one deliberate *precedence* asymmetry lives in the desktop
+  wrapper: only the XDG layer is filtered on `exists()`. An absent
+  user config is the normal case and stays silent, whereas an
+  explicit `--keybinds <path>` that does not resolve is a user
+  error worth a warning. Changing that is a change to one
+  function.
 
 Adding a fourth user-tier config file is a matter of naming its
-filename, query param, and storage key, then handing each
-wrapper a parser — no new read, cap, layer, or fallback code.
+filename and storage key, then handing each wrapper a parser — no
+new read, cap, layer, or fallback code.
 
 ### `SourceTier`
 

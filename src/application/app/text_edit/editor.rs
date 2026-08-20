@@ -616,9 +616,10 @@ pub(in crate::application::app) fn handle_text_edit_key(
     let name = key_name.as_deref();
     let action = name.and_then(|n| keybinds.action_for_context(InputContext::TextEdit, n, ctrl, shift, alt));
     // `TextEditCommit` / `TextEditCancel` are funneled via the
-    // keyboard handler's pre-filter (`event_keyboard.rs:135-153`).
-    // This handler reaches only the literal-Key character + cursor
-    // primitive paths.
+    // keyboard handler's pre-filter — `ModalEditor::stealing` plus
+    // `steal_key_for_modal` in `app/event_keyboard.rs`. This handler
+    // reaches only the literal-Key character + cursor primitive
+    // paths.
 
     // `enter` and `tab` insert literal characters in the multi-line
     // node editor unless the user explicitly bound a TextEdit Action

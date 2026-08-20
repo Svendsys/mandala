@@ -113,8 +113,14 @@ impl ThrottledDrag {
     /// Widen the active variant to a trait-object borrow so every
     /// dispatcher — accumulate, drain, commit-on-release — can reach
     /// it without naming the kind. One match arm per variant, and
-    /// this is the only place in the crate that has one; the three
-    /// dispatchers themselves stay shapeless.
+    /// together with [`Self::as_dyn`] these are the only per-variant
+    /// matches on the production path; the three dispatchers
+    /// themselves stay shapeless. Two more live in this file's
+    /// `#[cfg(test)]` module — `variant_name` and
+    /// `latches_the_cursor` — and are there on purpose, so a new
+    /// variant answers "what is your fixture called?" and "which
+    /// pending discipline are you?" as build errors. A variant added
+    /// to the enum therefore draws four `E0004`s, not one.
     ///
     /// Widened to [`ThrottledDragInteraction`] rather than to
     /// [`ThrottledInteraction`]: the drag trait has the other as a

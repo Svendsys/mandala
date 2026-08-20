@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Web user-source plumbing for custom mutations: URL
-//! `?mutations=` query param > `localStorage` under the
-//! `mandala_mutations` key > empty. Not compiled on native.
+//! Web user-source plumbing for custom mutations: `localStorage`
+//! under the `mandala_mutations` key, then empty. Not compiled on
+//! native.
 //!
-//! The query/storage reads, the size cap, and the fallback walk all
-//! belong to `crate::application::user_config::web_storage` — the
-//! keybinds and macros web loaders name their layers against the
-//! same driver, so the three cannot drift.
+//! **There is no `?mutations=` layer.** The query-param machinery
+//! exists in `crate::application::user_config::web_storage` and this
+//! loader deliberately does not reach it — see [`load_user`] below
+//! for the trust argument, and the `web_storage` module header for
+//! the same note against its two siblings.
+//!
+//! The storage read, the size cap, and the fallback walk all belong
+//! to `crate::application::user_config::web_storage` — the keybinds
+//! and macros web loaders name their layers against the same driver,
+//! so the three cannot drift.
 
 use baumhard::mindmap::custom_mutation::CustomMutation;
 

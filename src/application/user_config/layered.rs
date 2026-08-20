@@ -4,9 +4,9 @@
 //!
 //! Each user-tier config (`keybinds.json`, `mutations.json`,
 //! `macros.json`) is looked up across an ordered list of candidate
-//! sources — explicit CLI path before the XDG path on native, URL
-//! query param before `localStorage` on web — and the first source
-//! that yields a payload which fits the size cap *and* parses wins.
+//! sources — explicit CLI path before the XDG path on native,
+//! `localStorage` alone on web — and the first source that yields a
+//! payload which fits the size cap *and* parses wins.
 //! A source that is simply absent is skipped silently; a source that
 //! is present but unreadable, oversized, or malformed is logged and
 //! the walk continues. That policy is identical for every config and
@@ -15,12 +15,15 @@
 //! The driver itself is platform-neutral: it only knows how to walk
 //! [`ConfigLayer`]s. The filesystem-backed layers are built by
 //! `super::desktop::load_desktop_layered` on top of
-//! `super::read_capped`; the query-param / `localStorage` layers are
-//! built by `super::web_storage::load_web_layered`. Both of those
-//! wrappers are cfg-gated to their target, so this header names them
-//! in plain backticks rather than intra-doc links. That split keeps
-//! the precedence logic testable on native (TEST_CONVENTIONS §T9)
-//! even though half the layers only exist in a browser.
+//! `super::read_capped`; the `localStorage` layer is built by
+//! `super::web_storage::load_web_storage_only`, and the query-param
+//! layer beside it in `super::web_storage::load_web_layered` is built
+//! and reached by nothing, for the trust reason that module's header
+//! gives. Both of those wrappers are cfg-gated to their target, so
+//! this header names them in plain backticks rather than intra-doc
+//! links. That split keeps the precedence logic testable on native
+//! (TEST_CONVENTIONS §T9) even though half the layers only exist in a
+//! browser.
 
 use super::check_cap;
 

@@ -7,9 +7,11 @@
 //! `$XDG_CONFIG_HOME/mandala/<filename>` (with the `$HOME/.config`
 //! fallback) — in that order. [`load_desktop_layered`] is that
 //! composition, and it is the native peer of
-//! `web_storage::load_web_layered`: both name their platform's
+//! `web_storage::load_web_storage_only`: both name their platform's
 //! layers once and hand them to the shared
-//! [`super::layered::load_layered`] driver.
+//! [`super::layered::load_layered`] driver. The browser names one
+//! layer where this names two, deliberately — see that module's
+//! header for why `?<param>=` is not a user-tier source.
 //!
 //! The three desktop loaders (keybinds, mutations, macros) used to
 //! open-code the layer construction, so the `exists()` policy below

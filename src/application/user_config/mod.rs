@@ -19,13 +19,17 @@
 //!   Each platform names its own layers exactly once, in the
 //!   composition wrapper the driver sits under:
 //!   `desktop::load_desktop_layered` (explicit CLI path, then the XDG
-//!   path) and `web_storage::load_web_layered` (URL query param, then
-//!   `localStorage`).
+//!   path) and `web_storage::load_web_storage_only` (`localStorage`
+//!   alone). The browser's two-layer wrapper,
+//!   `web_storage::load_web_layered`, reads a URL query param first
+//!   and is called by nothing — a query param is owned by whoever
+//!   composed the link rather than by the user, so it must not reach
+//!   `SourceTier::User`. That module's header carries the argument.
 //!
 //! Adding a fourth user-tier config file is therefore a matter of
-//! naming its filename / query-param / storage key and handing the
-//! wrapper a parser; no new read, cap, or fallback code, and no new
-//! layer construction.
+//! naming its filename and storage key and handing the wrapper a
+//! parser; no new read, cap, or fallback code, and no new layer
+//! construction.
 //!
 //! Native path resolution is `xdg::xdg_mandala_path`
 //! (`$XDG_CONFIG_HOME/mandala/<file>.json`, or the `$HOME/.config`
