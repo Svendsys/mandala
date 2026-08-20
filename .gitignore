@@ -10,3 +10,6 @@
 lcov.info
 .rustc_info.json
 *.profraw
+
+# Agent working notes — never part of a deliverable.
+scratchpad/
