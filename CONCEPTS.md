@@ -373,8 +373,11 @@ single shared `Range` type means span operations compose across
 modules without glue.
 
 `lib/baumhard/src/core/primitives.rs`. Totally
-ordered for `BTreeSet` use; ships with `magnitude`, `push_left`,
-`push_right`, `overlaps`, `to_rust_range`.
+ordered for `BTreeSet` use; ships with `new` / `tup`,
+`magnitude`, `overlaps`, `to_rust_range`, and
+`checked_push_right`, which shifts both ends and answers `false`
+rather than wrapping when the shift would overflow — the shape
+every region-shifting primitive above is written against.
 
 ### `Channel` and `BranchChannel`
 
@@ -795,10 +798,12 @@ entry carries `layer: i32`, `offset: Vec2`, and `visible: bool`.
 Hit-test is `O(trees)` at the scene level and `O(tree size)`
 inside the matched tree.
 
-### `TreeWalker`
+### The tree walker — `walk_tree_from`
 
 The recursive dispatch engine that walks a
-`MutatorTree` against a `Tree` and applies matched mutations.
+`MutatorTree` against a `Tree` and applies matched mutations. It
+is a set of free functions in `tree_walker.rs`, not a type — there
+is nothing named `TreeWalker` to reach for.
 
 Every mutation that ever lands on an element
 goes through the walker — `MutatorTree::apply_to` just calls
@@ -1793,10 +1798,12 @@ on `(from_id, to_id, edge_type)`, reused across frames when
 endpoints have not moved.
 
 Sampling a cubic Bézier path at uniform arc
-length is the most expensive per-edge work. The cache invalidates
-on endpoint drag (via `drag_offsets`) and on zoom or structural
-change. Otherwise the previous frame's samples are reused with a
-cheap `point_inside_any_node` clip filter.
+length is the per-edge work worth not repeating. The cache
+invalidates on endpoint drag — the caller passes the frame's drag
+`offsets` map, and an endpoint that moved inside it is a miss —
+and on zoom or structural change. Otherwise the previous frame's
+samples are reused, with a `point_inside_any_node` clip filter
+deciding which of them the node rectangles swallow.
 
 `lib/baumhard/src/mindmap/scene_cache.rs`.
 
@@ -2249,14 +2256,21 @@ keeps the placard a map the loader itself accepts: unbounded, a
 
 `src/application/app/startup_load.rs` is the decision. Both init
 paths call `startup_load::adopt(startup_load::startup_surface(...))`
-and nothing else: `StartupSurface` has one arm per outcome, `adopt`
-is the only place the rejected arm is matched, and it is where the
-message reaches the log. That is what keeps the browser build and
-the desktop build reporting a bad map identically (§1
-"Cross-platform as first-class"); the browser build's earlier DOM
-overlay is gone, replaced by this. Adding a third outcome is a
-compile error in `adopt` rather than a silent return to the empty
-window.
+and nothing else: `StartupSurface` has one arm per outcome, and
+`adopt` is where the message reaches the log. That is what keeps
+the browser build and the desktop build reporting a bad map
+identically (§1 "Cross-platform as first-class"); the browser
+build's earlier DOM overlay is gone, replaced by this.
+
+The two halves are split so a test can reach the deciding one.
+`adopt` is three lines — call `resolve`, `log::error!` the line it
+hands back if there is one, return the document — and `resolve` is
+the pure function that holds the exhaustive `match`. So adding a
+third outcome is a compile error **in `resolve`**, not a silent
+return to the empty window; and the one statement no runtime
+assertion can see, the `log::error!` itself, is held by
+`test_adopt_still_reports_the_message_to_the_log`, which reads
+`adopt`'s own body as source text.
 
 The placard is bound to no file path, which is load-bearing rather
 than incidental: `save` and `Ctrl+S` both refuse a document without
