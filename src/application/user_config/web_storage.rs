@@ -1,23 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! WASM-side `?<name>=` query-param + `localStorage` access. The
-//! three user-tier JSON loaders (keybinds, mutations, macros) all
-//! reach for the same shape: pull the named string from the URL,
-//! fall back to a localStorage key. Same shape; same machinery —
-//! [`load_web_layered`] is that shape, wired onto the shared
-//! [`super::layered::load_layered`] driver.
+//! WASM-side `localStorage` access, plus the `?<name>=` query-param
+//! reader that nothing calls. The three user-tier JSON loaders
+//! (keybinds, mutations, macros) all reach for the same shape: read
+//! a named `localStorage` key, or fall back to their defaults. Same
+//! shape; same machinery — [`load_web_storage_only`] is that shape,
+//! wired onto the shared [`super::layered::load_layered`] driver.
 //!
 //! **The query-param layer is built but not reached.** All three
 //! browser loaders (`keybinds::platform_web`,
 //! `macros::loader::platform_web`,
 //! `document::mutations_loader::platform_web`) call
-//! [`load_web_storage_only`], so `?keybinds=<json>` and its siblings
-//! do nothing today. #41 found the two-layer chain dead and kept it
-//! rather than delete a working implementation: switching the three
-//! call sites over is a decision about what URL surface the app
-//! offers, not a cleanup. Until then this module documents a
-//! capability the app does not have, and that is recorded here
-//! rather than left for the next reader to discover.
+//! [`load_web_storage_only`], so [`load_web_layered`] — the
+//! two-layer chain that would read `?keybinds=<json>` and its
+//! siblings before `localStorage` — does nothing today. #41 found
+//! the chain dead and kept it rather than delete a working
+//! implementation: switching the three call sites over is a decision
+//! about what URL surface the app offers, not a cleanup, and
+//! [`load_web_storage_only`] carries the trust argument for why the
+//! answer is currently no. Until then this module holds a capability
+//! the app does not have, and that is recorded here rather than left
+//! for the next reader to discover.
 
 use super::{load_layered, ConfigLayer};
 

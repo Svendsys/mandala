@@ -4078,7 +4078,8 @@ the finding is written once in
   for the explicit CLI path before the XDG path, and
   `web_storage::load_web_storage_only(label, key, parse)` for
   `localStorage[key]` and nothing else. All six platform loaders
-  (three configs × two targets) are now a filename and a parser.
+  (three configs × two targets) are now a source name — a filename
+  on native, a storage key in the browser — plus a parser.
 - **The browser chain is one layer, not two, and that is a trust
   boundary rather than an omission.** `web_storage` also holds
   `load_web_layered`, which reads `?<param>=<json>` before
