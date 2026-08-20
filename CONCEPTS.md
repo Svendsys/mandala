@@ -37,8 +37,9 @@ these seams explicitly.
 
 Each entry uses bold labels in this order: **Summary** (one
 sentence), **What it's for** (the problem it solves), **Under
-the hood** (file references in `path/to/file.rs:line` form, jump
-targets), and where useful **Vision** (named trajectory) and
+the hood** (jump targets, named as `path/to/file.rs` plus the item
+to grep for — a line number would be stale by the next commit
+above it), and where useful **Vision** (named trajectory) and
 **Caveat** (gotchas).
 
 ## Table of contents
@@ -452,9 +453,14 @@ data. A subscriber *can* enqueue further mutations as a
 reaction, which is how reactive chains are built.
 
 `lib/baumhard/src/gfx_structs/mutator.rs`.
-`GlyphTreeEvent` is the enum of event kinds (`KeyboardEvent`,
-`MouseEvent`, `AppEvent`, `CloseEvent`, `KillEvent`);
-`GlyphTreeEventInstance` wraps it with a timestamp;
+`GlyphTreeEvent` is the enum of event kinds — `KeyboardEvent`,
+`MouseEvent(MouseEventData)` (the one that carries canvas-space
+coordinates), `AppEvent`, `CloseEvent`, `KillEvent`,
+`MutationEvent`, and `NoopEvent(usize)`. The last two are not
+constructed anywhere in either crate today: `MutationEvent` is the
+reserved peer of `Flag::MutationEvents`, and `NoopEvent` carries a
+`usize` so a test can tell two dispatches apart.
+`GlyphTreeEventInstance` wraps one with a timestamp;
 `EventSubscriber` is
 `Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance)
  + Send + Sync>>`. The `Arc<Mutex<…>>` shape exists so that
@@ -605,11 +611,20 @@ Some operations have fixed semantics that
 don't map to "add/subtract/assign": *pop the last three
 graphemes*, *change the range of this region*, *delete a
 specific region*. Commands are the vocabulary for those.
-Imperatively named, grapheme-aware, covers ~16 operations.
+Imperatively named and grapheme-aware. The
+operations fall in five groups: grapheme pops (`PopFront`,
+`PopBack`), position (`NudgeLeft` / `NudgeRight` / `NudgeUp` /
+`NudgeDown`, `MoveTo`, `Rotate`), font size and line height
+(`GrowFont`, `ShrinkFont`, `SetFontSize`, `SetLineHeight`,
+`GrowLineHeight`, `ShrinkLineHeight`), bounds (`SetBounds`), and
+the region table (`SetRegionFont`, `SetRegionColor`,
+`DeleteColorFontRegion`, `ChangeRegionRange`).
 
-`lib/baumhard/src/gfx_structs/area_mutators.rs`.
-All grapheme-touching commands use `grapheme_chad` helpers, so
-emoji / ZWJ / combining-mark sequences survive intact.
+`enum GlyphAreaCommand` in
+`lib/baumhard/src/gfx_structs/area_mutators.rs` is the count —
+the groups above are a reading aid, not a second list to keep in
+step. All grapheme-touching commands use `grapheme_chad` helpers,
+so emoji / ZWJ / combining-mark sequences survive intact.
 
 ### `OutlineStyle`
 
@@ -634,11 +649,19 @@ descent.
 A node's visual silhouette and its clickable
 silhouette must agree. `NodeShape` names the two today
 (rectangle, ellipse) and gives both pipelines one source of
-truth for "is this point inside?". Adding a new shape is
-four small changes: one enum variant, one `style_spellings`
-arm, one WGSL shader `case`, one `contains_local` arm. The
-`style_spellings` `match` is exhaustive over the variants, so
-the first change does not compile without the second.
+truth for "is this point inside?". Adding a new shape is a
+variant plus four match arms plus a shader case, and
+`shape.rs`'s own module header is the canonical recipe. What
+makes it safe to follow is that the arms are not remembered:
+four `match`es over `NodeShape` are exhaustive — `shader_id`,
+`style_spellings`, `contains_local` and `intersects_local_aabb`
+— so the variant does not compile until every one of them is
+answered, and the compiler names each. The shader `case` is the
+one half no `match` covers; it is held instead by
+`test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`,
+which reads `RECT_SHADER_WGSL` as text and fails on a variant
+with no constant, a constant carrying the wrong id, and — the
+silent one — a non-default variant with no `case` arm.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
@@ -1449,7 +1472,13 @@ parametric positions along the border perimeter.
 
 - `preset: String` — one of `"light"` (`─ │ ┌ ┐ └ ┘`),
   `"heavy"` (`━ ┃ ┏ ┓ ┗ ┛`), `"double"` (`═ ║ ╔ ╗ ╚ ╝`),
-  `"rounded"` (`─ │ ╭ ╮ ╰ ╯`, the default), or `"custom"`.
+  `"rounded"` (`─ │ ╭ ╮ ╰ ╯`), or `"custom"`. The default is
+  `"light"` (`default_border_preset` in `model/node.rs`, and the
+  `unwrap_or` floor in `border.rs`'s `resolve_border_style`), and
+  deliberately not `"rounded"`: `┌┐└┘` reach the cell edges and
+  join the side glyphs cleanly in a monospace font, while `╭╮╰╯`
+  curve inward and leave a visible gap at every corner. Pick
+  `"rounded"` when that is the look you want.
 - `font: Option<String>` — font family override; `None` =
   system default.
 - `font_size_pt: f32` — glyph size.
@@ -1485,7 +1514,8 @@ interpreted as the target *on-screen* size at zoom = 1.0;
 screen-space size as the camera zooms, so a long edge stays
 readable both zoomed in and zoomed out.
 
-`lib/baumhard/src/mindmap/model/edge.rs:335+`.
+`struct GlyphConnectionConfig` in
+`lib/baumhard/src/mindmap/model/edge.rs`.
 Fields: `body: String` (default mid-dot `·`), `cap_start` /
 `cap_end: Option<String>`, `font: Option<String>`, `font_size_pt:
 f32`, `min_font_size_pt` / `max_font_size_pt: Option<f32>`,
@@ -1654,9 +1684,12 @@ per-role mutations stay scoped.
 `MindMapTree` with `node_map: HashMap<String, NodeId>` (mind id →
 container arena id), `section_map: HashMap<(String, usize), NodeId>`
 (mind id + section index → section-area arena id), reverse maps
-for both, and an `owning_mind_id` helper that climbs up to three
-arena edges (model → section → container) to find the owning
-mind-node. Section-areas (and section-models) carry
+for both, and an `owning_mind_id` helper that climbs the parent
+chain until it reaches a container, to find the owning mind-node.
+Today's section subtree makes that at most model → section →
+container, but the climb is deliberately not written to a bound of
+three: a later per-component refinement that deepens a section's
+subtree keeps resolving without an edit here. Section-areas (and section-models) carry
 `Flag::SectionRoot`. Folded nodes are excluded.
 
 ### Canvas-role projection
@@ -1717,8 +1750,11 @@ distinction.
 Style is resolved exactly once, in the data pass; neither
 projection re-resolves it. Two inputs cross role boundaries.
 `node_clip::node_clip_aabbs` is the one the connection sampler
-clips glyph samples against; it reads only the resolved border
-`font_size_pt`. [`EdgePathCache`](#edge-path-cache) is the other:
+clips glyph samples against, and it resolves only the *size* half
+of the border cascade — whether a frame exists at all, and if so
+its `font_size_pt` — rather than calling the full
+`resolve_border_style`. No glyph set, no side patterns, no palette,
+no color string. [`EdgePathCache`](#edge-path-cache) is the other:
 the sampler, the selected edge's grab-handles and the label layout
 all want the same edge's `ConnectionPath`, and it is built once per
 edge per frame for whichever of them asks first.
@@ -2061,9 +2097,12 @@ Relabeling a gesture would silently stop every `["Web"]`-gated
 trigger from firing under a finger in the browser, so which
 platform a build *is* stays a build fact until the authoring
 format decides otherwise (`format/mutations.md`).
-Embedded in `MutationApplicabilityGate.contexts:
-Vec<PlatformContext>` so a mutation can declare which platforms
-it applies to.
+The per-binding filter is
+`TriggerBinding.contexts: Vec<PlatformContext>` (empty = every
+platform), so an authored trigger can declare which platforms it
+fires on. There is no separate gate type; a `CustomMutation`'s own
+`contexts` field is the *other* taxonomy, the dotted-namespace one
+above.
 
 ### Document actions
 
@@ -2076,8 +2115,13 @@ it touches `canvas.theme_variables`. Document actions cover that
 seam. They run alongside the tree mutation; a single mutation
 can both restyle nodes and switch the theme in one apply.
 
-`lib/baumhard/src/mindmap/custom_mutation/document_action.rs`.
-`SetThemeVariant` copies a named preset from
+`enum DocumentAction` in
+`lib/baumhard/src/mindmap/custom_mutation/mod.rs`, applied by
+`MindMapDocument::apply_document_actions`
+(`src/application/document/custom/mod.rs`). The enum is
+`#[non_exhaustive]`, so a variant that reaches outside memory
+cannot be added without the privilege review its doc comment
+names. `SetThemeVariant` copies a named preset from
 `canvas.theme_variants` into the live `theme_variables`;
 `SetThemeVariables` overwrites individual entries while
 preserving unmentioned keys.
@@ -2434,7 +2478,8 @@ Edges have no stable id (§3:
 console arguments all carry this triple. Equality and lookup are
 by triple match against the model's `Vec<MindEdge>`.
 
-`src/application/document/types.rs:71-97`. The `matches`
+`struct EdgeRef` in
+`src/application/document/types.rs`. Its `matches`
 method walks the edge vector linearly; this is fine because
 edges are sparse and the lookup happens at user-event frequency,
 not in hot loops.
@@ -2706,8 +2751,9 @@ project targets — has no input path at all on a phone.
 - **`Tap`** on the lift of a finger that never left
   `POINTER_DRAG_THRESHOLD_PX` and was down for less than
   `LONG_PRESS_MS`.
-- **`LongPress`** from `tick(now)` — "held for 350 ms" is a
-  wall-clock transition, not an event — once per episode.
+- **`LongPress`** from `tick(now)` — "still down after
+  `LONG_PRESS_MS`" is a wall-clock transition, not an event —
+  once per episode.
 - **`Pan { pos, delta }`** on every `Moved` from the threshold
   crossing onward. The first emission carries the travel since
   the finger *landed*, so summing an episode's deltas gives
@@ -2886,7 +2932,8 @@ average; if the average exceeds budget, it raises `n` (the
 "drain divisor"); if work is well under budget with hysteresis
 margin, it lowers `n` toward 1.
 
-`src/application/frame_throttle.rs:64-183`.
+`struct MutationFrequencyThrottle` in
+`src/application/frame_throttle.rs`.
 Default budget `14_000` µs (60 Hz minus safety), default
 window 8 frames, default hysteresis 30%. `n` clamps in
 `[1, 8]`. Each `ThrottledDrag` owns its own throttle, so
@@ -2974,15 +3021,20 @@ pipelines, atlases, and the FPS ring buffer; every frame, its
 buffers, and submits to the GPU. It never holds a reference to
 the document.
 
-`src/application/renderer/mod.rs:224-878`.
+`struct Renderer` in `src/application/renderer/mod.rs`.
 The dual pipeline lives here:
 - **Rect / SDF pipeline** — node fills, ellipse SDF (shape-aware
   fills via `RECT_SHADER_WGSL`), background fills.
 - **Glyph pipeline** — every visible character, via
   cosmic-text + glyphon atlas.
 
-Sub-passes sit in `borders.rs`, `connections.rs`,
-`console_pass.rs`, `color_picker.rs`. Visibility culling
+Sub-passes sit in `borders.rs`, `console_pass.rs`,
+`color_picker.rs` and `selection_overlay.rs`; the frame body and
+its vertex helpers are in `render.rs`. Connections have no file of
+their own here — like nodes, labels, portals and handles they
+reach the GPU through the Baumhard tree pipeline
+(`tree_walker.rs` → `tree_buffers.rs`), which the rubber-band
+overlay is the deliberate exception to. Visibility culling
 combines `Camera2D::is_visible` (spatial) with
 [`ZoomVisibility`](#zoomvisibility) (window).
 
@@ -3009,7 +3061,8 @@ second, and swapping them still renders correctly while undoing
 the whole point (see
 [canvas-role projection](#canvas-role-projection)).
 
-`src/application/scene_host.rs:1-150`. Each
+`struct AppScene` in `src/application/scene_host.rs`, with
+`CanvasRole` and `OverlayRole` above it in the same file. Each
 role has named slots (`CanvasRole`, `OverlayRole`); each slot
 has a corresponding `Tree<GfxElement, GfxMutator>` and a
 mutator registry. The same idiom drives both canvas-role
@@ -3221,7 +3274,8 @@ invariant for the model/view pipeline is preserved because the
 watchdog only *reads* a shared `AtomicU64`, never touching app
 state.
 
-`src/application/app/freeze_watchdog.rs:38-134`. Main thread
+`struct FreezeWatchdog` in
+`src/application/app/freeze_watchdog.rs`. Main thread
 calls `tick()` at every event-loop boundary; watchdog reads
 the atomic every second; if the gap exceeds `FREEZE_THRESHOLD`
 (10 seconds), prints diagnostics and aborts. Not present on
@@ -3252,7 +3306,7 @@ and the animation tick — are budgeted well above it either way.
 ### Action dispatch
 
 Every user-driven application-level effect is a variant
-of `enum Action` (`src/application/keybinds/action.rs`) and runs
+of `enum Action` (`src/application/keybinds/action/mod.rs`) and runs
 through a single `dispatch_action(action, ctx, hit)` funnel
 (`src/application/app/dispatch/native.rs`). Mouse, keyboard, the future
 macro runtime, and any plugin host all reach the same arms.
@@ -3391,7 +3445,9 @@ mutation against the tree (not the model) so the user sees
 in-flight characters; on commit, the model is updated and a
 single `EditNodeText` undo entry is pushed.
 
-`src/application/app/text_edit/mod.rs:29-80`.
+`enum TextEditState` in
+`src/application/app/text_edit/mod.rs`; the lifecycle is in the
+sibling `editor.rs`.
 Cross-platform — works on both native and WASM. Cursor math
 runs on grapheme-cluster indices throughout (via
 [`grapheme_chad`](#utilities--grapheme_chad-color-geometry)),
@@ -3633,9 +3689,9 @@ Four things the shape is load-bearing for:
   `Rows` covers both the document-derived vocabularies (a
   map's palettes, a node's sections, the host's font families)
   and the *suggestion* lists too open-ended to print: `zoom
-  min=` offers eight zoom levels and accepts any positive
-  float, so the popup gets the eight and the usage line gets
-  `<zoom|unset>`.
+  min=` accepts any positive float, so the popup gets the seven
+  levels `VALUE_PRESETS` names plus the `unset` sentinel, and the
+  usage line gets `<zoom|unset>`.
 - **A `Form` is (slots, keys), and a subverb may declare
   several.** `section move` takes `dx=`/`dy=` *or* `x=`/`y=`;
   `section resize` takes the `fill` literal *or* `w=`/`h=`.
