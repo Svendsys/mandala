@@ -2306,8 +2306,9 @@ comment there says *"Sole entry to the render path"* — so winit
 can coalesce a batch of `request_redraw` calls into one render.
 Nothing in the drain touches the GPU.
 
-`drain_inputs` runs six things in this order, and the
-`drain_frame.rs` helpers are the last four of them:
+`drain_inputs` runs six things in this order. Three of
+them are the `drain_frame.rs` helpers — steps 3, 4 and 6; the
+other three are inline in `run_native.rs`:
 
 1. Drive the active throttled drag, if any
    ([`ThrottledDrag`](#throttledinteraction-and-throttleddrag)) —
