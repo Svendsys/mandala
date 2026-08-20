@@ -37,9 +37,18 @@ use glam::Vec2;
 use crate::util::geometry::aabb_center;
 
 /// Period of `border_t`: four sides, normalized to one unit each.
-/// Exposed so the drag path can wrap values into the canonical
-/// range (e.g. after a dragged label would otherwise leave it
-/// at `t = 4.2`, we wrap back to `0.2`).
+/// This is the recorded value every `[0, period)` statement about
+/// `border_t` derives from — in this module, in the app crate, and
+/// in `CONCEPTS.md`'s "Portal geometry" entry, which names it
+/// rather than restating it.
+///
+/// `pub` as a seam rather than for a consumer: the only readers
+/// today are [`wrap_border_t`] below and its doc, because callers
+/// that need a canonical parameter reach for the wrapping functions
+/// instead of doing the rem-Euclid themselves. Wrapping is not
+/// optional — a label dragged past the bottom-left corner leaves
+/// `t` at 4.2 and has to come back to 0.2 — so the period is
+/// exported for whoever eventually wraps outside this module.
 pub const BORDER_T_PERIOD: f32 = 4.0;
 
 /// Wrap a raw `border_t` into the canonical `[0.0, 4.0)` range.

@@ -350,10 +350,16 @@ offsets** — the unit baumhard's text primitives speak in (see
 `font/attrs.rs` slice through `find_byte_index_of_grapheme`. The
 primitive itself just holds `usize` pairs and does not enforce a
 unit at the type level, so consumers that reach in from elsewhere
-must agree on the grapheme convention. Five mutation primitives keep the set
-consistent under text edit: `insert_regions_at`,
-`shrink_regions_after`, `split_and_separate`,
-`shift_regions_after`, `set_or_insert`. A spatial index
+must agree on the grapheme convention. The mutation surface is
+nine `&mut self` methods, and four of them are why it exists:
+`insert_regions_at`, `shrink_regions_after`, `shift_regions_after`
+and `split_and_separate` re-key the whole set when the underlying
+text changes, so a color pinned to one word still covers that word
+after a character is typed ahead of it. The other five —
+`submit_region`, `set_or_insert`, `replace_regions`, `remove_range`
+and `remove` — are ordinary set operations, though `submit_region`
+is reachable from the interactive `Type` path too and says so. A
+spatial index
 ([`RegionIndexer`](#regionparams-regionindexer-regionerror)) can
 be layered on top for hit-testing.
 
@@ -459,11 +465,20 @@ reaction, which is how reactive chains are built.
 `GlyphTreeEvent` is the enum of event kinds — `KeyboardEvent`,
 `MouseEvent(MouseEventData)` (the one that carries canvas-space
 coordinates), `AppEvent`, `CloseEvent`, `KillEvent`,
-`MutationEvent`, and `NoopEvent(usize)`. `MutationEvent` is
-reserved — the peer of `Flag::MutationEvents`, and constructed
-nowhere in either crate. `NoopEvent` is the test vehicle: its
-`usize` is how `tree_tests`' dispatch fixtures tell one delivery
-from another, and nothing in production builds one.
+`MutationEvent`, and `NoopEvent(usize)`. **No variant of the
+seven is constructed in production** — the vocabulary is a
+preserved seam rather than live traffic, and reading it as the
+kinds a future subscriber may distinguish is the only reading the
+code supports. `MouseEvent`, `AppEvent`, `CloseEvent`,
+`KillEvent` and `NoopEvent` are built only under
+`lib/baumhard/src/gfx_structs/tests/`; `NoopEvent`'s `usize` is
+how `tree_tests`' dispatch fixtures tell one delivery from
+another. `KeyboardEvent` and `MutationEvent` are constructed
+nowhere in either crate, not even by a test: `MutationEvent` is
+the reserved peer of `Flag::MutationEvents`, and keystrokes reach
+the app through `app/event_keyboard.rs` and the `Action` funnel
+rather than through a subscriber, so nothing has ever had a
+reason to build a `KeyboardEvent`.
 `GlyphTreeEventInstance` wraps one with a timestamp;
 `EventSubscriber` is
 `Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance)
@@ -471,11 +486,13 @@ from another, and nothing in production builds one.
 cloning an element (as the arena does) keeps a single callback
 reachable from every clone rather than duplicating state.
 
-Today the mindmap app does not use subscribers
-heavily — most interaction goes through the application's own
-input handlers. The seam is preserved for the Baumhard script
-API and plugin trajectory, where user-authored code will want
-to subscribe to events without reaching into the app crate.
+Today the mindmap app registers no subscribers at all —
+`subscribers_mut` is called by element cloning and by the test
+modules, and by nothing else — so every interaction goes through
+the application's own input handlers. The seam is preserved for
+the Baumhard script API and plugin trajectory, where
+user-authored code will want to subscribe to events without
+reaching into the app crate.
 
 ### `Predicate` and `Comparator`
 
@@ -1652,19 +1669,24 @@ shapes.
 
 ### Portal geometry
 
-The conversion between `border_t ∈ [0, 4)` and a
+The conversion between a `border_t` parameter and a
 canvas point on a rectangular node's border, plus directional
 defaults.
 
 Portal endpoints must sit on their owning
 node's border, parametrically — so when the node is resized, a
 label at "the middle of the right edge" stays at the middle of
-the right edge. The side-indexed encoding (`[0, 1)` = top,
-`[1, 2)` = right, `[2, 3)` = bottom, `[3, 4)` = left) is the right
+the right edge. The side-indexed encoding is the right
 abstraction: stable across resize, deterministic across corners.
+One unit of `border_t` per side, walking top → right → bottom →
+left, so the integer part is the side index and the fraction is
+the position along that side. The period is
+`portal_geometry::BORDER_T_PERIOD`, and the per-side table is on
+`border_point_at` beside it — read the ranges out of one of those
+rather than out of this entry.
 
 `lib/baumhard/src/mindmap/portal_geometry.rs`.
-Functions: `wrap_border_t` (rem-Euclid into `[0, 4)`),
+Functions: `wrap_border_t` (rem-Euclid by `BORDER_T_PERIOD`),
 `border_point_at`, `border_outward_normal`,
 `default_border_t` (the auto-orientation: cast a ray from owner
 to partner center), `nearest_border_t` (project a canvas point to
@@ -2609,6 +2631,18 @@ impose on every state — including the `None` that is live for all
 but a few seconds of a session. `PendingRight`, 64 bytes, is the
 widest variant left and stays unboxed.
 
+**Those figures are unpinned `size_of` readings, and this entry is
+not their authority.** No constant records them and no test
+asserts them, so a field added to `PendingRight` moves the 64
+silently and nothing turns red; `app/mod.rs`'s `DragState` doc
+carries the same numbers with the same standing, so the two agree
+by hand rather than by construction. The 912 is historical — it
+describes a shape that no longer exists and cannot be re-measured
+at all. What survives re-measurement is the claim the numbers are
+there for: boxing moved a large per-variant cost off the state
+that is live almost all the time. Take a fresh `size_of` before
+quoting a figure.
+
 **`SelectingRect` splits its per-frame work in two, and only one
 half runs every frame.** The overlay rectangle tracks the pointer
 and is redrawn unconditionally. The covered-node preview is
@@ -3020,6 +3054,14 @@ window so any declarative or imperative mutation replays
 cleanly. Every arm is bounds-checked (e.g. `index <
 edges.len()`) before mutating, so undo is always safe — never
 panics, even on a partially-deleted state.
+
+**What holds the number and what does not.** `undo()`'s match in
+`document/undo.rs` is exhaustive with no catch-all, so a
+fourteenth variant cannot ship without its reversal — that part
+is compiler-forced. The *count* is not: "13" and the list beside
+it are prose, checked against the enum by hand, and a variant
+added with its `undo()` arm written leaves both stale without
+failing anything. Count the enum, not this sentence.
 
 ### The node-edit envelope and `NodeEditTail`
 
@@ -3733,10 +3775,13 @@ A `Grammar` is a **level**, not a verb. `border` is one,
 `border preview` is another, `canvas section-frame focused` a
 third, each joined to its parent by a `&'static` reference on
 `Subverb::child`. `subverb_sets` and `key_sets` are slices *of
-slices*, so `canvas border` names border's fifteen keys and
-border's seven per-field subverbs rather than transcribing
+slices*, so `canvas border` names border's fifteen keys and the
+seven subverbs of `POSITIONAL_SUBVERBS` rather than transcribing
 them; `section frame` names the same fifteen and adds its own
-`section=`.
+`section=`. Seven is the slice length, not a help-group count:
+five of the seven declare the group `"per-field"` and two —
+`side` and `corner` — declare `"glyphs"`, which is what puts them
+under their own heading in `help`.
 
 Four things the shape is load-bearing for:
 

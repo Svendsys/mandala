@@ -135,6 +135,19 @@ impl MouseEventData {
 /// [`EventSubscriber`](crate::gfx_structs::tree::EventSubscriber)
 /// may react to. Cheap to clone (`Copy`-like; inner data is at most
 /// one `usize`).
+///
+/// **This is a vocabulary, not live traffic.** No variant is
+/// constructed in production today: five of them are built only by
+/// the test modules under `gfx_structs/tests/`, and `KeyboardEvent`
+/// and `MutationEvent` are built nowhere at all. The set names the
+/// stimuli a future subscriber — the Baumhard script API, a plugin —
+/// would want to tell apart, and is preserved on those grounds
+/// rather than because something dispatches them now. A new
+/// variant is correspondingly unguarded: no hand-written `match`
+/// over this enum is exhaustive in either crate — the sole one, in
+/// `spatial_descend_tests`, ends in a catch-all — and the derives
+/// cover a new variant themselves, so nothing will make you notice
+/// it went undispatched.
 #[derive(Clone, Debug, Serialize, Deserialize, Display, Eq, PartialEq)]
 pub enum GlyphTreeEvent {
     /// Keyboard input events
