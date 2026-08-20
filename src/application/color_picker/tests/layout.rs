@@ -134,7 +134,7 @@ fn layout_val_bar_monotonic_y_constant_x() {
 }
 
 /// With `center_override` set, every position in the layout
-/// (hue slots, bar cells, chips, preview, backdrop) must
+/// (hue slots, bar cells, preview, hex readout, backdrop) must
 /// translate by the offset between the override and the default
 /// window center.
 #[test]

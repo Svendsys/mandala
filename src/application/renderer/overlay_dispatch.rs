@@ -103,12 +103,12 @@ impl Renderer {
     /// overlay buffers so it disappears.
     ///
     /// Called by `open_color_picker`, the `Resized` handler, and
-    /// the hover / chip-focus / commit / cancel paths in
+    /// the hover / HSV / commit / cancel paths in
     /// `app::rebuild_color_picker_overlay`.
     ///
     /// Open and close are the two events that genuinely rebuild the
     /// arena, and so the two that shape every cell in it. The
-    /// per-frame hover / HSV / chip paths do not come through here
+    /// per-frame hover / HSV paths do not come through here
     /// — they mutate the registered arena in place and re-shape
     /// only the cells whose `GlyphArea` actually moved; see
     /// [`Self::apply_color_picker_overlay_dynamic_mutator`] and
@@ -134,7 +134,7 @@ impl Renderer {
     ///
     /// Use this only when something the layout depends on actually
     /// changed (viewport resize, RMB size_scale drag, drag-move
-    /// repositioning the wheel). Per-frame hover/HSV/chip updates
+    /// repositioning the wheel). Per-frame hover / HSV updates
     /// should call [`Self::apply_color_picker_overlay_dynamic_mutator`]
     /// instead — same arena, slimmer per-cell delta. Open / close
     /// still use [`Self::rebuild_color_picker_overlay_buffers`]
@@ -162,7 +162,7 @@ impl Renderer {
     /// text) are written; layout-phase fields stay as the previous
     /// layout-mutator wrote them.
     ///
-    /// This is the per-frame hot path for hover / HSV / chip-focus
+    /// This is the per-frame hot path for hover / HSV
     /// updates — the picker's element set, position, and bounds are
     /// unchanged. Calls `rebuild_overlay_scene_buffers` afterward,
     /// which re-shapes the cells whose `GlyphArea` this mutator

@@ -22,7 +22,7 @@ use super::geometry::compute_picker_geometry;
 ///   repositioning): apply the layout-phase mutator —
 ///   `Renderer::apply_color_picker_overlay_mutator` — which writes
 ///   every variable field on every cell via `Assign` deltas.
-/// - **Layout unchanged** (per-frame hover / HSV / chip / drag-Move
+/// - **Layout unchanged** (per-frame hover / HSV / drag-Move
 ///   without geometry change): apply the dynamic-phase mutator —
 ///   `Renderer::apply_color_picker_overlay_dynamic_mutator` — which
 ///   writes only the fields that genuinely move per frame

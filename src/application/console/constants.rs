@@ -13,7 +13,9 @@
 // ---------------------------------------------------------------
 //
 // Resolved at scene-build time by `baumhard::util::color::resolve_var`.
-// Used by the `color` command's chip row and the theme-swap trigger.
+// The `color` verb's named-value vocabulary: `ColorValue::parse`
+// (`console/traits/color_value.rs`) maps `accent` / `edge` / `fg` onto
+// these, so an author can name a theme variable instead of a hex.
 
 pub const VAR_ACCENT: &str = "var(--accent)";
 pub const VAR_EDGE: &str = "var(--edge)";

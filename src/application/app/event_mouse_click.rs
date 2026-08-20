@@ -114,8 +114,7 @@ pub(super) fn handle_mouse_input(
     // picker captures both left- and right-mouse
     // buttons:
     // - LMB on a `DragAnchor` → wheel-move gesture;
-    //   on any other hit → preview / commit / chip
-    //   focus.
+    //   on any other hit → preview or commit.
     // - RMB on a `DragAnchor` → wheel-resize
     //   gesture (drag away to grow, toward to shrink).
     //   RMB elsewhere is currently a no-op — only

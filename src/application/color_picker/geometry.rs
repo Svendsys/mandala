@@ -85,8 +85,8 @@ pub struct ColorPickerOverlayGeometry {
     /// Wheel center override in screen-space pixels, set by the drag
     /// handler. When `None`, the layout centers the wheel at
     /// `(screen_w/2, screen_h/2)` (today's behavior). When `Some`,
-    /// every position in the layout — hue slots, bar cells, chips,
-    /// title, hint, backdrop, everything — is translated so the
+    /// every position in the layout — hue slots, bar cells, preview,
+    /// hex readout, hint, backdrop, everything — is translated so the
     /// geometric wheel center lands on the override.
     pub center_override: Option<(f32, f32)>,
     /// Which interactive element the cursor is currently over, if

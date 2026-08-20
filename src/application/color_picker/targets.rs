@@ -152,9 +152,9 @@ fn node_axis_color<'a>(
 }
 
 /// Read the current color string for a handle. Used to seed picker
-/// HSV at open time and to read the effective color for the
-/// preview after a chip action. Returns `None` if the index / id
-/// no longer resolves.
+/// HSV at open time and to re-read the effective color when the
+/// preview is refreshed. Returns `None` if the index / id no
+/// longer resolves.
 ///
 /// **Effective**, not authored: every node / section arm reads
 /// through the palette cascade

@@ -46,11 +46,17 @@ pub(in crate::application::app) fn fire_onclick_triggers(
             // `dispatch::apply_keybind_custom_mutation` is the other,
             // and it is the one CLAUDE.md's "Dual-target status"
             // registry names for the keystroke tier. Named pre-existing
-            // duplication: the two differ in the no-tree case (that
-            // one returns `false` and skips `apply_document_actions`;
-            // this loop applies them regardless) and in the target
-            // shape (`start_animation_at` is section-aware), so
-            // collapsing them decides behavior rather than moving it.
+            // duplication, differing in three ways: arity (this is a
+            // loop over every mutation the hit resolved, that one
+            // handles the single mutation a keybind named), target
+            // shape (`start_animation_at` is section-aware; a
+            // keystroke has no `hit_section`), and the no-tree case
+            // (that one returns `false` and skips
+            // `apply_document_actions`; this loop applies them
+            // regardless). The third is why collapsing them decides
+            // behavior rather than moving it. The full enumeration
+            // lives on `apply_keybind_custom_mutation`'s animated
+            // branch.
             //
             // Both stall identically on the browser: `start_animation*`
             // only queues the envelope and `drain_animation_tick` is

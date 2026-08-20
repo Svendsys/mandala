@@ -51,7 +51,7 @@ pub(in crate::application::color_picker_overlay) fn build_color_picker_overlay_t
 ///
 /// This is the §B2 "mutation, not rebuild" path for layout-change
 /// events: initial open, viewport resize, and RMB size_scale drag.
-/// Hover / HSV / chip frames go through
+/// Hover / HSV frames go through
 /// [`build_color_picker_overlay_dynamic_mutator`] instead — same
 /// channel layout, slimmer per-section field lists.
 pub(in crate::application::color_picker_overlay) fn build_color_picker_overlay_mutator(

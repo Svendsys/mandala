@@ -2153,14 +2153,17 @@ to `InitState` and stay there for the lifetime of the run.
 `NativeApp` exists only to satisfy winit's trait surface;
 everything substantive lives on `InitState`.
 
-`src/application/app/run_native.rs:48-130`.
+All three in
+`src/application/app/run_native.rs`; `Application` itself is
+declared in `src/application/app/mod.rs`, once per target.
 `InitState` carries `window: Arc<Window>`, a
-`document: Option<MindMapDocument>`, `drag_state`, `app_mode`,
-modal UI state (console, node text editor, single-line editor,
-color picker), `picker_hover`, and the resolved keybind table. The
-`input_context()` method at line 137 produces a borrowed view of
-these fields per-event so handlers can borrow disjoint subsets
-without lifetime contortions.
+`document: Option<MindMapDocument>`, the `mindmap_tree` the
+document does not own, `drag_state`, `interaction_mode`, modal UI
+state (console, node text editor, single-line editor, color
+picker), `picker_hover`, `touch_recognizer`, and the resolved
+keybind and macro tables. Its `input_context()` method produces a
+borrowed view of these fields per-event so handlers can borrow
+disjoint subsets without lifetime contortions.
 
 The `Option` on `document` is the interactive shell's shape, not
 startup's: init always produces a document, because a load that
@@ -2222,40 +2225,77 @@ The convention behind the choice is
 broken program precondition, and a user's malformed input is not
 one.
 
-### Event loop and `drain_frame`
+### Event loop and `drain_inputs`
 
-The per-frame heartbeat: tick watchdog, drive
-throttled interactions, advance animations, rebuild geometry,
-rebuild scene if dirty, render, log frame interval.
+The native per-frame heartbeat: one drain of the
+pending interaction state, run from `AboutToWait`, followed —
+separately, and only if the drain asked for it — by a render.
 
-Every frame runs the same six steps in the
-same order. Inputs arriving between frames mutate the document;
-the throttled-interaction shells and the per-frame geometry
-flags ensure the next `drain_frame` rebuilds only what changed.
+Inputs arriving between frames mutate the
+document; the throttled-interaction shells and the per-frame
+geometry flags ensure the next drain rebuilds only what changed.
 This decouples mutation frequency (often per-input-sample) from
 rebuild frequency (at most once per frame), so a flurry of
 pointer events doesn't trigger a flurry of scene rebuilds.
 
-`src/application/app/drain_frame.rs`. Called
-on every winit `AboutToWait` event. Step order:
+**The drain and the render are two events, not two steps.**
+`NativeApp::about_to_wait` (`src/application/app/run_native.rs`)
+calls `InitState::drain_inputs`, then asks
+[`needs_continuation`](#throttledinteraction-and-throttleddrag)
+whether to `request_redraw`. `Renderer::process` runs from the
+`WindowEvent::RedrawRequested` arm and nowhere else — its own
+comment there says *"Sole entry to the render path"* — so winit
+can coalesce a batch of `request_redraw` calls into one render.
+Nothing in the drain touches the GPU.
 
-1. Drive any active throttled interaction
-   ([`ThrottledInteraction`](#throttledinteraction-and-throttleddrag)) —
+`drain_inputs` runs six things in this order, and the
+`drain_frame.rs` helpers are the last four of them:
+
+1. Drive the active throttled drag, if any
+   ([`ThrottledDrag`](#throttledinteraction-and-throttleddrag)) —
    apply pending delta if the throttle says drain.
-2. Advance running animations; on completion, push undo entry.
-3. Rebuild connection geometry if edges moved.
-4. Rebuild the scene where the frame's work requires it —
-   mutation-path rebuilds run at their call sites
-   (`rebuild_all`); the [dirty flag](#dirty-flag) is the
-   unsaved-changes marker, not a rebuild trigger.
-5. Dispatch to `Renderer::process` to push GPU buffers.
-6. Update FPS rolling-average / snapshot counter.
+2. Drive the picker-hover interaction, which shares the same
+   [`ThrottledInteraction`](#throttledinteraction-and-throttleddrag)
+   shell. A hover drain still queued when the picker closed
+   bypasses the throttle and clears, rather than pinning the loop
+   in `ControlFlow::Poll` for a throttle window.
+3. `drain_rect_select` — unconditional, and takes the whole
+   [`DragState`](#dragstate): it re-derives the rubber band from
+   the state that authorizes it, which is why it has to run on the
+   frames where no band is live too.
+4. `drain_camera_geometry_rebuild` — re-projects the
+   zoom-dependent canvas roles when the renderer's
+   `connection_geometry_dirty` flag is set. The
+   [dirty flag](#dirty-flag) on the document is the
+   unsaved-changes marker and is not consulted here or anywhere
+   else in the drain.
+5. Animation pause/resume — entering a tree-mutating drag stamps
+   wall-clock, leaving one shifts every active animation's
+   `start_ms` forward by the drag's duration, so a long drag does
+   not leave an in-flight animation observing `elapsed >= total`
+   on the first frame after release.
+6. `drain_animation_tick` — skipped entirely during those same
+   tree-mutating drags, because a tick routes through
+   `sync_node_from_tree` and would write mid-drag state to the
+   model and the undo stack.
+
+Inside `Renderer::process` the FPS counter ticks *before* the
+frame is drawn, not after: `tick_fps` and
+`rebuild_fps_overlay_if_needed` run first so the overlay the frame
+draws is the one this tick computed.
+
+**None of this exists on the browser.** `WasmApp` implements no
+`about_to_wait`, so there is no drain: every rebuild runs at its
+event handler's call site and `Renderer::process` runs from that
+target's own `RedrawRequested` arm. The consequences are
+registered in [`CLAUDE.md`](./CLAUDE.md) "Dual-target status" —
+animated `CustomMutation`s start and never tick, and
+`DragState::SelectingRect` has nothing to enter.
 
 ### `MindMapDocument`
 
-The data plane: owns the `MindMap`, the tree mirror,
-the undo stack, the running animations, and the mutation
-registries.
+The data plane: owns the `MindMap`, the undo
+stack, the running animations, and the mutation registries.
 
 This is where every persistent piece of state
 lives. It is the only owner of the model and the undo stack; the
@@ -2264,24 +2304,35 @@ it. Transient previews (live color picker, in-flight label edit,
 in-flight portal-caption edit) belong to it too — read by the scene
 builder, never committed back without an explicit step.
 
-`src/application/document/mod.rs:64-151`. Fields include
-`mindmap: MindMap`, `tree: Option<MindMapTree>`, `selection:
+`struct MindMapDocument` in
+`src/application/document/mod.rs`. Its fields: `mindmap: MindMap`,
+`file_path: Option<String>`, `dirty: bool`, `selection:
 SelectionState`, `undo_stack: Vec<UndoAction>`,
-`active_animations`, `active_toggles`, `mutation_registry`,
-`mutation_handlers`, `mutation_sources`, `dirty: bool`,
-`label_edit_preview`, `portal_text_edit_preview`,
-`color_picker_preview`, `border_preview`,
-`rect_select_preview` (the node ids a rubber-band rectangle
-currently covers — see [`DragState`](#dragstate)). What it does
-**not**
+`mutation_registry`, `mutation_sources`, `mutation_handlers`,
+`active_toggles`, `active_animations`, `label_edit_preview`,
+`portal_text_edit_preview`, `color_picker_preview`,
+`border_preview`, and the private `rect_select_preview` (the node
+ids a rubber-band rectangle currently covers — see
+[`DragState`](#dragstate)). What it does **not**
 own: the renderer, GPU resources, drag/mode state, modal editor
 state, keybinds — those are all on `InitState`.
+
+**The Baumhard tree mirror is not one of them.** `build_tree` is a
+method here — it is the pure projection of the model that the
+`Persistent` custom-mutation path syncs back against — but the
+live `Option<MindMapTree>` it produces is held by the runtime, not
+the document: `InitState.mindmap_tree` on native and
+`WasmApp.mindmap_tree` on the browser. That is why every
+tree-touching call in the app takes the tree as a separate `&mut`
+argument beside `&mut MindMapDocument` rather than reaching
+through it.
 
 ### `SelectionState`
 
 A tagged union of what the user has selected:
-nothing, a node, multiple nodes, one section of one node, an
-edge body, an edge label, a portal icon, or a portal text.
+nothing, a node, multiple nodes, one section of one node, several
+sections, a grapheme range inside one section, an edge body, an
+edge label, a portal icon, or a portal text.
 
 Selection variants are mutually exclusive by
 construction — at most one thing is selected at a time. The
@@ -2976,10 +3027,13 @@ Rebuild dispatch stops at the arena. A mutator
 apply reaches every slot of a role by design, and every writer
 above it assigns every field whether or not the value moved, so
 "mutate, don't rebuild" bought a reused arena and then paid for a
-full re-shape of it anyway: a picker hover shaped all 59 overlay
-elements, a console keystroke all ~50 rows, and every one of the
-ten `flush_canvas_scene_buffers` call sites shaped every buffer of
-all eight canvas roles no matter which one it had re-projected.
+full re-shape of it anyway. A picker hover changes one cell's
+color and re-shaped every cell of the wheel — the whole fixed
+payload `mutator_round_trip.rs` pins; a console keystroke changes
+one line and re-shaped the frame plus every scrollback and
+completion row; and every one of the ten
+`flush_canvas_scene_buffers` call sites re-shaped every buffer of
+all eight `CanvasRole`s no matter which one it had re-projected.
 
 `src/application/renderer/scene_shape_cache.rs`.
 `refresh(scene, ids, shaped, kind)` walks the sub-scene in layer
@@ -3013,8 +3067,8 @@ a statement.
 
 ### Scene rebuild granularity
 
-Five tiered rebuild functions, each scoped to a
-specific change kind.
+Four whole-canvas rebuild functions over seven
+per-role updaters, each scoped to a specific change kind.
 
 Different changes invalidate different
 amounts of work. Editing a node's text might change its width
@@ -3023,18 +3077,34 @@ amounts of work. Editing a node's text might change its width
 only touches portal markers (portal-only rebuild). Each tier
 is dispatched explicitly so the cheapest one runs.
 
-`src/application/app/scene_rebuild.rs`.
-Functions: `rebuild_all` (node tree + every canvas role),
-`rebuild_scene_only` (reuse the node tree, refresh every canvas
-role), `rebuild_selection_highlight` (node text buffers only — no
-canvas roles, no mode-status line: what a change to *which nodes
-are highlighted* actually needs), and the per-role methods on
+`src/application/app/scene_rebuild.rs`. The four whole-canvas
+functions:
+
+- `rebuild_all` — the node tree plus every canvas role.
+- `rebuild_scene_only` — every canvas role, node tree reused.
+- `rebuild_camera_geometry` — only the roles that size or position
+  against the camera (connections and their grab handles, labels,
+  portals). Borders, section frames and resize handles are
+  canvas-space, so a scroll tick that re-projected them would be
+  pure waste. Both targets reach this one: native from the
+  per-frame drain under the renderer's dirty flag, the browser from
+  its wheel handler under the same flag.
+- `rebuild_selection_highlight` — node text buffers only, no canvas
+  roles and no mode-status line: what a change to *which nodes are
+  highlighted* actually needs. `cfg`-gated to native today, because
+  its two callers are, but not native by nature — see
+  [`CLAUDE.md`](./CLAUDE.md) "Dual-target status".
+
+Under them sit the seven per-role methods on
 [`CanvasFrame`](#canvas-role-projection) —
 `update_connection_trees` (edges + their grab handles),
-`update_portal_tree`, `update_border_tree`,
+`update_border_tree`, `update_portal_tree`,
 `update_connection_label_tree`, `update_section_frame_tree`, and
 the two resize-handle updaters — each callable on its own so a
 caller refreshes only what its interaction can change.
+`CanvasFrame::update_all` runs all seven:
+`rebuild_scene_only` is one call to it, and `rebuild_all` reaches
+it through `rebuild_scene_only`.
 
 **`RebuildTier` names the top two rather than running them.**
 `RebuildTier::{All, SceneOnly}` is the choice between the first
@@ -3168,10 +3238,14 @@ FPS tracking, throttled-interaction frame stamping all need a
 clock that works the same on both targets. `now_ms()` is the
 single bridge.
 
-`src/application/app/mod.rs:98-111`.
-Native: `Instant::now()` deltas from a static epoch. WASM:
-`window.performance.now()` (clamped to ≥1ms by Spectre
-mitigations).
+`now_ms` in `src/application/common.rs` — the single
+definition; `src/application/app/mod.rs` re-exports it
+(`pub(crate) use`) so the `use super::now_ms` shape inside `app`
+keeps working. Native: `Instant::now()` deltas from a static
+`OnceLock` epoch. WASM: `window.performance.now()`. Browsers
+quantise that clock, so treat its resolution as no finer than a
+millisecond; the two consumers that care — the double-click window
+and the animation tick — are budgeted well above it either way.
 
 ---
 
@@ -3270,11 +3344,30 @@ ships unbound. Users opt back in via:
 { "create_orphan_node_and_edit": ["DoubleClick"] }
 ```
 
-**Custom-mutation parity.** `dispatch_custom_mutation_for_key`
-mirrors the click-trigger path at `click.rs:35-64` byte-for-byte:
-animation-aware (`start_animation` when `timing.duration_ms > 0`),
-always invokes `apply_document_actions`. Closes the silent feature
-gap where keyboard-triggered custom mutations skipped both.
+**Custom-mutation parity, and the one place it is only
+approximate.** The keystroke tier resolves through
+`dispatch_custom_mutation_for_key`
+(`dispatch/cross_dispatch/lifecycle.rs`) into
+`apply_keybind_custom_mutation` (`dispatch/cross_dispatch/mod.rs`),
+which is animation-aware — `start_animation` when
+`timing.duration_ms > 0` — and always invokes
+`apply_document_actions`. That closed the silent feature gap where
+keyboard-triggered custom mutations skipped both.
+
+It is **not** the same body the click-trigger path runs.
+`click_triggers::fire_onclick_triggers` carries its own copy of the
+animated-vs-instant routing, and the two differ in three ways: it
+loops over every mutation the hit resolved rather than handling
+one; it calls the section-aware `start_animation_at`, which the
+keystroke tier has no `hit_section` to pass; and when there is no
+tree, the keystroke tier returns `false` and skips
+`apply_document_actions` while the trigger loop applies them
+anyway. The duplication is named at both sites and registered in
+[`CLAUDE.md`](./CLAUDE.md) "Dual-target status", because collapsing
+it decides which of the two no-tree answers is right rather than
+moving code. Both stall identically on the browser: `start_animation*`
+only queues the envelope, and the tick that would advance it is
+native-only.
 
 ---
 
@@ -3375,8 +3468,9 @@ contract a unit test on either editor cannot see.
 
 ### Glyph-wheel color picker
 
-A modal HSV picker rendered as a 24-glyph hue ring
-with sat/value crosshairs and theme-variable quick-pick chips.
+A modal HSV picker rendered as a hue ring of
+`HUE_SLOT_COUNT` glyphs, with two perpendicular sat/value glyph
+bars crossing at a center preview glyph and a hex readout.
 
 Picking a color for the current selection
 without leaving the canvas. Hover live-previews through the
@@ -3384,16 +3478,25 @@ without leaving the canvas. Hover live-previews through the
 connection, label, and portal passes read it during projection
 and substitute the preview color for the targeted element. Click commits, click
 outside cancels. Keyboard: h/H nudges hue, s/S sat, v/V value,
-Tab cycles theme chips, Enter commits, Esc cancels.
+Enter commits, Esc cancels.
 
-`src/application/color_picker/mod.rs:1-77`
-and `src/application/color_picker_overlay/`. Native-only today.
+A row of theme-variable quick-pick chips was part of the original
+design and is **gone** — with it the `Tab` binding that cycled
+them, so there is no chip in `PickerHit`, no chip list in
+`widgets/color_picker.json`, and no chip-cycling `Action`. Theme
+variables are still reachable by name: `color … accent|edge|fg`
+resolves through `ColorValue::parse`.
+
+`src/application/color_picker/` for the pure geometry, hit test
+and state, `src/application/color_picker_overlay/` for the tree
+and mutator builders. Native-only today.
 `compute_color_picker_layout()` is a pure function over
 geometry + viewport, so layout can be unit-tested without GPU.
 Two modes: contextual (modal, opened from edge context menu;
 commits to the targeted edge and closes) and standalone
-(persistent palette, opened via `color picker on`; commits to
-the current selection and stays open).
+(persistent palette, opened via `color picker on` and closed by
+`color picker off`; commits to the current selection and stays
+open).
 
 Commit, cancel and the six HSV nudges are `Action`s that run in
 `dispatch_action` like every other user-named effect
@@ -3472,8 +3575,8 @@ console verbs, plus the `BorderPreview` lifecycle.
 
 ### Console
 
-A CLI-style command palette (Ctrl+;) for mutations,
-styling, settings, and document operations.
+A CLI-style command palette (`/` by default) for
+mutations, styling, settings, and document operations.
 
 Power-user operations that don't have a
 keybind. The console covers the long tail: zoom-bound
@@ -3483,11 +3586,20 @@ and application, FPS toggle. Tokenized shell-style
 first-class). Tab-completion is contextual and prefix-matched;
 scrollback shows command history with dimmed older lines.
 
-`src/application/console/mod.rs:1-170`.
-Native-only today. Verbs include `zoom`, `font`, `color`,
-`label`, `edge`, `portal`, `anchor`, `body`, `cap`, `spacing`,
-`fps`, `mutation` (with `list`, `help`, `apply`, `inspect`
-subverbs), `open`, `new`, `quit`, `save`. Visuals borrow
+`src/application/console/mod.rs` for the shell,
+`src/application/console/commands/` for the verbs. Native-only
+today. The registry is the `COMMANDS` slice in
+`console/commands/mod.rs`, and it is the whole list — in its own
+declaration order, which is the order `help` prints: `help`,
+`anchor`, `body`, `border`, `canvas`, `cap`, `color`, `edge`,
+`font`, `fps`, `spacing`, `label`, `mode`, `mutation`, `save`,
+`open`, `new`, `node`, `section`, `zoom`. Three carry aliases
+(`help` as `?` / `h`, `mutation` as `mut`, `zoom` as
+`visibility`); `mutation` is the one with subverbs worth naming
+here — `list`, `apply`, `help`, `inspect`. There is no `quit`
+verb, and no `portal` verb: portal authoring is reached through
+`edge display_mode=portal` and the per-endpoint verbs that follow
+a portal selection. Visuals borrow
 `baumhard::mindmap::border::BorderGlyphSet::box_drawing_rounded`
 for the frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
@@ -3860,9 +3972,16 @@ round-trip; on paste, the payload is consulted only when its
 `text` snapshot matches the OS clipboard's current text exactly
 (consistency check; falls through to plain text when the user
 copied from another app between Mandala copy and paste).
-Failures (permission denied, unavailable) log via `log::warn!`
-and return `None` — interactive paths must not panic. WASM
-stubs warn-and-noop pending the browser's async clipboard API.
+
+**Both failure paths are quiet, and differently so.** A native
+failure — permission denied, no clipboard server — is swallowed
+without a log line: `read_clipboard` composes `.ok()` and returns
+`None`, `write_clipboard` discards its result. Interactive paths
+must not panic, and nothing here does; but nothing here reports
+either, so a user whose clipboard is unavailable sees a copy that
+silently does nothing. The WASM stubs are the deliberate half:
+they `log::debug!` that the operation is not supported yet and
+return, pending the browser's async clipboard API.
 
 ### `maptool` CLI
 

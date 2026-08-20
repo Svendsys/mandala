@@ -37,7 +37,7 @@ pub(super) fn prepare_overlay_for_rebuild(
 /// picker overlay tree without rebuilding the arena. Use only
 /// when something the layout depends on actually changed (viewport
 /// resize, RMB size_scale drag, drag-move repositioning the
-/// wheel). Per-frame hover/HSV/chip updates should call
+/// wheel). Per-frame hover / HSV updates should call
 /// [`apply_dynamic_mutator`] instead — same arena, slimmer
 /// per-cell delta.
 ///
@@ -56,7 +56,7 @@ pub(super) fn apply_layout_mutator(
 /// picker overlay tree. Only per-frame fields (color regions,
 /// hover scale, hex text) are written; layout-phase fields stay
 /// as the previous layout-mutator wrote them. The per-frame hot
-/// path for hover / HSV / chip-focus updates.
+/// path for hover / HSV updates.
 pub(super) fn apply_dynamic_mutator(
     app_scene: &mut AppScene,
     geometry: &ColorPickerOverlayGeometry,

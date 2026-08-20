@@ -17,8 +17,8 @@ use super::commit::apply_picker_preview;
 ///
 /// - **Drag active**: translate the wheel so
 ///   `center = cursor + grab_offset`. Every layout position (ring,
-///   bars, chips, backdrop) rebuilds against the new center via
-///   `center_override`.
+///   bars, preview, hex readout, backdrop) rebuilds against the new
+///   center via `center_override`.
 /// - **Hover**: hit-test the cursor, set `hover_preview` to the
 ///   hovered cell's HSV (visual preview only — no mutation of the
 ///   selected `hue_deg`/`sat`/`val`), and record `hovered_hit`

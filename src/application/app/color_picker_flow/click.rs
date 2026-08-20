@@ -54,9 +54,9 @@ pub(in crate::application::app) fn terminal_route_for_hit(
     // RMB outside the DragAnchor region is a no-op for now — only
     // the empty region of the wheel disk (inside the circle, off
     // every interactive glyph) acts as a resize handle. That keeps
-    // the gesture predictable: RMB on a hue/sat/val cell or a chip
-    // doesn't accidentally resize while the user is also reading
-    // the live preview. In Standalone mode we fall through so
+    // the gesture predictable: RMB on a hue/sat/val cell or the
+    // center preview doesn't accidentally resize while the user is
+    // also reading the live preview. In Standalone mode we fall through so
     // the RMB can reach any future right-click menu on the canvas.
     if button == MouseButton::Right && !matches!(hit, PickerHit::DragAnchor) {
         return Some(if is_standalone {

@@ -88,11 +88,16 @@ pub(in crate::application::app) use pointer::*;
 pub(in crate::application::app) use selection::*;
 pub(in crate::application::app) use style::*;
 
-/// Pure inner helper for the keybind-triggered custom-mutation path.
-/// Runs the same animation-aware apply + always-`apply_document_actions`
-/// sequence the click-trigger path at `click.rs:35-64` uses, but
-/// without touching the renderer. Returns `true` when the mutation
-/// was applied.
+/// Pure inner helper for the keybind-triggered custom-mutation path:
+/// an animation-aware apply plus an `apply_document_actions` that runs
+/// on both branches, without touching the renderer. Returns `true`
+/// when the mutation was applied.
+///
+/// The click-trigger path — `click_triggers::fire_onclick_triggers`,
+/// which `click::handle_click_core` calls — is the *sibling* of this
+/// body rather than its source. See the comment on the animated
+/// branch below for the three ways the two differ; it is the one
+/// place this crate has two answers to the same question.
 ///
 /// Cross-platform: takes only `MindMapDocument`, `Option<MindMapTree>`,
 /// `SceneConnectionCache`, `CustomMutation`, `node_id`, `now_ms`.
@@ -124,15 +129,25 @@ pub(crate) fn apply_keybind_custom_mutation(
         //
         // The **click-trigger** path does not come through here:
         // `click_triggers::fire_onclick_triggers` carries its own copy
-        // of this animated-vs-instant routing and calls
-        // `start_animation_at` (section-aware) instead. Same stall,
-        // reached by a second body. Named pre-existing duplication,
-        // not unified in this PR because the two copies genuinely
-        // differ in the no-tree case — this one returns `false` and
-        // skips `apply_document_actions`, the trigger loop applies
-        // them anyway — so collapsing them is a behavior decision, not
-        // a refactor. Whoever takes it owns picking which of the two
-        // is right.
+        // of this animated-vs-instant routing. Same stall, reached by
+        // a second body. The two differ in three ways, and every one
+        // of them is a decision rather than a divergence to tidy:
+        //
+        //   1. **Arity.** That one loops over every mutation the hit
+        //      resolved; this one handles the single mutation the
+        //      keybind named.
+        //   2. **Target shape.** That one calls `start_animation_at`,
+        //      which is section-aware; a keystroke has no
+        //      `hit_section` to pass, so this one calls
+        //      `start_animation`.
+        //   3. **The no-tree case.** This one returns `false` and
+        //      skips `apply_document_actions`; that one applies them
+        //      anyway.
+        //
+        // Named pre-existing duplication, not unified here: (3) means
+        // collapsing them picks which answer is right, which is a
+        // behavior decision, not a refactor. Whoever takes it owns
+        // that pick.
         doc.start_animation(cm, node_id, now_ms);
     } else if let Some(tree) = mindmap_tree.as_mut() {
         doc.apply_custom_mutation(cm, node_id, Some(tree));
