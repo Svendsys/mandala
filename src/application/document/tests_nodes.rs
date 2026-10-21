@@ -2815,69 +2815,69 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
 
     // Each scenario: a `BorderConfigEdits` and a description.
     let scenarios: Vec<(&'static str, BorderConfigEdits)> = vec![
-        ("Set preset to heavy", {
-            let e = BorderConfigEdits {
+        (
+            "Set preset to heavy",
+            BorderConfigEdits {
                 preset: OptionEdit::Set("heavy".into()),
                 ..Default::default()
-            };
-            e
-        }),
-        ("Clear font (Risk #1 case)", {
-            let e = BorderConfigEdits {
+            },
+        ),
+        (
+            "Clear font (Risk #1 case)",
+            BorderConfigEdits {
                 font: OptionEdit::Clear,
                 ..Default::default()
-            };
-            e
-        }),
-        ("Clear color (Risk #1 case)", {
-            let e = BorderConfigEdits {
+            },
+        ),
+        (
+            "Clear color (Risk #1 case)",
+            BorderConfigEdits {
                 color: OptionEdit::Clear,
                 ..Default::default()
-            };
-            e
-        }),
-        ("Clear color_palette (Risk #1 case)", {
-            let e = BorderConfigEdits {
+            },
+        ),
+        (
+            "Clear color_palette (Risk #1 case)",
+            BorderConfigEdits {
                 color_palette: OptionEdit::Clear,
                 ..Default::default()
-            };
-            e
-        }),
-        ("Clear color_palette_field (Risk #1 case)", {
-            let e = BorderConfigEdits {
+            },
+        ),
+        (
+            "Clear color_palette_field (Risk #1 case)",
+            BorderConfigEdits {
                 color_palette_field: OptionEdit::Clear,
                 ..Default::default()
-            };
-            e
-        }),
+            },
+        ),
         ("Set side top to a pattern (auto-promote to custom)", {
             let mut e = BorderConfigEdits::default();
             e.with_side_pattern(BorderSide::Top, "###(*)###").expect("parses");
             e
         }),
-        ("Set padding", {
-            let e = BorderConfigEdits {
+        (
+            "Set padding",
+            BorderConfigEdits {
                 padding: OptionEdit::Set(8.0),
                 ..Default::default()
-            };
-            e
-        }),
-        ("Combine preset=heavy + color=Clear", {
-            let e = BorderConfigEdits {
+            },
+        ),
+        (
+            "Combine preset=heavy + color=Clear",
+            BorderConfigEdits {
                 preset: OptionEdit::Set("heavy".into()),
                 color: OptionEdit::Clear,
                 ..Default::default()
-            };
-            e
-        }),
-        ("Set palette + field", {
-            let e = BorderConfigEdits {
+            },
+        ),
+        (
+            "Set palette + field",
+            BorderConfigEdits {
                 color_palette: OptionEdit::Set("summer".into()),
                 color_palette_field: OptionEdit::Set(PaletteField::Background),
                 ..Default::default()
-            };
-            e
-        }),
+            },
+        ),
     ];
 
     for (label, edits) in scenarios {
