@@ -961,6 +961,12 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
         Action::LabelEditDeleteForward if *cursor < grapheme_chad::count_grapheme_clusters(buffer) => {
             *cursor = delete_at_cursor(buffer, *cursor);
         }
+        // At the end of the buffer delete-forward is a no-op, and it
+        // says so in its own arm rather than falling through to the
+        // catch-all, so an arm added above `_` later cannot receive it.
+        // The guard above is clippy's `collapsible_match` form (the
+        // nested `if` the siblings use trips it on the last arm only).
+        Action::LabelEditDeleteForward => {}
         _ => {}
     }
     *cursor != before || buffer.len() != len_before
