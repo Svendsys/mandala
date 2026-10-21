@@ -332,7 +332,6 @@ pub(in crate::application::app) fn apply_double_click_activate(
                     doc,
                     core.text_edit_state,
                     core.mindmap_tree,
-                    core.app_scene,
                     core.renderer,
                 );
             }

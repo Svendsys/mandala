@@ -11,7 +11,7 @@
 //! `section_idx` resolved from the active `SelectionState` at open
 //! time so per-section selections commit to the right section).
 
-use crate::application::platform::input::Key;
+use crate::application::platform::input::{Key, Modifiers};
 
 use baumhard::util::grapheme_chad;
 
@@ -19,7 +19,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::super::scene_rebuild::rebuild_all;
+use super::super::dispatch::cross_dispatch::RebuildContext;
 use super::{insert_at_cursor, insert_caret, TextEditState};
 
 /// Open the text editor on the given node. Seeds the buffer (empty if
@@ -40,7 +40,6 @@ pub(in crate::application::app) fn open_text_edit(
     doc: &mut MindMapDocument,
     text_edit_state: &mut TextEditState,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    _app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
     open_text_edit_with_close_target(
@@ -50,7 +49,6 @@ pub(in crate::application::app) fn open_text_edit(
         doc,
         text_edit_state,
         mindmap_tree,
-        _app_scene,
         renderer,
     );
 }
@@ -71,7 +69,6 @@ pub(in crate::application::app) fn open_text_edit_with_close_target(
     doc: &mut MindMapDocument,
     text_edit_state: &mut TextEditState,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    _app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
     // Resolve the section index from the document's selection.
@@ -308,13 +305,8 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
 /// range so follow-up per-section verbs can target it.
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
-    doc: &mut MindMapDocument,
-    interaction_mode: &mut super::super::InteractionMode,
     text_edit_state: &mut TextEditState,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    rc: &mut RebuildContext<'_>,
 ) {
     let snapshot = match std::mem::replace(text_edit_state, TextEditState::Closed) {
         TextEditState::Open {
@@ -359,9 +351,13 @@ pub(in crate::application::app) fn close_text_edit(
     // inside an already-active NodeEdit session) keep
     // `exit_to_default_on_close == false` — close returns to
     // NodeEdit so the user can pick a different section.
-    if exit_to_default_on_close && matches!(*interaction_mode, super::super::InteractionMode::NodeEdit { .. })
+    if exit_to_default_on_close
+        && matches!(
+            *rc.interaction_mode,
+            super::super::InteractionMode::NodeEdit { .. }
+        )
     {
-        *interaction_mode = super::super::InteractionMode::Default;
+        *rc.interaction_mode = super::super::InteractionMode::Default;
     }
     // Editor close lifts a non-empty shift-select anchor to
     // `SelectionState::SectionRange`, so per-section verbs (color
@@ -376,7 +372,7 @@ pub(in crate::application::app) fn close_text_edit(
         if let Some(new_sel) =
             lift_anchor_to_section_range(selection_anchor, cursor_grapheme_pos, &node_id, section_idx)
         {
-            doc.selection = new_sel;
+            rc.document.selection = new_sel;
         }
     }
     if commit {
@@ -393,22 +389,15 @@ pub(in crate::application::app) fn close_text_edit(
         // preserve `bold` / `italic` / `underline` / `size_pt` /
         // `hyperlink` per the `region_to_text_run` contract) and
         // writes both fields atomically.
-        doc.set_section_text_and_runs(&node_id, section_idx, buffer, &buffer_regions);
+        rc.document
+            .set_section_text_and_runs(&node_id, section_idx, buffer, &buffer_regions);
         // Commit changed the model — pull the tree back to it.
         // `set_section_text_and_runs` may have grown `node.size`
         // via `grow_one_node_to_fit_text`, so connection sample
         // caches keyed on the pre-grow geometry are stale; clear
         // them before the rebuild. The drag drop path already
         // does the equivalent (`event_mouse_click.rs`).
-        scene_cache.clear();
-        rebuild_all(
-            doc,
-            interaction_mode,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-        );
+        rc.rebuild_after_geometry_change();
     } else {
         // Cancel: model is untouched, so we only need to revert the
         // edited section's transient caret-bearing text/regions to
@@ -420,8 +409,8 @@ pub(in crate::application::app) fn close_text_edit(
             section_idx,
             original_text,
             original_regions,
-            mindmap_tree,
-            renderer,
+            rc.mindmap_tree,
+            rc.renderer,
         );
     }
 }
@@ -602,19 +591,22 @@ pub(in crate::application::app) fn apply_literal_char_insert(
 pub(in crate::application::app) fn handle_text_edit_key(
     key_name: &Option<String>,
     logical_key: &Key,
-    ctrl: bool,
-    shift: bool,
-    alt: bool,
+    modifiers: &Modifiers,
     keybinds: &ResolvedKeybinds,
     text_edit_state: &mut TextEditState,
-    _doc: &mut MindMapDocument,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    _app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
-    _scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let name = key_name.as_deref();
-    let action = name.and_then(|n| keybinds.action_for_context(InputContext::TextEdit, n, ctrl, shift, alt));
+    let action = name.and_then(|n| {
+        keybinds.action_for_context(
+            InputContext::TextEdit,
+            n,
+            modifiers.control_key(),
+            modifiers.shift_key(),
+            modifiers.alt_key(),
+        )
+    });
     // `TextEditCommit` / `TextEditCancel` are funneled via the
     // keyboard handler's pre-filter (`event_keyboard.rs:135-153`).
     // This handler reaches only the literal-Key character + cursor

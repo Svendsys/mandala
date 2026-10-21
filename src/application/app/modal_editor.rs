@@ -149,16 +149,11 @@ pub(super) fn steal_key_for_modal(
         ModalEditor::Text => super::text_edit::handle_text_edit_key(
             key_name,
             logical_key,
-            ctrl,
-            shift,
-            alt,
+            ctx.modifiers,
             ctx.keybinds,
             ctx.text_edit_state,
-            doc,
             ctx.mindmap_tree,
-            ctx.app_scene,
             ctx.renderer,
-            ctx.scene_cache,
         ),
         ModalEditor::SingleLine => super::single_line_edit::handle_single_line_edit_key(
             key_name,
