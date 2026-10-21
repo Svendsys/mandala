@@ -435,6 +435,11 @@ thread_local! {
 /// consulted to decide anything.
 static WRITER: Mutex<Option<(&'static str, ThreadId)>> = Mutex::new(None);
 
+/// Whether the poisoned-lock skip in [`try_acquire_font_system_write`]
+/// has been reported yet. That helper runs once per frame, so it says
+/// so once rather than at frame rate.
+static POISON_SKIP_REPORTED: AtomicBool = AtomicBool::new(false);
+
 /// Set when a thread panics while holding the write guard, because
 /// cosmic-text may have been left mid-mutation. `parking_lot` has no
 /// poisoning of its own, so this reproduces what `std::sync::RwLock`
@@ -574,14 +579,20 @@ impl Drop for FontSystemReadGuard {
     }
 }
 
-/// Record that this thread now holds the write guard, then check the
-/// poison flag. The wrapper is built *before* the check so that the
-/// panic it may raise unwinds through [`FontSystemWriteGuard::drop`]
-/// and releases the lock cleanly.
-fn adopt_write(site: &'static str, guard: RwLockWriteGuard<'static, FontSystem>) -> FontSystemWriteGuard {
+/// Record that this thread now holds the write guard, without looking
+/// at the poison flag. The wrapper exists from here on, so whatever
+/// the caller does next — panic or simply return — releases the lock
+/// and clears the record through [`FontSystemWriteGuard::drop`].
+fn record_write(site: &'static str, guard: RwLockWriteGuard<'static, FontSystem>) -> FontSystemWriteGuard {
     update_held(|held| held.write_site = Some(site));
     set_writer(Some((site, thread::current().id())));
-    let adopted = FontSystemWriteGuard { guard };
+    FontSystemWriteGuard { guard }
+}
+
+/// [`record_write`], then panic if the lock is poisoned. The wrapper is
+/// built *before* the check so that the panic unwinds through its drop.
+fn adopt_write(site: &'static str, guard: RwLockWriteGuard<'static, FontSystem>) -> FontSystemWriteGuard {
+    let adopted = record_write(site, guard);
     refuse_if_poisoned(site);
     adopted
 }
@@ -654,9 +665,20 @@ pub fn acquire_font_system_write_with_timeout(site: &'static str, timeout: Durat
     }
 }
 
-/// Non-blocking [`acquire_font_system_write`]: `None` when another
-/// thread holds the lock, so the caller can skip the frame and retry
-/// on the next cycle.
+/// Non-blocking [`acquire_font_system_write`]: `None` when the caller
+/// should skip the frame and try again on the next cycle.
+///
+/// `None` means one of two things, and both are the renderer's
+/// "degrade, don't abort" contract:
+///
+/// - **Another thread holds the lock.** A legitimate transient.
+/// - **A prior holder panicked** (the lock is poisoned). The blocking
+///   forms panic here, as `std::sync::RwLock` did; this one returns
+///   `None`, because `Renderer::prewarm` deliberately catches a panic
+///   out of the first render, which leaves the lock poisoned, and the
+///   frames after it must skip rather than abort the process they were
+///   written to keep alive. The first such skip is logged at `error!`,
+///   since unlike contention it never clears.
 ///
 /// A same-thread hold is **not** reported as `None`. "Another thread
 /// is mid-shape, try next frame" is a legitimate skip; "this thread
@@ -664,7 +686,20 @@ pub fn acquire_font_system_write_with_timeout(site: &'static str, timeout: Durat
 /// from then on in silence, so it panics like the blocking form.
 pub fn try_acquire_font_system_write(site: &'static str) -> Option<FontSystemWriteGuard> {
     refuse_reentry(site, Access::Write);
-    FONT_SYSTEM.try_write().map(|guard| adopt_write(site, guard))
+    let adopted = record_write(site, FONT_SYSTEM.try_write()?);
+    if POISONED.load(Ordering::SeqCst) {
+        if !POISON_SKIP_REPORTED.swap(true, Ordering::Relaxed) {
+            log::error!(
+                "FONT_SYSTEM is poisoned (site: {site}): a prior holder panicked while \
+                 holding the guard, so non-blocking acquires now return None and every \
+                 caller that skips on None skips for good"
+            );
+        }
+        // `adopted` drops here, outside any unwind, so it releases the
+        // lock without marking anything further.
+        return None;
+    }
+    Some(adopted)
 }
 
 /// Shared access to the `FontSystem`, with the same never-wait-forever
@@ -1226,6 +1261,22 @@ mod tests {
             let _ = acquire_font_system_read("test::reading_victim");
         });
         assert!(message.contains("poisoned"), "unexpected message: {message}");
+        // The renderer's contract: a poisoned lock skips the frame, it
+        // does not abort. `Renderer::prewarm` catches a panic out of
+        // the first render, which leaves exactly this state behind.
+        assert!(
+            try_acquire_font_system_write("test::skipping_frame").is_none(),
+            "a poisoned lock must read as `None` to the non-blocking helper, not panic"
+        );
+        // And the skip left the lock usable by nothing else: it did not
+        // strand a record that would make the next acquire look re-entrant.
+        let message = panic_message(|| {
+            let _ = acquire_font_system_write("test::after_the_skip");
+        });
+        assert!(
+            message.contains("poisoned") && !message.contains("re-entrant"),
+            "unexpected message: {message}"
+        );
         println!("POISON_SCENARIO_OK");
     }
 }
