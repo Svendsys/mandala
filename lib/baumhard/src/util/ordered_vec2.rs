@@ -39,10 +39,7 @@ impl OrderedVec2 {
     /// Construct from already-wrapped [`OrderedFloat`] components.
     /// O(1).
     pub fn new(x: OrderedFloat<f32>, y: OrderedFloat<f32>) -> Self {
-        OrderedVec2 {
-            x: OrderedFloat::from(x),
-            y: OrderedFloat::from(y),
-        }
+        OrderedVec2 { x, y }
     }
 
     /// Construct from raw `f32` components. O(1).

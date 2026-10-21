@@ -342,7 +342,7 @@ impl RegionParams {
         }
 
         // If target_factor is a divisor of dimension_span, return it
-        if dimension_span % target_factor == 0 {
+        if dimension_span.is_multiple_of(target_factor) {
             return target_factor;
         }
 
@@ -357,7 +357,7 @@ impl RegionParams {
 
         let mut divisor = 1;
         while divisor * divisor <= dimension_span {
-            if dimension_span % divisor == 0 {
+            if dimension_span.is_multiple_of(divisor) {
                 let corresponding_divisor = dimension_span / divisor;
 
                 // Check the difference for the current divisor

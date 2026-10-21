@@ -958,10 +958,8 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
                 *cursor = delete_before_cursor(buffer, *cursor);
             }
         }
-        Action::LabelEditDeleteForward => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                *cursor = delete_at_cursor(buffer, *cursor);
-            }
+        Action::LabelEditDeleteForward if *cursor < grapheme_chad::count_grapheme_clusters(buffer) => {
+            *cursor = delete_at_cursor(buffer, *cursor);
         }
         _ => {}
     }

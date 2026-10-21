@@ -60,19 +60,19 @@ fn assert_matrix_place_in(my_string: &String, regions: &ColorFontRegions) {
     );
     assert_eq!(regions.num_regions(), 3);
     let first_region = regions.regions.first();
-    assert_eq!(first_region.is_some(), true);
+    assert!(first_region.is_some());
     let unwrapped_first_region = first_region.unwrap();
     assert_eq!(unwrapped_first_region.range, Range::new(20, 30));
     assert_eq!(unwrapped_first_region.color.unwrap(), Color::black().to_float());
     assert_eq!(unwrapped_first_region.font.unwrap(), AppFont::Evilz);
     let second_region = regions.get(Range::new(41, 51));
-    assert_eq!(second_region.is_some(), true);
+    assert!(second_region.is_some());
     let unwrapped_second_region = second_region.unwrap();
     assert_eq!(unwrapped_second_region.range, Range::new(41, 51));
     assert_eq!(unwrapped_second_region.color.unwrap(), Color::black().to_float());
     assert_eq!(unwrapped_second_region.font.unwrap(), AppFont::Evilz);
     let third_region = regions.get(Range::new(62, 72));
-    assert_eq!(third_region.is_some(), true);
+    assert!(third_region.is_some());
     let unwrapped_third_region = third_region.unwrap();
     assert_eq!(unwrapped_third_region.range, Range::new(62, 72));
     assert_eq!(unwrapped_third_region.color.unwrap(), Color::black().to_float());
@@ -1086,7 +1086,7 @@ fn create_default_matrix() -> GlyphMatrix {
         Color::white(),
     )));
 
-    return matrix;
+    matrix
 }
 
 #[test]
@@ -1353,7 +1353,7 @@ pub fn do_expanding_insert_4() {
     let mut glyph_line = GlyphLine::new();
     glyph_line.expanding_insert(0, &GlyphComponent::text("123", AppFont::African, Color::black()));
     assert_eq!(glyph_line.line.len(), 1);
-    assert_eq!(glyph_line.line.get(0).unwrap().text, "123");
+    assert_eq!(glyph_line.line.first().unwrap().text, "123");
 }
 
 #[test]
@@ -1366,7 +1366,7 @@ pub fn do_expanding_insert_5() {
     glyph_line.expanding_insert(10, &GlyphComponent::text("123", AppFont::African, Color::black()));
     assert_eq!(glyph_line.line.len(), 2);
     assert_eq!(
-        glyph_line.line.get(0).unwrap().text,
+        glyph_line.line.first().unwrap().text,
         GlyphComponent::space(10).text
     );
     assert_eq!(glyph_line.line.get(1).unwrap().text, "123");
@@ -1383,7 +1383,7 @@ pub fn do_expanding_insert_6() {
     glyph_line.expanding_insert(10, &GlyphComponent::text("123", AppFont::African, Color::black()));
     assert_eq!(glyph_line.line.len(), 2);
     assert_eq!(
-        glyph_line.line.get(0).unwrap().text,
+        glyph_line.line.first().unwrap().text,
         GlyphComponent::space(10).text
     );
     assert_eq!(glyph_line.line.get(1).unwrap().text, "123");
@@ -1400,7 +1400,7 @@ pub fn do_expanding_insert_7() {
     glyph_line.expanding_insert(10, &GlyphComponent::text("123", AppFont::African, Color::black()));
     assert_eq!(glyph_line.line.len(), 2);
     assert_eq!(
-        glyph_line.line.get(0).unwrap().text,
+        glyph_line.line.first().unwrap().text,
         GlyphComponent::space(10).text
     );
     assert_eq!(glyph_line.line.get(1).unwrap().text, "123");

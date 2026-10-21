@@ -469,7 +469,7 @@ impl<'a> HandlesPaste for TargetView<'a> {
             TargetView::Edge { .. }
             | TargetView::EdgeLabel { .. }
             | TargetView::PortalLabel { .. }
-            | TargetView::PortalText { .. } => paste_edge_adjacent_color(self, &content),
+            | TargetView::PortalText { .. } => paste_edge_adjacent_color(self, content),
         }
     }
 }
@@ -504,8 +504,8 @@ impl<'a> HandlesCut for TargetView<'a> {
                 };
                 let cleared = SectionPayload {
                     text_runs: Vec::new(),
-                    offset: payload.offset.clone(),
-                    size: payload.size.clone(),
+                    offset: payload.offset,
+                    size: payload.size,
                     channel: payload.channel,
                     trigger_bindings: payload.trigger_bindings.clone(),
                 };
@@ -781,8 +781,8 @@ fn cut_section_range(
     );
     let payload = SectionPayload {
         text_runs: new_runs,
-        offset: section.offset.clone(),
-        size: section.size.clone(),
+        offset: section.offset,
+        size: section.size,
         channel: section.channel,
         trigger_bindings: section.trigger_bindings.clone(),
     };
@@ -858,8 +858,8 @@ fn paste_section_range(
     );
     let payload = SectionPayload {
         text_runs: new_runs,
-        offset: section.offset.clone(),
-        size: section.size.clone(),
+        offset: section.offset,
+        size: section.size,
         channel: section.channel,
         trigger_bindings: section.trigger_bindings.clone(),
     };

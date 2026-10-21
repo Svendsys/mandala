@@ -2298,7 +2298,7 @@ mod tests {
         // Every key really went back — otherwise this times an early exit.
         for i in 0..N {
             assert!(
-                document["list"][i].get(&format!("u{i}")).is_some(),
+                document["list"][i].get(format!("u{i}")).is_some(),
                 "key u{i} was not spliced back"
             );
         }

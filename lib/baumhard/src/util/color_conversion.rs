@@ -67,7 +67,7 @@ pub fn parse_var_name(raw: &str) -> Option<&str> {
         return None;
     }
     let inner = trimmed["var(".len()..trimmed.len() - 1].trim();
-    if inner.len() <= 2 || !inner.starts_with("--") || inner.contains(|c: char| c == '(' || c == ')') {
+    if inner.len() <= 2 || !inner.starts_with("--") || inner.contains(['(', ')']) {
         return None;
     }
     Some(inner)

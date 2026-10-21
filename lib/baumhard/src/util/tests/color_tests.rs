@@ -74,7 +74,7 @@ fn test_from_hex_lazy_static() {
 
 pub fn do_from_hex_lazy_static() {
     assert_eq!(RGBA_COLORS.len(), 4);
-    assert_eq!(RGBA_COLORS.get(0).unwrap(), &CONTROL_1.clone());
+    assert_eq!(RGBA_COLORS.first().unwrap(), &CONTROL_1.clone());
     assert_eq!(RGBA_COLORS.get(1).unwrap(), &CONTROL_2.clone());
     assert_eq!(RGBA_COLORS.get(2).unwrap(), &CONTROL_3.clone());
     assert_eq!(RGBA_COLORS.get(3).unwrap(), &CONTROL_4.clone());

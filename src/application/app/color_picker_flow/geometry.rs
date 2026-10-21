@@ -150,7 +150,7 @@ pub(in crate::application::app) fn compute_picker_geometry(
     let (surface_w, surface_h) = surface_size;
     let layout = compute_color_picker_layout(&geometry, surface_w, surface_h);
     let layout_changed = if let ColorPickerState::Open { layout: cached, .. } = state {
-        let changed = cached.as_ref().map_or(true, |c| c != &layout);
+        let changed = cached.as_ref() != Some(&layout);
         *cached = Some(layout);
         changed
     } else {

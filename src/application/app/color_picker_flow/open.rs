@@ -178,7 +178,7 @@ pub(in crate::application::app) fn open_picker_inner(
             &crosshair,
             measurement_font_size,
         );
-        let ring_glyphs: Vec<&str> = hue_ring_glyphs().iter().copied().collect();
+        let ring_glyphs: Vec<&str> = hue_ring_glyphs().to_vec();
         let ring = crate::application::renderer::measure_max_glyph_advance(
             &mut font_system,
             &ring_glyphs,

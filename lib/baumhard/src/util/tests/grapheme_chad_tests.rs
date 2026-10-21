@@ -415,7 +415,7 @@ pub fn test_find_byte_index_of_grapheme() {
 
 pub fn do_find_byte_index_of_grapheme() {
     for (string, graph_index, expected_byte_index) in INDEX_OF_GRAPHEME_TEST.clone() {
-        if expected_byte_index.is_some() && expected_byte_index.clone().unwrap() >= string.len() {
+        if expected_byte_index.is_some() && expected_byte_index.unwrap() >= string.len() {
             panic!("Expected byte index is out of bounds!! This is a test error.");
         }
         let result = find_byte_index_of_grapheme(string, graph_index);
@@ -432,7 +432,7 @@ pub fn do_replace_graphemes_until_newline() {
     for (source, idx, target, expected) in REPLACE_GRAPHEMES_UNTIL_NEWLINE_TEST.clone() {
         let mut result = target.to_string();
         let before = count_grapheme_clusters(&result);
-        let outcome = replace_graphemes_until_newline(&mut result, idx, &source);
+        let outcome = replace_graphemes_until_newline(&mut result, idx, source);
         assert_eq!(result, expected);
 
         // The four fields of `LineReplacement` are a contract, not

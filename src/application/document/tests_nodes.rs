@@ -182,7 +182,7 @@ fn test_set_section_size_writes_and_round_trips_through_undo() {
         width: 80.0,
         height: 40.0,
     });
-    assert_eq!(doc.set_section_size(&id, 1, new_size.clone()), Ok(true));
+    assert_eq!(doc.set_section_size(&id, 1, new_size), Ok(true));
     assert_eq!(doc.mindmap.nodes.get(&id).unwrap().sections[1].size, new_size);
     assert!(doc.undo());
     assert_eq!(
@@ -3483,11 +3483,11 @@ fn test_node_setters_are_no_ops_when_value_is_unchanged() {
     });
     assert_setter_no_op("set_node_font_size", |doc, nid| {
         let current = doc.mindmap.nodes.get(nid).unwrap().sections[0].text_runs[0].size_pt;
-        doc.set_node_font_size(nid, current as f32)
+        doc.set_node_font_size(nid, current)
     });
     assert_setter_no_op("set_section_font_size", |doc, nid| {
         let current = doc.mindmap.nodes.get(nid).unwrap().sections[0].text_runs[0].size_pt;
-        doc.set_section_font_size(nid, 0, current as f32)
+        doc.set_section_font_size(nid, 0, current)
     });
     assert_setter_no_op("set_node_font_family", |doc, nid| {
         let current = doc.mindmap.nodes.get(nid).unwrap().sections[0].text_runs[0]
@@ -3537,7 +3537,7 @@ fn test_node_setters_are_no_ops_when_value_is_unchanged() {
     });
     assert_setter_no_op("set_section_font_size_range", |doc, nid| {
         let size = doc.mindmap.nodes.get(nid).unwrap().sections[0].text_runs[0].size_pt;
-        doc.set_section_font_size_range(nid, 0, 0, 3, size as f32)
+        doc.set_section_font_size_range(nid, 0, 0, 3, size)
     });
     assert_setter_no_op("set_section_font_family_range", |doc, nid| {
         let font = doc.mindmap.nodes.get(nid).unwrap().sections[0].text_runs[0]

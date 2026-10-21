@@ -138,7 +138,7 @@ pub(in crate::application::app) fn accept_console_completion(console_state: &mut
             .map(|c| c.is_whitespace())
             .unwrap_or(true);
         if !next_is_ws {
-            input.insert_str(cursor_byte_after, " ");
+            input.insert(cursor_byte_after, ' ');
             *cursor += 1;
         } else if cursor_byte_after == input.len() {
             input.push(' ');

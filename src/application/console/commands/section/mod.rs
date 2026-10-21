@@ -994,10 +994,10 @@ mod tests {
             node_id: id.clone(),
             section_idx: 1,
         });
-        let before = doc.mindmap.nodes.get(&id).unwrap().sections[1].size.clone();
+        let before = doc.mindmap.nodes.get(&id).unwrap().sections[1].size;
         assert_exec_ok(run("section resize w=80 h=40", &mut doc));
         assert!(doc.undo());
-        let restored = doc.mindmap.nodes.get(&id).unwrap().sections[1].size.clone();
+        let restored = doc.mindmap.nodes.get(&id).unwrap().sections[1].size;
         assert_eq!(restored, before, "undo restores prior size");
     }
 

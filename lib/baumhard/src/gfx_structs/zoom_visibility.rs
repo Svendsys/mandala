@@ -26,7 +26,7 @@ use std::hash::{Hash, Hasher};
 /// assert!(only_zoomed_in.contains(2.0));
 /// assert!(!only_zoomed_in.contains(1.0));
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct ZoomVisibility {
     /// Lower bound on `camera.zoom`; `None` = unbounded below.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -34,12 +34,6 @@ pub struct ZoomVisibility {
     /// Upper bound on `camera.zoom`; `None` = unbounded above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f32>,
-}
-
-impl Default for ZoomVisibility {
-    fn default() -> Self {
-        ZoomVisibility { min: None, max: None }
-    }
 }
 
 /// Manual `Eq` — `f32` is only `PartialEq`. The finite-bound

@@ -64,14 +64,14 @@ pub fn do_basics_solo_mutation() {
         .glyph_area_mut()
         .unwrap()
         .regions
-        .submit_region(color_font_region.clone());
+        .submit_region(color_font_region);
 
     assert_element_delta(
         &element,
         vec![
             GlyphAreaField::Text("test".to_string()),
             GlyphAreaField::scale(1.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![color_font_region.clone()])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![color_font_region])),
             GlyphAreaField::position(10.0, 10.0),
         ],
     );
@@ -1185,9 +1185,9 @@ pub fn do_event_propagation_complex_symmetric() {
     // Now both trees are completed, we can apply mutator to the target
     walk_tree_from(
         &mut model,
-        &mut mutator,
-        model_index.get("0").unwrap().clone(),
-        mutator_index.get("0").unwrap().clone(),
+        &mutator,
+        *model_index.get("0").unwrap(),
+        *mutator_index.get("0").unwrap(),
     );
 }
 
@@ -1244,7 +1244,7 @@ pub fn do_event_propagation_simple() {
     let event_id = mutator.arena.new_node(event);
     let event_baby_id = mutator.arena.new_node(event_baby);
     event_id.append(event_baby_id, &mut mutator.arena);
-    walk_tree_from(&mut model, &mut mutator, model_root_id, event_id);
+    walk_tree_from(&mut model, &mutator, model_root_id, event_id);
 }
 
 #[test]
@@ -1511,7 +1511,7 @@ pub fn do_complex_tree_mutation() {
     c_instruction.append(mutator_child_c, &mut mutator_c.arena);
 
     // Apply mutation
-    walk_tree_from(&mut model, &mut mutator_c, root_id, c_instruction);
+    walk_tree_from(&mut model, &mutator_c, root_id, c_instruction);
     // The root node should not be mutated, because by specification it is the children of the instruction-node that
     // should be applied to the children of the target node. If we want to also mutate the root, then we can do that
     // a few ways. For example a mutator can be set in the instruction node that specifically targets the root
@@ -1734,9 +1734,9 @@ pub fn do_complex_tree_mutation() {
     ));
 
     a_instruction.append(mutator_child_a, &mut mutator_a.arena);
-    assert_eq!(mutator_a.get(a_instruction).is_some(), true);
+    assert!(mutator_a.get(a_instruction).is_some());
 
-    walk_tree_from(&mut model, &mut mutator_a, root_id, a_instruction);
+    walk_tree_from(&mut model, &mutator_a, root_id, a_instruction);
 
     let a = model.get(node_a_id).unwrap();
     assert_eq!(
@@ -2027,7 +2027,7 @@ pub fn do_simple_tree_mutation() {
     mutator_c.append(mutator_ca, &mut mutator.arena);
 
     // Do mutation
-    walk_tree_from(&mut model, &mut mutator, root_id, mutator_root);
+    walk_tree_from(&mut model, &mutator, root_id, mutator_root);
 
     let root = model.get(root_id).unwrap();
     assert_eq!(root.get().position(), Vec2::new(50.0, 50.0));

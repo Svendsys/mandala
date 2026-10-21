@@ -785,7 +785,6 @@ fn test_sync_node_from_tree_pins_section_size_only_on_a_real_resize() {
     );
     let pinned = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .size
-        .clone()
         .expect("a resized section must pin the bounds it was resized to");
     assert!(
         (pinned.width - 321.0).abs() < 1e-3 && (pinned.height - 123.0).abs() < 1e-3,

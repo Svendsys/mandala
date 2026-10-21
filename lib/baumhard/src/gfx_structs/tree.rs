@@ -99,7 +99,7 @@ impl Applicable<Tree<GfxElement, GfxMutator>> for MutatorTree<GfxMutator> {
         // safe default is to drop the bbox memos and let the next
         // query recompute. Cheap (one Cell write each).
         target.invalidate_caches();
-        walk_tree_from(target, &self, target.root, self.root);
+        walk_tree_from(target, self, target.root, self.root);
         target.invalidate_caches();
     }
 }

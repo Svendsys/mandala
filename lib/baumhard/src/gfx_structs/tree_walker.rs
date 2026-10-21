@@ -499,7 +499,7 @@ pub fn repeat_while(
 ) {
     let condition_matches = {
         let target = get_target(&mut gfx_tree.arena, target_id).get_mut();
-        condition.test(&target)
+        condition.test(target)
     };
     if condition_matches {
         debug!(

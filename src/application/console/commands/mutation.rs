@@ -673,7 +673,7 @@ mod tests {
             vec!["map.node"],
             "user-authored flower-layout override",
         );
-        doc.build_mutation_registry_with_app_and_user(&[], &[user_cm.clone()]);
+        doc.build_mutation_registry_with_app_and_user(&[], std::slice::from_ref(&user_cm));
         // The bundled handlers registry still has `flower-layout`
         // because a real app also registers them; the test
         // simulates that by inserting directly.

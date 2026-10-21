@@ -919,7 +919,7 @@ pub fn do_predicate_truth_table() {
     for (make_element, field, comparator, expected) in PREDICATE_TRUTH_TABLE.clone() {
         let element = make_element();
         let pred = Predicate {
-            fields: vec![(field.clone(), comparator.clone())],
+            fields: vec![(field.clone(), comparator)],
             always_match: false,
         };
         let result = pred.test(&element);

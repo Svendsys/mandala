@@ -666,7 +666,7 @@ fn test_insert_at_cursor_after_zwj_emoji_family() {
 fn test_delete_before_cursor_removes_whole_zwj_family() {
     let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
     let combined = format!("{zwj}A");
-    let mut s = String::from(combined);
+    let mut s = combined;
     let new_cursor = delete_before_cursor(&mut s, 1);
     assert_eq!(s, "A", "ZWJ family must be deleted as one cluster");
     assert_eq!(new_cursor, 0);

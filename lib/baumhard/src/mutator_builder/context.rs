@@ -92,7 +92,7 @@ pub(super) fn default_field_from_area(area: &GlyphArea, template: &CellField) ->
         CellField::scale => GlyphAreaField::scale(area.scale.0),
         CellField::line_height => GlyphAreaField::line_height(area.line_height.0),
         CellField::ColorFontRegions => GlyphAreaField::ColorFontRegions(area.regions.clone()),
-        CellField::Outline => GlyphAreaField::Outline(area.outline.clone()),
+        CellField::Outline => GlyphAreaField::Outline(area.outline),
         CellField::Operation(op) => GlyphAreaField::Operation(*op),
     }
 }

@@ -526,9 +526,10 @@ impl WasmApp {
                 redraw_after = true;
             }
             WindowEvent::Touch(touch) => {
-                if self.handle_touch_event(touch) {
-                    redraw_after = true;
-                }
+                // `|=`, not a match guard: `handle_touch_event` acts on
+                // the event, and a guard that acts would fall through
+                // into whatever arm is added below when it says no.
+                redraw_after |= self.handle_touch_event(touch);
             }
             // Catch-all for winit `WindowEvent` variants WASM
             // doesn't yet route. The notable un-wired ones:

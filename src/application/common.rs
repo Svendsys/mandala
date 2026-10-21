@@ -35,8 +35,9 @@ use web_time::Instant;
 /// - `CameraZoom { screen_x, screen_y, factor }` — multiply
 ///   the camera zoom by `factor`, anchored at the given screen
 ///   coordinates so the point under the cursor stays put.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum RenderDecree {
+    #[default]
     Noop,
     SetFpsDisplay(FpsDisplayMode),
     StartRender,
@@ -66,12 +67,6 @@ pub enum FpsDisplayMode {
     Off,
     Snapshot,
     Debug,
-}
-
-impl Default for RenderDecree {
-    fn default() -> Self {
-        RenderDecree::Noop
-    }
 }
 
 /// Cross-platform monotonic clock in milliseconds since first call.

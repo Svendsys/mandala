@@ -345,7 +345,7 @@ pub(super) fn console_overlay_areas(
     let prompt_text = "\u{276F} ";
     let combined = format!("{prompt_text}{input_clipped}");
     let prompt_chars = baumhard::util::grapheme_chad::count_grapheme_clusters(prompt_text);
-    let input_chars = baumhard::util::grapheme_chad::count_grapheme_clusters(&input_clipped);
+    let input_chars = baumhard::util::grapheme_chad::count_grapheme_clusters(input_clipped);
 
     let mut prompt_area = GlyphArea::new_with_str(
         &combined,
