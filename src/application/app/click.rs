@@ -157,12 +157,13 @@ pub(super) fn handle_click_core(
 /// exactly this since before the browser release path started using
 /// it — CODE_CONVENTIONS §4 makes the two targets peers, and the
 /// browser was the better-optimized one here.
+///
+/// The pointer position and the Shift state are read from `ctx`
+/// rather than passed beside it, so they cannot disagree with it.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn handle_click(
     hit: Option<String>,
     hit_section: Option<usize>,
-    cursor_pos: (f64, f64),
-    shift_pressed: bool,
     ctx: &mut InputHandlerContext<'_>,
 ) {
     let doc = match ctx.document.as_mut() {
@@ -171,13 +172,13 @@ pub(super) fn handle_click(
     };
     let canvas_pos = ctx
         .renderer
-        .screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
+        .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
     let tier = handle_click_core(
         hit,
         hit_section,
         canvas_pos,
         super::dispatch::CanvasPerPixel::of(ctx.renderer),
-        shift_pressed,
+        ctx.modifiers.shift_key(),
         ClickCore {
             document: doc,
             mindmap_tree: ctx.mindmap_tree,

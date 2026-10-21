@@ -543,13 +543,7 @@ pub(super) fn handle_mouse_input(
                             false
                         };
                         if !entered_label_select {
-                            handle_click(
-                                hit_node,
-                                hit_section_idx,
-                                cursor_pos_val,
-                                ctx.modifiers.shift_key(),
-                                ctx,
-                            );
+                            handle_click(hit_node, hit_section_idx, ctx);
                         }
                     }
                     // Seven throttled drag variants, one release
