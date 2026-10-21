@@ -21,7 +21,7 @@
 //!   to it does not resolve when the docs are built for
 //!   `wasm32-unknown-unknown`. `interaction_mode` is **not** in this
 //!   set — it moved to the core when the resize-handle gate and the
-//!   `close_text_edit` rebuild path started reading it on both
+//!   text editor's close path started reading it on both
 //!   targets.
 //!
 //! Native dispatchers pass `Some(&mut ext)`; WASM passes `None`.
@@ -115,7 +115,7 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// High-level interaction mode (Default / Reparent / Connect /
     /// NodeEdit / Resize). Cross-platform — sits on the core because
     /// the resize-handle gate, the click router, and the
-    /// `close_text_edit` rebuild path all need to read it. Mutating
+    /// text editor's close path all need to read it. Mutating
     /// arms (Enter*Mode, Exit*Mode, ReparentToTarget, ConnectToTarget)
     /// take `&mut`; read paths (rebuild_all-callers, hit-test gates)
     /// take `&`. See `super::interaction_mode::InteractionMode`.

@@ -253,7 +253,7 @@ pub(in crate::application::app) fn revert_node_text_on_tree(
 
 /// Decide whether the editor's `(anchor, cursor)` pair should
 /// promote the document selection at close time. Pure function —
-/// extracted from `close_text_edit`'s inline logic so the lift
+/// extracted from `commit_text_edit`'s inline logic so the lift
 /// contract can be unit-tested without the full renderer / tree /
 /// scene plumbing.
 ///
@@ -294,45 +294,37 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
     })
 }
 
-/// Commit or cancel the open text editor. Commit writes the
-/// buffer through `set_section_text_and_runs` and rebuilds; cancel
-/// reverts only the edited section's transient text/regions to
-/// the pre-edit snapshot (model was untouched during editing, so
-/// the rest of the tree stays in sync). Commit also lifts a
-/// non-empty shift-select anchor to
-/// `SelectionState::SectionRange` via
-/// `lift_anchor_to_section_range`, carrying the swept grapheme
-/// range so follow-up per-section verbs can target it.
-pub(in crate::application::app) fn close_text_edit(
-    commit: bool,
+/// The fields of an open editor session that commit and cancel read
+/// once the editor is closed. Named so the two closers destructure
+/// one struct rather than a nine-element tuple.
+pub(super) struct ClosedSession {
+    pub(super) node_id: String,
+    pub(super) section_idx: usize,
+    pub(super) buffer: String,
+    pub(super) cursor_grapheme_pos: usize,
+    pub(super) buffer_regions: baumhard::core::primitives::ColorFontRegions,
+    pub(super) original_text: String,
+    pub(super) original_regions: baumhard::core::primitives::ColorFontRegions,
+    pub(super) selection_anchor: Option<usize>,
+}
+
+/// Close the editor and return its session, or `None` when it was
+/// not open. Shared by [`commit_text_edit`] and [`cancel_text_edit`],
+/// so the part both closers do — the `mem::replace(.., Closed)` and
+/// the mode exit — exists once.
+///
+/// Single-section short-circuit lift: when the editor was opened by
+/// `apply_enter_node_edit`'s short-circuit (single-section node,
+/// NodeEdit + editor in one call), revert to Default mode on close so
+/// the user lands at the node's normal post-edit state. Multi-section
+/// opens (where the user picked a section inside an already-active
+/// NodeEdit session) keep `exit_to_default_on_close == false` — close
+/// returns to NodeEdit so the user can pick a different section.
+pub(super) fn take_open_session(
     text_edit_state: &mut TextEditState,
-    rc: &mut RebuildContext<'_>,
-) {
-    let snapshot = match std::mem::replace(text_edit_state, TextEditState::Closed) {
-        TextEditState::Open {
-            node_id,
-            section_idx,
-            buffer,
-            cursor_grapheme_pos,
-            buffer_regions,
-            original_text,
-            original_regions,
-            selection_anchor,
-            exit_to_default_on_close,
-        } => (
-            node_id,
-            section_idx,
-            buffer,
-            cursor_grapheme_pos,
-            buffer_regions,
-            original_text,
-            original_regions,
-            selection_anchor,
-            exit_to_default_on_close,
-        ),
-        TextEditState::Closed => return,
-    };
-    let (
+    interaction_mode: &mut super::super::InteractionMode,
+) -> Option<ClosedSession> {
+    let TextEditState::Open {
         node_id,
         section_idx,
         buffer,
@@ -342,23 +334,39 @@ pub(in crate::application::app) fn close_text_edit(
         original_regions,
         selection_anchor,
         exit_to_default_on_close,
-    ) = snapshot;
-    // Single-section short-circuit lift: when the editor was opened
-    // by `apply_enter_node_edit`'s short-circuit (single-section
-    // node, NodeEdit + editor in one call), revert to Default mode
-    // on close so the user lands at the node's normal post-edit
-    // state. Multi-section opens (where the user picked a section
-    // inside an already-active NodeEdit session) keep
-    // `exit_to_default_on_close == false` — close returns to
-    // NodeEdit so the user can pick a different section.
-    if exit_to_default_on_close
-        && matches!(
-            *rc.interaction_mode,
-            super::super::InteractionMode::NodeEdit { .. }
-        )
+    } = std::mem::replace(text_edit_state, TextEditState::Closed)
+    else {
+        return None;
+    };
+    if exit_to_default_on_close && matches!(*interaction_mode, super::super::InteractionMode::NodeEdit { .. })
     {
-        *rc.interaction_mode = super::super::InteractionMode::Default;
+        *interaction_mode = super::super::InteractionMode::Default;
     }
+    Some(ClosedSession {
+        node_id,
+        section_idx,
+        buffer,
+        cursor_grapheme_pos,
+        buffer_regions,
+        original_text,
+        original_regions,
+        selection_anchor,
+    })
+}
+
+/// Commit the open text editor: write the buffer through
+/// `set_section_text_and_runs` and rebuild. Also lifts a non-empty
+/// shift-select anchor to `SelectionState::SectionRange` via
+/// `lift_anchor_to_section_range`, carrying the swept grapheme range
+/// so follow-up per-section verbs can target it. A no-op when the
+/// editor is not open.
+pub(in crate::application::app) fn commit_text_edit(
+    text_edit_state: &mut TextEditState,
+    rc: &mut RebuildContext<'_>,
+) {
+    let Some(session) = take_open_session(text_edit_state, rc.interaction_mode) else {
+        return;
+    };
     // Editor close lifts a non-empty shift-select anchor to
     // `SelectionState::SectionRange`, so per-section verbs (color
     // text, font size, font family) land on the exact graphemes
@@ -368,51 +376,66 @@ pub(in crate::application::app) fn close_text_edit(
     // graphemes than the (anchor, cursor) pair was selected over,
     // so a grapheme-derived lift would be stale before it was
     // read.
-    if commit {
-        if let Some(new_sel) =
-            lift_anchor_to_section_range(selection_anchor, cursor_grapheme_pos, &node_id, section_idx)
-        {
-            rc.document.selection = new_sel;
-        }
+    if let Some(new_sel) = lift_anchor_to_section_range(
+        session.selection_anchor,
+        session.cursor_grapheme_pos,
+        &session.node_id,
+        session.section_idx,
+    ) {
+        rc.document.selection = new_sel;
     }
-    if commit {
-        // Section-aware commit. The editor records both the
-        // section index *and* the per-grapheme `buffer_regions`
-        // (font / colour spans) accumulated during the session.
-        // Pre-fix the commit went through `set_section_text`
-        // alone, which collapses `text_runs` to a single
-        // template-inherited run — every per-keystroke styling
-        // change vanished on Esc-out. Now we route through
-        // `set_section_text_and_runs`, the section-aware setter
-        // that converts the live `ColorFontRegions` back to
-        // `Vec<TextRun>` (merging with the prior runs to
-        // preserve `bold` / `italic` / `underline` / `size_pt` /
-        // `hyperlink` per the `region_to_text_run` contract) and
-        // writes both fields atomically.
-        rc.document
-            .set_section_text_and_runs(&node_id, section_idx, buffer, &buffer_regions);
-        // Commit changed the model — pull the tree back to it.
-        // `set_section_text_and_runs` may have grown `node.size`
-        // via `grow_one_node_to_fit_text`, so connection sample
-        // caches keyed on the pre-grow geometry are stale; clear
-        // them before the rebuild. The drag drop path already
-        // does the equivalent (`event_mouse_click.rs`).
-        rc.rebuild_after_geometry_change();
-    } else {
-        // Cancel: model is untouched, so we only need to revert the
-        // edited section's transient caret-bearing text/regions to
-        // the pre-edit snapshot. Scene elements (borders,
-        // connections, etc.) were never mutated during the edit
-        // session.
-        revert_node_text_on_tree(
-            &node_id,
-            section_idx,
-            original_text,
-            original_regions,
-            rc.mindmap_tree,
-            rc.renderer,
-        );
-    }
+    // Section-aware commit. The editor records both the
+    // section index *and* the per-grapheme `buffer_regions`
+    // (font / colour spans) accumulated during the session.
+    // Pre-fix the commit went through `set_section_text`
+    // alone, which collapses `text_runs` to a single
+    // template-inherited run — every per-keystroke styling
+    // change vanished on Esc-out. Now we route through
+    // `set_section_text_and_runs`, the section-aware setter
+    // that converts the live `ColorFontRegions` back to
+    // `Vec<TextRun>` (merging with the prior runs to
+    // preserve `bold` / `italic` / `underline` / `size_pt` /
+    // `hyperlink` per the `region_to_text_run` contract) and
+    // writes both fields atomically.
+    rc.document.set_section_text_and_runs(
+        &session.node_id,
+        session.section_idx,
+        session.buffer,
+        &session.buffer_regions,
+    );
+    // Commit changed the model — pull the tree back to it.
+    // `set_section_text_and_runs` may have grown `node.size`
+    // via `grow_one_node_to_fit_text`, so connection sample
+    // caches keyed on the pre-grow geometry are stale; clear
+    // them before the rebuild. The drag drop path already
+    // does the equivalent (`event_mouse_click.rs`).
+    rc.rebuild_after_geometry_change();
+}
+
+/// Cancel the open text editor: revert only the edited section's
+/// transient text/regions to the pre-edit snapshot. The model was
+/// untouched during editing, so the rest of the tree stays in sync,
+/// and scene elements (borders, connections, etc.) were never
+/// mutated — which is why this takes the mode, the tree and the
+/// renderer rather than the whole `RebuildContext` commit needs, and
+/// needs no document at all. A no-op when the editor is not open.
+pub(in crate::application::app) fn cancel_text_edit(
+    text_edit_state: &mut TextEditState,
+    interaction_mode: &mut super::super::InteractionMode,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    renderer: &mut Renderer,
+) {
+    let Some(session) = take_open_session(text_edit_state, interaction_mode) else {
+        return;
+    };
+    revert_node_text_on_tree(
+        &session.node_id,
+        session.section_idx,
+        session.original_text,
+        session.original_regions,
+        mindmap_tree,
+        renderer,
+    );
 }
 
 /// push the current (`buffer`, `cursor`) state into the

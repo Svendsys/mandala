@@ -355,22 +355,33 @@ pub(in crate::application::app) fn dispatch_compatible(
 
     match action {
         // ── Modal text-edit commit / cancel ───────────────────
-        // Cross-platform — `text_edit::close_text_edit` is reachable
-        // on both targets. WASM keyboard handler + click-outside
-        // path AND native modal handler all funnel through these
-        // arms; the close helper owns the `mem::replace(.., Closed)`
-        // mode-exit + tree-revert / scene-rebuild lifecycle. Builds the
-        // `RebuildContext` inline (not via `with_doc_rebuild`) because
-        // the closure it passes receives only the rebuild bundle, and
-        // the close helper also needs `text_edit_state` — a sibling
-        // field of `core` that a closure over `core` cannot split off.
-        Action::TextEditCancel | Action::TextEditCommit => {
-            let commit = matches!(action, Action::TextEditCommit);
+        // Cross-platform — both closers are reachable on both
+        // targets. WASM keyboard handler + click-outside path AND
+        // native modal handler all funnel through these arms; the
+        // closers own the `mem::replace(.., Closed)` mode-exit and
+        // the scene-rebuild (commit) or tree-revert (cancel).
+        //
+        // Commit builds the `RebuildContext` inline (not via
+        // `with_doc_rebuild`) because the closure it passes receives
+        // only the rebuild bundle, and the closer also needs
+        // `text_edit_state` — a sibling field of `core` that a
+        // closure over `core` cannot split off. Cancel never touched
+        // the model, so it takes only the mode, the tree and the
+        // renderer, and runs with or without a document: an editor
+        // left open with no document now closes instead of staying
+        // open, which no path can reach (opening one needs a node).
+        Action::TextEditCommit => {
             if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::super::text_edit::close_text_edit(commit, core.text_edit_state, &mut rc);
+                super::super::text_edit::commit_text_edit(core.text_edit_state, &mut rc);
             }
         }
+        Action::TextEditCancel => super::super::text_edit::cancel_text_edit(
+            core.text_edit_state,
+            core.interaction_mode,
+            core.mindmap_tree,
+            core.renderer,
+        ),
         // ── Document-lifecycle ─────────────────────────────────
         Action::Undo => with_doc_rebuild(core, super::cross_dispatch::apply_undo),
         Action::DeleteSelection => with_doc_rebuild(core, super::cross_dispatch::apply_delete_selection),
