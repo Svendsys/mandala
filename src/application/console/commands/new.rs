@@ -53,7 +53,7 @@ fn execute_new(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             return ExecResult::err(e);
         }
     }
-    eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(doc));
+    eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(Box::new(doc)));
     match path {
         Some(p) => ExecResult::ok_msg(format!("new map at {}", p)),
         None => ExecResult::ok_msg("new map (no file path; use `save <path>` to bind one)"),
@@ -83,7 +83,7 @@ mod tests {
     /// dispatcher, panicking with the offending variant otherwise.
     fn replacement(side: Option<ConsoleSideEffect>) -> MindMapDocument {
         match side {
-            Some(ConsoleSideEffect::ReplaceDocument(doc)) => doc,
+            Some(ConsoleSideEffect::ReplaceDocument(doc)) => *doc,
             other => panic!("expected ReplaceDocument, got {:?}", other),
         }
     }

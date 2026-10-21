@@ -142,7 +142,7 @@ impl MindMapDocument {
                     }
                 }
                 UndoAction::CanvasSnapshot { canvas } => {
-                    self.mindmap.canvas = canvas;
+                    self.mindmap.canvas = *canvas;
                 }
                 UndoAction::DeleteNode {
                     node,

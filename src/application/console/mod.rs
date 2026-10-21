@@ -86,7 +86,12 @@ pub enum ConsoleSideEffect {
     /// dispatcher also drops the cached `mindmap_tree` and clears
     /// any open modal-editor state so stale references into the
     /// old document can't outlive the swap.
-    ReplaceDocument(MindMapDocument),
+    ///
+    /// **Boxed.** A whole document is by far the largest payload here,
+    /// and every effect — a one-field `OpenLabelEdit` included — is
+    /// returned by value, so the enum would otherwise be a document
+    /// wide for all of them.
+    ReplaceDocument(Box<MindMapDocument>),
     /// Flip the high-level interaction mode and trigger a scene
     /// rebuild. Mirrors the `SetFpsDisplay` precedent: a UI-state
     /// transition that doesn't pass through `Action` because the
