@@ -306,16 +306,20 @@ re-litigate them without a strong reason.
   `CLAUDE.md`). Tests stay that way.
 - **No `wasm-bindgen-test`.** See §T9.
 - **No GPU / live-wgpu test infrastructure.** See §T8.
-- **No lint or coverage gate in CI.** There *is* CI —
-  `.github/workflows/test.yml` runs `./test.sh` on every push to
-  main and every pull request, with the wasm32 target installed on
-  the toolchain action, and `license-headers.yml` runs the SPDX
-  check beside it — but it runs the bare script. `--lint`'s fmt and
-  doc gates and `--coverage` are yours to run locally, so `./test.sh`
-  stays the covenant rather than becoming a formality something else
-  performs. This bullet said "No CI yet" for as long as CI had
-  existed, while the next bullet down — §T11's first, one heading
-  away — described that same CI's behavior.
+- **No coverage gate in CI.** There *is* CI —
+  `.github/workflows/test.yml` runs `./test.sh --lint` on every push
+  to main and every pull request, on the toolchain `rust-toolchain.toml`
+  pins (wasm32 target included), and `license-headers.yml` runs the
+  SPDX check beside it. CI runs the same script you do, so
+  `./test.sh` stays the covenant rather than becoming a formality
+  something else performs. `--coverage` is yours to run locally.
+  This bullet used to exclude the lint gates too. That held while
+  clippy was advisory and the toolchain floated; once clippy was hard
+  at a zero baseline, leaving `--lint` out of CI meant a new stable
+  release could turn every contributor's run red while CI, which
+  never ran clippy, stayed green and could not catch a real
+  regression either. The pin and the CI leg landed together for
+  that reason.
 
 ## §T11 Running the suite
 

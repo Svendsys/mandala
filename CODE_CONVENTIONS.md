@@ -660,7 +660,9 @@ Workspace-level commitment:
   benchmark targets and the wasm32 leg, so neither can rot between
   merges. `./test.sh --lint`'s fmt, doc and clippy gates are all hard
   at zero baselines (#130, #134 for the first two), so a clippy
-  warning fails the run — fix it.
+  warning fails the run — fix it. CI runs `--lint` on the toolchain
+  pinned in `rust-toolchain.toml`, so a pull request that skips it
+  locally is still held to it.
 - **`./build.sh` is green for cross-platform changes.** Anything
   outside an explicit `cfg` guard must build for
   `wasm32-unknown-unknown` before commit.

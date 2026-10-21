@@ -197,9 +197,10 @@ the parity trajectory (or why none is owed):
   where**: the wasm32 leg is *skipped with a note* when the target is
   not installed, so a green local run on a machine that has never
   had `rustup target add wasm32-unknown-unknown` has proved nothing
-  about the browser build. CI installs the target
-  (`.github/workflows/test.yml` names it on the toolchain action), so
-  the guarantee is unconditional there and conditional here. The same
+  about the browser build. `rust-toolchain.toml` lists the target, so
+  `rustup toolchain install` in the checkout supplies it, and CI runs
+  exactly that (`.github/workflows/test.yml`), so the guarantee is
+  unconditional there and conditional here. The same
   holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
   baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
   §T9): it skips with a note without the target or `node`, and CI sets
@@ -230,7 +231,12 @@ the parity trajectory (or why none is owed):
   `getrandom` edge needs the `wasm_js` feature that only the root
   manifest declares — and maptool and mandala_derive have no wasm32
   half to document. Both wasm32 legs are skipped with a note when the
-  target isn't installed), `--bench` (runs the criterion
+  target isn't installed. CI runs `./test.sh --lint`, so these gates
+  hold on every pull request and not only on the machine of whoever
+  remembered the flag. They can be hard because the toolchain is
+  pinned in `rust-toolchain.toml`: a new stable release cannot add a
+  lint until the pin is bumped, and bumping it is a change of its own
+  that fixes what the new lints report), `--bench` (runs the criterion
   benches after tests — **maintainers only**; §7 and `AGENTS.md`
   forbid it to agents, who need the type-check above and nothing
   else).
