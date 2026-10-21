@@ -2242,8 +2242,10 @@ mod tests {
                 "entry {i} built its own fingerprint vector — the capture is quadratic again"
             );
         }
-        // Guards the assertion above against passing on a single entry.
-        assert!(ELEMENTS > 1);
+        // Guards the assertions above against passing on a single entry.
+        // A compile-time check: shrinking `ELEMENTS` to 1 is a build error
+        // rather than a test that quietly stops testing anything.
+        const { assert!(ELEMENTS > 1) };
     }
 
     /// **Saving must stay linear in the number of preserved keys.**
