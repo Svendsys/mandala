@@ -304,6 +304,24 @@ pub(in crate::application::app) fn handle_single_line_edit_key(
     state: &mut SingleLineEditor,
     rc: &mut RebuildContext<'_>,
 ) {
+    let input = resolve_edit_input(key_name, logical_key, modifiers, keybinds);
+    let refresh = state.handle_input_core(input, rc.document);
+    apply_refresh(refresh, state, rc);
+}
+
+/// Renderer-free half of [`handle_single_line_edit_key`]: resolve
+/// one keystroke, modifiers included, to the [`EditInput`] the
+/// lifecycle core takes. A key bound in `InputContext::LabelEdit`
+/// becomes its `Action`; anything else stays the literal payload.
+///
+/// Split out so the modifier plumbing is reachable from a test —
+/// the shell itself needs a live `Renderer` (TEST_CONVENTIONS §T8).
+pub(in crate::application::app) fn resolve_edit_input<'k>(
+    key_name: &Option<String>,
+    logical_key: &'k Key,
+    modifiers: &Modifiers,
+    keybinds: &ResolvedKeybinds,
+) -> EditInput<'k> {
     let action = key_name.as_deref().and_then(|n| {
         keybinds.action_for_context(
             InputContext::LabelEdit,
@@ -313,12 +331,10 @@ pub(in crate::application::app) fn handle_single_line_edit_key(
             modifiers.alt_key(),
         )
     });
-    let input = match action {
+    match action {
         Some(a) => EditInput::Action(a),
         None => EditInput::Key(logical_key),
-    };
-    let refresh = state.handle_input_core(input, rc.document);
-    apply_refresh(refresh, state, rc);
+    }
 }
 
 /// Apply a `LabelEdit*` cursor / delete primitive that arrived
