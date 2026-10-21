@@ -56,7 +56,7 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
         layout: state_layout,
         last_dynamic_apply,
         ..
-    }) = state.open_mut()
+    }) = state.as_open_mut()
     else {
         return;
     };

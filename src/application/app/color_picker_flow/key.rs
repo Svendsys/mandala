@@ -201,7 +201,7 @@ pub(in crate::application::app) fn apply_picker_nudge(
         val,
         hover_preview,
         ..
-    }) = state.open_mut()
+    }) = state.as_open_mut()
     else {
         return false;
     };
@@ -444,7 +444,7 @@ mod tests {
             &mut hover
         ));
 
-        let Some(OpenPicker { hue_deg, .. }) = state.open() else {
+        let Some(OpenPicker { hue_deg, .. }) = state.as_open() else {
             panic!("nudge must not close the picker");
         };
         assert_eq!(*hue_deg, 25.0);
@@ -467,7 +467,7 @@ mod tests {
     fn test_apply_picker_nudge_clears_a_stale_hover_preview() {
         let mut doc = crate::application::document::tests_common::load_test_doc();
         let mut state = open_contextual_picker((10.0, 0.5, 0.5));
-        if let Some(OpenPicker { hover_preview, .. }) = state.open_mut() {
+        if let Some(OpenPicker { hover_preview, .. }) = state.as_open_mut() {
             *hover_preview = Some((200.0, 0.1, 0.9));
         }
         let mut hover = ColorPickerHoverInteraction::default();
@@ -481,7 +481,7 @@ mod tests {
 
         let Some(OpenPicker {
             hover_preview, sat, ..
-        }) = state.open()
+        }) = state.as_open()
         else {
             panic!("nudge must not close the picker");
         };

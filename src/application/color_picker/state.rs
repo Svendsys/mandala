@@ -113,7 +113,7 @@ pub enum ColorPickerState {
     /// geometry, and an enum is as large as its largest variant, so held
     /// inline it would make every `ColorPickerState` — the closed one
     /// included — that big. The fields live on [`OpenPicker`]; read them
-    /// through [`ColorPickerState::open`] / [`ColorPickerState::open_mut`].
+    /// through [`ColorPickerState::as_open`] / [`ColorPickerState::as_open_mut`].
     Open(Box<OpenPicker>),
 }
 
@@ -259,16 +259,16 @@ impl Eq for PickerDynamicApplyKey {}
 impl ColorPickerState {
     /// The open picker, or `None` when closed. Matching through this
     /// keeps field patterns as they were before the payload was boxed:
-    /// `if let Some(OpenPicker { hue_deg, .. }) = state.open_mut()`.
-    pub fn open(&self) -> Option<&OpenPicker> {
+    /// `if let Some(OpenPicker { hue_deg, .. }) = state.as_open_mut()`.
+    pub fn as_open(&self) -> Option<&OpenPicker> {
         match self {
             ColorPickerState::Open(picker) => Some(picker),
             ColorPickerState::Closed => None,
         }
     }
 
-    /// Mutable form of [`ColorPickerState::open`].
-    pub fn open_mut(&mut self) -> Option<&mut OpenPicker> {
+    /// Mutable form of [`ColorPickerState::as_open`].
+    pub fn as_open_mut(&mut self) -> Option<&mut OpenPicker> {
         match self {
             ColorPickerState::Open(picker) => Some(picker),
             ColorPickerState::Closed => None,
@@ -282,7 +282,7 @@ impl ColorPickerState {
     /// True if the picker is open in Standalone mode.
     pub fn is_standalone(&self) -> bool {
         matches!(
-            self.open(),
+            self.as_open(),
             Some(OpenPicker {
                 mode: PickerMode::Standalone,
                 ..
@@ -314,7 +314,7 @@ pub enum FlashKind {
 pub fn request_error_flash(state: &mut ColorPickerState, _kind: FlashKind) {
     if let Some(OpenPicker {
         pending_error_flash, ..
-    }) = state.open_mut()
+    }) = state.as_open_mut()
     {
         *pending_error_flash = true;
     }

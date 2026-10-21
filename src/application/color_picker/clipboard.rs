@@ -13,7 +13,7 @@ use crate::application::console::traits::{ClipboardContent, HandlesCopy, Handles
 
 impl HandlesCopy for ColorPickerState {
     fn clipboard_copy(&self) -> ClipboardContent {
-        match self.open() {
+        match self.as_open() {
             Some(OpenPicker {
                 hue_deg, sat, val, ..
             }) => ClipboardContent::Text(hsv_to_hex(*hue_deg, *sat, *val)),
@@ -30,7 +30,7 @@ impl HandlesPaste for ColorPickerState {
             val,
             hover_preview,
             ..
-        }) = self.open_mut()
+        }) = self.as_open_mut()
         else {
             return Outcome::NotApplicable;
         };

@@ -92,7 +92,7 @@ pub(in crate::application::app) fn commit_color_picker(
     };
     use baumhard::util::color::hsv_to_hex;
 
-    let (handle, hue_deg, sat, val, seed_var_ref, seed_hsv) = match state.open() {
+    let (handle, hue_deg, sat, val, seed_var_ref, seed_hsv) = match state.as_open() {
         Some(OpenPicker {
             mode:
                 crate::application::color_picker::PickerMode::Contextual {
@@ -263,7 +263,7 @@ pub(in crate::application::app) fn apply_picker_preview(
     use crate::application::document::ColorPickerPreview;
     use baumhard::util::color::hsv_to_hex;
 
-    let (handle, eff_hue, eff_sat, eff_val) = match state.open() {
+    let (handle, eff_hue, eff_sat, eff_val) = match state.as_open() {
         Some(OpenPicker {
             mode,
             hue_deg,
@@ -355,7 +355,7 @@ pub(in crate::application::app) fn commit_color_picker_to_selection(
     };
     use baumhard::util::color::hsv_to_hex;
 
-    let (hue_deg, sat, val) = match state.open() {
+    let (hue_deg, sat, val) = match state.as_open() {
         Some(OpenPicker {
             hue_deg, sat, val, ..
         }) => (*hue_deg, *sat, *val),

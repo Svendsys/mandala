@@ -61,7 +61,7 @@ fn paste_valid_hex_sets_hsv() {
     // After pasting red, hue should be near 0, sat and val near 1.
     if let Some(OpenPicker {
         hue_deg, sat, val, ..
-    }) = state.open()
+    }) = state.as_open()
     {
         assert!(
             (*hue_deg - 0.0).abs() < 1.0,

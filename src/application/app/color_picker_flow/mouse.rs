@@ -49,7 +49,7 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
     // the hex readout can appear/disappear as the cursor crosses the
     // backdrop boundary.
     let cursor = (cursor_pos.0 as f32, cursor_pos.1 as f32);
-    if let Some(OpenPicker { last_cursor_pos, .. }) = state.open_mut() {
+    if let Some(OpenPicker { last_cursor_pos, .. }) = state.as_open_mut() {
         *last_cursor_pos = Some(cursor);
     }
 
@@ -62,7 +62,7 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
         center_override,
         size_scale,
         ..
-    }) = state.open_mut()
+    }) = state.as_open_mut()
     {
         match *g {
             crate::application::color_picker::PickerGesture::Move { grab_offset } => {
@@ -94,7 +94,7 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
 
     let hit = if let Some(OpenPicker {
         layout: Some(layout), ..
-    }) = state.open_mut()
+    }) = state.as_open_mut()
     {
         hit_test_picker(layout, cursor.0, cursor.1)
     } else {
@@ -131,7 +131,7 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
         hovered_hit,
         hover_preview,
         ..
-    }) = state.open_mut()
+    }) = state.as_open_mut()
     {
         // Track hover changes for hover-grow. Any change in the
         // hit region (e.g. moving from hue slot 3 to slot 4, or
