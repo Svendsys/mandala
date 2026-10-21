@@ -597,7 +597,9 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
                 return Err(format!("`{cmd_name}`: write stdin: {e}"));
             }
         }
-        drop(stdin); // close the pipe so the child sees EOF
+        // No explicit `drop(stdin)`: the closure owns `stdin`, so it is
+        // closed as the closure returns — on this path and on the early
+        // `return Err` above — which is what lets the child see EOF.
         Ok(())
     });
     let output = child
