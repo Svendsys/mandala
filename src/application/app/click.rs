@@ -394,6 +394,92 @@ mod tests {
         assert_eq!(tier, RebuildTier::All);
     }
 
+    /// Two distinct node ids from the fixture, smallest first.
+    fn two_node_ids(doc: &MindMapDocument) -> (String, String) {
+        let mut ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+        ids.sort();
+        assert!(ids.len() >= 2, "the testament fixture has at least two nodes");
+        (ids[0].clone(), ids[1].clone())
+    }
+
+    /// Shift on empty canvas keeps the selection; the same click
+    /// without Shift clears it.
+    ///
+    /// `handle_click` reads Shift from `ctx.modifiers` and the shell
+    /// cannot run without a live `Renderer` (TEST_CONVENTIONS §T8),
+    /// so this pins the flag at the core boundary the shell feeds.
+    /// Fails if the core stops honoring `shift_pressed` on a miss,
+    /// or if the two branches collapse into one.
+    #[test]
+    fn test_click_core_shift_on_empty_canvas_keeps_the_selection() {
+        let mut world = CoreWorld::new();
+        let node_id = first_node_id(&world.doc);
+        world.doc.selection = SelectionState::Single(node_id.clone());
+        handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), true, world.core());
+        assert!(
+            matches!(&world.doc.selection, SelectionState::Single(id) if *id == node_id),
+            "Shift+click on empty canvas must keep the selection, got {:?}",
+            world.doc.selection
+        );
+
+        let mut control = CoreWorld::new();
+        control.doc.selection = SelectionState::Single(node_id);
+        handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), false, control.core());
+        assert!(
+            matches!(control.doc.selection, SelectionState::None),
+            "the same click without Shift must clear it, got {:?}",
+            control.doc.selection
+        );
+    }
+
+    /// Shift on a node adds it to the selection; without Shift it
+    /// replaces the selection. Fails if `shift_pressed` stops
+    /// reaching `compute_node_click_selection` through the core.
+    #[test]
+    fn test_click_core_shift_on_a_node_adds_it_to_the_selection() {
+        let mut world = CoreWorld::new();
+        let (first, second) = two_node_ids(&world.doc);
+        world.doc.selection = SelectionState::Single(first.clone());
+        let tier = handle_click_core(
+            Some(second.clone()),
+            None,
+            FAR_OFF_CANVAS,
+            unzoomed(),
+            true,
+            world.core(),
+        );
+        match &world.doc.selection {
+            SelectionState::Multi(ids) => {
+                assert!(
+                    ids.contains(&first) && ids.contains(&second) && ids.len() == 2,
+                    "Shift+click must add the node to the existing one, got {ids:?}"
+                );
+            }
+            other => panic!("Shift+click on a second node must produce Multi, got {other:?}"),
+        }
+        assert_eq!(
+            tier,
+            RebuildTier::All,
+            "a node selection change repaints node highlights"
+        );
+
+        let mut control = CoreWorld::new();
+        control.doc.selection = SelectionState::Single(first);
+        handle_click_core(
+            Some(second.clone()),
+            None,
+            FAR_OFF_CANVAS,
+            unzoomed(),
+            false,
+            control.core(),
+        );
+        assert!(
+            matches!(&control.doc.selection, SelectionState::Single(id) if *id == second),
+            "the same click without Shift must replace the selection, got {:?}",
+            control.doc.selection
+        );
+    }
+
     /// Why `RebuildTier::for_click`'s `triggers_fired` flag cannot
     /// be observed from this path today, stated as a test rather
     /// than as a comment nobody re-checks.
