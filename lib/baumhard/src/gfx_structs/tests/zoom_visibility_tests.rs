@@ -58,7 +58,8 @@ pub fn do_inclusive_band_on_every_authored_shape() {
     assert_eq!(dft, ZoomVisibility::unbounded());
 
     // (label, window, expected_contains_at)
-    let cases: [(&str, ZoomVisibility, &[(f32, bool)]); 4] = [
+    type ContainsAt = &'static [(f32, bool)];
+    let cases: [(&str, ZoomVisibility, ContainsAt); 4] = [
         (
             "min-only",
             ZoomVisibility {

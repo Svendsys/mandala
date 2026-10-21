@@ -13,6 +13,11 @@ use crate::util::grapheme_chad::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+/// One case for [`NTH_LINE_GRAPHEME_INDICES_TEST`]: the text, the line
+/// number asked for, and the grapheme range that line occupies (`None`
+/// when the text has no such line).
+type NthLineCase = (&'static str, usize, Option<(usize, usize)>);
+
 lazy_static! {
     pub static ref SPLIT_GRAPHEMES_TEST: Vec<(&'static str, usize, &'static str, &'static str)> = vec![
         ("abcd🍕1234", 4, "abcd", "🍕1234"),
@@ -150,7 +155,7 @@ lazy_static! {
         "a\u{3000}b\n\u{200B}\n",
     ];
 
-    pub static ref NTH_LINE_GRAPHEME_INDICES_TEST: Vec<(&'static str, usize, Option<(usize, usize)>)> = vec![
+    pub static ref NTH_LINE_GRAPHEME_INDICES_TEST: Vec<NthLineCase> = vec![
         ("\n", 0, Some((0, 0))),
         // The trailing empty line a terminator leaves behind is one
         // of the lines `count_number_lines` counts, so it has to be
