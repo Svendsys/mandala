@@ -438,12 +438,12 @@ fn connection_label_layout(channel: usize, elem: &ConnectionLabelElement) -> (us
 /// matches.
 pub fn build_connection_label_tree(elements: &[ConnectionLabelElement]) -> ConnectionLabelTree {
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
-    let mut unique_id: usize = 1;
 
     for (idx, elem) in elements.iter().enumerate() {
-        let (channel, area) = connection_label_layout(idx + 1, elem);
+        // Ids run 1.. in insertion order.
+        let unique_id = idx + 1;
+        let (channel, area) = connection_label_layout(unique_id, elem);
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
-        unique_id += 1;
         tree.root.append_value(element_node, &mut tree.arena);
     }
 

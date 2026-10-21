@@ -207,9 +207,9 @@ fn test_region_params_exhaustive_4x4() {
 pub fn do_region_params_exhaustive_4x4() {
     let params = RegionParams::new(2, (4, 4));
     let expected = [[0, 0, 1, 1], [0, 0, 1, 1], [2, 2, 3, 3], [2, 2, 3, 3]];
-    for y in 0..4_usize {
-        for x in 0..4_usize {
-            assert_eq!(params.calculate_region_from_pixel((x, y)), Ok(expected[y][x]));
+    for (y, row) in expected.iter().enumerate() {
+        for (x, &want) in row.iter().enumerate() {
+            assert_eq!(params.calculate_region_from_pixel((x, y)), Ok(want));
         }
     }
 }
