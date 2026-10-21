@@ -555,10 +555,11 @@ industrial cost/benefit reasoning. This is not license for speculation.
   in either drew nothing from `cargo clippy` until that file carried
   the attribute itself. Both were found by writing the count down
   and then checking it against `cargo metadata`, which is the only
-  reason this sentence states a number at all. The scan is the gate,
-  because clippy is advisory here until its warning baseline is
-  zero; the lint is the faster feedback, and it reads
-  post-macro-expansion code the scan cannot. Neither replaces the
+  reason this sentence states a number at all. The scan is the gate
+  on every `./test.sh`; the lint is the faster feedback — and, under
+  `./test.sh --lint`, a second gate, since clippy's warning baseline
+  reached zero — and it reads post-macro-expansion code the scan
+  cannot. Neither replaces the
   judgment: `expect("<the invariant relied on>")` is the answer when
   a value is provably there, binding at the guard is the answer when
   something already proved it, and degrading is the answer in an
@@ -657,9 +658,9 @@ Workspace-level commitment:
 - **Tests land in the commit that introduces the code they test.**
 - **`./test.sh` is green before committing.** It also type-checks the
   benchmark targets and the wasm32 leg, so neither can rot between
-  merges. `./test.sh --lint`'s fmt and doc gates are hard at zero
-  baselines (#130, #134); clippy is advisory until its baseline is
-  zero — review it.
+  merges. `./test.sh --lint`'s fmt, doc and clippy gates are all hard
+  at zero baselines (#130, #134 for the first two), so a clippy
+  warning fails the run — fix it.
 - **`./build.sh` is green for cross-platform changes.** Anything
   outside an explicit `cfg` guard must build for
   `wasm32-unknown-unknown` before commit.

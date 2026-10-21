@@ -21,13 +21,16 @@ Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
                neither can rot silently between merges.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
   --lint       Also run cargo fmt --check, cargo clippy and cargo doc.
-               fmt and both doc legs (host: --workspace with private
-               items; wasm32: -p mandala) are hard gates: their
-               baselines are zero (#130, #134), so a regression prints
-               a FAILED: line and the run exits non-zero at the end,
-               after every other gate has reported. clippy is advisory
-               until its warning baseline is zero. fmt runs once — rustfmt
-               parses rather than compiles, so it is target-independent.
+               fmt, both clippy legs and both doc legs (host:
+               --workspace with private items; wasm32: -p mandala)
+               are hard gates: their baselines are zero (#130, #134
+               for fmt and doc; clippy followed once its warnings were
+               cleared), so a regression prints a FAILED: line and the
+               run exits non-zero at the end, after every other gate
+               has reported. clippy runs with -D warnings, because
+               cargo clippy exits 0 on warnings. fmt runs once —
+               rustfmt parses rather than compiles, so it is
+               target-independent.
                clippy and doc run twice, on the host target *and* on
                wasm32-unknown-unknown: a host-target compile drops
                everything under #[cfg(target_arch = "wasm32")], so the
@@ -61,16 +64,18 @@ if [ "$LINT" -eq 1 ]; then
   echo "== fmt (hard) =="
   cargo fmt --all -- --check \
     || { echo "FAILED (exit $?): cargo fmt --all -- --check (#130) — formatting diffs, or rustfmt itself failed"; LINT_FAILED=1; }
-  echo "== clippy, host target (advisory) =="
-  cargo clippy --workspace --all-targets 2>&1 || echo "(clippy issues present — not failing the run)"
-  # The doc gates hold a zero-warning baseline, which makes them the
-  # one lint gate that can be hard today (#134): clippy still carries
-  # a pre-existing warning count, but a broken intra-doc link is a
-  # hard `error:` against a baseline of zero. `-D warnings` turns it
-  # into a failure; the handler records it and the run exits non-zero
-  # at the end, after the remaining gates have reported. An `|| echo`
-  # used to sit here instead, and it swallowed a red `cargo doc` for
-  # a full review round. The direction rule for links whose target is
+  echo "== clippy, host target (hard) =="
+  cargo clippy --workspace --all-targets -- -D warnings 2>&1 \
+    || { echo "FAILED (exit $?): cargo clippy --workspace --all-targets — this gate holds a zero-warning baseline"; LINT_FAILED=1; }
+  # The doc and clippy legs hold a zero-warning baseline, which is
+  # what lets them be hard (#134 for doc; clippy's followed once its
+  # 152 warnings were cleared). `-D warnings` turns a warning into a
+  # failure — for clippy that is the whole mechanism, since `cargo
+  # clippy` exits 0 on warnings, so a hard leg that left it out would
+  # gate nothing. The handler records the failure and the run exits
+  # non-zero at the end, after the remaining gates have reported. An
+  # `|| echo` used to sit here instead, and it swallowed a red `cargo
+  # doc` for a full review round. The direction rule for links whose target is
   # cfg-stripped (`#[cfg(test)]`, platform gates) lives in
   # CODE_CONVENTIONS.md §8 — rustdoc never compiles the stripped
   # half, so the link breaks from live code and goes unchecked from
@@ -113,9 +118,9 @@ if [ "$LINT" -eq 1 ]; then
   # native-gated. Test code is clippy-checked on the host leg above,
   # which is where it runs.
   if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
-    echo "== clippy, wasm32-unknown-unknown (advisory) =="
-    cargo clippy --workspace --target wasm32-unknown-unknown 2>&1 \
-      || echo "(clippy issues present — not failing the run)"
+    echo "== clippy, wasm32-unknown-unknown (hard) =="
+    cargo clippy --workspace --target wasm32-unknown-unknown -- -D warnings 2>&1 \
+      || { echo "FAILED (exit $?): cargo clippy --workspace, wasm32 — this gate holds a zero-warning baseline"; LINT_FAILED=1; }
     # 11 broken intra-doc links lived here undetected until this leg
     # existed — every one a link to a native-gated item from a
     # cross-platform file, invisible to the host leg by construction.

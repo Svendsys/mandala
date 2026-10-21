@@ -120,9 +120,10 @@
 // CODE_CONVENTIONS §9 closes with "Bare `unwrap()` outside tests is
 // a bug", and this is the half of that rule an editor can tell you
 // about while you type. `util::unwrap_posture` is the other half —
-// it reads the workspace's source text and fails `./test.sh`, which
-// is a hard gate where clippy here is advisory. Two mechanisms
-// rather than one because they disagree usefully: the lint sees
+// it reads the workspace's source text and fails every `./test.sh`
+// run; the lint fails only `./test.sh --lint`, a hard gate since
+// clippy's baseline reached zero, but one you have to ask for. Two
+// mechanisms rather than one because they disagree usefully: the lint sees
 // post-expansion code the text scan cannot read, and the scan sees
 // the `pub mod tests;` trees the lint has to be told about.
 //
