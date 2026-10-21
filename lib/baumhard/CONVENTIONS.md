@@ -173,7 +173,10 @@ access to it.
   `acquire_font_system_write(site)` — the default, blocking; (2)
   `try_acquire_font_system_write(site)` — non-blocking, for the
   renderer's interactive overlay/prepare paths that skip a frame on
-  contention; (3) `acquire_font_system_read(site)`. All three return
+  contention. It also reads a *poisoned* lock as `None` where the
+  blocking forms panic: `Renderer::prewarm` catches a panic out of the
+  first render, which leaves the lock poisoned, and the frames after it
+  must skip, not abort; (3) `acquire_font_system_read(site)`. All three return
   guard types of `fonts.rs`'s own (`FontSystemWriteGuard`,
   `FontSystemReadGuard`), because the helpers record what the
   *current thread* holds. That record is what makes the two failures
