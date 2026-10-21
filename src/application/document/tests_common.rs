@@ -64,8 +64,8 @@ pub(super) fn load_test_tree() -> MindMapTree {
 
 /// Pick the lexicographically smallest node id from the
 /// testament map. Deterministic across `cargo test` invocations
-/// regardless of `HashMap` seed (the natural `String` ordering
-/// + `min()` win is stable). Tests that want the well-known
+/// regardless of `HashMap` seed (the natural `String` ordering +
+/// `min()` win is stable). Tests that want the well-known
 /// root specifically should still index by `"0"` directly so
 /// the dependency on the testament shape is visible at the
 /// call site.
