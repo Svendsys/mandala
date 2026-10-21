@@ -173,10 +173,11 @@ access to it.
   `acquire_font_system_write(site)` — the default, blocking; (2)
   `try_acquire_font_system_write(site)` — non-blocking, for the
   renderer's interactive overlay/prepare paths that skip a frame on
-  contention. It also reads a *poisoned* lock as `None` where the
-  blocking forms panic: `Renderer::prewarm` catches a panic out of the
-  first render, which leaves the lock poisoned, and the frames after it
-  must skip, not abort; (3) `acquire_font_system_read(site)`. All three return
+  contention. Contention is the only thing it reports as `None`: a
+  re-entrant or *poisoned* lock panics as in the blocking form, because
+  neither clears on a later frame — a skip would only hand the panic to
+  the same frame's next blocking acquire; (3)
+  `acquire_font_system_read(site)`. All three return
   guard types of `fonts.rs`'s own (`FontSystemWriteGuard`,
   `FontSystemReadGuard`), because the helpers record what the
   *current thread* holds. That record is what makes the two failures
@@ -196,7 +197,8 @@ access to it.
   path reads no clock**: `std::time::Instant::now()` traps on
   `wasm32-unknown-unknown`, which is the only path the browser takes.
   Do not add a timing read before the first acquire attempt;
-  `tests/wasm_probe` runs the helper on wasm32 and fails if it does.
+  `tests/wasm_font_lock.rs` runs the helper on wasm32 and fails if it
+  does.
 - **A caller already holding the guard measures via a `*_with`
   variant, never a nested acquire.** Thread the live
   `&mut FontSystem` into the composable API — `metric_cache::glyph_*_with`,

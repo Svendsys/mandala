@@ -500,9 +500,24 @@ impl Renderer {
     /// the panic and continuing means a degraded first frame
     /// instead of a dead app — the next real `process()` cycle
     /// retries from a known state.
+    ///
+    /// **Except when the panic took the font system with it.** A panic
+    /// raised while `prepare_text_for_pass` held the `FONT_SYSTEM`
+    /// guard leaves the lock poisoned, and no state is known after
+    /// that: every later acquire panics, so the first frame that
+    /// rebuilds anything would end the process with a message about
+    /// the poison instead of its cause. That panic is re-raised here
+    /// with its own payload, so the report names what actually failed.
     pub fn prewarm(&mut self) {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.render()));
-        if result.is_err() {
+        if let Err(payload) = result {
+            if fonts::font_system_poisoned() {
+                log::error!(
+                    "renderer.prewarm: first render panicked while holding the font system, \
+                     which leaves it unusable; re-raising the original panic"
+                );
+                std::panic::resume_unwind(payload);
+            }
             log::warn!(
                 "renderer.prewarm: first render panicked; continuing with cold pipelines. \
                  First user interaction may show a one-frame stutter."

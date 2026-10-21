@@ -41,6 +41,19 @@ const REQUIRE_ENV: &str = "MANDALA_REQUIRE_WASM_PROBE";
 const TARGET: &str = "wasm32-unknown-unknown";
 const PROBE_CRATE: &str = "wasm_font_lock_probe";
 
+/// Environment the probe's nested `cargo build` must not inherit from
+/// this test process; see where it is removed.
+const INHERITED_HOST_FLAGS: &[&str] = &[
+    "RUSTFLAGS",
+    "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_BUILD_RUSTFLAGS",
+    "RUSTDOCFLAGS",
+    "CARGO_ENCODED_RUSTDOCFLAGS",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "LLVM_PROFILE_FILE",
+];
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -144,7 +157,18 @@ fn test_font_lock_helpers_run_on_wasm32() {
         .expect("the workspace Cargo.lock must be readable");
 
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let build = Command::new(&cargo)
+    let mut build = Command::new(&cargo);
+    // The flags this test process was built with are the *host's*, and
+    // a nested cargo would otherwise inherit them for a wasm32 build:
+    // `cargo llvm-cov` (`./test.sh --coverage`) injects
+    // `-C instrument-coverage`, for which wasm32 has no profiler
+    // runtime, and a `-C target-cpu=native` names a CPU wasm32 has not
+    // got. The probe is meant to build the way the browser bundle
+    // does, so it gets none of them.
+    for var in INHERITED_HOST_FLAGS {
+        build.env_remove(var);
+    }
+    let build = build
         .args(["build", "--target", TARGET, "--manifest-path"])
         .arg(stage.join("Cargo.toml"))
         .arg("--target-dir")

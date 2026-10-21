@@ -41,7 +41,7 @@ cosmic-text = "0.18.2"
 # `fonts.rs` catches every same-thread cause of contention first, and
 # the browser has no second thread to cause another. The uncontended
 # path never parks and never reads a clock, which is the only path
-# the browser takes — `tests/wasm_probe` runs that claim.
+# the browser takes — `tests/wasm_font_lock.rs` runs that claim.
 parking_lot = "0.12.5"
 tinyvec = "1.11.0"
 unicode-segmentation = "1.13.2"
