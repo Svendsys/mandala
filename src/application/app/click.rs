@@ -187,14 +187,7 @@ pub(super) fn handle_click(
             interaction_mode: ctx.interaction_mode,
         },
     );
-    tier.execute(
-        doc,
-        ctx.interaction_mode,
-        ctx.mindmap_tree,
-        ctx.app_scene,
-        ctx.renderer,
-        ctx.scene_cache,
-    );
+    tier.execute(&mut super::dispatch::cross_dispatch::rebuild_ctx!(ctx, doc));
 }
 
 /// Rebuild tree, connections, and borders like `rebuild_all`, but additionally

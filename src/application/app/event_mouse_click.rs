@@ -528,12 +528,7 @@ pub(super) fn handle_mouse_input(
                                 );
                                 rebuild_after_selection_change(
                                     &prev,
-                                    doc,
-                                    ctx.interaction_mode,
-                                    ctx.mindmap_tree,
-                                    ctx.app_scene,
-                                    ctx.renderer,
-                                    ctx.scene_cache,
+                                    &mut super::dispatch::cross_dispatch::rebuild_ctx!(ctx, doc),
                                 );
                                 true
                             } else {

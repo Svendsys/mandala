@@ -667,14 +667,7 @@ fn start_label_drag(ctx: &mut InputHandlerContext<'_>, selection: SelectionState
         return;
     };
     let tier = arm_label_drag(doc, ctx.drag_state, ctx.scene_cache, selection, drag);
-    tier.execute(
-        doc,
-        ctx.interaction_mode,
-        ctx.mindmap_tree,
-        ctx.app_scene,
-        ctx.renderer,
-        ctx.scene_cache,
-    );
+    tier.execute(&mut super::dispatch::cross_dispatch::rebuild_ctx!(ctx, doc));
 }
 
 /// The renderer-free half of [`start_label_drag`]: write the
