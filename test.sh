@@ -7,8 +7,9 @@ export RUST_BACKTRACE=1
 COVERAGE=0
 LINT=0
 BENCH=0
-# Set by the hard lint gates (fmt, doc) on failure; checked at the very
-# end of the run so every other gate still reports first (#134).
+# Set by the hard lint gates (fmt, both clippy legs, both doc legs) on
+# failure; checked at the very end of the run so every other gate
+# still reports first (#134).
 LINT_FAILED=0
 
 usage() {
@@ -104,10 +105,11 @@ if [ "$LINT" -eq 1 ]; then
   # substitutes for neither.
   #
   # Guarded on the target being installed, the same way the
-  # unconditional wasm32 check below is: without the guard these legs
-  # print "issues present" on a machine that has never run
-  # `rustup target add`, which reports a missing toolchain as a code
-  # problem.
+  # unconditional wasm32 check below is: without the guard these hard
+  # legs would print FAILED on a machine that lacks the target, which
+  # reports a missing toolchain as a code problem. rust-toolchain.toml
+  # lists the target, so `rustup toolchain install` in this checkout
+  # supplies it; the guard is for a machine that has not run that.
   #
   # `--workspace`, so baumhard's cross-platform discipline
   # (lib/baumhard/CONVENTIONS.md) is clippy-checked for wasm and not
@@ -272,8 +274,8 @@ else
   echo "    rustup target add wasm32-unknown-unknown)"
 fi
 
-# Deferred hard-gate verdict (#134). The fmt and doc gates record
-# failures instead of aborting so a single run reports every gate;
+# Deferred hard-gate verdict (#134). The fmt, clippy and doc gates
+# record failures instead of aborting so a single run reports every gate;
 # the recorded verdict lands here, last, where it cannot be mistaken
 # for advisory noise scrolling past.
 if [ "$LINT_FAILED" -ne 0 ]; then
