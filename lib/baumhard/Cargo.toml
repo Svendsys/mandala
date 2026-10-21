@@ -31,6 +31,18 @@ log.workspace = true
 indextree.workspace = true
 glam.workspace = true
 cosmic-text = "0.18.2"
+# The lock behind `font::fonts::FONT_SYSTEM`. Chosen over
+# `std::sync::RwLock` for one capability std lacks: a *timed* write
+# acquire that queues fairly (`try_write_for`) instead of a
+# `try_write` + sleep poll, which is unfair and starved a waiter past
+# its ceiling under parallel tests. It was already in the lockfile
+# through wgpu, on both targets. On `wasm32-unknown-unknown` without
+# atomics its parker panics, so a *contended* acquire traps there;
+# `fonts.rs` catches every same-thread cause of contention first, and
+# the browser has no second thread to cause another. The uncontended
+# path never parks and never reads a clock, which is the only path
+# the browser takes — `tests/wasm_font_lock.rs` runs that claim.
+parking_lot = "0.12.5"
 tinyvec = "1.11.0"
 unicode-segmentation = "1.13.2"
 rustc-hash.workspace = true

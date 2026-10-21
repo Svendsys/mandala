@@ -1097,7 +1097,13 @@ mod tests {
             "the failures are one level in, at the browser's `EventLoop::new` and \
              `create_window`; the native arm of it cannot fail at all",
         ),
-        ("FONT_SYSTEM.read", "lib/baumhard/src/font/fonts.rs", true, ""),
+        (
+            "acquire_font_system_read",
+            "lib/baumhard/src/font/fonts.rs",
+            false,
+            "it returns a guard, not a `Result`; its failure is the helper's own \
+             `panic!`, which is the next row",
+        ),
         // The one roster name that is a macro rather than a call.
         // `acquire_font_system_write_with_timeout` is where the
         // decision lives, but the statement that ends the process is
@@ -1154,7 +1160,7 @@ mod tests {
     /// *vocabulary* rather than startup sites — they are what the
     /// rule is about, or the type it is stated in, not entries in
     /// its list.
-    const NOT_A_SITE: &[&str] = &["expect", "unwrap", "Err", "Result", "TryLockError"];
+    const NOT_A_SITE: &[&str] = &["expect", "unwrap", "Err", "Result"];
 
     /// The bold lead of §9's `expect` bullet, verbatim.
     const EXPECT_LEAD: &str = "**Startup paths use `expect(\"<reason>\")` with a human-readable message.**";
@@ -1344,9 +1350,9 @@ mod tests {
             // "Says why it died", in either spelling that can. §9's
             // demand is a human-readable message, and
             // `panic!("<reason>")` carries one exactly as
-            // `expect("<reason>")` does — `fonts.rs` reaches its two
-            // through a `match` on `TryLockError`, where there is no
-            // `Result` left to `expect` on. A bare `unwrap()` carries
+            // `expect("<reason>")` does — `fonts.rs` raises its own
+            // from lock helpers that hand back a guard, not a
+            // `Result`, so there is nothing to `expect` on. A bare `unwrap()` carries
             // neither and still fails, here and in
             // [`test_no_startup_file_panics_outside_the_roster`].
             let all_expect = calls

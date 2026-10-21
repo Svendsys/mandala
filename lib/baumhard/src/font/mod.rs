@@ -104,7 +104,7 @@ pub use cosmic_text::Buffer;
 /// common defaults the renderer used to write inline.
 pub use cosmic_text::Color;
 /// Long-lived font system (database + atlas). One per process;
-/// owned by [`fonts::FONT_SYSTEM`].
+/// owned by `fonts::FONT_SYSTEM`.
 pub use cosmic_text::FontSystem;
 /// Per-buffer font / line-height metrics — one `Metrics::new(...)`
 /// per [`Buffer`] construction.

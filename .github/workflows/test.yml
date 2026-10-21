@@ -31,5 +31,13 @@ jobs:
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
+      # `lib/baumhard/tests/wasm_font_lock.rs` runs wasm32 code under
+      # node and otherwise skips, with a note, when the target or node
+      # is absent. Here both are present by construction (the target
+      # is installed above; ubuntu-latest ships node), so a missing one
+      # means this workflow broke, and the probe must fail rather than
+      # pass by skipping.
       - name: Run ./test.sh
+        env:
+          MANDALA_REQUIRE_WASM_PROBE: "1"
         run: ./test.sh

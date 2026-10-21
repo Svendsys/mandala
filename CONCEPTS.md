@@ -825,9 +825,11 @@ from `ColorFontRegions` to the two cosmic-text shaping API shapes.
 
 Every piece of text shaping in the project
 flows through these. `fonts::init()` is called once at startup;
-the `FONT_SYSTEM` `RwLock` is acquired through
-`acquire_font_system_write("site-name")` with a timeout-guarded
-write lock. `AppFont` is generated at build time by scanning
+the `FONT_SYSTEM` `RwLock` is private and is acquired through
+`acquire_font_system_write("site-name")` (or its `try_` / `_read`
+siblings). Re-acquiring on the same thread panics at once; a wait on
+another thread's hold is bounded and ends in a panic naming the
+holder, never a hang. `AppFont` is generated at build time by scanning
 `lib/baumhard/src/font/fonts/` — drop a font file in, recompile,
 and the variant appears.
 
@@ -849,10 +851,11 @@ shared private resolver, both live in `attrs.rs`:
 
 Unknown fonts log a `warn!` and drop to a monospace / no-pin
 fallback rather than aborting — interactive paths must not panic
-([`CODE_CONVENTIONS.md §9`](./CODE_CONVENTIONS.md)). The 5-second timeout on the write lock is a re-entrancy
-bug detector: the single-threaded app should never wait on this
-lock, so a timeout means the same thread is trying to acquire
-twice.
+([`CODE_CONVENTIONS.md §9`](./CODE_CONVENTIONS.md)). The lock tells
+its two failures apart rather than timing them: a thread
+re-acquiring what it already holds is refused at once from a
+thread-local record, and the 60-second timeout bounds only a wait on
+*another* thread's hold, which is a deadlock if it runs that long.
 
 ### `RegionParams`, `RegionIndexer`, `RegionError`
 

@@ -246,35 +246,30 @@ pub fn do_glyph_ink_with_cold_key_under_held_guard() {
 /// `fonts::test_acquire_font_system_write_panics_on_timeout`: a
 /// cache **miss** taken while the `FONT_SYSTEM` write guard is
 /// already held must route through `acquire_font_system_write` and
-/// PANIC with the site tag — not hang forever on a re-entrant
-/// `RwLock::write()`. This is the exact deadlock the renderer's
+/// PANIC with the site tag — not hang forever waiting on itself. This is the exact deadlock the renderer's
 /// border-rebuild loop would hit if it called `glyph_advance`
 /// (instead of `glyph_advance_with`) on a cold key.
 ///
 /// We hold the guard on the test thread and drive the miss under
 /// `catch_unwind`, then drop the guard cleanly: the panic is caught
 /// while the guard is still live, so it never unwinds past the
-/// guard and `FONT_SYSTEM` is left un-poisoned for sibling tests. A
-/// short acquire timeout keeps the test fast — the panic path and
-/// message are identical to production's 5 s budget.
+/// guard and `FONT_SYSTEM` is left un-poisoned for sibling tests. No
+/// timeout is involved: a thread asking for a lock it already holds
+/// is refused on the spot, so the test is fast without help.
 ///
 /// Plain `#[test]` with no `do_*` body: §B8 opt-out class 2, the
-/// body drives a panic. Every iteration would wait out the 200 ms
-/// acquire budget before the panic it exists to catch, so the fold
-/// of wrapper and body is required here rather than forbidden.
+/// body drives a panic, and an iteration would measure the refusal
+/// rather than the code it exists to guard.
 #[test]
 fn test_glyph_advance_miss_under_held_guard_panics_not_hangs() {
-    use crate::font::metric_cache::glyph_advance_with_timeout;
-    use std::time::Duration;
+    use crate::font::metric_cache::glyph_advance;
 
     fonts::init();
     // A grapheme + size pair no other test warms, so the call is
     // guaranteed to miss the cache and reach the acquire.
     let cold = "\u{2591}\u{2593}reentry";
     let guard = acquire_font_system_write("metric_cache_reentrancy_test_holder");
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        glyph_advance_with_timeout(None, 41.5, cold, Duration::from_millis(200))
-    }));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| glyph_advance(None, 41.5, cold)));
     drop(guard);
     let payload = outcome.expect_err("re-entrant glyph_advance miss must panic, not hang");
     let msg = payload
@@ -393,7 +388,7 @@ pub fn do_the_metric_cache_probes_without_owning_the_cluster() {
     );
 
     const PROBING: [&str; 4] = [
-        "fn glyph_advance_with_timeout(",
+        "pub fn glyph_advance(",
         "pub fn glyph_advance_with(",
         "pub fn glyph_ink(",
         "pub fn glyph_ink_with(",

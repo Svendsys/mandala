@@ -993,7 +993,8 @@ impl Renderer {
         if self.mode_status_text.as_deref() == self.last_mode_status_shaped.as_deref() {
             return;
         }
-        let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
+        let Some(mut font_system) = fonts::try_acquire_font_system_write("renderer::mode_status_overlay")
+        else {
             // Lock contention — leave the cache state alone so the
             // next process() cycle retries shaping. Pre-fix this
             // advanced `last_mode_status_shaped` before the lock
@@ -1042,7 +1043,7 @@ impl Renderer {
         if self.fps == self.last_fps_shaped && !self.fps_overlay_buffers.is_empty() {
             return;
         }
-        let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
+        let Some(mut font_system) = fonts::try_acquire_font_system_write("renderer::fps_overlay") else {
             return;
         };
         let text = match self.fps {
@@ -1114,10 +1115,13 @@ impl Renderer {
                 if frame_micros > 0 {
                     self.fps_ring.push(frame_micros);
                 }
-                if let Some(avg) = self.fps_ring.avg_micros() {
-                    if avg > 0 {
-                        self.fps = Some((1_000_000u128 / avg) as usize);
-                    }
+                // `checked_div`: a zero average leaves `self.fps` as it was.
+                if let Some(fps) = self
+                    .fps_ring
+                    .avg_micros()
+                    .and_then(|avg| 1_000_000u128.checked_div(avg))
+                {
+                    self.fps = Some(fps as usize);
                 }
             }
         }

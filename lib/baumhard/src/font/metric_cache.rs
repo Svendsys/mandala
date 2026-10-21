@@ -113,11 +113,9 @@ use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
 use std::sync::{Mutex, RwLock};
-use std::time::Duration;
 
 use crate::font::fonts::{
-    acquire_font_system_write, acquire_font_system_write_with_timeout, ensure_warm, face_family_name_for_pin,
-    measure_glyph_ink_bounds, AppFont,
+    acquire_font_system_write, ensure_warm, face_family_name_for_pin, measure_glyph_ink_bounds, AppFont,
 };
 
 /// Outer cache key: the face pin plus the size in points. `Copy`,
@@ -228,28 +226,6 @@ lazy_static! {
 /// cosmic-text and caches. Subsequent calls return the cached
 /// value. The cache is process-lifetime.
 pub fn glyph_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
-    glyph_advance_with_timeout(
-        face,
-        size_pt,
-        grapheme,
-        crate::font::fonts::FONT_SYSTEM_LOCK_TIMEOUT,
-    )
-}
-
-/// [`glyph_advance`]'s shared body, parameterized by the acquire
-/// timeout — the public wrapper calls this with the standard
-/// `FONT_SYSTEM_LOCK_TIMEOUT` budget. The `acquire_timeout` parameter
-/// exists so the re-entrancy regression test can drive the timeout
-/// path on a short budget instead of waiting the full production one;
-/// it mirrors the `acquire_font_system_write` /
-/// `acquire_font_system_write_with_timeout` pair in `fonts.rs`.
-/// `pub(crate)` — not public API surface.
-pub(crate) fn glyph_advance_with_timeout(
-    face: Option<AppFont>,
-    size_pt: f32,
-    grapheme: &str,
-    acquire_timeout: Duration,
-) -> f32 {
     // Fast path: a cache hit needs no `FONT_SYSTEM` access at all,
     // and probes with the borrowed cluster rather than an owned copy.
     if let Some(v) = probe(&ADVANCE_CACHE, face, size_pt, grapheme) {
@@ -258,9 +234,11 @@ pub(crate) fn glyph_advance_with_timeout(
     // Miss: warm the font lazy-statics BEFORE acquiring so a
     // `Some(face)` pin lookup under the guard can't re-enter
     // `load_fonts` (see `ensure_warm`), then acquire through the
-    // timeout-guarded helper (never a raw `.write()`) and shape.
+    // helper (the lock is private; there is no raw `.write()`) and
+    // shape. A caller that already holds the guard panics here at once,
+    // naming both sites, rather than waiting on itself.
     ensure_warm();
-    let mut guard = acquire_font_system_write_with_timeout("metric_cache::glyph_advance", acquire_timeout);
+    let mut guard = acquire_font_system_write("metric_cache::glyph_advance");
     glyph_advance_with(&mut guard, face, size_pt, grapheme)
 }
 

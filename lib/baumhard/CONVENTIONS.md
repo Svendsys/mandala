@@ -168,16 +168,37 @@ access to it.
   the write lock across a long computation serialises the whole
   renderer — which on a single-threaded event loop means stalling the
   entire frame.
-- **Never take the write lock with a raw `FONT_SYSTEM.write()`.**
-  Exactly two shapes are sanctioned (see the
-  `acquire_font_system_write` doc for the full list): (1)
-  blocking-with-timeout through `acquire_font_system_write(site)` —
-  the default; a re-entrant same-thread acquire panics with `site`
-  instead of hanging forever on the futex; (2) non-blocking
-  `FONT_SYSTEM.try_write()` + frame-degrade, used only by the
+- **`FONT_SYSTEM` is private; the lock is reached through three
+  helpers, and a raw `.write()` does not compile.** (1)
+  `acquire_font_system_write(site)` — the default, blocking; (2)
+  `try_acquire_font_system_write(site)` — non-blocking, for the
   renderer's interactive overlay/prepare paths that skip a frame on
-  contention. A raw blocking `.write()` is neither and is a latent
-  self-deadlock — `grep`-guard against it.
+  contention. Contention is the only thing it reports as `None`: a
+  re-entrant or *poisoned* lock panics as in the blocking form, because
+  neither clears on a later frame — a skip would only hand the panic to
+  the same frame's next blocking acquire; (3)
+  `acquire_font_system_read(site)`. All three return
+  guard types of `fonts.rs`'s own (`FontSystemWriteGuard`,
+  `FontSystemReadGuard`), because the helpers record what the
+  *current thread* holds. That record is what makes the two failures
+  different:
+  - **Re-entrancy** (this thread already holds the lock, or holds a
+    read guard and wants the write guard) panics *immediately*,
+    naming both sites. It is decided from the thread-local record, not
+    by waiting out a timeout.
+  - **Contention** (another thread holds it) waits, queued fairly, up
+    to `FONT_SYSTEM_LOCK_TIMEOUT`, then panics naming the holder. It
+    is never an error on its own: parallel tests contend for this lock
+    constantly, and the earlier 5 s timeout, which could not tell the
+    two cases apart, turned that into spurious crashes.
+
+  Neither case may hang, and neither may be fixed by lengthening a
+  timeout that stands in for a decidable question. **The uncontended
+  path reads no clock**: `std::time::Instant::now()` traps on
+  `wasm32-unknown-unknown`, which is the only path the browser takes.
+  Do not add a timing read before the first acquire attempt;
+  `tests/wasm_font_lock.rs` runs the helper on wasm32 and fails if it
+  does.
 - **A caller already holding the guard measures via a `*_with`
   variant, never a nested acquire.** Thread the live
   `&mut FontSystem` into the composable API — `metric_cache::glyph_*_with`,
@@ -367,8 +388,8 @@ rationale.
      regression. `metric_cache_tests`'s twin is the thirteenth: it
      catches its own panic under `catch_unwind` instead of
      declaring it, but like its sibling it holds the `FONT_SYSTEM`
-     write guard across a deliberate lock timeout, so an iteration
-     measures the timeout budget and never reaches the code.
+     write guard across a deliberate re-entrant acquire, so an
+     iteration measures the refusal and never reaches the code.
      Thirteen.
   3. **The enumeration is the runtime, not the primitive.**
      `test_color_to_float_round_trips_through_new_f32` sweeps 16.7
