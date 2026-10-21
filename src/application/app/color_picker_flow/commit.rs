@@ -87,11 +87,13 @@ pub(in crate::application::app) fn commit_color_picker(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    use crate::application::color_picker::{ColorPickerState, NodeColorAxis, PickerHandle, SectionColorAxis};
+    use crate::application::color_picker::{
+        ColorPickerState, NodeColorAxis, OpenPicker, PickerHandle, SectionColorAxis,
+    };
     use baumhard::util::color::hsv_to_hex;
 
-    let (handle, hue_deg, sat, val, seed_var_ref, seed_hsv) = match state {
-        ColorPickerState::Open {
+    let (handle, hue_deg, sat, val, seed_var_ref, seed_hsv) = match state.open() {
+        Some(OpenPicker {
             mode:
                 crate::application::color_picker::PickerMode::Contextual {
                     handle,
@@ -102,7 +104,7 @@ pub(in crate::application::app) fn commit_color_picker(
             sat,
             val,
             ..
-        } => (
+        }) => (
             handle.clone(),
             *hue_deg,
             *sat,
@@ -114,14 +116,14 @@ pub(in crate::application::app) fn commit_color_picker(
         // `commit_color_picker_to_selection` instead; this function
         // is Contextual-only. Being reached in Standalone mode means
         // the caller picked the wrong commit path.
-        ColorPickerState::Open { .. } => {
+        Some(_) => {
             log::warn!(
                 "commit_color_picker called in non-contextual mode; \
                  use commit_color_picker_to_selection for Standalone mode"
             );
             return;
         }
-        ColorPickerState::Closed => return,
+        None => return,
     };
 
     // Close the modal state first so the subsequent rebuilds don't
@@ -257,19 +259,19 @@ pub(in crate::application::app) fn apply_picker_preview(
     doc: &mut MindMapDocument,
     picker_hover: &mut ColorPickerHoverInteraction,
 ) {
-    use crate::application::color_picker::{ColorPickerState, PickerHandle};
+    use crate::application::color_picker::{OpenPicker, PickerHandle};
     use crate::application::document::ColorPickerPreview;
     use baumhard::util::color::hsv_to_hex;
 
-    let (handle, eff_hue, eff_sat, eff_val) = match state {
-        ColorPickerState::Open {
+    let (handle, eff_hue, eff_sat, eff_val) = match state.open() {
+        Some(OpenPicker {
             mode,
             hue_deg,
             sat,
             val,
             hover_preview,
             ..
-        } => {
+        }) => {
             let handle = match mode {
                 crate::application::color_picker::PickerMode::Contextual { handle, .. } => {
                     Some(handle.clone())
@@ -284,7 +286,7 @@ pub(in crate::application::app) fn apply_picker_preview(
             let (eh, es, ev) = hover_preview.unwrap_or((*hue_deg, *sat, *val));
             (handle, eh, es, ev)
         }
-        ColorPickerState::Closed => return,
+        None => return,
     };
     let hex = hsv_to_hex(eff_hue, eff_sat, eff_val);
     if let Some(handle) = handle {
@@ -347,17 +349,17 @@ pub(in crate::application::app) fn commit_color_picker_to_selection(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    use crate::application::color_picker::{request_error_flash, ColorPickerState, FlashKind};
+    use crate::application::color_picker::{request_error_flash, FlashKind, OpenPicker};
     use crate::application::console::traits::{
         selection_targets, view_for, AcceptsWheelColor, ColorValue, Outcome,
     };
     use baumhard::util::color::hsv_to_hex;
 
-    let (hue_deg, sat, val) = match state {
-        ColorPickerState::Open {
+    let (hue_deg, sat, val) = match state.open() {
+        Some(OpenPicker {
             hue_deg, sat, val, ..
-        } => (*hue_deg, *sat, *val),
-        ColorPickerState::Closed => return,
+        }) => (*hue_deg, *sat, *val),
+        None => return,
     };
     let color = ColorValue::Hex(hsv_to_hex(hue_deg, sat, val));
 

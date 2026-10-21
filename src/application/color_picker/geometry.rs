@@ -80,7 +80,7 @@ pub struct ColorPickerOverlayGeometry {
     /// shorter side; values >1 grow the widget, <1 shrink it.
     /// Mutated by the right-mouse-button drag-to-resize gesture in
     /// app.rs; stored alongside `center_override` on
-    /// `ColorPickerState::Open` and reset to 1.0 on each new open.
+    /// `OpenPicker` and reset to 1.0 on each new open.
     pub size_scale: f32,
     /// Wheel center override in screen-space pixels, set by the drag
     /// handler. When `None`, the layout centers the wheel at

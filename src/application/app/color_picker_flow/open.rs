@@ -239,7 +239,7 @@ pub(in crate::application::app) fn open_picker_inner(
         (cell, ring, arm_top, arm_bottom, arm_left, arm_right, preview)
     };
 
-    *state = ColorPickerState::Open {
+    *state = ColorPickerState::Open(Box::new(crate::application::color_picker::OpenPicker {
         mode,
         hue_deg,
         sat,
@@ -261,7 +261,7 @@ pub(in crate::application::app) fn open_picker_inner(
         hover_preview: None,
         pending_error_flash: false,
         last_dynamic_apply: None,
-    };
+    }));
 
     rebuild_color_picker_overlay(state, app_scene, renderer);
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);

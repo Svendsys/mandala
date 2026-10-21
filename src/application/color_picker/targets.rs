@@ -62,7 +62,7 @@ pub enum ColorTarget {
     },
 }
 
-/// Resolved handle carried inside `ColorPickerState::Open`. For
+/// Resolved handle carried inside `OpenPicker::mode`. For
 /// edges it indexes into the live `Vec`; for nodes it carries the
 /// id + axis directly. One enum instead of `kind + target_index` +
 /// a parallel optional id field.

@@ -375,7 +375,7 @@ impl InitState {
                 self.renderer
                     .process_decree(RenderDecree::SetSurfaceSize(size.width, size.height));
                 // Glyph-wheel color picker caches its layout in
-                // ColorPickerState::Open { layout, .. }; the
+                // OpenPicker::layout; the
                 // cached values include the screen-space backdrop
                 // and per-glyph positions, so a resize would
                 // leave hit-tests aimed at the old geometry and
