@@ -11,6 +11,8 @@ use baumhard::mindmap::tree_builder::PortalPart;
 
 use super::click_triggers::fire_onclick_triggers;
 use super::dispatch::compute_node_click_selection;
+#[cfg(not(target_arch = "wasm32"))]
+use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{build_overlaid_tree, rebuild_scene_only, RebuildTier};
 use super::{now_ms, InteractionMode};
 use crate::application::document::{
@@ -161,39 +163,36 @@ pub(super) fn handle_click(
     hit_section: Option<usize>,
     cursor_pos: (f64, f64),
     shift_pressed: bool,
-    document: &mut Option<MindMapDocument>,
-    interaction_mode: &InteractionMode,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    ctx: &mut InputHandlerContext<'_>,
 ) {
-    let doc = match document.as_mut() {
+    let doc = match ctx.document.as_mut() {
         Some(d) => d,
         None => return,
     };
-    let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
+    let canvas_pos = ctx
+        .renderer
+        .screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
     let tier = handle_click_core(
         hit,
         hit_section,
         canvas_pos,
-        super::dispatch::CanvasPerPixel::of(renderer),
+        super::dispatch::CanvasPerPixel::of(ctx.renderer),
         shift_pressed,
         ClickCore {
             document: doc,
-            mindmap_tree,
-            app_scene,
-            scene_cache,
-            interaction_mode,
+            mindmap_tree: ctx.mindmap_tree,
+            app_scene: ctx.app_scene,
+            scene_cache: ctx.scene_cache,
+            interaction_mode: ctx.interaction_mode,
         },
     );
     tier.execute(
         doc,
-        interaction_mode,
-        mindmap_tree,
-        app_scene,
-        renderer,
-        scene_cache,
+        ctx.interaction_mode,
+        ctx.mindmap_tree,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.scene_cache,
     );
 }
 

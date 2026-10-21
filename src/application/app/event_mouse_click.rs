@@ -548,12 +548,7 @@ pub(super) fn handle_mouse_input(
                                 hit_section_idx,
                                 cursor_pos_val,
                                 ctx.modifiers.shift_key(),
-                                ctx.document,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
+                                ctx,
                             );
                         }
                     }
