@@ -13,34 +13,62 @@
 //!
 //! Every export returns `1` on success. The `reentrant_*` exports are
 //! *meant* to panic: on `wasm32-unknown-unknown` a panic aborts as a
-//! trap, which says nothing about its cause, so the hook below hands
-//! the message to the host first. The runner decides pass or fail from
-//! that message, not from the trap: a trap on its own is exactly what
-//! `Instant::now()` produces too, so only the message tells a
-//! deliberate panic from a bug.
+//! trap, which says nothing about its cause, so the hook below leaves
+//! the message where the host can read it. The runner decides pass or
+//! fail from that message, not from the trap: a trap on its own is
+//! exactly what `Instant::now()` produces too, so only the message
+//! tells a deliberate panic from a bug.
+//!
+//! **Plain safe Rust, by design.** Baumhard keeps its source free of
+//! the keyword this file would otherwise need for a host callback
+//! (`lib/baumhard/CONVENTIONS.md`), and a probe that lives under
+//! `lib/baumhard/tests/` is held to the same rule. So there is no host
+//! import to call. The hook writes the message into a static buffer,
+//! the module exports the *addresses* of that buffer and its length,
+//! and the host reads linear memory directly. It fetches the two
+//! addresses before it runs a scenario, so it never has to call into
+//! an instance that has already trapped.
 
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Once;
 
 use baumhard::font::fonts::{acquire_font_system_read, acquire_font_system_write, try_acquire_font_system_write};
 
-// The explicit module is what makes this an import. Without it the
-// symbol is merely undefined, and current rustc no longer links
-// wasm32-unknown-unknown with `--allow-undefined` to paper over that.
-#[link(wasm_import_module = "env")]
-extern "C" {
-    /// Host import: receives each panic's message.
-    fn host_panic(ptr: *const u8, len: usize);
+/// Longest panic message kept. Longer ones are truncated; every message
+/// the runner looks for is in the first line.
+const MESSAGE_CAP: usize = 1024;
+
+/// The last panic's message. `AtomicU8` has the same in-memory
+/// representation as `u8`, which is what lets the host read these as
+/// plain bytes.
+static MESSAGE: [AtomicU8; MESSAGE_CAP] = [const { AtomicU8::new(0) }; MESSAGE_CAP];
+static MESSAGE_LEN: AtomicUsize = AtomicUsize::new(0);
+
+fn record_panic(message: &str) {
+    let bytes = message.as_bytes();
+    let kept = bytes.len().min(MESSAGE_CAP);
+    for (slot, byte) in MESSAGE.iter().zip(bytes) {
+        slot.store(*byte, Ordering::Relaxed);
+    }
+    MESSAGE_LEN.store(kept, Ordering::Relaxed);
+}
+
+/// Where the host finds the panic message bytes in linear memory.
+#[no_mangle]
+pub extern "C" fn panic_message_addr() -> usize {
+    MESSAGE.as_ptr() as usize
+}
+
+/// Where the host finds the message's length (a `usize`, 4 bytes here).
+#[no_mangle]
+pub extern "C" fn panic_message_len_addr() -> usize {
+    std::ptr::from_ref(&MESSAGE_LEN) as usize
 }
 
 fn install_hook() {
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {
-        std::panic::set_hook(Box::new(|info| {
-            let message = info.to_string();
-            // SAFETY: the host only reads `len` bytes at `ptr` during
-            // the call, and `message` outlives it.
-            unsafe { host_panic(message.as_ptr(), message.len()) };
-        }));
+        std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
     });
 }
 
