@@ -199,7 +199,11 @@ the parity trajectory (or why none is owed):
   had `rustup target add wasm32-unknown-unknown` has proved nothing
   about the browser build. CI installs the target
   (`.github/workflows/test.yml` names it on the toolchain action), so
-  the guarantee is unconditional there and conditional here. The
+  the guarantee is unconditional there and conditional here. The same
+  holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
+  baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
+  §T9): it skips with a note without the target or `node`, and CI sets
+  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. The
   test count itself is not a gate — a summary-format change makes it
   print "count unavailable" rather than ending the run, which is
   what it used to do, silently, under `set -euo pipefail`. Flags: `--coverage`

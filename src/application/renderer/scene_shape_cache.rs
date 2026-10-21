@@ -325,7 +325,7 @@ pub(crate) fn refresh(
     let keep_fills = kind.keeps_background_fills();
     // Lazily acquired: a pass in which every element still matches
     // its cached inputs never touches the lock.
-    let mut font_system: Option<std::sync::RwLockWriteGuard<'static, baumhard::font::FontSystem>> = None;
+    let mut font_system: Option<fonts::FontSystemWriteGuard> = None;
     let mut counts = ScenePassCounts {
         walked: 0,
         reshaped: 0,

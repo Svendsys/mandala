@@ -426,8 +426,7 @@ pub fn byte_indices_of_graphemes(s: &str, ascending: &[usize]) -> Vec<Option<usi
 /// revalidation.
 ///
 /// `pub(crate)` rather than private so the out-of-contract
-/// regression test can drive the degrade — the same reason
-/// `metric_cache::glyph_advance_with_timeout` is.
+/// regression test can drive the degrade.
 pub(crate) fn replace_substring(s: &mut String, i: usize, n: usize, source: &str) {
     if i > n || !s.is_char_boundary(i) || !s.is_char_boundary(n) {
         error!(

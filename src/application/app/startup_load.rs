@@ -1097,7 +1097,13 @@ mod tests {
             "the failures are one level in, at the browser's `EventLoop::new` and \
              `create_window`; the native arm of it cannot fail at all",
         ),
-        ("FONT_SYSTEM.read", "lib/baumhard/src/font/fonts.rs", true, ""),
+        (
+            "acquire_font_system_read",
+            "lib/baumhard/src/font/fonts.rs",
+            false,
+            "it returns a guard, not a `Result`; its failure is the helper's own \
+             `panic!`, which is the next row",
+        ),
         // The one roster name that is a macro rather than a call.
         // `acquire_font_system_write_with_timeout` is where the
         // decision lives, but the statement that ends the process is

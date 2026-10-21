@@ -409,11 +409,12 @@ pub fn do_app_font_by_family_unknown_returns_none() {
     assert!(app_font_by_family("").is_none());
 }
 
-/// Freeze-hardening regression: `acquire_font_system_write` must
-/// panic (not hang) when the write guard cannot be obtained within
-/// its timeout budget. The production deadlock this guards against
-/// is a same-thread re-entrant `RwLock::write()` acquire — which
-/// `std::sync::RwLock` would otherwise block on forever.
+/// Freeze-hardening regression: when **another thread** holds the
+/// write guard past the caller's ceiling, `acquire_font_system_write`
+/// must panic (not hang). This pins the cross-thread backstop only.
+/// A same-thread re-entrant acquire never reaches the timeout — it is
+/// refused at once, from the thread's own record of what it holds —
+/// and has its own tests in `font::fonts::tests`.
 ///
 /// The test holds the guard on a **separate** thread (not the test
 /// thread) to avoid poisoning the lock when the panic unwinds: the
@@ -446,14 +447,13 @@ fn test_acquire_font_system_write_panics_on_timeout() {
         let _guard = acquire_font_system_write("test_timeout_holder");
         acquired_tx.send(()).unwrap();
         // Hold for 5× the acquire timeout so a slow scheduler
-        // cannot let `try_write` succeed before the timeout fires.
+        // cannot let the holder release before the timeout fires.
         thread::sleep(Duration::from_millis(1000));
     });
     acquired_rx.recv().expect("holder thread should acquire");
-    // Test-scale timeout — the production constant is 5 s which
-    // would make this test slow. 200 ms gives the acquire loop
-    // ~200 poll cycles (1 ms each) of margin against scheduler
-    // jitter on loaded CI runners; still well under the holder's
+    // Test-scale timeout — the production ceiling is 60 s, which
+    // would make this test slow. 200 ms is long enough to be a real
+    // wait on a loaded CI runner and still well under the holder's
     // 1 s grip. The contract we're pinning is "panics instead of
     // hanging"; the panic message and the code path are identical.
     let _would_hang = acquire_font_system_write_with_timeout(

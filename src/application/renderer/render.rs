@@ -398,7 +398,8 @@ impl Renderer {
         // would flood stderr at frame rate for no diagnostic gain.
         // `rebuild_mode_status_overlay_if_needed` takes the same
         // contention path silently for the same reason.
-        let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
+        let Some(mut font_system) = fonts::try_acquire_font_system_write("render::prepare_text_for_pass")
+        else {
             log::debug!("renderer: font_system lock contended in prepare_text_for_pass, skipping");
             return false;
         };

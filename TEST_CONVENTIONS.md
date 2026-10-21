@@ -273,6 +273,25 @@ we test for non-native targets.
 - **No `wasm-bindgen-test`.** Cross-platform logic is tested once on
   native; WASM-specific code paths are validated by `build.sh`
   compiling for `wasm32-unknown-unknown`.
+- **One exception, and the reason for it: the font-lock probe.**
+  Compiling proves a path type-checks, not that it runs, and
+  `std::time::Instant::now()` is the standing example: it compiles for
+  `wasm32-unknown-unknown` and traps the first time it executes there.
+  `acquire_font_system_write` read a clock before its first attempt, so
+  the browser's font initialization trapped with no message while every
+  gate was green. `lib/baumhard/tests/wasm_font_lock.rs` therefore
+  builds a small `cdylib` that calls the lock helpers and runs it under
+  `node`, and asserts both that the uncontended path works and that
+  each same-thread re-entrancy case panics with its own message. It is
+  deliberately narrow — no browser, no DOM, no GPU — and it is the
+  template if another wasm-only runtime hazard needs pinning: keep the
+  probe tiny, and judge pass or fail by the panic *message*, because a
+  wasm trap carries no cause of its own.
+  It needs the wasm32 target and `node`, and **skips with a note when
+  either is missing**, so a green local run without them proves nothing
+  about the browser — the same caveat as `test.sh`'s wasm32 gate. CI
+  sets `MANDALA_REQUIRE_WASM_PROBE`, which turns a missing prerequisite
+  into a failure there.
 
 ## §T10 What we deliberately don't do
 

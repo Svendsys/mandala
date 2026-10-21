@@ -231,6 +231,7 @@ dependencies = [
  "lazy_static",
  "log",
  "ordered-float",
+ "parking_lot",
  "path-slash",
  "proc-macro2",
  "rand 0.10.1",

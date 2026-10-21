@@ -6,9 +6,12 @@
 //! every font it might need without touching the filesystem at run
 //! time.
 
-use std::sync::{Arc, OnceLock, RwLock, RwLockWriteGuard, TryLockError};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::cell::Cell;
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::{self, ThreadId};
+use std::time::Duration;
 
 use cosmic_text::fontdb::Source;
 use cosmic_text::fontdb::ID;
@@ -16,6 +19,7 @@ use cosmic_text::FontSystem;
 use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, SwashCache};
 use lazy_static::lazy_static;
 use log::debug;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
 
@@ -31,7 +35,7 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
     for a in FONT_DATA {
         map.insert(a.0, Source::Binary(Arc::new(a.1)));
     }
-    return map;
+    map
 }
 
 /// Register every compiled-in font with [`FONT_SYSTEM`], returning
@@ -56,7 +60,7 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     });
     drop(font_system);
     debug!("Released font-system lock.");
-    return compiled_font_id_map;
+    compiled_font_id_map
 }
 
 lazy_static! {
@@ -66,7 +70,14 @@ lazy_static! {
     /// Global cosmic-text `FontSystem`. Every cosmic-text operation
     /// (shaping, layout, measurement) goes through this single
     /// `RwLock`-guarded instance.
-    pub static ref FONT_SYSTEM: RwLock<FontSystem> = RwLock::new(FontSystem::new());
+    ///
+    /// **Private on purpose.** The only ways to take the lock are
+    /// [`acquire_font_system_write`], [`try_acquire_font_system_write`]
+    /// and [`acquire_font_system_read`], because those are the ones
+    /// that record who holds it: a bare `FONT_SYSTEM.write()` would
+    /// hold the lock invisibly, and a same-thread re-acquire under it
+    /// could no longer be told from ordinary contention.
+    static ref FONT_SYSTEM: RwLock<FontSystem> = RwLock::new(FontSystem::new());
     /// `AppFont → fontdb face IDs` map populated on first access by
     /// [`load_fonts`]. Read-only after initialization.
     pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = load_fonts();
@@ -231,9 +242,7 @@ fn build_family_index() -> Vec<(String, AppFont)> {
         }
     }
 
-    let font_system = FONT_SYSTEM
-        .read()
-        .expect("FONT_SYSTEM lock poisoned during family-index build");
+    let font_system = acquire_font_system_read("build_family_index");
     let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
     let mut out: Vec<(String, AppFont)> = Vec::new();
     for face in font_system.db().faces() {
@@ -380,101 +389,309 @@ pub(crate) fn face_family_name_for_pin(
     Some(face.families.first()?.0.clone())
 }
 
-/// Wall-clock ceiling for a `FONT_SYSTEM` write acquisition. Mandala
-/// is single-threaded (see `CLAUDE.md`), so in healthy operation the
-/// lock is always free when a caller asks for it. Any wait longer
-/// than a single frame means a re-entrancy bug — the same thread
-/// already holds the guard and is trying to acquire it again, which
-/// `std::sync::RwLock::write()` would otherwise block on forever.
-/// 5 s is orders of magnitude beyond any legitimate frame budget and
-/// conservative enough to never fire on a healthy system.
+/// Longest one thread waits on **another** thread's hold of
+/// `FONT_SYSTEM` before the wait is declared a deadlock and the
+/// process panics instead of hanging.
+///
+/// This bound is for cross-thread waits only. A thread that already
+/// holds the lock and asks for it again never waits at all: it is
+/// refused on the spot (see [`refuse_reentry`]), because that case is
+/// decidable and a timeout is a poor way to decide it. The earlier
+/// design used a 5 s timeout for both, which turned ordinary
+/// parallel-test contention into a spurious crash — two tests hold the
+/// lock for seconds in a debug build — while taking five seconds to
+/// report a genuine re-entrancy bug.
+///
+/// 60 s sits above any legitimate hold seen under load, and below the
+/// point where a hung process stops being diagnosable. A genuinely
+/// slower holder than this would be a bug in its own right. Natively
+/// the `FreezeWatchdog` aborts a silent UI thread after 10 s, so for
+/// the main thread that backstop fires first.
 ///
 /// `pub(crate)` so the metric cache reuses the *same* budget for its
-/// miss-path acquires rather than duplicating the literal — the
-/// "same value" the two sites want is then compiler-enforced.
-pub(crate) const FONT_SYSTEM_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+/// miss-path acquires rather than duplicating the literal.
+pub(crate) const FONT_SYSTEM_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Poll interval while waiting for the `FONT_SYSTEM` write guard.
-/// Short enough that a lock release is noticed promptly; long enough
-/// that a spinning thread doesn't waste CPU.
-const FONT_SYSTEM_LOCK_POLL: Duration = Duration::from_millis(1);
+/// What the current thread holds of `FONT_SYSTEM`.
+///
+/// Thread-local because re-entrancy is, by definition, a thread
+/// acquiring a lock it already holds: the answer to "would this
+/// acquire deadlock against myself?" is a fact about the calling
+/// thread alone, and needs no registry of other threads.
+#[derive(Clone, Copy)]
+struct Held {
+    /// The site that took the write guard this thread holds, if any.
+    write_site: Option<&'static str>,
+    /// How many read guards this thread holds.
+    readers: usize,
+}
 
-/// Acquire the `FONT_SYSTEM` write guard with a bounded timeout,
-/// panicking with `site` in the message on timeout or poison.
+thread_local! {
+    static HELD: Cell<Held> = const { Cell::new(Held { write_site: None, readers: 0 }) };
+}
+
+/// Who holds the write guard right now, across all threads. Read only
+/// to make the deadlock panic say *whom* it is waiting on; never
+/// consulted to decide anything.
+static WRITER: Mutex<Option<(&'static str, ThreadId)>> = Mutex::new(None);
+
+/// Set when a thread panics while holding the write guard, because
+/// cosmic-text may have been left mid-mutation. `parking_lot` has no
+/// poisoning of its own, so this reproduces what `std::sync::RwLock`
+/// did: every later acquire panics rather than shaping against a
+/// half-updated font system. Sticky for the life of the process.
+static POISONED: AtomicBool = AtomicBool::new(false);
+
+/// Update this thread's [`Held`] record. `try_with` rather than
+/// `with`: a guard dropped from inside a thread-local destructor runs
+/// after `HELD` itself may be gone, and failing to update a record
+/// nobody can read any more must not turn into a second panic.
+fn update_held(f: impl FnOnce(&mut Held)) {
+    let _ = HELD.try_with(|cell| {
+        let mut held = cell.get();
+        f(&mut held);
+        cell.set(held);
+    });
+}
+
+fn current_writer() -> Option<(&'static str, ThreadId)> {
+    *WRITER.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn set_writer(writer: Option<(&'static str, ThreadId)>) {
+    *WRITER.lock().unwrap_or_else(|p| p.into_inner()) = writer;
+}
+
+/// Which kind of access an acquire is asking for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Read,
+    Write,
+}
+
+/// Panic if this thread already holds `FONT_SYSTEM` in a way that
+/// makes the requested access wait on itself.
 ///
-/// There are exactly **two sanctioned shapes** for taking the
-/// `FONT_SYSTEM` write lock; a raw `FONT_SYSTEM.write()` is neither:
+/// Three cases, all deadlocks by construction and all caught here
+/// without waiting:
 ///
-/// 1. **Blocking-with-timeout via this helper** — the default. Used
-///    by every call site that must measure or shape and can afford
-///    to wait a frame: `load_fonts`, the metric cache's miss path
-///    (`metric_cache::glyph_*`), and the renderer's border /
-///    handle / overlay rebuilds. A timeout here is a re-entrancy
-///    bug (this thread already holds the guard); without the helper
-///    that bug would hang the main thread forever, so instead we
-///    panic with a stack trace pointing at the second acquisition.
-/// 2. **Non-blocking `try_write` + frame-degrade** — the renderer's
-///    interactive paths (`renderer::mod::rebuild_mode_status_overlay_if_needed`,
-///    `rebuild_fps_overlay_if_needed`, `render::prepare_text_for_pass`)
-///    take `FONT_SYSTEM.try_write()` directly and skip the frame on
-///    `WouldBlock` rather than block or panic. This is legitimate:
-///    a contended lock there means another pass is mid-shape, and
-///    dropping one overlay frame is cheaper than stalling render.
-///    These sites retry on the next `process()` cycle.
+/// - write while holding the write guard;
+/// - write while holding a read guard (read-then-write);
+/// - read while holding the write guard.
+///
+/// A read while holding only read guards is fine — it is taken
+/// recursively, see [`acquire_font_system_read`].
+fn refuse_reentry(site: &'static str, access: Access) {
+    let held = HELD.try_with(Cell::get).unwrap_or(Held {
+        write_site: None,
+        readers: 0,
+    });
+    if let Some(holder) = held.write_site {
+        panic!(
+            "FONT_SYSTEM re-entrant acquire (site: {site}): this thread \
+             already holds the write guard taken at `{holder}`, so waiting \
+             for it can never succeed. Thread the held `&mut FontSystem` \
+             into a `*_with` variant instead of re-acquiring."
+        );
+    }
+    if access == Access::Write && held.readers > 0 {
+        panic!(
+            "FONT_SYSTEM write acquire while holding a read guard (site: \
+             {site}): this thread holds {} read guard(s), and a writer \
+             cannot proceed until they are released. Drop the read guard \
+             first.",
+            held.readers
+        );
+    }
+}
+
+/// Panic if a thread panicked while holding the write guard. Checked
+/// *after* acquiring, because the poisoning thread sets the flag
+/// before it releases the lock — a check made before waiting would
+/// miss one that happened while we waited.
+fn refuse_if_poisoned(site: &'static str) {
+    if POISONED.load(Ordering::SeqCst) {
+        panic!(
+            "FONT_SYSTEM lock is poisoned (site: {site}). A prior \
+             holder panicked while holding the guard."
+        );
+    }
+}
+
+/// Exclusive access to the global `FontSystem`.
+///
+/// Derefs to [`FontSystem`], so it is passed wherever a
+/// `&mut FontSystem` is wanted. It exists as a type of its own,
+/// rather than handing out `parking_lot`'s guard, to run code on
+/// release: clearing this thread's holding record and marking the
+/// lock poisoned if the holder is unwinding.
+pub struct FontSystemWriteGuard {
+    guard: RwLockWriteGuard<'static, FontSystem>,
+}
+
+impl Deref for FontSystemWriteGuard {
+    type Target = FontSystem;
+    fn deref(&self) -> &FontSystem {
+        &self.guard
+    }
+}
+
+impl DerefMut for FontSystemWriteGuard {
+    fn deref_mut(&mut self) -> &mut FontSystem {
+        &mut self.guard
+    }
+}
+
+impl Drop for FontSystemWriteGuard {
+    /// Runs before the inner guard is released, so the record is
+    /// cleared while the lock is still ours: the next holder cannot
+    /// set its record and then have it erased by this one.
+    fn drop(&mut self) {
+        if thread::panicking() {
+            POISONED.store(true, Ordering::SeqCst);
+        }
+        set_writer(None);
+        update_held(|held| held.write_site = None);
+    }
+}
+
+/// Shared access to the global `FontSystem`. Read-only; see
+/// [`FontSystemWriteGuard`] for why it is a type of its own.
+pub struct FontSystemReadGuard {
+    guard: RwLockReadGuard<'static, FontSystem>,
+}
+
+impl Deref for FontSystemReadGuard {
+    type Target = FontSystem;
+    fn deref(&self) -> &FontSystem {
+        &self.guard
+    }
+}
+
+impl Drop for FontSystemReadGuard {
+    fn drop(&mut self) {
+        update_held(|held| held.readers = held.readers.saturating_sub(1));
+    }
+}
+
+/// Record that this thread now holds the write guard, then check the
+/// poison flag. The wrapper is built *before* the check so that the
+/// panic it may raise unwinds through [`FontSystemWriteGuard::drop`]
+/// and releases the lock cleanly.
+fn adopt_write(site: &'static str, guard: RwLockWriteGuard<'static, FontSystem>) -> FontSystemWriteGuard {
+    update_held(|held| held.write_site = Some(site));
+    set_writer(Some((site, thread::current().id())));
+    let adopted = FontSystemWriteGuard { guard };
+    refuse_if_poisoned(site);
+    adopted
+}
+
+/// Acquire the `FONT_SYSTEM` write guard, panicking with `site` in the
+/// message rather than ever waiting forever.
+///
+/// There are **three sanctioned ways** to take the lock, and no
+/// others — `FONT_SYSTEM` is private so a raw `.write()` does not
+/// compile:
+///
+/// 1. **This function**, the default. Used by every call site that
+///    must measure or shape and can afford to wait: `load_fonts`, the
+///    metric cache's miss path, and the renderer's border / handle /
+///    overlay rebuilds.
+/// 2. [`try_acquire_font_system_write`] — non-blocking, for the
+///    renderer's interactive paths, which skip a frame on contention
+///    rather than stall render.
+/// 3. [`acquire_font_system_read`] — shared access, for the family
+///    index.
+///
+/// What each failure looks like, because they are different bugs:
+///
+/// - **This thread already holds the lock**: panics immediately,
+///   naming both sites. No timeout is involved.
+/// - **Another thread holds it**: waits, queued fairly behind earlier
+///   waiters, for up to `FONT_SYSTEM_LOCK_TIMEOUT` (60 s), then panics
+///   naming the holder. Contention between threads is ordinary — the
+///   test harness produces plenty — and is never an error by itself.
+/// - **A holder panicked mid-mutation**: panics, as a poisoned
+///   `std::sync::RwLock` did.
 ///
 /// Guard-holding callers that need to measure a nested value must
 /// thread their `&mut FontSystem` into a `*_with` variant (see
 /// `metric_cache` / `border_run_specs_with`) rather than re-acquire.
 ///
-/// `site` is a short static string naming the call site; it appears
-/// in the panic message so the stack makes the culprit obvious even
-/// in a stripped release build.
+/// **No clock on the uncontended path.** `std::time::Instant::now()`
+/// traps on `wasm32-unknown-unknown`, and the browser takes only the
+/// uncontended path: it has one thread, and re-entrancy is refused
+/// before any wait. This function therefore reads no clock itself and
+/// leaves timing to the lock's own slow path. `tests/wasm_probe` runs
+/// this function on wasm32 to keep that true.
 ///
-/// **Note on the busy-wait shape.** The plan flagged this as a
-/// candidate for "replace with `try_write` + immediate panic on
-/// contention." That works for production (single-threaded by
-/// `CLAUDE.md` invariant) but breaks `cargo test`, which runs
-/// integration tests in parallel and routinely sees legitimate
-/// `WouldBlock` from sibling test threads. The busy-wait is the
-/// minimal-friction shape that handles both contexts: production
-/// hits `Ok(guard)` on the first iteration; test-thread contention
-/// resolves within a handful of polls. The 5 s ceiling still
-/// catches genuine deadlocks.
-pub fn acquire_font_system_write(site: &'static str) -> RwLockWriteGuard<'static, FontSystem> {
+/// `site` is a short static string naming the call site; it appears
+/// in every panic message so the stack makes the culprit obvious even
+/// in a stripped release build.
+pub fn acquire_font_system_write(site: &'static str) -> FontSystemWriteGuard {
     acquire_font_system_write_with_timeout(site, FONT_SYSTEM_LOCK_TIMEOUT)
 }
 
 /// Internal worker for [`acquire_font_system_write`] with a
-/// caller-chosen timeout. Exposed (crate-visible) so tests can
-/// exercise the timeout path without waiting the full production
-/// 5-second budget.
-pub fn acquire_font_system_write_with_timeout(
-    site: &'static str,
-    timeout: Duration,
-) -> RwLockWriteGuard<'static, FontSystem> {
-    let start = Instant::now();
-    loop {
-        match FONT_SYSTEM.try_write() {
-            Ok(guard) => return guard,
-            Err(TryLockError::Poisoned(_)) => {
-                panic!(
-                    "FONT_SYSTEM lock is poisoned (site: {site}). A prior \
-                     holder panicked while holding the guard."
-                );
-            }
-            Err(TryLockError::WouldBlock) => {
-                if start.elapsed() >= timeout {
-                    panic!(
-                        "FONT_SYSTEM write lock not available after {:?} \
-                         (site: {site}). In a single-threaded app this \
-                         almost certainly means the current thread \
-                         already holds the guard — look for a re-entrant \
-                         call on the stack above.",
-                        timeout
-                    );
-                }
-                thread::sleep(FONT_SYSTEM_LOCK_POLL);
-            }
+/// caller-chosen cross-thread ceiling. Exposed so tests can exercise
+/// the deadlock panic without waiting the full production budget.
+pub fn acquire_font_system_write_with_timeout(site: &'static str, timeout: Duration) -> FontSystemWriteGuard {
+    refuse_reentry(site, Access::Write);
+    match FONT_SYSTEM.try_write_for(timeout) {
+        Some(guard) => adopt_write(site, guard),
+        None => {
+            let holder = match current_writer() {
+                Some((holder_site, thread)) => format!("`{holder_site}` on {thread:?}"),
+                None => "reader(s), which hold no write record".to_string(),
+            };
+            panic!(
+                "FONT_SYSTEM write lock not available after {timeout:?} \
+                 (site: {site}). It is held by {holder}. Another thread \
+                 holding it this long is a deadlock, or a guard held across \
+                 blocking work."
+            );
+        }
+    }
+}
+
+/// Non-blocking [`acquire_font_system_write`]: `None` when another
+/// thread holds the lock, so the caller can skip the frame and retry
+/// on the next cycle.
+///
+/// A same-thread hold is **not** reported as `None`. "Another thread
+/// is mid-shape, try next frame" is a legitimate skip; "this thread
+/// already holds it" is a bug that would otherwise skip every frame
+/// from then on in silence, so it panics like the blocking form.
+pub fn try_acquire_font_system_write(site: &'static str) -> Option<FontSystemWriteGuard> {
+    refuse_reentry(site, Access::Write);
+    FONT_SYSTEM.try_write().map(|guard| adopt_write(site, guard))
+}
+
+/// Shared access to the `FontSystem`, with the same never-wait-forever
+/// contract as [`acquire_font_system_write`].
+///
+/// Taken *recursively* (`try_read_recursive_for`): a thread that holds
+/// one read guard and asks for a second must not queue behind a
+/// writer that is itself waiting for the first, which an ordinary
+/// read would do and which deadlocks.
+pub fn acquire_font_system_read(site: &'static str) -> FontSystemReadGuard {
+    refuse_reentry(site, Access::Read);
+    match FONT_SYSTEM.try_read_recursive_for(FONT_SYSTEM_LOCK_TIMEOUT) {
+        Some(guard) => {
+            update_held(|held| held.readers += 1);
+            let adopted = FontSystemReadGuard { guard };
+            refuse_if_poisoned(site);
+            adopted
+        }
+        None => {
+            let holder = match current_writer() {
+                Some((holder_site, thread)) => format!("`{holder_site}` on {thread:?}"),
+                None => "an unrecorded holder".to_string(),
+            };
+            panic!(
+                "FONT_SYSTEM read lock not available after {FONT_SYSTEM_LOCK_TIMEOUT:?} \
+                 (site: {site}). It is held by {holder}."
+            );
         }
     }
 }
@@ -581,7 +798,7 @@ impl InkBounds {
 /// Empty / all-whitespace / tofu input yields a zero bounding box.
 ///
 /// `font_system` and `swash_cache` are passed in rather than taken
-/// from the global [`FONT_SYSTEM`] so the primitive composes with
+/// from the global `FONT_SYSTEM` so the primitive composes with
 /// existing call sites that already hold the write guard (notably
 /// the color picker open path, which measures advances and ink in
 /// the same lock scope).
@@ -698,7 +915,7 @@ impl TextBlockSize {
 /// `height = line_count * line_height`.
 ///
 /// `font_system` is passed in — not taken from the global
-/// [`FONT_SYSTEM`] — so the caller controls the lock scope (§B5).
+/// `FONT_SYSTEM` — so the caller controls the lock scope (§B5).
 /// `scale` is the font size in px; `line_height` is the absolute
 /// line height in px (not a multiplier), applied uniformly to every
 /// line. Empty input returns [`TextBlockSize::ZERO`] without shaping.
@@ -754,5 +971,261 @@ pub fn measure_text_block_unbounded(
         width: max_w,
         height: line_count as f32 * line_height,
         line_count,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The lock's own contract: what it refuses, what it waits for, and
+    //! what it records. Inline rather than in `font/tests/` because that
+    //! tree is the benchmark-reusable one (§T2.2), and a test that holds
+    //! the process-global lock on purpose has no business being iterated
+    //! by criterion. The wasm32 half of the contract is
+    //! `tests/wasm_font_lock.rs`.
+
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    /// Set in the child process that runs the poisoning scenario.
+    const POISON_CHILD_ENV: &str = "MANDALA_FONT_LOCK_POISON_CHILD";
+
+    /// The message `f` panicked with. Panics itself if `f` does not.
+    ///
+    /// Every test here that provokes a panic does so *inside* this
+    /// helper while holding its guard *outside* it. The guard then
+    /// drops after `catch_unwind` has returned, when the thread is no
+    /// longer unwinding — dropping it mid-unwind is precisely what
+    /// poisons the lock, for the whole process.
+    fn panic_message(f: impl FnOnce()) -> String {
+        let payload = catch_unwind(AssertUnwindSafe(f)).expect_err("the closure was supposed to panic");
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("the panic payload should be a string")
+    }
+
+    /// Hold the write guard on a new thread until told to let go.
+    /// Returns once the thread really holds it.
+    fn hold_on_another_thread(site: &'static str) -> (mpsc::Sender<()>, thread::JoinHandle<()>) {
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let holder = thread::spawn(move || {
+            let _guard = acquire_font_system_write(site);
+            held_tx.send(()).expect("the test is listening");
+            // Closed channel and message both mean "let go".
+            let _ = release_rx.recv();
+        });
+        held_rx.recv().expect("the holder should take the lock");
+        (release_tx, holder)
+    }
+
+    #[test]
+    fn test_reentrant_write_panics_at_once_naming_both_sites() {
+        let outer = acquire_font_system_write("test::outer");
+        let started = Instant::now();
+        let message = panic_message(|| {
+            let _ = acquire_font_system_write("test::inner");
+        });
+        let waited = started.elapsed();
+        drop(outer);
+
+        assert!(message.contains("re-entrant"), "unexpected message: {message}");
+        assert!(
+            message.contains("test::outer"),
+            "must name the site holding it: {message}"
+        );
+        assert!(
+            message.contains("test::inner"),
+            "must name the site asking: {message}"
+        );
+        // Decided from the thread's own record, so it cannot have
+        // waited on a clock. The bound is far below the 60 s ceiling
+        // and far above scheduler noise.
+        assert!(
+            waited < Duration::from_secs(5),
+            "a re-entrant acquire waited {waited:?} instead of failing at once"
+        );
+    }
+
+    #[test]
+    fn test_write_while_holding_a_read_guard_panics_at_once() {
+        let reader = acquire_font_system_read("test::reader");
+        let message = panic_message(|| {
+            let _ = acquire_font_system_write("test::writer");
+        });
+        drop(reader);
+        assert!(message.contains("read guard"), "unexpected message: {message}");
+    }
+
+    #[test]
+    fn test_read_while_holding_the_write_guard_panics_at_once() {
+        let writer = acquire_font_system_write("test::writer");
+        let message = panic_message(|| {
+            let _ = acquire_font_system_read("test::reader");
+        });
+        drop(writer);
+        assert!(message.contains("re-entrant"), "unexpected message: {message}");
+    }
+
+    #[test]
+    fn test_try_acquire_on_a_thread_that_holds_it_panics_rather_than_skipping() {
+        let outer = acquire_font_system_write("test::outer");
+        let message = panic_message(|| {
+            let _ = try_acquire_font_system_write("test::try");
+        });
+        drop(outer);
+        assert!(
+            message.contains("re-entrant"),
+            "a same-thread hold must not read as ordinary contention: {message}"
+        );
+    }
+
+    #[test]
+    fn test_nested_reads_on_one_thread_are_allowed() {
+        let outer = acquire_font_system_read("test::outer");
+        let inner = acquire_font_system_read("test::inner");
+        let _faces = inner.db().len();
+        drop(inner);
+        drop(outer);
+    }
+
+    #[test]
+    fn test_dropping_the_guard_clears_the_threads_record() {
+        drop(acquire_font_system_write("test::first"));
+        // Would panic as re-entrant if the first drop left its record.
+        drop(acquire_font_system_write("test::second"));
+        drop(acquire_font_system_read("test::third"));
+        drop(acquire_font_system_write("test::fourth"));
+    }
+
+    #[test]
+    fn test_try_acquire_is_none_while_another_thread_holds_it() {
+        let (release, holder) = hold_on_another_thread("test::holder");
+        assert!(
+            try_acquire_font_system_write("test::try").is_none(),
+            "a hold on another thread is contention, and `try_` reports it as `None`"
+        );
+        release.send(()).expect("the holder is waiting");
+        holder.join().expect("the holder should not panic");
+        // Blocking, not `try_`: sibling tests take the lock too, so a
+        // `try_` here could lose to one of them and say nothing about
+        // this lock.
+        drop(acquire_font_system_write("test::after"));
+    }
+
+    /// The shape of the failure this design replaced: a long hold with
+    /// a queue behind it. Every waiter must come out the other side
+    /// with the lock, not with a panic, because contention between
+    /// threads is not an error.
+    #[test]
+    fn test_waiters_queue_behind_a_long_hold_instead_of_failing() {
+        let (release, holder) = hold_on_another_thread("test::long_holder");
+        let waiters: Vec<_> = (0..6)
+            .map(|_| {
+                thread::spawn(|| {
+                    let started = Instant::now();
+                    let guard = acquire_font_system_write("test::waiter");
+                    let waited = started.elapsed();
+                    thread::sleep(Duration::from_millis(20));
+                    drop(guard);
+                    waited
+                })
+            })
+            .collect();
+        // Long enough that the waiters are certainly parked behind it.
+        thread::sleep(Duration::from_millis(300));
+        release.send(()).expect("the holder is waiting");
+        holder.join().expect("the holder should not panic");
+        for waiter in waiters {
+            let waited = waiter
+                .join()
+                .expect("a waiter panicked instead of waiting its turn");
+            assert!(
+                waited >= Duration::from_millis(100),
+                "waiter did not actually wait: {waited:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_timeout_names_the_site_holding_the_lock() {
+        let (release, holder) = hold_on_another_thread("test::named_holder");
+        let message = panic_message(|| {
+            let _ = acquire_font_system_write_with_timeout("test::impatient", Duration::from_millis(100));
+        });
+        release.send(()).expect("the holder is waiting");
+        holder.join().expect("the holder should not panic");
+
+        assert!(
+            message.contains("FONT_SYSTEM write lock not available"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("test::impatient"),
+            "must name the waiter: {message}"
+        );
+        // The point of recording the holder: a deadlock report that says
+        // who is in the way. Sibling tests may be the registered writer
+        // at the instant of the panic, so only the format is pinned.
+        assert!(
+            message.contains("It is held by"),
+            "must say who holds it: {message}"
+        );
+    }
+
+    /// Poisoning is process-wide and permanent, so provoking it here
+    /// would fail every other test in this binary. The scenario runs in
+    /// a child process instead: this test launches the test binary
+    /// again, filtered to the one scenario below, and checks it.
+    #[test]
+    fn test_panic_while_holding_poisons_later_acquires() {
+        if std::env::var_os(POISON_CHILD_ENV).is_some() {
+            return;
+        }
+        let scenario = format!(
+            "{}::test_child_scenario_poisoning",
+            module_path!()
+                .split_once("::")
+                .expect("module paths start with the crate")
+                .1
+        );
+        let out = Command::new(std::env::current_exe().expect("the test binary has a path"))
+            .args(["--exact", &scenario, "--nocapture", "--test-threads=1"])
+            .env(POISON_CHILD_ENV, "1")
+            .output()
+            .expect("the test binary must be re-runnable");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("POISON_SCENARIO_OK"),
+            "the poisoning scenario failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// The child half of the test above. A no-op in an ordinary run.
+    #[test]
+    fn test_child_scenario_poisoning() {
+        if std::env::var_os(POISON_CHILD_ENV).is_none() {
+            return;
+        }
+        let poisoner = thread::spawn(|| {
+            let _guard = acquire_font_system_write("test::poisoner");
+            panic!("deliberate: a holder dying mid-mutation");
+        });
+        assert!(poisoner.join().is_err(), "the poisoner was supposed to panic");
+
+        let message = panic_message(|| {
+            let _ = acquire_font_system_write("test::victim");
+        });
+        assert!(message.contains("poisoned"), "unexpected message: {message}");
+        let message = panic_message(|| {
+            let _ = acquire_font_system_read("test::reading_victim");
+        });
+        assert!(message.contains("poisoned"), "unexpected message: {message}");
+        println!("POISON_SCENARIO_OK");
     }
 }

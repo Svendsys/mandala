@@ -825,9 +825,11 @@ from `ColorFontRegions` to the two cosmic-text shaping API shapes.
 
 Every piece of text shaping in the project
 flows through these. `fonts::init()` is called once at startup;
-the `FONT_SYSTEM` `RwLock` is acquired through
-`acquire_font_system_write("site-name")` with a timeout-guarded
-write lock. `AppFont` is generated at build time by scanning
+the `FONT_SYSTEM` `RwLock` is private and is acquired through
+`acquire_font_system_write("site-name")` (or its `try_` / `_read`
+siblings). Re-acquiring on the same thread panics at once; a wait on
+another thread's hold is bounded and ends in a panic naming the
+holder, never a hang. `AppFont` is generated at build time by scanning
 `lib/baumhard/src/font/fonts/` — drop a font file in, recompile,
 and the variant appears.
 

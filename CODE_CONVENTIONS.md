@@ -45,7 +45,8 @@ rise and fall together.
   `lib/baumhard/src/gfx_structs/tree.rs`). Never clone-edit-reinsert a
   subtree to change one field.
 - **Font** through `baumhard::font::fonts`. `fonts::init()` once at
-  startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`;
+  startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`
+  (or its `try_` / `_read` siblings — there is no other way in);
   resolve families through `app_font_by_family` /
   `loaded_families_iter`. Region-styled text reaches cosmic-text only
   through `baumhard::font::attrs` (`attrs_list_from_regions`,
@@ -511,11 +512,12 @@ industrial cost/benefit reasoning. This is not license for speculation.
   the `append_child` that attaches one to the other, and the
   `inner_width` / `inner_height` the first surface is sized from —
   any one of them missing means there is no page to draw on. **The
-  font system, behind `fonts::init`:** the `FONT_SYSTEM.read` the
-  family index is built under, and the `panic!` that a poisoned or
-  unavailable write guard raises — a message rather than an
-  `expect` only because there is no `Result` left to `expect` on by
-  the time a `TryLockError` has been matched. Two
+  font system, behind `fonts::init`:** the `acquire_font_system_read`
+  the family index is built under, and the `panic!`s that a
+  poisoned, re-entrant or unavailable guard raises — a message rather
+  than an `expect` only because the helper has no `Result` to hand
+  back: a lock that cannot be had is not something the caller can
+  recover from. Two
   things in the phase list cannot fail, and are inside the boundary
   rather than exceptions to it: `fonts::init` itself returns `()`, and
   the query-string extractor is infallible by construction —
