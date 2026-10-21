@@ -1442,8 +1442,10 @@ fn test_default_border_config_first_edit_materializes_light_preset() {
     // Strip any pre-existing per-node border so we exercise the
     // `get_or_insert_with(GlyphBorderConfig::default)` path.
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
-    let mut edits = BorderConfigEdits::default();
-    edits.padding = OptionEdit::Set(8.0);
+    let edits = BorderConfigEdits {
+        padding: OptionEdit::Set(8.0),
+        ..Default::default()
+    };
     let outcome = doc.set_node_border_config(&nid, edits);
     assert!(outcome.changed);
     let cfg = doc
@@ -2397,8 +2399,10 @@ fn test_border_preview_does_not_push_undo_or_dirty() {
     let before_node = doc.mindmap.nodes.get(&nid).cloned().unwrap();
     doc.dirty = false;
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
 
     assert_eq!(doc.undo_stack.len(), undo_depth);
@@ -2431,8 +2435,10 @@ fn test_border_preview_cleared_returns_to_committed() {
     doc.dirty = false;
     let undo_depth = doc.undo_stack.len();
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("double".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("double".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
     let returned = doc.cancel_border_preview();
 
@@ -2466,8 +2472,10 @@ fn test_border_preview_commit_pushes_undo_and_dirty() {
     let undo_depth = doc.undo_stack.len();
     doc.dirty = false;
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
     let outcome = doc.commit_border_preview().expect("preview was active");
 
@@ -2497,8 +2505,10 @@ fn test_border_preview_commit_clears_preview_slot() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid]), edits);
     let _ = doc.commit_border_preview().expect("preview was active");
     assert!(doc.border_preview.is_none(), "commit clears the preview slot");
@@ -2517,12 +2527,16 @@ fn test_border_preview_replaces_prior_preview() {
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
 
-    let mut first_edits = BorderConfigEdits::default();
-    first_edits.preset = OptionEdit::Set("heavy".into());
+    let first_edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), first_edits);
 
-    let mut second_edits = BorderConfigEdits::default();
-    second_edits.preset = OptionEdit::Set("double".into());
+    let second_edits = BorderConfigEdits {
+        preset: OptionEdit::Set("double".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), second_edits);
 
     let outcome = doc.commit_border_preview().expect("second preview active");
@@ -2557,8 +2571,10 @@ fn test_border_preview_cancel_returns_true_when_active_and_false_when_inactive()
         "cancel returns false when no preview is active"
     );
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid]), edits);
     assert!(
         doc.cancel_border_preview(),
@@ -2584,8 +2600,10 @@ fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
     // sees a real promotion.
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let mut edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     edits
         .with_side_pattern(crate::application::document::BorderSide::Top, "###(*)###")
         .expect("pattern parses");
@@ -2677,8 +2695,10 @@ fn test_border_preview_drift_clears_on_selection_change() {
 
     // Stage a preview against node A.
     doc.selection = SelectionState::Single(nid_a.clone());
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid_a.clone()]), edits);
     assert!(doc.border_preview_covers_live_selection());
 
@@ -2716,8 +2736,10 @@ fn test_committing_set_node_border_config_clears_active_preview() {
     doc.selection = SelectionState::Single(nid.clone());
 
     // Stage a preview.
-    let mut preview_edits = BorderConfigEdits::default();
-    preview_edits.preset = OptionEdit::Set("heavy".into());
+    let preview_edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), preview_edits);
     assert!(doc.border_preview.is_some());
 
@@ -2726,8 +2748,10 @@ fn test_committing_set_node_border_config_clears_active_preview() {
     // node-level setter path here; the section / canvas paths
     // are validated by the same implicit-cancel call site at the
     // top of each setter.
-    let mut direct_edits = BorderConfigEdits::default();
-    direct_edits.preset = OptionEdit::Set("double".into());
+    let direct_edits = BorderConfigEdits {
+        preset: OptionEdit::Set("double".into()),
+        ..Default::default()
+    };
     let _ = doc.set_node_border_config(&nid, direct_edits);
 
     assert!(
@@ -2792,28 +2816,38 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
     // Each scenario: a `BorderConfigEdits` and a description.
     let scenarios: Vec<(&'static str, BorderConfigEdits)> = vec![
         ("Set preset to heavy", {
-            let mut e = BorderConfigEdits::default();
-            e.preset = OptionEdit::Set("heavy".into());
+            let e = BorderConfigEdits {
+                preset: OptionEdit::Set("heavy".into()),
+                ..Default::default()
+            };
             e
         }),
         ("Clear font (Risk #1 case)", {
-            let mut e = BorderConfigEdits::default();
-            e.font = OptionEdit::Clear;
+            let e = BorderConfigEdits {
+                font: OptionEdit::Clear,
+                ..Default::default()
+            };
             e
         }),
         ("Clear color (Risk #1 case)", {
-            let mut e = BorderConfigEdits::default();
-            e.color = OptionEdit::Clear;
+            let e = BorderConfigEdits {
+                color: OptionEdit::Clear,
+                ..Default::default()
+            };
             e
         }),
         ("Clear color_palette (Risk #1 case)", {
-            let mut e = BorderConfigEdits::default();
-            e.color_palette = OptionEdit::Clear;
+            let e = BorderConfigEdits {
+                color_palette: OptionEdit::Clear,
+                ..Default::default()
+            };
             e
         }),
         ("Clear color_palette_field (Risk #1 case)", {
-            let mut e = BorderConfigEdits::default();
-            e.color_palette_field = OptionEdit::Clear;
+            let e = BorderConfigEdits {
+                color_palette_field: OptionEdit::Clear,
+                ..Default::default()
+            };
             e
         }),
         ("Set side top to a pattern (auto-promote to custom)", {
@@ -2822,20 +2856,26 @@ fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
             e
         }),
         ("Set padding", {
-            let mut e = BorderConfigEdits::default();
-            e.padding = OptionEdit::Set(8.0);
+            let e = BorderConfigEdits {
+                padding: OptionEdit::Set(8.0),
+                ..Default::default()
+            };
             e
         }),
         ("Combine preset=heavy + color=Clear", {
-            let mut e = BorderConfigEdits::default();
-            e.preset = OptionEdit::Set("heavy".into());
-            e.color = OptionEdit::Clear;
+            let e = BorderConfigEdits {
+                preset: OptionEdit::Set("heavy".into()),
+                color: OptionEdit::Clear,
+                ..Default::default()
+            };
             e
         }),
         ("Set palette + field", {
-            let mut e = BorderConfigEdits::default();
-            e.color_palette = OptionEdit::Set("summer".into());
-            e.color_palette_field = OptionEdit::Set(PaletteField::Background);
+            let e = BorderConfigEdits {
+                color_palette: OptionEdit::Set("summer".into()),
+                color_palette_field: OptionEdit::Set(PaletteField::Background),
+                ..Default::default()
+            };
             e
         }),
     ];
@@ -2917,8 +2957,10 @@ fn test_border_preview_commit_force_shows_frame_on_hidden_node() {
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
     doc.selection = SelectionState::Single(nid.clone());
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
     let _ = doc.commit_border_preview().expect("preview was active");
 
@@ -3074,9 +3116,11 @@ fn test_border_preview_commit_explicit_visibility_overrides_auto_flip() {
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
     doc.selection = SelectionState::Single(nid.clone());
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
-    edits.visible = Some(false);
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        visible: Some(false),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
     let _ = doc.commit_border_preview();
 
@@ -3109,8 +3153,10 @@ fn test_border_preview_undo_after_commit_restores_pre_preview() {
         .as_ref()
         .map(|c| c.preset.clone());
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
     let _ = doc.commit_border_preview().expect("preview was active");
     assert!(doc.undo());
@@ -3148,8 +3194,10 @@ fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
     doc.undo_stack.clear();
     doc.dirty = false;
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(ids.clone()), edits);
     let outcome = doc
         .commit_border_preview()
@@ -3229,8 +3277,10 @@ fn test_border_preview_commit_fans_out_to_section_range() {
     doc.dirty = false;
 
     let pairs: Vec<(String, usize)> = (0..=last_section_idx).map(|i| (node_id.clone(), i)).collect();
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Sections(pairs.clone()), edits);
     let _ = doc
         .commit_border_preview()
@@ -3291,8 +3341,10 @@ fn test_border_preview_target_kind_node_resolves_against_live_selection() {
         );
     }
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let outcome = doc.set_border_preview(BorderPreviewTarget::Nodes(resolved_ids), edits);
     assert!(doc.border_preview.is_some(), "preview slot populated");
     assert!(
@@ -3320,8 +3372,10 @@ fn test_border_on_off_clears_active_node_preview() {
     let nid = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
 
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
     assert!(doc.border_preview.is_some(), "preview was set");
 
@@ -3334,8 +3388,10 @@ fn test_border_on_off_clears_active_node_preview() {
 
     // Same for `border on`: stage another preview, flip back to
     // visible, the preview is gone.
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("double".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("double".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
     assert!(doc.border_preview.is_some());
     doc.set_node_border_visible(&nid, true);

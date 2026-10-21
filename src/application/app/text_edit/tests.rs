@@ -993,8 +993,10 @@ fn test_lifted_section_range_reaches_both_consumer_classes() {
 
     // Span class: the same selection expands to exactly the anchor
     // section for the border preview's coverage check.
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(
         BorderPreviewTarget::Sections(vec![(node_id.clone(), 0)]),
         edits.clone(),

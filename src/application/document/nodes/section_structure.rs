@@ -761,8 +761,10 @@ mod tests {
             });
 
         // Stage a section-targeted border preview.
-        let mut edits = BorderConfigEdits::default();
-        edits.preset = OptionEdit::Set("heavy".into());
+        let edits = BorderConfigEdits {
+            preset: OptionEdit::Set("heavy".into()),
+            ..Default::default()
+        };
         let _ = doc.set_border_preview(BorderPreviewTarget::Sections(vec![(id.clone(), 0)]), edits);
         assert!(doc.border_preview.is_some());
 
