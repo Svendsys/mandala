@@ -24,7 +24,9 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > envelope, `hello` / `connection_rejected` / `shutdown`, and the
 > bootstrap commands `describe` and `ping` (IPC-02, #62); the command
 > registry, reply `warnings`, and the `act` family — `act.action`,
-> `act.console`, `act.macro` (IPC-03, #63).
+> `act.console`, `act.macro` (IPC-03, #63); the `query` family — `query.document`,
+> `query.selection`, `query.camera`, `query.mode`, `query.status`,
+> `query.animations`, `query.editors`, `query.undo` (IPC-04, #64).
 
 ## Transport
 
@@ -736,7 +738,7 @@ PR that implements them.
 |---|---|---|---|
 | *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
 | `act` | `act.rs` | IPC-03 | `act.action`, `act.console`, `act.macro` |
-| `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.editors`, `query.animations`, `query.undo` |
+| `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.animations`, `query.editors`, `query.undo` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch` |
 | `capture` | `capture.rs` | IPC-07 (+ IPC-08) | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
@@ -863,16 +865,185 @@ naming the refused step.
 
 ## `query` — application state (IPC-04)
 
-Read-only, allocation-light JSON views of what the application
-knows: `query.document` (path, dirty flag, node/edge/section
-counts, map metadata), `query.selection` (the `SelectionState`
-variant and its ids), `query.camera` (center, zoom, surface size —
-the `surface`↔`canvas` transform), `query.mode`
-(`InteractionMode`, open modal if any), `query.editors` (in-flight
-text/label/portal edit state and previews), `query.animations`
-(active animation instances and their clocks), `query.undo`
-(stack depth and top entries' kinds). Field-level reference lands
-with IPC-04, appended here.
+Read-only views of what the application knows: what a person reads off
+the screen chrome, and the app's mental state. Eight commands:
+`query.document`, `query.selection`, `query.camera`, `query.mode`,
+`query.status`, `query.animations`, `query.editors`, `query.undo`.
+
+**Zero mutation, by construction.** A query reaches the app through
+`observe()` (`&`), and the only reads the execution context offers are
+`&MindMapDocument` and a `&self` projection of the shell state. So a
+query cannot flip `dirty`, push an undo entry, rebuild a scene or ask
+for a frame (the reply's repaint flag is never set, and a query polled
+in a loop costs no frame). A test holds each of those to it.
+
+**No mirror structs.** Each wire form is a projection that sits beside
+the state it exposes (`document/ipc_state.rs`, `app/ipc_state.rs`).
+Where a type is pure serde (`MindMap`, `AnimationTiming`) the
+projection is its own serializer; elsewhere it is an exhaustive `match`
+with no wildcard arm. A new `SelectionState`, `InteractionMode`,
+`DragState`, `ThrottledDrag` or `UndoAction` variant therefore fails
+the build until its wire form is decided and written here. Every
+variant-shaped value is an object whose `kind` is **the variant's own
+name**, with that variant's ids beside it. Where a projection leaves
+state out, this section names the omission.
+
+**Errors.** Before the app exists every query answers `no_document`.
+After it, the four queries that read the document (`query.document`,
+`query.selection`, `query.animations`, `query.undo`) answer
+`no_document` when its initial load failed. `query.camera`,
+`query.mode`, `query.status` and `query.editors` need no document and
+answer regardless. A query's own parameter failures are
+`invalid_params`, naming the parameter.
+
+### `query.document`
+
+The open document: `file_path`, `dirty`, `undo_depth`, `map`, `counts`
+and, on request, the whole model as `mindmap`.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `fields` | array | no | Which parts to return, as strings from the list below. Default: every part but `mindmap`, the one whose size is unbounded. Empty, mistyped or unknown words are `invalid_params`. Replies carry the parts in the order below, whatever order they were asked for. |
+| `pointer` | string | no | An RFC 6901 JSON Pointer into the serialized model (`"/nodes/1.2"`, `"/edges/0"`, `"/canvas/background_color"`). The reply's `mindmap` is then the value found there. Implies `fields: ["mindmap"]` when `fields` is omitted, and is `invalid_params` when `fields` lacks `mindmap`. A pointer that resolves to nothing is `not_found`. |
+| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `mindmap` may exceed the 8 MiB reply cap. |
+| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. A symlink at the path is refused either way and never followed, and a missing parent directory is `invalid_params`. |
+
+| result field | type | meaning |
+|---|---|---|
+| `file_path` | string | The path the document is bound to; `null` for a document never saved. |
+| `dirty` | boolean | Unsaved changes. |
+| `undo_depth` | integer | Entries on the undo stack (`query.undo` lists them). |
+| `map` | object | `{"name", "version"}` of the loaded map. |
+| `counts` | object | `{"nodes", "edges", "sections", "palettes", "custom_mutations", "macros"}`. `sections` is summed over every node. |
+| `mindmap` | object | The model through its own serde, the `.mindmap.json` shape (`schema.md`). A save adds the loader's preserved unknown keys; a query does not, because they are the loader's bookkeeping and not part of the model. With `pointer`, the value found there. |
+| `path`, `bytes` | string, integer | With `to_file` only, and then the *only* fields: the absolute path written and its size. |
+
+The `mindmap` field round-trips: parsed back as a `MindMap` and
+serialized again it is the value the app serialized, so what an agent
+reads is what the app holds.
+
+```jsonc
+{"id": 1, "cmd": "query.document"}
+{"id": 1, "ok": true, "result": {
+  "file_path": "maps/testament.mindmap.json", "dirty": false, "undo_depth": 0,
+  "map": {"name": "testament", "version": "1.0"},
+  "counts": {"nodes": 252, "edges": 258, "sections": 254, "palettes": 12, "custom_mutations": 0, "macros": 0}}}
+{"id": 2, "cmd": "query.document", "pointer": "/nodes/0/position"}
+{"id": 2, "ok": true, "result": {"mindmap": {"x": -179.432388, "y": -2413.803223}}}
+{"id": 3, "cmd": "query.document", "fields": ["mindmap"], "to_file": "/tmp/model.json"}
+```
+
+### `query.selection`
+
+Params: none. Result: the `SelectionState`, an object whose `kind` is
+`None`, `Single`, `Multi`, `Section`, `MultiSection`, `SectionRange`,
+`Edge`, `EdgeLabel`, `PortalLabel` or `PortalText`, with the variant's
+ids beside it. Lossless: every field of every variant is carried.
+
+| `kind` | keys beside it |
+|---|---|
+| `None` | — |
+| `Single` | `node_id` |
+| `Multi` | `node_ids` (array) |
+| `Section` | `node_id`, `section_idx` |
+| `MultiSection` | `sections`: array of `{"node_id", "section_idx"}` |
+| `SectionRange` | `node_id`, `section_idx`, `section_span` `{"lo", "hi"}` (inclusive **section indices**), `grapheme_range` `{"start", "end"}` (half-open **grapheme-cluster** offsets into that section's text; the two ranges are different units, see `SelectionState`) |
+| `Edge`, `EdgeLabel` | `edge`: `{"from_id", "to_id", "edge_type"}` |
+| `PortalLabel`, `PortalText` | `edge` (as above), `endpoint_node_id` |
+
+```jsonc
+{"id": 1, "cmd": "query.selection"}
+{"id": 1, "ok": true, "result": {"kind": "Single", "node_id": "1.2"}}
+```
+
+### `query.camera`
+
+Params: none. The `surface` ↔ `canvas` transform ([Coordinate
+spaces](#coordinate-spaces)). A canvas point `p` lands at surface
+`(p - center) * zoom + surface / 2`, so a client converts without a
+round trip per point.
+
+| result field | type | meaning |
+|---|---|---|
+| `center` | object | `{"x", "y"}`: the canvas point at the middle of the viewport. |
+| `zoom` | number | Zoom factor; above 1 is zoomed in. |
+| `zoom_min`, `zoom_max` | number | The clamp the camera enforces (`0.05` and `5.0`). |
+| `surface` | object | `{"width", "height"}` in physical pixels. |
+
+```jsonc
+{"id": 1, "ok": true, "result": {"center": {"x": 12.0, "y": -340.5}, "zoom": 0.75,
+  "zoom_min": 0.05, "zoom_max": 5.0, "surface": {"width": 1920, "height": 1080}}}
+```
+
+### `query.mode`
+
+Params: none.
+
+| result field | type | meaning |
+|---|---|---|
+| `interaction_mode` | object | `kind`: `Default`, `Reparent` (`sources`), `Connect` (`source`), `NodeEdit` (`node_id`) or `Resize` (`target`: `{"kind": "Node", "node_id"}` or `{"kind": "Section", "node_id", "section_idx"}`). |
+| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Throttled`. `Pending` carries `start_pos` (surface pixels), `hit_node`, `hit_section_idx` and `grabs`, the names of any handle the press landed on (`edge_handle`, `portal_label`, `edge_label`, `section_resize_handle`, `node_resize_handle`). `PendingRight` carries `start_pos`, `start_canvas`, `hit_node`, `hit_section_idx`. `SelectingRect` carries `start_canvas` and `current_canvas`. `Throttled` names its `gesture` (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) with what it is acting on (`node_ids`, `node_id`, `section_idx`, `side`, `edge`, `handle`, `endpoint_node_id`). A gesture's pre-drag snapshots, pending delta and throttle are omitted: bookkeeping, not identity. |
+| `modal` | string | Which modal takes the keyboard first: `console`, `color_picker`, `single_line_edit`, `text_edit`, or `none`. The order is the keyboard handler's steal order. `query.editors` says which are open. |
+| `hovered_node` | string | The node id under the pointer; `null` over none. |
+| `cursor_pos` | object | `{"x", "y"}`: the last known pointer position, in surface pixels. |
+
+### `query.status`
+
+Params: none. Result: `text` (string), the cyan mode-status line the
+renderer shows (`"editing: 1.2 — section [1 of 3]"`), or `null` when none
+is showing (Default mode). The app already writes this line for a human,
+so an agent reads it instead of re-deriving it.
+
+### `query.animations`
+
+Params: none. Result: `active` (boolean, whether the per-frame drain is
+ticking animations), `count` (integer) and `animations` (array,
+oldest-started first). Each entry:
+
+| key | meaning |
+|---|---|
+| `target_id`, `section_idx` | The node animated, and the section when the trigger resolved to one (`null` otherwise). |
+| `mutation_id` | The `CustomMutation` id being animated. |
+| `start_ms`, `elapsed_ms` | The app-clock start and the time since. The app clock is virtual under `clock.set_mode virtual`. |
+| `phase` | `delay` before the delay elapses, `running` while it interpolates, `due` once the full envelope has elapsed and the next tick commits it. |
+| `progress` | The linear position through the duration, `0` to `1`, before easing. |
+| `timing` | The mutation's `AnimationTiming` through its own serializer (`duration_ms`, `delay_ms` when set, `easing`). |
+
+The from/to node snapshots and the mutation list are omitted. They are
+the document's own business, and large. `active: false` with an empty
+list is how an agent sees that animations have settled.
+
+### `query.editors`
+
+Params: none. Each modal editor's live state, `null` when it is closed,
+and the document's active previews.
+
+| result field | type | meaning |
+|---|---|---|
+| `console` | object | `input`, `cursor` (grapheme index), `history_len`, `history_idx`, `scrollback_len`, `scrollback` (the last 50 lines, each `{"kind": "Input"\|"Output"\|"Error", "text"}`), `completion_count`, `completion_idx`, `scroll_offset`. Omitted: each line's pinned font family, the completion rows, the wheel accumulator. |
+| `color_picker` | object | `mode` (`{"kind": "Standalone"}`, or `{"kind": "Contextual", "handle", "seed_var_ref", "seed_hsv"}` where `handle` is `Edge` (`edge_index`), `Node` (`node_id`, `axis`) or `Section` (`node_id`, `section_idx`, `axis`, `grapheme_range`)), `hue_deg` (`[0, 360)`), `sat` and `val` (`[0, 1]`), `size_scale`, `gesture` (`Move`, `Resize` or `null`), `hover_preview`. Omitted: the cached layout, glyph-measurement caches and wheel placement, which are geometry (`scene.dump` is where what it looks like lives). |
+| `single_line_edit` | object | The edge-label / portal-caption editor: `target` (`{"kind": "EdgeLabel", "edge"}` or `{"kind": "PortalText", "edge", "endpoint_node_id"}`), `buffer`, `cursor_grapheme_pos`, `original` (the target's string when the editor opened; `null` if none). |
+| `text_edit` | object | The node text editor: `node_id`, `section_idx`, `buffer`, `cursor_grapheme_pos`, `selection_anchor` (`null` without a sub-range selection), `exit_to_default_on_close`. Omitted: the buffer's styling regions and the pre-edit snapshot cancel restores from. |
+| `previews` | object | What the scene shows in place of committed model state, never serialized, never undoable, never dirtying: `label_edit` (`edge`, `buffer`), `portal_text_edit` (`edge`, `endpoint_node_id`, `buffer`), `color_picker` (`edge`, `color`), `border` (`kind`: `Nodes`, `Sections`, `CanvasDefault`, `CanvasSectionFrame`, `CanvasSectionFrameFocused`, with its targets; the staged values are omitted) and `rect_select` (the node ids a Shift+drag currently covers). Each is `null` when none is live. An agent whose pixels disagree with `query.document` looks here first. |
+
+Cursors are **grapheme-cluster** indices into their buffer, never bytes:
+the unit the editors use, and the one a user counts as characters.
+
+### `query.undo`
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `limit` | integer | no | How many entries to return, newest first. Default 20, at most 1000 (a larger or negative value is `invalid_params`, so the cap is learned rather than silently applied). |
+
+Result: `depth` (integer, the whole stack) and `entries` (array, newest
+first, the order `Undo` takes them). Each entry is `{"kind", "node_ids"?,
+"index"?}`: `kind` is the `UndoAction` variant's name (`MoveNodes`,
+`CustomMutation`, `ReparentNodes`, `DeleteEdge`, `CreateEdge`,
+`EditEdge`, `CreateNode`, `EditNodeText`, `EditNodeStyle`,
+`EditNodeZoom`, `CanvasSnapshot`, `EditNodeAabb`, `DeleteNode`), with the
+nodes it touches or, for the edge entries, the edge `index`. The
+before-images an entry carries are what undo restores from and are not
+reported.
 
 ## `scene` — laid-out scene introspection (IPC-05)
 

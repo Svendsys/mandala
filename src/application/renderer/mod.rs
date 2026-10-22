@@ -870,6 +870,26 @@ impl Renderer {
         self.camera.zoom
     }
 
+    /// The camera, read-only: the `surface` ↔ `canvas` transform the
+    /// renderer and every hit test derive from. Added for the IPC
+    /// `query.camera` command (and shared with `scene.*`); nothing
+    /// outside the renderer can move the camera through it.
+    // Native-driver-only: the IPC `query.camera` reader; the browser
+    // serves no socket (CLAUDE.md "Dual-target status").
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn camera(&self) -> &Camera2D {
+        &self.camera
+    }
+
+    /// The text of the cyan mode-status line, or `None` when none is
+    /// showing. Read-only: [`Self::set_mode_status_text`] is the
+    /// writer, called by the app's scene-rebuild paths.
+    // Native-driver-only: the IPC `query.status` reader, as above.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn mode_status_text(&self) -> Option<&str> {
+        self.mode_status_text.as_deref()
+    }
+
     /// Swapchain surface width in pixels.
     pub fn surface_width(&self) -> u32 {
         self.config.width

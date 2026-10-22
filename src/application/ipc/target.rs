@@ -18,11 +18,34 @@
 //! needs a path past a privilege gate is a redesign of `format/ipc.md`
 //! §Trust model, not a new method here (§D4's composition rule).
 
+use serde_json::Value;
+
 use crate::application::console::LineOutcome;
+use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 
 use super::space::Point;
+
+/// A part of the app shell's own state that a `query` command reads.
+/// The state types behind it (`DragState`, the modal editors) are
+/// private to `app`, so the app side projects each one to JSON
+/// ([`CommandTarget::shell_state`]) and the `ipc` side never names
+/// them. The match on it, in `app/ipc_target.rs`, has no wildcard arm:
+/// a new part is a compile error there until it has a projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellState {
+    /// The camera: center, zoom and surface size (`query.camera`).
+    Camera,
+    /// The interaction mode, drag state, open modal, hover and pointer
+    /// (`query.mode`).
+    Mode,
+    /// The mode-status line the renderer shows (`query.status`).
+    Status,
+    /// Every modal editor's live state and the document's previews
+    /// (`query.editors`).
+    Editors,
+}
 
 /// What a command may ask of the running application.
 ///
@@ -72,4 +95,17 @@ pub(crate) trait CommandTarget {
     /// implementation answers from each funnel's own outcome, the only
     /// place that knows.
     fn changed_view(&self) -> bool;
+
+    /// The loaded document, **read-only**. `None` when the app has no
+    /// document (the initial load failed). The read half of the
+    /// `query` family goes through here, so what it can reach is what
+    /// `&MindMapDocument` allows: nothing that flips `dirty`, pushes
+    /// an undo entry or rebuilds a scene.
+    fn document(&self) -> Option<&MindMapDocument>;
+
+    /// One part of the app shell's state, projected to JSON.
+    /// Read-only, and it reports no view change
+    /// ([`Self::changed_view`] is untouched), so a query polled in a
+    /// loop costs no frame.
+    fn shell_state(&self, which: ShellState) -> Value;
 }

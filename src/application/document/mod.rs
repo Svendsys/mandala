@@ -31,6 +31,10 @@ mod edges;
 // compiles unreferenced; the lint stays armed on the host.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod hit_test;
+// Native-only with the IPC module that reads it (`CLAUDE.md` "Dual-target
+// status"): the browser serves no socket.
+#[cfg(not(target_arch = "wasm32"))]
+mod ipc_state;
 pub mod mutations;
 pub mod mutations_loader;
 mod nodes;
@@ -105,6 +109,8 @@ pub use baumhard::mindmap::tree_builder::InteractionModeOverrides;
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use ipc_state::{f32_json, DocumentField};
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
 pub use undo_action::UndoAction;

@@ -80,6 +80,8 @@ mod freeze_watchdog;
 mod input_context;
 mod interaction_mode;
 #[cfg(not(target_arch = "wasm32"))]
+mod ipc_state;
+#[cfg(not(target_arch = "wasm32"))]
 mod ipc_target;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).

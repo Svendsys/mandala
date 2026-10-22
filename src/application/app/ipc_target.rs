@@ -14,10 +14,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use glam::Vec2;
+use serde_json::{json, Value};
 
 use crate::application::console::LineOutcome;
+use crate::application::document::MindMapDocument;
 use crate::application::ipc::space::{Point, Space};
-use crate::application::ipc::CommandTarget;
+use crate::application::ipc::{CommandTarget, ShellState};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::source_tier::SourceTier;
@@ -25,6 +27,7 @@ use crate::application::source_tier::SourceTier;
 use super::console_input::exec::execute_console_line;
 use super::dispatch::{self, DispatchHit, DispatchOutcome};
 use super::input_context::InputHandlerContext;
+use super::ipc_state;
 
 /// How an anonymous `act.macro` step sequence is named in the macro
 /// dispatcher's diagnostics.
@@ -117,5 +120,33 @@ impl CommandTarget for IpcCommandTarget<'_> {
 
     fn changed_view(&self) -> bool {
         self.changed_view
+    }
+
+    fn document(&self) -> Option<&MindMapDocument> {
+        self.ctx.document.as_ref()
+    }
+
+    fn shell_state(&self, which: ShellState) -> Value {
+        match which {
+            ShellState::Camera => ipc_state::camera_to_ipc_json(self.ctx.renderer.camera()),
+            ShellState::Mode => ipc_state::mode_to_ipc_json(
+                self.ctx.interaction_mode,
+                self.ctx.drag_state,
+                self.ctx.console_state,
+                self.ctx.color_picker_state,
+                self.ctx.single_line_edit_state,
+                self.ctx.text_edit_state,
+                self.ctx.hovered_node.as_deref(),
+                *self.ctx.cursor_pos,
+            ),
+            ShellState::Status => json!({ "text": self.ctx.renderer.mode_status_text() }),
+            ShellState::Editors => ipc_state::editors_to_ipc_json(
+                self.ctx.console_state,
+                self.ctx.color_picker_state,
+                self.ctx.single_line_edit_state,
+                self.ctx.text_edit_state,
+                self.ctx.document.as_ref(),
+            ),
+        }
     }
 }
