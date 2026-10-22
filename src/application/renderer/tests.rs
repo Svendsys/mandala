@@ -1986,7 +1986,7 @@ fn shape_cluster_advances(
     use baumhard::font::{buffer, SHAPING_ADVANCED};
 
     let mut buf = buffer::create_square(font_system, font_size);
-    buf.set_text(font_system, cluster, &Attrs::new(), SHAPING_ADVANCED, None);
+    buf.set_text(cluster, &Attrs::new(), SHAPING_ADVANCED, None);
     buf.shape_until_scroll(font_system, false);
     let (mut widest, mut summed, mut count) = (0.0f32, 0.0f32, 0usize);
     for run in buf.layout_runs() {

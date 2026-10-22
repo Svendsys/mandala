@@ -135,9 +135,9 @@ rustc-hash.workspace = true
 # `::Color`, `::FontSystem`, ...). Leaving the crate out of this
 # manifest makes that containment compiler-enforced: a `use
 # cosmic_text::...` in `src/` no longer resolves.
-wgpu = { version = "29.0", features = ["webgl"] }
+wgpu = { version = "30.0.1", features = ["webgl"] }
 bytemuck = "1.25.2"
-glyphon = "0.11.0"
+glyphon = "0.12.0"
 # Alternative: https://crates.io/crates/ab_glyph
 glam.workspace = true
 winit = "0.30.13"

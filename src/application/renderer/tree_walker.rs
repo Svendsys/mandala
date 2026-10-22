@@ -165,14 +165,8 @@ pub(super) fn shape_one_element_into_buffers(
     // exceeded the cell box.
     let mut shape_and_yield = |spans: &[(&str, Attrs)], x_off: f32, y_off: f32, fs: &mut FontSystem| {
         let mut buffer = buffer::create(fs, scale, line_height);
-        buffer.set_size(fs, Some(bound_x), Some(bound_y));
-        buffer.set_rich_text(
-            fs,
-            spans.iter().cloned(),
-            &Attrs::new(),
-            SHAPING_ADVANCED,
-            alignment,
-        );
+        buffer.set_size(Some(bound_x), Some(bound_y));
+        buffer.set_rich_text(spans.iter().cloned(), &Attrs::new(), SHAPING_ADVANCED, alignment);
         buffer.shape_until_scroll(fs, false);
         let text_buffer = MindMapTextBuffer {
             buffer,

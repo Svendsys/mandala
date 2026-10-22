@@ -905,7 +905,7 @@ pub fn measure_glyph_ink_bounds(
         None => Attrs::new(),
     };
 
-    buffer.set_text(font_system, glyph, &attrs, Shaping::Advanced, None);
+    buffer.set_text(glyph, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
 
     let mut out = InkBounds::default();
@@ -1016,7 +1016,7 @@ pub fn measure_text_block_unbounded(
     }
     let mut buffer = Buffer::new(font_system, Metrics::new(scale, line_height));
     // `None` on both axes = unbounded; measure natural widths.
-    buffer.set_size(font_system, None, None);
+    buffer.set_size(None, None);
 
     // Pin the requested AppFont family if any — without this, a
     // node pinned to a wide display face measures as if it were
@@ -1030,7 +1030,13 @@ pub fn measure_text_block_unbounded(
         None => Attrs::new(),
     };
 
-    buffer.set_text(font_system, text, &attrs, Shaping::Advanced, None);
+    buffer.set_text(text, &attrs, Shaping::Advanced, None);
+    // cosmic-text 0.19 made the setters lazy: `set_text` / `set_size`
+    // only mark the buffer dirty, and the raw `layout_runs()` reads
+    // whatever was last shaped — nothing, for a fresh buffer. Shape
+    // explicitly, or every block measures 0 × 0. 0.18 shaped inside
+    // `set_text`, which is why this call was not needed before.
+    buffer.shape_until_scroll(font_system, false);
 
     let mut max_w = 0.0_f32;
     let mut line_count = 0_u32;
