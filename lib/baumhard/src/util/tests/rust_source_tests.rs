@@ -59,7 +59,7 @@ const TEST_MODULE_HEADERS: &[(&str, bool)] = &[
         concat!("#[cfg(not(target_arch = \"wasm32\"))]\n#[cfg(", "test)]"),
         true,
     ),
-    // `lib/baumhard/src/util/log.rs` and five others in `util/`.
+    // `lib/baumhard/src/util/log/mod.rs` and five others in `util/`.
     ("#[cfg(all(test, not(target_arch = \"wasm32\")))]", true),
     // A non-`cfg` attribute in between — the shim's spelling.
     (concat!("#[cfg(", "test)]\n#[allow(dead_code)]"), true),
@@ -818,7 +818,7 @@ fn test_above_test_modules_knows_every_shape_in_this_tree() {
             ),
         ),
         (
-            "lib/baumhard/src/util/log.rs",
+            "lib/baumhard/src/util/log/mod.rs",
             "#[cfg(all(test, not(target_arch = \"wasm32\")))] mod tests {",
         ),
         ("src/application/macros/tests.rs", concat!("#![cfg(", "test)]")),

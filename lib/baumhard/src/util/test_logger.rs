@@ -167,6 +167,10 @@ impl log::Log for Recorder {
     }
 
     fn log(&self, record: &log::Record) {
+        // The same tap `util::log::init`'s native logger carries, so a
+        // test can open a `capture` window and see what a shipped
+        // build's window would.
+        crate::util::log::capture::observe(record);
         if !self.enabled(record.metadata()) {
             return;
         }

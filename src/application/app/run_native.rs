@@ -18,6 +18,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 use super::color_picker_flow::rebuild_color_picker_overlay;
 use super::freeze_watchdog::FreezeWatchdog;
 use super::input_context::InputHandlerContext;
+use super::ipc_target::IpcCommandTarget;
 use super::run_native_init;
 use super::single_line_edit::SingleLineEditor;
 use super::text_edit::TextEditState;
@@ -106,12 +107,22 @@ struct NativeApp {
 }
 
 /// Execute queued IPC requests on the main thread, with the same access
-/// an input handler has. A free function over the one field, so
-/// `about_to_wait` can call it while it holds `InitState`.
-fn drain_ipc(server: &mut Option<IpcServer>) -> DrainOutcome {
-    match server {
-        Some(server) => server.drain(ipc::execute),
-        None => DrainOutcome::default(),
+/// an input handler has: each command gets an [`IpcCommandTarget`]
+/// over the same `InputHandlerContext` a winit handler is given.
+/// `init` is `None` before the window exists, and a command that
+/// needs the app then answers `no_document`. A free function over the
+/// one field, so `about_to_wait` can call it while it holds
+/// `InitState`.
+fn drain_ipc(server: &mut Option<IpcServer>, init: Option<&mut InitState>) -> DrainOutcome {
+    let Some(server) = server else {
+        return DrainOutcome::default();
+    };
+    match init {
+        Some(init) => server.drain(|request| {
+            let mut target = IpcCommandTarget::new(init.input_context());
+            ipc::execute(request, Some(&mut target))
+        }),
+        None => server.drain(|request| ipc::execute(request, None)),
     }
 }
 
@@ -175,7 +186,7 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // After the input drain, so a command observes every input
             // the user sent before it — throttled drag moves and zoom
             // steps included — and its effects are ordered after them.
-            ipc_outcome = drain_ipc(&mut self.ipc);
+            ipc_outcome = drain_ipc(&mut self.ipc, Some(init));
             let still_continuing = init.needs_continuation();
             // Request a redraw if work happened this iteration
             // (`was_continuing`) OR if more work is pending
@@ -236,7 +247,7 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         } else {
             // Before the window exists there is no input to order
             // against; requests that need no app state still answer.
-            ipc_outcome = drain_ipc(&mut self.ipc);
+            ipc_outcome = drain_ipc(&mut self.ipc, None);
         }
         // A drain that ran out of budget keeps the loop iterating until
         // the queue is empty.

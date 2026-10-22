@@ -75,7 +75,8 @@ sanctioned native-only carve-outs; each entry names the reason and
 the parity trajectory (or why none is owed):
 
 - **IPC** (`--ipc`, `src/application/ipc/`; transport since
-  IPC-02/#62) — native-only by transport nature: browsers cannot
+  IPC-02/#62, command registry and `act` bridge since IPC-03/#63)
+  — native-only by transport nature: browsers cannot
   serve local sockets, and the consumer is an agent driving a
   desktop/Xvfb instance. Protocol: `format/ipc.md`; design:
   `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
@@ -288,4 +289,6 @@ the parity trajectory (or why none is owed):
   (`-N` closes the write half after the request; the server answers
   everything it received, then closes).
   `{"id":2,"cmd":"describe"}` lists the commands this build serves;
+  `{"id":3,"cmd":"act.action","action":"ZoomIn"}` drives an Action,
+  and `act.console` / `act.macro` run a console line or a macro;
   `format/ipc.md` is the full protocol.

@@ -227,6 +227,61 @@ pub enum ExecResult {
     Lines(Vec<OutputLine>),
 }
 
+/// The diagnostic code a failed console line is logged under when a
+/// caller other than the prompt ran it (a file Action, a macro step,
+/// an IPC command): `log::warn!(code = LINE_FAILED_CODE; …)`. An IPC
+/// reply carries it as a `console_error` warning, matching the
+/// `console_error` error code `act.console` answers with, so an agent
+/// can branch on a console failure however the line was reached. A code
+/// is API there (`format/ipc.md` §Warnings).
+pub const LINE_FAILED_CODE: &str = "console_error";
+
+/// The diagnostic code `Action::SaveDocument` logs when no file path
+/// is bound, so there is nothing to save to. A save-as fixes it. An IPC
+/// reply carries it as a `save_unbound` warning (`format/ipc.md`
+/// §Warnings).
+pub const SAVE_UNBOUND_CODE: &str = "save_unbound";
+
+/// The diagnostic code `Action::SaveDocument` logs when writing the
+/// bound file failed: the disk, the path, permissions. An IPC reply
+/// carries it as a `save_failed` warning.
+pub const SAVE_FAILED_CODE: &str = "save_failed";
+
+/// What running one console line produced, before anything renders
+/// it. The console modal folds it into its scrollback. The IPC
+/// `act.console` command returns it to the client. Neither path
+/// changes what the verb did.
+#[derive(Debug)]
+#[must_use = "a console line's outcome is its only report: print it, log it, or return it"]
+pub enum LineOutcome {
+    /// The line was blank, so nothing ran.
+    Blank,
+    /// The line's head names no verb. Carries the head token.
+    Unknown(String),
+    /// A verb ran and returned this.
+    Ran(ExecResult),
+}
+
+impl LineOutcome {
+    /// Whether the line did what it asked: a verb ran and did not
+    /// report a failure. A blank line, an unknown verb and a verb
+    /// error did not apply.
+    pub fn applied(&self) -> bool {
+        matches!(self, LineOutcome::Ran(ExecResult::Ok(_) | ExecResult::Lines(_)))
+    }
+
+    /// The failure text the console shows for this outcome, or
+    /// `None` when the line succeeded or was blank. One spelling,
+    /// shared by the scrollback, the log and the IPC reply.
+    pub fn failure(&self) -> Option<String> {
+        match self {
+            LineOutcome::Unknown(head) => Some(format!("unknown command: {head}")),
+            LineOutcome::Ran(ExecResult::Err(message)) => Some(message.clone()),
+            LineOutcome::Blank | LineOutcome::Ran(ExecResult::Ok(_) | ExecResult::Lines(_)) => None,
+        }
+    }
+}
+
 /// One line of multi-line console output. Default-shaped (font
 /// family unset) unless the producing command pins a face — used
 /// today by `font list` so each row renders in the family it
