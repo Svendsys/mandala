@@ -1436,6 +1436,7 @@ dependencies = [
  "mandala_derive",
  "pollster",
  "rustc-hash 2.1.3",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "strum",

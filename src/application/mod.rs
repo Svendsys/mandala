@@ -25,6 +25,8 @@
 //! - [`color_picker`] / [`color_picker_overlay`] — glyph-wheel
 //!   HSV picker (modal-input carve-out).
 //! - [`clipboard`] — cross-platform copy / paste plumbing.
+//! - `ipc` — the opt-in `--ipc` socket an agent drives the
+//!   running app through (native-only, so a plain code-span).
 //! - [`scene_host`] — canvas vs overlay scene-tree slot
 //!   routing (the boundary between renderer and the modal
 //!   editors).
@@ -69,6 +71,11 @@ pub(crate) mod common;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod console;
 pub(crate) mod document;
+// Local socket control surface for agents and tooling. Native-only by
+// transport nature — browsers cannot serve local sockets; see
+// CLAUDE.md "Dual-target status".
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod ipc;
 // Adaptive drain-rate math. Driver: `app::throttled_interaction`,
 // native-gated with the drag state machine it paces.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

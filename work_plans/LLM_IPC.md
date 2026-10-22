@@ -158,7 +158,7 @@ see the generation stamp below). None touches app state.
    │  parse → enqueue IpcRequest   │   │  (8 MiB cap / too_large)  │
    │  {gen:G} → send_event         │   │  → blocking write         │
    └───────┬───────────────────────┘   └──────────▲────────────────┘
-           │ mpsc request queue (cap 1024)         │ mpsc outbound queue
+           │ mpsc inbound queue (FIFO; 1024 reqs)  │ mpsc outbound queue
            ▼                                       │ (cap 256)
    ┌───────────────────────────────────────────────┴──┐
    │ main thread — winit event loop                   │
@@ -190,10 +190,12 @@ see the generation stamp below). None touches app state.
   `EventLoopProxy::send_event(IpcWake)`, or pushes a pre-formed
   `parse_error` reply straight onto its outbound queue (parse errors
   never need app state, so they never cross into the loop). On
-  EOF/error it sends a `send_event(IpcGone{gen:G})` so the main
-  thread cancels this generation's pending `clock.wait` and resets
-  its subscriptions, then it and its outbound peer exit; the
-  acceptor's next accept installs a fresh controller at G+1.
+  EOF/error it enqueues `Gone{gen:G}` — on the same queue as its
+  requests, behind the last of them — and wakes the loop, so the main
+  thread retires this generation (cancelling its pending
+  `clock.wait` and resetting its subscriptions); then it and its
+  outbound peer exit, and the acceptor's next accept installs a fresh
+  controller at G+1.
 - **The outbound thread** (per controller, gen G) owns the write
   half: receives reply and event *values* (from the main thread;
   plus the reader's pre-formed parse-error replies), serializes them
@@ -201,42 +203,67 @@ see the generation stamp below). None touches app state.
   here, off the interactive path — and performs every blocking write.
   Its queue dies with the connection, so a reply the main thread
   computed for a departed controller is discarded rather than
-  delivered to the successor. Backpressure is **asymmetric**: 256
-  undelivered *replies* → teardown, but unsolicited *events* are
-  coalesced/dropped-oldest-by-revision rather than triggering
-  teardown (a thinking agent that pauses while events flood must keep
-  its session). **The app is never backpressured by a slow client**,
-  and the `FreezeWatchdog` never sees IPC I/O.
+  delivered to the successor. Backpressure is **asymmetric**: a full
+  queue of 256 *replies* pauses that controller's execution until the
+  writer makes room (the writer wakes the loop when it does), and a
+  write that makes no progress for 10 s — a client that has stopped
+  reading — tears the connection down; unsolicited *events* are
+  coalesced/dropped-oldest-by-revision rather than pausing anything
+  (a thinking agent that pauses while events flood must keep its
+  session). **The app is never backpressured by a slow client**, and
+  the `FreezeWatchdog` never sees IPC I/O.
 - **The generation stamp** is what keeps a single persistent-looking
   reply/event stream honest across reconnects: every `IpcRequest`,
   reply, event, and pending wait carries the gen it belongs to; the
-  main thread only routes to the current gen's outbound and only
-  honors an `IpcGone{gen}` for the live gen. This is the mechanism
+  main thread only executes and routes for the current gen and only
+  honors a `Gone{gen}` for the live gen. This is the mechanism
   behind `format/ipc.md`'s "no session state survives a disconnect."
-- **The main thread** is the only place commands execute. IPC-02
-  changes the event loop to
-  `EventLoop::<IpcUserEvent>::with_user_event()` (the user-event type
-  is a small enum — `IpcWake` and `IpcGone{gen}`) and implements
-  `ApplicationHandler::user_event` on `NativeApp`: tick the
-  watchdog (`unparked`, like every other handler), drain the
-  request queue to exhaustion and treat an empty-queue wake as a
-  no-op (winit delivers one user event per `send_event`, but an
-  earlier wake's drain may already have consumed requests enqueued
-  just before a later wake was sent), execute each current-gen
-  command via the registry against `InitState` (the same access
-  `input_context()` gives an input handler), enqueue replies, and —
-  the seam that keeps the watched window and screenshots truthful —
-  **request a redraw whenever a command changed pixels**, then fall
-  through to the normal `about_to_wait` drain. `hello`'s `map` field
-  is live app state, so the main thread publishes the current file
-  path into an `Arc`-swapped snapshot on document load and the
-  acceptor reads *that* (never `MindMapDocument`) when greeting — the
-  state-free-boundary invariant holds. Note the winit event *type*
-  changes (`Event<()>` → `Event<IpcUserEvent>`), but
-  `handle_event` — which only ever receives `WindowEvent`s — needs
-  no signature change; user events land in the separate `user_event`
-  method. (The `redraw_after → request_redraw()` pattern the drain
-  reuses is already in `handle_event`.)
+- **The main thread** is the only place commands execute. The event
+  loop is `EventLoop::<IpcWake>::with_user_event()` — `IpcWake` a
+  payload-free wake — and `NativeApp` implements
+  `ApplicationHandler::user_event`: tick the watchdog (`unparked`,
+  like every other handler), drain the inbound queue and treat an
+  empty-queue wake as a no-op (an earlier drain may already have
+  consumed what a later wake announced), execute each current-gen
+  command against app state (the same access `input_context()` gives
+  an input handler; the registry that dispatches it is IPC-03's),
+  enqueue replies, and — the seam that keeps the watched window and
+  screenshots truthful — **request a redraw whenever a command
+  changed pixels**, then fall through to the normal `about_to_wait`
+  drain, which drains the queue again beside `drain_inputs` so a
+  burst coalesces per frame. `hello`'s `map` field is live app
+  state, so the main thread publishes the current file path into an
+  `Arc`-swapped snapshot whenever it changes, and the acceptor reads
+  *that* (never `MindMapDocument`) when greeting — the
+  state-free-boundary invariant holds. `handle_event`, which only
+  ever receives `WindowEvent`s, needs no signature change; user
+  events land in the separate `user_event` method. (The
+  `redraw_after → request_redraw()` pattern the drain reuses is
+  already in `handle_event`.)
+
+**Amended by IPC-02 (#62), in two places, both to make the pinned
+behavior hold rather than to change it.** (1) *One ordered queue,
+one payload-free wake.* This section first had the reader announce a
+disconnect as its own user event, `IpcGone{gen}`, beside an mpsc
+queue of requests. Two channels have no order between them: a
+disconnect could overtake the requests sent just before it — so
+`printf … | nc -N -U`, which half-closes right after its request,
+could lose its reply — and a controller's first request could reach
+the main thread before the notice that the controller exists. Every
+inbound message — connected, request, gone — now travels on one FIFO
+queue, with the request cap counted separately so a lifecycle notice
+is never refused; the user event only says "drain". (2) *Pause, not
+teardown, on a full reply queue.* "256 undelivered replies →
+teardown" read the queue's length as the client's health, and it is
+not: the main thread executes a pipelined burst faster than the
+writer can make one `write` per reply, so the queue fills while a
+perfectly healthy client is reading — the loopback tests measured
+exactly that. A full queue now pauses that controller's execution
+until the writer makes room, the reader waits for room for its own
+replies (which stops it reading, so pressure lands on the client),
+and death is judged where it is visible — a write that makes no
+progress for 10 s. `format/ipc.md` §Threading contract carries the
+wire-visible half.
 
 **Pixels-affecting commands must request a redraw (and bump the
 render revision).** The existing winit handlers set
@@ -690,6 +717,15 @@ Documents moved by this design, in the same PR that pinned it:
 - **`format/README.md`** — indexes `ipc.md` under a "Wire protocol"
   heading (it documents a protocol, not the on-disk map format —
   placed per IPC-01's instruction to mirror `macros.md`'s home).
+
+Moved later, by the issue that found the need:
+
+- **IPC-02 (#62)** — §D2's inbound ordering and reply backpressure
+  (the "Amended by IPC-02" note there); `format/ipc.md` §Single
+  controller and §Threading contract carry the wire-visible half, and
+  CODE_CONVENTIONS §3's IPC bullet describes the as-built shape. §9's
+  startup roster gains `EventLoop::with_user_event` and
+  `IpcServer::start`.
 
 ## Change governance
 

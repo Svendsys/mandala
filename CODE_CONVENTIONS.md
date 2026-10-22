@@ -104,28 +104,30 @@ decision, not a drive-by edit.
   - The native `FreezeWatchdog`
     (`src/application/app/freeze_watchdog.rs`) — reads a liveness
     atomic, never touches app state.
-  - The IPC boundary threads (design: `work_plans/LLM_IPC.md` §D2,
-    protocol: `format/ipc.md`; lands with IPC-02). When `--ipc` is
-    active: a persistent acceptor thread (always `accept()`ing, so a
-    second client is rejected immediately with a non-blocking write),
-    plus a per-controller reader thread (blocking read → parse →
-    enqueue → wake the loop via a winit `EventLoopProxy` user event)
-    and a per-controller outbound thread (dequeue → serialize →
-    blocking write) that are spawned and torn down together per
-    connection. Each connection carries a monotonic generation stamp
-    on its requests/replies/events/pending-waits, and the reader's
-    disconnect sends a user event so the main thread cancels that
-    generation's waits and subscriptions — nothing crosses to a
+  - The IPC boundary threads (`src/application/ipc/`; design:
+    `work_plans/LLM_IPC.md` §D2, protocol: `format/ipc.md`). Only
+    when `--ipc` is passed: a persistent acceptor thread (always
+    `accept()`ing, so a second client is rejected immediately with a
+    non-blocking write), plus a per-controller reader thread (blocking
+    read → parse → enqueue → wake the loop via a winit
+    `EventLoopProxy` user event) and a per-controller outbound thread
+    (dequeue → serialize → blocking write) that are spawned and torn
+    down together per connection. Each connection carries a monotonic
+    generation stamp on its requests/replies/events/pending-waits, and
+    the reader's disconnect is queued behind that connection's
+    requests and wakes the main thread, which retires the generation
+    — cancelling its waits and subscriptions — so nothing crosses to a
     successor controller. All see only protocol value types; every
-    IPC command executes on the main thread in the `user_event` arm
-    with the same access as any input handler, and a command that
-    changes pixels requests a redraw just as the winit input handlers
-    do. The `std::sync::mpsc` queues at this boundary carry protocol
-    values only — they are not a license for channels between app
-    components — and blocking IPC I/O on the main thread stays
-    forbidden: a stalled client must never trip
-    the `FreezeWatchdog`; the bounded outbound queue tears the
-    connection down instead.
+    IPC command executes on the main thread, in the `user_event` arm
+    and beside `drain_inputs` in `about_to_wait`, with the same access
+    as any input handler, and a command that changes pixels requests a
+    redraw just as the winit input handlers do. The `std::sync::mpsc`
+    queues at this boundary carry protocol values only — they are not
+    a license for channels between app components — and blocking IPC
+    I/O on the main thread stays forbidden: a stalled client must
+    never trip the `FreezeWatchdog`. A full outbound queue pauses that
+    controller's execution until its writer makes room, and a write
+    that makes no progress for ten seconds tears the connection down.
 - **Model / view separation.** `MindMapDocument` owns the data model;
   `Renderer` owns GPU resources. The renderer reads intermediate
   representation (`Tree<GfxElement, GfxMutator>`, one per canvas
@@ -497,14 +499,21 @@ industrial cost/benefit reasoning. This is not license for speculation.
   internal invariants".
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
-  the winit event loop and its window, the renderer bootstrap,
-  `fonts::init`, and — in the browser — hanging a canvas off the page
-  and reading `?map=` from its URL. What can fail says so where it
-  happens, in four groups. **The window:** `EventLoop::new`,
-  `create_window`, and `run_app`, whose `Err` is the loop itself
-  giving out — the first two on both targets, since `Application::new`
-  creates them for the browser rather than its run module doing so.
-  **The renderer bootstrap:** `create_surface`, then
+  the winit event loop and its window, the `--ipc` socket when the
+  flag is passed, the renderer bootstrap, `fonts::init`, and — in the
+  browser — hanging a canvas off the page and reading `?map=` from its
+  URL. What can fail says so where it happens, in five groups. **The
+  window:** the event loop — `EventLoop::with_user_event` on native,
+  whose loop carries the IPC wake, and `EventLoop::new` in the
+  browser — then `create_window`, and `run_app`, whose `Err` is the
+  loop itself giving out. The browser's loop and window are created
+  in `Application::new` rather than in its run module, so
+  `create_window` is named on both targets. **The IPC socket, under
+  `--ipc` only:** `IpcServer::start`, whose message names the path
+  and why it was refused — a parent directory other users can write,
+  a path that is not a stale socket of ours, a live listener — so a
+  bad `--ipc` ends the launch instead of leaving IPC silently
+  missing. **The renderer bootstrap:** `create_surface`, then
   `request_adapter` and `request_device` — no GPU, no program —
   reached from both `Renderer::bootstrap_native` and
   `Renderer::bootstrap_wasm`. **The page, in the browser:**

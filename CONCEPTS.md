@@ -88,8 +88,8 @@ threads, no `tokio`, no `std::thread::spawn` in any interactive
 path. The one sanctioned exception running today is the native
 [`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* an
 `AtomicU64` ping; CODE_CONVENTIONS §3 additionally sanctions the
-IPC boundary threads (design: `work_plans/LLM_IPC.md`; lands with
-IPC-02), which move protocol bytes and never touch app state. Lock
+[IPC boundary threads](#ipc-server-ipcserver), which run only under
+`--ipc`, move protocol values and never touch app state. Lock
 scopes stay trivial because of this.
 
 ### Model / view separation
@@ -3147,12 +3147,12 @@ Mandala is single-threaded; an infinite
 loop, a same-thread `RwLock` re-entry, or a blocking GPU call
 would hang indefinitely with no actionable error. The watchdog
 turns a hang into a fast, diagnostic crash. It is the only
-sanctioned background thread running today — CODE_CONVENTIONS
-§3 additionally sanctions the IPC boundary threads that land with
-IPC-02 (`work_plans/LLM_IPC.md` §D2) — and the single-threaded
-invariant for the model/view pipeline is preserved because the
-watchdog only *reads* a shared `AtomicU64`, never touching app
-state.
+background thread of a default launch — CODE_CONVENTIONS §3
+additionally sanctions the [IPC boundary
+threads](#ipc-server-ipcserver), which exist only under `--ipc` —
+and the single-threaded invariant for the model/view pipeline is
+preserved because the watchdog only *reads* a shared `AtomicU64`,
+never touching app state.
 
 `src/application/app/freeze_watchdog.rs:38-134`. Main thread
 calls `tick()` at every event-loop boundary; watchdog reads
@@ -3160,6 +3160,40 @@ the atomic every second; if the gap exceeds `FREEZE_THRESHOLD`
 (10 seconds), prints diagnostics and aborts. Not present on
 WASM — browsers already provide an "unresponsive tab" dialog
 for free.
+
+### IPC server (`IpcServer`)
+
+The opt-in local socket an external process — an LLM agent, a test
+harness, `mandalactl` — drives the running app through, speaking
+newline-delimited JSON (`format/ipc.md`).
+
+The app's feedback loop for an agent: attach to an instance a human
+launched (or one the agent launched itself), send commands, read
+structured replies. Off unless `--ipc <path>` is passed; without the
+flag no socket exists and no thread runs.
+
+`src/application/ipc/`. Boundary threads own the socket — a
+persistent acceptor (one controller at a time; a second client is
+refused immediately), plus a reader and an outbound writer per
+controller — and exchange only protocol values with the main thread
+over one ordered `mpsc` queue in and a bounded one out. They wake the
+parked event loop through a winit user event (`IpcWake`), so an idle
+app answers without polling; `NativeApp::user_event` and
+`about_to_wait` drain the queue and execute every command on the main
+thread, with the same access an input handler has. Each connection
+carries a generation stamp, so nothing a departed controller sent can
+act after it left. A controller that falls behind on its replies is
+paused rather than dropped; one whose socket accepts nothing for ten
+seconds is dropped. The socket is created owner-only, refuses a
+parent directory other users can write, and replaces an existing path
+only when it is provably a stale socket of ours.
+
+**Vision:** IPC-03 adds the command registry and the `act` bridge to
+`dispatch_action` / `dispatch_macro` / the console; the families after
+it (query, scene, input, capture, clock, events) each add one module.
+**Caveat:** Unix-only today — Windows fails `--ipc` at startup until
+the named-pipe adapter lands, and the browser has no socket at all
+(`CLAUDE.md` "Dual-target status").
 
 ### `now_ms()`
 

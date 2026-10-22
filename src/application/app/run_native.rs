@@ -28,6 +28,7 @@ use super::{
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
+use crate::application::ipc::{self, IpcServer, IpcWake};
 use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
 
@@ -54,12 +55,33 @@ const FPS_IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 /// short version: Mandala is single-threaded and a same-thread
 /// `std::sync::RwLock` re-entry deadlock would otherwise hang
 /// silently forever.
+///
+/// Starts the IPC listener beside it when `--ipc` was passed — before
+/// the event loop takes over, so a bad socket path fails the launch
+/// rather than the first client. The loop is built with [`IpcWake`]
+/// as its user event either way; without the flag no proxy exists and
+/// none is ever sent.
 pub(super) fn run(app: Application) {
-    let event_loop = EventLoop::new().expect("Could not create an EventLoop");
+    let event_loop: EventLoop<IpcWake> = EventLoop::with_user_event()
+        .build()
+        .expect("Could not create an EventLoop");
+    let options = app.into_options();
+    let ipc = options.ipc_socket.as_deref().map(|path| {
+        let proxy = event_loop.create_proxy();
+        // A send fails only once the loop has exited, when there is
+        // nothing left to wake.
+        let wake = move || {
+            let _ = proxy.send_event(IpcWake);
+        };
+        IpcServer::start(path, wake)
+            .expect("ipc: the `--ipc` listener could not start (format/ipc.md \"Socket, flag, lifecycle\")")
+    });
     let mut handler = NativeApp {
-        options: app.into_options(),
+        options,
         init: None,
         watchdog: FreezeWatchdog::spawn(),
+        ipc,
+        ipc_backlog: false,
     };
     event_loop
         .run_app(&mut handler)
@@ -79,9 +101,32 @@ struct NativeApp {
     /// hangs mid-drain or mid-event produces a diagnostic abort
     /// after `freeze_watchdog::FREEZE_THRESHOLD`.
     watchdog: FreezeWatchdog,
+    /// The `--ipc` listener, when the flag was passed. Taken and shut
+    /// down in [`ApplicationHandler::exiting`].
+    ipc: Option<IpcServer>,
+    /// The last IPC drain ran out of budget with messages queued; the
+    /// loop keeps polling until a drain empties the queue.
+    ipc_backlog: bool,
 }
 
-impl ApplicationHandler for NativeApp {
+impl NativeApp {
+    /// Execute queued IPC requests on the main thread, with the same
+    /// access an input handler has, and request a redraw if any of
+    /// them changed pixels — the IPC peer of `handle_event`'s
+    /// `redraw_after`.
+    fn drain_ipc(&mut self) {
+        let Some(server) = self.ipc.as_mut() else { return };
+        let outcome = server.drain(ipc::execute);
+        if outcome.repaint {
+            if let Some(init) = self.init.as_ref() {
+                init.window.request_redraw();
+            }
+        }
+        self.ipc_backlog = outcome.backlog;
+    }
+}
+
+impl ApplicationHandler<IpcWake> for NativeApp {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _: StartCause) {
         // ControlFlow is set authoritatively at the end of every
         // `about_to_wait` based on `InitState::needs_continuation`.
@@ -119,8 +164,19 @@ impl ApplicationHandler for NativeApp {
         }
     }
 
+    /// An IPC boundary thread has queued work. Ticks the watchdog like
+    /// every other handler, so a command that wedges the loop still
+    /// gets its diagnostic abort — IPC has no exemption.
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _: IpcWake) {
+        self.watchdog.unparked();
+        self.drain_ipc();
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.watchdog.unparked();
+        // Beside `drain_inputs`, so requests that arrived during this
+        // iteration's other events coalesce into one drain per frame.
+        self.drain_ipc();
         if let Some(init) = self.init.as_mut() {
             // Pre-snapshot the continuation predicate: if the loop
             // was *entering* this iteration with continuous work
@@ -178,12 +234,28 @@ impl ApplicationHandler for NativeApp {
             } else {
                 ControlFlow::Wait
             });
+            // After every handler of the iteration has run, so a load,
+            // a `new` or a save-as reaches the next client's `hello`.
+            if let Some(server) = self.ipc.as_mut() {
+                server.publish_map(init.document.as_ref().and_then(|doc| doc.file_path.as_deref()));
+            }
+        }
+        if self.ipc_backlog {
+            event_loop.set_control_flow(ControlFlow::Poll);
         }
         // Mark parked AFTER setting ControlFlow so the watchdog
         // begins ignoring silence only once we've committed to
         // sleeping. If ControlFlow::Poll, the next about_to_wait
         // will call `unparked` again immediately.
         self.watchdog.parked();
+    }
+
+    /// Graceful exit: the client hears `shutdown`, and the socket file
+    /// is removed.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(server) = self.ipc.take() {
+            server.shutdown();
+        }
     }
 }
 
