@@ -15,7 +15,7 @@ use crate::application::renderer::Renderer;
 
 use super::completion::{accept_console_completion, nav_popup, recompute_console_completions};
 use super::edit::{self, EditOutcome};
-use super::exec::{execute_console_line, report_console_line};
+use super::exec::{execute_console_line, print_console_line};
 use super::history::save_console_history;
 use super::rebuild_console_overlay;
 
@@ -346,7 +346,7 @@ pub(in crate::application::app) fn submit_line(ctx: &mut InputHandlerContext<'_>
                 ctx.scene_cache,
                 ctx.macros,
             );
-            report_console_line(&line, outcome, ctx.console_state);
+            print_console_line(outcome, ctx.console_state);
         }
     }
     if let Some(doc) = ctx.document.as_ref() {

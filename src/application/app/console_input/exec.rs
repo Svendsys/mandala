@@ -32,10 +32,11 @@ use super::{push_scrollback_error, push_scrollback_output, push_scrollback_outpu
 /// caller's decision, because the callers do not agree on where it
 /// goes. A human typing at the console, a key binding or macro step
 /// running a line, and the IPC `act.console` command all reach this
-/// same parse → execute → side-effect drain. Only the first two
-/// report the outcome back into the console, through
-/// [`report_console_line`]. IPC returns it in its reply and leaves an
-/// open console's scrollback alone (`format/ipc.md` §act).
+/// same parse → execute → side-effect drain. Only the prompt prints
+/// the outcome into the console, through [`print_console_line`]. The
+/// others log a failure through [`log_console_line`], and IPC also
+/// returns the outcome in its reply. No caller but the prompt touches
+/// the scrollback (`format/ipc.md` §act).
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::application::app) fn execute_console_line(
@@ -129,27 +130,23 @@ pub(in crate::application::app) fn execute_console_line(
     LineOutcome::Ran(result)
 }
 
-/// Report what [`execute_console_line`] produced to the human who
-/// caused it.
+/// Print what [`execute_console_line`] produced to the console
+/// prompt that submitted the line: output lines in their pinned
+/// faces, a failure in the error color.
 ///
-/// With the console open, the outcome lands in its scrollback: output
-/// lines in their pinned faces, a failure in the error color. With the
-/// console closed, which is how a key binding or a macro step runs a
-/// line, there is no scrollback to land in. A failure is then
-/// `warn!`ed rather than discarded, so a bound `open` of a missing
-/// file still says why it did nothing (§9). Successful output from a
-/// closed console has no reader and is dropped, as it always was.
-pub(in crate::application::app) fn report_console_line(
-    line: &str,
+/// **The scrollback is the prompt's own transcript.** This is its only
+/// writer. Every other caller of [`execute_console_line`] reports
+/// through [`log_console_line`] instead: a key-bound file Action, a
+/// macro step, and the IPC `act.console` / `act.action` /
+/// `act.macro` commands. Those callers do not own the console. They
+/// can fire while it is open (an IPC command, or a mouse binding),
+/// and a line pushed into the scrollback from outside would show
+/// output the user never typed for, in an overlay nothing rebuilds
+/// until their next keystroke.
+pub(in crate::application::app) fn print_console_line(
     outcome: LineOutcome,
     console_state: &mut ConsoleState,
 ) {
-    if !console_state.is_open() {
-        if let Some(failure) = outcome.failure() {
-            log::warn!("console: `{line}` failed: {failure}");
-        }
-        return;
-    }
     if let Some(failure) = outcome.failure() {
         push_scrollback_error(console_state, failure);
         return;
@@ -163,6 +160,20 @@ pub(in crate::application::app) fn report_console_line(
         }
         // Blank lines, empty successes, and the failures handled above.
         _ => {}
+    }
+}
+
+/// Report what [`execute_console_line`] produced for a caller that is
+/// not the console prompt (see [`print_console_line`] for why such a
+/// caller never writes the scrollback).
+///
+/// A failure is `warn!`ed, so a bound `open` of a missing file still
+/// says why it did nothing (§9). Under `--ipc` the same line is the
+/// command's reply warning. Successful output has no reader and is
+/// dropped.
+pub(in crate::application::app) fn log_console_line(line: &str, outcome: &LineOutcome) {
+    if let Some(failure) = outcome.failure() {
+        log::warn!("console: `{line}` failed: {failure}");
     }
 }
 
@@ -416,35 +427,28 @@ fn handle_post_rebuild_side_effect(
 }
 
 /// Persist the document to its bound `file_path`, clear the dirty
-/// flag, and surface the outcome — to the console scrollback when
-/// open, and always to the log. Used by the `Ctrl+S` keybind. When
-/// no path is bound, surfaces a hint pointing the user at `save
-/// <path>` from the console; the dirty flag is left untouched.
+/// flag, and report the outcome to the log. This is the body of
+/// `Action::SaveDocument` (`Ctrl+S` by default). When no path is
+/// bound it `warn!`s a hint pointing at `save <path>` and leaves the
+/// dirty flag untouched.
+///
+/// It reports through the log only, never the console scrollback,
+/// for the reason [`print_console_line`] gives: the Action is not the
+/// console prompt, and under `--ipc` it can fire while the console is
+/// open. The `save` verb typed at the prompt reports through its own
+/// `ExecResult`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn save_document_to_bound_path(
-    doc: &mut MindMapDocument,
-    console_state: &mut ConsoleState,
-) {
-    let path = match doc.file_path.clone() {
-        Some(p) => p,
-        None => {
-            let msg = "no file path bound; use `save <path>` to choose one".to_string();
-            log::warn!("save: {}", msg);
-            push_scrollback_error(console_state, msg);
-            return;
-        }
+pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMapDocument) {
+    let Some(path) = doc.file_path.clone() else {
+        log::warn!("save: no file path bound; use `save <path>` to choose one");
+        return;
     };
     match baumhard::mindmap::loader::save_to_file(std::path::Path::new(&path), &doc.mindmap) {
         Ok(()) => {
             doc.dirty = false;
-            let msg = format!("saved to {}", path);
-            log::info!("save: {}", msg);
-            push_scrollback_output(console_state, msg);
+            log::info!("save: saved to {}", path);
         }
-        Err(e) => {
-            log::error!("save: {}", e);
-            push_scrollback_error(console_state, e);
-        }
+        Err(e) => log::error!("save: {}", e),
     }
 }
 

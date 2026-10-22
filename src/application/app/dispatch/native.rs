@@ -543,7 +543,7 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::SaveDocument => {
             if let Some(doc) = ctx.document.as_mut() {
-                save_document_to_bound_path(doc, ctx.console_state);
+                save_document_to_bound_path(doc);
             }
             DispatchOutcome::Handled
         }
@@ -763,11 +763,7 @@ pub(in crate::application::app) fn dispatch_action(
                     ctx.scene_cache,
                     ctx.macros,
                 );
-                crate::application::app::console_input::exec::report_console_line(
-                    &line,
-                    outcome,
-                    ctx.console_state,
-                );
+                crate::application::app::console_input::exec::log_console_line(&line, &outcome);
             } else {
                 log::warn!("dispatch: {}: no document loaded; skipping '{}'", verb, line);
             }
@@ -1107,11 +1103,7 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
             self.ctx.scene_cache,
             self.ctx.macros,
         );
-        crate::application::app::console_input::exec::report_console_line(
-            line,
-            outcome,
-            self.ctx.console_state,
-        );
+        crate::application::app::console_input::exec::log_console_line(line, &outcome);
         true
     }
 

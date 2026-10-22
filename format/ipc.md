@@ -801,16 +801,21 @@ console's own message (`"unknown command: frobnicate"`).
 **Result path.** `execute_console_line` returns what the verb
 produced (`LineOutcome`: blank, unknown, or the verb's
 `ExecResult`) instead of writing it into the scrollback. Each caller
-renders it. The console prompt folds it into the scrollback, a
-key-bound or macro-run line does the same while the console is open
-and `warn!`s a failure while it is closed, and IPC returns it in the
-reply. No fake open modal is built to scrape. **The full
+renders it. **The scrollback is the prompt's own transcript**: only
+the console prompt prints an outcome there. Every other caller
+`warn!`s a failure: a key-bound file Action, a macro `ConsoleLine`
+step, `SaveDocument`, and every IPC command. Under IPC that warning is
+also the reply's warning, and `act.console` returns the outcome
+itself. So nothing an agent sends writes lines into a console the
+user has open, or leaves its overlay stale. No fake open modal is
+built to scrape. **The full
 side-effect drain still runs**: `ConsoleSideEffect::ReplaceDocument`
 (the document swap for `open` / `new`), `rebuild_all`, and any modal
 handoff, because "behaviorally identical to a human typing it" (§2)
 requires those effects, not just the return value. What IPC skips is
 the human's half: an open console's scrollback and the command
-history are left alone.
+history are left alone, by `act.console` and by the `act.action` /
+`act.macro` paths that run console lines or save.
 
 ### `act.macro`
 
