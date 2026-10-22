@@ -78,6 +78,14 @@ pub(super) fn bind(path: &Path) -> Result<(UnixListener, BoundSocket), String> {
     if path.as_os_str().is_empty() {
         return Err("`--ipc` needs a socket path, e.g. `--ipc $XDG_RUNTIME_DIR/mandala.sock`".to_string());
     }
+    let length = path.as_os_str().len();
+    if length > SOCKET_PATH_MAX {
+        return Err(format!(
+            "{} is {length} bytes; a Unix socket path holds at most {SOCKET_PATH_MAX} here — choose \
+             a shorter `--ipc` path",
+            path.display()
+        ));
+    }
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -103,63 +111,124 @@ fn directory_is_trusted(uid: u32, mode: u32, me: u32) -> bool {
     owner_is_trusted && (mode & WRITABLE_BY_OTHERS == 0 || mode & STICKY != 0)
 }
 
-/// Refuse `dir` unless it, and every directory above it, is
-/// [`directory_is_trusted`]. The chain is read from the canonical
-/// path, so a symlink anywhere on it is judged by where it leads.
-fn vet_chain(dir: &Path, me: u32) -> Result<(), String> {
-    let canonical = fs::canonicalize(dir)
-        .map_err(|e| format!("cannot resolve the socket's directory {}: {e}", dir.display()))?;
-    let leaf =
-        fs::metadata(&canonical).map_err(|e| format!("cannot inspect {}: {e}", canonical.display()))?;
-    if !leaf.is_dir() {
-        return Err(format!(
-            "the socket's parent {} is not a directory",
-            dir.display()
-        ));
+/// How many symbolic links one path may pass through before the walk
+/// gives up — the kernel's own `ELOOP` limit on Linux.
+const MAX_SYMLINK_HOPS: usize = 40;
+
+/// The longest socket path the platform's `sun_path` holds, excluding
+/// its terminating NUL.
+const SOCKET_PATH_MAX: usize = if cfg!(any(target_os = "linux", target_os = "android")) {
+    107
+} else {
+    103
+};
+
+/// Walk to `parent` the way the kernel resolves a path — one component
+/// at a time, following each symbolic link where it stands — and refuse
+/// it unless every directory the walk steps through is
+/// [`directory_is_trusted`]. Missing directories are created
+/// owner-only (`0700`) as the walk reaches them, so nothing is ever
+/// created under a directory that has not been vetted.
+///
+/// The walk is over the *literal* path, not its canonical form, on
+/// purpose: an agent connects through the path the user typed, and the
+/// kernel re-resolves it on every `connect`. A symlink stored in a
+/// directory another user can write is a name they can re-point, so the
+/// directory *holding* each symlink is vetted along with every
+/// directory its target leads through — chains included — and
+/// `canonicalize` would skip exactly the former.
+///
+/// Cost: one `lstat` per component and one `readlink` per symlink, up
+/// to [`MAX_SYMLINK_HOPS`].
+fn prepare_parent(parent: &Path, me: u32) -> Result<(), String> {
+    use std::collections::VecDeque;
+    use std::ffi::OsString;
+    use std::path::Component;
+
+    fn pending(path: &Path) -> impl Iterator<Item = OsString> + '_ {
+        path.components().filter_map(|c| match c {
+            Component::Normal(name) => Some(name.to_os_string()),
+            Component::ParentDir => Some(OsString::from("..")),
+            Component::RootDir | Component::Prefix(_) | Component::CurDir => None,
+        })
     }
-    for ancestor in canonical.ancestors() {
-        let metadata =
-            fs::metadata(ancestor).map_err(|e| format!("cannot inspect {}: {e}", ancestor.display()))?;
-        let mode = metadata.permissions().mode();
-        if !directory_is_trusted(metadata.uid(), mode, me) {
+
+    let absolute = std::path::absolute(parent)
+        .map_err(|e| format!("cannot resolve the socket's directory {}: {e}", parent.display()))?;
+    let mut remaining: VecDeque<OsString> = pending(&absolute).collect();
+    let mut current = PathBuf::from("/");
+    vet_directory(&current, me)?;
+    let mut hops = 0usize;
+    while let Some(name) = remaining.pop_front() {
+        if name == ".." {
+            // `current` is a real directory by construction, so its
+            // lexical parent is the parent the kernel would take.
+            current.pop();
+            continue;
+        }
+        let next = current.join(&name);
+        let metadata = match fs::symlink_metadata(&next) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                DirBuilder::new()
+                    .mode(0o700)
+                    .create(&next)
+                    .map_err(|e| format!("cannot create the socket's directory {}: {e}", next.display()))?;
+                fs::symlink_metadata(&next).map_err(|e| format!("cannot inspect {}: {e}", next.display()))?
+            }
+            Err(e) => return Err(format!("cannot inspect {}: {e}", next.display())),
+        };
+        if metadata.file_type().is_symlink() {
+            hops += 1;
+            if hops > MAX_SYMLINK_HOPS {
+                return Err(format!(
+                    "{} passes through more than {MAX_SYMLINK_HOPS} symbolic links",
+                    parent.display()
+                ));
+            }
+            let target =
+                fs::read_link(&next).map_err(|e| format!("cannot read the link {}: {e}", next.display()))?;
+            // The link lives in `current`, which is already vetted; its
+            // target is walked in its place, from `/` when absolute.
+            if target.is_absolute() {
+                current = PathBuf::from("/");
+            }
+            for spliced in pending(&target).collect::<Vec<_>>().into_iter().rev() {
+                remaining.push_front(spliced);
+            }
+            continue;
+        }
+        if !metadata.is_dir() {
             return Err(format!(
-                "refusing to bind under {} (owner uid {}, mode {:o}): another user could rename or \
-                 replace the socket path there. Every directory on the path must be owned by you or \
-                 root and writable only by its owner (or sticky); $XDG_RUNTIME_DIR is the usual \
-                 choice",
-                ancestor.display(),
-                metadata.uid(),
-                mode & 0o7777
+                "{} is on the socket's path but is not a directory",
+                next.display()
             ));
         }
+        vet_metadata(&next, &metadata, me)?;
+        current = next;
     }
     Ok(())
 }
 
-/// Vet the directory chain, create `parent` (owner-only, `0700`) if it
-/// is missing, and vet again. The part that exists is vetted *before*
-/// anything is created under it, and the whole chain after.
-fn prepare_parent(parent: &Path, me: u32) -> Result<(), String> {
-    let existing = parent
-        .ancestors()
-        .map(|a| {
-            if a.as_os_str().is_empty() {
-                Path::new(".")
-            } else {
-                a
-            }
-        })
-        .find(|a| a.exists())
-        .unwrap_or(Path::new("/"));
-    vet_chain(existing, me)?;
-    if !parent.exists() {
-        DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent)
-            .map_err(|e| format!("cannot create the socket's directory {}: {e}", parent.display()))?;
+fn vet_directory(dir: &Path, me: u32) -> Result<(), String> {
+    let metadata = fs::metadata(dir).map_err(|e| format!("cannot inspect {}: {e}", dir.display()))?;
+    vet_metadata(dir, &metadata, me)
+}
+
+fn vet_metadata(dir: &Path, metadata: &fs::Metadata, me: u32) -> Result<(), String> {
+    let mode = metadata.permissions().mode();
+    if directory_is_trusted(metadata.uid(), mode, me) {
+        return Ok(());
     }
-    vet_chain(parent, me)
+    Err(format!(
+        "refusing to bind under {} (owner uid {}, mode {:o}): another user could rename or replace \
+         the socket path there. Every directory on the path, including any that holds a symbolic \
+         link on it, must be owned by you or root and writable only by its owner (or sticky); \
+         $XDG_RUNTIME_DIR is the usual choice",
+        dir.display(),
+        metadata.uid(),
+        mode & 0o7777
+    ))
 }
 
 /// Clear the way for a bind at `path`. A missing path is the common
@@ -224,12 +293,14 @@ static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 /// Bind inside a fresh `0700` staging directory in `parent`, make the
 /// socket `0600`, then hard-link it to `path`. Nobody else can reach
 /// the socket before the link exists, and the link itself refuses an
-/// existing path. The staging name is kept short (`.mipc<n>/s`)
-/// because a Unix socket path is length-limited and the staged path
-/// is the one `bind` sees.
+/// existing path. The staging name is kept short (`.m<n>/s`) because
+/// a Unix socket path is length-limited and the staged path is the one
+/// `bind` sees; a path within a few bytes of the limit with a very
+/// short file name can still overflow it, and is then refused in terms
+/// of the path the user gave.
 fn bind_staged(path: &Path, parent: &Path) -> Result<(UnixListener, BoundSocket), String> {
     let staging = loop {
-        let candidate = parent.join(format!(".mipc{}", NEXT_STAGING.fetch_add(1, Ordering::Relaxed)));
+        let candidate = parent.join(format!(".m{}", NEXT_STAGING.fetch_add(1, Ordering::Relaxed)));
         match DirBuilder::new().mode(0o700).create(&candidate) {
             Ok(()) => break candidate,
             // Left behind by a process that died mid-bind, or another
@@ -255,6 +326,14 @@ fn bind_staged(path: &Path, parent: &Path) -> Result<(UnixListener, BoundSocket)
 
 fn bind_in(staging: &Path, path: &Path) -> Result<(UnixListener, BoundSocket), String> {
     let staged = staging.join("s");
+    if staged.as_os_str().len() > SOCKET_PATH_MAX {
+        return Err(format!(
+            "{} is too close to the {SOCKET_PATH_MAX}-byte Unix socket path limit to bind it safely \
+             — choose an `--ipc` path at least {} bytes shorter",
+            path.display(),
+            staged.as_os_str().len() - SOCKET_PATH_MAX
+        ));
+    }
     let listener = UnixListener::bind(&staged).map_err(|e| {
         format!(
             "cannot bind the socket for {} (staged at {}): {e}",
@@ -474,6 +553,100 @@ mod tests {
         assert!(
             !shared.join("new").exists(),
             "nothing was created under the open ancestor"
+        );
+    }
+
+    fn private_dir(path: &Path) {
+        fs::create_dir_all(path).expect("mkdir");
+        fs::set_permissions(path, Permissions::from_mode(0o700)).expect("chmod");
+    }
+
+    #[test]
+    fn test_bind_refuses_a_symlink_held_in_a_directory_others_can_write() {
+        // `/shared(0777)/link -> private(0700)`: every directory on the
+        // canonical path is fine, but anyone can re-point `link`.
+        let dir = TempDir::new("ipc-open-symlink");
+        let private = dir.join("private");
+        let shared = dir.join("shared");
+        private_dir(&private);
+        fs::create_dir(&shared).expect("mkdir");
+        std::os::unix::fs::symlink(&private, shared.join("link")).expect("symlink");
+        fs::set_permissions(&shared, Permissions::from_mode(0o777)).expect("chmod");
+        let err = bind(&shared.join("link/m.sock")).expect_err("the open link holder is refused");
+        assert!(
+            err.contains(&shared.display().to_string()),
+            "the refusal names it: {err}"
+        );
+        assert_eq!(
+            fs::read_dir(&private).expect("read_dir").count(),
+            0,
+            "nothing was created"
+        );
+    }
+
+    #[test]
+    fn test_bind_refuses_an_open_directory_reached_through_a_chain_of_symlinks() {
+        // `a(0700)/l -> b/x` and `b(0777)/x -> c(0700)`: `b` is on
+        // neither the literal path nor the canonical one, yet whoever can
+        // write it can re-point `x`.
+        let dir = TempDir::new("ipc-symlink-chain");
+        let (a, b, c) = (dir.join("a"), dir.join("b"), dir.join("c"));
+        private_dir(&a);
+        private_dir(&c);
+        fs::create_dir(&b).expect("mkdir");
+        std::os::unix::fs::symlink(b.join("x"), a.join("l")).expect("symlink");
+        std::os::unix::fs::symlink(&c, b.join("x")).expect("symlink");
+        fs::set_permissions(&b, Permissions::from_mode(0o777)).expect("chmod");
+        let err = bind(&a.join("l/m.sock")).expect_err("the open middle hop is refused");
+        assert!(
+            err.contains(&b.display().to_string()),
+            "the refusal names it: {err}"
+        );
+    }
+
+    #[test]
+    fn test_bind_follows_symlinks_kept_in_trusted_directories() {
+        let dir = TempDir::new("ipc-symlink-ok");
+        let (a, c) = (dir.join("a"), dir.join("c"));
+        private_dir(&a);
+        private_dir(&c);
+        std::os::unix::fs::symlink("../c", a.join("l")).expect("relative symlink");
+        let (_listener, _bound) = bind(&a.join("l/m.sock")).expect("a trusted chain binds");
+        assert!(fs::symlink_metadata(c.join("m.sock"))
+            .expect("bound in the target")
+            .file_type()
+            .is_socket());
+    }
+
+    #[test]
+    fn test_bind_refuses_a_symlink_loop() {
+        let dir = TempDir::new("ipc-symlink-loop");
+        std::os::unix::fs::symlink("loop", dir.join("loop")).expect("symlink");
+        let err = bind(&dir.join("loop/m.sock")).expect_err("a loop cannot be walked");
+        assert!(err.contains("symbolic links"), "{err}");
+    }
+
+    #[test]
+    fn test_bind_refuses_an_overlong_path_in_terms_of_the_path_given() {
+        let dir = TempDir::new("ipc-long");
+        let long = dir.join(&format!("{}.sock", "x".repeat(SOCKET_PATH_MAX)));
+        let err = bind(&long).expect_err("too long");
+        assert!(
+            err.contains(&long.display().to_string()) && err.contains("bytes"),
+            "{err}"
+        );
+
+        // Exactly at the limit, with a one-byte name: the path itself
+        // fits, but the staged path cannot. The message still names
+        // the user's path, not the staging name.
+        let base = dir.path().as_os_str().len();
+        let padding = "p".repeat(SOCKET_PATH_MAX - base - "/".len() - "/s".len());
+        let edge = dir.path().join(&padding).join("s");
+        assert_eq!(edge.as_os_str().len(), SOCKET_PATH_MAX);
+        let err = bind(&edge).expect_err("too close to stage");
+        assert!(
+            err.contains(&edge.display().to_string()) && !err.contains(".m"),
+            "{err}"
         );
     }
 

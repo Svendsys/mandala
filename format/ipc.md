@@ -76,13 +76,21 @@ owner-only (`0700`). The `0600` mode protects the socket's *bytes*,
 but the socket's *name* is only as trustworthy as the directories
 above it — whoever can rename or unlink an entry in any of them can
 swap the path for one of their own while Mandala runs. So the server
-refuses to bind unless **every directory on the path**, from the
-parent up to `/` (symlinks resolved), is owned by the user or by
-root, and is writable by nobody but its owner (group- **or**
+refuses to bind unless **every directory on the path** is owned by
+the user or by root, and is writable by nobody but its owner (group- **or**
 world-writable fails) unless it has the sticky bit — one
 mechanically checkable predicate per directory. The owner clause is
 not redundant with the sticky bit: a sticky directory's *owner* can
-still unlink or rename what is in it. A root-owned sticky directory
+still unlink or rename what is in it. "Every directory on the path"
+is judged the way the kernel resolves the path the client will
+connect through — component by component from `/`, following each
+symbolic link where it stands — so it covers each directory that
+*holds* a symlink on the path as well as every directory the link's
+target leads through, chains included (a symlink in a directory
+another user can write is a name they can re-point). Checking only
+the canonical path would miss exactly the link holders. A path
+longer than the platform's socket-path limit (107 bytes on Linux,
+103 elsewhere) is refused up front, naming it. A root-owned sticky directory
 (e.g. `/tmp`) is accepted but second-best; the recommended location is
 `$XDG_RUNTIME_DIR` (already `0700` on every mainstream distro).
 Never a TCP port: filesystem permissions are the access-control
