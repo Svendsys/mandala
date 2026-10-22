@@ -760,6 +760,37 @@ pub fn take_graphemes(s: &str, n: usize) -> (&str, bool) {
     (&s[..end], iter.next().is_some())
 }
 
+/// The longest prefix of `s` that is at most `max_bytes` long and
+/// ends on a grapheme-cluster boundary, with whether anything was cut.
+///
+/// The byte-budget sibling of [`take_graphemes`] (a cluster count) and
+/// [`truncate_to_display_width`] (a cell count). Use it where the
+/// limit is storage or wire size rather than what a reader sees. A
+/// diagnostic bounded so a reply frame cannot overflow is the caller
+/// it was written for. A cluster that would straddle the budget is
+/// left out whole, so a ZWJ emoji or a base plus its combining marks
+/// is never split. The prefix can therefore come out shorter than
+/// `max_bytes`, and is empty when the first cluster alone exceeds it.
+///
+/// # Costs
+///
+/// Free when `s` already fits: one length comparison, no walk.
+/// Otherwise an O(prefix) grapheme walk that stops at the budget. No
+/// allocation; the prefix borrows from `s`.
+pub fn truncate_to_byte_budget(s: &str, max_bytes: usize) -> (&str, bool) {
+    if s.len() <= max_bytes {
+        return (s, false);
+    }
+    let mut end = 0usize;
+    for g in s.graphemes(true) {
+        if end + g.len() > max_bytes {
+            break;
+        }
+        end += g.len();
+    }
+    (&s[..end], true)
+}
+
 /// Split `s` into its grapheme clusters, each owned as a `String`.
 ///
 /// Exists for the cluster-vector layouts that must outlive the source

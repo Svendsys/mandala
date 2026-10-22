@@ -331,22 +331,8 @@ pub(in crate::application::app) fn submit_line(ctx: &mut InputHandlerContext<'_>
                 ctx.console_history.drain(..drop);
             }
         }
-        if let Some(doc) = ctx.document.as_mut() {
-            let outcome = execute_console_line(
-                &line,
-                ctx.console_state,
-                ctx.single_line_edit_state,
-                ctx.color_picker_state,
-                ctx.text_edit_state,
-                doc,
-                ctx.interaction_mode,
-                ctx.mindmap_tree,
-                ctx.app_scene,
-                ctx.renderer,
-                ctx.scene_cache,
-                ctx.macros,
-            );
-            print_console_line(outcome, ctx.console_state);
+        if let Some(run) = execute_console_line(ctx, &line) {
+            print_console_line(run.outcome, ctx.console_state);
         }
     }
     if let Some(doc) = ctx.document.as_ref() {

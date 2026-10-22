@@ -227,17 +227,17 @@ impl CommandSpec {
 /// A handler's view of the request it is answering and the app it
 /// may act on.
 ///
-/// The app is reached through [`Call::drive`] or [`Call::observe`],
-/// and the borrow kind is the declaration. A command that drives the
-/// app may have changed pixels, so the event loop requests a redraw
-/// after it, as a winit handler does after a mutating input. A
-/// command that only observes cannot mutate through a shared borrow
-/// and causes no redraw.
+/// The app is reached through [`Call::drive`] (`&mut`) or
+/// [`Call::observe`] (`&`), so a command that only reads cannot
+/// mutate. Whether a command changed pixels is not inferred from the
+/// borrow. The target answers it from each funnel's own outcome
+/// ([`CommandTarget::changed_view`]), and the event loop requests a
+/// redraw only then, as a winit handler does after a mutating input.
+/// A refused action or a read-only console line costs no frame.
 pub(crate) struct Call<'a> {
     request: &'a IpcRequest,
     /// `None` before the window, and with it the document, exists.
     target: Option<&'a mut dyn CommandTarget>,
-    drove: bool,
 }
 
 impl<'a> Call<'a> {
@@ -253,12 +253,14 @@ impl<'a> Call<'a> {
         self.param(name).and_then(Value::as_str)
     }
 
-    /// The app, for a command that acts on it. Marks the command as
-    /// pixels-affecting.
+    /// The app, for a command that acts on it.
     pub(crate) fn drive(&mut self) -> Option<&mut dyn CommandTarget> {
-        let target = self.target.as_deref_mut()?;
-        self.drove = true;
-        Some(target)
+        // Re-wrapping shortens the trait object's lifetime to the
+        // borrow of `self`; `&mut` is invariant, so it cannot be
+        // handed out at the field's own lifetime.
+        self.target
+            .as_deref_mut()
+            .map(|target| target as &mut dyn CommandTarget)
     }
 
     /// The app, read-only.
@@ -323,12 +325,11 @@ pub(crate) fn execute(request: &IpcRequest, target: Option<&mut dyn CommandTarge
         // is all a handler needs. `&mut` is invariant, so the field
         // cannot take the caller's lifetime as is.
         target: target.map(|target| target as &mut dyn CommandTarget),
-        drove: false,
     };
     let (reply, captured) = capture(|| (spec.run)(&mut call));
     Executed {
         reply: reply.with_warnings(warnings_from(captured)),
-        repaint: call.drove,
+        repaint: call.observe().is_some_and(|target| target.changed_view()),
     }
 }
 
@@ -380,9 +381,13 @@ fn check_params(request: &IpcRequest, spec: &CommandSpec) -> Option<Reply> {
 /// does not. A name in a registered family lists that family's
 /// commands; any other name lists the families.
 fn unknown_command_message(name: &str) -> String {
-    let in_family = name
-        .split_once('.')
-        .and_then(|(prefix, _)| FAMILIES.iter().find(|f| f.name == prefix));
+    // The bootstrap family is a label, not a namespace: `describe` and
+    // `ping` carry no prefix, so `bootstrap.ping` names nothing in it.
+    let in_family = name.split_once('.').and_then(|(prefix, _)| {
+        FAMILIES
+            .iter()
+            .find(|f| f.name == prefix && f.name != BOOTSTRAP_FAMILY)
+    });
     let nearby = match in_family {
         Some(family) => format!(
             "family `{}` has {}",
@@ -596,6 +601,13 @@ pub(crate) mod tests {
         assert!(
             message.contains("act.*") && message.contains("ping"),
             "an unregistered family lists the families: {message}"
+        );
+
+        let (reply, _) = run_detached(r#"{"id":4,"cmd":"bootstrap.ping"}"#);
+        let message = reply["error"]["message"].as_str().expect("message");
+        assert!(
+            !message.contains("family `bootstrap`") && message.contains("act.*"),
+            "`bootstrap` is not a namespace, so it is answered with the families: {message}"
         );
     }
 

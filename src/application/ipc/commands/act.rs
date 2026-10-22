@@ -47,8 +47,8 @@ pub(super) const FAMILY: Family = Family {
                     "x",
                     ParamType::Number,
                     false,
-                    "Pointer x, in `space`. With `y`, the cursor stands there and the dispatch carries \
-                     what the click hit test finds under it, as a mouse press does.",
+                    "Pointer x, in `space`. With `y`, the cursor stands there for this dispatch only and \
+                     the dispatch carries what the click hit test finds under it, as a mouse press does.",
                 ),
                 ParamSpec::new(
                     "y",
@@ -430,6 +430,13 @@ mod tests {
         );
 
         assert_eq!(console_output(LineOutcome::Blank), Ok(Vec::new()));
+        assert!(console_outcome("help").applied());
+        for not_applied in ["frobnicate now", "border show", "   "] {
+            assert!(
+                !console_outcome(not_applied).applied(),
+                "`{not_applied}` did not apply, so a file Action or macro step running it is not Handled"
+            );
+        }
         assert_eq!(
             console_output(LineOutcome::Ran(ExecResult::Ok("a\nb".into()))),
             Ok(vec!["a".to_string(), "b".to_string()]),

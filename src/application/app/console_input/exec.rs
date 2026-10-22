@@ -16,50 +16,71 @@ use baumhard::mindmap::tree_builder::MindMapTree;
 use super::super::color_picker_flow::{
     close_color_picker_standalone, open_color_picker_contextual, open_color_picker_standalone,
 };
+use super::super::input_context::InputHandlerContext;
 use super::super::scene_rebuild::rebuild_all;
 use super::super::single_line_edit::{open_single_line_edit, SingleLineEditTarget, SingleLineEditor};
+use super::super::text_edit::TextEditState;
+use super::super::{DragState, LastClick};
 use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_in_font};
 
-/// Parse and execute a console line, and return what the verb
-/// produced. Drains deferred modal handoffs (`open_single_line_edit`,
-/// `open_color_picker`), custom mutation apply requests
-/// (`run_mutation`, needs tree access), binding overlay updates
-/// (`bind_mutation` / `unbind_mutation`, need `ResolvedKeybinds`
-/// access), and alias writes (`set_alias`). Rebuilds the scene on any
-/// document mutation.
+/// What one [`execute_console_line`] did.
+#[must_use = "a console line's outcome is its only report: print it, log it, or return it"]
+pub(in crate::application::app) struct LineRun {
+    /// What the verb produced.
+    pub(in crate::application::app) outcome: LineOutcome,
+    /// Whether anything the window draws may have changed: a scene
+    /// rebuild, any side effect (the FPS overlay and the modal handoffs
+    /// included), or the console closing. A caller deciding whether to
+    /// request a redraw reads this rather than assuming one.
+    pub(in crate::application::app) changed_view: bool,
+}
+
+/// Parse and execute a console line against `ctx`, and return what the
+/// verb produced. `None` when no document is loaded, because every verb
+/// runs against one. Drains deferred modal handoffs
+/// (`open_single_line_edit`, `open_color_picker`), custom mutation
+/// apply requests (`run_mutation`, needs tree access), binding overlay
+/// updates (`bind_mutation` / `unbind_mutation`, need
+/// `ResolvedKeybinds` access), and alias writes (`set_alias`). Rebuilds
+/// the scene on any document mutation.
+///
+/// The one entry point for every caller: the console prompt, the
+/// file-path Actions, a macro `ConsoleLine` step, and the IPC
+/// `act.console` command. Each takes the same `InputHandlerContext`,
+/// so a field the drain needs is threaded in one place, not four.
 ///
 /// **Writes nothing to the scrollback.** Rendering the outcome is the
 /// caller's decision, because the callers do not agree on where it
-/// goes. A human typing at the console, a key binding or macro step
-/// running a line, and the IPC `act.console` command all reach this
-/// same parse → execute → side-effect drain. Only the prompt prints
-/// the outcome into the console, through [`print_console_line`]. The
-/// others log a failure through [`log_console_line`], and IPC also
-/// returns the outcome in its reply. No caller but the prompt touches
-/// the scrollback (`format/ipc.md` §act).
-#[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::too_many_arguments)]
+/// goes. Only the prompt prints the outcome into the console, through
+/// [`print_console_line`]. The others log a failure through
+/// [`log_console_line`], and IPC also returns the outcome in its
+/// reply. No caller but the prompt touches the scrollback
+/// (`format/ipc.md` §act).
 pub(in crate::application::app) fn execute_console_line(
+    ctx: &mut InputHandlerContext<'_>,
     line: &str,
-    console_state: &mut ConsoleState,
-    single_line_edit_state: &mut SingleLineEditor,
-    color_picker_state: &mut ColorPickerState,
-    text_edit_state: &mut super::super::text_edit::TextEditState,
-    doc: &mut MindMapDocument,
-    interaction_mode: &mut super::super::InteractionMode,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-    macros: &mut crate::application::macros::MacroRegistry,
-) -> LineOutcome {
+) -> Option<LineRun> {
+    let doc = ctx.document.as_mut()?;
     if line.trim().is_empty() {
-        return LineOutcome::Blank;
+        return Some(LineRun {
+            outcome: LineOutcome::Blank,
+            changed_view: false,
+        });
     }
     let (cmd, args) = match parse(line) {
         ParseResult::Ok { cmd, args } => (cmd, args),
-        ParseResult::Empty => return LineOutcome::Blank,
-        ParseResult::Unknown(head) => return LineOutcome::Unknown(head),
+        ParseResult::Empty => {
+            return Some(LineRun {
+                outcome: LineOutcome::Blank,
+                changed_view: false,
+            })
+        }
+        ParseResult::Unknown(head) => {
+            return Some(LineRun {
+                outcome: LineOutcome::Unknown(head),
+                changed_view: false,
+            })
+        }
     };
     let cmd: &'static Command = cmd;
     let mut effects = ConsoleEffects::new(doc);
@@ -67,6 +88,7 @@ pub(in crate::application::app) fn execute_console_line(
     let document_mutated = effects.document_mutated();
     let side_effect = effects.side_effect.take();
     let close_after = effects.close_console;
+    let had_side_effect = side_effect.is_some();
 
     // Decided before the pre-rebuild handler consumes the effect,
     // because two of its arms write state the rebuild has to see —
@@ -85,12 +107,18 @@ pub(in crate::application::app) fn execute_console_line(
     let post_rebuild = handle_pre_rebuild_side_effect(
         side_effect,
         doc,
-        interaction_mode,
-        mindmap_tree,
-        single_line_edit_state,
-        color_picker_state,
-        macros,
-        renderer,
+        SessionState {
+            interaction_mode: ctx.interaction_mode,
+            mindmap_tree: ctx.mindmap_tree,
+            single_line_edit_state: ctx.single_line_edit_state,
+            color_picker_state: ctx.color_picker_state,
+            text_edit_state: ctx.text_edit_state,
+            drag_state: ctx.drag_state,
+            hovered_node: ctx.hovered_node,
+            last_click: ctx.last_click,
+        },
+        ctx.macros,
+        ctx.renderer,
     );
 
     // Rebuild only when something the canvas draws could have
@@ -100,34 +128,37 @@ pub(in crate::application::app) fn execute_console_line(
     // a full `doc.build_tree()` + cosmic-text buffer rebuild for
     // output that never left the scrollback.
     if needs_rebuild {
-        scene_cache.clear();
+        ctx.scene_cache.clear();
         rebuild_all(
             doc,
-            interaction_mode,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
+            ctx.interaction_mode,
+            ctx.mindmap_tree,
+            ctx.app_scene,
+            ctx.renderer,
+            ctx.scene_cache,
         );
     }
 
     let opened_modal = handle_post_rebuild_side_effect(
         post_rebuild,
         doc,
-        interaction_mode,
-        mindmap_tree,
-        single_line_edit_state,
-        color_picker_state,
-        text_edit_state,
-        app_scene,
-        renderer,
-        scene_cache,
+        ctx.interaction_mode,
+        ctx.mindmap_tree,
+        ctx.single_line_edit_state,
+        ctx.color_picker_state,
+        ctx.text_edit_state,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.scene_cache,
     );
     if opened_modal || close_after {
-        *console_state = ConsoleState::Closed;
-        renderer.rebuild_console_overlay_buffers(app_scene, None);
+        *ctx.console_state = ConsoleState::Closed;
+        ctx.renderer.rebuild_console_overlay_buffers(ctx.app_scene, None);
     }
-    LineOutcome::Ran(result)
+    Some(LineRun {
+        outcome: LineOutcome::Ran(result),
+        changed_view: needs_rebuild || had_side_effect || opened_modal || close_after,
+    })
 }
 
 /// Print what [`execute_console_line`] produced to the console
@@ -173,7 +204,10 @@ pub(in crate::application::app) fn print_console_line(
 /// dropped.
 pub(in crate::application::app) fn log_console_line(line: &str, outcome: &LineOutcome) {
     if let Some(failure) = outcome.failure() {
-        log::warn!("console: `{line}` failed: {failure}");
+        log::warn!(
+            code = crate::application::console::LINE_FAILED_CODE;
+            "console: `{line}` failed: {failure}"
+        );
     }
 }
 
@@ -227,29 +261,66 @@ fn side_effect_changes_the_canvas(side_effect: Option<&ConsoleSideEffect>) -> bo
     }
 }
 
+/// The interaction state a document swap must not leave pointing at
+/// the document it replaced. Grouped so [`handle_pre_rebuild_side_effect`]
+/// takes one value for it rather than eight loose borrows.
+struct SessionState<'s> {
+    interaction_mode: &'s mut super::super::InteractionMode,
+    mindmap_tree: &'s mut Option<MindMapTree>,
+    single_line_edit_state: &'s mut SingleLineEditor,
+    color_picker_state: &'s mut ColorPickerState,
+    text_edit_state: &'s mut TextEditState,
+    drag_state: &'s mut DragState,
+    hovered_node: &'s mut Option<String>,
+    last_click: &'s mut Option<LastClick>,
+}
+
 /// Apply the side effects that need to land **before** the
 /// `rebuild_all` pass: wholesale document swap (so the rebuild
 /// sees the new doc) and FPS overlay toggle (orthogonal to the
 /// scene tree). Returns the side effect untouched if it's a
 /// post-rebuild modal transition; returns `None` if the effect
 /// was consumed here.
-#[allow(clippy::too_many_arguments)]
 fn handle_pre_rebuild_side_effect(
     side_effect: Option<ConsoleSideEffect>,
     doc: &mut MindMapDocument,
-    interaction_mode: &mut super::super::InteractionMode,
-    mindmap_tree: &mut Option<MindMapTree>,
-    single_line_edit_state: &mut SingleLineEditor,
-    color_picker_state: &mut ColorPickerState,
+    session: SessionState<'_>,
     macros: &mut crate::application::macros::MacroRegistry,
     renderer: &mut Renderer,
 ) -> Option<ConsoleSideEffect> {
+    let SessionState {
+        interaction_mode,
+        mindmap_tree,
+        single_line_edit_state,
+        color_picker_state,
+        text_edit_state,
+        drag_state,
+        hovered_node,
+        last_click,
+    } = session;
     match side_effect? {
         ConsoleSideEffect::ReplaceDocument(new_doc) => {
             *doc = *new_doc;
             *mindmap_tree = None;
             *single_line_edit_state = SingleLineEditor::Closed;
             *color_picker_state = ColorPickerState::Closed;
+            // Every interaction in flight names ids, a tree or a hit
+            // of the document just replaced. The node text editor
+            // would commit its buffer into whatever node carries the
+            // old id in the new map. A throttled drag would drive the
+            // old gesture against the new tree on the next drain. A
+            // remembered click or hover would pair a stale hit with
+            // the next real one. None of them survives the swap. The
+            // editor's own revert targets the old tree, which is
+            // already gone, so closing the state is the whole cancel.
+            // Reachable whenever the swap does not come from the
+            // prompt, which the key-stealing modals otherwise guard:
+            // an IPC `act.console "open …"`, or a file Action bound
+            // to a mouse gesture.
+            *text_edit_state = TextEditState::Closed;
+            *drag_state = DragState::None;
+            *hovered_node = None;
+            *last_click = None;
             // Reset interaction mode: a stale `NodeEdit { node_id }`
             // or `Resize { target }` from the prior document points
             // at ids that don't exist in the new one — the next
@@ -438,17 +509,23 @@ fn handle_post_rebuild_side_effect(
 /// open. The `save` verb typed at the prompt reports through its own
 /// `ExecResult`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMapDocument) {
+///
+/// Returns whether the document was written.
+pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMapDocument) -> bool {
     let Some(path) = doc.file_path.clone() else {
         log::warn!("save: no file path bound; use `save <path>` to choose one");
-        return;
+        return false;
     };
     match baumhard::mindmap::loader::save_to_file(std::path::Path::new(&path), &doc.mindmap) {
         Ok(()) => {
             doc.dirty = false;
             log::info!("save: saved to {}", path);
+            true
         }
-        Err(e) => log::error!("save: {}", e),
+        Err(e) => {
+            log::error!("save: {}", e);
+            false
+        }
     }
 }
 
@@ -521,6 +598,35 @@ mod tests {
                 "`{line}` writes nothing the canvas draws, so it must not clear the scene cache"
             );
         }
+    }
+
+    /// A failed line run by anything but the prompt is logged under
+    /// `LINE_FAILED_CODE`, the code an IPC reply carries it as. A line
+    /// that worked logs nothing.
+    #[test]
+    fn test_log_console_line_warns_a_failure_under_its_code_and_nothing_else() {
+        use baumhard::util::log::capture::capture;
+
+        baumhard::util::test_logger::install();
+        let ((), captured) =
+            capture(|| log_console_line("frobnicate-5d1e", &LineOutcome::Unknown("frobnicate-5d1e".into())));
+        assert_eq!(captured.records.len(), 1, "{captured:?}");
+        assert_eq!(
+            captured.records[0].code.as_deref(),
+            Some(crate::application::console::LINE_FAILED_CODE)
+        );
+        assert!(captured.records[0]
+            .message
+            .contains("unknown command: frobnicate-5d1e"));
+
+        let ((), captured) = capture(|| {
+            log_console_line("help", &LineOutcome::Ran(ExecResult::Ok("fine".into())));
+            log_console_line("", &LineOutcome::Blank);
+        });
+        assert!(
+            captured.records.is_empty(),
+            "success and blank lines report nothing: {captured:?}"
+        );
     }
 
     /// The control that keeps the row above from being "answer

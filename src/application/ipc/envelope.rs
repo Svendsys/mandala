@@ -145,6 +145,8 @@ pub(crate) mod warning {
         // A macro step was refused by its tier's privilege gate and
         // the rest of the macro aborted.
         crate::application::macros::GATE_REJECTED_CODE,
+        // A console line run by an Action or a macro step failed.
+        crate::application::console::LINE_FAILED_CODE,
     ];
 }
 

@@ -34,11 +34,18 @@ const IPC_STEPS_LABEL: &str = "(ipc steps)";
 /// [`InputHandlerContext`] is built per event.
 pub(super) struct IpcCommandTarget<'a> {
     ctx: InputHandlerContext<'a>,
+    /// Set when a funnel reports it did something that may have
+    /// changed pixels; read back through
+    /// [`CommandTarget::changed_view`].
+    changed_view: bool,
 }
 
 impl<'a> IpcCommandTarget<'a> {
     pub(super) fn new(ctx: InputHandlerContext<'a>) -> Self {
-        IpcCommandTarget { ctx }
+        IpcCommandTarget {
+            ctx,
+            changed_view: false,
+        }
     }
 
     /// Stand a synthetic pointer at `point`, as a real one would have
@@ -68,30 +75,26 @@ impl<'a> IpcCommandTarget<'a> {
 
 impl CommandTarget for IpcCommandTarget<'_> {
     fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> bool {
+        // The synthetic pointer is part of this one dispatch, like the
+        // `DispatchHit` it builds. The cursor goes back afterwards, so
+        // the hover state, the cursor icon and the next real wheel
+        // zoom all keep agreeing with the user's actual pointer, which
+        // never moved.
+        let real_cursor = *self.ctx.cursor_pos;
         let hit = pointer.map(|point| self.place_pointer(point));
-        matches!(
+        let handled = matches!(
             dispatch::dispatch_action(action, &mut self.ctx, hit.as_ref()),
             DispatchOutcome::Handled
-        )
+        );
+        *self.ctx.cursor_pos = real_cursor;
+        self.changed_view |= handled;
+        handled
     }
 
     fn run_console_line(&mut self, line: &str) -> Option<LineOutcome> {
-        let ctx = &mut self.ctx;
-        let doc = ctx.document.as_mut()?;
-        Some(execute_console_line(
-            line,
-            ctx.console_state,
-            ctx.single_line_edit_state,
-            ctx.color_picker_state,
-            ctx.text_edit_state,
-            doc,
-            ctx.interaction_mode,
-            ctx.mindmap_tree,
-            ctx.app_scene,
-            ctx.renderer,
-            ctx.scene_cache,
-            ctx.macros,
-        ))
+        let run = execute_console_line(&mut self.ctx, line)?;
+        self.changed_view |= run.changed_view;
+        Some(run.outcome)
     }
 
     fn has_macro(&self, macro_id: &str) -> bool {
@@ -99,12 +102,20 @@ impl CommandTarget for IpcCommandTarget<'_> {
     }
 
     fn run_macro(&mut self, macro_id: &str) -> bool {
-        dispatch::dispatch_macro(macro_id, &mut self.ctx)
+        let ran = dispatch::dispatch_macro(macro_id, &mut self.ctx);
+        self.changed_view |= ran;
+        ran
     }
 
     fn run_macro_steps(&mut self, steps: &[MacroStep]) -> bool {
         // `User`: the steps were authored by the IPC client, and IPC
         // executes at the User tier (format/ipc.md §Trust model).
-        dispatch::run_macro_steps(IPC_STEPS_LABEL, steps, SourceTier::User, &mut self.ctx)
+        let ran = dispatch::run_macro_steps(IPC_STEPS_LABEL, steps, SourceTier::User, &mut self.ctx);
+        self.changed_view |= ran;
+        ran
+    }
+
+    fn changed_view(&self) -> bool {
+        self.changed_view
     }
 }

@@ -227,11 +227,21 @@ pub enum ExecResult {
     Lines(Vec<OutputLine>),
 }
 
+/// The diagnostic code a failed console line is logged under when a
+/// caller other than the prompt ran it (a file Action, a macro step,
+/// an IPC command): `log::warn!(code = LINE_FAILED_CODE; …)`. An IPC
+/// reply carries it as a `console_error` warning, matching the
+/// `console_error` error code `act.console` answers with, so an agent
+/// can branch on a console failure however the line was reached. A code
+/// is API there (`format/ipc.md` §Warnings).
+pub const LINE_FAILED_CODE: &str = "console_error";
+
 /// What running one console line produced, before anything renders
 /// it. The console modal folds it into its scrollback. The IPC
 /// `act.console` command returns it to the client. Neither path
 /// changes what the verb did.
 #[derive(Debug)]
+#[must_use = "a console line's outcome is its only report: print it, log it, or return it"]
 pub enum LineOutcome {
     /// The line was blank, so nothing ran.
     Blank,
@@ -242,6 +252,13 @@ pub enum LineOutcome {
 }
 
 impl LineOutcome {
+    /// Whether the line did what it asked: a verb ran and did not
+    /// report a failure. A blank line, an unknown verb and a verb
+    /// error did not apply.
+    pub fn applied(&self) -> bool {
+        matches!(self, LineOutcome::Ran(ExecResult::Ok(_) | ExecResult::Lines(_)))
+    }
+
     /// The failure text the console shows for this outcome, or
     /// `None` when the line succeeded or was blank. One spelling,
     /// shared by the scrollback, the log and the IPC reply.

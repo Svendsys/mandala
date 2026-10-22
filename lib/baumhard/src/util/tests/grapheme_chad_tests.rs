@@ -9,7 +9,8 @@ use crate::util::grapheme_chad::{
     insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
     prev_word_boundary_ws, push_spaces, replace_graphemes_until_newline, replace_substring,
     scalar_display_width, slice_to_newline, split_graphemes_owned, split_off_graphemes, take_graphemes,
-    token_start_ws, truncate_to_display_width, word_left, word_right, wrap_to_display_width, LineReplacement,
+    token_start_ws, truncate_to_byte_budget, truncate_to_display_width, word_left, word_right,
+    wrap_to_display_width, LineReplacement,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -1103,6 +1104,42 @@ pub fn do_truncate_to_display_width() {
     // Combining marks: NFD "café" is 4 cells, e+́ folds into one cell.
     assert_eq!(truncate_to_display_width("cafe\u{0301}", 3), "caf");
     assert_eq!(truncate_to_display_width("cafe\u{0301}", 4), "cafe\u{0301}");
+}
+
+#[test]
+pub fn test_truncate_to_byte_budget() {
+    do_truncate_to_byte_budget();
+}
+
+/// [`truncate_to_byte_budget`] keeps whole clusters only: a cluster
+/// that would cross the budget is dropped entire, never cut.
+pub fn do_truncate_to_byte_budget() {
+    // Fits: returned whole, nothing cut, including exactly at budget.
+    assert_eq!(truncate_to_byte_budget("abc", 3), ("abc", false));
+    assert_eq!(truncate_to_byte_budget("abc", 100), ("abc", false));
+    assert_eq!(truncate_to_byte_budget("", 0), ("", false));
+    // ASCII: one byte per cluster.
+    assert_eq!(truncate_to_byte_budget("abcdef", 4), ("abcd", true));
+    assert_eq!(truncate_to_byte_budget("abcdef", 0), ("", true));
+    // A 4-byte scalar straddling the budget is left out whole.
+    assert_eq!(truncate_to_byte_budget("ab🍕c", 5), ("ab", true));
+    assert_eq!(truncate_to_byte_budget("ab🍕c", 6), ("ab🍕", true));
+    // A ZWJ family (25 bytes) is one cluster: all of it or none.
+    let family = "👨\u{200d}👩\u{200d}👧\u{200d}👦";
+    let text = format!("x{family}y");
+    assert_eq!(truncate_to_byte_budget(&text, 25), ("x", true));
+    assert_eq!(truncate_to_byte_budget(&text, 26), (&text[..26], true));
+    // A base plus its combining mark is never split.
+    assert_eq!(truncate_to_byte_budget("cafe\u{0301}!", 4), ("caf", true));
+    assert_eq!(
+        truncate_to_byte_budget("cafe\u{0301}!", 6),
+        ("cafe\u{0301}", true)
+    );
+    // Every answer is a prefix that ends on a char boundary.
+    for budget in 0..text.len() {
+        let (prefix, cut) = truncate_to_byte_budget(&text, budget);
+        assert!(prefix.len() <= budget && cut && text.starts_with(prefix));
+    }
 }
 
 #[test]

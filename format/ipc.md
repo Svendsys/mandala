@@ -440,8 +440,13 @@ convention for the whole surface:
   is sanctioned §2 integration work, and implementing issues own the
   completeness of their own commands' warnings.
 - One reply carries at most 64 captured records (the first ones,
-  since the first warning is usually the cause). Any beyond that are
-  counted in a closing `warnings_truncated` entry.
+  since the first warning is usually the cause), each message at most
+  4096 bytes (a longer one is cut on a grapheme boundary and says how
+  much was elided). Any records beyond that are counted in a closing
+  `warnings_truncated` entry. The bound is on bytes, not just records,
+  because a message can echo arbitrary input, such as a failed console
+  line. Without it, an oversized reply would be replaced whole by
+  `reply_too_large`, and the command's result would be lost with it.
 - Degrades *outside* any command's execution window (a font drop
   during an ordinary interactive frame) are not retroactively
   attached to replies. Streaming those would be a `log_line` event
@@ -457,6 +462,7 @@ Warning code registry (additions are non-breaking, like error codes):
 | `log_error` | An `error!` the command's execution emitted with no code of its own. `message` is the log line. |
 | `warnings_truncated` | The command emitted more diagnostics than one reply carries (64); `message` says how many were left out. |
 | `macro_gate_rejected` | A macro step was refused by its tier's privilege gate, and the rest of the macro aborted (`format/macros.md` "Privilege model"). |
+| `console_error` | A console line run by something other than `act.console` failed: a file-path `Action`'s line, or a macro `ConsoleLine` step. Matches the `act.console` error code, so a console failure is branchable however the line was reached. `message` is the console's own text. |
 
 ### Large payloads
 
@@ -612,13 +618,15 @@ method is one funnel and nothing else. This is the indirection
 `dispatch_macro` already uses through `MacroDispatchTarget`
 (`app/dispatch/macro_core.rs`). It keeps the funnels private and the
 `ipc` modules free of `app` internals. A handler reaches the app
-through one of two accessors, and the borrow kind is the declaration:
-
-- `drive()` gives `&mut`. The command may have changed pixels, so
-  the event loop requests a redraw after it, as a winit handler does
-  after a mutating input.
-- `observe()` gives `&`. A read-only command cannot mutate the app
-  and causes no redraw.
+through `drive()` (`&mut`) or `observe()` (`&`), so a read-only
+command cannot mutate it. Whether a command changed pixels is
+answered by the target from each funnel's own outcome
+(`CommandTarget::changed_view`): a handled Action, a ran macro step,
+a console line that rebuilt the scene, had a side effect or closed
+the console. The event loop requests a redraw only then, as a winit
+handler does after a mutating input. A refused action, a failed or
+read-only console line, or a macro whose steps all skipped costs no
+frame.
 
 Before the window exists, which on native is also before the
 document does, there is no app to reach, and a command that needs
@@ -748,8 +756,10 @@ exactly what it would after a keyboard delete.
 All three need the app. Before its window, and with it its document,
 exists, they answer `no_document`. Each validates its whole request
 first, so a refused request (`invalid_params`) has no side effects.
-Each drives the app, so the event loop requests a redraw after one
-runs.
+The event loop requests a redraw after one only when it reports a
+change of view (see [Command registry](#command-registry-and-describe)).
+A failed console line run by an Action or a macro step is reported as
+a `console_error` warning.
 
 ### `act.action`
 
@@ -759,15 +769,18 @@ binding fires it.
 | param | type | required | meaning |
 |---|---|---|---|
 | `action` | string\|object | yes | The `Action`, in the externally tagged form macro `Action` steps deserialize through: a string for a unit variant (`"Undo"`), and a `{"Variant": payload}` object for a payload variant (`{"OpenDocument": "/path/m.mindmap.json"}`). An unknown variant or a mistyped payload is `invalid_params`, naming what serde expected. |
-| `x`, `y` | number | no, together | A pointer position. With it, the cursor stands there and the dispatch carries what the canonical click hit test (`compute_click_hit`, the one mouse presses use) finds under it, as a mouse handler's `DispatchHit` does. Pointer-driven arms then behave as under a real pointer: `DoubleClickActivate` routes on the hit, and `ZoomIn` / `ZoomOut` / `CreateOrphanNode` use the position. Without it they use the current cursor, and `DoubleClickActivate` reports `unhandled`. One without the other is `invalid_params`. |
+| `x`, `y` | number | no, together | A pointer position. With it, the cursor stands there for this dispatch only (afterwards it is back where the user's real pointer is, so their next wheel or key acts where they point, not where the agent did), and the dispatch carries what the canonical click hit test (`compute_click_hit`, the one mouse presses use) finds under it, as a mouse handler's `DispatchHit` does. Pointer-driven arms then behave as under a real pointer: `DoubleClickActivate` routes on the hit, and `ZoomIn` / `ZoomOut` / `CreateOrphanNode` use the position. Without it they use the current cursor, and `DoubleClickActivate` reports `unhandled`. One without the other is `invalid_params`. |
 | `space` | string | no | The coordinate space of `x`/`y`: `"canvas"` (default) or `"surface"` ([Coordinate spaces](#coordinate-spaces)). Only valid with `x`/`y`. |
 
 Result: `outcome` (string), `"handled"` or `"unhandled"`: the
 funnel's `DispatchOutcome`. `unhandled` means the action did not
 apply in the current context. A `Console*` action with the console
 closed is one: every `Console*` body edits the open modal, so with
-none open it reports that nothing ran. Treat an unrecognized value as
-`"unhandled"`.
+none open it reports that nothing ran. So is a file Action whose
+line failed (`OpenDocument` of a missing file, `SaveDocumentAs` to an
+unwritable path) and a `SaveDocument` that wrote nothing. Each of
+those also carries a warning saying why: `console_error` for the
+file-path Actions. Treat an unrecognized value as `"unhandled"`.
 
 ```jsonc
 {"id": 1, "cmd": "act.action", "action": "ZoomIn"}
@@ -831,7 +844,10 @@ Exactly one of `macro_id` / `steps`: neither, or both, is
 `invalid_params`.
 
 Result: `ran` (boolean), the dispatcher's any-step-executed flag. A
-privilege-gate abort is not an error. The steps before it ran, so
+step that did not apply does not count: an unhandled Action, a
+skipped custom mutation, or a `ConsoleLine` that failed (also
+reported as a `console_error` warning). A privilege-gate abort is not
+an error. The steps before it ran, so
 the reply is `ok:true` and carries a `macro_gate_rejected` warning
 naming the refused step.
 

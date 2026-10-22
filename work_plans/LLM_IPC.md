@@ -525,10 +525,13 @@ precedent; it is IPC-03's to wire and is called out here so the
 `InputHandlerContext` a winit handler receives rather than `&mut
 InitState`, because that context is exactly "the access an input
 handler has". Each method is one funnel. A handler reaches the target
-through `drive()` (`&mut`, which marks the command pixels-affecting,
-so the drain requests a redraw) or `observe()` (`&`, no redraw), so a
-read-only family like IPC-04's cannot cause a redraw by
-construction.
+through `drive()` (`&mut`) or `observe()` (`&`), so a read-only family
+like IPC-04's cannot mutate by construction. The redraw decision is
+not taken from the borrow. The target reports it
+(`CommandTarget::changed_view`) from each funnel's own outcome, so a
+refused action or a read-only console line polled in a loop costs no
+frame. (The first IPC-03 cut keyed it on the `&mut` borrow, and review
+caught every failed or read-only command forcing a render.)
 
 ## D6 — Cross-platform stance (§4): explicit native carve-out
 
@@ -708,8 +711,10 @@ machine-branchable code attaches it as the record's `code` key-value
 first such code. Uncoded records are `log_warn` / `log_error`. The
 window is bounded (64 records, then a `warnings_truncated` count), so
 a per-node degrade on a large map cannot push a reply past the frame
-cap and lose its result. "Extending a seam" now means making a silent
-degrade log, which §9 asks of it anyway.
+cap and lose its result. Each captured message is also held to 4096
+bytes, because a count alone does not bound size: a message can echo
+arbitrary input. "Extending a seam" now means making a silent degrade
+log, which §9 asks of it anyway.
 
 **Why the envelope and not the log stream.** The design first
 reasoned from `release_max_level_off`, under which an agent driving a

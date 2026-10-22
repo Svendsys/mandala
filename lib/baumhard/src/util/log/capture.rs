@@ -39,6 +39,8 @@
 
 use std::cell::Cell;
 
+use crate::util::grapheme_chad::truncate_to_byte_budget;
+
 /// The key-value key a log site names its stable diagnostic code
 /// under: `log::warn!(code = SOME_CODE; "…")`. The `log` macros
 /// spell the key as a bare identifier, so this constant cannot be
@@ -48,11 +50,22 @@ pub const CODE_KEY: &str = "code";
 
 /// Most records one window keeps. Beyond it records are counted in
 /// [`Captured::dropped`] rather than kept, so a degrade path that
-/// fires once per node on a large map cannot grow a reply past the
-/// transport's frame cap and lose the result along with the noise.
-/// The first records are kept rather than the last, because the
-/// first warning is usually the cause and the rest its echoes.
+/// fires once per node on a large map cannot flood the caller. The
+/// first records are kept rather than the last, because the first
+/// warning is usually the cause and the rest its echoes.
+///
+/// Together with [`MESSAGE_BYTE_LIMIT`] this bounds what one window
+/// can hold to `CAPTURE_LIMIT × MESSAGE_BYTE_LIMIT` bytes of message
+/// text. A count alone would not: a message can echo arbitrary input,
+/// such as a failed console line, and 64 of those could outgrow the
+/// IPC reply's frame cap and cost the command its whole reply.
 pub const CAPTURE_LIMIT: usize = 64;
+
+/// Longest message one captured record keeps, in bytes. A longer one
+/// is cut on a grapheme boundary and marked with how much was elided.
+/// The full line still reaches the installed logger, because the cut
+/// applies only to the captured copy.
+pub const MESSAGE_BYTE_LIMIT: usize = 4096;
 
 /// One `warn!` / `error!` record a capture window observed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,9 +199,23 @@ pub(crate) fn observe(record: &log::Record) {
     window.push(CapturedRecord {
         level: record.level(),
         code: record_code(record),
-        message: record.args().to_string(),
+        message: bounded_message(record.args().to_string()),
     });
     WINDOW.with(|w| w.set(Some(window)));
+}
+
+/// `message`, held to [`MESSAGE_BYTE_LIMIT`]. Over the limit, the kept
+/// prefix and its elision marker together stay within it.
+fn bounded_message(message: String) -> String {
+    if message.len() <= MESSAGE_BYTE_LIMIT {
+        return message;
+    }
+    // The marker's length depends on the count it reports. Sizing it
+    // with the largest count it could ever print keeps the arithmetic
+    // one pass and the result under the limit.
+    let marker_room = format!(" … [{} bytes elided]", message.len()).len();
+    let (kept, _) = truncate_to_byte_budget(&message, MESSAGE_BYTE_LIMIT - marker_room);
+    format!("{kept} … [{} bytes elided]", message.len() - kept.len())
 }
 
 /// The record's [`CODE_KEY`] key-value, as a string.
@@ -273,6 +300,25 @@ mod tests {
         assert_eq!(captured.records.len(), CAPTURE_LIMIT);
         assert_eq!(captured.dropped, 5);
         assert_eq!(captured.records[0].message, "capture-test: flood-0-c3e8");
+    }
+
+    /// A message that echoes large input is cut, not the window: the
+    /// bound on a window is records × bytes, not records alone.
+    #[test]
+    fn test_an_oversized_message_is_cut_within_the_byte_limit_and_says_so() {
+        installed();
+        let huge = "é".repeat(MESSAGE_BYTE_LIMIT);
+        let ((), captured) = capture(|| log::warn!("capture-test: huge-8b07 {huge}"));
+        let message = &captured.records[0].message;
+        assert!(message.len() <= MESSAGE_BYTE_LIMIT, "{} bytes", message.len());
+        assert!(message.starts_with("capture-test: huge-8b07 éé"));
+        assert!(message.ends_with(" bytes elided]"), "the cut is marked");
+        let short = "capture-test: short-8b07";
+        assert_eq!(
+            bounded_message(short.to_string()),
+            short,
+            "a short message is untouched"
+        );
     }
 
     #[test]

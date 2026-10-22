@@ -541,12 +541,10 @@ pub(in crate::application::app) fn dispatch_action(
             open_editor_for_edge_selection(clean, ctx);
             DispatchOutcome::Handled
         }
-        Action::SaveDocument => {
-            if let Some(doc) = ctx.document.as_mut() {
-                save_document_to_bound_path(doc);
-            }
-            DispatchOutcome::Handled
-        }
+        Action::SaveDocument => match ctx.document.as_mut().map(save_document_to_bound_path) {
+            Some(true) => DispatchOutcome::Handled,
+            Some(false) | None => DispatchOutcome::Unhandled,
+        },
 
         // ── Mouse-gesture Actions ──────────────────────────────
         Action::DoubleClickActivate => {
@@ -748,26 +746,24 @@ pub(in crate::application::app) fn dispatch_action(
                 }
             };
             let line = format!("{} {}", verb, quote_console_arg(path));
-            if let Some(doc) = ctx.document.as_mut() {
-                let outcome = crate::application::app::console_input::exec::execute_console_line(
-                    &line,
-                    ctx.console_state,
-                    ctx.single_line_edit_state,
-                    ctx.color_picker_state,
-                    ctx.text_edit_state,
-                    doc,
-                    ctx.interaction_mode,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
-                    ctx.macros,
-                );
-                crate::application::app::console_input::exec::log_console_line(&line, &outcome);
-            } else {
-                log::warn!("dispatch: {}: no document loaded; skipping '{}'", verb, line);
+            // The Action applied only if its line did: a missing file
+            // or an unwritable path is `Unhandled`, so a caller that
+            // reads the outcome (a macro's `any_ran`, an IPC reply)
+            // is not told the map was opened or saved when it was not.
+            match crate::application::app::console_input::exec::execute_console_line(ctx, &line) {
+                Some(run) => {
+                    crate::application::app::console_input::exec::log_console_line(&line, &run.outcome);
+                    if run.outcome.applied() {
+                        DispatchOutcome::Handled
+                    } else {
+                        DispatchOutcome::Unhandled
+                    }
+                }
+                None => {
+                    log::warn!("dispatch: {}: no document loaded; skipping '{}'", verb, line);
+                    DispatchOutcome::Unhandled
+                }
             }
-            DispatchOutcome::Handled
         }
 
         // ── Color-picker modal Actions (NativeOnly) ─────────────
@@ -1076,35 +1072,24 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
     }
 
     fn execute_console_line(&mut self, line: &str) -> bool {
-        // `execute_console_line` requires a loaded document (takes
-        // `&mut MindMapDocument`, not `Option`). Macros fired before
-        // any document is loaded silently skip and return false so
-        // the macro's `any_ran` doesn't bump on the no-op path —
-        // matches pre-Track-B behavior where the warn arm left
-        // `any_ran` unchanged.
-        let Some(doc) = self.ctx.document.as_mut() else {
-            log::warn!(
-                "macros: ConsoleLine step: no document loaded; skipping '{}'",
-                line
-            );
-            return false;
-        };
-        let outcome = crate::application::app::console_input::exec::execute_console_line(
-            line,
-            self.ctx.console_state,
-            self.ctx.single_line_edit_state,
-            self.ctx.color_picker_state,
-            self.ctx.text_edit_state,
-            doc,
-            self.ctx.interaction_mode,
-            self.ctx.mindmap_tree,
-            self.ctx.app_scene,
-            self.ctx.renderer,
-            self.ctx.scene_cache,
-            self.ctx.macros,
-        );
-        crate::application::app::console_input::exec::log_console_line(line, &outcome);
-        true
+        // Every verb runs against a document, so a macro fired before
+        // one loads soft-skips. A line that ran but failed (an unknown
+        // verb, a verb error) did not apply either. Neither bumps the
+        // macro's `any_ran`, so a keystroke whose macro did nothing
+        // still falls through to the custom-mutation tier.
+        match crate::application::app::console_input::exec::execute_console_line(self.ctx, line) {
+            Some(run) => {
+                crate::application::app::console_input::exec::log_console_line(line, &run.outcome);
+                run.outcome.applied()
+            }
+            None => {
+                log::warn!(
+                    "macros: ConsoleLine step: no document loaded; skipping '{}'",
+                    line
+                );
+                false
+            }
+        }
     }
 
     fn current_selection_node_id(&self) -> Option<String> {

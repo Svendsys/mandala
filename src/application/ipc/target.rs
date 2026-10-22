@@ -33,10 +33,13 @@ pub(crate) trait CommandTarget {
     /// Run `action` through `dispatch_action`, exactly as a key
     /// binding fires it. With `pointer`, the dispatch also carries the
     /// payload a mouse handler builds before it dispatches. The
-    /// cursor stands at that point, and the `DispatchHit` holds what
-    /// the canonical click hit test finds there, so pointer-driven
-    /// arms (`DoubleClickActivate`, the orphan-creation and zoom
-    /// arms) behave as they do under a real pointer.
+    /// cursor stands at that point for the duration of the dispatch,
+    /// and the `DispatchHit` holds what the canonical click hit test
+    /// finds there, so pointer-driven arms (`DoubleClickActivate`, the
+    /// orphan-creation and zoom arms) behave as they do under a real
+    /// pointer. Afterwards the cursor is back where the user's real
+    /// pointer is, so their next wheel or key does not act at a point
+    /// the agent chose.
     ///
     /// Returns whether the funnel reported `Handled`.
     fn dispatch_action(&mut self, action: Action, pointer: Option<Point>) -> bool;
@@ -60,4 +63,13 @@ pub(crate) trait CommandTarget {
     /// client, and IPC executes as `User` (`format/ipc.md` §Trust
     /// model). Returns the any-step-executed flag.
     fn run_macro_steps(&mut self, steps: &[MacroStep]) -> bool;
+
+    /// Whether anything run through this target so far may have
+    /// changed what the window draws. The executor reads it after the
+    /// handler returns, and the event loop requests a redraw only when
+    /// it is set. So a refused action, a failed or read-only console
+    /// line, or a macro whose steps all skipped costs no frame. The
+    /// implementation answers from each funnel's own outcome, the only
+    /// place that knows.
+    fn changed_view(&self) -> bool;
 }
