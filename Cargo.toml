@@ -41,7 +41,7 @@ license = "MPL-2.0"
 # featureless here is about where the *declaration* lives, not about
 # what gets compiled.
 [workspace.dependencies]
-glam = { version = "0.32.1", features = ["serde"] }
+glam = { version = "0.34.1", features = ["serde"] }
 indextree = { version = "4.9.2", features = ["serde"] }
 # `release_max_level_warn`: `warn!`/`error!` survive into release
 # builds so CODE_CONVENTIONS §9's "log and degrade" posture is real in
