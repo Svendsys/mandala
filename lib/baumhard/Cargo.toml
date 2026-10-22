@@ -42,7 +42,7 @@ cosmic-text = "0.18.2"
 # the browser has no second thread to cause another. The uncontended
 # path never parks and never reads a clock, which is the only path
 # the browser takes — `tests/wasm_font_lock.rs` runs that claim.
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 tinyvec = "1.13.3"
 unicode-segmentation = "1.13.3"
 rustc-hash.workspace = true
