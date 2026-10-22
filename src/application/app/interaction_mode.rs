@@ -31,10 +31,11 @@
 ///
 /// One of these is always active. Transitions go through `Action`
 /// dispatch — there is no path that flips a mode by side-effect.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub enum InteractionMode {
     /// Default canvas mode. Click selects, drag moves, no mode-gated chrome.
+    #[default]
     Default,
 
     /// User is choosing a new parent for `sources`. The next left-click on
@@ -76,12 +77,6 @@ pub enum InteractionMode {
 pub enum ResizeTarget {
     Node(String),
     Section { node_id: String, section_idx: usize },
-}
-
-impl Default for InteractionMode {
-    fn default() -> Self {
-        InteractionMode::Default
-    }
 }
 
 impl InteractionMode {

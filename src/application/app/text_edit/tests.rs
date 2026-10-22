@@ -472,6 +472,99 @@ fn make_open_state(buffer: &str, cursor: usize) -> TextEditState {
     }
 }
 
+// -----------------------------------------------------------------
+// `take_open_session` — the close step commit and cancel share.
+// Renderer-free, so the mode lift both closers inherit is pinned
+// here rather than through either renderer-bound closer.
+// -----------------------------------------------------------------
+
+fn node_edit_on(id: &str) -> crate::application::app::InteractionMode {
+    crate::application::app::InteractionMode::NodeEdit {
+        node_id: id.to_string(),
+    }
+}
+
+#[test]
+fn test_take_open_session_closes_the_editor_and_returns_its_fields() {
+    let mut state = make_open_state("hello", 3);
+    if let TextEditState::Open { selection_anchor, .. } = &mut state {
+        *selection_anchor = Some(1);
+    }
+    let mut mode = crate::application::app::InteractionMode::Default;
+    let session = super::editor::take_open_session(&mut state, &mut mode).expect("the editor was open");
+    assert!(
+        matches!(state, TextEditState::Closed),
+        "the state must be Closed afterwards"
+    );
+    assert_eq!(session.node_id, "n-test");
+    assert_eq!(session.section_idx, 0);
+    assert_eq!(session.buffer, "hello");
+    assert_eq!(session.cursor_grapheme_pos, 3);
+    assert_eq!(session.selection_anchor, Some(1));
+    assert_eq!(session.original_text, "");
+}
+
+#[test]
+fn test_take_open_session_on_a_closed_editor_is_a_no_op() {
+    let mut state = TextEditState::Closed;
+    let mut mode = node_edit_on("n-test");
+    assert!(super::editor::take_open_session(&mut state, &mut mode).is_none());
+    assert_eq!(
+        mode,
+        node_edit_on("n-test"),
+        "closing nothing must not touch the mode"
+    );
+}
+
+/// The single-section short-circuit opens NodeEdit and the editor
+/// in one step, so closing must leave NodeEdit too — on commit and
+/// on cancel alike, which is why the lift lives in the shared step.
+#[test]
+fn test_take_open_session_exits_node_edit_when_the_open_asked_for_it() {
+    let mut state = make_open_state("x", 1);
+    if let TextEditState::Open {
+        exit_to_default_on_close,
+        ..
+    } = &mut state
+    {
+        *exit_to_default_on_close = true;
+    }
+    let mut mode = node_edit_on("n-test");
+    super::editor::take_open_session(&mut state, &mut mode).expect("the editor was open");
+    assert_eq!(mode, crate::application::app::InteractionMode::Default);
+}
+
+/// A multi-section open keeps NodeEdit so the user can pick another
+/// section; and the lift never invents a mode change outside
+/// NodeEdit.
+#[test]
+fn test_take_open_session_keeps_the_mode_otherwise() {
+    let mut state = make_open_state("x", 1);
+    let mut mode = node_edit_on("n-test");
+    super::editor::take_open_session(&mut state, &mut mode).expect("the editor was open");
+    assert_eq!(
+        mode,
+        node_edit_on("n-test"),
+        "exit_to_default_on_close = false keeps NodeEdit"
+    );
+
+    let mut state = make_open_state("x", 1);
+    if let TextEditState::Open {
+        exit_to_default_on_close,
+        ..
+    } = &mut state
+    {
+        *exit_to_default_on_close = true;
+    }
+    let mut mode = crate::application::app::InteractionMode::Default;
+    super::editor::take_open_session(&mut state, &mut mode).expect("the editor was open");
+    assert_eq!(
+        mode,
+        crate::application::app::InteractionMode::Default,
+        "outside NodeEdit the flag changes nothing"
+    );
+}
+
 fn cursor_of(state: &TextEditState) -> usize {
     match state {
         TextEditState::Open {
@@ -666,7 +759,7 @@ fn test_insert_at_cursor_after_zwj_emoji_family() {
 fn test_delete_before_cursor_removes_whole_zwj_family() {
     let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
     let combined = format!("{zwj}A");
-    let mut s = String::from(combined);
+    let mut s = combined;
     let new_cursor = delete_before_cursor(&mut s, 1);
     assert_eq!(s, "A", "ZWJ family must be deleted as one cluster");
     assert_eq!(new_cursor, 0);
@@ -993,8 +1086,10 @@ fn test_lifted_section_range_reaches_both_consumer_classes() {
 
     // Span class: the same selection expands to exactly the anchor
     // section for the border preview's coverage check.
-    let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set("heavy".into());
+    let edits = BorderConfigEdits {
+        preset: OptionEdit::Set("heavy".into()),
+        ..Default::default()
+    };
     let _ = doc.set_border_preview(
         BorderPreviewTarget::Sections(vec![(node_id.clone(), 0)]),
         edits.clone(),

@@ -25,6 +25,7 @@ use crate::application::platform::input::ElementState;
 
 use super::PendingClick;
 use crate::application::app::click_triggers::fire_onclick_triggers;
+use crate::application::app::dispatch::cross_dispatch::RebuildContext;
 use crate::application::app::dispatch::DispatchOutcome;
 use crate::application::app::scene_rebuild::RebuildTier;
 use crate::application::app::{
@@ -414,14 +415,14 @@ impl super::WasmApp {
         let tier = RebuildTier::for_click(triggers_fired, &prev_selection, &input.document.selection);
         let mut renderer_borrow = self.renderer.borrow_mut();
         if let Some(renderer) = renderer_borrow.as_mut() {
-            tier.execute(
-                &input.document,
-                &input.interaction_mode,
-                &mut input.mindmap_tree,
-                &mut input.app_scene,
+            tier.execute(&mut RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
                 renderer,
-                &mut input.scene_cache,
-            );
+                scene_cache: &mut input.scene_cache,
+                interaction_mode: &mut input.interaction_mode,
+            });
         }
     }
 }

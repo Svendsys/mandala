@@ -1271,7 +1271,7 @@ fn test_the_scene_wide_glyph_budget_is_shared_equally_and_never_zero() {
     // Real maps must be untouched by this: the repository's heaviest is
     // `stress_long_edges` at 46 290 samples over 124 edges.
     assert!(
-        per_path_sample_budget(124) >= 46_290 / 124 + 1,
+        per_path_sample_budget(124) > 46_290 / 124,
         "the budget must not thin the repository's own worst-case map"
     );
 }

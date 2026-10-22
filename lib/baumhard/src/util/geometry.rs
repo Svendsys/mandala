@@ -14,9 +14,7 @@ pub fn clockwise_rotation_around_pivot(a: Vec2, pivot: Vec2, degrees: f32) -> Ve
     let radians = -degrees.to_radians();
     let rotation = Mat3::from_rotation_z(radians);
 
-    let result = rotation.transform_point2(translated) + pivot;
-
-    result
+    rotation.transform_point2(translated) + pivot
 }
 
 const ERROR_TOLERANCE_ALMOST_EQUAL: f32 = 1e-5;

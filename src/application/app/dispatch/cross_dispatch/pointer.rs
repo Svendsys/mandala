@@ -332,7 +332,6 @@ pub(in crate::application::app) fn apply_double_click_activate(
                     doc,
                     core.text_edit_state,
                     core.mindmap_tree,
-                    core.app_scene,
                     core.renderer,
                 );
             }
@@ -366,15 +365,7 @@ pub(in crate::application::app) fn apply_double_click_activate(
                 if !edge_label_selection_is_current(&doc.selection, &edge_ref) {
                     let prev = doc.selection.clone();
                     doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref.clone()));
-                    rebuild_after_selection_change(
-                        &prev,
-                        doc,
-                        core.interaction_mode,
-                        core.mindmap_tree,
-                        core.app_scene,
-                        core.renderer,
-                        core.scene_cache,
-                    );
+                    rebuild_after_selection_change(&prev, &mut super::rebuild_ctx!(core, doc));
                 }
             }
             DoubleClickResidual::OpenEdgeLabelEditor
@@ -715,14 +706,8 @@ fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
         edge_under_pointer(canvas_pos, &doc.mindmap, CanvasPerPixel::of(core.renderer))
     };
 
-    RebuildTier::for_click(triggers_fired, &prev_selection, &doc.selection).execute(
-        doc,
-        core.interaction_mode,
-        core.mindmap_tree,
-        core.app_scene,
-        core.renderer,
-        core.scene_cache,
-    );
+    RebuildTier::for_click(triggers_fired, &prev_selection, &doc.selection)
+        .execute(&mut super::rebuild_ctx!(core, doc));
 }
 
 /// Pure selection-update helper for "click landed on a node."

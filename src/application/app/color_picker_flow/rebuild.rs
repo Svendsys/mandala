@@ -33,7 +33,7 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
-    use crate::application::color_picker::{ColorPickerState, PickerDynamicApplyKey};
+    use crate::application::color_picker::{OpenPicker, PickerDynamicApplyKey};
     use crate::application::scene_host::OverlayRole;
     let surface_size = (renderer.surface_width() as f32, renderer.surface_height() as f32);
     let Some((geometry, layout_changed)) = compute_picker_geometry(state, surface_size) else {
@@ -50,13 +50,13 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
         hovered_hit: geometry.hovered_hit,
         hex_visible: geometry.hex_visible,
     };
-    // Split the Open variant into disjoint field borrows so we can
+    // Split the open picker into disjoint field borrows so we can
     // read `layout` and write `last_dynamic_apply` concurrently.
-    let ColorPickerState::Open {
+    let Some(OpenPicker {
         layout: state_layout,
         last_dynamic_apply,
         ..
-    } = state
+    }) = state.as_open_mut()
     else {
         return;
     };

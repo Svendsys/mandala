@@ -259,7 +259,7 @@ pub(crate) fn apply_zoom_to_selection(
             let ids = doc.selection.dedup_owning_node_ids();
             let mut changed = false;
             for id in &ids {
-                changed |= doc.set_node_zoom_visibility(id, min.clone(), max.clone());
+                changed |= doc.set_node_zoom_visibility(id, min, max);
             }
             changed
         }

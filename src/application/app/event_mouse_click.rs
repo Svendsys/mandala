@@ -528,12 +528,7 @@ pub(super) fn handle_mouse_input(
                                 );
                                 rebuild_after_selection_change(
                                     &prev,
-                                    doc,
-                                    ctx.interaction_mode,
-                                    ctx.mindmap_tree,
-                                    ctx.app_scene,
-                                    ctx.renderer,
-                                    ctx.scene_cache,
+                                    &mut super::dispatch::cross_dispatch::rebuild_ctx!(ctx, doc),
                                 );
                                 true
                             } else {
@@ -543,18 +538,7 @@ pub(super) fn handle_mouse_input(
                             false
                         };
                         if !entered_label_select {
-                            handle_click(
-                                hit_node,
-                                hit_section_idx,
-                                cursor_pos_val,
-                                ctx.modifiers.shift_key(),
-                                ctx.document,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
+                            handle_click(hit_node, hit_section_idx, ctx);
                         }
                     }
                     // Seven throttled drag variants, one release

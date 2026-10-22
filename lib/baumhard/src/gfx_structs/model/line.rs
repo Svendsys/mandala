@@ -8,7 +8,7 @@
 use super::component::GlyphComponent;
 use crate::util::grapheme_chad::split_off_graphemes;
 use serde::{Deserialize, Serialize};
-use std::ops::{AddAssign, Index, IndexMut, MulAssign, SubAssign};
+use std::ops::{AddAssign, Index, IndexMut, MulAssign, Range, SubAssign};
 
 /// One visual line in a [`crate::gfx_structs::model::GlyphMatrix`] —
 /// a vector of [`GlyphComponent`] runs. `ignore_initial_space`
@@ -90,6 +90,22 @@ pub(crate) enum GlyphLineOp {
     MulAssign,
     /// The rhs color is subtracted per channel from the lhs color.
     SubAssign,
+}
+
+/// Where an overriding insert lands, decided by the run it starts in.
+/// What [`GlyphLine::seek_comp_begin`] reports once it has found that
+/// run; it used to hand the same three values back through `&mut`
+/// out-parameters, written together in every branch and read by no one
+/// in between.
+struct BeginPlan {
+    /// Index of the first run the insert's drain window covers.
+    drain_begin: usize,
+    /// Index the new run is inserted at.
+    insert: usize,
+    /// Whether the run already in the insertion slot is replaced
+    /// outright rather than pushed along. Only honored by the caller
+    /// when the drain window actually reaches past `insert`.
+    overwrite: bool,
 }
 
 impl GlyphLine {
@@ -277,28 +293,28 @@ impl GlyphLine {
         self.line.get_mut(i)
     }
 
+    /// Does the run at `comp_index`, covering `comp_span` in grapheme
+    /// positions, hold the start of an insert covering `item_span`? If
+    /// so, say where the insert goes and trim the run if it must make
+    /// room; if not, `None` and the run is untouched.
     #[inline]
     fn seek_comp_begin(
-        e_idx_head: usize,
-        begin: usize,
-        end: usize,
-        e_begin_comp: usize,
-        comp: &mut GlyphComponent,
+        item_span: &Range<usize>,
+        comp_span: &Range<usize>,
         comp_index: usize,
-        idx_comp_drain_begin: &mut usize,
-        idx_insert: &mut usize,
-        should_overwrite: &mut bool,
-    ) -> bool {
+        comp: &mut GlyphComponent,
+    ) -> Option<BeginPlan> {
         let comp_len = comp.length();
-        if e_idx_head == begin {
+        let item_len = item_span.end - item_span.start;
+        if comp_span.end == item_span.start {
             // This whole comp can be spared: the insert starts exactly
             // on the boundary after it, so it goes into the next slot.
             //
-            // `should_overwrite` is `true` because whether that next
-            // slot is *consumed* by the insert is not knowable from
-            // here — it depends on the item's length against a
-            // component this call has not seen. So defer to the drain
-            // window: the caller only honors the flag when
+            // `overwrite` is `true` because whether that next slot is
+            // *consumed* by the insert is not knowable from here — it
+            // depends on the item's length against a component this
+            // call has not seen. So defer to the drain window: the
+            // caller only honors the flag when
             // `idx_comp_drain_end > idx_insert`, which is precisely
             // "the run in the insertion slot was fully overridden".
             // Hard-coding `false` made the result depend on how the
@@ -306,35 +322,40 @@ impl GlyphLine {
             // the same text overwrote a character when the line was one
             // run, and grew the line by one when a run boundary fell at
             // the insertion point.
-            *idx_comp_drain_begin = comp_index + 2; // next will be used
-            *idx_insert = comp_index + 1; // insert into next
-            *should_overwrite = true;
-            return true;
-        } else if e_begin_comp == begin && (end - begin) >= comp_len {
+            Some(BeginPlan {
+                drain_begin: comp_index + 2, // next will be used
+                insert: comp_index + 1,      // insert into next
+                overwrite: true,
+            })
+        } else if comp_span.start == item_span.start && item_len >= comp_len {
             // This whole comp will be replaced, so we can hijack
-            *idx_insert = comp_index;
-            *idx_comp_drain_begin = comp_index + 1;
-            *should_overwrite = true;
-            return true;
-        } else if e_begin_comp == begin {
+            Some(BeginPlan {
+                drain_begin: comp_index + 1,
+                insert: comp_index,
+                overwrite: true,
+            })
+        } else if comp_span.start == item_span.start {
             // We're resizing, but insertion is done in the very front, so we need to shift to the right
             // and the insertion part does not completely override the existing component
-            *idx_insert = comp_index;
-            *should_overwrite = false;
-            *idx_comp_drain_begin = comp_index + 2;
-            comp.discard_front(end - begin);
-            return true;
-        } else if e_idx_head > begin {
+            comp.discard_front(item_len);
+            Some(BeginPlan {
+                drain_begin: comp_index + 2,
+                insert: comp_index,
+                overwrite: false,
+            })
+        } else if comp_span.end > item_span.start {
             // means we resize, so this one can't be hijacked
             // but that means we can't drain next component either
             // because we need that spot for insertion
-            *idx_comp_drain_begin = comp_index + 2;
-            *idx_insert = comp_index + 1;
-            *should_overwrite = true;
-            comp.discard_back(comp_len - (begin - e_begin_comp));
-            return true;
+            comp.discard_back(comp_len - (item_span.start - comp_span.start));
+            Some(BeginPlan {
+                drain_begin: comp_index + 2,
+                insert: comp_index + 1,
+                overwrite: true,
+            })
+        } else {
+            None
         }
-        false
     }
 
     #[inline]
@@ -498,6 +519,7 @@ impl GlyphLine {
         let self_len = self.length();
         let item_len = item.length();
         let end = begin + item_len;
+        let item_span = begin..end;
         let mut idx_comp_drain_begin: usize = 0;
         let mut needs_comp_begin = true;
         let mut idx_comp_drain_end = self.line.len();
@@ -528,18 +550,11 @@ impl GlyphLine {
                     idx_insert_comp = i + 1;
                     break;
                 } else if needs_comp_begin {
-                    let found_begin = Self::seek_comp_begin(
-                        e_idx_head,
-                        begin,
-                        end,
-                        e_begin_comp,
-                        comp,
-                        i,
-                        &mut idx_comp_drain_begin,
-                        &mut idx_insert_comp,
-                        &mut override_at_index,
-                    );
-                    if found_begin {
+                    let comp_span = e_begin_comp..e_idx_head;
+                    if let Some(plan) = Self::seek_comp_begin(&item_span, &comp_span, i, comp) {
+                        idx_comp_drain_begin = plan.drain_begin;
+                        idx_insert_comp = plan.insert;
+                        override_at_index = plan.overwrite;
                         needs_comp_begin = false;
                     }
                 } else {

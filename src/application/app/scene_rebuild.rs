@@ -18,6 +18,8 @@ use crate::application::document::{
     apply_inactive_node_dimming, apply_tree_highlights, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
 };
 use crate::application::renderer::Renderer;
+
+use super::dispatch::cross_dispatch::RebuildContext;
 use baumhard::mindmap::tree_builder::{FrameOverrides, InteractionModeOverrides};
 
 /// Which of the two whole-canvas rebuild tiers a change owes,
@@ -113,26 +115,30 @@ impl RebuildTier {
         }
     }
 
-    /// Run the tier against the live renderer.
-    pub(in crate::application::app) fn execute(
-        self,
-        doc: &MindMapDocument,
-        interaction_mode: &super::InteractionMode,
-        mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-        app_scene: &mut crate::application::scene_host::AppScene,
-        renderer: &mut Renderer,
-        scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-    ) {
+    /// Run the tier against the live renderer, through the same
+    /// [`RebuildContext`] bundle every other rebuild takes.
+    ///
+    /// `All` is `rebuild_all` without the connection-cache clear:
+    /// a selection change moves no edge, so the cached samples stay
+    /// valid (see `RebuildContext::rebuild_after_geometry_change`
+    /// for the variant that clears them).
+    pub(in crate::application::app) fn execute(self, rc: &mut RebuildContext<'_>) {
         match self {
             Self::All => rebuild_all(
-                doc,
-                interaction_mode,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
+                rc.document,
+                &*rc.interaction_mode,
+                rc.mindmap_tree,
+                rc.app_scene,
+                rc.renderer,
+                rc.scene_cache,
             ),
-            Self::SceneOnly => rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache),
+            Self::SceneOnly => rebuild_scene_only(
+                rc.document,
+                &*rc.interaction_mode,
+                rc.app_scene,
+                rc.renderer,
+                rc.scene_cache,
+            ),
         }
     }
 }
@@ -150,21 +156,9 @@ impl RebuildTier {
 /// `RebuildTier` directly instead.
 pub(in crate::application::app) fn rebuild_after_selection_change(
     prev_selection: &SelectionState,
-    doc: &MindMapDocument,
-    interaction_mode: &super::InteractionMode,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    rc: &mut RebuildContext<'_>,
 ) {
-    RebuildTier::for_selection_change(prev_selection, &doc.selection).execute(
-        doc,
-        interaction_mode,
-        mindmap_tree,
-        app_scene,
-        renderer,
-        scene_cache,
-    );
+    RebuildTier::for_selection_change(prev_selection, &rc.document.selection).execute(rc);
 }
 
 /// Stamp **every render-layer overlay** onto an already-built node

@@ -11,6 +11,8 @@ use baumhard::mindmap::tree_builder::PortalPart;
 
 use super::click_triggers::fire_onclick_triggers;
 use super::dispatch::compute_node_click_selection;
+#[cfg(not(target_arch = "wasm32"))]
+use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{build_overlaid_tree, rebuild_scene_only, RebuildTier};
 use super::{now_ms, InteractionMode};
 use crate::application::document::{
@@ -155,46 +157,37 @@ pub(super) fn handle_click_core(
 /// exactly this since before the browser release path started using
 /// it — CODE_CONVENTIONS §4 makes the two targets peers, and the
 /// browser was the better-optimized one here.
+///
+/// The pointer position and the Shift state are read from `ctx`
+/// rather than passed beside it, so they cannot disagree with it.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn handle_click(
     hit: Option<String>,
     hit_section: Option<usize>,
-    cursor_pos: (f64, f64),
-    shift_pressed: bool,
-    document: &mut Option<MindMapDocument>,
-    interaction_mode: &InteractionMode,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    ctx: &mut InputHandlerContext<'_>,
 ) {
-    let doc = match document.as_mut() {
+    let doc = match ctx.document.as_mut() {
         Some(d) => d,
         None => return,
     };
-    let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
+    let canvas_pos = ctx
+        .renderer
+        .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
     let tier = handle_click_core(
         hit,
         hit_section,
         canvas_pos,
-        super::dispatch::CanvasPerPixel::of(renderer),
-        shift_pressed,
+        super::dispatch::CanvasPerPixel::of(ctx.renderer),
+        ctx.modifiers.shift_key(),
         ClickCore {
             document: doc,
-            mindmap_tree,
-            app_scene,
-            scene_cache,
-            interaction_mode,
+            mindmap_tree: ctx.mindmap_tree,
+            app_scene: ctx.app_scene,
+            scene_cache: ctx.scene_cache,
+            interaction_mode: ctx.interaction_mode,
         },
     );
-    tier.execute(
-        doc,
-        interaction_mode,
-        mindmap_tree,
-        app_scene,
-        renderer,
-        scene_cache,
-    );
+    tier.execute(&mut super::dispatch::cross_dispatch::rebuild_ctx!(ctx, doc));
 }
 
 /// Rebuild tree, connections, and borders like `rebuild_all`, but additionally
@@ -392,6 +385,92 @@ mod tests {
             world.doc.selection
         );
         assert_eq!(tier, RebuildTier::All);
+    }
+
+    /// Two distinct node ids from the fixture, smallest first.
+    fn two_node_ids(doc: &MindMapDocument) -> (String, String) {
+        let mut ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+        ids.sort();
+        assert!(ids.len() >= 2, "the testament fixture has at least two nodes");
+        (ids[0].clone(), ids[1].clone())
+    }
+
+    /// Shift on empty canvas keeps the selection; the same click
+    /// without Shift clears it.
+    ///
+    /// `handle_click` reads Shift from `ctx.modifiers` and the shell
+    /// cannot run without a live `Renderer` (TEST_CONVENTIONS §T8),
+    /// so this pins the flag at the core boundary the shell feeds.
+    /// Fails if the core stops honoring `shift_pressed` on a miss,
+    /// or if the two branches collapse into one.
+    #[test]
+    fn test_click_core_shift_on_empty_canvas_keeps_the_selection() {
+        let mut world = CoreWorld::new();
+        let node_id = first_node_id(&world.doc);
+        world.doc.selection = SelectionState::Single(node_id.clone());
+        handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), true, world.core());
+        assert!(
+            matches!(&world.doc.selection, SelectionState::Single(id) if *id == node_id),
+            "Shift+click on empty canvas must keep the selection, got {:?}",
+            world.doc.selection
+        );
+
+        let mut control = CoreWorld::new();
+        control.doc.selection = SelectionState::Single(node_id);
+        handle_click_core(None, None, FAR_OFF_CANVAS, unzoomed(), false, control.core());
+        assert!(
+            matches!(control.doc.selection, SelectionState::None),
+            "the same click without Shift must clear it, got {:?}",
+            control.doc.selection
+        );
+    }
+
+    /// Shift on a node adds it to the selection; without Shift it
+    /// replaces the selection. Fails if `shift_pressed` stops
+    /// reaching `compute_node_click_selection` through the core.
+    #[test]
+    fn test_click_core_shift_on_a_node_adds_it_to_the_selection() {
+        let mut world = CoreWorld::new();
+        let (first, second) = two_node_ids(&world.doc);
+        world.doc.selection = SelectionState::Single(first.clone());
+        let tier = handle_click_core(
+            Some(second.clone()),
+            None,
+            FAR_OFF_CANVAS,
+            unzoomed(),
+            true,
+            world.core(),
+        );
+        match &world.doc.selection {
+            SelectionState::Multi(ids) => {
+                assert!(
+                    ids.contains(&first) && ids.contains(&second) && ids.len() == 2,
+                    "Shift+click must add the node to the existing one, got {ids:?}"
+                );
+            }
+            other => panic!("Shift+click on a second node must produce Multi, got {other:?}"),
+        }
+        assert_eq!(
+            tier,
+            RebuildTier::All,
+            "a node selection change repaints node highlights"
+        );
+
+        let mut control = CoreWorld::new();
+        control.doc.selection = SelectionState::Single(first);
+        handle_click_core(
+            Some(second.clone()),
+            None,
+            FAR_OFF_CANVAS,
+            unzoomed(),
+            false,
+            control.core(),
+        );
+        assert!(
+            matches!(&control.doc.selection, SelectionState::Single(id) if *id == second),
+            "the same click without Shift must replace the selection, got {:?}",
+            control.doc.selection
+        );
     }
 
     /// Why `RebuildTier::for_click`'s `triggers_fired` flag cannot

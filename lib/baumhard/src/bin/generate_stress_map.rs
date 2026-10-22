@@ -239,7 +239,7 @@ fn make_node(id: String, parent_id: Option<String>, x: f64, y: f64, depth: usize
         "#30b082", "#b03080", "#3080b0", "#b08030", "#8030b0", "#30b0b0", "#b03030",
     ];
     let frame_color = frame_palette[depth % frame_palette.len()].to_string();
-    let text = format!("{}", id);
+    let text = id.to_string();
     let text_runs = vec![TextRun {
         start: 0,
         end: count_grapheme_clusters(&text),

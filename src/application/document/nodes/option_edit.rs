@@ -96,13 +96,9 @@ where
 /// rather than tri-state overrides).
 pub(super) fn apply_string_set(edit: &OptionEdit<String>, slot: &mut String) -> bool {
     match edit {
-        OptionEdit::Set(v) => {
-            if slot != v {
-                *slot = v.clone();
-                true
-            } else {
-                false
-            }
+        OptionEdit::Set(v) if slot != v => {
+            *slot = v.clone();
+            true
         }
         _ => false,
     }

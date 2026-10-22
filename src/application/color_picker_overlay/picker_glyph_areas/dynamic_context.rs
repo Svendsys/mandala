@@ -176,7 +176,7 @@ pub(super) struct PickerDynamicContext<'a> {
     /// per-font-size scales (`font_size`, `ring_font_size`,
     /// `cell_font_size`, `preview_size`) the dynamic mutator's `scale`
     /// field reads. Borrowed because the layout lives on
-    /// `ColorPickerState::Open.layout` for the same frame.
+    /// `OpenPicker::layout` for the same frame.
     layout: &'a ColorPickerLayout,
     /// Preview color in cosmic form — reused by title/hint/hex/preview
     /// (when not commit-hovered).

@@ -87,8 +87,10 @@ mod tests {
     fn test_numeric_check_flags_what_the_loader_refuses() {
         let mut map = MindMap::new_blank("t");
         map.nodes.insert("0".into(), node("0", None));
-        let mut border = baumhard::mindmap::model::GlyphBorderConfig::default();
-        border.font_size_pt = 0.0;
+        let border = baumhard::mindmap::model::GlyphBorderConfig {
+            font_size_pt: 0.0,
+            ..Default::default()
+        };
         map.nodes.get_mut("0").unwrap().style.border = Some(border);
 
         let violations = check(&map);

@@ -206,7 +206,7 @@ fn handle_pre_rebuild_side_effect(
 ) -> Option<ConsoleSideEffect> {
     match side_effect? {
         ConsoleSideEffect::ReplaceDocument(new_doc) => {
-            *doc = new_doc;
+            *doc = *new_doc;
             *mindmap_tree = None;
             *single_line_edit_state = SingleLineEditor::Closed;
             *color_picker_state = ColorPickerState::Closed;

@@ -172,7 +172,7 @@ pub(crate) fn apply_edge_type_to_selection(doc: &mut MindMapDocument, edge_type:
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;
     };
-    if !EDGE_TYPES.iter().any(|t| *t == edge_type) {
+    if !EDGE_TYPES.contains(&edge_type) {
         return false;
     }
     doc.set_edge_type(&er, edge_type)
@@ -186,7 +186,7 @@ pub(crate) fn apply_edge_display_mode_to_selection(doc: &mut MindMapDocument, mo
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;
     };
-    if !DISPLAY_MODES.iter().any(|m| *m == mode) {
+    if !DISPLAY_MODES.contains(&mode) {
         return false;
     }
     doc.set_edge_display_mode(&er, mode)

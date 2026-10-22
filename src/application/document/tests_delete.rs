@@ -1153,7 +1153,7 @@ fn test_orphan_selection_promotes_to_root_and_keeps_subtree() {
     let child_of_node = doc.mindmap.nodes.get(&child).unwrap().parent_id.clone();
     assert_eq!(child_of_node.as_deref(), Some(parent_having_child.as_str()));
 
-    let undo = doc.apply_orphan_selection(&[parent_having_child.clone()]);
+    let undo = doc.apply_orphan_selection(std::slice::from_ref(&parent_having_child));
     assert_eq!(undo.entries.len(), 1);
 
     // The orphaned node is now a root...
@@ -1184,7 +1184,7 @@ fn test_orphan_selection_undo_reattaches() {
         .expect("at least one non-root node");
     let original_parent = doc.mindmap.nodes.get(&non_root).unwrap().parent_id.clone();
 
-    let undo = doc.apply_orphan_selection(&[non_root.clone()]);
+    let undo = doc.apply_orphan_selection(std::slice::from_ref(&non_root));
     doc.undo_stack.push(UndoAction::ReparentNodes {
         entries: undo.entries,
         old_edges: undo.old_edges,
@@ -1205,7 +1205,7 @@ fn test_orphan_selection_on_root_is_noop() {
     let root = doc.mindmap.root_nodes().first().map(|n| n.id.clone()).unwrap();
     let orig_edges_len = doc.mindmap.edges.len();
 
-    let undo = doc.apply_orphan_selection(&[root.clone()]);
+    let undo = doc.apply_orphan_selection(std::slice::from_ref(&root));
     // The node is already a root, so there are entries (it's a valid
     // "move-to-last-root-index" op), but nothing meaningful changed:
     // parent_id is still None.

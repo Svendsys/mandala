@@ -48,7 +48,7 @@ fn execute_open(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
     match MindMapDocument::load(&path) {
         Ok(doc) => {
-            eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(doc));
+            eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(Box::new(doc)));
             ExecResult::ok_msg(format!("opened {}", path))
         }
         // The loader's message verbatim, prefixed with the path it

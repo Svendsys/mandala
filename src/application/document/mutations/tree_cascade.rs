@@ -217,9 +217,9 @@ mod tests {
             .find(|id| doc.mindmap.children_of(id).is_empty())
             .unwrap()
             .clone();
-        let before = doc.mindmap.nodes.get(&leaf).unwrap().position.clone();
+        let before = doc.mindmap.nodes.get(&leaf).unwrap().position;
         apply(&mut doc, &leaf);
-        let after = doc.mindmap.nodes.get(&leaf).unwrap().position.clone();
+        let after = doc.mindmap.nodes.get(&leaf).unwrap().position;
         assert_eq!(before.x, after.x);
         assert_eq!(before.y, after.y);
     }

@@ -76,9 +76,9 @@ pub(super) fn compute_positions(
 
     let mut sat_cell_positions = [(0.0_f32, 0.0_f32); SAT_CELL_COUNT];
     let mut val_cell_positions = [(0.0_f32, 0.0_f32); VAL_CELL_COUNT];
-    for i in 0..SAT_CELL_COUNT {
+    for (i, slot) in sat_cell_positions.iter_mut().enumerate() {
         let base = (center.0 - bar_span * 0.5 + i as f32 * step, center.1);
-        sat_cell_positions[i] = apply_ink(
+        *slot = apply_ink(
             base,
             &geometry.arm_left_ink_offsets,
             &geometry.arm_right_ink_offsets,
@@ -86,9 +86,9 @@ pub(super) fn compute_positions(
             cell_fs,
         );
     }
-    for i in 0..VAL_CELL_COUNT {
+    for (i, slot) in val_cell_positions.iter_mut().enumerate() {
         let base = (center.0, center.1 - bar_span * 0.5 + i as f32 * step);
-        val_cell_positions[i] = apply_ink(
+        *slot = apply_ink(
             base,
             &geometry.arm_top_ink_offsets,
             &geometry.arm_bottom_ink_offsets,

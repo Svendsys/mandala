@@ -664,13 +664,8 @@ pub(in crate::application::app) fn dispatch_action(
             if let Some(doc) = ctx.document.as_mut() {
                 close_single_line_edit(
                     matches!(action, Action::LabelEditCommit),
-                    doc,
-                    ctx.interaction_mode,
                     ctx.single_line_edit_state,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
+                    &mut super::cross_dispatch::rebuild_ctx!(ctx, doc),
                 );
             }
             DispatchOutcome::Handled
@@ -715,12 +710,7 @@ pub(in crate::application::app) fn dispatch_action(
                 super::super::single_line_edit::apply_single_line_edit_action(
                     action,
                     ctx.single_line_edit_state,
-                    doc,
-                    ctx.interaction_mode,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
+                    &mut super::cross_dispatch::rebuild_ctx!(ctx, doc),
                 );
             }
             DispatchOutcome::Handled
@@ -958,11 +948,15 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
                 *cursor = delete_before_cursor(buffer, *cursor);
             }
         }
-        Action::LabelEditDeleteForward => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                *cursor = delete_at_cursor(buffer, *cursor);
-            }
+        Action::LabelEditDeleteForward if *cursor < grapheme_chad::count_grapheme_clusters(buffer) => {
+            *cursor = delete_at_cursor(buffer, *cursor);
         }
+        // At the end of the buffer delete-forward is a no-op, and it
+        // says so in its own arm rather than falling through to the
+        // catch-all, so an arm added above `_` later cannot receive it.
+        // The guard above is clippy's `collapsible_match` form (the
+        // nested `if` the siblings use trips it on the last arm only).
+        Action::LabelEditDeleteForward => {}
         _ => {}
     }
     *cursor != before || buffer.len() != len_before

@@ -390,11 +390,7 @@ fn zip_map_children(
     let mut option_target_child = get_target(&mut gfx_tree.arena, target_id).first_child();
 
     let mut paired: usize = 0;
-    loop {
-        let (mutator_child_id, target_child_id) = match (option_mutator_child, option_target_child) {
-            (Some(m), Some(t)) => (m, t),
-            _ => break,
-        };
+    while let (Some(mutator_child_id), Some(target_child_id)) = (option_mutator_child, option_target_child) {
         // Look up the next-siblings *before* the force-apply that
         // takes `&mut gfx_tree.arena`, so the read-only borrows end
         // cleanly.
@@ -499,7 +495,7 @@ pub fn repeat_while(
 ) {
     let condition_matches = {
         let target = get_target(&mut gfx_tree.arena, target_id).get_mut();
-        condition.test(&target)
+        condition.test(target)
     };
     if condition_matches {
         debug!(

@@ -126,10 +126,15 @@ pub enum UndoAction {
         before_max: Option<f32>,
     },
     /// Snapshot of the entire `Canvas` taken before a document action
-    /// (theme switch, etc.) mutated it. The canvas is small and cloning
-    /// the whole thing is cheaper than tracking field-level diffs, and
-    /// trivially correct.
-    CanvasSnapshot { canvas: Canvas },
+    /// (theme switch, etc.) mutated it. Cloning the whole thing is
+    /// cheaper than tracking field-level diffs, and trivially correct.
+    ///
+    /// **Boxed.** Held inline, the canvas alone sized this enum at over
+    /// a kilobyte (clippy's `large_enum_variant` measured 1216 bytes),
+    /// and the undo stack is a `Vec<UndoAction>`, so every entry — a
+    /// one-field zoom edit included — would occupy that much. Boxing
+    /// leaves the cost with the snapshots that actually need it.
+    CanvasSnapshot { canvas: Box<Canvas> },
     /// A node's AABB (`position` + `size`) was atomically rewritten
     /// — the release-commit of a node-resize drag, or the
     /// `node resize` console verb. Captures the pre-edit pair so

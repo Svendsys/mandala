@@ -470,8 +470,9 @@ impl MindMapDocument {
             }
         }
         if changed {
-            self.undo_stack
-                .push(UndoAction::CanvasSnapshot { canvas: snapshot });
+            self.undo_stack.push(UndoAction::CanvasSnapshot {
+                canvas: Box::new(snapshot),
+            });
             self.dirty = true;
         }
         changed

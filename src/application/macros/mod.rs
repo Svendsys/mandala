@@ -232,7 +232,7 @@ impl MacroRegistry {
     pub fn contains(&self, id: &str) -> bool {
         self.macros
             .get(id)
-            .map_or(false, |slots| slots.iter().any(Option::is_some))
+            .is_some_and(|slots| slots.iter().any(Option::is_some))
     }
 
     /// Number of distinct ids with at least one tier slot occupied.

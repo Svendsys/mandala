@@ -36,7 +36,7 @@ pub(in crate::application::app) fn compute_picker_geometry(
     surface_size: (f32, f32),
 ) -> Option<(crate::application::color_picker::ColorPickerOverlayGeometry, bool)> {
     use crate::application::color_picker::{
-        compute_color_picker_layout, ColorPickerOverlayGeometry, ColorPickerState,
+        compute_color_picker_layout, ColorPickerOverlayGeometry, OpenPicker,
     };
 
     // Extract only the fields `compute_color_picker_layout` needs,
@@ -61,9 +61,9 @@ pub(in crate::application::app) fn compute_picker_geometry(
         arm_left_ink_offsets,
         arm_right_ink_offsets,
         preview_ink_offset,
-    ) = match state {
-        ColorPickerState::Closed => return None,
-        ColorPickerState::Open {
+    ) = match state.as_open() {
+        None => return None,
+        Some(OpenPicker {
             hue_deg,
             sat,
             val,
@@ -82,7 +82,7 @@ pub(in crate::application::app) fn compute_picker_geometry(
             arm_right_ink_offsets,
             preview_ink_offset,
             ..
-        } => {
+        }) => {
             let (eff_hue, eff_sat, eff_val) = hover_preview.unwrap_or((*hue_deg, *sat, *val));
             (
                 eff_hue,
@@ -149,8 +149,8 @@ pub(in crate::application::app) fn compute_picker_geometry(
     // center_override, ink-offset measurement update).
     let (surface_w, surface_h) = surface_size;
     let layout = compute_color_picker_layout(&geometry, surface_w, surface_h);
-    let layout_changed = if let ColorPickerState::Open { layout: cached, .. } = state {
-        let changed = cached.as_ref().map_or(true, |c| c != &layout);
+    let layout_changed = if let Some(OpenPicker { layout: cached, .. }) = state.as_open_mut() {
+        let changed = cached.as_ref() != Some(&layout);
         *cached = Some(layout);
         changed
     } else {

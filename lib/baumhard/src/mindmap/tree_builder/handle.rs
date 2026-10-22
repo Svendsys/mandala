@@ -84,12 +84,12 @@ pub fn handle_identity_sequence<E: HandleVisual>(elements: &[E]) -> Vec<usize> {
 /// same kind-derived channel across drag frames.
 pub fn build_handle_tree<E: HandleVisual>(elements: &[E]) -> Tree<GfxElement, GfxMutator> {
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
-    let mut unique_id: usize = 1;
 
-    for elem in elements {
+    for (idx, elem) in elements.iter().enumerate() {
+        // Ids run 1.. in insertion order.
+        let unique_id = idx + 1;
         let (channel, area) = handle_layout(elem);
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
-        unique_id += 1;
         tree.root.append_value(element_node, &mut tree.arena);
     }
 

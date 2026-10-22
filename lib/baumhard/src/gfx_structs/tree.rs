@@ -71,6 +71,14 @@ pub struct MutatorTree<T> {
     pub root: NodeId,
 }
 
+/// Not derived: `derive(Default)` would demand `T: Default`, which the
+/// tree does not need — only `T::void()`, via [`MutatorTree::new`].
+impl<T: TreeNode + Clone> Default for MutatorTree<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: TreeNode + Clone> MutatorTree<T> {
     /// Construct an empty mutator tree rooted at a `T::void()`
     /// node. O(1); one arena allocation for the root.
@@ -99,7 +107,7 @@ impl Applicable<Tree<GfxElement, GfxMutator>> for MutatorTree<GfxMutator> {
         // safe default is to drop the bbox memos and let the next
         // query recompute. Cheap (one Cell write each).
         target.invalidate_caches();
-        walk_tree_from(target, &self, target.root, self.root);
+        walk_tree_from(target, self, target.root, self.root);
         target.invalidate_caches();
     }
 }

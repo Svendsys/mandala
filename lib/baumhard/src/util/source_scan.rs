@@ -478,10 +478,10 @@ pub(crate) fn workspace_shell_scripts() -> Vec<PathBuf> {
 /// `license-headers.yml` today.
 ///
 /// CI runs commands, so it states rules about how this repository is
-/// built in exactly the way the scripts do. It runs bare `./test.sh`
-/// today and nothing else, which is the reason to read it now rather
-/// than after the first `cargo` line is added to a step and quietly
-/// escapes a scan that stopped at the file extension.
+/// built in exactly the way the scripts do. It runs `./test.sh --lint`
+/// today and no `cargo` line of its own, which is the reason to read
+/// it now rather than after the first `cargo` line is added to a step
+/// and quietly escapes a scan that stopped at the file extension.
 pub(crate) fn workspace_ci_workflows() -> Vec<PathBuf> {
     let mut out = collect_by_extension(&[WORKFLOW_ROOT], ".yml", false);
     out.extend(collect_by_extension(&[WORKFLOW_ROOT], ".yaml", false));
