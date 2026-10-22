@@ -283,7 +283,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
         let cm = self.input.document.mutation_registry.get(id).cloned();
         let Some(cm) = cm else {
-            log::warn!("macro step: unknown custom-mutation id '{}'", id);
+            log::warn!("macros: CustomMutation step: unknown custom-mutation id '{}'", id);
             return false;
         };
         let now = super::now_ms() as u64;

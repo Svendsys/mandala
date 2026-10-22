@@ -635,6 +635,16 @@ industrial cost/benefit reasoning. This is not license for speculation.
   area is what they can name in a bug report. Bare messages with no
   prefix are not acceptable. Normalize prefixes in files you are
   already editing rather than in a repository-wide sweep.
+- **A log line is also a reply.** Under `--ipc`, every `warn!` /
+  `error!` a command's execution emits on the main thread is carried
+  in that command's reply as a warning, in the line's own words
+  (`baumhard::util::log::capture`; `format/ipc.md` §Warnings). So a
+  degrade an agent should be able to *branch* on, rather than read,
+  gets a stable code at the site that logs it, as a key-value:
+  `log::warn!(code = GATE_REJECTED_CODE; "macros: …")`. The constant
+  lives beside the site, and the code is API once it ships. A degrade
+  that does not log is invisible there as well as on stderr, which is
+  one more reason it must.
 
 ## §10 No backwards-compatibility assumptions until V1
 

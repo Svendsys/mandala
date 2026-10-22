@@ -44,6 +44,9 @@ pub(crate) mod code {
     pub(crate) const INVALID_PARAMS: &str = "invalid_params";
     pub(crate) const OVERLOADED: &str = "overloaded";
     pub(crate) const REPLY_TOO_LARGE: &str = "reply_too_large";
+    pub(crate) const NO_DOCUMENT: &str = "no_document";
+    pub(crate) const NOT_FOUND: &str = "not_found";
+    pub(crate) const CONSOLE_ERROR: &str = "console_error";
     pub(crate) const INTERNAL: &str = "internal";
 
     /// Every code above, for the registry test.
@@ -54,6 +57,9 @@ pub(crate) mod code {
         INVALID_PARAMS,
         OVERLOADED,
         REPLY_TOO_LARGE,
+        NO_DOCUMENT,
+        NOT_FOUND,
+        CONSOLE_ERROR,
         INTERNAL,
     ];
 }
@@ -86,8 +92,60 @@ pub(crate) struct Reply {
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<Value>,
+    /// Boxed so a `Reply` stays small enough to travel as the `Err`
+    /// side of a handler's parse helpers (`Result<_, Reply>`) without
+    /// every `Ok` paying for the error body.
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<ErrorBody>,
+    error: Option<Box<ErrorBody>>,
+    /// The command's diagnostics (`format/ipc.md` §Warnings). Omitted
+    /// when empty, on success and failure alike.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<Warning>,
+}
+
+/// One entry of a reply's `warnings` array.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Warning {
+    /// Stable snake_case identifier; API, like an error code
+    /// ([`warning`] lists every one this build emits).
+    pub(crate) code: String,
+    /// What happened, in the words the log site used.
+    pub(crate) message: String,
+}
+
+/// Warning codes this build emits. **Codes are API**, held to
+/// `format/ipc.md`'s warning registry table by
+/// `test_every_emitted_warning_code_is_in_the_registry`.
+///
+/// A coded log site attaches its code as the record's `code`
+/// key-value, so the code is chosen once, where the degrade happens.
+/// The site's constant lives beside it, in the module that owns the
+/// degrade, and is listed in the test-only `ALL` below. Uncoded
+/// records are classified by level as
+/// [`LOG_WARN`](warning::LOG_WARN) /
+/// [`LOG_ERROR`](warning::LOG_ERROR).
+pub(crate) mod warning {
+    /// A `warn!` the command's execution emitted with no code of its
+    /// own; `message` is the log line.
+    pub(crate) const LOG_WARN: &str = "log_warn";
+    /// An `error!` the command's execution emitted with no code of
+    /// its own; `message` is the log line.
+    pub(crate) const LOG_ERROR: &str = "log_error";
+    /// The command emitted more diagnostics than one reply carries;
+    /// `message` says how many were left out.
+    pub(crate) const WARNINGS_TRUNCATED: &str = "warnings_truncated";
+
+    /// Every code this build emits, for the registry test: the three
+    /// above, and each coded log site's constant.
+    #[cfg(test)]
+    pub(crate) const ALL: &[&str] = &[
+        LOG_WARN,
+        LOG_ERROR,
+        WARNINGS_TRUNCATED,
+        // A macro step was refused by its tier's privilege gate and
+        // the rest of the macro aborted.
+        crate::application::macros::GATE_REJECTED_CODE,
+    ];
 }
 
 #[derive(Debug, Serialize)]
@@ -105,6 +163,7 @@ impl Reply {
             ok: true,
             result: Some(result),
             error: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -118,12 +177,19 @@ impl Reply {
             id,
             ok: false,
             result: None,
-            error: Some(ErrorBody {
+            error: Some(Box::new(ErrorBody {
                 code,
                 message: message.into(),
                 data,
-            }),
+            })),
+            warnings: Vec::new(),
         }
+    }
+
+    /// The same reply, carrying `warnings`.
+    pub(crate) fn with_warnings(mut self, warnings: Vec<Warning>) -> Self {
+        self.warnings = warnings;
+        self
     }
 
     /// `invalid_params` naming the offending parameter in
@@ -646,6 +712,44 @@ mod tests {
         assert_eq!(reply["id"], Value::Null);
         assert_eq!(reply["error"]["code"], json!("parse_error"));
         assert_eq!(reply["error"]["data"]["line"], json!(12));
+    }
+
+    /// Warning codes are API on the same terms as error codes, and
+    /// have their own registry table.
+    #[test]
+    fn test_every_emitted_warning_code_is_in_the_registry() {
+        use baumhard::util::doc_fixtures::{documented_paragraph, repo_path};
+
+        let table = documented_paragraph(
+            &repo_path("format/ipc.md"),
+            "### Warnings — per-command diagnostics",
+            "| warning code | meaning |",
+        );
+        for emitted in warning::ALL {
+            assert!(
+                table.contains(&format!("| `{emitted}` |")),
+                "warning code `{emitted}` is emitted but has no row in format/ipc.md's warning table"
+            );
+        }
+    }
+
+    #[test]
+    fn test_warnings_are_omitted_when_empty_and_carried_when_present() {
+        assert!(
+            wire(Frame::Reply(Reply::ok(json!(1), json!({}))))
+                .get("warnings")
+                .is_none(),
+            "an empty warnings array is omitted"
+        );
+        let warned = Reply::error(json!(2), code::INTERNAL, "boom", None).with_warnings(vec![Warning {
+            code: warning::LOG_WARN.into(),
+            message: "area: degraded".into(),
+        }]);
+        assert_eq!(
+            wire(Frame::Reply(warned))["warnings"],
+            json!([{ "code": "log_warn", "message": "area: degraded" }]),
+            "a failed command's diagnostics still reach the client"
+        );
     }
 
     /// **Codes are API, and the registry table is where the API is

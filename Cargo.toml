@@ -65,7 +65,13 @@ indextree = { version = "4.9.2", features = ["serde"] }
 # that, and separately pins the `log` version the `compile_error!`
 # above was read in, so a bump has to re-verify the citation rather
 # than inherit it.
-log = { version = "0.4.34", features = ["release_max_level_warn"] }
+#
+# `kv`: lets a log site attach a stable diagnostic code beside its
+# message (`log::warn!(code = SOME_CODE; "area: …")`). Nothing is
+# printed differently: env_logger's own `kv` feature stays off. The
+# reader is `baumhard::util::log::capture`, which hands the code to the
+# IPC reply's `warnings` array (`format/ipc.md` §Warnings).
+log = { version = "0.4.34", features = ["release_max_level_warn", "kv"] }
 # Two members name it, so it lives here: `mandala_derive` writes a
 # proc macro with it, and baumhard's dev-dependency asks for
 # `span-locations` on top (see `lib/baumhard/Cargo.toml`).

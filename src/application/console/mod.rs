@@ -227,6 +227,33 @@ pub enum ExecResult {
     Lines(Vec<OutputLine>),
 }
 
+/// What running one console line produced, before anything renders
+/// it. The console modal folds it into its scrollback. The IPC
+/// `act.console` command returns it to the client. Neither path
+/// changes what the verb did.
+#[derive(Debug)]
+pub enum LineOutcome {
+    /// The line was blank, so nothing ran.
+    Blank,
+    /// The line's head names no verb. Carries the head token.
+    Unknown(String),
+    /// A verb ran and returned this.
+    Ran(ExecResult),
+}
+
+impl LineOutcome {
+    /// The failure text the console shows for this outcome, or
+    /// `None` when the line succeeded or was blank. One spelling,
+    /// shared by the scrollback, the log and the IPC reply.
+    pub fn failure(&self) -> Option<String> {
+        match self {
+            LineOutcome::Unknown(head) => Some(format!("unknown command: {head}")),
+            LineOutcome::Ran(ExecResult::Err(message)) => Some(message.clone()),
+            LineOutcome::Blank | LineOutcome::Ran(ExecResult::Ok(_) | ExecResult::Lines(_)) => None,
+        }
+    }
+}
+
 /// One line of multi-line console output. Default-shaped (font
 /// family unset) unless the producing command pins a face — used
 /// today by `font list` so each row renders in the family it

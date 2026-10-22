@@ -79,6 +79,15 @@ impl Renderer {
         self.camera.screen_to_canvas(Vec2::new(screen_x, screen_y))
     }
 
+    /// The inverse of [`Self::screen_to_canvas`]: where a canvas
+    /// point lands on the surface under the current camera.
+    // Native-only consumer: the IPC command target places a synthetic
+    // pointer given in canvas space.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn canvas_to_screen(&self, canvas: Vec2) -> Vec2 {
+        self.camera.canvas_to_screen(canvas)
+    }
+
     /// Size of one screen pixel in canvas units — used to convert
     /// screen-space tolerances (e.g. click tolerance) to canvas-space
     /// distances that stay visually consistent across zoom.

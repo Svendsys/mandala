@@ -286,6 +286,16 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::ConsoleScrollPageDown
         | Action::ConsoleScrollEnd
         | Action::ConsoleScrollHome => {
+            // Every Console* body edits the open modal. With the
+            // console closed there is nothing for one to act on (the
+            // keyboard only reaches here while it is open), so a macro
+            // step or an IPC `act.action` sending one reports that
+            // nothing ran, as the hitless `DoubleClickActivate` does,
+            // rather than claiming a keystroke into a modal that is
+            // not there.
+            if !ctx.console_state.is_open() {
+                return DispatchOutcome::Unhandled;
+            }
             super::super::console_input::dispatch_console_action(&action, ctx);
             DispatchOutcome::Handled
         }
@@ -600,7 +610,7 @@ pub(in crate::application::app) fn dispatch_action(
             // Nothing ran, and the caller — the native macro loop
             // reads this for `any_ran` — is told so.
             PanCanvasRoute::Refuse => {
-                log::debug!("PanCanvas ignored (uncommitted gesture in flight); state stays put");
+                log::debug!("dispatch: PanCanvas ignored (uncommitted gesture in flight); state stays put");
                 DispatchOutcome::Unhandled
             }
         },
@@ -730,13 +740,16 @@ pub(in crate::application::app) fn dispatch_action(
                 Action::SaveDocumentAs(_) => "save",
                 Action::NewDocumentAt(_) => "new",
                 _ => {
-                    log::error!("fs-variant fan-out missed inner-match variant: {:?}", action,);
+                    log::error!(
+                        "dispatch: fs-variant fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
                     return DispatchOutcome::Handled;
                 }
             };
             let line = format!("{} {}", verb, quote_console_arg(path));
             if let Some(doc) = ctx.document.as_mut() {
-                crate::application::app::console_input::exec::execute_console_line(
+                let outcome = crate::application::app::console_input::exec::execute_console_line(
                     &line,
                     ctx.console_state,
                     ctx.single_line_edit_state,
@@ -750,8 +763,13 @@ pub(in crate::application::app) fn dispatch_action(
                     ctx.scene_cache,
                     ctx.macros,
                 );
+                crate::application::app::console_input::exec::report_console_line(
+                    &line,
+                    outcome,
+                    ctx.console_state,
+                );
             } else {
-                log::warn!("{}: no document loaded; skipping '{}'", verb, line);
+                log::warn!("dispatch: {}: no document loaded; skipping '{}'", verb, line);
             }
             DispatchOutcome::Handled
         }
@@ -779,7 +797,7 @@ pub(in crate::application::app) fn dispatch_action(
                 // The guard just proved `Some`; a mismatch means
                 // `picker_op_for` is not a pure function any more.
                 // Fail safe per CODE_CONVENTIONS §9.
-                log::error!("picker arm guard/body disagreement on {:?}", a);
+                log::error!("dispatch: picker arm guard/body disagreement on {:?}", a);
                 return DispatchOutcome::Unhandled;
             };
             dispatch_picker_op(op, ctx)
@@ -790,7 +808,7 @@ pub(in crate::application::app) fn dispatch_action(
         // respective modal handlers. Falling through to `Unhandled`
         // lets the keyboard handler's contextual resolution own them.
         _ => {
-            log::debug!("dispatch_action: {:?} not handled at Document context", action);
+            log::debug!("dispatch: {:?} not handled at Document context", action);
             DispatchOutcome::Unhandled
         }
     }
@@ -820,9 +838,7 @@ fn open_editor_for_edge_selection(clean: bool, ctx: &mut InputHandlerContext<'_>
         return;
     };
     let Some(target) = resolve_single_line_target(&doc.selection) else {
-        log::debug!(
-            "open_editor_for_edge_selection: selection is not an edge label / portal endpoint; no-op"
-        );
+        log::debug!("dispatch: edit-selection: selection is not an edge label / portal endpoint; no-op");
         return;
     };
     open_single_line_edit(
@@ -852,12 +868,12 @@ fn dispatch_picker_op(op: PickerOp, ctx: &mut InputHandlerContext<'_>) -> Dispat
         standalone,
         ctx.document.is_some(),
     ) {
-        log::debug!("picker action {:?} declined: {:?}", op, reason);
+        log::debug!("dispatch: picker action {:?} declined: {:?}", op, reason);
         return DispatchOutcome::Unhandled;
     }
     // `picker_decline_reason` just proved the document is present.
     let Some(doc) = ctx.document.as_mut() else {
-        log::error!("picker arm: decline check and document borrow disagree");
+        log::error!("dispatch: picker arm: decline check and document borrow disagree");
         return DispatchOutcome::Unhandled;
     };
     match op {
@@ -903,7 +919,10 @@ fn dispatch_picker_op(op: PickerOp, ctx: &mut InputHandlerContext<'_>) -> Dispat
             // the nudge, so the op did not take effect — report
             // that rather than a blanket `Handled`.
             if !apply_picker_nudge(nudge, ctx.color_picker_state, doc, ctx.picker_hover) {
-                log::debug!("picker nudge {:?} did not apply; reporting Unhandled", nudge);
+                log::debug!(
+                    "dispatch: picker nudge {:?} did not apply; reporting Unhandled",
+                    nudge
+                );
                 return DispatchOutcome::Unhandled;
             }
         }
@@ -990,6 +1009,19 @@ pub(in crate::application::app) fn dispatch_macro(macro_id: &str, ctx: &mut Inpu
     super::macro_core::dispatch_macro(macro_id, &mut target)
 }
 
+/// Run an anonymous step sequence through the same gated step loop
+/// [`dispatch_macro`] runs a registered macro through, as a macro
+/// from tier `source`. `label` names the sequence in diagnostics.
+pub(in crate::application::app) fn run_macro_steps(
+    label: &str,
+    steps: &[crate::application::macros::MacroStep],
+    source: crate::application::source_tier::SourceTier,
+    ctx: &mut InputHandlerContext<'_>,
+) -> bool {
+    let mut target = NativeMacroDispatchTarget { ctx };
+    super::macro_core::run_macro_steps(label, steps, source, &mut target)
+}
+
 /// Native impl of [`super::macro_core::MacroDispatchTarget`].
 /// Wraps `&mut InputHandlerContext` and forwards each operation to
 /// the existing native helpers (`dispatch_action`,
@@ -1018,7 +1050,7 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
             .as_ref()
             .and_then(|d| d.mutation_registry.get(id).cloned());
         let Some(cm) = cm else {
-            log::warn!("macro step: unknown custom-mutation id '{}'", id);
+            log::warn!("macros: CustomMutation step: unknown custom-mutation id '{}'", id);
             return false;
         };
         let Some(doc) = self.ctx.document.as_mut() else {
@@ -1055,10 +1087,13 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
         // matches pre-Track-B behavior where the warn arm left
         // `any_ran` unchanged.
         let Some(doc) = self.ctx.document.as_mut() else {
-            log::warn!("macro step ConsoleLine: no document loaded; skipping '{}'", line,);
+            log::warn!(
+                "macros: ConsoleLine step: no document loaded; skipping '{}'",
+                line
+            );
             return false;
         };
-        crate::application::app::console_input::exec::execute_console_line(
+        let outcome = crate::application::app::console_input::exec::execute_console_line(
             line,
             self.ctx.console_state,
             self.ctx.single_line_edit_state,
@@ -1071,6 +1106,11 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
             self.ctx.renderer,
             self.ctx.scene_cache,
             self.ctx.macros,
+        );
+        crate::application::app::console_input::exec::report_console_line(
+            line,
+            outcome,
+            self.ctx.console_state,
         );
         true
     }
@@ -1126,7 +1166,7 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
     };
 
     let Some(h) = hit else {
-        log::debug!("FastResizeStart: no DispatchHit; skipping");
+        log::debug!("dispatch: FastResizeStart: no DispatchHit; skipping");
         return;
     };
     // Snapshot press-time hit out of PendingRight. If the state
@@ -1139,19 +1179,19 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
             ..
         } => (hit_node.clone(), *hit_section_idx),
         _ => {
-            log::debug!("FastResizeStart: drag_state isn't PendingRight; skipping");
+            log::debug!("dispatch: FastResizeStart: drag_state isn't PendingRight; skipping");
             return;
         }
     };
     let Some(node_id) = hit_node else {
         // Empty-canvas right-press — no fast-resize target.
-        log::debug!("FastResizeStart: press landed on empty canvas; skipping");
+        log::debug!("dispatch: FastResizeStart: press landed on empty canvas; skipping");
         *ctx.drag_state = DragState::None;
         return;
     };
 
     let Some(doc) = ctx.document.as_mut() else {
-        log::debug!("FastResizeStart: no document; skipping");
+        log::debug!("dispatch: FastResizeStart: no document; skipping");
         *ctx.drag_state = DragState::None;
         return;
     };
@@ -1160,13 +1200,16 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
     // target (whole-node hit, including single-section nodes).
     if let Some(section_idx) = hit_section_idx {
         let Some(node) = doc.mindmap.nodes.get(&node_id) else {
-            log::debug!("FastResizeStart: node '{}' not found; skipping", node_id);
+            log::debug!(
+                "dispatch: FastResizeStart: node '{}' not found; skipping",
+                node_id
+            );
             *ctx.drag_state = DragState::None;
             return;
         };
         let Some(section) = node.sections.get(section_idx) else {
             log::debug!(
-                "FastResizeStart: section[{}] not found on '{}'; skipping",
+                "dispatch: FastResizeStart: section[{}] not found on '{}'; skipping",
                 section_idx,
                 node_id
             );
@@ -1176,7 +1219,7 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         let Some(start_size) = section.size else {
             // fill-parent section — no AABB to anchor against.
             log::info!(
-                "FastResizeStart: section[{}] of '{}' is fill-parent (size=None); cannot fast-resize",
+                "dispatch: FastResizeStart: section[{}] of '{}' is fill-parent (size=None); cannot fast-resize",
                 section_idx,
                 node_id
             );
@@ -1203,7 +1246,10 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         )));
     } else {
         let Some(node) = doc.mindmap.nodes.get(&node_id) else {
-            log::debug!("FastResizeStart: node '{}' not found; skipping", node_id);
+            log::debug!(
+                "dispatch: FastResizeStart: node '{}' not found; skipping",
+                node_id
+            );
             *ctx.drag_state = DragState::None;
             return;
         };

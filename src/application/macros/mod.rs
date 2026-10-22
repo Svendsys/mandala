@@ -78,6 +78,15 @@ impl SourceTier {
     }
 }
 
+/// The diagnostic code a privilege-gate rejection is logged under
+/// (`log::warn!(code = GATE_REJECTED_CODE; …)`), so a caller collecting
+/// diagnostics can tell "the gate refused a step and the rest of the
+/// macro aborted" from an ordinary degrade without parsing prose. The
+/// IPC reply's `warnings` array carries it as `macro_gate_rejected`
+/// (`format/ipc.md` §Warnings). A code is API there, so this string
+/// does not change without a protocol bump.
+pub const GATE_REJECTED_CODE: &str = "macro_gate_rejected";
+
 /// One step inside a macro. A macro is a sequence of these executed
 /// atomically. Each variant routes through one of the application's
 /// existing dispatch surfaces, so adding a new step kind is a matter

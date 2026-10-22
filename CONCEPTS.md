@@ -3189,9 +3189,21 @@ directory on its path that another user could rename it out of, and
 replaces an existing path only when it is provably a stale socket of
 ours.
 
-**Vision:** IPC-03 adds the command registry and the `act` bridge to
-`dispatch_action` / `dispatch_macro` / the console; the families after
-it (query, scene, input, capture, clock, events) each add one module.
+Commands live in a registry (`ipc/registry.rs`), one module per family
+under `ipc/commands/`, and `describe` renders that same table, so the
+discovery surface cannot drift from the dispatch surface. Each command
+runs inside a log-capture window (`baumhard::util::log::capture`), so
+every `warn!` / `error!` it causes also reaches its reply's
+`warnings`. The `act` family is the dispatch bridge: `act.action`,
+`act.console` and `act.macro` reach `dispatch_action`, the console's
+`execute_console_line` and the macro dispatcher's gated step loop
+through `CommandTarget`, the app-side execution context. There is no
+parallel control path, so undo, gates and side effects match the
+keystroke each stands in for.
+
+**Vision:** the families after `act` (query, scene, input, capture,
+clock, events) each add one module and one line to the registry's
+family table.
 **Caveat:** Unix-only today — Windows fails `--ipc` at startup until
 the named-pipe adapter lands, and the browser has no socket at all
 (`CLAUDE.md` "Dual-target status").
@@ -3246,7 +3258,11 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    `MacroRegistry`, and `dispatch_macro`. Steps fan out to
    `dispatch_action`, `apply_keybind_custom_mutation`, or
    `execute_console_line` depending on `MacroStep` kind, so plugin
-   authors and macro recorders share one runtime path. **Unknown
+   authors and macro recorders share one runtime path. That path is
+   `run_macro_steps`, the gated step loop `dispatch_macro` calls
+   after its lookup. IPC's `act.macro` runs an anonymous step list
+   through it too, so there is one privilege gate however a macro
+   arrives. **Unknown
    macro id falls through** to the custom-mutation tier, so a
    typo'd or half-loaded macros file doesn't swallow the keystroke.
 3. `keybinds.custom_mutation_for(...)` — per-node custom mutations.

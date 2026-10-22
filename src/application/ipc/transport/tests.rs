@@ -22,7 +22,15 @@ use baumhard::util::test_temp::TempDir;
 use serde_json::{json, Value};
 
 use super::*;
-use crate::application::ipc::execute;
+use crate::application::ipc::{execute, Executed};
+
+/// The registry with no app attached, as the main thread runs it
+/// before the window exists. The loopback tests exercise the
+/// transport, so the bootstrap commands, which need no app, are what
+/// they send.
+fn execute_detached(request: &crate::application::ipc::envelope::IpcRequest) -> Executed {
+    execute(request, None)
+}
 
 const MAP: &str = "maps/fixture.mindmap.json";
 
@@ -91,7 +99,7 @@ impl Harness {
         let stop = Arc::clone(&self.stop);
         self.main = Some(thread::spawn(move || {
             while wakes.recv().is_ok() && !stop.load(Ordering::SeqCst) {
-                while server.drain(execute).backlog {}
+                while server.drain(execute_detached).backlog {}
             }
             server
         }));
@@ -216,14 +224,14 @@ fn test_ipc_loopback_wakes_an_idle_main_thread() {
         .wakes()
         .recv_timeout(FRAME_TIMEOUT)
         .expect("a connection wakes the loop");
-    harness.server().drain(execute);
+    harness.server().drain(execute_detached);
 
     client.send(r#"{"id":"w","cmd":"ping"}"#);
     harness
         .wakes()
         .recv_timeout(FRAME_TIMEOUT)
         .expect("a request wakes the loop");
-    assert_eq!(harness.server().drain(execute), DrainOutcome::default());
+    assert_eq!(harness.server().drain(execute_detached), DrainOutcome::default());
     assert_eq!(client.next()["id"], json!("w"));
 }
 

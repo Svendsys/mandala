@@ -7,7 +7,7 @@
 use crate::application::color_picker::ColorPickerState;
 use crate::application::console::commands::Command;
 use crate::application::console::parser::{parse, Args, ParseResult};
-use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ConsoleState, ExecResult};
+use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ConsoleState, ExecResult, LineOutcome};
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
@@ -20,13 +20,22 @@ use super::super::scene_rebuild::rebuild_all;
 use super::super::single_line_edit::{open_single_line_edit, SingleLineEditTarget, SingleLineEditor};
 use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_in_font};
 
-/// Parse and execute a console line. Drains deferred modal handoffs
-/// (`open_single_line_edit`, `open_color_picker`), custom mutation apply
-/// requests (`run_mutation`, needs tree access), binding overlay
-/// updates (`bind_mutation` / `unbind_mutation`, need
-/// `ResolvedKeybinds` access), and alias writes (`set_alias`).
-/// Appends the result to the scrollback; rebuilds the scene on any
+/// Parse and execute a console line, and return what the verb
+/// produced. Drains deferred modal handoffs (`open_single_line_edit`,
+/// `open_color_picker`), custom mutation apply requests
+/// (`run_mutation`, needs tree access), binding overlay updates
+/// (`bind_mutation` / `unbind_mutation`, need `ResolvedKeybinds`
+/// access), and alias writes (`set_alias`). Rebuilds the scene on any
 /// document mutation.
+///
+/// **Writes nothing to the scrollback.** Rendering the outcome is the
+/// caller's decision, because the callers do not agree on where it
+/// goes. A human typing at the console, a key binding or macro step
+/// running a line, and the IPC `act.console` command all reach this
+/// same parse → execute → side-effect drain. Only the first two
+/// report the outcome back into the console, through
+/// [`report_console_line`]. IPC returns it in its reply and leaves an
+/// open console's scrollback alone (`format/ipc.md` §act).
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::application::app) fn execute_console_line(
@@ -42,17 +51,14 @@ pub(in crate::application::app) fn execute_console_line(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     macros: &mut crate::application::macros::MacroRegistry,
-) {
+) -> LineOutcome {
     if line.trim().is_empty() {
-        return;
+        return LineOutcome::Blank;
     }
     let (cmd, args) = match parse(line) {
         ParseResult::Ok { cmd, args } => (cmd, args),
-        ParseResult::Empty => return,
-        ParseResult::Unknown(ref head) => {
-            push_scrollback_error(console_state, format!("unknown command: {}", head));
-            return;
-        }
+        ParseResult::Empty => return LineOutcome::Blank,
+        ParseResult::Unknown(head) => return LineOutcome::Unknown(head),
     };
     let cmd: &'static Command = cmd;
     let mut effects = ConsoleEffects::new(doc);
@@ -60,21 +66,6 @@ pub(in crate::application::app) fn execute_console_line(
     let document_mutated = effects.document_mutated();
     let side_effect = effects.side_effect.take();
     let close_after = effects.close_console;
-
-    // Emit the command's result lines into the scrollback.
-    match result {
-        ExecResult::Ok(s) => {
-            if !s.is_empty() {
-                push_scrollback_output(console_state, s);
-            }
-        }
-        ExecResult::Err(s) => push_scrollback_error(console_state, s),
-        ExecResult::Lines(lines) => {
-            for line in lines {
-                push_scrollback_output_in_font(console_state, line.text, line.font_family);
-            }
-        }
-    }
 
     // Decided before the pre-rebuild handler consumes the effect,
     // because two of its arms write state the rebuild has to see —
@@ -134,6 +125,44 @@ pub(in crate::application::app) fn execute_console_line(
     if opened_modal || close_after {
         *console_state = ConsoleState::Closed;
         renderer.rebuild_console_overlay_buffers(app_scene, None);
+    }
+    LineOutcome::Ran(result)
+}
+
+/// Report what [`execute_console_line`] produced to the human who
+/// caused it.
+///
+/// With the console open, the outcome lands in its scrollback: output
+/// lines in their pinned faces, a failure in the error color. With the
+/// console closed, which is how a key binding or a macro step runs a
+/// line, there is no scrollback to land in. A failure is then
+/// `warn!`ed rather than discarded, so a bound `open` of a missing
+/// file still says why it did nothing (§9). Successful output from a
+/// closed console has no reader and is dropped, as it always was.
+pub(in crate::application::app) fn report_console_line(
+    line: &str,
+    outcome: LineOutcome,
+    console_state: &mut ConsoleState,
+) {
+    if !console_state.is_open() {
+        if let Some(failure) = outcome.failure() {
+            log::warn!("console: `{line}` failed: {failure}");
+        }
+        return;
+    }
+    if let Some(failure) = outcome.failure() {
+        push_scrollback_error(console_state, failure);
+        return;
+    }
+    match outcome {
+        LineOutcome::Ran(ExecResult::Ok(s)) if !s.is_empty() => push_scrollback_output(console_state, s),
+        LineOutcome::Ran(ExecResult::Lines(lines)) => {
+            for line in lines {
+                push_scrollback_output_in_font(console_state, line.text, line.font_family);
+            }
+        }
+        // Blank lines, empty successes, and the failures handled above.
+        _ => {}
     }
 }
 
@@ -376,7 +405,7 @@ fn handle_post_rebuild_side_effect(
         | ConsoleSideEffect::SetFpsDisplay(_)
         | ConsoleSideEffect::SetInteractionMode(_) => {
             log::error!(
-                "{:?} reached post-rebuild handler; should have been consumed by \
+                "console: {:?} reached post-rebuild handler; should have been consumed by \
                  handle_pre_rebuild_side_effect — ignoring to avoid crash",
                 eff
             );
@@ -400,7 +429,7 @@ pub(in crate::application::app) fn save_document_to_bound_path(
         Some(p) => p,
         None => {
             let msg = "no file path bound; use `save <path>` to choose one".to_string();
-            log::warn!("{}", msg);
+            log::warn!("save: {}", msg);
             push_scrollback_error(console_state, msg);
             return;
         }
@@ -409,11 +438,11 @@ pub(in crate::application::app) fn save_document_to_bound_path(
         Ok(()) => {
             doc.dirty = false;
             let msg = format!("saved to {}", path);
-            log::info!("{}", msg);
+            log::info!("save: {}", msg);
             push_scrollback_output(console_state, msg);
         }
         Err(e) => {
-            log::error!("{}", e);
+            log::error!("save: {}", e);
             push_scrollback_error(console_state, e);
         }
     }

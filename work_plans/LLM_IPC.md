@@ -441,7 +441,11 @@ Map/Inline-tier — `dispatch_macro`'s fail-closed gates run
 untouched. IPC-03's bridge therefore calls the existing dispatchers
 and adds **no** gate-bypassing entry points; if a future command
 needs a path around a gate, that is a redesign of this section, not
-an implementation detail.
+an implementation detail. The same rule places `act.macro`'s
+anonymous `steps` (issue #63's inline variant): the IPC client
+authored them, so they run at `User`, and they run through the one
+gated step loop (`run_macro_steps`, which `dispatch_macro` now calls
+after its lookup) rather than a second loop.
 
 ## D5 — Command families, registry shape, self-description
 
@@ -476,11 +480,13 @@ IPC-16 audits at epic close).
 ```
 src/application/ipc/            #[cfg(not(target_arch = "wasm32"))]
 ├── mod.rs         module doc: the D2 boundary contract
-├── transport.rs   acceptor + per-controller reader + outbound threads (IPC-02)
-├── envelope.rs    IpcRequest / reply / event value types (IPC-02)
-├── registry.rs    CommandSpec, the one assembly table, describe (IPC-03)
+├── transport/     acceptor + per-controller reader + outbound threads (IPC-02)
+├── envelope.rs    IpcRequest / reply / event / warning value types (IPC-02, warnings IPC-03)
+├── registry.rs    CommandSpec + descriptors, execute, the capture window (IPC-03)
+├── target.rs      CommandTarget, the app-side execution context (IPC-03)
+├── space.rs       the surface / canvas coordinate spaces (IPC-03)
 └── commands/
-    ├── mod.rs     family registrar index (IPC-03)
+    ├── mod.rs     FAMILIES, the family registrar index (IPC-03)
     ├── meta.rs    describe, ping (IPC-03)
     ├── act.rs     … (IPC-03)
     ├── query.rs   … (IPC-04)
@@ -512,6 +518,17 @@ trait shim is the §2/§7-aligned choice and reuses an existing
 precedent; it is IPC-03's to wire and is called out here so the
 "reaches the funnels" language in §D5/`format/ipc.md` isn't read as
 "calls private items across a module boundary."
+
+*As built by IPC-03 (#63):* the trait is `CommandTarget`
+(`ipc/target.rs`), and its native implementation is
+`IpcCommandTarget` (`app/ipc_target.rs`). It wraps the same
+`InputHandlerContext` a winit handler receives rather than `&mut
+InitState`, because that context is exactly "the access an input
+handler has". Each method is one funnel. A handler reaches the target
+through `drive()` (`&mut`, which marks the command pixels-affecting,
+so the drain requests a redraw) or `observe()` (`&`, no redraw), so a
+read-only family like IPC-04's cannot cause a redraw by
+construction.
 
 ## D6 — Cross-platform stance (§4): explicit native carve-out
 
@@ -672,15 +689,39 @@ once in `format/ipc.md` §Warnings; implementing issues own their
 commands' warning completeness, and extending a seam to surface a
 degrade upward is sanctioned §2 work.
 
-**Why the envelope and not the log stream.** Release builds compile
-logs out entirely (`release_max_level_off` — the #45 decision
-gate), so an agent driving a release binary would fly blind on
-exactly the §9 degrade paths it most needs to see (font drops,
-rejected steps, no-op mutations). The reply envelope is the one
-channel that provably reaches the agent in every build profile.
-Streaming out-of-band degrades (a `log_line` event class) becomes
-possible only under #45's Option A and is parked there — this
-design takes no dependency on that decision in either direction.
+**Amended by IPC-03 (#63): the sink is the log, tapped.** As written,
+dual-emit meant threading a sink through every site a command can
+reach. For `act.action` that is every dispatch arm, every document
+setter, and the Baumhard primitives under them. That is a second
+diagnostic channel beside the first, incomplete the day it lands,
+and it cannot reach Baumhard without Baumhard learning about IPC.
+IPC-03 keeps the decision and changes the mechanism. The registry
+runs each handler inside a `baumhard::util::log::capture` window. The
+installed logger offers every record to the window open on its
+thread, so each `warn!` / `error!` the command emits lands in its
+reply. The log line *is* the warning: one site, one emission, the
+same text by construction, and a `warn!` added anywhere later is
+reported with no further work, as `ActionClassify` gives a new
+variant no way to go unclassified. A site that wants a
+machine-branchable code attaches it as the record's `code` key-value
+(`log`'s `kv` feature). The macro gate's `macro_gate_rejected` is the
+first such code. Uncoded records are `log_warn` / `log_error`. The
+window is bounded (64 records, then a `warnings_truncated` count), so
+a per-node degrade on a large map cannot push a reply past the frame
+cap and lose its result. "Extending a seam" now means making a silent
+degrade log, which §9 asks of it anyway.
+
+**Why the envelope and not the log stream.** The design first
+reasoned from `release_max_level_off`, under which an agent driving a
+release binary had no log at all. #45 has since kept `warn!` /
+`error!` in release (`release_max_level_warn`), and the reason
+survives that change. The log reaches the app's stderr, which an
+agent attached to an already-running instance over the socket never
+sees. The reply envelope is the one channel that provably reaches the
+agent in every build profile and every launch arrangement. Streaming
+out-of-band degrades (a `log_line` event class), meaning those
+outside any command's window, became possible with #45. Whether to
+ship it is IPC-14's call, and this design takes no dependency on it.
 
 ---
 
@@ -740,6 +781,13 @@ Moved later, by the issue that found the need:
   CODE_CONVENTIONS §3's IPC bullet describes the as-built shape. §9's
   startup roster gains `EventLoop::with_user_event` and
   `IpcServer::start`.
+- **IPC-03 (#63)** — §D8's warning sink becomes a tap on the log
+  (the "Amended by IPC-03" note there), with a `kv` feature on the
+  workspace `log` declaration to carry codes. `format/ipc.md`
+  §Warnings gains the mechanism and a warning-code registry, and its
+  stale `release_max_level_off` premise is corrected to #45's
+  outcome. §D4 places `act.macro`'s anonymous `steps` at `User`.
+  §D5's module layout and boundary trait are recorded as built.
 
 ## Change governance
 

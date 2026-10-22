@@ -38,7 +38,8 @@ pub mod geometry;
 pub mod grapheme_chad;
 /// Logger initialization — `init()` selects the right backend per
 /// target. Macro callsites keep using `log::warn!` etc. directly,
-/// since `log` is the universal Rust facade.
+/// since `log` is the universal Rust facade. On native, `capture`
+/// collects the `warn!` / `error!` records one stretch of code emits.
 pub mod log;
 /// Reader over the workspace's own `Cargo.toml` files, so the
 /// "one version, declared once in `[workspace.dependencies]`" rule

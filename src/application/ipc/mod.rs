@@ -29,13 +29,17 @@
 // with nothing draining it — the same shape as the wasm32 allows in
 // `application/mod.rs`, scoped the same way so the Unix lint stays
 // fully armed, and gone when the named-pipe transport (#169) lands.
-mod bootstrap;
+mod commands;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod envelope;
+mod registry;
+pub(crate) mod space;
+mod target;
 #[cfg(unix)]
 mod transport;
 
-pub(crate) use bootstrap::execute;
+pub(crate) use registry::execute;
+pub(crate) use target::CommandTarget;
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
 

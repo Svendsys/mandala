@@ -127,9 +127,14 @@ action, no document loaded) keep the existing best-effort
 **IPC is not a tier.** Commands arriving over the `--ipc` socket
 ([`format/ipc.md`](./ipc.md)) execute at `User` posture — the user
 owns the flag exactly as they own this file. Macros fired *via* IPC
-(`act.macro`) keep their own loader-pinned tier: IPC initiates, it
-never escalates, and the fail-closed gates above run unchanged.
-Rationale: `work_plans/LLM_IPC.md` §D4.
+(`act.macro` with a `macro_id`) keep their own loader-pinned tier:
+IPC initiates, it never escalates, and the fail-closed gates above
+run unchanged. An anonymous step list sent as `act.macro`'s `steps`
+was authored by the IPC client, so it runs at `User`. It runs
+through the same gated step loop, not a second one. A gate
+rejection is logged under the code `macro_gate_rejected`, which an
+IPC reply carries as a warning. Rationale: `work_plans/LLM_IPC.md`
+§D4.
 
 ### The load-time trust boundary
 
