@@ -19,6 +19,10 @@
 //! byte slicing — `Range` indices on `ColorFontRegion` carry
 //! grapheme-cluster offsets (see `CONCEPTS.md`'s `Range` entry,
 //! `format/text-runs.md`, and `lib/baumhard/CONVENTIONS.md §B1`).
+//! [`crate::font::attrs::displayed_text`] is the read-only third
+//! shape: the string those spans add up to, for a consumer that has
+//! to say what is on screen without shaping it.
+//!
 //! The shared private `resolve_font_family` keeps the lookup +
 //! fallback discipline in one place — see `CODE_CONVENTIONS.md`
 //! §1 and `lib/baumhard/CONVENTIONS.md` §B5.
@@ -38,6 +42,9 @@
 //!   (Baumhard tree path). Uses the
 //!   [`crate::font::attrs::RegionFamilies`] +
 //!   [`crate::font::attrs::rich_text_spans_into`] pair.
+//! - `lib/baumhard/src/mindmap/scene_dump/mod.rs` — the scene
+//!   introspection's displayed text for every section, label and
+//!   portal caption. Uses [`crate::font::attrs::displayed_text`].
 //!
 //! [`crate::font::attrs::attrs_list_from_regions`] has no in-tree
 //! consumer today: it is the `Editor::insert_string` half of the
@@ -326,26 +333,64 @@ pub fn rich_text_spans_into<'a>(
         out.push((families.text, attrs));
         return;
     }
-    for ((region, family_name), &(start, end)) in families
-        .regions
-        .iter()
-        .zip(families.names.iter())
-        .zip(families.bounds.iter())
-    {
-        if start >= end {
-            continue;
-        }
-        let slice = &families.text[start..end];
+    for (index, slice) in covered_slices(families.text, &families.bounds) {
         let mut attrs = Attrs::new().metrics(metrics);
-        let color = color_override.or_else(|| region.color.map(rgba_to_color));
+        let color = color_override.or_else(|| families.regions[index].color.map(rgba_to_color));
         if let Some(c) = color {
             attrs = attrs.color(c);
         }
-        if let Some(family) = family_name.as_deref() {
+        if let Some(family) = families.names[index].as_deref() {
             attrs = attrs.family(Family::Name(family));
         }
         out.push((slice, attrs));
     }
+}
+
+/// The coverage rule, in one place: each region's slice of `text`,
+/// paired with the region's index, in region order, with every
+/// zero-width or out-of-range region (`start >= end` after byte
+/// mapping) left out. [`rich_text_spans_into`] shapes exactly these
+/// slices and [`displayed_text`] concatenates them, so what the
+/// renderer draws and what the scene introspection says it draws are
+/// one rule rather than two that agree.
+///
+/// `bounds` must come from [`region_byte_bounds`] over this same
+/// `text`, which only ever yields character boundaries no greater
+/// than `text.len()`, so the slicing cannot panic.
+fn covered_slices<'t>(
+    text: &'t str,
+    bounds: &'t [(usize, usize)],
+) -> impl Iterator<Item = (usize, &'t str)> + 't {
+    bounds
+        .iter()
+        .enumerate()
+        .filter(|(_, &(start, end))| start < end)
+        .map(move |(index, &(start, end))| (index, &text[start..end]))
+}
+
+/// The text a styled run actually puts on screen: the concatenation
+/// of the slices its regions cover, in region order.
+///
+/// A section with `text_runs` renders **only its covered graphemes**
+/// (`CONCEPTS.md`, "TextRun"): an uncovered cluster drops silently, so
+/// the model's `text` and what a user reads diverge. This answers the
+/// second, through the same coverage rule the renderer shapes by
+/// ([`rich_text_spans_into`]). With no regions at all the whole text
+/// renders in the default style, and the whole text is returned.
+///
+/// # Costs
+///
+/// O(text + regions): one grapheme walk over `text` to map every
+/// region's cluster range to bytes (none with no regions), the three
+/// boundary `Vec`s that walk allocates, the region slice
+/// `ColorFontRegions::all_regions` collects, and the returned
+/// `String`. No font system, no lock.
+pub fn displayed_text(text: &str, regions: &ColorFontRegions) -> String {
+    if regions.num_regions() == 0 {
+        return text.to_string();
+    }
+    let bounds = region_byte_bounds(text, regions.all_regions().iter().map(|r| &r.range));
+    covered_slices(text, &bounds).map(|(_, slice)| slice).collect()
 }
 
 /// [`rich_text_spans_into`] into a freshly allocated `Vec` — the

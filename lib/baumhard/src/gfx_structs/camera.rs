@@ -9,6 +9,35 @@
 //! event on the right glyph.
 
 use glam::Vec2;
+use serde::Serialize;
+
+use crate::gfx_structs::zoom_visibility::ZoomVisibility;
+
+/// The cull verdict for one element at one camera state, from
+/// [`Camera2D::visibility`]: whether it renders, and if not, the
+/// reason. Serializes as its snake-case name (`"visible"`,
+/// `"outside_zoom_window"`, `"offscreen"`), the words the IPC
+/// `scene` family reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    /// Inside its zoom window and overlapping the viewport: drawn.
+    Visible,
+    /// The camera's zoom falls outside the element's
+    /// [`ZoomVisibility`] window. Not drawn at any pan.
+    OutsideZoomWindow,
+    /// Inside its zoom window, but its AABB misses the viewport. A pan
+    /// would bring it on screen.
+    Offscreen,
+}
+
+impl Visibility {
+    /// `true` only for [`Visibility::Visible`]. O(1).
+    #[inline]
+    pub const fn is_visible(self) -> bool {
+        matches!(self, Visibility::Visible)
+    }
+}
 
 /// A 2D camera for navigating large canvas spaces with pan and zoom.
 ///
@@ -193,6 +222,37 @@ impl Camera2D {
                 max,
                 padding_fraction,
             } => self.fit_to_bounds(min, max, padding_fraction),
+        }
+    }
+
+    /// Whether an element with this canvas-space AABB and zoom window
+    /// renders at the current camera state, and if not, why — the
+    /// single cull predicate. The renderer's per-frame cull asks
+    /// [`Visibility::is_visible`] of it for every buffer and fill
+    /// rect, and the scene introspection
+    /// ([`crate::mindmap::scene_dump`]) reports the verdict itself, so
+    /// what an agent is told is on screen and what is drawn cannot
+    /// disagree.
+    ///
+    /// The zoom window is consulted first: it is the cheaper test,
+    /// and it is the reason that holds wherever the camera pans, so an
+    /// element both outside its window and off-screen is reported as
+    /// [`Visibility::OutsideZoomWindow`] — panning to it would not
+    /// bring it back.
+    ///
+    /// # Costs
+    ///
+    /// O(1), no allocation: up to two `Option<f32>` compares, then the
+    /// [`Self::is_visible`] rect test. Short-circuits exactly as the
+    /// `&&` it replaced did.
+    #[inline]
+    pub fn visibility(&self, canvas_pos: Vec2, canvas_size: Vec2, window: ZoomVisibility) -> Visibility {
+        if !window.contains(self.zoom) {
+            Visibility::OutsideZoomWindow
+        } else if !self.is_visible(canvas_pos, canvas_size) {
+            Visibility::Offscreen
+        } else {
+            Visibility::Visible
         }
     }
 

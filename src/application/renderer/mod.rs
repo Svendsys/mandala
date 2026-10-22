@@ -653,13 +653,15 @@ pub(super) struct NodeBackgroundRect {
 }
 
 impl NodeBackgroundRect {
-    /// Should this rect render at the current camera state?
-    /// Combines the spatial AABB cull (`Camera2D::is_visible`)
-    /// with the zoom-window cull
-    /// (`ZoomVisibility::contains`). Pure, no allocation; the
-    /// render loop calls this once per rect per frame.
+    /// Should this rect render at the current camera state? Asks
+    /// the one cull predicate, `Camera2D::visibility`, which the
+    /// IPC scene introspection reports verbatim. Pure, no
+    /// allocation; the render loop calls this once per rect per
+    /// frame.
     pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
-        camera.is_visible(self.position, self.size) && self.zoom_visibility.contains(camera.zoom)
+        camera
+            .visibility(self.position, self.size, self.zoom_visibility)
+            .is_visible()
     }
 }
 
@@ -1257,15 +1259,14 @@ pub struct MindMapTextBuffer {
 
 impl MindMapTextBuffer {
     /// Should this text buffer render at the current camera
-    /// state? Combines the spatial AABB cull
-    /// (`Camera2D::is_visible`) with the zoom-window cull
-    /// (`ZoomVisibility::contains`). Pure, no allocation; the
-    /// render loop calls this once per buffer per frame in the
-    /// `main_text_areas` collector.
+    /// state? Asks the one cull predicate, `Camera2D::visibility`,
+    /// which the IPC scene introspection reports verbatim. Pure,
+    /// no allocation; the render loop calls this once per buffer
+    /// per frame in the `main_text_areas` collector.
     pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
         let pos = Vec2::new(self.pos.0, self.pos.1);
         let size = Vec2::new(self.bounds.0, self.bounds.1);
-        camera.is_visible(pos, size) && self.zoom_visibility.contains(camera.zoom)
+        camera.visibility(pos, size, self.zoom_visibility).is_visible()
     }
 }
 

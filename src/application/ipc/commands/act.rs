@@ -152,7 +152,7 @@ fn parse_action(call: &Call<'_>) -> Result<Action, Reply> {
 }
 
 /// The optional synthetic pointer: `x` and `y` together, in `space`.
-fn parse_pointer(call: &Call<'_>) -> Result<Option<Point>, Reply> {
+pub(super) fn parse_pointer(call: &Call<'_>) -> Result<Option<Point>, Reply> {
     let coordinate = |name: &str| call.param(name).and_then(Value::as_f64);
     let space = call.str_param("space");
     let (x, y) = match (coordinate("x"), coordinate("y")) {

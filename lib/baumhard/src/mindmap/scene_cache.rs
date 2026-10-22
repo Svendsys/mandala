@@ -65,8 +65,10 @@ use crate::util::geometry::almost_equal;
 
 /// Stable identity of a connection. Mirrors the `(from_id, to_id, edge_type)`
 /// triple that the rest of the codebase uses to identify edges
-/// (`document::EdgeRef` is the same shape).
-#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+/// (`document::EdgeRef` is the same shape). Serializes as
+/// `{"from_id", "to_id", "edge_type"}`, the edge identity the IPC
+/// surface uses everywhere.
+#[derive(Hash, Eq, PartialEq, Clone, Debug, serde::Serialize)]
 pub struct EdgeKey {
     pub from_id: String,
     pub to_id: String,

@@ -39,7 +39,7 @@ mod target;
 mod transport;
 
 pub(crate) use registry::execute;
-pub(crate) use target::{CommandTarget, ShellState};
+pub(crate) use target::{CommandTarget, SceneView, ShellState};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
 

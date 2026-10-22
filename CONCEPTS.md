@@ -750,7 +750,12 @@ Position in canvas space (the point at the viewport center),
 `SetPosition { canvas_pos }`, `SetZoom { factor }`,
 `FitToBounds { min, max, padding_fraction }`. Projection
 helpers `canvas_to_screen` / `screen_to_canvas` are the only
-place coordinate-space conversion lives.
+place coordinate-space conversion lives. `Camera2D::visibility` is
+the only place the cull lives: it answers whether an element with a
+given canvas rect and zoom window is drawn, and if not why
+(`Visibility::OutsideZoomWindow` before `Offscreen`). The renderer's
+per-frame cull asks it, and the IPC `scene` family reports its verdict
+verbatim, so "on screen" means one thing.
 
 ### `Scene`
 
@@ -1402,7 +1407,10 @@ cover every grapheme they want visible, not just the ones they
 want to restyle. This is by design (it simplifies the
 renderer's region pass) but it is the single biggest trap in
 the format; `maptool verify` does not catch partial-coverage
-intent vs. accident.
+intent vs. accident. What a section *displays* is therefore not its
+`text`: `baumhard::font::attrs::displayed_text` answers it, through
+the same coverage rule the renderer slices spans by, and the IPC
+`scene` family reports that string.
 
 ### Theme variables
 
@@ -3208,11 +3216,19 @@ reads on `CommandTarget` (`document()`, `animation_pause()` and
 ask for a frame. Each wire form is an exhaustive-`match` projection beside the state it
 exposes (`document/ipc_state.rs`, `app/ipc_state.rs`), not a mirror
 struct, so a new `SelectionState`, `InteractionMode`, `DragState` or
-`UndoAction` variant breaks the build until it is given one.
+`UndoAction` variant breaks the build until it is given one. The
+`scene` family is what is drawn rather than what is known:
+`scene.dump`, `.visible_set`, `.node_geometry`, `.hit_test` and
+`.find_text` read the canvas trees through Baumhard's serializer
+(`baumhard::mindmap::scene_dump`) — rects in both spaces, the
+renderer's own cull verdict, and the text after run coverage — and
+name each element through its role's hit-test index. `scene.hit_test`
+runs the canonical click ladder on the app side
+(`CommandTarget::hit_test`) rather than a copy of it.
 
-**Vision:** the families after `query` (scene, input, capture, clock,
-events) each add one module and one line to the registry's family
-table.
+**Vision:** the families after `scene` (input, capture, clock, events)
+each add one module and one line to the registry's family table; the
+capture sidecar (IPC-07) is the scene serializer's output.
 **Caveat:** Unix-only today — Windows fails `--ipc` at startup until
 the named-pipe adapter lands, and the browser has no socket at all
 (`CLAUDE.md` "Dual-target status").

@@ -39,6 +39,7 @@ use crate::mindmap::model::MindMap;
 mod border;
 mod connection;
 mod connection_label;
+mod edge_channel_index;
 mod edge_handle;
 mod edge_path;
 mod handle;
@@ -62,13 +63,14 @@ pub use border::{
 };
 pub use connection::{
     build_connection_elements, build_connection_mutator_tree, build_connection_tree,
-    connection_identity_sequence, point_inside_any_node, ConnectionEdgeIdentity, ConnectionElement,
+    connection_channel_index, connection_identity_sequence, point_inside_any_node, ConnectionEdgeIdentity,
+    ConnectionElement,
 };
 pub use connection_label::{
     build_connection_label_mutator_tree, build_connection_label_tree, build_label_elements,
-    connection_label_identity_sequence, ConnectionLabelElement, ConnectionLabelHitIndex,
-    ConnectionLabelMutator, ConnectionLabelTree,
+    connection_label_identity_sequence, ConnectionLabelElement, ConnectionLabelMutator, ConnectionLabelTree,
 };
+pub use edge_channel_index::EdgeChannelIndex;
 pub use edge_handle::{build_edge_handles, edge_handle_channel_for, EdgeHandleElement, EdgeHandleKind};
 pub use edge_path::{edge_endpoint_rects, offset_node_rect, EdgePathCache};
 pub use handle::{build_handle_mutator_tree, build_handle_tree, handle_identity_sequence, HandleVisual};

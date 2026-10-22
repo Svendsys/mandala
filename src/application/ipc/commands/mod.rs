@@ -8,12 +8,15 @@
 mod act;
 mod meta;
 mod query;
+mod refusal;
+mod scene;
+mod sidecar;
 
 use super::registry::Family;
 
 /// Every registered family. `describe` and dispatch both walk this
 /// table and nothing else.
-pub(super) const FAMILIES: &[Family] = &[meta::FAMILY, act::FAMILY, query::FAMILY];
+pub(super) const FAMILIES: &[Family] = &[meta::FAMILY, act::FAMILY, query::FAMILY, scene::FAMILY];
 
 #[cfg(test)]
 mod tests {

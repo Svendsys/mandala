@@ -491,6 +491,8 @@ src/application/ipc/            #[cfg(not(target_arch = "wasm32"))]
     ├── act.rs     … (IPC-03)
     ├── query.rs   … (IPC-04)
     ├── scene.rs   … (IPC-05)
+    ├── refusal.rs the read families' shared refusals (IPC-05, from IPC-04's query.rs)
+    ├── sidecar.rs the to_file writer (IPC-05, from IPC-04's query.rs)
     ├── input.rs   … (IPC-06)
     ├── capture.rs … (IPC-07, extended by IPC-08)
     ├── clock.rs   … (IPC-09)
@@ -546,6 +548,40 @@ The projections are inherent methods beside the state
 commands: the seven pinned in `format/ipc.md`'s family map plus
 `query.status`, which the issue listed and the map did not. The
 camera read accessor is `Renderer::camera()`; IPC-05 reuses it.
+
+*As built by IPC-05 (#65):* the pipeline question the issue raised is
+settled by #22 having closed: there is no flat `RenderScene` left, and
+every model-derived visual is a `Tree<GfxElement, GfxMutator>`. So the
+serializer is a Baumhard primitive over those trees,
+`baumhard::mindmap::scene_dump`, and nothing in the family re-derives
+geometry from the model. Three seams were extended rather than
+re-implemented. The renderer's two duplicated cull conjunctions became
+one classifier, `Camera2D::visibility`, which returns the *reason*
+(`OutsideZoomWindow` before `Offscreen`) and which the renderer now
+calls; the dump reports its verdict, so the two cannot disagree. The
+span shaper's coverage rule moved into one private iterator shared with
+`font::attrs::displayed_text`, so the text the family reports is the
+text the renderer slices. And the label tree's channel → `EdgeKey`
+index became `EdgeChannelIndex`, which now also names the connection
+tree's per-edge `Void`s: the connection dispatcher stamps it on
+`AppScene` from the identity sequence it already built for its
+signature, moving the keys instead of dropping them. The trait gained
+one `&self` read, `scene()` (a `SceneView`: the document, the node
+tree, `AppScene`, the camera — plain data, so a test stands one up from
+`CanvasFrame` with no renderer), and one `&mut` method, `hit_test`,
+whose projection lives app-side (`app/ipc_scene.rs`) because the click
+ladder (`compute_click_hit` and its last rung `edge_under_pointer`) is
+private to `app`. A test holds it to a real click at every node, label,
+portal part and connection of the fixture. The family is five
+commands: the three pinned in `format/ipc.md`'s family map plus
+`scene.visible_set` and `scene.node_geometry`, which the issue listed
+and the map did not — the `query.status` precedent above. The file
+sidecar writer and the read families' refusal type moved out of
+`query.rs` into `commands/sidecar.rs` and `commands/refusal.rs`, so
+`scene.dump`'s `to_file` is the same atomic write rather than a second
+one, and the camera's wire projection moved to `ipc/space.rs` beside
+the coordinate spaces it describes, shared by `query.camera` and every
+dump.
 
 ## D6 — Cross-platform stance (§4): explicit native carve-out
 

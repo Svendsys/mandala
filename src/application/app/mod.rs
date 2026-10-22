@@ -80,6 +80,8 @@ mod freeze_watchdog;
 mod input_context;
 mod interaction_mode;
 #[cfg(not(target_arch = "wasm32"))]
+mod ipc_scene;
+#[cfg(not(target_arch = "wasm32"))]
 mod ipc_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod ipc_target;
@@ -1017,6 +1019,32 @@ pub struct Options {
     /// no IPC thread. Native-only: browsers cannot serve sockets.
     #[cfg(not(target_arch = "wasm32"))]
     pub ipc_socket: Option<std::path::PathBuf>,
+}
+
+/// The node tree and every canvas role tree for `doc` at
+/// `camera_zoom`, projected through the same `CanvasFrame` passes a
+/// full rebuild runs — the drawn scene, minus the GPU. For tests
+/// outside `app` (the IPC `scene` family's) that need a real scene
+/// without a renderer (TEST_CONVENTIONS §T8).
+#[cfg(test)]
+pub(crate) fn project_scene_for_tests(
+    doc: &crate::application::document::MindMapDocument,
+    camera_zoom: f32,
+) -> (
+    baumhard::mindmap::tree_builder::MindMapTree,
+    crate::application::scene_host::AppScene,
+) {
+    let mut app_scene = crate::application::scene_host::AppScene::new();
+    let mut cache = baumhard::mindmap::scene_cache::SceneConnectionCache::default();
+    let offsets = std::collections::HashMap::new();
+    scene_rebuild::CanvasFrame::new(
+        doc,
+        &offsets,
+        InteractionMode::Default.resize_handle_overrides(),
+        camera_zoom,
+    )
+    .update_all(&mut cache, &mut app_scene);
+    (doc.build_tree(), app_scene)
 }
 
 // Unit tests for pure helpers (cursor math, caret insertion,

@@ -23,10 +23,10 @@ use std::collections::HashMap;
 
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
-use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
+use baumhard::gfx_structs::scene::{Scene, SceneEntry, SceneTreeId};
 use baumhard::gfx_structs::tree::{MutatorTree, Tree};
 use baumhard::mindmap::scene_cache::EdgeKey;
-use baumhard::mindmap::tree_builder::{ConnectionLabelHitIndex, PortalHit, PortalHitIndex};
+use baumhard::mindmap::tree_builder::{EdgeChannelIndex, PortalHit, PortalHitIndex};
 use glam::Vec2;
 #[cfg(test)]
 use indextree::NodeId;
@@ -271,7 +271,13 @@ pub struct AppScene {
     /// Channel → `EdgeKey` names for the
     /// [`CanvasRole::ConnectionLabels`] tree. Same contract as
     /// [`Self::portal_hit_index`].
-    connection_label_hit_index: ConnectionLabelHitIndex,
+    connection_label_hit_index: EdgeChannelIndex,
+    /// Channel → `EdgeKey` names for the [`CanvasRole::Connections`]
+    /// tree's per-edge `Void`s. Same contract again. No click
+    /// resolves through it — a connection path is hit by curve
+    /// distance against the model, not by AABB — so its one reader is
+    /// the scene introspection, which names every glyph it reports.
+    connection_index: EdgeChannelIndex,
 }
 
 impl Default for AppScene {
@@ -300,7 +306,8 @@ impl AppScene {
             canvas_content_signatures: HashMap::new(),
             overlay_signatures: HashMap::new(),
             portal_hit_index: PortalHitIndex::default(),
-            connection_label_hit_index: ConnectionLabelHitIndex::default(),
+            connection_label_hit_index: EdgeChannelIndex::default(),
+            connection_index: EdgeChannelIndex::default(),
         }
     }
 
@@ -364,9 +371,8 @@ impl AppScene {
         self.canvas_content_signatures.remove(&role);
         match role {
             CanvasRole::Portals => self.portal_hit_index = PortalHitIndex::default(),
-            CanvasRole::ConnectionLabels => {
-                self.connection_label_hit_index = ConnectionLabelHitIndex::default()
-            }
+            CanvasRole::ConnectionLabels => self.connection_label_hit_index = EdgeChannelIndex::default(),
+            CanvasRole::Connections => self.connection_index = EdgeChannelIndex::default(),
             _ => {}
         }
     }
@@ -617,8 +623,58 @@ impl AppScene {
     /// Record the identity names for the currently registered
     /// [`CanvasRole::ConnectionLabels`] tree. Mirrors
     /// [`Self::set_portal_hit_index`].
-    pub fn set_connection_label_hit_index(&mut self, index: ConnectionLabelHitIndex) {
+    pub fn set_connection_label_hit_index(&mut self, index: EdgeChannelIndex) {
         self.connection_label_hit_index = index;
+    }
+
+    /// Record the identity names for the currently registered
+    /// [`CanvasRole::Connections`] tree. Mirrors
+    /// [`Self::set_portal_hit_index`]: the connection dispatcher
+    /// stamps it on both §B2 arms, from the element slice it built
+    /// the tree or mutator from.
+    pub fn set_connection_index(&mut self, index: EdgeChannelIndex) {
+        self.connection_index = index;
+    }
+
+    // --- Introspection -----------------------------------------
+    //
+    // Read by the IPC `scene` family, which is native-only with its
+    // transport (CLAUDE.md "Dual-target status"). The reads are
+    // cross-platform state, kept ungated so the browser peer
+    // (IPC-15) finds them in place; on wasm32 they compile
+    // unreferenced.
+
+    /// A registered canvas role's scene entry — its tree, offset and
+    /// visibility flag — for a reader that walks what is drawn (the
+    /// IPC `scene` family). `None` when the role has no tree.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn canvas_entry(&self, role: CanvasRole) -> Option<&SceneEntry> {
+        self.canvas.get(self.canvas_id(role)?)
+    }
+
+    /// The names of the registered [`CanvasRole::Portals`] tree's
+    /// leaves.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn portal_index(&self) -> &PortalHitIndex {
+        &self.portal_hit_index
+    }
+
+    /// The names of the per-edge children of an edge-shaped role's
+    /// tree: [`CanvasRole::Connections`] and
+    /// [`CanvasRole::ConnectionLabels`]. `None` for every other role,
+    /// none of which is one child per edge.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn edge_channel_index(&self, role: CanvasRole) -> Option<&EdgeChannelIndex> {
+        match role {
+            CanvasRole::Connections => Some(&self.connection_index),
+            CanvasRole::ConnectionLabels => Some(&self.connection_label_hit_index),
+            CanvasRole::Borders
+            | CanvasRole::Portals
+            | CanvasRole::EdgeHandles
+            | CanvasRole::SectionResizeHandles
+            | CanvasRole::NodeResizeHandles
+            | CanvasRole::SectionFrames => None,
+        }
     }
 
     /// Hit-test the portal role at a canvas-space point and name

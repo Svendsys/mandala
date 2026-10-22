@@ -13,7 +13,8 @@
 
 use glam::Vec2;
 
-use crate::gfx_structs::camera::{Camera2D, CameraMutation};
+use crate::gfx_structs::camera::{Camera2D, CameraMutation, Visibility};
+use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::util::geometry::almost_equal_vec2;
 
 // ── round-trip ──────────────────────────────────────────────────────
@@ -377,4 +378,92 @@ fn test_set_viewport_size_leaves_zoom_and_position_untouched() {
     cam.set_viewport_size(1920, 1080);
     assert_eq!(cam.zoom, initial_zoom);
     assert_eq!(cam.position, initial_position);
+}
+
+// ── visibility verdict ──────────────────────────────────────────────
+
+#[test]
+fn test_visibility_names_each_reason() {
+    do_visibility_names_each_reason();
+}
+
+/// One element per verdict, at a camera that sees canvas
+/// `[-400, 400] × [-300, 300]`: on screen, panned away, and outside
+/// its zoom window. The zoom window wins over the pan when both fail,
+/// because no pan brings that element back.
+pub fn do_visibility_names_each_reason() {
+    let cam = Camera2D::new(800, 600);
+    let size = Vec2::new(50.0, 20.0);
+    let unbounded = ZoomVisibility::unbounded();
+    let zoomed_in_only = ZoomVisibility::from_pair(Some(2.0), None);
+
+    assert_eq!(cam.visibility(Vec2::ZERO, size, unbounded), Visibility::Visible);
+    assert_eq!(
+        cam.visibility(Vec2::new(5000.0, 0.0), size, unbounded),
+        Visibility::Offscreen
+    );
+    assert_eq!(
+        cam.visibility(Vec2::ZERO, size, zoomed_in_only),
+        Visibility::OutsideZoomWindow
+    );
+    assert_eq!(
+        cam.visibility(Vec2::new(5000.0, 0.0), size, zoomed_in_only),
+        Visibility::OutsideZoomWindow,
+        "outside the window and off-screen reports the window"
+    );
+    assert!(Visibility::Visible.is_visible());
+    assert!(!Visibility::Offscreen.is_visible());
+    assert!(!Visibility::OutsideZoomWindow.is_visible());
+}
+
+#[test]
+fn test_visibility_agrees_with_the_conjunction_it_replaced() {
+    do_visibility_agrees_with_the_conjunction_it_replaced();
+}
+
+/// `visibility(..).is_visible()` is exactly `is_visible && contains`
+/// — the expression the renderer's two `visible_at` culls used to
+/// spell out — across a sweep of positions straddling every viewport
+/// edge, at zooms below, inside and above a bounded window.
+pub fn do_visibility_agrees_with_the_conjunction_it_replaced() {
+    let windows = [
+        ZoomVisibility::unbounded(),
+        ZoomVisibility::from_pair(Some(0.5), Some(2.0)),
+        ZoomVisibility::from_pair(None, Some(0.75)),
+    ];
+    let size = Vec2::new(40.0, 40.0);
+    for zoom in [0.25_f32, 0.5, 1.0, 2.0, 3.0] {
+        let mut cam = Camera2D::new(640, 480);
+        cam.zoom = zoom;
+        cam.position = Vec2::new(30.0, -10.0);
+        for window in windows {
+            for xi in -12..=12 {
+                for yi in -12..=12 {
+                    let pos = Vec2::new(xi as f32 * 70.0, yi as f32 * 55.0);
+                    let expected = cam.is_visible(pos, size) && window.contains(cam.zoom);
+                    assert_eq!(
+                        cam.visibility(pos, size, window).is_visible(),
+                        expected,
+                        "zoom {zoom}, window {window:?}, pos {pos}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The verdicts serialize as the snake-case words `format/ipc.md`
+/// documents for the `scene` family.
+#[test]
+fn test_visibility_serializes_as_its_wire_words() {
+    for (verdict, word) in [
+        (Visibility::Visible, "visible"),
+        (Visibility::OutsideZoomWindow, "outside_zoom_window"),
+        (Visibility::Offscreen, "offscreen"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(verdict).expect("serializes"),
+            serde_json::Value::String(word.into())
+        );
+    }
 }
