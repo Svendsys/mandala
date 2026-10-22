@@ -462,6 +462,8 @@ Warning code registry (additions are non-breaking, like error codes):
 | `log_error` | An `error!` the command's execution emitted with no code of its own. `message` is the log line. |
 | `warnings_truncated` | The command emitted more diagnostics than one reply carries (64); `message` says how many were left out. |
 | `macro_gate_rejected` | A macro step was refused by its tier's privilege gate, and the rest of the macro aborted (`format/macros.md` "Privilege model"). |
+| `save_unbound` | `SaveDocument` found no file path bound to the document, so nothing was written. `SaveDocumentAs` (or `act.console` with `save <path>`) binds one. |
+| `save_failed` | `SaveDocument` could not write the bound file; `message` carries the I/O error. |
 | `console_error` | A console line run by something other than `act.console` failed: a file-path `Action`'s line, or a macro `ConsoleLine` step. Matches the `act.console` error code, so a console failure is branchable however the line was reached. `message` is the console's own text. |
 
 ### Large payloads
@@ -780,7 +782,8 @@ none open it reports that nothing ran. So is a file Action whose
 line failed (`OpenDocument` of a missing file, `SaveDocumentAs` to an
 unwritable path) and a `SaveDocument` that wrote nothing. Each of
 those also carries a warning saying why: `console_error` for the
-file-path Actions. Treat an unrecognized value as `"unhandled"`.
+file-path Actions, `save_unbound` or `save_failed` for `SaveDocument`.
+Treat an unrecognized value as `"unhandled"`.
 
 ```jsonc
 {"id": 1, "cmd": "act.action", "action": "ZoomIn"}

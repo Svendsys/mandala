@@ -147,6 +147,9 @@ pub(crate) mod warning {
         crate::application::macros::GATE_REJECTED_CODE,
         // A console line run by an Action or a macro step failed.
         crate::application::console::LINE_FAILED_CODE,
+        // SaveDocument had no bound path, or its write failed.
+        crate::application::console::SAVE_UNBOUND_CODE,
+        crate::application::console::SAVE_FAILED_CODE,
     ];
 }
 

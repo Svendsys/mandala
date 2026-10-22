@@ -236,6 +236,17 @@ pub enum ExecResult {
 /// is API there (`format/ipc.md` §Warnings).
 pub const LINE_FAILED_CODE: &str = "console_error";
 
+/// The diagnostic code `Action::SaveDocument` logs when no file path
+/// is bound, so there is nothing to save to. A save-as fixes it. An IPC
+/// reply carries it as a `save_unbound` warning (`format/ipc.md`
+/// §Warnings).
+pub const SAVE_UNBOUND_CODE: &str = "save_unbound";
+
+/// The diagnostic code `Action::SaveDocument` logs when writing the
+/// bound file failed: the disk, the path, permissions. An IPC reply
+/// carries it as a `save_failed` warning.
+pub const SAVE_FAILED_CODE: &str = "save_failed";
+
 /// What running one console line produced, before anything renders
 /// it. The console modal folds it into its scrollback. The IPC
 /// `act.console` command returns it to the client. Neither path

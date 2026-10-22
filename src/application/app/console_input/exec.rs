@@ -326,6 +326,12 @@ fn handle_pre_rebuild_side_effect(
             *drag_state = DragState::None;
             *hovered_node = None;
             *last_click = None;
+            // The window's cursor icon is deliberately left alone: it
+            // can still show a resize arrow or a button hand from the
+            // old document until the pointer next moves, when
+            // `event_cursor_moved` recomputes it. Resetting it here would
+            // need the `Window`, which this drain does not hold, to fix a
+            // glyph that heals on the user's next motion.
             // Reset interaction mode: a stale `NodeEdit { node_id }`
             // or `Resize { target }` from the prior document points
             // at ids that don't exist in the new one — the next
@@ -512,13 +518,16 @@ fn handle_post_rebuild_side_effect(
 /// for the reason [`print_console_line`] gives: the Action is not the
 /// console prompt, and under `--ipc` it can fire while the console is
 /// open. The `save` verb typed at the prompt reports through its own
-/// `ExecResult`.
-#[cfg(not(target_arch = "wasm32"))]
+/// `ExecResult`. Each failure carries a code, so a caller collecting
+/// diagnostics can tell "nothing is bound" (fixable with a save-as)
+/// from a write that failed.
 ///
 /// Returns whether the document was written.
+#[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMapDocument) -> bool {
+    use crate::application::console::{SAVE_FAILED_CODE, SAVE_UNBOUND_CODE};
     let Some(path) = doc.file_path.clone() else {
-        log::warn!("save: no file path bound; use `save <path>` to choose one");
+        log::warn!(code = SAVE_UNBOUND_CODE; "save: no file path bound; use `save <path>` to choose one");
         return false;
     };
     match baumhard::mindmap::loader::save_to_file(std::path::Path::new(&path), &doc.mindmap) {
@@ -528,7 +537,7 @@ pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMap
             true
         }
         Err(e) => {
-            log::error!("save: {}", e);
+            log::error!(code = SAVE_FAILED_CODE; "save: {}", e);
             false
         }
     }
@@ -605,35 +614,6 @@ mod tests {
         }
     }
 
-    /// A failed line run by anything but the prompt is logged under
-    /// `LINE_FAILED_CODE`, the code an IPC reply carries it as. A line
-    /// that worked logs nothing.
-    #[test]
-    fn test_log_console_line_warns_a_failure_under_its_code_and_nothing_else() {
-        use baumhard::util::log::capture::capture;
-
-        baumhard::util::test_logger::install();
-        let ((), captured) =
-            capture(|| log_console_line("frobnicate-5d1e", &LineOutcome::Unknown("frobnicate-5d1e".into())));
-        assert_eq!(captured.records.len(), 1, "{captured:?}");
-        assert_eq!(
-            captured.records[0].code.as_deref(),
-            Some(crate::application::console::LINE_FAILED_CODE)
-        );
-        assert!(captured.records[0]
-            .message
-            .contains("unknown command: frobnicate-5d1e"));
-
-        let ((), captured) = capture(|| {
-            log_console_line("help", &LineOutcome::Ran(ExecResult::Ok("fine".into())));
-            log_console_line("", &LineOutcome::Blank);
-        });
-        assert!(
-            captured.records.is_empty(),
-            "success and blank lines report nothing: {captured:?}"
-        );
-    }
-
     /// The control that keeps the row above from being "answer
     /// `false` always" — one line per source the gate reads.
     ///
@@ -674,5 +654,67 @@ mod tests {
             &ConsoleSideEffect::CloseColorPicker
         )));
         assert!(!side_effect_changes_the_canvas(None));
+    }
+
+    /// A failed line run by anything but the prompt is logged under
+    /// `LINE_FAILED_CODE`, the code an IPC reply carries it as. A line
+    /// that worked logs nothing.
+    #[test]
+    fn test_log_console_line_warns_a_failure_under_its_code_and_nothing_else() {
+        use baumhard::util::log::capture::capture;
+
+        baumhard::util::test_logger::install();
+        let ((), captured) =
+            capture(|| log_console_line("frobnicate-5d1e", &LineOutcome::Unknown("frobnicate-5d1e".into())));
+        assert_eq!(captured.records.len(), 1, "{captured:?}");
+        assert_eq!(
+            captured.records[0].code.as_deref(),
+            Some(crate::application::console::LINE_FAILED_CODE)
+        );
+        assert!(captured.records[0]
+            .message
+            .contains("unknown command: frobnicate-5d1e"));
+
+        let ((), captured) = capture(|| {
+            log_console_line("help", &LineOutcome::Ran(ExecResult::Ok("fine".into())));
+            log_console_line("", &LineOutcome::Blank);
+        });
+        assert!(
+            captured.records.is_empty(),
+            "success and blank lines report nothing: {captured:?}"
+        );
+    }
+
+    /// `SaveDocument`'s three outcomes, each with the code a caller
+    /// can branch on: no bound path, a write that fails, and a write
+    /// that succeeds and clears the dirty flag.
+    #[test]
+    fn test_save_to_bound_path_reports_each_outcome_under_its_code() {
+        use crate::application::console::{SAVE_FAILED_CODE, SAVE_UNBOUND_CODE};
+        use baumhard::util::log::capture::capture;
+
+        baumhard::util::test_logger::install();
+        let mut doc = load_test_doc();
+        doc.file_path = None;
+        let (saved, captured) = capture(|| save_document_to_bound_path(&mut doc));
+        assert!(!saved);
+        assert_eq!(captured.records[0].code.as_deref(), Some(SAVE_UNBOUND_CODE));
+
+        let dir = baumhard::util::test_temp::TempDir::new("save-codes");
+        doc.file_path = Some(
+            dir.path()
+                .join("missing-dir/m.mindmap.json")
+                .display()
+                .to_string(),
+        );
+        let (saved, captured) = capture(|| save_document_to_bound_path(&mut doc));
+        assert!(!saved, "a parent that does not exist cannot be written into");
+        assert_eq!(captured.records[0].code.as_deref(), Some(SAVE_FAILED_CODE));
+
+        doc.file_path = Some(dir.path().join("m.mindmap.json").display().to_string());
+        doc.dirty = true;
+        let (saved, captured) = capture(|| save_document_to_bound_path(&mut doc));
+        assert!(saved && !doc.dirty, "a written save clears the dirty flag");
+        assert!(captured.records.is_empty(), "{captured:?}");
     }
 }
