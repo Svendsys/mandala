@@ -1717,7 +1717,7 @@ fn test_node_resize_reports_every_element_it_moved() {
         .keys()
         .chain(after_areas.keys())
         .copied()
-        .filter(|uid| before_areas.get(uid).map(&described) != after_areas.get(uid).map(&described))
+        .filter(|uid| before_areas.get(uid).map(described) != after_areas.get(uid).map(described))
         .collect();
     let patched: HashSet<usize> = patches.iter().map(|(uid, _)| *uid).collect();
 

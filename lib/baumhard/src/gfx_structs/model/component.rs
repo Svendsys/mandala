@@ -6,7 +6,7 @@
 //! `Vec<GlyphLine>`; a `GlyphModel` wraps the matrix.
 //!
 //! Field-level deltas against a component are expressed through
-//! [`GlyphModelField`](crate::gfx_structs::model::GlyphModelField),
+//! [`GlyphModelField`],
 //! which is the model half of the two field vocabularies §B4
 //! recognizes. There is deliberately no third, component-level one.
 

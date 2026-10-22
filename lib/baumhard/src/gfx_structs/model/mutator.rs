@@ -5,7 +5,7 @@
 //! insert). Both implement
 //! [`Applicable`](crate::core::primitives::Applicable)`<GlyphModel>`
 //! and route through
-//! [`GlyphModel`](crate::gfx_structs::model::GlyphModel)'s internal
+//! [`GlyphModel`]'s internal
 //! `apply_operation` or its public methods.
 
 use super::component::GlyphComponent;
