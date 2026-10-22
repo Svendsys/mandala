@@ -20,7 +20,7 @@ use cosmic_text::FontSystem;
 use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, SwashCache};
 use lazy_static::lazy_static;
 use log::debug;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{RecursiveRwLock, RecursiveRwLockReadGuard, RecursiveRwLockWriteGuard};
 use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
 
@@ -70,7 +70,9 @@ lazy_static! {
     pub static ref FONT_SOURCES: FxHashMap<AppFont, Source> = load_font_sources();
     /// Global cosmic-text `FontSystem`. Every cosmic-text operation
     /// (shaping, layout, measurement) goes through this single
-    /// `RwLock`-guarded instance.
+    /// lock-guarded instance. A `RecursiveRwLock` — parking_lot's
+    /// reader-biased lock — because every read is taken recursively;
+    /// see [`acquire_font_system_read`].
     ///
     /// **Private on purpose.** The only ways to take the lock are
     /// [`acquire_font_system_write`], [`try_acquire_font_system_write`]
@@ -78,7 +80,7 @@ lazy_static! {
     /// that record who holds it: a bare `FONT_SYSTEM.write()` would
     /// hold the lock invisibly, and a same-thread re-acquire under it
     /// could no longer be told from ordinary contention.
-    static ref FONT_SYSTEM: RwLock<FontSystem> = RwLock::new(FontSystem::new());
+    static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(FontSystem::new());
     /// `AppFont → fontdb face IDs` map populated on first access by
     /// [`load_fonts`]. Read-only after initialization.
     pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = load_fonts();
@@ -565,7 +567,7 @@ fn refuse_if_poisoned(site: &'static str) {
 /// release: clearing this thread's holding record and marking the
 /// lock poisoned if the holder is unwinding.
 pub struct FontSystemWriteGuard {
-    guard: RwLockWriteGuard<'static, FontSystem>,
+    guard: RecursiveRwLockWriteGuard<'static, FontSystem>,
     /// Whether this thread was already unwinding when it took the
     /// guard. Such a guard is taken by cleanup code running *during* a
     /// panic that began elsewhere; that panic cannot have interrupted
@@ -604,7 +606,7 @@ impl Drop for FontSystemWriteGuard {
 /// Shared access to the global `FontSystem`. Read-only; see
 /// [`FontSystemWriteGuard`] for why it is a type of its own.
 pub struct FontSystemReadGuard {
-    guard: RwLockReadGuard<'static, FontSystem>,
+    guard: RecursiveRwLockReadGuard<'static, FontSystem>,
     _not_send: NotSend,
 }
 
@@ -625,7 +627,10 @@ impl Drop for FontSystemReadGuard {
 /// the lock is poisoned. The wrapper is built *before* the check, so
 /// the panic unwinds through [`FontSystemWriteGuard::drop`], which
 /// releases the lock and clears the record.
-fn adopt_write(site: &'static str, guard: RwLockWriteGuard<'static, FontSystem>) -> FontSystemWriteGuard {
+fn adopt_write(
+    site: &'static str,
+    guard: RecursiveRwLockWriteGuard<'static, FontSystem>,
+) -> FontSystemWriteGuard {
     update_held(|held| held.write_site = Some(site));
     set_writer(Some((site, this_thread())));
     let adopted = FontSystemWriteGuard {
@@ -733,13 +738,15 @@ pub fn try_acquire_font_system_write(site: &'static str) -> Option<FontSystemWri
 /// Shared access to the `FontSystem`, with the same never-wait-forever
 /// contract as [`acquire_font_system_write`].
 ///
-/// Taken *recursively* (`try_read_recursive_for`): a thread that holds
-/// one read guard and asks for a second must not queue behind a
-/// writer that is itself waiting for the first, which an ordinary
-/// read would do and which deadlocks.
+/// Taken *recursively*: a thread that holds one read guard and asks
+/// for a second must not queue behind a writer that is itself waiting
+/// for the first, which an ordinary read would do and which deadlocks.
+/// `FONT_SYSTEM` is a `RecursiveRwLock` for exactly this, so its plain
+/// `try_read_for` already behaves that way. parking_lot 0.13 replaced
+/// the old `RwLock::try_read_recursive_for` with that dedicated type.
 pub fn acquire_font_system_read(site: &'static str) -> FontSystemReadGuard {
     refuse_reentry(site, Access::Read);
-    match FONT_SYSTEM.try_read_recursive_for(FONT_SYSTEM_LOCK_TIMEOUT) {
+    match FONT_SYSTEM.try_read_for(FONT_SYSTEM_LOCK_TIMEOUT) {
         Some(guard) => {
             update_held(|held| held.readers += 1);
             let adopted = FontSystemReadGuard {
@@ -898,7 +905,7 @@ pub fn measure_glyph_ink_bounds(
         None => Attrs::new(),
     };
 
-    buffer.set_text(font_system, glyph, &attrs, Shaping::Advanced, None);
+    buffer.set_text(glyph, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
 
     let mut out = InkBounds::default();
@@ -1009,7 +1016,7 @@ pub fn measure_text_block_unbounded(
     }
     let mut buffer = Buffer::new(font_system, Metrics::new(scale, line_height));
     // `None` on both axes = unbounded; measure natural widths.
-    buffer.set_size(font_system, None, None);
+    buffer.set_size(None, None);
 
     // Pin the requested AppFont family if any — without this, a
     // node pinned to a wide display face measures as if it were
@@ -1023,7 +1030,13 @@ pub fn measure_text_block_unbounded(
         None => Attrs::new(),
     };
 
-    buffer.set_text(font_system, text, &attrs, Shaping::Advanced, None);
+    buffer.set_text(text, &attrs, Shaping::Advanced, None);
+    // cosmic-text 0.19 made the setters lazy: `set_text` / `set_size`
+    // only mark the buffer dirty, and the raw `layout_runs()` reads
+    // whatever was last shaped — nothing, for a fresh buffer. Shape
+    // explicitly, or every block measures 0 × 0. 0.18 shaped inside
+    // `set_text`, which is why this call was not needed before.
+    buffer.shape_until_scroll(font_system, false);
 
     let mut max_w = 0.0_f32;
     let mut line_count = 0_u32;

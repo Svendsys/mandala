@@ -774,13 +774,13 @@ impl Renderer {
                 module: &rect_shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: RECT_VERTEX_SIZE,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     // The layout, its offsets and why `shape_id` is a
                     // float are all documented on the table itself.
                     attributes: &RECT_VERTEX_ATTRIBUTES,
-                }],
+                })],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &rect_shader,

@@ -1669,7 +1669,7 @@ fn collect_type_names(ty: &Type, out: &mut Vec<String>) {
                     }
                     PathArguments::Parenthesized(args) => {
                         for inner in &args.inputs {
-                            collect_type_names(inner, out);
+                            collect_type_names(&inner.ty, out);
                         }
                     }
                     PathArguments::None => {}

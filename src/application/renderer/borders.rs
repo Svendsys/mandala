@@ -89,14 +89,8 @@ pub(super) fn create_border_buffer_lh(
     bounds: (f32, f32),
 ) -> MindMapTextBuffer {
     let mut buf = buffer::create(font_system, font_size, line_height);
-    buf.set_size(font_system, Some(bounds.0), Some(bounds.1));
-    buf.set_rich_text(
-        font_system,
-        vec![(text, attrs.clone())],
-        &Attrs::new(),
-        SHAPING_ADVANCED,
-        None,
-    );
+    buf.set_size(Some(bounds.0), Some(bounds.1));
+    buf.set_rich_text(vec![(text, attrs.clone())], &Attrs::new(), SHAPING_ADVANCED, None);
     buf.shape_until_scroll(font_system, false);
     MindMapTextBuffer {
         buffer: buf,

@@ -286,7 +286,7 @@ impl Renderer {
             }
         }
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        self.queue.present(frame);
         self.atlas.trim();
     }
 

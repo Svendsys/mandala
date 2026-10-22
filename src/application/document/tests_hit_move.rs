@@ -1717,7 +1717,7 @@ fn test_node_resize_reports_every_element_it_moved() {
         .keys()
         .chain(after_areas.keys())
         .copied()
-        .filter(|uid| before_areas.get(uid).map(&described) != after_areas.get(uid).map(&described))
+        .filter(|uid| before_areas.get(uid).map(described) != after_areas.get(uid).map(described))
         .collect();
     let patched: HashSet<usize> = patches.iter().map(|(uid, _)| *uid).collect();
 
@@ -1863,7 +1863,7 @@ fn test_deep_chain_drag_does_not_exhaust_the_stack() {
         .stack_size(SMALL_STACK)
         .spawn(move || {
             let mut tree = baumhard::mindmap::tree_builder::build_mindmap_tree(&map);
-            let arena_nodes = tree.tree.arena.count();
+            let arena_nodes = tree.tree.arena.len();
             // `include_descendants = true` is the whole point: it is
             // what routes into `walk_drag_subtree` and inherits the
             // chain's depth. The patch-collecting variant shares that

@@ -368,7 +368,7 @@ fn shape_advance_with(
         Some(name) => Attrs::new().family(Family::Name(name)),
         None => Attrs::new(),
     };
-    buffer.set_text(font_system, grapheme, &attrs, Shaping::Advanced, None);
+    buffer.set_text(grapheme, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, false);
     let mut total = 0.0f32;
     for run in buffer.layout_runs() {

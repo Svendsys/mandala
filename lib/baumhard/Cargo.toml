@@ -15,11 +15,11 @@ autobenches = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.10.1"
+rand = "0.10.3"
 serde.workspace = true
 serde_json.workspace = true
 slab = "0.4.12"
-lazy_static = "1.5.0"
+lazy_static = "1.5.1"
 # `release_max_level_warn` is what keeps baumhard's §9 degrade paths
 # (unknown font id, UTF-8 conversion failure, corrupt-region drop)
 # diagnosable from a user report while the chatty walker
@@ -30,7 +30,7 @@ lazy_static = "1.5.0"
 log.workspace = true
 indextree.workspace = true
 glam.workspace = true
-cosmic-text = "0.18.2"
+cosmic-text = "0.19.0"
 # The lock behind `font::fonts::FONT_SYSTEM`. Chosen over
 # `std::sync::RwLock` for one capability std lacks: a *timed* write
 # acquire that queues fairly (`try_write_for`) instead of a
@@ -42,13 +42,13 @@ cosmic-text = "0.18.2"
 # the browser has no second thread to cause another. The uncontended
 # path never parks and never reads a clock, which is the only path
 # the browser takes — `tests/wasm_font_lock.rs` runs that claim.
-parking_lot = "0.12.5"
-tinyvec = "1.11.0"
-unicode-segmentation = "1.13.2"
+parking_lot = "0.13.0"
+tinyvec = "1.13.3"
+unicode-segmentation = "1.13.3"
 rustc-hash.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
-ordered-float = {version = "5.3.0", features = ["serde"]}
+ordered-float = {version = "5.5.0", features = ["serde"]}
 derivative = "2.2.0"
 # The loader's unknown-key capture. serde reports a key no field
 # matches by handing its value to `deserialize_ignored_any`, and
@@ -81,8 +81,8 @@ serde_ignored = "0.1.14"
 # wasm32 leg, and cargo unions features per target, so the browser
 # build's `log` is now `release_max_level_warn` alone where it used to
 # be `release_max_level_warn,std`. That is survivable today only
-# because `console_log 1.0.0` installs a `static LOGGER` through
-# `log::set_logger(&LOGGER)` (`console_log-1.0.0/src/lib.rs:215`)
+# because `console_log 1.1.0` installs a `static LOGGER` through
+# `log::set_logger(&LOGGER)` (`console_log-1.1.0/src/lib.rs:222`)
 # rather than `log::set_boxed_logger`, which is the API `log`'s
 # `std`/`alloc` features gate. A wasm arm that reached for
 # `set_boxed_logger`, or a replacement for `console_log` that boxes its
@@ -96,10 +96,10 @@ serde_ignored = "0.1.14"
 # `generate_stress_map` uses it and the wasm32 gate builds that binary
 # on both legs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-env_logger = "0.11.10"
+env_logger = "0.11.11"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_log = "1.0.0"
+console_log = "1.1.0"
 console_error_panic_hook = "0.1.7"
 
 [build-dependencies]
