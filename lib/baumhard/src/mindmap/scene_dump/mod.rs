@@ -21,8 +21,8 @@
 //!   tree's registered offset, sized by `render_bounds` — the rect the
 //!   renderer shapes a buffer into;
 //! - its **surface** rect, that rect through
-//!   [`Camera2D::canvas_to_screen`], in physical pixels;
-//! - its [`Visibility`] verdict from [`Camera2D::visibility`], the
+//!   [`Camera2D::canvas_to_screen`](crate::gfx_structs::camera::Camera2D::canvas_to_screen), in physical pixels;
+//! - its [`Visibility`](crate::gfx_structs::camera::Visibility) verdict from [`Camera2D::visibility`](crate::gfx_structs::camera::Camera2D::visibility), the
 //!   predicate the renderer's per-frame cull calls — so "on screen"
 //!   here and "drawn" there cannot disagree.
 //!
@@ -31,9 +31,9 @@
 //! coverage rule the shaper slices spans by.
 //!
 //! **Names come from the role's own identity index**, the one its
-//! hit-test resolves through — [`MindMapTree`]'s id maps for nodes and
-//! sections, [`EdgeChannelIndex`] for connections and labels,
-//! [`PortalHitIndex`] for portal markers — so an element is called
+//! hit-test resolves through — [`MindMapTree`](crate::mindmap::tree_builder::MindMapTree)'s id maps for nodes and
+//! sections, [`EdgeChannelIndex`](crate::mindmap::tree_builder::EdgeChannelIndex) for connections and labels,
+//! [`PortalHitIndex`](crate::mindmap::tree_builder::PortalHitIndex) for portal markers — so an element is called
 //! here what a click on it is called.
 //!
 //! Every function is pure over `&` references and allocates only its

@@ -13,7 +13,8 @@
 //! camera the renderer culls by. Nothing here re-derives geometry from
 //! the model or re-implements a visibility rule. `scene.hit_test`
 //! routes through the canonical click ladder on the app side
-//! ([`CommandTarget::hit_test`]) rather than any copy of it.
+//! ([`CommandTarget::hit_test`](crate::application::ipc::CommandTarget::hit_test))
+//! rather than any copy of it.
 //!
 //! **Read-only.** Four commands reach the app through
 //! [`Call::observe`]; `scene.hit_test` needs `drive()` only because a
