@@ -87,7 +87,7 @@ strum_macros = "0.28.0"
 # is one of the heaviest compile dependencies in the graph, so the
 # default-feature set is the one to inherit and `["full"]` the one to
 # ask for.
-syn = "2.0.117"
+syn = "3.0.9"
 
 # The profile `./build.sh --fat` selects, and the reason that flag
 # exists: `release` keeps `codegen-units = 16` and thin-local LTO so

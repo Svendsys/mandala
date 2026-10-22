@@ -1496,7 +1496,8 @@ mod log_routing {
         for (index, arm) in reporting.arms.iter().enumerate() {
             let position = format!("`match` arm {}", index + 1);
             only_doc_attrs(&arm.attrs, &position)?;
-            if arm.guard.is_some() {
+            // syn 3 carries a guard inside the arm's pattern.
+            if matches!(arm.pat, Pat::Guard(_)) {
                 return Err(format!("{position} carries an `if` guard"));
             }
             let Some(pattern) = render_pat(&arm.pat) else {
@@ -1760,7 +1761,7 @@ mod log_routing {
             ));
         };
         only_doc_attrs(&block.attrs, "the enclosing `impl` block")?;
-        if let Some((_, path, _)) = &block.trait_ {
+        if let Some((path, _)) = &block.trait_ {
             return Err(format!(
                 "`from_style_string` is defined in `impl {} for NodeShape`; \
                  the pin models the inherent impl, and a trait impl is a \
