@@ -390,7 +390,7 @@ impl ShapeSpelling {
 /// the call site, and stays a **literal** macro there deliberately:
 /// `log::trace!` expands to `log::log!(Level::Trace, …)`, whose
 /// release compile-out is `lvl <= STATIC_MAX_LEVEL` constant-folding
-/// on a level the compiler can see (`log-0.4.29/src/macros.rs:137`
+/// on a level the compiler can see (`log-0.4.34/src/macros.rs:137`
 /// and `:356`). A `log::log!(computed_level, …)` driven off
 /// [`Self::level`] would defeat that fold and keep the `trace!` arm's
 /// formatting in every shipped binary, which is the opposite of what

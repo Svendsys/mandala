@@ -90,14 +90,14 @@ const POLICY_HEADING: &str = "## §9 Error handling";
 /// `log` versions in which the
 /// `compile_error!("multiple release_max_level_* features set")` guard
 /// the root manifest's comment leans on was *read*, not assumed —
-/// `log-0.4.29/src/lib.rs:376-394`.
+/// `log-0.4.34/src/lib.rs:381-399`.
 ///
-/// `[workspace.dependencies]` requests `"0.4.29"`, which is a caret
+/// `[workspace.dependencies]` requests `"0.4.34"`, which is a caret
 /// requirement, so `cargo update` can move the resolved version
 /// underneath that text without touching the manifest. Pinning the
 /// *lockfile* is therefore the only place the claim can be held.
 #[cfg(all(test, not(target_arch = "wasm32")))]
-const VERIFIED_LOG_VERSIONS: &[&str] = &["0.4.29"];
+const VERIFIED_LOG_VERSIONS: &[&str] = &["0.4.34"];
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
@@ -207,7 +207,7 @@ mod tests {
     /// *dependency's source*, which nothing in this workspace would
     /// otherwise notice going stale.
     ///
-    /// Both manifests request `"0.4.29"`, a caret requirement, so
+    /// Both manifests request `"0.4.34"`, a caret requirement, so
     /// `cargo update` alone can move the resolved crate to a version
     /// whose guard nobody has read while the manifests, the comments
     /// and every other test stay green. This fails instead, and the
