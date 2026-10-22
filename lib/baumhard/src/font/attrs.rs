@@ -325,47 +325,48 @@ pub fn rich_text_spans_into<'a>(
 ) {
     out.clear();
     let metrics = Metrics::new(scale, line_height);
-    if families.regions.is_empty() {
+    for (region, slice) in covered_slices(families.text, &families.bounds) {
         let mut attrs = Attrs::new().metrics(metrics);
-        if let Some(c) = color_override {
-            attrs = attrs.color(c);
-        }
-        out.push((families.text, attrs));
-        return;
-    }
-    for (index, slice) in covered_slices(families.text, &families.bounds) {
-        let mut attrs = Attrs::new().metrics(metrics);
-        let color = color_override.or_else(|| families.regions[index].color.map(rgba_to_color));
+        let color =
+            color_override.or_else(|| region.and_then(|i| families.regions[i].color.map(rgba_to_color)));
         if let Some(c) = color {
             attrs = attrs.color(c);
         }
-        if let Some(family) = families.names[index].as_deref() {
+        if let Some(family) = region.and_then(|i| families.names[i].as_deref()) {
             attrs = attrs.family(Family::Name(family));
         }
         out.push((slice, attrs));
     }
 }
 
-/// The coverage rule, in one place: each region's slice of `text`,
-/// paired with the region's index, in region order, with every
-/// zero-width or out-of-range region (`start >= end` after byte
-/// mapping) left out. [`rich_text_spans_into`] shapes exactly these
+/// The coverage rule, in one place, for both bridges: what of `text`
+/// is drawn, and under which region.
+///
+/// With no regions at all, the whole text, under none (`None`): the
+/// data-model contract that "no regions" means uniform default
+/// styling. Otherwise each region's slice, paired with the region's
+/// index, in region order, with every zero-width or out-of-range
+/// region (`start >= end` after byte mapping) left out — an uncovered
+/// grapheme is not drawn. [`rich_text_spans_into`] shapes exactly these
 /// slices and [`displayed_text`] concatenates them, so what the
 /// renderer draws and what the scene introspection says it draws are
 /// one rule rather than two that agree.
 ///
 /// `bounds` must come from [`region_byte_bounds`] over this same
-/// `text`, which only ever yields character boundaries no greater
-/// than `text.len()`, so the slicing cannot panic.
+/// `text`, one pair per region (so empty exactly when there are no
+/// regions); it only ever yields character boundaries no greater than
+/// `text.len()`, so the slicing cannot panic.
 fn covered_slices<'t>(
     text: &'t str,
     bounds: &'t [(usize, usize)],
-) -> impl Iterator<Item = (usize, &'t str)> + 't {
-    bounds
+) -> impl Iterator<Item = (Option<usize>, &'t str)> + 't {
+    let uniform = bounds.is_empty().then_some((None, text));
+    let covered = bounds
         .iter()
         .enumerate()
         .filter(|(_, &(start, end))| start < end)
-        .map(move |(index, &(start, end))| (index, &text[start..end]))
+        .map(move |(index, &(start, end))| (Some(index), &text[start..end]));
+    uniform.into_iter().chain(covered)
 }
 
 /// The text a styled run actually puts on screen: the concatenation
@@ -375,20 +376,17 @@ fn covered_slices<'t>(
 /// (`CONCEPTS.md`, "TextRun"): an uncovered cluster drops silently, so
 /// the model's `text` and what a user reads diverge. This answers the
 /// second, through the same coverage rule the renderer shapes by
-/// ([`rich_text_spans_into`]). With no regions at all the whole text
-/// renders in the default style, and the whole text is returned.
+/// ([`rich_text_spans_into`]) — including its no-regions case, where
+/// the whole text renders in the default style.
 ///
 /// # Costs
 ///
 /// O(text + regions): one grapheme walk over `text` to map every
 /// region's cluster range to bytes (none with no regions), the three
-/// boundary `Vec`s that walk allocates, the region slice
-/// `ColorFontRegions::all_regions` collects, and the returned
-/// `String`. No font system, no lock.
+/// boundary `Vec`s that walk allocates (empty, and so unallocated, with
+/// no regions), the region slice `ColorFontRegions::all_regions`
+/// collects, and the returned `String`. No font system, no lock.
 pub fn displayed_text(text: &str, regions: &ColorFontRegions) -> String {
-    if regions.num_regions() == 0 {
-        return text.to_string();
-    }
     let bounds = region_byte_bounds(text, regions.all_regions().iter().map(|r| &r.range));
     covered_slices(text, &bounds).map(|(_, slice)| slice).collect()
 }

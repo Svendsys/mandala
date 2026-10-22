@@ -8,7 +8,7 @@
 //! writing straight to text prints an `f32` the short way, but one
 //! building a `serde_json::Value` first widens it — so the same data
 //! read inline and read from a streamed file would differ in every
-//! float. [`shortest_f64`] closes that gap at the value: it is the
+//! float. [`shortest_f64`](crate::util::shortest_float::shortest_f64) closes that gap at the value: it is the
 //! `f64` nearest the `f32`'s shortest decimal, so both paths print the
 //! same digits and both parse back to the same `f32`.
 

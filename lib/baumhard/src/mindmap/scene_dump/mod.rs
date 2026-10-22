@@ -50,7 +50,7 @@
 //! is called.
 //!
 //! Every function is pure over `&` references and allocates only its
-//! output. A [`DumpFilter`] decides, before any text is resolved,
+//! output. A [`DumpFilter`](crate::mindmap::scene_dump::DumpFilter) decides, before any text is resolved,
 //! which elements are kept and whether their text is: an element the
 //! filter drops, or a read that asks for no text, costs no
 //! [`displayed_text`](crate::font::attrs::displayed_text) walk.
