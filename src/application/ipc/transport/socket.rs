@@ -5,13 +5,24 @@
 //! (`format/ipc.md` §Socket, flag, lifecycle and §Ownership and
 //! permissions).
 //!
-//! The order is the security argument, so it is fixed: the parent
-//! directory is vetted **first**, because the type-gated stale-socket
-//! check that follows does a stat → unlink → bind sequence, and only a
-//! parent no other user can write to closes the window in which
-//! someone could swap the inode between the stat and the bind. The
-//! bind then creates the socket owner-only from its first instant, so
-//! there is no moment where another user could connect to it.
+//! The order is the security argument, so it is fixed:
+//!
+//! 1. **The directory chain is vetted first** — the parent and every
+//!    ancestor above it must be owned by this user or by root, and
+//!    writable by nobody else unless sticky. Whoever can rename any
+//!    directory on the path can swap the socket's name for one of
+//!    theirs, so checking the parent alone is not enough.
+//! 2. **An existing path is replaced only when it is provably a stale
+//!    socket of ours.**
+//! 3. **The socket is bound where nobody else can reach it** — inside
+//!    a fresh `0700` staging directory — made `0600`, and only then
+//!    hard-linked to its real name. A link refuses an existing path,
+//!    so the final step can never replace anything, and the socket is
+//!    never reachable by another user with wider permissions.
+//!
+//! No step touches the process umask: it is process-wide, and
+//! narrowing it for a moment would leak into whatever else the process
+//! — or a parallel test — creates in that moment.
 //!
 //! Every failure is a `String` naming the path and the remedy. They
 //! surface through the one startup `expect` in `run_native` — a bad
@@ -23,6 +34,7 @@ use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The socket file this process bound, identified by inode as well
 /// as by name. Unlinking checks the identity first, so a graceful exit
@@ -58,10 +70,10 @@ impl BoundSocket {
 }
 
 /// Bind the listening socket at `path`, running the whole vetted
-/// sequence: parent directory, existing path, owner-only bind.
+/// sequence: directory chain, existing path, staged owner-only bind.
 ///
-/// Cost: a handful of syscalls, once per launch, before the event loop
-/// runs.
+/// Cost: a handful of syscalls per ancestor directory, once per
+/// launch, before the event loop runs.
 pub(super) fn bind(path: &Path) -> Result<(UnixListener, BoundSocket), String> {
     if path.as_os_str().is_empty() {
         return Err("`--ipc` needs a socket path, e.g. `--ipc $XDG_RUNTIME_DIR/mandala.sock`".to_string());
@@ -70,60 +82,84 @@ pub(super) fn bind(path: &Path) -> Result<(UnixListener, BoundSocket), String> {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    prepare_parent(parent)?;
-    clear_stale(path)?;
-    bind_owner_only(path)
+    let me = rustix::process::geteuid().as_raw();
+    prepare_parent(parent, me)?;
+    clear_stale(path, me)?;
+    bind_staged(path, parent)
 }
 
-/// Whether a directory with permission bits `mode` is a safe home for
-/// the socket's *name*: writable by nobody but its owner, or carrying
-/// the sticky bit, under which others may create entries but not
-/// unlink or rename ours. One predicate covers group- and
-/// world-writable alike.
-fn parent_mode_is_trusted(mode: u32) -> bool {
+/// Whether a directory with owner `uid` and permission bits `mode` is
+/// a safe place on the socket's path, for a process running as `me`.
+///
+/// Owned by `me` or by root, because a directory's owner can always
+/// rename or unlink what is in it, sticky bit or not. And writable by
+/// nobody but its owner, or carrying the sticky bit, under which
+/// others may create entries but not unlink or rename ours — one
+/// predicate for group- and world-writable alike.
+fn directory_is_trusted(uid: u32, mode: u32, me: u32) -> bool {
     const WRITABLE_BY_OTHERS: u32 = 0o022;
     const STICKY: u32 = 0o1000;
-    mode & WRITABLE_BY_OTHERS == 0 || mode & STICKY != 0
+    let owner_is_trusted = uid == me || uid == 0;
+    owner_is_trusted && (mode & WRITABLE_BY_OTHERS == 0 || mode & STICKY != 0)
 }
 
-/// Create `parent` (owner-only, `0700`) when it does not exist, then
-/// refuse it unless [`parent_mode_is_trusted`].
-fn prepare_parent(parent: &Path) -> Result<(), String> {
-    let metadata = match fs::metadata(parent) {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(parent)
-                .map_err(|e| format!("cannot create the socket's directory {}: {e}", parent.display()))?;
-            fs::metadata(parent)
-                .map_err(|e| format!("cannot inspect the socket's directory {}: {e}", parent.display()))?
-        }
-        Err(e) => {
-            return Err(format!(
-                "cannot inspect the socket's directory {}: {e}",
-                parent.display()
-            ))
-        }
-    };
-    if !metadata.is_dir() {
+/// Refuse `dir` unless it, and every directory above it, is
+/// [`directory_is_trusted`]. The chain is read from the canonical
+/// path, so a symlink anywhere on it is judged by where it leads.
+fn vet_chain(dir: &Path, me: u32) -> Result<(), String> {
+    let canonical = fs::canonicalize(dir)
+        .map_err(|e| format!("cannot resolve the socket's directory {}: {e}", dir.display()))?;
+    let leaf =
+        fs::metadata(&canonical).map_err(|e| format!("cannot inspect {}: {e}", canonical.display()))?;
+    if !leaf.is_dir() {
         return Err(format!(
             "the socket's parent {} is not a directory",
-            parent.display()
+            dir.display()
         ));
     }
-    let mode = metadata.permissions().mode();
-    if !parent_mode_is_trusted(mode) {
-        return Err(format!(
-            "refusing to bind in {} (mode {:o}): it is writable by other users and has no sticky \
-             bit, so they could replace the socket path; use a directory only you can write to, \
-             such as $XDG_RUNTIME_DIR",
-            parent.display(),
-            mode & 0o7777
-        ));
+    for ancestor in canonical.ancestors() {
+        let metadata =
+            fs::metadata(ancestor).map_err(|e| format!("cannot inspect {}: {e}", ancestor.display()))?;
+        let mode = metadata.permissions().mode();
+        if !directory_is_trusted(metadata.uid(), mode, me) {
+            return Err(format!(
+                "refusing to bind under {} (owner uid {}, mode {:o}): another user could rename or \
+                 replace the socket path there. Every directory on the path must be owned by you or \
+                 root and writable only by its owner (or sticky); $XDG_RUNTIME_DIR is the usual \
+                 choice",
+                ancestor.display(),
+                metadata.uid(),
+                mode & 0o7777
+            ));
+        }
     }
     Ok(())
+}
+
+/// Vet the directory chain, create `parent` (owner-only, `0700`) if it
+/// is missing, and vet again. The part that exists is vetted *before*
+/// anything is created under it, and the whole chain after.
+fn prepare_parent(parent: &Path, me: u32) -> Result<(), String> {
+    let existing = parent
+        .ancestors()
+        .map(|a| {
+            if a.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                a
+            }
+        })
+        .find(|a| a.exists())
+        .unwrap_or(Path::new("/"));
+    vet_chain(existing, me)?;
+    if !parent.exists() {
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(|e| format!("cannot create the socket's directory {}: {e}", parent.display()))?;
+    }
+    vet_chain(parent, me)
 }
 
 /// Clear the way for a bind at `path`. A missing path is the common
@@ -132,7 +168,7 @@ fn prepare_parent(parent: &Path) -> Result<(), String> {
 /// refuses a probe connection. Anything else is left exactly as found
 /// and the launch fails naming it — a typo'd `--ipc ~/thesis.txt`
 /// must never delete the file.
-fn clear_stale(path: &Path) -> Result<(), String> {
+fn clear_stale(path: &Path, me: u32) -> Result<(), String> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
@@ -140,23 +176,12 @@ fn clear_stale(path: &Path) -> Result<(), String> {
     };
     let file_type = metadata.file_type();
     if !file_type.is_socket() {
-        let kind = if file_type.is_symlink() {
-            "a symbolic link"
-        } else if file_type.is_dir() {
-            "a directory"
-        } else if file_type.is_file() {
-            "a regular file"
-        } else if file_type.is_fifo() {
-            "a FIFO"
-        } else {
-            "not a socket"
-        };
         return Err(format!(
-            "{} already exists and is {kind}; refusing to replace it — pick another `--ipc` path",
-            path.display()
+            "{} already exists and is {}; refusing to replace it — pick another `--ipc` path",
+            path.display(),
+            describe_kind(file_type)
         ));
     }
-    let me = rustix::process::geteuid().as_raw();
     if metadata.uid() != me {
         return Err(format!(
             "{} is a socket owned by uid {}, not by you (uid {me}); refusing to replace it",
@@ -178,38 +203,84 @@ fn clear_stale(path: &Path) -> Result<(), String> {
     }
 }
 
-/// Bind with the process umask narrowed to owner-only, so the socket
-/// is `0600` from the instant it exists rather than after a `chmod`
-/// another user could race. The umask is process-wide; this runs at
-/// startup, before the window, the renderer or any thread that
-/// creates files exists, and restores it immediately. The explicit
-/// `chmod` after it covers platforms that ignore the umask for socket
-/// files.
-fn bind_owner_only(path: &Path) -> Result<(UnixListener, BoundSocket), String> {
-    use rustix::fs::Mode;
-
-    let previous = rustix::process::umask(Mode::from_raw_mode(0o177));
-    let bound = UnixListener::bind(path);
-    rustix::process::umask(previous);
-    let listener = bound.map_err(|e| format!("cannot bind {}: {e}", path.display()))?;
-
-    let identity = fs::set_permissions(path, Permissions::from_mode(0o600))
-        .and_then(|()| fs::symlink_metadata(path))
-        .map_err(|e| format!("cannot restrict {} to owner-only: {e}", path.display()));
-    match identity {
-        Ok(metadata) => Ok((
-            listener,
-            BoundSocket {
-                path: path.to_path_buf(),
-                dev: metadata.dev(),
-                ino: metadata.ino(),
-            },
-        )),
-        Err(message) => {
-            let _ = fs::remove_file(path);
-            Err(message)
-        }
+fn describe_kind(file_type: fs::FileType) -> &'static str {
+    if file_type.is_symlink() {
+        "a symbolic link"
+    } else if file_type.is_dir() {
+        "a directory"
+    } else if file_type.is_file() {
+        "a regular file"
+    } else if file_type.is_fifo() {
+        "a FIFO"
+    } else {
+        "not a socket"
     }
+}
+
+/// Staging directories created by this process, so concurrent binds —
+/// parallel tests — never pick the same name.
+static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
+
+/// Bind inside a fresh `0700` staging directory in `parent`, make the
+/// socket `0600`, then hard-link it to `path`. Nobody else can reach
+/// the socket before the link exists, and the link itself refuses an
+/// existing path. The staging name is kept short (`.mipc<n>/s`)
+/// because a Unix socket path is length-limited and the staged path
+/// is the one `bind` sees.
+fn bind_staged(path: &Path, parent: &Path) -> Result<(UnixListener, BoundSocket), String> {
+    let staging = loop {
+        let candidate = parent.join(format!(".mipc{}", NEXT_STAGING.fetch_add(1, Ordering::Relaxed)));
+        match DirBuilder::new().mode(0o700).create(&candidate) {
+            Ok(()) => break candidate,
+            // Left behind by a process that died mid-bind, or another
+            // instance binding next to us; take the next name.
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(format!(
+                    "cannot create a staging directory in {}: {e}",
+                    parent.display()
+                ))
+            }
+        }
+    };
+    let bound = bind_in(&staging, path);
+    if let Err(e) = fs::remove_dir_all(&staging) {
+        log::warn!(
+            "ipc: could not remove staging directory {}: {e}",
+            staging.display()
+        );
+    }
+    bound
+}
+
+fn bind_in(staging: &Path, path: &Path) -> Result<(UnixListener, BoundSocket), String> {
+    let staged = staging.join("s");
+    let listener = UnixListener::bind(&staged).map_err(|e| {
+        format!(
+            "cannot bind the socket for {} (staged at {}): {e}",
+            path.display(),
+            staged.display()
+        )
+    })?;
+    fs::set_permissions(&staged, Permissions::from_mode(0o600))
+        .map_err(|e| format!("cannot restrict {} to owner-only: {e}", staged.display()))?;
+    fs::hard_link(&staged, path).map_err(|e| match e.kind() {
+        ErrorKind::AlreadyExists => format!(
+            "{} appeared while the socket was being bound; refusing to replace it",
+            path.display()
+        ),
+        _ => format!("cannot create the socket at {}: {e}", path.display()),
+    })?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|e| format!("cannot inspect {}: {e}", path.display()))?;
+    Ok((
+        listener,
+        BoundSocket {
+            path: path.to_path_buf(),
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -226,17 +297,49 @@ mod tests {
     }
 
     #[test]
-    fn test_parent_mode_is_trusted_refuses_writable_by_others_without_sticky() {
-        assert!(parent_mode_is_trusted(0o700));
-        assert!(parent_mode_is_trusted(0o755));
-        assert!(parent_mode_is_trusted(0o1777), "sticky /tmp is accepted");
+    fn test_directory_is_trusted_refuses_writable_by_others_without_sticky() {
+        const ME: u32 = 1000;
+        assert!(directory_is_trusted(ME, 0o700, ME));
+        assert!(directory_is_trusted(ME, 0o755, ME));
         assert!(
-            parent_mode_is_trusted(0o1770),
+            directory_is_trusted(0, 0o1777, ME),
+            "root's sticky /tmp is accepted"
+        );
+        assert!(
+            directory_is_trusted(ME, 0o1770, ME),
             "sticky group-writable is accepted"
         );
-        assert!(!parent_mode_is_trusted(0o777));
-        assert!(!parent_mode_is_trusted(0o775), "group-writable alone is refused");
-        assert!(!parent_mode_is_trusted(0o757), "world-writable alone is refused");
+        assert!(!directory_is_trusted(ME, 0o777, ME));
+        assert!(
+            !directory_is_trusted(ME, 0o775, ME),
+            "group-writable alone is refused"
+        );
+        assert!(
+            !directory_is_trusted(ME, 0o757, ME),
+            "world-writable alone is refused"
+        );
+    }
+
+    #[test]
+    fn test_directory_is_trusted_requires_the_owner_to_be_me_or_root() {
+        const ME: u32 = 1000;
+        const OTHER: u32 = 1001;
+        // A sticky directory's owner can still unlink or rename what is
+        // in it, so the sticky bit vouches only for root's directories.
+        assert!(!directory_is_trusted(OTHER, 0o1777, ME));
+        assert!(
+            !directory_is_trusted(OTHER, 0o755, ME),
+            "its owner can rename our entry"
+        );
+        assert!(directory_is_trusted(0, 0o755, ME));
+        assert!(
+            directory_is_trusted(0, 0o755, 0),
+            "root trusts its own directories"
+        );
+        assert!(
+            !directory_is_trusted(OTHER, 0o700, 0),
+            "root does not trust a user's directory"
+        );
     }
 
     #[test]
@@ -269,7 +372,7 @@ mod tests {
         fs::create_dir(&open).expect("mkdir");
         fs::set_permissions(&open, Permissions::from_mode(0o777)).expect("chmod");
         let err = bind(&open.join("mandala.sock")).expect_err("a world-writable parent is refused");
-        assert!(err.contains("writable by other users"), "{err}");
+        assert!(err.contains("another user could"), "{err}");
         assert!(!open.join("mandala.sock").exists(), "nothing was created");
 
         fs::set_permissions(&open, Permissions::from_mode(0o1777)).expect("chmod");
@@ -346,5 +449,43 @@ mod tests {
             path.exists(),
             "a different inode at the same path is not ours to remove"
         );
+    }
+
+    #[test]
+    fn test_bind_refuses_an_ancestor_other_users_can_write() {
+        // `/shared(0777)/mine(0700)/m.sock`: `mine` is private, but any
+        // user can rename it away from under `shared` and put their own
+        // in its place.
+        let dir = TempDir::new("ipc-open-ancestor");
+        let shared = dir.join("shared");
+        let mine = shared.join("mine");
+        fs::create_dir_all(&mine).expect("mkdir");
+        fs::set_permissions(&mine, Permissions::from_mode(0o700)).expect("chmod");
+        fs::set_permissions(&shared, Permissions::from_mode(0o777)).expect("chmod");
+        let err = bind(&mine.join("m.sock")).expect_err("an open ancestor is refused");
+        assert!(
+            err.contains(&shared.display().to_string()),
+            "the refusal names the ancestor: {err}"
+        );
+
+        // The same check runs before anything is created under it.
+        let err = bind(&shared.join("new/m.sock")).expect_err("refused before creating");
+        assert!(err.contains("another user could"), "{err}");
+        assert!(
+            !shared.join("new").exists(),
+            "nothing was created under the open ancestor"
+        );
+    }
+
+    #[test]
+    fn test_bind_leaves_only_the_socket_behind() {
+        let dir = TempDir::new("ipc-staging");
+        let path = dir.join("m.sock");
+        let (_listener, _bound) = bind(&path).expect("bind");
+        let entries: Vec<String> = fs::read_dir(dir.path())
+            .expect("read_dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, ["m.sock"], "the staging directory is removed");
     }
 }

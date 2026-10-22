@@ -28,7 +28,7 @@ use super::{
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
-use crate::application::ipc::{self, IpcServer, IpcWake};
+use crate::application::ipc::{self, DrainOutcome, IpcServer, IpcWake};
 use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
 
@@ -81,7 +81,6 @@ pub(super) fn run(app: Application) {
         init: None,
         watchdog: FreezeWatchdog::spawn(),
         ipc,
-        ipc_backlog: false,
     };
     event_loop
         .run_app(&mut handler)
@@ -104,25 +103,15 @@ struct NativeApp {
     /// The `--ipc` listener, when the flag was passed. Taken and shut
     /// down in [`ApplicationHandler::exiting`].
     ipc: Option<IpcServer>,
-    /// The last IPC drain ran out of budget with messages queued; the
-    /// loop keeps polling until a drain empties the queue.
-    ipc_backlog: bool,
 }
 
-impl NativeApp {
-    /// Execute queued IPC requests on the main thread, with the same
-    /// access an input handler has, and request a redraw if any of
-    /// them changed pixels — the IPC peer of `handle_event`'s
-    /// `redraw_after`.
-    fn drain_ipc(&mut self) {
-        let Some(server) = self.ipc.as_mut() else { return };
-        let outcome = server.drain(ipc::execute);
-        if outcome.repaint {
-            if let Some(init) = self.init.as_ref() {
-                init.window.request_redraw();
-            }
-        }
-        self.ipc_backlog = outcome.backlog;
+/// Execute queued IPC requests on the main thread, with the same access
+/// an input handler has. A free function over the one field, so
+/// `about_to_wait` can call it while it holds `InitState`.
+fn drain_ipc(server: &mut Option<IpcServer>) -> DrainOutcome {
+    match server {
+        Some(server) => server.drain(ipc::execute),
+        None => DrainOutcome::default(),
     }
 }
 
@@ -164,19 +153,18 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         }
     }
 
-    /// An IPC boundary thread has queued work. Ticks the watchdog like
-    /// every other handler, so a command that wedges the loop still
-    /// gets its diagnostic abort — IPC has no exemption.
+    /// An IPC boundary thread has queued work. The wake's whole job is
+    /// to unpark the loop: winit runs `about_to_wait` after every
+    /// iteration that delivered events, and the queue is drained there,
+    /// once, in its place in the frame. Ticks the watchdog like every
+    /// other handler.
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _: IpcWake) {
         self.watchdog.unparked();
-        self.drain_ipc();
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.watchdog.unparked();
-        // Beside `drain_inputs`, so requests that arrived during this
-        // iteration's other events coalesce into one drain per frame.
-        self.drain_ipc();
+        let ipc_outcome;
         if let Some(init) = self.init.as_mut() {
             // Pre-snapshot the continuation predicate: if the loop
             // was *entering* this iteration with continuous work
@@ -184,13 +172,19 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // drain will do work that needs to land on screen.
             let was_continuing = init.needs_continuation();
             init.drain_inputs();
+            // After the input drain, so a command observes every input
+            // the user sent before it — throttled drag moves and zoom
+            // steps included — and its effects are ordered after them.
+            ipc_outcome = drain_ipc(&mut self.ipc);
             let still_continuing = init.needs_continuation();
             // Request a redraw if work happened this iteration
             // (`was_continuing`) OR if more work is pending
             // (`still_continuing`). The OR catches the last
             // animation frame: pre=true, post=false, still need
-            // one redraw to land the final state.
-            if was_continuing || still_continuing {
+            // one redraw to land the final state. An IPC command that
+            // changed pixels needs one too, as a mutating input
+            // handler's `redraw_after` does.
+            if was_continuing || still_continuing || ipc_outcome.repaint {
                 init.window.request_redraw();
             }
             // Active → idle FPS transition: when the loop is about
@@ -239,8 +233,14 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             if let Some(server) = self.ipc.as_mut() {
                 server.publish_map(init.document.as_ref().and_then(|doc| doc.file_path.as_deref()));
             }
+        } else {
+            // Before the window exists there is no input to order
+            // against; requests that need no app state still answer.
+            ipc_outcome = drain_ipc(&mut self.ipc);
         }
-        if self.ipc_backlog {
+        // A drain that ran out of budget keeps the loop iterating until
+        // the queue is empty.
+        if ipc_outcome.backlog {
             event_loop.set_control_flow(ControlFlow::Poll);
         }
         // Mark parked AFTER setting ControlFlow so the watchdog

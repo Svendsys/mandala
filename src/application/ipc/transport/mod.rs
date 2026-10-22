@@ -27,8 +27,9 @@
 //! **Nothing blocks the main thread.** Delivery to a controller is a
 //! `try_send` into its bounded outbound queue. A full queue does not
 //! mean the client is gone — the main thread can execute a burst of
-//! pipelined requests faster than one `write` per reply drains them —
-//! so it *pauses* that controller instead: the reply that did not fit
+//! pipelined requests faster than the writer thread is scheduled to
+//! drain them, even though the writer sends everything queued in one
+//! write — so it *pauses* that controller instead: the reply that did not fit
 //! is held, no further request is executed, and the outbound thread
 //! wakes the loop as soon as it has made room. A client that has
 //! genuinely stopped reading is detected where it can be, at the
@@ -45,7 +46,7 @@ use std::path::Path;
 use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use std::os::unix::net::UnixStream;
 
@@ -67,10 +68,13 @@ const OUTBOUND_QUEUE_CAP: usize = 256;
 /// that is merely thinking.
 #[cfg(not(test))]
 const STALLED_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Shortened under test so the dead-client path is exercised in about
-/// a second rather than ten; the mechanism is the same socket option.
+/// Shortened under test so the dead-client path runs in seconds rather
+/// than ten; the mechanism is the same socket option. Still long enough
+/// that a test client descheduled on a loaded runner is not mistaken
+/// for a dead one — the paused-reader test pauses for a small,
+/// independent fraction of it.
 #[cfg(test)]
-const STALLED_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+const STALLED_WRITE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Inbound messages one drain handles at most. Bounds the time a
 /// single drain can hold the main thread against a client that writes
@@ -81,7 +85,15 @@ const DRAIN_BUDGET: usize = REQUEST_QUEUE_CAP;
 /// How long a graceful exit waits for the `shutdown` event to reach
 /// the client. The event loop has already stopped; this only bounds
 /// how long a stalled client can delay the process ending.
+#[cfg(not(test))]
 const SHUTDOWN_FLUSH: Duration = Duration::from_millis(250);
+/// Longer under test, so a test client descheduled on a loaded runner
+/// is not mistaken for one that stopped reading.
+#[cfg(test)]
+const SHUTDOWN_FLUSH: Duration = Duration::from_secs(4);
+
+/// How often a graceful exit retries a full queue before its deadline.
+const SHUTDOWN_RETRY: Duration = Duration::from_millis(2);
 
 /// A message from the boundary threads to the main thread.
 enum Inbound {
@@ -358,10 +370,18 @@ impl IpcServer {
     }
 
     /// Graceful exit: tell the controller, if any, that the app is
-    /// going away, give that frame [`SHUTDOWN_FLUSH`] to reach it,
-    /// close the connection and remove the socket file. Requests still
-    /// queued are not executed — the app is exiting, and the
+    /// going away, give that frame until [`SHUTDOWN_FLUSH`] to reach
+    /// it, close the connection and remove the socket file. Requests
+    /// still queued are not executed — the app is exiting, and the
     /// `shutdown` event is the answer they get.
+    ///
+    /// A controller paused on a full queue is the one case that needs
+    /// care: its held reply is owed first, and neither it nor the
+    /// `shutdown` frame fits until the writer makes room. Both are
+    /// offered against the same deadline, so a client reading normally
+    /// mid-burst still learns the app exited rather than seeing a bare
+    /// EOF, and a client that stopped reading costs the exit at most
+    /// [`SHUTDOWN_FLUSH`].
     pub(crate) fn shutdown(mut self) {
         while let Ok(message) = self.inbound.try_recv() {
             match message {
@@ -371,22 +391,44 @@ impl IpcServer {
             }
         }
         if let Some(controller) = self.controller.take() {
+            let deadline = Instant::now() + SHUTDOWN_FLUSH;
             let Controller {
                 outbound,
                 hangup,
                 flushed,
                 ..
             } = controller;
-            if outbound
-                .try_send(Outbound::Final(Frame::Event(Event::shutdown())))
-                .is_ok()
-            {
+            let held_delivered = self
+                .stalled
+                .take()
+                .is_none_or(|held| send_by(&outbound, held, deadline));
+            let goodbye = Outbound::Final(Frame::Event(Event::shutdown()));
+            if held_delivered && send_by(&outbound, goodbye, deadline) {
                 drop(outbound);
-                let _ = flushed.recv_timeout(SHUTDOWN_FLUSH);
+                let _ = flushed.recv_timeout(deadline.saturating_duration_since(Instant::now()));
             }
             let _ = hangup.shutdown(std::net::Shutdown::Both);
         }
         self.socket.unlink();
+    }
+}
+
+/// Queue `message`, retrying while the queue is full, until
+/// `deadline`. Only for the exit path, after the event loop has
+/// stopped — anywhere else the main thread never waits on a client.
+fn send_by(outbound: &SyncSender<Outbound>, mut message: Outbound, deadline: Instant) -> bool {
+    loop {
+        match outbound.try_send(message) {
+            Ok(()) => return true,
+            Err(TrySendError::Disconnected(_)) => return false,
+            Err(TrySendError::Full(back)) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                message = back;
+                std::thread::sleep(SHUTDOWN_RETRY);
+            }
+        }
     }
 }
 

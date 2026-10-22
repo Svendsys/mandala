@@ -66,18 +66,24 @@ mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
 
 The socket is as security-sensitive as `~/.config/mandala/macros.json`
 (see [Trust model](#trust-model)). The server creates it with
-owner-only permissions (`0600`, in a directory the user owns) —
-bound under an owner-only umask, so there is no instant at which it
-exists with wider permissions. A parent directory that does not
-exist yet is created, owner-only (`0700`). The
-`0600` mode protects the socket's *bytes*, but the socket's *name*
-is only as trustworthy as its parent directory — a directory another
-user can write to lets them unlink or replace the path while Mandala
-runs. So the server refuses to bind when the parent directory is
-writable by anyone but the owner (group- **or** world-writable)
-without the sticky bit — one mechanically checkable predicate
-covering both. A sticky-bit shared directory (e.g. `/tmp`) is
-accepted but second-best; the recommended location is
+owner-only permissions (`0600`, in a directory the user owns). It
+is bound inside a fresh private (`0700`) staging directory, made
+`0600` there, and only then hard-linked to its real name — so there
+is no instant at which another user can reach it, and the link
+refuses an existing path, so the final step can never replace
+anything. A parent directory that does not exist yet is created,
+owner-only (`0700`). The `0600` mode protects the socket's *bytes*,
+but the socket's *name* is only as trustworthy as the directories
+above it — whoever can rename or unlink an entry in any of them can
+swap the path for one of their own while Mandala runs. So the server
+refuses to bind unless **every directory on the path**, from the
+parent up to `/` (symlinks resolved), is owned by the user or by
+root, and is writable by nobody but its owner (group- **or**
+world-writable fails) unless it has the sticky bit — one
+mechanically checkable predicate per directory. The owner clause is
+not redundant with the sticky bit: a sticky directory's *owner* can
+still unlink or rename what is in it. A root-owned sticky directory
+(e.g. `/tmp`) is accepted but second-best; the recommended location is
 `$XDG_RUNTIME_DIR` (already `0700` on every mainstream distro).
 Never a TCP port: filesystem permissions are the access-control
 mechanism.

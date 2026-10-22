@@ -116,11 +116,11 @@ decision, not a drive-by edit.
     generation stamp on its requests/replies/events/pending-waits, and
     the reader's disconnect is queued behind that connection's
     requests and wakes the main thread, which retires the generation
-    — cancelling its waits and subscriptions — so nothing crosses to a
+    — canceling its waits and subscriptions — so nothing crosses to a
     successor controller. All see only protocol value types; every
-    IPC command executes on the main thread, in the `user_event` arm
-    and beside `drain_inputs` in `about_to_wait`, with the same access
-    as any input handler, and a command that changes pixels requests a
+    IPC command executes on the main thread, in `about_to_wait` right
+    after `drain_inputs` (the `user_event` wake only unparks the
+    loop), with the same access as any input handler, and a command that changes pixels requests a
     redraw just as the winit input handlers do. The `std::sync::mpsc`
     queues at this boundary carry protocol values only — they are not
     a license for channels between app components — and blocking IPC

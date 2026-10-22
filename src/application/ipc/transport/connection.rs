@@ -25,6 +25,12 @@ use crate::application::ipc::envelope::{
     decode_line, Decoded, Event, Frame, Reply, INBOUND_LINE_CAP, OUTBOUND_FRAME_CAP,
 };
 
+/// The size past which the writer stops adding queued frames to one
+/// write. Large enough that a burst of replies goes out in a handful of
+/// syscalls; small enough that a batch is not a second unbounded
+/// buffer beside the queue.
+const WRITE_BATCH_BYTES: usize = 64 << 10;
+
 /// Pause after a failed `accept()` before trying again, so a
 /// persistent failure (descriptor exhaustion) cannot spin a core.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
@@ -135,7 +141,8 @@ struct Writer {
 
 impl Writer {
     /// Serialize each frame (cap check and `reply_too_large`
-    /// substitution included) and write it. Ends when every sender is
+    /// substitution included) and write it, gathering every frame
+    /// already queued into one write. Ends when every sender is
     /// gone — the reader has exited and the main thread has retired
     /// the controller — on a write error or a write stalled past
     /// `STALLED_WRITE_TIMEOUT`, or after an [`Outbound::Final`] frame;
@@ -157,23 +164,39 @@ impl Writer {
             }
         };
         let mut writer = &stream;
-        while let Ok(message) = frames.recv() {
-            // Taking the frame made room in the queue. The fence pairs
-            // with the one in `Controller::offer`.
-            fence(Ordering::SeqCst);
-            resume_main_thread();
-            let (frame, last) = match message {
-                Outbound::Frame(frame) => (frame, false),
-                Outbound::Final(frame) => (frame, true),
-            };
-            match frame.encode(OUTBOUND_FRAME_CAP) {
-                Some(bytes) => {
-                    if let Err(e) = writer.write_all(&bytes).and_then(|()| writer.flush()) {
-                        log::debug!("ipc: write to controller failed, closing: {e}");
-                        break;
+        let mut batch = Vec::new();
+        while let Ok(first) = frames.recv() {
+            // Everything already queued goes out in one write: a burst
+            // costs one syscall rather than one per frame, which keeps
+            // the queue from filling while a pipelining client reads
+            // normally. The batch stops growing at `WRITE_BATCH_BYTES`
+            // so one write never holds an unbounded buffer.
+            batch.clear();
+            let mut last = false;
+            let mut next = Some(first);
+            while let Some(message) = next.take() {
+                // Taking the frame made room in the queue. The fence
+                // pairs with the one in `Controller::offer`.
+                fence(Ordering::SeqCst);
+                resume_main_thread();
+                let frame = match message {
+                    Outbound::Frame(frame) => frame,
+                    Outbound::Final(frame) => {
+                        last = true;
+                        frame
                     }
+                };
+                if !frame.encode_into(&mut batch, OUTBOUND_FRAME_CAP) {
+                    log::warn!("ipc: dropped an event that exceeded the outbound frame cap");
                 }
-                None => log::warn!("ipc: dropped an event that exceeded the outbound frame cap"),
+                if last || batch.len() >= WRITE_BATCH_BYTES {
+                    break;
+                }
+                next = frames.try_recv().ok();
+            }
+            if let Err(e) = writer.write_all(&batch) {
+                log::debug!("ipc: write to controller failed, closing: {e}");
+                break;
             }
             if last {
                 break;

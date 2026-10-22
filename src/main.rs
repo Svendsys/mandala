@@ -39,10 +39,13 @@ struct CliArgs {
 /// first positional argument is the map, and `--keybinds` / `--ipc`
 /// take a path either as the next argument or after `=`.
 ///
-/// `--ipc` with nothing after it is kept as an *empty* path rather
+/// `--ipc` with no path after it is kept as an *empty* path rather
 /// than dropped, so the listener refuses it by name and the launch
 /// fails: the user asked for IPC, and running without it would be the
-/// silent no-op `format/ipc.md` rules out.
+/// silent no-op `format/ipc.md` rules out. "No path" includes a next
+/// argument that is itself a flag — `--ipc --keybinds k.json` is a
+/// forgotten path, not a socket named `--keybinds` — and that flag is
+/// left to be parsed as itself.
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_cli(args: impl IntoIterator<Item = String>) -> CliArgs {
     use std::path::PathBuf;
@@ -50,7 +53,7 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> CliArgs {
     let mut mindmap_path: Option<String> = None;
     let mut keybinds_path: Option<PathBuf> = None;
     let mut ipc_socket: Option<PathBuf> = None;
-    let mut args = args.into_iter();
+    let mut args = args.into_iter().peekable();
     while let Some(a) = args.next() {
         if a == "--keybinds" {
             if let Some(val) = args.next() {
@@ -59,7 +62,8 @@ fn parse_cli(args: impl IntoIterator<Item = String>) -> CliArgs {
         } else if let Some(val) = a.strip_prefix("--keybinds=") {
             keybinds_path = Some(PathBuf::from(val));
         } else if a == "--ipc" {
-            ipc_socket = Some(args.next().map(PathBuf::from).unwrap_or_default());
+            let value = args.next_if(|next| !next.starts_with("--"));
+            ipc_socket = Some(value.map(PathBuf::from).unwrap_or_default());
         } else if let Some(val) = a.strip_prefix("--ipc=") {
             ipc_socket = Some(PathBuf::from(val));
         } else if !a.starts_with("--") && mindmap_path.is_none() {
@@ -146,6 +150,18 @@ mod tests {
         // Dropping it would launch without the IPC the user asked for.
         assert_eq!(cli(&["--ipc"]).ipc_socket, Some(PathBuf::new()));
         assert_eq!(cli(&["--ipc="]).ipc_socket, Some(PathBuf::new()));
+    }
+
+    #[test]
+    fn test_parse_cli_does_not_take_a_flag_as_the_ipc_path() {
+        let parsed = cli(&["--ipc", "--keybinds", "k.json", "m.mindmap.json"]);
+        assert_eq!(parsed.ipc_socket, Some(PathBuf::new()), "refused by name at bind");
+        assert_eq!(
+            parsed.keybinds_path,
+            Some(PathBuf::from("k.json")),
+            "the flag still parses"
+        );
+        assert_eq!(parsed.mindmap_path, "m.mindmap.json", "and so does the map");
     }
 
     #[test]

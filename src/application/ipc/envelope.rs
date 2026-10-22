@@ -228,51 +228,113 @@ pub(crate) enum Frame {
 }
 
 impl Frame {
-    /// The frame as one newline-terminated NDJSON line, held to
-    /// `cap` bytes (the newline excluded).
+    /// Append the frame to `out` as one newline-terminated NDJSON
+    /// line, held to `cap` bytes (the newline excluded). Appending
+    /// rather than returning is what lets the outbound thread gather
+    /// every queued frame into a single write.
     ///
-    /// A reply over the cap is replaced by `reply_too_large` carrying
-    /// the same `id`, so the client's correlation still resolves. An
-    /// event over the cap has no requester to tell; it is dropped and
-    /// `None` returned, which the outbound thread logs. Serialization
-    /// itself cannot fail for these types (string keys, no maps keyed
-    /// by non-strings), but should it, a reply degrades to `internal`
-    /// rather than vanishing.
+    /// Serialization stops the moment it passes the cap, so a
+    /// pathological reply never costs more than `cap` bytes of buffer.
+    /// It is replaced by `reply_too_large` carrying the same `id`, so
+    /// the client's correlation still resolves, and its full size —
+    /// `data.bytes` — is measured by a second pass into a counting sink
+    /// that allocates nothing. An event over the cap has no requester
+    /// to tell; nothing is appended and `false` returned, which the
+    /// outbound thread logs. Serialization itself cannot otherwise fail
+    /// for these types (string keys, no maps keyed by non-strings), but
+    /// should it, a reply degrades to `internal` rather than vanishing.
     ///
-    /// Cost: one serialization, plus one more for a substituted reply.
-    pub(crate) fn encode(&self, cap: usize) -> Option<Vec<u8>> {
-        let serialized = match self {
-            Frame::Reply(reply) => serde_json::to_vec(reply),
-            Frame::Event(event) => serde_json::to_vec(event),
+    /// Cost: one serialization into `out`; an oversized reply adds one
+    /// non-allocating counting pass and the small substitute.
+    pub(crate) fn encode_into(&self, out: &mut Vec<u8>, cap: usize) -> bool {
+        let start = out.len();
+        let mut capped = CappedSink {
+            out: &mut *out,
+            limit: start + cap,
+            overflowed: false,
         };
-        let mut bytes = match (serialized, self) {
-            (Ok(bytes), _) if bytes.len() <= cap => bytes,
-            (Ok(bytes), Frame::Reply(reply)) => {
-                let substitute = Reply::error(
+        let serialized = self.serialize(&mut capped);
+        let overflowed = capped.overflowed;
+        if let Err(e) = serialized {
+            out.truncate(start);
+            let Frame::Reply(reply) = self else { return false };
+            let substitute = if overflowed {
+                let mut counter = CountingSink(0);
+                // Only the count matters; the sink cannot fail.
+                let _ = self.serialize(&mut counter);
+                Reply::error(
                     reply.id.clone(),
                     code::REPLY_TOO_LARGE,
-                    format!(
-                        "reply of {} bytes exceeds the {} byte outbound cap",
-                        bytes.len(),
-                        cap
-                    ),
-                    Some(serde_json::json!({ "bytes": bytes.len() })),
-                );
-                serde_json::to_vec(&substitute).ok()?
-            }
-            (Err(e), Frame::Reply(reply)) => {
-                let substitute = Reply::error(
+                    format!("reply of {} bytes exceeds the {cap} byte outbound cap", counter.0),
+                    Some(serde_json::json!({ "bytes": counter.0 })),
+                )
+            } else {
+                Reply::error(
                     reply.id.clone(),
                     code::INTERNAL,
                     format!("reply could not be serialized: {e}"),
                     None,
-                );
-                serde_json::to_vec(&substitute).ok()?
+                )
+            };
+            if serde_json::to_writer(&mut *out, &substitute).is_err() {
+                out.truncate(start);
+                return false;
             }
-            (_, Frame::Event(_)) => return None,
-        };
-        bytes.push(b'\n');
-        Some(bytes)
+        }
+        out.push(b'\n');
+        true
+    }
+
+    /// [`Frame::encode_into`] a fresh buffer — for a frame written on
+    /// its own. `None` when the frame was dropped.
+    pub(crate) fn encode(&self, cap: usize) -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode_into(&mut out, cap).then_some(out)
+    }
+
+    fn serialize(&self, sink: &mut impl std::io::Write) -> serde_json::Result<()> {
+        match self {
+            Frame::Reply(reply) => serde_json::to_writer(sink, reply),
+            Frame::Event(event) => serde_json::to_writer(sink, event),
+        }
+    }
+}
+
+/// A writer into a `Vec` that refuses to grow it past `limit`, so an
+/// oversized frame is abandoned at the cap instead of being built in
+/// full first.
+struct CappedSink<'a> {
+    out: &'a mut Vec<u8>,
+    limit: usize,
+    overflowed: bool,
+}
+
+impl std::io::Write for CappedSink<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.out.len() + buf.len() > self.limit {
+            self.overflowed = true;
+            return Err(std::io::Error::other("frame exceeds the outbound cap"));
+        }
+        self.out.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A writer that keeps nothing and counts what it is given.
+struct CountingSink(usize);
+
+impl std::io::Write for CountingSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -531,7 +593,12 @@ mod tests {
         let reply: Value = serde_json::from_slice(&bytes).expect("JSON");
         assert_eq!(reply["id"], json!(9), "correlation survives the substitution");
         assert_eq!(reply["error"]["code"], json!("reply_too_large"));
-        assert!(reply["error"]["data"]["bytes"].as_u64().is_some_and(|n| n > 64));
+        let full = big.encode(OUTBOUND_FRAME_CAP).expect("fits the real cap").len() - 1;
+        assert_eq!(
+            reply["error"]["data"]["bytes"],
+            json!(full),
+            "the counted size is the reply's real size"
+        );
 
         let fits = Frame::Reply(Reply::ok(json!(9), json!({})));
         let exact = fits.encode(OUTBOUND_FRAME_CAP).expect("fits").len() - 1;
@@ -539,6 +606,31 @@ mod tests {
             fits.encode(exact).is_some_and(|b| b.len() == exact + 1),
             "the cap is inclusive"
         );
+    }
+
+    #[test]
+    fn test_encode_into_appends_and_leaves_earlier_frames_intact() {
+        let mut batch = Vec::new();
+        assert!(Frame::Reply(Reply::ok(json!(1), json!({}))).encode_into(&mut batch, 64));
+        let first = batch.clone();
+        assert!(
+            !Frame::Event(Event::hello(Some(&"m".repeat(500)))).encode_into(&mut batch, 64),
+            "an oversized event is dropped"
+        );
+        assert_eq!(batch, first, "a dropped frame leaves no partial bytes behind");
+        let big = Frame::Reply(Reply::ok(json!(2), json!({ "blob": "y".repeat(200) })));
+        assert!(
+            big.encode_into(&mut batch, 64),
+            "an oversized reply is substituted"
+        );
+        assert!(batch.starts_with(&first));
+        let lines: Vec<Value> = batch
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("each line is JSON"))
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1]["error"]["code"], json!("reply_too_large"));
     }
 
     #[test]

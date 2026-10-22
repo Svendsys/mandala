@@ -30,6 +30,13 @@ const MAP: &str = "maps/fixture.mindmap.json";
 /// runner is slow, and a timeout here only ever means a failure.
 const FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long the paused-reader test stops reading. Long enough for the
+/// server's output to fill the socket buffer and the outbound queue,
+/// and a small fraction of `STALLED_WRITE_TIMEOUT`, so a slow runner
+/// has seconds of slack before a pause could read as a dead client.
+const READER_PAUSE: Duration = Duration::from_millis(250);
+const _: () = assert!(READER_PAUSE.as_millis() * 8 <= STALLED_WRITE_TIMEOUT.as_millis());
+
 /// A server plus the wake channel its boundary threads signal.
 struct Harness {
     _dir: TempDir,
@@ -313,9 +320,12 @@ fn test_ipc_loopback_half_close_still_gets_every_reply() {
 
 #[test]
 fn test_ipc_loopback_answers_a_pipelined_burst_in_full_and_in_order() {
-    // The main thread executes a burst faster than one write per reply
-    // drains it, so the outbound queue fills. That must pause the
-    // controller, not drop it.
+    // The main thread executes a burst as fast as it can, while the
+    // writer sends whatever is queued in one write per wakeup. Whether
+    // the outbound queue fills depends on how the writer thread is
+    // scheduled; either way the client reading normally must get every
+    // reply — paused, never dropped. (With one write per frame, this
+    // burst filled the queue hundreds of times.)
     let harness = Harness::running("ipc-burst");
     let (mut client, _) = Client::attach(&harness.path);
     let burst: String = (0..1000)
@@ -346,7 +356,7 @@ fn test_ipc_loopback_a_client_that_pauses_reading_is_paused_not_dropped() {
             writeln!(writer, r#"{{"id":{id},"cmd":"describe"}}"#).expect("write");
         }
     });
-    thread::sleep(STALLED_WRITE_TIMEOUT / 3);
+    thread::sleep(READER_PAUSE);
     for id in 0..1000 {
         assert_eq!(client.next()["id"], json!(id), "nothing lost while paused");
     }
@@ -434,6 +444,42 @@ fn test_ipc_loopback_shutdown_says_so_and_removes_the_socket() {
     assert_eq!(client.next(), json!({ "event": "shutdown", "data": {} }));
     assert!(client.at_eof(), "the connection closes after `shutdown`");
     assert!(!path.exists(), "a graceful exit removes the socket file");
+}
+
+#[test]
+fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
+    // The window closes while the controller is paused on a full queue:
+    // the reply it holds and the `shutdown` event both still arrive,
+    // after every reply already queued, so a client reading normally
+    // can tell "app exited" from "connection died".
+    let harness = Harness::running("ipc-shutdown-paused");
+    let (mut client, _) = Client::attach(&harness.path);
+    let burst: String = (0..1000)
+        .map(|id| format!("{{\"id\":{id},\"cmd\":\"describe\"}}\n"))
+        .collect();
+    client
+        .writer
+        .write_all(burst.as_bytes())
+        .expect("write the burst");
+    thread::sleep(READER_PAUSE);
+
+    let exiting = thread::spawn(move || harness.shutdown());
+    let mut answered = 0;
+    loop {
+        let frame = client.next();
+        if frame["event"] == json!("shutdown") {
+            break;
+        }
+        assert_eq!(
+            frame["id"],
+            json!(answered),
+            "replies arrive in order, none skipped"
+        );
+        answered += 1;
+    }
+    assert!(answered > 0, "the burst was under way when the app exited");
+    assert!(client.at_eof(), "the connection closes after `shutdown`");
+    exiting.join().expect("shutdown does not panic");
 }
 
 #[test]

@@ -3178,15 +3178,16 @@ refused immediately), plus a reader and an outbound writer per
 controller — and exchange only protocol values with the main thread
 over one ordered `mpsc` queue in and a bounded one out. They wake the
 parked event loop through a winit user event (`IpcWake`), so an idle
-app answers without polling; `NativeApp::user_event` and
-`about_to_wait` drain the queue and execute every command on the main
-thread, with the same access an input handler has. Each connection
+app answers without polling; `about_to_wait` drains the queue right
+after `drain_inputs` and executes every command on the main thread,
+with the same access an input handler has. Each connection
 carries a generation stamp, so nothing a departed controller sent can
 act after it left. A controller that falls behind on its replies is
 paused rather than dropped; one whose socket accepts nothing for ten
-seconds is dropped. The socket is created owner-only, refuses a
-parent directory other users can write, and replaces an existing path
-only when it is provably a stale socket of ours.
+seconds is dropped. The socket is created owner-only, refuses any
+directory on its path that another user could rename it out of, and
+replaces an existing path only when it is provably a stale socket of
+ours.
 
 **Vision:** IPC-03 adds the command registry and the `act` bridge to
 `dispatch_action` / `dispatch_macro` / the console; the families after

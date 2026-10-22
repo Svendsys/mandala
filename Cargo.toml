@@ -170,16 +170,16 @@ web-time = "1.1.0"
 pollster = "1.0.1"
 arboard = "3.7.0"
 
-# The `--ipc` socket's lifecycle needs two POSIX calls std does not
-# expose — `umask`, so the socket is owner-only from the instant it is
-# bound, and `geteuid`, so a stale socket is only ever replaced when it
-# is ours — and this crate has no `unsafe`. `cfg(unix)` rather than
-# the native table because Windows has neither call and no Unix-socket
-# transport. rustix 1.x already reaches the native graph through the
-# windowing stack, so the table adds features to that copy rather
-# than a second version of the crate.
+# The `--ipc` socket's lifecycle needs one POSIX call std does not
+# expose — `geteuid`, so the directories on the socket's path are only
+# trusted when this user or root owns them, and a stale socket is only
+# ever replaced when it is ours — and this crate has no `unsafe`.
+# `cfg(unix)` rather than the native table because Windows has no such
+# call and no Unix-socket transport. rustix 1.x already reaches the
+# native graph through the windowing stack, so the table adds a feature
+# to that copy rather than a second version of the crate.
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.5", features = ["fs", "process"] }
+rustix = { version = "1.1.5", features = ["process"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.129"

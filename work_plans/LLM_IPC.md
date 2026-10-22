@@ -162,7 +162,8 @@ see the generation stamp below). None touches app state.
            ▼                                       │ (cap 256)
    ┌───────────────────────────────────────────────┴──┐
    │ main thread — winit event loop                   │
-   │  user_event(IpcWake): drain request queue,       │
+   │  user_event(IpcWake) unparks; about_to_wait,     │
+   │  after drain_inputs: drain the inbound queue,    │
    │  execute each command against InitState (same    │
    │  access as any input handler), push replies,     │
    │  request_redraw if any command changed pixels    │
@@ -192,7 +193,7 @@ see the generation stamp below). None touches app state.
   never need app state, so they never cross into the loop). On
   EOF/error it enqueues `Gone{gen:G}` — on the same queue as its
   requests, behind the last of them — and wakes the loop, so the main
-  thread retires this generation (cancelling its pending
+  thread retires this generation (canceling its pending
   `clock.wait` and resetting its subscriptions); then it and its
   outbound peer exit, and the acceptor's next accept installs a fresh
   controller at G+1.
@@ -221,17 +222,21 @@ see the generation stamp below). None touches app state.
 - **The main thread** is the only place commands execute. The event
   loop is `EventLoop::<IpcWake>::with_user_event()` — `IpcWake` a
   payload-free wake — and `NativeApp` implements
-  `ApplicationHandler::user_event`: tick the watchdog (`unparked`,
-  like every other handler), drain the inbound queue and treat an
-  empty-queue wake as a no-op (an earlier drain may already have
-  consumed what a later wake announced), execute each current-gen
+  `ApplicationHandler::user_event` to tick the watchdog (`unparked`,
+  like every other handler) and nothing more: the wake's job is to
+  unpark the loop, and winit runs `about_to_wait` after every
+  iteration that delivered events. There, **right after
+  `drain_inputs`** — so a command observes every input the user sent
+  before it, throttled drag moves and zoom steps included, and its
+  effects are ordered after them — the main thread drains the inbound
+  queue (an empty queue is a no-op: an earlier drain may already have
+  consumed what a later wake announced), executes each current-gen
   command against app state (the same access `input_context()` gives
   an input handler; the registry that dispatches it is IPC-03's),
-  enqueue replies, and — the seam that keeps the watched window and
-  screenshots truthful — **request a redraw whenever a command
-  changed pixels**, then fall through to the normal `about_to_wait`
-  drain, which drains the queue again beside `drain_inputs` so a
-  burst coalesces per frame. `hello`'s `map` field is live app
+  enqueues replies, and — the seam that keeps the watched window and
+  screenshots truthful — **requests a redraw whenever a command
+  changed pixels**. One drain site per iteration, so a burst
+  coalesces per frame. `hello`'s `map` field is live app
   state, so the main thread publishes the current file path into an
   `Arc`-swapped snapshot whenever it changes, and the acceptor reads
   *that* (never `MindMapDocument`) when greeting — the
@@ -241,7 +246,7 @@ see the generation stamp below). None touches app state.
   `redraw_after → request_redraw()` pattern the drain reuses is
   already in `handle_event`.)
 
-**Amended by IPC-02 (#62), in two places, both to make the pinned
+**Amended by IPC-02 (#62), in three places, all to make the pinned
 behavior hold rather than to change it.** (1) *One ordered queue,
 one payload-free wake.* This section first had the reader announce a
 disconnect as its own user event, `IpcGone{gen}`, beside an mpsc
@@ -256,14 +261,22 @@ is never refused; the user event only says "drain". (2) *Pause, not
 teardown, on a full reply queue.* "256 undelivered replies →
 teardown" read the queue's length as the client's health, and it is
 not: the main thread executes a pipelined burst faster than the
-writer can make one `write` per reply, so the queue fills while a
-perfectly healthy client is reading — the loopback tests measured
-exactly that. A full queue now pauses that controller's execution
+writer thread is scheduled to drain it, so the queue can fill while a
+perfectly healthy client is reading — with one `write` per reply, the
+loopback tests filled it hundreds of times in a 1000-ping burst. The
+writer now sends everything queued in one write, which makes that
+rare, and a full queue pauses that controller's execution
 until the writer makes room, the reader waits for room for its own
 replies (which stops it reading, so pressure lands on the client),
 and death is judged where it is visible — a write that makes no
 progress for 10 s. `format/ipc.md` §Threading contract carries the
-wire-visible half.
+wire-visible half. (3) *One drain site, after the input drain.* This
+section first drained in `user_event` and again beside `drain_inputs`.
+Any drain ahead of `drain_inputs` executes a command before throttled
+input the user had already sent — a pending drag move, a zoom step —
+reversing the ordering `format/ipc.md` promises; and since winit runs
+`about_to_wait` after every iteration with events, the `user_event`
+drain was never the only one anyway. The wake now only unparks.
 
 **Pixels-affecting commands must request a redraw (and bump the
 render revision).** The existing winit handlers set
@@ -271,7 +284,7 @@ render revision).** The existing winit handlers set
 mutating input, because `about_to_wait`'s continuation check alone
 does *not* schedule a present for a one-shot change that leaves
 `needs_continuation()` false (a selection, a style write, a single
-zoom). The `user_event` drain mirrors that exactly: each command
+zoom). The IPC drain mirrors that exactly: each command
 reports whether it touched pixels (document mutation *or* view /
 selection change), and the drain requests a redraw and advances the
 render revision (IPC-14's counter — a *render*-affecting revision,
@@ -323,8 +336,9 @@ auditable shape this boundary can have; the single-controller
 promise (D-transport) is exactly why accept and read are *separate*
 blocking loops rather than one.
 
-**Watchdog interplay (pinned invariants).** `user_event` ticks
-`unparked()` on entry like every handler, so a command that wedges
+**Watchdog interplay (pinned invariants).** Commands execute inside
+`about_to_wait`, which ticks `unparked()` on entry like every
+handler (as does the `user_event` wake), so a command that wedges
 the loop still gets the watchdog's diagnostic abort — IPC gains no
 exemption from the 10-second contract. Command execution is
 synchronous and bounded; anything that must outlive a heartbeat
