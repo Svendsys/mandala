@@ -26,42 +26,67 @@ mod application;
 
 const DEFAULT_MINDMAP: &str = "maps/testament.mindmap.json";
 
+/// The native command line, parsed.
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_cli() -> (String, Option<std::path::PathBuf>) {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+#[derive(Debug, PartialEq)]
+struct CliArgs {
+    mindmap_path: String,
+    keybinds_path: Option<std::path::PathBuf>,
+    ipc_socket: Option<std::path::PathBuf>,
+}
+
+/// Parse `args` (the command line without the program name): the
+/// first positional argument is the map, and `--keybinds` / `--ipc`
+/// take a path either as the next argument or after `=`.
+///
+/// `--ipc` with no path after it is kept as an *empty* path rather
+/// than dropped, so the listener refuses it by name and the launch
+/// fails: the user asked for IPC, and running without it would be the
+/// silent no-op `format/ipc.md` rules out. "No path" includes a next
+/// argument that is itself a flag — `--ipc --keybinds k.json` is a
+/// forgotten path, not a socket named `--keybinds` — and that flag is
+/// left to be parsed as itself.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_cli(args: impl IntoIterator<Item = String>) -> CliArgs {
+    use std::path::PathBuf;
+
     let mut mindmap_path: Option<String> = None;
-    let mut keybinds_path: Option<std::path::PathBuf> = None;
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
+    let mut keybinds_path: Option<PathBuf> = None;
+    let mut ipc_socket: Option<PathBuf> = None;
+    let mut args = args.into_iter().peekable();
+    while let Some(a) = args.next() {
         if a == "--keybinds" {
-            if let Some(val) = args.get(i + 1) {
-                keybinds_path = Some(std::path::PathBuf::from(val));
-                i += 2;
-                continue;
+            if let Some(val) = args.next() {
+                keybinds_path = Some(PathBuf::from(val));
             }
         } else if let Some(val) = a.strip_prefix("--keybinds=") {
-            keybinds_path = Some(std::path::PathBuf::from(val));
+            keybinds_path = Some(PathBuf::from(val));
+        } else if a == "--ipc" {
+            let value = args.next_if(|next| !next.starts_with("--"));
+            ipc_socket = Some(value.map(PathBuf::from).unwrap_or_default());
+        } else if let Some(val) = a.strip_prefix("--ipc=") {
+            ipc_socket = Some(PathBuf::from(val));
         } else if !a.starts_with("--") && mindmap_path.is_none() {
-            mindmap_path = Some(a.clone());
+            mindmap_path = Some(a);
         }
-        i += 1;
     }
-    (
-        mindmap_path.unwrap_or_else(|| DEFAULT_MINDMAP.to_string()),
+    CliArgs {
+        mindmap_path: mindmap_path.unwrap_or_else(|| DEFAULT_MINDMAP.to_string()),
         keybinds_path,
-    )
+        ipc_socket,
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn create_options() -> Options {
-    let (mindmap_path, keybinds_path) = parse_cli();
-    let keybind_config = KeybindConfig::load_for_desktop(keybinds_path.as_deref());
+    let cli = parse_cli(std::env::args().skip(1));
+    let keybind_config = KeybindConfig::load_for_desktop(cli.keybinds_path.as_deref());
 
     Options {
         should_exit: false,
-        mindmap_path,
+        mindmap_path: cli.mindmap_path,
         keybind_config,
+        ipc_socket: cli.ipc_socket,
     }
 }
 
@@ -90,6 +115,60 @@ fn main() {
 mod tests {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
+
+    fn cli(args: &[&str]) -> super::CliArgs {
+        super::parse_cli(args.iter().map(|a| a.to_string()))
+    }
+
+    #[test]
+    fn test_parse_cli_defaults_without_arguments() {
+        let parsed = cli(&[]);
+        assert_eq!(parsed.mindmap_path, super::DEFAULT_MINDMAP);
+        assert_eq!(parsed.keybinds_path, None);
+        assert_eq!(parsed.ipc_socket, None, "no flag, no socket");
+    }
+
+    #[test]
+    fn test_parse_cli_reads_both_spellings_of_each_path_flag() {
+        let spaced = cli(&[
+            "m.mindmap.json",
+            "--ipc",
+            "/run/user/1/m.sock",
+            "--keybinds",
+            "k.json",
+        ]);
+        let joined = cli(&["--ipc=/run/user/1/m.sock", "m.mindmap.json", "--keybinds=k.json"]);
+        for parsed in [spaced, joined] {
+            assert_eq!(parsed.mindmap_path, "m.mindmap.json");
+            assert_eq!(parsed.keybinds_path, Some(PathBuf::from("k.json")));
+            assert_eq!(parsed.ipc_socket, Some(PathBuf::from("/run/user/1/m.sock")));
+        }
+    }
+
+    #[test]
+    fn test_parse_cli_keeps_a_valueless_ipc_flag_as_an_empty_path() {
+        // Dropping it would launch without the IPC the user asked for.
+        assert_eq!(cli(&["--ipc"]).ipc_socket, Some(PathBuf::new()));
+        assert_eq!(cli(&["--ipc="]).ipc_socket, Some(PathBuf::new()));
+    }
+
+    #[test]
+    fn test_parse_cli_does_not_take_a_flag_as_the_ipc_path() {
+        let parsed = cli(&["--ipc", "--keybinds", "k.json", "m.mindmap.json"]);
+        assert_eq!(parsed.ipc_socket, Some(PathBuf::new()), "refused by name at bind");
+        assert_eq!(
+            parsed.keybinds_path,
+            Some(PathBuf::from("k.json")),
+            "the flag still parses"
+        );
+        assert_eq!(parsed.mindmap_path, "m.mindmap.json", "and so does the map");
+    }
+
+    #[test]
+    fn test_parse_cli_takes_the_first_positional_as_the_map() {
+        let parsed = cli(&["a.mindmap.json", "b.mindmap.json", "--unknown"]);
+        assert_eq!(parsed.mindmap_path, "a.mindmap.json");
+    }
 
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))

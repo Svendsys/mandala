@@ -1006,6 +1006,15 @@ mod tests {
             "src/application/app/run_wasm/mod.rs",
             "the page attachment, the `?map=` read and the browser bootstrap",
         ),
+        (
+            "src/application/ipc/transport/mod.rs",
+            "`IpcServer::start` — the `--ipc` listener, which reports every failure as a \
+             message for its caller's `expect` and must therefore panic nowhere",
+        ),
+        (
+            "src/application/ipc/transport/socket.rs",
+            "the `--ipc` socket's bind sequence, inside the same promise",
+        ),
         ("src/application/renderer/mod.rs", "the renderer bootstrap"),
         (
             "src/application/renderer/pipeline.rs",
@@ -1042,8 +1051,16 @@ mod tests {
     /// below `create_surface` was a live `.expect(` on the startup
     /// path that §9 did not mention.
     const STARTUP_SITES: &[(&str, &str, bool, &str)] = &[
-        ("EventLoop::new", "src/application/app/run_native.rs", true, ""),
+        // Native builds its loop with a user-event type — the IPC wake —
+        // which winit only offers through the builder.
+        (
+            "EventLoop::with_user_event",
+            "src/application/app/run_native.rs",
+            true,
+            "",
+        ),
         ("create_window", "src/application/app/run_native.rs", true, ""),
+        ("IpcServer::start", "src/application/app/run_native.rs", true, ""),
         // The browser creates both in `Application::new` rather than
         // in `run_wasm`, so the same two names need a row per file —
         // an entry keyed only by name reads as covered while the

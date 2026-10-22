@@ -20,7 +20,9 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > is the contract its owning issue implements against; the `describe`
 > command must stay byte-honest against this document at every merge.
 > Sections whose owning issue has not merged yet are contract, not
-> yet running code.
+> yet running code. **Running today** (IPC-02, #62): the Unix
+> transport, framing, envelope, `hello` / `connection_rejected` /
+> `shutdown`, and the two bootstrap commands `describe` and `ping`.
 
 ## Transport
 
@@ -35,7 +37,9 @@ mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
 
 - `--ipc <path>` / `--ipc=<path>` — listen on a Unix domain socket
   (`SOCK_STREAM`) at `<path>`. No flag, no socket, no IPC threads —
-  the interactive app pays zero cost when IPC is off.
+  the interactive app pays zero cost when IPC is off. A flag with no
+  path (`--ipc` last on the line, or `--ipc=`) is a startup error,
+  not an IPC-less launch.
 - The listener starts before the event loop takes over (alongside
   `FreezeWatchdog::spawn()` in `run_native.rs::run`) and lives for
   the process lifetime.
@@ -62,15 +66,32 @@ mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
 
 The socket is as security-sensitive as `~/.config/mandala/macros.json`
 (see [Trust model](#trust-model)). The server creates it with
-owner-only permissions (`0600`, in a directory the user owns). The
-`0600` mode protects the socket's *bytes*, but the socket's *name*
-is only as trustworthy as its parent directory — a directory another
-user can write to lets them unlink or replace the path while Mandala
-runs. So the server refuses to bind when the parent directory is
-writable by anyone but the owner (group- **or** world-writable)
-without the sticky bit — one mechanically checkable predicate
-covering both. A sticky-bit shared directory (e.g. `/tmp`) is
-accepted but second-best; the recommended location is
+owner-only permissions (`0600`, in a directory the user owns). It
+is bound inside a fresh private (`0700`) staging directory, made
+`0600` there, and only then hard-linked to its real name — so there
+is no instant at which another user can reach it, and the link
+refuses an existing path, so the final step can never replace
+anything. A parent directory that does not exist yet is created,
+owner-only (`0700`). The `0600` mode protects the socket's *bytes*,
+but the socket's *name* is only as trustworthy as the directories
+above it — whoever can rename or unlink an entry in any of them can
+swap the path for one of their own while Mandala runs. So the server
+refuses to bind unless **every directory on the path** is owned by
+the user or by root, and is writable by nobody but its owner (group- **or**
+world-writable fails) unless it has the sticky bit — one
+mechanically checkable predicate per directory. The owner clause is
+not redundant with the sticky bit: a sticky directory's *owner* can
+still unlink or rename what is in it. "Every directory on the path"
+is judged the way the kernel resolves the path the client will
+connect through — component by component from `/`, following each
+symbolic link where it stands — so it covers each directory that
+*holds* a symlink on the path as well as every directory the link's
+target leads through, chains included (a symlink in a directory
+another user can write is a name they can re-point). Checking only
+the canonical path would miss exactly the link holders. A path
+longer than the platform's socket-path limit (107 bytes on Linux,
+103 elsewhere) is refused up front, naming it. A root-owned sticky directory
+(e.g. `/tmp`) is accepted but second-best; the recommended location is
 `$XDG_RUNTIME_DIR` (already `0700` on every mainstream distro).
 Never a TCP port: filesystem permissions are the access-control
 mechanism.
@@ -106,6 +127,14 @@ Exactly **one client** is served at a time.
   main thread to cancel that generation's pending waits and reset its
   subscriptions — so a departed controller's late `timeout` reply can
   never land on its successor (design: `work_plans/LLM_IPC.md` §D2).
+  The departure is noticed by the controller's reader a moment after
+  the socket closes; a client that connects inside that moment is
+  refused `busy` like any other, and retries.
+- **A half-close ends the requests, not the replies.** A client that
+  closes its write half after sending (`printf … | nc -N -U`) still
+  receives a reply to every request it sent before the close: the
+  disconnect is ordered behind them. The server closes the
+  connection once those replies are written.
 
 Attach-after-launch and re-attach are first-class: the intended
 workflow is a human launching (or already running) the app and an
@@ -130,10 +159,9 @@ max-message limits. "Same protocol" means the same envelope and
 commands, not the same framing bytes.
 
 IPC-02 ships the Unix transport; the named-pipe adapter is a
-self-contained follow-up inside the same transport module, **owned
-by IPC-02 (#62)**: it lands there if a Windows environment is
-available when IPC-02 does, and otherwise filing the tracked
-follow-up issue is part of IPC-02's acceptance. Until it lands,
+self-contained follow-up inside the same transport module. IPC-02
+(#62) landed without a Windows environment to build it in, so the
+adapter is tracked as #169. Until it lands,
 `--ipc` on a Windows build fails at startup with a message pointing
 at this section (honest fail-fast per §9/§10 — no silent no-op of a
 user-requested feature).
@@ -152,8 +180,11 @@ gap by nature, not a design gap.
 
 - **NDJSON**: one JSON object per line, `\n`-terminated, UTF-8. A
   frame must not contain a raw newline (JSON string escapes cover
-  every payload). No pretty-printing on the wire.
-- Empty lines are ignored.
+  every payload). No pretty-printing on the wire. A trailing `\r`
+  is tolerated (it is JSON whitespace), and a final line the client
+  closes the connection without terminating is still read as a line.
+- Empty (or whitespace-only) lines are ignored — but still counted
+  by `data.line` below, which indexes every line the client sent.
 - **Inbound line cap: 1 MiB.** A longer line is consumed and
   discarded up to its terminating newline and answered with a
   `parse_error` reply (`"id": null`). The stream stays usable.
@@ -287,9 +318,12 @@ On accept, before reading anything, the server greets:
 
 All `hello` fields except `map` are process-static
 (`protocol`/`app`/`version`/`pid`); `map` is live app state
-(`MindMapDocument.file_path`). The state-free boundary threads do
+(`MindMapDocument.file_path` — the file the document is bound to, so
+it follows a load, a `new` and a save-as, and is `null` while no file
+is bound). The state-free boundary threads do
 not read it directly — the main thread publishes the current path
-into a shared snapshot (an `Arc` swapped on document load), which
+into a shared snapshot (an `Arc` swapped whenever the bound path
+changes), which
 the acceptor reads when composing the greeting, preserving the "I/O
 threads never touch app state" invariant (§D2).
 
@@ -353,7 +387,7 @@ additions are non-breaking):
 | `unsupported` | Command exists but not on this platform/build (e.g. future Windows gaps). |
 | `busy` | A single-instance command was already pending when another was issued — today, a second `clock.wait` while one is in flight (waits are exclusive per controller). Distinct from the connection-level `connection_rejected` event. |
 | `overloaded` | Request queue full (1024 pending); resend after draining replies. |
-| `reply_too_large` | Serialized reply exceeded 8 MiB; `data.hint` names the file-sidecar parameter. |
+| `reply_too_large` | Serialized reply exceeded 8 MiB; `data.bytes` is its size, and `data.hint` names the file-sidecar parameter when the command has one. |
 | `no_document` | Command needs a loaded document and none is. |
 | `not_found` | A referenced entity (node id, macro id, mutation id) does not exist. |
 | `console_error` | The console rejected the `act.console` line (unknown verb) or the verb reported an error; `message` is the console's own text. |
@@ -487,16 +521,27 @@ The full architecture is CODE_CONVENTIONS §3 (amended by IPC-01) and
   is discarded by construction when the controller leaves — nothing
   crosses to the successor).
 - **Backpressure is asymmetric by frame kind.** *Replies* are
-  contractual: if the outbound queue holds **256** undelivered
-  frames the client is declared dead and the connection dropped
-  (reconnect and resubscribe). *Unsolicited events* the client
-  never paced itself against (`camera_changed`, `animation_*`, …)
-  are instead **coalesced/dropped-oldest by revision** under
-  pressure rather than triggering teardown — an agent that pauses to
-  think for a few seconds while an animation emits a flood of events
-  must not have its live connection torn down. So a slow-reading
-  client loses *stale events*, not its session; only a client not
-  draining *replies* is killed. (IPC-14 owns the coalescing rule;
+  contractual, and are never dropped while the connection lives:
+  when **256** replies wait in the outbound queue, the server
+  **pauses executing that controller's requests** until the writer
+  has made room, then resumes where it stopped. A pipelining client
+  that reads its replies therefore never loses one, however far
+  ahead it sends (up to the request-queue cap below). A client that
+  has stopped reading is detected at the socket instead: once a
+  write makes **no progress for 10 seconds** — the kernel's socket
+  buffer full of output the client has not read — the client is
+  declared dead and the connection dropped (reconnect and
+  resubscribe). The reader's own replies (`parse_error`,
+  `overloaded`, …) wait for room too, which stops it reading:
+  pressure lands on the client that is not draining, never on the
+  app. *Unsolicited events* the client never paced itself against
+  (`camera_changed`, `animation_*`, …) are instead
+  **coalesced/dropped-oldest by revision** under pressure rather
+  than pausing anything — an agent that pauses to think for a few
+  seconds while an animation emits a flood of events must not have
+  its session stalled or torn down. So a slow-reading client loses
+  *stale events*, not its session; only a client that stops reading
+  *replies* altogether is dropped. (IPC-14 owns the coalescing rule;
   the event carries a `revision`, so "keep the newest per class" is
   well-defined.)
 - More than **1024 queued unexecuted requests** answers further
@@ -548,7 +593,15 @@ table:
 
 Params: `command` (string, optional — describe just this one command
 instead of the whole table; named `command`, not `cmd`, per the
-reserved-word rule).
+reserved-word rule). A `command` that names no registered command is
+`invalid_params` with `data.param: "command"`.
+
+The two unnamespaced bootstrap commands report `"family":
+"bootstrap"`. Until IPC-03's registry exists, IPC-02 serves them from
+a hand-written table that `describe` renders and dispatch matches
+against — one list, held to this document by tests — and the
+`events` array lists the three transport-level classes, the only
+ones a build without IPC-14 can send.
 
 ```jsonc
 {"id": 1, "cmd": "describe", "command": "clock.step"}
@@ -611,7 +664,7 @@ PR that implements them.
 
 | family | module (`src/application/ipc/commands/`) | owner | commands |
 |---|---|---|---|
-| *(bootstrap)* | `meta.rs` | IPC-03 | `describe`, `ping` |
+| *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
 | `act` | `act.rs` | IPC-03 | `act.action`, `act.console`, `act.macro` |
 | `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.editors`, `query.animations`, `query.undo` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.hit_test`, `scene.find_text` |

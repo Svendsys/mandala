@@ -74,13 +74,15 @@ Native desktop and the browser build are first-class peers
 sanctioned native-only carve-outs; each entry names the reason and
 the parity trajectory (or why none is owed):
 
-- **IPC** (`--ipc`, `src/application/ipc/`; lands with IPC-02/#62)
-  — native-only by transport nature: browsers cannot serve local
-  sockets, and the consumer is an agent driving a desktop/Xvfb
-  instance. Protocol: `format/ipc.md`; design:
+- **IPC** (`--ipc`, `src/application/ipc/`; transport since
+  IPC-02/#62) — native-only by transport nature: browsers cannot
+  serve local sockets, and the consumer is an agent driving a
+  desktop/Xvfb instance. Protocol: `format/ipc.md`; design:
   `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
   transport + browser-side capture, same envelope and commands) is
-  parked in IPC-15 (#75).
+  parked in IPC-15 (#75). Within native the transport is Unix-only
+  for now: `--ipc` on Windows fails at startup naming the gap, until
+  the named-pipe adapter lands (#169).
 - **Console modal shell** (`src/application/app/console_input/`) —
   the modal shell and its exec path are native-gated; the
   verb/parser layer (`src/application/console/`) is
@@ -279,3 +281,11 @@ the parity trajectory (or why none is owed):
   of this file, and every other document, is on your own care.
 - **Load a different mindmap**: the first positional CLI arg is the path
   to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
+- **Drive the running app over IPC** (native, Unix): launch with
+  `--ipc <socket-path>` — `$XDG_RUNTIME_DIR/mandala.sock` is the
+  recommended place — then speak newline-delimited JSON to it, e.g.
+  `printf '{"id":1,"cmd":"ping"}\n' | nc -N -U $XDG_RUNTIME_DIR/mandala.sock`
+  (`-N` closes the write half after the request; the server answers
+  everything it received, then closes).
+  `{"id":2,"cmd":"describe"}` lists the commands this build serves;
+  `format/ipc.md` is the full protocol.

@@ -941,6 +941,11 @@ pub struct Options {
     /// defaults). The event loop resolves this into a `ResolvedKeybinds`
     /// at startup and dispatches keyboard events through it.
     pub keybind_config: crate::application::keybinds::KeybindConfig,
+    /// `--ipc <path>`: the Unix socket to serve the IPC protocol on
+    /// (`format/ipc.md`). `None` — the default — means no socket and
+    /// no IPC thread. Native-only: browsers cannot serve sockets.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub ipc_socket: Option<std::path::PathBuf>,
 }
 
 // Unit tests for pure helpers (cursor math, caret insertion,
