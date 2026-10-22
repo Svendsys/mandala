@@ -90,22 +90,31 @@ impl ModalEditor {
         )
     }
 
-    /// Pure half of [`Self::stealing`], over plain open-flags so the
-    /// steal *order* is pinnable without an event loop.
-    ///
-    /// The single-line editor is checked first, matching the order
-    /// the keyboard handler has always used; the two are mutually
-    /// exclusive by construction anyway (a node selection opens the
-    /// text editor, an edge-label / portal selection opens the
-    /// single-line one).
-    fn stealing_from(single_line_open: bool, text_open: bool) -> Option<ModalEditor> {
-        if single_line_open {
-            Some(ModalEditor::SingleLine)
-        } else if text_open {
-            Some(ModalEditor::Text)
-        } else {
-            None
-        }
+    /// The order the keyboard handler lets the editors steal in: the
+    /// single-line editor first, matching the order it has always
+    /// used. The two are mutually exclusive by construction anyway (a
+    /// node selection opens the text editor, an edge-label / portal
+    /// selection opens the single-line one). [`Self::stealing_from`]
+    /// and `query.mode` both read this list.
+    pub(super) const STEAL_ORDER: [ModalEditor; 2] = [ModalEditor::SingleLine, ModalEditor::Text];
+
+    /// The editors that are open, in [`Self::STEAL_ORDER`], over plain
+    /// open-flags so the steal *order* is pinnable without an event
+    /// loop.
+    pub(super) fn open_in_steal_order(
+        single_line_open: bool,
+        text_open: bool,
+    ) -> impl Iterator<Item = ModalEditor> {
+        Self::STEAL_ORDER.into_iter().filter(move |editor| match editor {
+            ModalEditor::SingleLine => single_line_open,
+            ModalEditor::Text => text_open,
+        })
+    }
+
+    /// Pure half of [`Self::stealing`]: the first open editor in
+    /// [`Self::STEAL_ORDER`].
+    pub(super) fn stealing_from(single_line_open: bool, text_open: bool) -> Option<ModalEditor> {
+        Self::open_in_steal_order(single_line_open, text_open).next()
     }
 }
 

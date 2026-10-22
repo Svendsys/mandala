@@ -184,8 +184,14 @@ arboard = "3.7.0"
 # call and no Unix-socket transport. rustix 1.x already reaches the
 # native graph through the windowing stack, so the table adds a feature
 # to that copy rather than a second version of the crate.
+#
+# `fs` is for `query.document`'s `to_file` (`ipc/commands/query.rs`):
+# its temp file has to be created exclusively *and* with `O_NOFOLLOW`,
+# so the kernel, not a check beforehand, refuses a symlink. std has no
+# spelling for that flag without `unsafe` or a `libc` dependency; this
+# crate has no `unsafe`, and rustix is already here.
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.5", features = ["process"] }
+rustix = { version = "1.1.5", features = ["process", "fs"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.129"

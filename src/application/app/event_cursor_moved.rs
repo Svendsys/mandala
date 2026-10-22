@@ -153,6 +153,10 @@ pub(super) fn handle_cursor_moved(
             drag.as_dyn_mut().accumulate(input);
         }
         DragState::Pending(press) => {
+            // Read before the fields are borrowed apart: which grab
+            // wins is `Grab::PRECEDENCE`'s call, the same list
+            // `query.mode` reports `grabs` in.
+            let first_grab = press.first_grab();
             let super::PendingPress {
                 start_pos,
                 hit_node,
@@ -189,198 +193,221 @@ pub(super) fn handle_cursor_moved(
                 // console, etc.), aborting the promotion is the
                 // honest UX — falling through to MovingNode would
                 // silently pivot the gesture from resize to move.
-                if let Some(edge_key) = hit_edge_label.take() {
-                    if let Some(doc) = ctx.document.as_mut() {
-                        let edge_ref = crate::application::document::EdgeRef::new(
-                            &edge_key.from_id,
-                            &edge_key.to_id,
-                            &edge_key.edge_type,
-                        );
-                        if let Some(original) =
-                            doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned()
-                        {
-                            start_label_drag(
-                                ctx,
-                                SelectionState::EdgeLabel(crate::application::document::EdgeLabelSel::new(
-                                    edge_ref.clone(),
-                                )),
-                                ThrottledDrag::EdgeLabel(EdgeLabelInteraction::new(edge_ref, original)),
-                            );
-                            return;
-                        }
-                    }
-                    // EdgeLabel hit consumed, validation missed
-                    // (edge deleted mid-press / `as_mut` failed) —
-                    // abort rather than fall through to MovingNode.
-                    return;
-                }
-                if let Some((edge_key, endpoint)) = hit_portal_label.take() {
-                    if let Some(doc) = ctx.document.as_mut() {
-                        let edge_ref = crate::application::document::EdgeRef::new(
-                            &edge_key.from_id,
-                            &edge_key.to_id,
-                            &edge_key.edge_type,
-                        );
-                        let original = doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned();
-                        if let Some(original) = original {
-                            start_label_drag(
-                                ctx,
-                                SelectionState::PortalLabel(crate::application::document::PortalLabelSel {
-                                    edge_key,
-                                    endpoint_node_id: endpoint.clone(),
-                                }),
-                                ThrottledDrag::PortalLabel(PortalLabelInteraction::new(
-                                    edge_ref, endpoint, original,
-                                )),
-                            );
-                            return;
-                        }
-                    }
-                    // PortalLabel hit consumed, validation missed
-                    // — abort rather than fall through.
-                    return;
-                }
-                if let Some((edge_ref, handle_kind)) = hit_edge_handle.take() {
-                    // Grab the pre-edit snapshot + start
-                    // position so the drain loop can do
-                    // absolute-positioning math.
-                    if let Some(doc) = ctx.document.as_mut() {
-                        if let Some(original) =
-                            doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned()
-                        {
-                            let canvas_pos = ctx
-                                .renderer
-                                .screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
-                            let start_handle_pos = doc
-                                .hit_test_edge_handle(canvas_pos, &edge_ref, f32::INFINITY)
-                                .map(|(_, p)| p)
-                                .unwrap_or(canvas_pos);
-                            ctx.scene_cache.clear();
-                            *ctx.drag_state = DragState::throttled(ThrottledDrag::EdgeHandle(
-                                EdgeHandleInteraction::new(edge_ref, handle_kind, original, start_handle_pos),
-                            ));
-                            return;
-                        }
-                    }
-                    // EdgeHandle hit consumed, validation missed
-                    // — abort rather than fall through.
-                    return;
-                }
-                if let Some((node_id, side)) = hit_node_resize_handle.take() {
-                    // Snapshot the node's pre-drag (position, size)
-                    // so the drain math + release commit derive
-                    // from a stable base. Skip if the node vanished
-                    // between press and threshold (deletion mid-
-                    // press) or had its size go non-finite /
-                    // non-positive (selection-gating means we
-                    // shouldn't see this; defensive against
-                    // model mutations through the console mid-
-                    // press).
-                    if let Some(doc) = ctx.document.as_mut() {
-                        if let Some(node) = doc.mindmap.nodes.get(&node_id) {
-                            if node.size.width.is_finite()
-                                && node.size.height.is_finite()
-                                && node.size.width > 0.0
-                                && node.size.height > 0.0
-                            {
-                                let start_position = node.position;
-                                let start_size = node.size;
-                                // Same demote-on-press as the
-                                // whole-node move arm — a
-                                // `MultiSection`/`Section` selection
-                                // on the resized node would otherwise
-                                // leave mid-drag picker hints reading
-                                // a section state while the user
-                                // bodily resizes the parent.
-                                if let Some(new_sel) =
-                                    selection_after_node_drag_press(&doc.selection, &node_id)
+                match first_grab {
+                    Some(super::Grab::EdgeLabel) => {
+                        if let Some(edge_key) = hit_edge_label.take() {
+                            if let Some(doc) = ctx.document.as_mut() {
+                                let edge_ref = crate::application::document::EdgeRef::new(
+                                    &edge_key.from_id,
+                                    &edge_key.to_id,
+                                    &edge_key.edge_type,
+                                );
+                                if let Some(original) =
+                                    doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned()
                                 {
-                                    doc.selection = new_sel;
-                                    rebuild_selection_highlight(
-                                        doc,
-                                        ctx.interaction_mode,
-                                        ctx.mindmap_tree,
-                                        ctx.renderer,
+                                    start_label_drag(
+                                        ctx,
+                                        SelectionState::EdgeLabel(
+                                            crate::application::document::EdgeLabelSel::new(edge_ref.clone()),
+                                        ),
+                                        ThrottledDrag::EdgeLabel(EdgeLabelInteraction::new(
+                                            edge_ref, original,
+                                        )),
                                     );
+                                    return;
                                 }
-                                ctx.scene_cache.clear();
-                                *ctx.drag_state = DragState::throttled(ThrottledDrag::NodeResize(
-                                    NodeResizeInteraction::new(
-                                        node_id,
-                                        side,
-                                        start_position,
-                                        start_size,
-                                        // Left-button handle drag — `right_release`
-                                        // finalize must not fire on this.
-                                        false,
-                                    ),
-                                ));
-                                return;
                             }
+                            // EdgeLabel hit consumed, validation missed
+                            // (edge deleted mid-press / `as_mut` failed) —
+                            // abort rather than fall through to MovingNode.
+                            return;
                         }
                     }
-                    // NodeResize handle consumed, validation missed
-                    // (node deleted / non-finite size) — abort
-                    // rather than fall through to MovingNode on
-                    // the same `hit_node`.
-                    return;
-                }
-                if let Some((node_id, section_idx, side)) = hit_section_resize_handle.take() {
-                    // Snapshot the section's pre-drag offset/size
-                    // so the drain math + release commit derive
-                    // from a stable base. Skip the gesture if the
-                    // section vanished between press and threshold
-                    // (deletion mid-drag) or its size went `None`
-                    // (selection-gating means we shouldn't see this
-                    // in practice, but the per-frame dispatch
-                    // shouldn't crash on a model the user mutated
-                    // through the console mid-press).
-                    if let Some(doc) = ctx.document.as_mut() {
-                        if let Some(node) = doc.mindmap.nodes.get(&node_id) {
-                            if let Some(section) = node.sections.get(section_idx) {
-                                if let Some(start_size) = section.size {
-                                    let start_offset = section.offset;
-                                    // Same demote-on-press as the
-                                    // section-move arm — a
-                                    // `MultiSection` containing the
-                                    // resized section demotes to
-                                    // `Section(node, idx)` so the
-                                    // mid-drag picker hint matches
-                                    // the in-flight gesture.
-                                    if let Some(new_sel) = selection_after_section_drag_press(
-                                        &doc.selection,
-                                        &node_id,
-                                        section_idx,
-                                    ) {
-                                        doc.selection = new_sel;
-                                        rebuild_selection_highlight(
-                                            doc,
-                                            ctx.interaction_mode,
-                                            ctx.mindmap_tree,
-                                            ctx.renderer,
-                                        );
-                                    }
+                    Some(super::Grab::PortalLabel) => {
+                        if let Some((edge_key, endpoint)) = hit_portal_label.take() {
+                            if let Some(doc) = ctx.document.as_mut() {
+                                let edge_ref = crate::application::document::EdgeRef::new(
+                                    &edge_key.from_id,
+                                    &edge_key.to_id,
+                                    &edge_key.edge_type,
+                                );
+                                let original =
+                                    doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned();
+                                if let Some(original) = original {
+                                    start_label_drag(
+                                        ctx,
+                                        SelectionState::PortalLabel(
+                                            crate::application::document::PortalLabelSel {
+                                                edge_key,
+                                                endpoint_node_id: endpoint.clone(),
+                                            },
+                                        ),
+                                        ThrottledDrag::PortalLabel(PortalLabelInteraction::new(
+                                            edge_ref, endpoint, original,
+                                        )),
+                                    );
+                                    return;
+                                }
+                            }
+                            // PortalLabel hit consumed, validation missed
+                            // — abort rather than fall through.
+                            return;
+                        }
+                    }
+                    Some(super::Grab::EdgeHandle) => {
+                        if let Some((edge_ref, handle_kind)) = hit_edge_handle.take() {
+                            // Grab the pre-edit snapshot + start
+                            // position so the drain loop can do
+                            // absolute-positioning math.
+                            if let Some(doc) = ctx.document.as_mut() {
+                                if let Some(original) =
+                                    doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned()
+                                {
+                                    let canvas_pos = ctx
+                                        .renderer
+                                        .screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
+                                    let start_handle_pos = doc
+                                        .hit_test_edge_handle(canvas_pos, &edge_ref, f32::INFINITY)
+                                        .map(|(_, p)| p)
+                                        .unwrap_or(canvas_pos);
                                     ctx.scene_cache.clear();
-                                    *ctx.drag_state = DragState::throttled(ThrottledDrag::SectionResize(
-                                        SectionResizeInteraction::new(
-                                            node_id,
-                                            section_idx,
-                                            side,
-                                            start_offset,
-                                            start_size,
-                                            // Left-button handle drag.
-                                            false,
+                                    *ctx.drag_state = DragState::throttled(ThrottledDrag::EdgeHandle(
+                                        EdgeHandleInteraction::new(
+                                            edge_ref,
+                                            handle_kind,
+                                            original,
+                                            start_handle_pos,
                                         ),
                                     ));
                                     return;
                                 }
                             }
+                            // EdgeHandle hit consumed, validation missed
+                            // — abort rather than fall through.
+                            return;
                         }
                     }
-                    // SectionResize handle consumed, validation
-                    // missed — abort rather than fall through to
-                    // MovingNode/MovingSection on the same press.
-                    return;
+                    Some(super::Grab::NodeResizeHandle) => {
+                        if let Some((node_id, side)) = hit_node_resize_handle.take() {
+                            // Snapshot the node's pre-drag (position, size)
+                            // so the drain math + release commit derive
+                            // from a stable base. Skip if the node vanished
+                            // between press and threshold (deletion mid-
+                            // press) or had its size go non-finite /
+                            // non-positive (selection-gating means we
+                            // shouldn't see this; defensive against
+                            // model mutations through the console mid-
+                            // press).
+                            if let Some(doc) = ctx.document.as_mut() {
+                                if let Some(node) = doc.mindmap.nodes.get(&node_id) {
+                                    if node.size.width.is_finite()
+                                        && node.size.height.is_finite()
+                                        && node.size.width > 0.0
+                                        && node.size.height > 0.0
+                                    {
+                                        let start_position = node.position;
+                                        let start_size = node.size;
+                                        // Same demote-on-press as the
+                                        // whole-node move arm — a
+                                        // `MultiSection`/`Section` selection
+                                        // on the resized node would otherwise
+                                        // leave mid-drag picker hints reading
+                                        // a section state while the user
+                                        // bodily resizes the parent.
+                                        if let Some(new_sel) =
+                                            selection_after_node_drag_press(&doc.selection, &node_id)
+                                        {
+                                            doc.selection = new_sel;
+                                            rebuild_selection_highlight(
+                                                doc,
+                                                ctx.interaction_mode,
+                                                ctx.mindmap_tree,
+                                                ctx.renderer,
+                                            );
+                                        }
+                                        ctx.scene_cache.clear();
+                                        *ctx.drag_state = DragState::throttled(ThrottledDrag::NodeResize(
+                                            NodeResizeInteraction::new(
+                                                node_id,
+                                                side,
+                                                start_position,
+                                                start_size,
+                                                // Left-button handle drag — `right_release`
+                                                // finalize must not fire on this.
+                                                false,
+                                            ),
+                                        ));
+                                        return;
+                                    }
+                                }
+                            }
+                            // NodeResize handle consumed, validation missed
+                            // (node deleted / non-finite size) — abort
+                            // rather than fall through to MovingNode on
+                            // the same `hit_node`.
+                            return;
+                        }
+                    }
+                    Some(super::Grab::SectionResizeHandle) => {
+                        if let Some((node_id, section_idx, side)) = hit_section_resize_handle.take() {
+                            // Snapshot the section's pre-drag offset/size
+                            // so the drain math + release commit derive
+                            // from a stable base. Skip the gesture if the
+                            // section vanished between press and threshold
+                            // (deletion mid-drag) or its size went `None`
+                            // (selection-gating means we shouldn't see this
+                            // in practice, but the per-frame dispatch
+                            // shouldn't crash on a model the user mutated
+                            // through the console mid-press).
+                            if let Some(doc) = ctx.document.as_mut() {
+                                if let Some(node) = doc.mindmap.nodes.get(&node_id) {
+                                    if let Some(section) = node.sections.get(section_idx) {
+                                        if let Some(start_size) = section.size {
+                                            let start_offset = section.offset;
+                                            // Same demote-on-press as the
+                                            // section-move arm — a
+                                            // `MultiSection` containing the
+                                            // resized section demotes to
+                                            // `Section(node, idx)` so the
+                                            // mid-drag picker hint matches
+                                            // the in-flight gesture.
+                                            if let Some(new_sel) = selection_after_section_drag_press(
+                                                &doc.selection,
+                                                &node_id,
+                                                section_idx,
+                                            ) {
+                                                doc.selection = new_sel;
+                                                rebuild_selection_highlight(
+                                                    doc,
+                                                    ctx.interaction_mode,
+                                                    ctx.mindmap_tree,
+                                                    ctx.renderer,
+                                                );
+                                            }
+                                            ctx.scene_cache.clear();
+                                            *ctx.drag_state = DragState::throttled(
+                                                ThrottledDrag::SectionResize(SectionResizeInteraction::new(
+                                                    node_id,
+                                                    section_idx,
+                                                    side,
+                                                    start_offset,
+                                                    start_size,
+                                                    // Left-button handle drag.
+                                                    false,
+                                                )),
+                                            );
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            // SectionResize handle consumed, validation
+                            // missed — abort rather than fall through to
+                            // MovingNode/MovingSection on the same press.
+                            return;
+                        }
+                    }
+                    None => {}
                 }
                 if let Some(node_id) = hit_node.take() {
                     // Snapshot before demote — shift+drag

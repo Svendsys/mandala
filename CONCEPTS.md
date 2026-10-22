@@ -3199,11 +3199,20 @@ every `warn!` / `error!` it causes also reaches its reply's
 `execute_console_line` and the macro dispatcher's gated step loop
 through `CommandTarget`, the app-side execution context. There is no
 parallel control path, so undo, gates and side effects match the
-keystroke each stands in for.
+keystroke each stands in for. The `query` family is the read half of
+the loop: `query.document`, `.selection`, `.camera`, `.mode`,
+`.status`, `.animations`, `.editors` and `.undo` return what a person
+reads off the chrome. They go through `observe()` and `&self`
+reads on `CommandTarget` (`document()`, `animation_pause()` and
+`shell_state()`), so a query cannot dirty the document, push undo or
+ask for a frame. Each wire form is an exhaustive-`match` projection beside the state it
+exposes (`document/ipc_state.rs`, `app/ipc_state.rs`), not a mirror
+struct, so a new `SelectionState`, `InteractionMode`, `DragState` or
+`UndoAction` variant breaks the build until it is given one.
 
-**Vision:** the families after `act` (query, scene, input, capture,
-clock, events) each add one module and one line to the registry's
-family table.
+**Vision:** the families after `query` (scene, input, capture, clock,
+events) each add one module and one line to the registry's family
+table.
 **Caveat:** Unix-only today — Windows fails `--ipc` at startup until
 the named-pipe adapter lands, and the browser has no socket at all
 (`CLAUDE.md` "Dual-target status").

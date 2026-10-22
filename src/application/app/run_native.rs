@@ -362,6 +362,7 @@ impl InitState {
             picker_hover: &mut self.picker_hover,
             keybinds: &self.keybinds,
             macros: &mut self.macros,
+            anim_pause_start_ms: &self.anim_pause_start_ms,
         }
     }
 
