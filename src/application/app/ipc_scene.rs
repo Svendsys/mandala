@@ -22,7 +22,7 @@ use glam::Vec2;
 use serde_json::{json, Value};
 
 use baumhard::mindmap::model::MindMap;
-use baumhard::mindmap::tree_builder::MindMapTree;
+use baumhard::mindmap::tree_builder::{MindMapTree, PortalPart};
 
 use crate::application::document::{f32_json, SelectionState};
 use crate::application::scene_host::AppScene;
@@ -87,13 +87,15 @@ pub(super) fn hit_report(
         portal_icon_hit,
         edge_label_hit,
     } = compute_click_hit(canvas, mindmap_tree, app_scene);
+    // `compute_click_hit` hands the portal rung back as two views of one
+    // `PortalHit`; the part is named through `PortalPart`'s own wire
+    // form, the one `scene.dump` reports.
     let portal = match (portal_text_hit, portal_icon_hit) {
-        (Some((edge, endpoint)), _) => json!({ "edge": edge, "endpoint_node_id": endpoint, "part": "text" }),
-        (None, Some((edge, endpoint))) => {
-            json!({ "edge": edge, "endpoint_node_id": endpoint, "part": "icon" })
-        }
-        (None, None) => Value::Null,
-    };
+        (Some((edge, endpoint)), _) => Some((edge, endpoint, PortalPart::Text)),
+        (None, Some((edge, endpoint))) => Some((edge, endpoint, PortalPart::Icon)),
+        (None, None) => None,
+    }
+    .map(|(edge, endpoint, part)| json!({ "edge": edge, "endpoint_node_id": endpoint, "part": part }));
     let edge = match click_hit {
         ClickHit::Empty => match edge_under_pointer(canvas, map, canvas_per_pixel) {
             SelectionState::Edge(edge) => edge.to_ipc_json(),
@@ -121,7 +123,9 @@ mod tests {
     use baumhard::gfx_structs::camera::Camera2D;
     use baumhard::mindmap::model::DISPLAY_MODE_PORTAL;
     use baumhard::mindmap::scene_cache::SceneConnectionCache;
-    use baumhard::mindmap::scene_dump::{dump_edges, dump_labels, dump_nodes, dump_portals, SceneRect};
+    use baumhard::mindmap::scene_dump::{
+        dump_edges, dump_labels, dump_nodes, dump_portals, DumpFilter, SceneRect,
+    };
 
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::MindMapDocument;
@@ -155,7 +159,7 @@ mod tests {
     fn probe_points(doc: &MindMapDocument) -> Vec<Vec2> {
         let (tree, scene) = crate::application::app::project_scene_for_tests(doc, 1.0);
         let camera = Camera2D::new(1280, 720);
-        let mut points: Vec<Vec2> = dump_nodes(&tree, &doc.mindmap, &camera)
+        let mut points: Vec<Vec2> = dump_nodes(&tree, &doc.mindmap, &camera, DumpFilter::ALL)
             .iter()
             .map(|n| center(&n.placement.canvas))
             .collect();
@@ -169,15 +173,22 @@ mod tests {
                 scene
                     .edge_channel_index(CanvasRole::ConnectionLabels)
                     .expect("edge role"),
+                DumpFilter::ALL,
             )
             .iter()
             .map(|l| center(&l.placement.canvas)),
         );
         let portals = entry(CanvasRole::Portals);
         points.extend(
-            dump_portals(portals.tree(), portals.offset(), &camera, scene.portal_index())
-                .iter()
-                .map(|p| center(&p.placement.canvas)),
+            dump_portals(
+                portals.tree(),
+                portals.offset(),
+                &camera,
+                scene.portal_index(),
+                DumpFilter::ALL,
+            )
+            .iter()
+            .map(|p| center(&p.placement.canvas)),
         );
         let edges = entry(CanvasRole::Connections);
         points.extend(
@@ -188,6 +199,7 @@ mod tests {
                 scene
                     .edge_channel_index(CanvasRole::Connections)
                     .expect("edge role"),
+                DumpFilter::ALL,
             )
             .iter()
             .map(|e| center(&e.placement.canvas)),
@@ -312,7 +324,7 @@ mod tests {
             })
         );
 
-        let node = dump_nodes(&tree, &doc.mindmap, &Camera2D::new(800, 600))
+        let node = dump_nodes(&tree, &doc.mindmap, &Camera2D::new(800, 600), DumpFilter::ALL)
             .into_iter()
             .next()
             .expect("a drawn node");

@@ -33,12 +33,12 @@ use super::nodes::BorderPreviewTarget;
 use super::{AnimationInstance, EdgeRef, MindMapDocument, SectionSel, SelectionState, UndoAction};
 
 /// An `f32` as the JSON number a reader expects: the shortest decimal
-/// that names it (`0.1`, not `0.10000000149011612`). A non-finite
-/// value, which JSON cannot carry, is `null`.
+/// that names it (`0.1`, not `0.10000000149011612`), through
+/// Baumhard's [`shortest_f64`](baumhard::util::shortest_float::shortest_f64),
+/// the rule the scene dumps serialize by too. A non-finite value, which
+/// JSON cannot carry, is `null`.
 pub(crate) fn f32_json(value: f32) -> Value {
-    format!("{value}")
-        .parse::<f64>()
-        .ok()
+    baumhard::util::shortest_float::shortest_f64(value)
         .and_then(serde_json::Number::from_f64)
         .map_or(Value::Null, Value::Number)
 }

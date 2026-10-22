@@ -29,9 +29,10 @@ use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
 use baumhard::mindmap::scene_dump::{
-    dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, EdgeDump, LabelDump, NodeDump,
-    Placement, PortalDump,
+    dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, DumpFilter, EdgeDump,
+    LabelDump, NodeDump, Placement, PortalDump,
 };
+use baumhard::mindmap::tree_builder::PortalPart;
 
 use crate::application::ipc::envelope::Reply;
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
@@ -128,7 +129,8 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "scene.visible_set",
-            summary: "Just the ids of what the camera shows right now, by kind: the cheap poll.",
+            summary: "Just the ids of what the camera shows right now, by kind. No text is resolved and \
+                      no rect is reported.",
             params: &[],
             result: &[
                 ResultSpec::new("nodes", ParamType::Array, "Visible node ids, in draw order."),
@@ -176,12 +178,19 @@ pub(super) const FAMILY: Family = Family {
                 ResultSpec::new(
                     "in_scene",
                     ParamType::Boolean,
-                    "Whether the scene draws the node. False when a folded ancestor hides it.",
+                    "Whether the scene draws the node. When false, absent_reason says why.",
                 ),
                 ResultSpec::new(
                     "hidden_by",
                     ParamType::String,
                     "The folded ancestor that hides the node, or null.",
+                ),
+                ResultSpec::new(
+                    "absent_reason",
+                    ParamType::String,
+                    "Why the scene does not draw the node: \"folded\" (hidden_by names the fold) or \
+                     \"not_built\" (no scene built yet, or the builder placed no container for it); \
+                     null when in_scene.",
                 ),
                 ResultSpec::new(
                     "canvas",
@@ -261,7 +270,8 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "scene.find_text",
-            summary: "Locate drawn sections, edge labels and portal captions by the text they display.",
+            summary: "Locate drawn sections, edge labels and portal captions (never icons) by the text \
+                      they display.",
             params: &[
                 ParamSpec::new(
                     "text",
@@ -312,16 +322,9 @@ impl Kinds {
     };
 }
 
-/// Whether `scene.dump` keeps only what the camera shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Include {
-    Visible,
-    All,
-}
-
-/// Every drawn element of the asked-for kinds, read off the trees at
-/// the view's camera. A kind not asked for is `None`, and its trees
-/// are not walked.
+/// The drawn elements of the asked-for kinds that a filter keeps,
+/// read off the trees at the view's camera. A kind not asked for is
+/// `None`, and its trees are not walked.
 #[derive(Debug, Serialize)]
 struct Drawn {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -346,9 +349,10 @@ fn drawn_role<'v>(
 }
 
 /// Read the scene: one serializer call per asked-for kind, each over
-/// the tree that kind is drawn from and named through that tree's own
-/// identity index.
-fn read_drawn(view: &SceneView<'_>, kinds: Kinds) -> Drawn {
+/// the tree that kind is drawn from, named through that tree's own
+/// identity index, and filtered by `filter` before any text is
+/// resolved.
+fn read_drawn(view: &SceneView<'_>, kinds: Kinds, filter: DumpFilter) -> Drawn {
     let camera = view.camera;
     let map = &view.document.mindmap;
     let edge_role = |role: CanvasRole| {
@@ -358,48 +362,37 @@ fn read_drawn(view: &SceneView<'_>, kinds: Kinds) -> Drawn {
     Drawn {
         nodes: kinds.nodes.then(|| {
             view.mindmap_tree
-                .map(|tree| dump_nodes(tree, map, camera))
+                .map(|tree| dump_nodes(tree, map, camera, filter))
                 .unwrap_or_default()
         }),
         edges: kinds.edges.then(|| {
             edge_role(CanvasRole::Connections)
-                .map(|(tree, offset, index)| dump_edges(tree, offset, camera, index))
+                .map(|(tree, offset, index)| dump_edges(tree, offset, camera, index, filter))
                 .unwrap_or_default()
         }),
         labels: kinds.labels.then(|| {
             edge_role(CanvasRole::ConnectionLabels)
-                .map(|(tree, offset, index)| dump_labels(tree, offset, camera, index))
+                .map(|(tree, offset, index)| dump_labels(tree, offset, camera, index, filter))
                 .unwrap_or_default()
         }),
         portals: kinds.portals.then(|| {
             drawn_role(view, CanvasRole::Portals)
-                .map(|(tree, offset)| dump_portals(tree, offset, camera, view.app_scene.portal_index()))
+                .map(|(tree, offset)| {
+                    dump_portals(tree, offset, camera, view.app_scene.portal_index(), filter)
+                })
                 .unwrap_or_default()
         }),
     }
 }
 
-impl Drawn {
-    /// Keep only what the camera shows. A node stays when it or any of
-    /// its sections is visible, carrying only its visible sections.
-    fn retain_visible(&mut self) {
-        let shown = |p: &Placement| p.visibility.is_visible();
-        if let Some(nodes) = &mut self.nodes {
-            nodes.retain_mut(|node| {
-                node.sections.retain(|s| shown(&s.placement));
-                shown(&node.placement) || !node.sections.is_empty()
-            });
-        }
-        if let Some(edges) = &mut self.edges {
-            edges.retain(|e| shown(&e.placement));
-        }
-        if let Some(labels) = &mut self.labels {
-            labels.retain(|l| shown(&l.placement));
-        }
-        if let Some(portals) = &mut self.portals {
-            portals.retain(|p| shown(&p.placement));
-        }
-    }
+/// `scene.dump`'s reply: the camera beside the drawn elements. A
+/// `Serialize` view over both, so `to_file` streams it into the file
+/// rather than building a value tree of the whole scene first.
+#[derive(Serialize)]
+struct DumpReply<'a> {
+    camera: Value,
+    #[serde(flatten)]
+    drawn: &'a Drawn,
 }
 
 /// Run `read` against the drawn scene, or answer `no_document`: with
@@ -418,11 +411,11 @@ fn with_scene(call: &mut Call<'_>, read: impl FnOnce(&SceneView<'_>) -> Result<V
     }
 }
 
-/// `scene.dump`'s `include`, checked.
-fn parse_include(include: Option<&str>) -> Result<Include, Refusal> {
+/// `scene.dump`'s `include`, checked, as the filter it asks for.
+fn parse_include(include: Option<&str>) -> Result<DumpFilter, Refusal> {
     match include {
-        None | Some("visible") => Ok(Include::Visible),
-        Some("all") => Ok(Include::All),
+        None | Some("visible") => Ok(DumpFilter::VISIBLE),
+        Some("all") => Ok(DumpFilter::ALL),
         Some(other) => Err(Refusal::Invalid(
             "include",
             format!("`include` must be \"visible\" or \"all\", got \"{other}\""),
@@ -474,20 +467,19 @@ fn dump(call: &mut Call<'_>) -> Reply {
             parse_to_file(call.param("to_file"), call.param("overwrite"))?,
         ))
     });
-    let (include, kinds, to_file) = match request {
+    let (filter, kinds, to_file) = match request {
         Ok(request) => request,
         Err(refusal) => return refuse(call, refusal),
     };
     with_scene(call, |view| {
-        let mut drawn = read_drawn(view, kinds);
-        if include == Include::Visible {
-            drawn.retain_visible();
-        }
-        let mut reply = serde_json::to_value(&drawn)
-            .map_err(|e| Refusal::Internal(format!("could not serialize the scene: {e}")))?;
-        reply["camera"] = camera_json(view.camera);
+        let drawn = read_drawn(view, kinds, filter);
+        let reply = DumpReply {
+            camera: camera_json(view.camera),
+            drawn: &drawn,
+        };
         match &to_file {
-            None => Ok(reply),
+            None => serde_json::to_value(&reply)
+                .map_err(|e| Refusal::Internal(format!("could not serialize the scene: {e}"))),
             Some(target) => write_sidecar(target, &reply),
         }
     })
@@ -495,8 +487,7 @@ fn dump(call: &mut Call<'_>) -> Reply {
 
 fn visible_set(call: &mut Call<'_>) -> Reply {
     with_scene(call, |view| {
-        let mut drawn = read_drawn(view, Kinds::ALL);
-        drawn.retain_visible();
+        let drawn = read_drawn(view, Kinds::ALL, DumpFilter::VISIBLE_IDS);
         let nodes = drawn.nodes.unwrap_or_default();
         let sections: Vec<Value> = nodes
             .iter()
@@ -555,9 +546,20 @@ fn node_geometry(call: &mut Call<'_>) -> Reply {
             .mindmap_tree
             .and_then(|tree| Some((tree, dump_node(tree, map, view.camera, &node_id)?)));
         let Some((tree, dumped)) = drawn else {
+            // A node the model holds but the scene does not draw is
+            // either behind a fold, or not built: no tree yet (before
+            // the first scene build), or the builder placed no
+            // container for it.
+            let reason = if result["hidden_by"].is_null() {
+                "not_built"
+            } else {
+                "folded"
+            };
             result["in_scene"] = json!(false);
+            result["absent_reason"] = json!(reason);
             return Ok(result);
         };
+        result["absent_reason"] = Value::Null;
         let overlaps: Vec<&str> = node_boxes(tree, view.camera)
             .filter(|(other, placed)| *other != node_id && placed.canvas.overlaps(&dumped.placement.canvas))
             .map(|(other, _)| other)
@@ -642,10 +644,12 @@ fn find_text(call: &mut Call<'_>) -> Reply {
                 edges: false,
                 ..Kinds::ALL
             },
+            DumpFilter::ALL,
         );
+        let shown = |text: &Option<String>| text.as_deref().is_some_and(|t| matcher.matches(t));
         let mut matches: Vec<Value> = Vec::new();
         for node in drawn.nodes.unwrap_or_default() {
-            for section in node.sections.iter().filter(|s| matcher.matches(&s.text)) {
+            for section in node.sections.iter().filter(|s| shown(&s.text)) {
                 matches.push(placed(
                     json!({
                         "kind": "section",
@@ -661,7 +665,7 @@ fn find_text(call: &mut Call<'_>) -> Reply {
             .labels
             .unwrap_or_default()
             .into_iter()
-            .filter(|l| matcher.matches(&l.text))
+            .filter(|l| shown(&l.text))
         {
             matches.push(placed(
                 json!({ "kind": "label", "edge": label.edge, "text": label.text }),
@@ -672,7 +676,9 @@ fn find_text(call: &mut Call<'_>) -> Reply {
             .portals
             .unwrap_or_default()
             .into_iter()
-            .filter(|p| matcher.matches(&p.text))
+            // Captions only: an icon is a marker glyph, not text a
+            // user reads.
+            .filter(|p| p.part == PortalPart::Text && shown(&p.text))
         {
             matches.push(placed(
                 json!({
@@ -725,7 +731,11 @@ mod tests {
     impl SceneApp {
         /// The fixture, with the camera centered on its first node.
         fn with_fixture() -> Self {
-            let doc = load_test_doc();
+            Self::with_doc(load_test_doc())
+        }
+
+        /// `doc` projected, with the camera centered on its first node.
+        fn with_doc(doc: MindMapDocument) -> Self {
             let (tree, scene) = crate::application::app::project_scene_for_tests(&doc, 1.0);
             let mut camera = Camera2D::new(1280, 720);
             let first = first_node(&doc);
@@ -1004,6 +1014,7 @@ mod tests {
         let story = result(&frame, &mut app);
         assert_eq!(story["in_scene"], json!(false));
         assert_eq!(story["hidden_by"], json!(parent));
+        assert_eq!(story["absent_reason"], json!("folded"));
         assert!(story.get("canvas").is_none() && story.get("sections").is_none());
     }
 
@@ -1106,5 +1117,81 @@ mod tests {
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"scene.find_text","text":""}"#, &mut app);
         assert_eq!(reply["error"]["data"]["param"], json!("text"));
+    }
+
+    /// Before the first scene build there is no tree, and a node the
+    /// model holds is absent for that reason, not for a fold.
+    #[test]
+    fn test_node_geometry_says_when_the_scene_is_not_built() {
+        let mut app = SceneApp::with_fixture();
+        app.tree = None;
+        let id = first_node(app.doc.as_ref().expect("doc"));
+        let frame = json!({ "id": 1, "cmd": "scene.node_geometry", "node_id": id }).to_string();
+        let story = result(&frame, &mut app);
+        assert_eq!(story["in_scene"], json!(false));
+        assert_eq!(story["hidden_by"], Value::Null);
+        assert_eq!(story["absent_reason"], json!("not_built"));
+        let mut drawn = SceneApp::with_fixture();
+        let story = result(&frame, &mut drawn);
+        assert_eq!(
+            story["absent_reason"],
+            Value::Null,
+            "a drawn node is absent for no reason"
+        );
+    }
+
+    /// A portal's icon is a marker glyph, not text: searching for it
+    /// finds no portal, though the dump reports the icon with that
+    /// very glyph.
+    #[test]
+    fn test_find_text_never_matches_a_portal_icon() {
+        use baumhard::mindmap::model::DISPLAY_MODE_PORTAL;
+
+        let mut doc = load_test_doc();
+        doc.mindmap
+            .edges
+            .iter_mut()
+            .find(|e| e.label.is_none())
+            .expect("an unlabeled edge")
+            .display_mode = Some(DISPLAY_MODE_PORTAL.to_string());
+        let mut app = SceneApp::with_doc(doc);
+        let all = result(
+            r#"{"id":1,"cmd":"scene.dump","include":"all","kinds":["portals"]}"#,
+            &mut app,
+        );
+        let icon = all["portals"]
+            .as_array()
+            .expect("portals")
+            .iter()
+            .find(|p| p["part"] == "icon")
+            .expect("the portal draws an icon")
+            .clone();
+        let glyph = icon["text"].as_str().expect("the icon's glyph");
+        let frame = json!({ "id": 1, "cmd": "scene.find_text", "text": glyph }).to_string();
+        let matches = result(&frame, &mut app)["matches"]
+            .as_array()
+            .expect("matches")
+            .clone();
+        assert!(
+            matches.iter().all(|m| m["kind"] != "portal"),
+            "an icon is not text: {matches:?}"
+        );
+    }
+
+    /// Rects carry the shortest decimal of each `f32` on the inline
+    /// path, the digits a streamed sidecar writes.
+    #[test]
+    fn test_scene_coordinates_are_shortest_decimals() {
+        let mut app = SceneApp::with_fixture();
+        let dump = result(r#"{"id":1,"cmd":"scene.dump","kinds":["nodes"]}"#, &mut app);
+        let node = &dump["nodes"][0];
+        for key in ["x", "y", "w", "h"] {
+            let number = node["canvas"][key].as_f64().expect("a number");
+            assert_eq!(
+                number.to_string(),
+                (number as f32).to_string(),
+                "{key} carries the f32's own digits"
+            );
+        }
     }
 }

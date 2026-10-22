@@ -17,28 +17,43 @@
 //!
 //! **Three facts per element, each from the renderer's own seam:**
 //!
-//! - its **canvas** rect, the `GlyphArea`'s `position` plus its
-//!   tree's registered offset, sized by `render_bounds` — the rect the
-//!   renderer shapes a buffer into;
+//! - its **canvas** rect: the extent the renderer draws for it — the
+//!   union of its background fill
+//!   ([`GlyphArea::background_rect`](crate::gfx_structs::area::GlyphArea::background_rect),
+//!   the box grown by its padding) and every text stamp
+//!   ([`GlyphArea::text_stamp_offsets`](crate::gfx_structs::area::GlyphArea::text_stamp_offsets):
+//!   the main glyph and each outline-halo stamp), offset by its tree's
+//!   registered scene offset. An area that draws nothing itself, an
+//!   unfilled node container, is placed by its layout box;
 //! - its **surface** rect, that rect through
-//!   [`Camera2D::canvas_to_screen`](crate::gfx_structs::camera::Camera2D::canvas_to_screen), in physical pixels;
-//! - its [`Visibility`](crate::gfx_structs::camera::Visibility) verdict from [`Camera2D::visibility`](crate::gfx_structs::camera::Camera2D::visibility), the
-//!   predicate the renderer's per-frame cull calls — so "on screen"
-//!   here and "drawn" there cannot disagree.
+//!   [`Camera2D::canvas_to_screen`](crate::gfx_structs::camera::Camera2D::canvas_to_screen),
+//!   in physical pixels;
+//! - its [`Visibility`](crate::gfx_structs::camera::Visibility) verdict
+//!   from
+//!   [`Camera2D::visibility`](crate::gfx_structs::camera::Camera2D::visibility),
+//!   the predicate the renderer's per-frame cull calls, asked of each
+//!   drawn rect as the renderer asks it — so "on screen" here and
+//!   "drawn" there cannot disagree.
 //!
 //! And for text, what the user actually reads:
 //! [`displayed_text`](crate::font::attrs::displayed_text), the
 //! coverage rule the shaper slices spans by.
 //!
 //! **Names come from the role's own identity index**, the one its
-//! hit-test resolves through — [`MindMapTree`](crate::mindmap::tree_builder::MindMapTree)'s id maps for nodes and
-//! sections, [`EdgeChannelIndex`](crate::mindmap::tree_builder::EdgeChannelIndex) for connections and labels,
-//! [`PortalHitIndex`](crate::mindmap::tree_builder::PortalHitIndex) for portal markers — so an element is called
-//! here what a click on it is called.
+//! hit-test resolves through —
+//! [`MindMapTree`](crate::mindmap::tree_builder::MindMapTree)'s id maps
+//! for nodes and sections,
+//! [`EdgeChannelIndex`](crate::mindmap::tree_builder::EdgeChannelIndex)
+//! for connections and labels, and
+//! [`PortalHitIndex`](crate::mindmap::tree_builder::PortalHitIndex) for
+//! portal markers — so an element is called here what a click on it
+//! is called.
 //!
 //! Every function is pure over `&` references and allocates only its
-//! output. It is meant to be cheap enough to run per screenshot (the
-//! IPC capture sidecar), which is why it is benched.
+//! output. A [`DumpFilter`] decides, before any text is resolved,
+//! which elements are kept and whether their text is: an element the
+//! filter drops, or a read that asks for no text, costs no
+//! [`displayed_text`](crate::font::attrs::displayed_text) walk.
 
 use glam::Vec2;
 use indextree::NodeId;
@@ -54,6 +69,7 @@ use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::mindmap::model::MindMap;
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::tree_builder::{EdgeChannelIndex, MindMapTree, PortalHitIndex, PortalPart};
+use crate::util::shortest_float::serialize_shortest;
 
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reach the `do_*()` bodies (`TEST_CONVENTIONS` §T2.2). The
@@ -65,11 +81,19 @@ pub mod tests;
 /// An axis-aligned rect: top-left corner and extent, y-down. In
 /// canvas units or surface pixels depending on which side of a
 /// [`Placement`] it is.
+///
+/// Each coordinate serializes as its shortest decimal
+/// ([`serialize_shortest`]), so a dump built into a `serde_json::Value`
+/// and one streamed into a file carry the same digits.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct SceneRect {
+    #[serde(serialize_with = "serialize_shortest")]
     pub x: f32,
+    #[serde(serialize_with = "serialize_shortest")]
     pub y: f32,
+    #[serde(serialize_with = "serialize_shortest")]
     pub w: f32,
+    #[serde(serialize_with = "serialize_shortest")]
     pub h: f32,
 }
 
@@ -109,14 +133,23 @@ impl SceneRect {
     pub fn contains(&self, point: Vec2) -> bool {
         point.x >= self.x && point.x <= self.x + self.w && point.y >= self.y && point.y <= self.y + self.h
     }
+
+    /// This canvas rect in surface pixels at `camera`: the corner
+    /// through [`Camera2D::canvas_to_screen`], the extent scaled by the
+    /// zoom. The one place a scene rect changes space. O(1).
+    pub fn to_surface(&self, camera: &Camera2D) -> SceneRect {
+        SceneRect::new(
+            camera.canvas_to_screen(Vec2::new(self.x, self.y)),
+            Vec2::new(self.w, self.h) * camera.zoom,
+        )
+    }
 }
 
 /// Where one drawn element is, in both coordinate spaces, and whether
 /// the camera shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Placement {
-    /// The element's rect in canvas space: what the renderer shapes
-    /// into and culls against.
+    /// The extent the renderer draws for the element, in canvas space.
     pub canvas: SceneRect,
     /// The same rect in surface pixels at the current camera. Not
     /// clipped to the surface: an element half off-screen has a rect
@@ -127,58 +160,145 @@ pub struct Placement {
 }
 
 impl Placement {
-    /// Place a canvas rect with its zoom window at `camera`. O(1).
-    pub fn of_rect(pos: Vec2, size: Vec2, window: ZoomVisibility, camera: &Camera2D) -> Self {
+    /// A canvas extent and the verdict already reached for it, with
+    /// its surface rect derived at `camera`. O(1).
+    fn spanning(canvas: SceneRect, visibility: Visibility, camera: &Camera2D) -> Self {
         Placement {
-            canvas: SceneRect::new(pos, size),
-            surface: SceneRect::new(camera.canvas_to_screen(pos), size * camera.zoom),
-            visibility: camera.visibility(pos, size, window),
+            canvas,
+            surface: canvas.to_surface(camera),
+            visibility,
         }
     }
 
-    /// Place a `GlyphArea` of a tree registered at `offset`, exactly
-    /// as the renderer culls its main buffer: `position + offset`,
-    /// sized by `render_bounds`, under the area's own zoom window.
-    /// O(1).
+    /// Place one canvas rect with its zoom window at `camera`. O(1).
+    pub fn of_rect(pos: Vec2, size: Vec2, window: ZoomVisibility, camera: &Camera2D) -> Self {
+        Self::spanning(
+            SceneRect::new(pos, size),
+            camera.visibility(pos, size, window),
+            camera,
+        )
+    }
+
+    /// Place a `GlyphArea` of a tree registered at `offset` the way the
+    /// renderer draws it: the union of its background fill
+    /// ([`GlyphArea::background_rect`]) and its text stamps
+    /// ([`GlyphArea::text_stamp_offsets`], each a `render_bounds` box),
+    /// each culled under the area's zoom window as the renderer culls
+    /// it, the verdict being the most visible of theirs. An area that
+    /// draws neither is placed by its `position` / `render_bounds` box.
+    ///
+    /// O(1): at most one fill and nine stamps, no allocation.
     pub fn of_area(area: &GlyphArea, offset: Vec2, camera: &Camera2D) -> Self {
-        let pos = Vec2::new(area.position.x.0, area.position.y.0) + offset;
-        let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
-        Self::of_rect(pos, size, area.zoom_visibility, camera)
+        let window = area.zoom_visibility;
+        let origin = area.position() + offset;
+        let bounds = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
+        let mut extent = Extent::default();
+        if let Some((pos, size)) = area.background_rect() {
+            extent.add(&Self::of_rect(pos + offset, size, window, camera));
+        }
+        for (dx, dy) in area.text_stamp_offsets() {
+            extent.add(&Self::of_rect(origin + Vec2::new(dx, dy), bounds, window, camera));
+        }
+        extent
+            .placement(camera)
+            .unwrap_or_else(|| Self::of_rect(origin, bounds, window, camera))
     }
 }
 
-/// Fold the verdicts of an element's parts into the element's: it is
-/// visible when any part is, off-screen when some part only needs a
-/// pan, and outside its zoom window only when every part is. O(1).
-fn most_visible(a: Visibility, b: Visibility) -> Visibility {
-    let rank = |v: Visibility| match v {
-        Visibility::Visible => 2,
-        Visibility::Offscreen => 1,
-        Visibility::OutsideZoomWindow => 0,
+/// The running union of an element's drawn parts and the most visible
+/// of their verdicts — visible when any part is, off-screen when some
+/// part only needs a pan, outside its zoom window only when every part
+/// is.
+#[derive(Default)]
+struct Extent {
+    whole: Option<(SceneRect, Visibility)>,
+}
+
+impl Extent {
+    fn add(&mut self, part: &Placement) {
+        let rank = |v: Visibility| match v {
+            Visibility::Visible => 2,
+            Visibility::Offscreen => 1,
+            Visibility::OutsideZoomWindow => 0,
+        };
+        self.whole = Some(match self.whole {
+            None => (part.canvas, part.visibility),
+            Some((rect, verdict)) => (
+                rect.union(&part.canvas),
+                if rank(part.visibility) > rank(verdict) {
+                    part.visibility
+                } else {
+                    verdict
+                },
+            ),
+        });
+    }
+
+    /// The element's placement, or `None` when no part was added.
+    fn placement(&self, camera: &Camera2D) -> Option<Placement> {
+        self.whole
+            .map(|(canvas, visibility)| Placement::spanning(canvas, visibility, camera))
+    }
+}
+
+/// Which drawn elements a dump keeps, and whether it resolves their
+/// text. Applied per element before its text is resolved, so a dropped
+/// element and a text-free read cost no
+/// [`displayed_text`] walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DumpFilter {
+    /// Keep only elements whose verdict is [`Visibility::Visible`]. A
+    /// node is kept when it or any of its sections is, carrying only
+    /// its visible sections.
+    pub visible_only: bool,
+    /// Resolve each element's displayed text. Without it every `text`
+    /// is `None` and is left out of the serialized form.
+    pub text: bool,
+}
+
+impl DumpFilter {
+    /// Every drawn element, with its text.
+    pub const ALL: DumpFilter = DumpFilter {
+        visible_only: false,
+        text: true,
     };
-    if rank(b) > rank(a) {
-        b
-    } else {
-        a
+    /// What the camera shows, with its text.
+    pub const VISIBLE: DumpFilter = DumpFilter {
+        visible_only: true,
+        text: true,
+    };
+    /// What the camera shows, identities and placements only.
+    pub const VISIBLE_IDS: DumpFilter = DumpFilter {
+        visible_only: true,
+        text: false,
+    };
+
+    fn keeps(&self, placement: &Placement) -> bool {
+        !self.visible_only || placement.visibility.is_visible()
+    }
+
+    fn text_of(&self, area: &GlyphArea) -> Option<String> {
+        self.text.then(|| displayed_text(&area.text, &area.regions))
     }
 }
 
 // --- Nodes and sections ------------------------------------------------
 
-/// One mind node as the scene draws it: its laid-out box and every
-/// section it renders.
+/// One mind node as the scene draws it: its drawn extent and the
+/// sections it renders.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NodeDump {
     pub node_id: String,
     /// The model's `folded` flag: this node's descendants are hidden.
     /// The node itself is drawn — it is in the scene.
     pub folded: bool,
-    /// The node's container box — the rect its background fills and
-    /// its hit test resolves against.
+    /// The node container's placement: its background fill grown by
+    /// its padding, or its layout box when it draws no fill.
     #[serde(flatten)]
     pub placement: Placement,
-    /// Each rendered section, in model order. A section the tree
-    /// builder skips (a non-finite or empty authored size) is absent.
+    /// Each rendered section the filter keeps, in model order. A
+    /// section the tree builder skips (a non-finite or empty authored
+    /// size) is never here.
     pub sections: Vec<SectionDump>,
 }
 
@@ -191,31 +311,34 @@ pub struct SectionDump {
     pub placement: Placement,
     /// What the user reads in it: the section's text after its
     /// `text_runs` coverage ([`displayed_text`]), which drops every
-    /// grapheme no run covers.
-    pub text: String,
+    /// grapheme no run covers. `None` when the filter asks for no text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
-/// Every node the mindmap tree draws, in tree pre-order (parents
-/// before children, siblings in model order — the order the renderer
-/// walks them). A node hidden by a folded ancestor is not in the tree
-/// and so not here; [`MindMap::folding_ancestor`] names the fold.
+/// Every node the mindmap tree draws that `filter` keeps, in tree
+/// pre-order (parents before children, siblings in model order — the
+/// order the renderer walks them). A node hidden by a folded ancestor
+/// is not in the tree and so not here; [`MindMap::folding_ancestor`]
+/// names the fold.
 ///
 /// # Costs
 ///
-/// O(tree elements): one arena walk, two hash lookups per element,
-/// one [`displayed_text`] per section (a grapheme walk of its text
-/// when it carries runs). Allocates the output: one `String` id per
-/// node, one text `String` per section.
-pub fn dump_nodes(tree: &MindMapTree, map: &MindMap, camera: &Camera2D) -> Vec<NodeDump> {
+/// O(tree elements): one arena walk, two hash lookups per element, and
+/// one [`displayed_text`] per *kept* section when the filter asks for
+/// text (a grapheme walk of its text when it carries runs). Allocates
+/// the output: one `String` id per kept node, one text `String` per
+/// kept section.
+pub fn dump_nodes(tree: &MindMapTree, map: &MindMap, camera: &Camera2D, filter: DumpFilter) -> Vec<NodeDump> {
     containers(tree)
-        .filter_map(|(mind_id, arena_id)| node_dump(tree, map, camera, mind_id, arena_id))
+        .filter_map(|(mind_id, arena_id)| node_dump(tree, map, camera, mind_id, arena_id, filter))
         .collect()
 }
 
-/// Every drawn node's id and laid-out box, in the order
-/// [`dump_nodes`] reports them — the node half of a dump without the
-/// sections or their text, for a caller that only asks where nodes
-/// are (an overlap test).
+/// Every drawn node's id and placement, in the order [`dump_nodes`]
+/// reports them — the node half of a dump without the sections or
+/// their text, for a caller that only asks where nodes are (an overlap
+/// test).
 ///
 /// O(tree elements): one arena walk and one hash lookup per element.
 /// Allocates nothing; the ids borrow from `tree`.
@@ -237,13 +360,15 @@ fn containers(tree: &MindMapTree) -> impl Iterator<Item = (&str, NodeId)> + '_ {
         .filter_map(|arena_id| Some((tree.mind_id_for_node(arena_id)?, arena_id)))
 }
 
-/// One node, by id, as [`dump_nodes`] would report it. `None` when the
-/// tree does not draw it: an unknown id, or a node hidden by a fold.
+/// One node, by id, with every section and its text, visible or not —
+/// [`dump_nodes`] under [`DumpFilter::ALL`] for one node. `None` when
+/// the tree does not draw it: an unknown id, or a node hidden by a
+/// fold.
 ///
 /// O(children of the node) plus one [`displayed_text`] per section.
 pub fn dump_node(tree: &MindMapTree, map: &MindMap, camera: &Camera2D, node_id: &str) -> Option<NodeDump> {
     let arena_id = tree.arena_id_for(node_id)?;
-    node_dump(tree, map, camera, node_id, arena_id)
+    node_dump(tree, map, camera, node_id, arena_id, DumpFilter::ALL)
 }
 
 fn node_dump(
@@ -252,25 +377,31 @@ fn node_dump(
     camera: &Camera2D,
     mind_id: &str,
     arena_id: NodeId,
+    filter: DumpFilter,
 ) -> Option<NodeDump> {
     let arena = &tree.tree.arena;
     let container = arena.get(arena_id)?.get().glyph_area()?;
-    let sections = arena_id
+    let placement = Placement::of_area(container, Vec2::ZERO, camera);
+    let sections: Vec<SectionDump> = arena_id
         .children(arena)
         .filter_map(|child| {
             let (_, section_idx) = tree.section_for_node(child)?;
             let area = arena.get(child)?.get().glyph_area()?;
-            Some(SectionDump {
+            let placement = Placement::of_area(area, Vec2::ZERO, camera);
+            filter.keeps(&placement).then(|| SectionDump {
                 section_idx,
-                placement: Placement::of_area(area, Vec2::ZERO, camera),
-                text: displayed_text(&area.text, &area.regions),
+                placement,
+                text: filter.text_of(area),
             })
         })
         .collect();
+    if !filter.keeps(&placement) && sections.is_empty() {
+        return None;
+    }
     Some(NodeDump {
         node_id: mind_id.to_string(),
         folded: map.nodes.get(mind_id).is_some_and(|node| node.folded),
-        placement: Placement::of_area(container, Vec2::ZERO, camera),
+        placement,
         sections,
     })
 }
@@ -282,8 +413,8 @@ fn node_dump(
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EdgeDump {
     pub edge: EdgeKey,
-    /// The union of its glyph rects, and the most visible of their
-    /// verdicts: visible when any glyph is drawn.
+    /// The union of its glyphs' placements, and the most visible of
+    /// their verdicts: visible when any glyph is drawn.
     #[serde(flatten)]
     pub placement: Placement,
     /// Glyphs drawn along the path, caps included.
@@ -292,15 +423,16 @@ pub struct EdgeDump {
     pub visible_glyphs: usize,
 }
 
-/// Every connection a connection-role tree draws, in tree order,
-/// named through `index` — the tree's own [`EdgeChannelIndex`]. A
-/// connection with no glyph (its whole path clipped inside its
-/// endpoint nodes) draws nothing and is not reported. `offset` is the
-/// tree's registered scene offset.
+/// Every connection a connection-role tree draws that `filter` keeps,
+/// in tree order, named through `index` — the tree's own
+/// [`EdgeChannelIndex`]. A connection with no glyph (its whole path
+/// clipped inside its endpoint nodes) draws nothing and is not
+/// reported. `offset` is the tree's registered scene offset. A
+/// connection carries no text, so the filter's `text` is moot.
 ///
 /// # Costs
 ///
-/// O(glyphs): one rect and verdict per glyph, one `EdgeKey` clone per
+/// O(glyphs): one placement per glyph, one `EdgeKey` clone per kept
 /// connection. A per-edge `Void` the index cannot name (a tree/index
 /// mismatch, never produced by the dispatcher) is left out with a
 /// `warn!`.
@@ -309,13 +441,14 @@ pub fn dump_edges(
     offset: Vec2,
     camera: &Camera2D,
     index: &EdgeChannelIndex,
+    filter: DumpFilter,
 ) -> Vec<EdgeDump> {
     tree.root()
         .children(&tree.arena)
         .filter_map(|edge_root| {
             let mut glyphs = 0usize;
             let mut visible_glyphs = 0usize;
-            let mut whole: Option<(SceneRect, Visibility)> = None;
+            let mut extent = Extent::default();
             for glyph in edge_root.children(&tree.arena) {
                 let Some(area) = tree.arena.get(glyph).and_then(|n| n.get().glyph_area()) else {
                     continue;
@@ -323,30 +456,19 @@ pub fn dump_edges(
                 let placed = Placement::of_area(area, offset, camera);
                 glyphs += 1;
                 visible_glyphs += usize::from(placed.visibility.is_visible());
-                whole = Some(match whole {
-                    None => (placed.canvas, placed.visibility),
-                    Some((rect, verdict)) => (
-                        rect.union(&placed.canvas),
-                        most_visible(verdict, placed.visibility),
-                    ),
-                });
+                extent.add(&placed);
             }
-            let (canvas, visibility) = whole?;
+            let placement = extent.placement(camera)?;
+            if !filter.keeps(&placement) {
+                return None;
+            }
             let Some(edge) = index.resolve(tree, edge_root) else {
                 log::warn!("scene_dump: a connection in the scene has no name in its index; left out");
                 return None;
             };
-            let origin = Vec2::new(canvas.x, canvas.y);
             Some(EdgeDump {
                 edge,
-                placement: Placement {
-                    canvas,
-                    surface: SceneRect::new(
-                        camera.canvas_to_screen(origin),
-                        Vec2::new(canvas.w, canvas.h) * camera.zoom,
-                    ),
-                    visibility,
-                },
+                placement,
                 glyphs,
                 visible_glyphs,
             })
@@ -361,34 +483,42 @@ pub struct LabelDump {
     #[serde(flatten)]
     pub placement: Placement,
     /// The label as displayed — while it is being edited, the live
-    /// buffer with its caret, which is what the tree holds.
-    pub text: String,
+    /// buffer with its caret, which is what the tree holds. `None`
+    /// when the filter asks for no text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
-/// Every label a connection-label tree draws, in tree order, named
-/// through the tree's [`EdgeChannelIndex`]. `offset` is the tree's
-/// registered scene offset.
+/// Every label a connection-label tree draws that `filter` keeps, in
+/// tree order, named through the tree's [`EdgeChannelIndex`]. `offset`
+/// is the tree's registered scene offset.
 ///
-/// O(labels), one `EdgeKey` clone and one [`displayed_text`] each. A
+/// O(labels), one `EdgeKey` clone per kept label and one
+/// [`displayed_text`] per kept label when the filter asks for text. A
 /// label the index cannot name is left out with a `warn!`.
 pub fn dump_labels(
     tree: &Tree<GfxElement, GfxMutator>,
     offset: Vec2,
     camera: &Camera2D,
     index: &EdgeChannelIndex,
+    filter: DumpFilter,
 ) -> Vec<LabelDump> {
     tree.root()
         .children(&tree.arena)
         .filter_map(|leaf| {
             let area = tree.arena.get(leaf)?.get().glyph_area()?;
+            let placement = Placement::of_area(area, offset, camera);
+            if !filter.keeps(&placement) {
+                return None;
+            }
             let Some(edge) = index.resolve(tree, leaf) else {
                 log::warn!("scene_dump: an edge label in the scene has no name in its index; left out");
                 return None;
             };
             Some(LabelDump {
                 edge,
-                placement: Placement::of_area(area, offset, camera),
-                text: displayed_text(&area.text, &area.regions),
+                placement,
+                text: filter.text_of(area),
             })
         })
         .collect()
@@ -403,30 +533,38 @@ pub struct PortalDump {
     pub part: PortalPart,
     #[serde(flatten)]
     pub placement: Placement,
-    /// The glyph or caption as displayed.
-    pub text: String,
+    /// The glyph or caption as displayed. `None` when the filter asks
+    /// for no text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
-/// Every portal icon and caption a portal tree draws, in tree order,
-/// named through the tree's [`PortalHitIndex`] — the resolution a
-/// click on the marker takes. An endpoint with no caption reserves an
-/// empty text slot at zero extent; it draws nothing and is not
-/// reported. `offset` is the tree's registered scene offset.
+/// Every portal icon and caption a portal tree draws that `filter`
+/// keeps, in tree order, named through the tree's [`PortalHitIndex`]
+/// — the resolution a click on the marker takes. An endpoint with no
+/// caption reserves an empty text slot at zero extent; it draws
+/// nothing and is not reported. `offset` is the tree's registered
+/// scene offset.
 ///
-/// O(tree elements), one [`PortalHitIndex::resolve`] and one
-/// [`displayed_text`] per drawn leaf. A leaf the index cannot name is
-/// left out with a `warn!`.
+/// O(tree elements), one [`PortalHitIndex::resolve`] per kept leaf and
+/// one [`displayed_text`] per kept leaf when the filter asks for text.
+/// A leaf the index cannot name is left out with a `warn!`.
 pub fn dump_portals(
     tree: &Tree<GfxElement, GfxMutator>,
     offset: Vec2,
     camera: &Camera2D,
     index: &PortalHitIndex,
+    filter: DumpFilter,
 ) -> Vec<PortalDump> {
     tree.root()
         .descendants(&tree.arena)
         .filter_map(|leaf| {
             let area = tree.arena.get(leaf)?.get().glyph_area()?;
             if area.text.is_empty() {
+                return None;
+            }
+            let placement = Placement::of_area(area, offset, camera);
+            if !filter.keeps(&placement) {
                 return None;
             }
             let Some(hit) = index.resolve(tree, leaf) else {
@@ -437,8 +575,8 @@ pub fn dump_portals(
                 edge: hit.edge_key,
                 endpoint_node_id: hit.endpoint_node_id,
                 part: hit.part,
-                placement: Placement::of_area(area, offset, camera),
-                text: displayed_text(&area.text, &area.regions),
+                placement,
+                text: filter.text_of(area),
             })
         })
         .collect()

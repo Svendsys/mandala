@@ -17,7 +17,7 @@ use crate::mindmap::loader;
 use crate::mindmap::model::{MindMap, TextRun, DISPLAY_MODE_PORTAL};
 use crate::mindmap::scene_cache::{EdgeKey, SceneConnectionCache};
 use crate::mindmap::scene_dump::{
-    dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, Placement,
+    dump_edges, dump_labels, dump_node, dump_nodes, dump_portals, node_boxes, DumpFilter, Placement,
 };
 use crate::mindmap::tree_builder::{
     build_connection_elements, build_connection_label_tree, build_connection_tree, build_label_elements,
@@ -69,7 +69,7 @@ pub fn do_scene_dump_nodes_are_the_tree_in_pre_order() {
     let map = testament();
     let tree = build_mindmap_tree(&map);
     let camera = camera_on(&map, &a_parent(&map));
-    let dump = dump_nodes(&tree, &map, &camera);
+    let dump = dump_nodes(&tree, &map, &camera, DumpFilter::ALL);
 
     let walk_order: Vec<&str> = tree
         .tree
@@ -182,7 +182,7 @@ pub fn do_scene_dump_a_fold_removes_the_descendants() {
     let tree = build_mindmap_tree(&map);
     let camera = camera_on(&map, &parent);
 
-    let dump = dump_nodes(&tree, &map, &camera);
+    let dump = dump_nodes(&tree, &map, &camera, DumpFilter::ALL);
     assert_eq!(dump.len(), map.nodes.len() - hidden.len());
     let folded = dump
         .iter()
@@ -238,7 +238,7 @@ pub fn do_scene_dump_section_text_is_the_covered_text() {
         .iter()
         .find(|s| s.section_idx == 0)
         .expect("section 0");
-    assert_eq!(first.text, "seen seen");
+    assert_eq!(first.text.as_deref(), Some("seen seen"));
 }
 
 #[test]
@@ -276,7 +276,7 @@ pub fn do_scene_dump_edge_roles_are_named_by_their_index() {
 
     let tree = build_connection_tree(&connections);
     let index = connection_channel_index(connection_identity_sequence(&connections));
-    let edges = dump_edges(&tree, Vec2::ZERO, &camera, &index);
+    let edges = dump_edges(&tree, Vec2::ZERO, &camera, &index, DumpFilter::ALL);
     let drawn: Vec<(&EdgeKey, usize)> = connections
         .iter()
         .map(|c| {
@@ -298,16 +298,28 @@ pub fn do_scene_dump_edge_roles_are_named_by_their_index() {
 
     let labels = build_label_elements(&map, None, None, None, &mut paths, 1.0, &hidden);
     let label_tree = build_connection_label_tree(&labels);
-    let dumped = dump_labels(&label_tree.tree, Vec2::ZERO, &camera, &label_tree.hit_index);
+    let dumped = dump_labels(
+        &label_tree.tree,
+        Vec2::ZERO,
+        &camera,
+        &label_tree.hit_index,
+        DumpFilter::ALL,
+    );
     assert_eq!(dumped.len(), labels.len());
     for (dump, element) in dumped.iter().zip(&labels) {
         assert_eq!(dump.edge, element.edge_key);
-        assert_eq!(dump.text, element.text);
+        assert_eq!(dump.text.as_deref(), Some(element.text.as_str()));
     }
 
     let pairs = portal_pair_data(&map, &offsets, None, None, None, None, 1.0, &hidden);
     let portal_tree = build_portal_tree_from_pairs(&pairs);
-    let markers = dump_portals(&portal_tree.tree, Vec2::ZERO, &camera, &portal_tree.hit_index);
+    let markers = dump_portals(
+        &portal_tree.tree,
+        Vec2::ZERO,
+        &camera,
+        &portal_tree.hit_index,
+        DumpFilter::ALL,
+    );
     assert!(!markers.is_empty());
     assert!(markers.iter().all(|m| m.edge == portal_key));
     let endpoints: std::collections::BTreeSet<&str> =
@@ -361,4 +373,142 @@ fn test_scene_dump_serializes_flat() {
     for key in ["section_idx", "canvas", "surface", "visibility", "text"] {
         assert!(section.get(key).is_some(), "{key} in {section}");
     }
+}
+
+#[test]
+fn test_scene_dump_placement_spans_what_the_renderer_draws() {
+    do_scene_dump_placement_spans_what_the_renderer_draws();
+}
+
+/// An element is placed by everything the renderer draws for it, each
+/// part culled as the renderer culls it: a padded background fill
+/// whose box sits just off-screen but whose padding crosses the
+/// viewport edge is visible, and so is a text whose main glyph is off
+/// the edge while one outline-halo stamp is on it. Each rect is the
+/// union of the parts. The camera sees canvas x in `[-800, 0)`, so a
+/// box starting at `x = 0` misses it by nothing.
+pub fn do_scene_dump_placement_spans_what_the_renderer_draws() {
+    use crate::gfx_structs::area::{EdgePadding, GlyphArea};
+    use crate::gfx_structs::area_fields::OutlineStyle;
+
+    let mut camera = Camera2D::new(800, 600);
+    camera.position = Vec2::new(-400.0, 0.0);
+    let boxed = |area: &GlyphArea| {
+        Placement::of_rect(
+            area.position(),
+            Vec2::new(100.0, 40.0),
+            area.zoom_visibility,
+            &camera,
+        )
+    };
+
+    let mut filled = GlyphArea::new(16.0, 16.0, Vec2::ZERO, Vec2::new(100.0, 40.0));
+    filled.background_color = Some([1, 2, 3, 255]);
+    filled.background_padding = EdgePadding::new(5.0, 6.0, 7.0, 8.0);
+    assert_eq!(
+        boxed(&filled).visibility,
+        Visibility::Offscreen,
+        "precondition: the bare box misses"
+    );
+    let placed = Placement::of_area(&filled, Vec2::ZERO, &camera);
+    assert_eq!(
+        placed.visibility,
+        Visibility::Visible,
+        "the padding is drawn, and it is on screen"
+    );
+    assert_eq!(
+        (placed.canvas.x, placed.canvas.y, placed.canvas.w, placed.canvas.h),
+        (-8.0, -5.0, 114.0, 52.0),
+        "the fill grown per edge: left 8, top 5, right 6, bottom 7"
+    );
+    assert_eq!(
+        filled.background_rect(),
+        Some((Vec2::new(-8.0, -5.0), Vec2::new(114.0, 52.0))),
+        "the rect the renderer's fill extraction reads"
+    );
+
+    let mut haloed = GlyphArea::new_with_str("x", 16.0, 16.0, Vec2::ZERO, Vec2::new(100.0, 40.0));
+    haloed.outline = Some(OutlineStyle {
+        color: [0, 0, 0, 255],
+        px: 3.0,
+    });
+    assert_eq!(
+        boxed(&haloed).visibility,
+        Visibility::Offscreen,
+        "precondition: the main glyph misses"
+    );
+    let placed = Placement::of_area(&haloed, Vec2::ZERO, &camera);
+    assert_eq!(
+        placed.visibility,
+        Visibility::Visible,
+        "the leftward halo stamp is drawn on screen"
+    );
+    assert_eq!(
+        (placed.canvas.x, placed.canvas.w),
+        (-3.0, 106.0),
+        "every stamp, both sides"
+    );
+    assert_eq!(
+        haloed.text_stamp_offsets().count(),
+        9,
+        "eight halo stamps and the main glyph"
+    );
+
+    let bare = GlyphArea::new(16.0, 16.0, Vec2::new(-200.0, 0.0), Vec2::new(100.0, 40.0));
+    assert_eq!(bare.text_stamp_offsets().count(), 0);
+    assert_eq!(
+        Placement::of_area(&bare, Vec2::ZERO, &camera),
+        boxed(&bare),
+        "an area that draws nothing is placed by its box"
+    );
+}
+
+#[test]
+fn test_scene_dump_filter_keeps_before_it_resolves_text() {
+    do_scene_dump_filter_keeps_before_it_resolves_text();
+}
+
+/// [`DumpFilter::VISIBLE`] keeps exactly the visible part of the full
+/// dump — a node when it or a section is visible, with only its visible
+/// sections — and [`DumpFilter::VISIBLE_IDS`] keeps the same elements
+/// with no text resolved.
+pub fn do_scene_dump_filter_keeps_before_it_resolves_text() {
+    let map = testament();
+    let tree = build_mindmap_tree(&map);
+    let camera = camera_on(&map, &a_parent(&map));
+    let all = dump_nodes(&tree, &map, &camera, DumpFilter::ALL);
+    let mut expected = all.clone();
+    expected.retain_mut(|node| {
+        node.sections.retain(|s| s.placement.visibility.is_visible());
+        node.placement.visibility.is_visible() || !node.sections.is_empty()
+    });
+    assert!(
+        !expected.is_empty() && expected.len() < all.len(),
+        "the camera shows part of the map"
+    );
+
+    let visible = dump_nodes(&tree, &map, &camera, DumpFilter::VISIBLE);
+    assert_eq!(visible, expected);
+    let ids = dump_nodes(&tree, &map, &camera, DumpFilter::VISIBLE_IDS);
+    let untexted: Vec<(String, Vec<usize>)> = ids
+        .iter()
+        .map(|n| {
+            (
+                n.node_id.clone(),
+                n.sections.iter().map(|s| s.section_idx).collect(),
+            )
+        })
+        .collect();
+    let texted: Vec<(String, Vec<usize>)> = visible
+        .iter()
+        .map(|n| {
+            (
+                n.node_id.clone(),
+                n.sections.iter().map(|s| s.section_idx).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(untexted, texted);
+    assert!(ids.iter().flat_map(|n| &n.sections).all(|s| s.text.is_none()));
+    assert!(visible.iter().flat_map(|n| &n.sections).all(|s| s.text.is_some()));
 }

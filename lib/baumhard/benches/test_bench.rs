@@ -35,6 +35,7 @@ use baumhard::util::tests::grapheme_chad_tests::*;
 use baumhard::util::tests::ordered_vec2_tests::*;
 use baumhard::util::tests::primes_test::{do_is_prime_above_the_sieve_ceiling, do_primes};
 use baumhard::util::tests::rust_source_tests::*;
+use baumhard::util::tests::shortest_float_tests::*;
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use std::collections::HashMap;
@@ -1332,6 +1333,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("rich_text_spans_into_keeps_the_no_region_whole_text_span", |b| {
         b.iter(do_rich_text_spans_into_keeps_the_no_region_whole_text_span)
     });
+    c.bench_function("shortest_f64_prints_and_round_trips_like_the_f32", |b| {
+        b.iter(do_shortest_f64_prints_and_round_trips_like_the_f32)
+    });
     c.bench_function("displayed_text_is_the_concatenated_covered_slices", |b| {
         b.iter(do_displayed_text_is_the_concatenated_covered_slices)
     });
@@ -1623,6 +1627,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("scene_dump_edge_roles_are_named_by_their_index", |b| {
         b.iter(do_scene_dump_edge_roles_are_named_by_their_index)
+    });
+    c.bench_function("scene_dump_placement_spans_what_the_renderer_draws", |b| {
+        b.iter(do_scene_dump_placement_spans_what_the_renderer_draws)
+    });
+    c.bench_function("scene_dump_filter_keeps_before_it_resolves_text", |b| {
+        b.iter(do_scene_dump_filter_keeps_before_it_resolves_text)
     });
     c.bench_function("camera_visibility_names_each_reason", |b| {
         b.iter(do_visibility_names_each_reason)
@@ -2212,14 +2222,13 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
 }
 
 /// The scene serializer alone, on the canonical fixture: the trees
-/// are built once outside the timed body, so each row is the cost of
-/// one dump — the cost the IPC capture sidecar pays per screenshot,
-/// which is why it is measured apart from the `do_*()` rows above
-/// (those include the load and the build). One row per role, plus the
-/// whole node dump with every section's displayed text.
+/// are built once outside the timed body, so each row is one dump and
+/// nothing else, apart from the `do_*()` rows above, which include the
+/// load and the build. One row per edge-shaped role, and the node dump
+/// under both the full filter and the text-free visible one.
 fn scene_dump_benchmark(c: &mut Criterion) {
     use baumhard::gfx_structs::camera::Camera2D;
-    use baumhard::mindmap::scene_dump::{dump_edges, dump_labels, dump_nodes};
+    use baumhard::mindmap::scene_dump::{dump_edges, dump_labels, dump_nodes, DumpFilter};
     use glam::Vec2;
 
     let map = load_testament_map();
@@ -2241,13 +2250,32 @@ fn scene_dump_benchmark(c: &mut Criterion) {
     let camera = Camera2D::new(1920, 1080);
 
     c.bench_function("scene_dump_nodes_testament", |b| {
-        b.iter(|| dump_nodes(&tree, &map, &camera))
+        b.iter(|| dump_nodes(&tree, &map, &camera, DumpFilter::ALL))
+    });
+    c.bench_function("scene_dump_visible_ids_testament", |b| {
+        b.iter(|| dump_nodes(&tree, &map, &camera, DumpFilter::VISIBLE_IDS))
     });
     c.bench_function("scene_dump_edges_testament", |b| {
-        b.iter(|| dump_edges(&connection_tree, Vec2::ZERO, &camera, &connection_index))
+        b.iter(|| {
+            dump_edges(
+                &connection_tree,
+                Vec2::ZERO,
+                &camera,
+                &connection_index,
+                DumpFilter::ALL,
+            )
+        })
     });
     c.bench_function("scene_dump_labels_testament", |b| {
-        b.iter(|| dump_labels(&label_tree.tree, Vec2::ZERO, &camera, &label_tree.hit_index))
+        b.iter(|| {
+            dump_labels(
+                &label_tree.tree,
+                Vec2::ZERO,
+                &camera,
+                &label_tree.hit_index,
+                DumpFilter::ALL,
+            )
+        })
     });
 }
 

@@ -1079,9 +1079,9 @@ an element is called here what a click on it is called.
 
 | key | meaning |
 |---|---|
-| `canvas` | `{"x", "y", "w", "h"}`: the rect the renderer shapes the element into, in canvas units (the `GlyphArea`'s position plus its tree's scene offset, sized by its render bounds). For a node, its laid-out box: the rect its background fills and its hit test resolves against. For a connection, the union of its glyph rects. |
+| `canvas` | `{"x", "y", "w", "h"}`: the extent the renderer draws for the element, in canvas units, offset by its tree's scene offset: the union of its background fill (its box grown by its padding, per edge, the rect `GlyphArea::background_rect` states for the renderer's fill pass too) and every text stamp (the main glyph and each outline-halo stamp, each a box of the element's render bounds). An area that draws neither, an unfilled node container, is placed by its layout box. For a connection, the union of its glyphs. The hit test resolves against the layout box, which can be smaller than a padded fill: `scene.hit_test` answers what a click hits. |
 | `surface` | The same rect through the camera, in surface pixels ([Coordinate spaces](#coordinate-spaces)). Not clipped: a rect half off-screen runs past the surface edge. |
-| `visibility` | The renderer's own cull verdict, from the one predicate its per-frame cull calls (`Camera2D::visibility`), so "visible" here and "drawn" there cannot disagree: `visible`; `outside_zoom_window`, when the camera's zoom falls outside the element's zoom window (no pan brings it back; checked first, so an element both outside its window and off-screen reports this); or `offscreen`, when it is inside its window but misses the viewport (a pan would show it). A connection is `visible` when any of its glyphs is. |
+| `visibility` | The renderer's own cull verdict, from the one predicate its per-frame cull calls (`Camera2D::visibility`), asked of each drawn part as the renderer asks it, so "visible" here and "drawn" there cannot disagree: `visible` when any part is drawn (a fill whose padding crosses the viewport edge, one halo stamp on screen); `outside_zoom_window`, when the camera's zoom falls outside the element's zoom window (no pan brings it back; checked first, so a part both outside its window and off-screen reports this); or `offscreen`, when it is inside its window but misses the viewport (a pan would show it). |
 
 **Displayed text, not model text.** A section with `text_runs` renders
 only the graphemes its runs cover (`format/text-runs.md`); its `text`
@@ -1111,7 +1111,11 @@ asks for a frame. Before the app exists every one answers
 Elements are listed in draw order: nodes in tree pre-order (parents
 before children, siblings in model order), every other kind in its
 tree's order. Edge identities are `{"from_id", "to_id", "edge_type"}`,
-as everywhere on the wire.
+as everywhere on the wire. Every coordinate is the shortest decimal
+that names its `f32` (`0.1`, not `0.10000000149011612`), inline and in
+a `to_file` sidecar alike. The visibility filter is applied before any
+text is resolved: an element a command drops costs no text walk, and
+`scene.visible_set` resolves none.
 
 ### `scene.dump`
 
@@ -1148,8 +1152,9 @@ The laid-out scene, by kind.
 
 ### `scene.visible_set`
 
-Params: none. The cheap poll: just the identities of what the camera
-shows, by kind — the default `scene.dump`'s ids.
+Params: none. Just the identities of what the camera shows, by kind —
+the default `scene.dump`'s ids, with no text resolved and no rect
+reported.
 
 | result field | type | meaning |
 |---|---|---|
@@ -1174,6 +1179,7 @@ draws it, and where.
 | `model` | object | `{"position": {"x", "y"}, "size": {"width", "height"}, "folded"}` as the model holds them: the authored values, before drag offsets and text fitting. |
 | `in_scene` | boolean | Whether the scene draws the node. |
 | `hidden_by` | string | The nearest folded ancestor, whose fold keeps the node out of the scene; `null` when none is folded. |
+| `absent_reason` | string | Why the scene does not draw the node: `folded` (`hidden_by` names the fold) or `not_built` (no scene has been built yet, or the tree builder placed no container for the node); `null` when `in_scene`. |
 | `canvas`, `surface`, `visibility` | object, object, string | Only when `in_scene`: the node's placement, as in `scene.dump`. |
 | `sections` | array | Only when `in_scene`: the drawn sections, as in `scene.dump`, visible or not. |
 | `overlaps` | array | Only when `in_scene`: the ids of the other drawn nodes whose canvas boxes share area with this one (boxes that only touch along an edge do not overlap), in draw order. |
@@ -1223,7 +1229,8 @@ the node rung. `query.mode` reports both.
 
 Locate drawn text: the sections, edge labels and portal captions whose
 *displayed* text matches, visible or not, so an agent can find
-something off-screen and pan to it. A node hidden by a fold displays
+something off-screen and pan to it. A portal's icon is a marker glyph,
+not text, and is never matched. A node hidden by a fold displays
 nothing and is not found.
 
 | param | type | required | meaning |
@@ -1235,7 +1242,8 @@ nothing and is not found.
 Result: `matches` (array), in draw order: sections, then labels, then
 portal parts. Each is `{"kind", …ids, "text", canvas, surface,
 visibility}` where `kind` is `section` (`node_id`, `section_idx`),
-`label` (`edge`) or `portal` (`edge`, `endpoint_node_id`, `part`).
+`label` (`edge`) or `portal` (`edge`, `endpoint_node_id`, `part`,
+always `text`).
 
 ## `input` — synthetic raw input (IPC-06)
 
