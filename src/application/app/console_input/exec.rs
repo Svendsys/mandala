@@ -56,6 +56,11 @@ pub(in crate::application::app) struct LineRun {
 /// [`log_console_line`], and IPC also returns the outcome in its
 /// reply. No caller but the prompt touches the scrollback
 /// (`format/ipc.md` §act).
+///
+/// `#[must_use]` here as well as on [`LineRun`]: the lint does not
+/// reach through the `Option` this returns, so without it a bare call
+/// that drops the line's only report would compile clean.
+#[must_use = "a console line's outcome is its only report: print it, log it, or return it"]
 pub(in crate::application::app) fn execute_console_line(
     ctx: &mut InputHandlerContext<'_>,
     line: &str,
