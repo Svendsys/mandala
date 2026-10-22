@@ -904,9 +904,9 @@ and, on request, the whole model as `mindmap`.
 | param | type | required | meaning |
 |---|---|---|---|
 | `fields` | array | no | Which parts to return, as strings from the list below. Default: every part but `mindmap`, the one whose size is unbounded. Empty, mistyped or unknown words are `invalid_params`. Replies carry the parts in the order below, whatever order they were asked for. |
-| `pointer` | string | no | An RFC 6901 JSON Pointer into the serialized model (`"/nodes/1.2"`, `"/edges/0"`, `"/canvas/background_color"`). The reply's `mindmap` is then the value found there. Implies `fields: ["mindmap"]` when `fields` is omitted, and is `invalid_params` when `fields` lacks `mindmap`. A pointer that resolves to nothing is `not_found`. |
-| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `mindmap` may exceed the 8 MiB reply cap. |
-| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. A symlink at the path is refused either way and never followed, and a missing parent directory is `invalid_params`. |
+| `pointer` | string | no | An RFC 6901 JSON Pointer into the serialized model (`"/nodes/1.2"`, `"/edges/0"`, `"/canvas/background_color"`). The reply's `mindmap` is then the value found there. Implies `fields: ["mindmap"]` when `fields` is omitted, and is `invalid_params` when `fields` lacks `mindmap`. A pointer that resolves to nothing is `not_found`, and is reported before anything is written to `to_file`. Only the selected subtree is serialized: the first one or two tokens (`/nodes/<id>`, `/edges/<index>`, `/palettes/<name>`, …) are resolved against the model's own structures, so polling `/nodes/0/position` costs one node, not the map. The result is exactly what a pointer into the whole serialized model would give. A field the serialized form omits while empty (`palettes`, `custom_mutations`, `macros`) is absent to a pointer too. |
+| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `mindmap` may exceed the 8 MiB reply cap. The model is **streamed** from the app's own structures into the file, so no copy of it is built beside it. The write is **atomic**: the bytes go to a temp file in the same directory (created exclusively and with `O_NOFOLLOW`), are flushed and `fsync`ed, and are then renamed into place. A failure partway (a full disk) removes the temp file and leaves the destination exactly as it was, so an earlier good export is never replaced by truncated JSON. A replaced file takes the default permissions of a new file. |
+| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. Without it the file is published with `link(2)`, which fails if the name exists, so a file created in the meantime is not clobbered. A symlink or a directory at the path is `invalid_params` either way, and a symlink is never written through: the temp file is created with `O_NOFOLLOW` and published by `rename(2)`, which replaces the directory entry itself. A missing parent directory is `invalid_params`. |
 
 | result field | type | meaning |
 |---|---|---|
@@ -983,7 +983,8 @@ Params: none.
 |---|---|---|
 | `interaction_mode` | object | `kind`: `Default`, `Reparent` (`sources`), `Connect` (`source`), `NodeEdit` (`node_id`) or `Resize` (`target`: `{"kind": "Node", "node_id"}` or `{"kind": "Section", "node_id", "section_idx"}`). |
 | `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Throttled`. `Pending` carries `start_pos` (surface pixels), `hit_node`, `hit_section_idx` and `grabs`, the names of any handle the press landed on (`edge_handle`, `portal_label`, `edge_label`, `section_resize_handle`, `node_resize_handle`). `PendingRight` carries `start_pos`, `start_canvas`, `hit_node`, `hit_section_idx`. `SelectingRect` carries `start_canvas` and `current_canvas`. `Throttled` names its `gesture` (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) with what it is acting on (`node_ids`, `node_id`, `section_idx`, `side`, `edge`, `handle`, `endpoint_node_id`). A gesture's pre-drag snapshots, pending delta and throttle are omitted: bookkeeping, not identity. |
-| `modal` | string | Which modal takes the keyboard first: `console`, `color_picker`, `single_line_edit`, `text_edit`, or `none`. The order is the keyboard handler's steal order. `query.editors` says which are open. |
+| `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`, `single_line_edit`, `text_edit`. Keys do not have one owner. The console takes **every** key. The color picker claims **only its own** keys (its commit, cancel and nudge verbs, and its clipboard keys); every other key falls through to the editors. The single-line editor, then the node text editor, take every key that reaches them. `query.editors` has each one's state. |
+| `key_owner` | string | Who receives an *ordinary* key right now: `console`, `single_line_edit`, `text_edit`, or `none` (normal dispatch). Never `color_picker`: with a picker and a text editor both open, a key the picker does not claim goes to `text_edit`, and that is what this field says. Type against `key_owner`, not against the head of `modals`. |
 | `hovered_node` | string | The node id under the pointer; `null` over none. |
 | `cursor_pos` | object | `{"x", "y"}`: the last known pointer position, in surface pixels. |
 
@@ -996,22 +997,24 @@ so an agent reads it instead of re-deriving it.
 
 ### `query.animations`
 
-Params: none. Result: `active` (boolean, whether the per-frame drain is
-ticking animations), `count` (integer) and `animations` (array,
-oldest-started first). Each entry:
+Params: none. Result: `active` (boolean, whether any animation instance is
+running), `paused` (boolean, whether a tree-mutating drag has suspended
+the tick), `count` (integer) and `animations` (array, oldest-started
+first). Each entry:
 
 | key | meaning |
 |---|---|
 | `target_id`, `section_idx` | The node animated, and the section when the trigger resolved to one (`null` otherwise). |
 | `mutation_id` | The `CustomMutation` id being animated. |
-| `start_ms`, `elapsed_ms` | The app-clock start and the time since. The app clock is virtual under `clock.set_mode virtual`. |
-| `phase` | `delay` before the delay elapses, `running` while it interpolates, `due` once the full envelope has elapsed and the next tick commits it. |
+| `start_ms`, `elapsed_ms` | The app-clock start and the time since. The app clock is the app's wall clock, milliseconds since process start (the one `ping` reports and the per-frame drain ticks against). It is **not** virtual today: the `clock` family that would make it so (IPC-09) has not landed, so `elapsed_ms` is not deterministic until it does. |
+| `phase` | `delay` before the delay elapses, `running` while it interpolates, `due` once the full envelope has elapsed and the next tick commits it, and `paused` while a tree-mutating drag (a node or section move or resize) has suspended the tick. While paused, `elapsed_ms` and `progress` are frozen at the value the animation resumes from (on release the drain shifts each `start_ms` forward by the pause), and nothing commits until the drag ends. Poll `paused` to tell a stalled animation from a finished one. |
 | `progress` | The linear position through the duration, `0` to `1`, before easing. |
 | `timing` | The mutation's `AnimationTiming` through its own serializer (`duration_ms`, `delay_ms` when set, `easing`). |
 
 The from/to node snapshots and the mutation list are omitted. They are
 the document's own business, and large. `active: false` with an empty
-list is how an agent sees that animations have settled.
+list is how an agent sees that animations have settled; `active: true`
+with `paused: true` is a drag holding them.
 
 ### `query.editors`
 

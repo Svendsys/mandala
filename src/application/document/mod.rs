@@ -110,7 +110,7 @@ pub use baumhard::mindmap::tree_builder::InteractionModeOverrides;
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use ipc_state::{f32_json, DocumentField};
+pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
 pub use undo_action::UndoAction;

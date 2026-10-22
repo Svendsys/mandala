@@ -34,10 +34,11 @@ use crate::application::console::{ConsoleLine, ConsoleState};
 use crate::application::document::{f32_json, MindMapDocument};
 
 use super::interaction_mode::ResizeTarget;
+use super::modal_editor::ModalEditor;
 use super::single_line_edit::{SingleLineEditTarget, SingleLineEditor};
 use super::text_edit::TextEditState;
 use super::throttled_interaction::ThrottledDrag;
-use super::{DragState, InteractionMode, PendingPress};
+use super::{DragState, Grab, InteractionMode};
 
 /// How many scrollback lines `query.editors` reports for an open
 /// console: the tail, which is what is on screen. The total is
@@ -120,31 +121,6 @@ fn edge_handle_json(handle: EdgeHandleKind) -> Value {
     }
 }
 
-impl PendingPress {
-    /// What the press landed on, by name: every populated grab slot,
-    /// in the precedence order the threshold-cross arm applies
-    /// (a handle beats a node).
-    fn grabs(&self) -> Vec<&'static str> {
-        let mut grabs = Vec::new();
-        if self.hit_edge_handle.is_some() {
-            grabs.push("edge_handle");
-        }
-        if self.hit_portal_label.is_some() {
-            grabs.push("portal_label");
-        }
-        if self.hit_edge_label.is_some() {
-            grabs.push("edge_label");
-        }
-        if self.hit_section_resize_handle.is_some() {
-            grabs.push("section_resize_handle");
-        }
-        if self.hit_node_resize_handle.is_some() {
-            grabs.push("node_resize_handle");
-        }
-        grabs
-    }
-}
-
 impl ThrottledDrag {
     /// The gesture as `query.mode` reports it, under `gesture` (the
     /// variant's name) with what it is acting on. **Omitted by name:**
@@ -204,7 +180,7 @@ impl DragState {
                 "start_pos": xy_f64(press.start_pos),
                 "hit_node": press.hit_node,
                 "hit_section_idx": press.hit_section_idx,
-                "grabs": press.grabs(),
+                "grabs": press.grabs().map(Grab::word).collect::<Vec<_>>(),
             }),
             DragState::PendingRight {
                 start_pos,
@@ -438,33 +414,52 @@ pub(super) fn picker_to_ipc_json(state: &ColorPickerState) -> Value {
     }
 }
 
-/// Which modal currently takes the keyboard first, by the order the
-/// keyboard handler steals in (`event_keyboard.rs`): the console,
-/// then the color picker, then the edge-label / portal-caption
-/// editor; the node text editor is reached through the action
-/// dispatcher rather than a steal, so it comes last. `"none"` when
-/// all four are closed.
-fn modal_word(
+/// Where keystrokes go, as the keyboard handler routes them
+/// (`event_keyboard.rs`), which is **not** one owner:
+///
+/// 1. The **console**, when open, takes every key.
+/// 2. The **color picker**, when open, claims only its own keys (its
+///    commit, cancel and nudge verbs and its clipboard keys). Every
+///    other key falls through to the steps below, so an open picker
+///    never answers "who gets the next ordinary key".
+/// 3. The **single-line editor**, then the **node text editor**
+///    ([`ModalEditor::STEAL_ORDER`]), take every key that reaches them.
+/// 4. With none of those open, a key reaches normal dispatch.
+///
+/// Returns `(modals, key_owner)`: every open modal in that order, and
+/// the one that receives an *ordinary* key (`"console"`,
+/// `"single_line_edit"`, `"text_edit"`, or `"none"` for normal
+/// dispatch). The picker appears in `modals` and is never the
+/// `key_owner`.
+fn key_routing(
     console: &ConsoleState,
     picker: &ColorPickerState,
     single_line: &SingleLineEditor,
     text: &TextEditState,
-) -> &'static str {
+) -> (Vec<&'static str>, &'static str) {
+    let editor_word = |editor: ModalEditor| match editor {
+        ModalEditor::SingleLine => "single_line_edit",
+        ModalEditor::Text => "text_edit",
+    };
+    let mut modals = Vec::new();
     if console.is_open() {
-        "console"
-    } else if picker.as_open().is_some() {
-        "color_picker"
-    } else if single_line.is_open() {
-        "single_line_edit"
-    } else if text.is_open() {
-        "text_edit"
-    } else {
-        "none"
+        modals.push("console");
     }
+    if picker.as_open().is_some() {
+        modals.push("color_picker");
+    }
+    modals.extend(ModalEditor::open_in_steal_order(single_line.is_open(), text.is_open()).map(editor_word));
+    let key_owner = if console.is_open() {
+        "console"
+    } else {
+        ModalEditor::stealing_from(single_line.is_open(), text.is_open()).map_or("none", editor_word)
+    };
+    (modals, key_owner)
 }
 
 /// `query.mode`'s reply: the interaction mode and the drag state
-/// machine, which modal is open, and where the pointer is.
+/// machine, which modals are open and who receives an ordinary key
+/// ([`key_routing`]), and where the pointer is.
 /// `hovered_node` is the node under the cursor (`null` over none) and
 /// `cursor_pos` the last known pointer position in **surface** pixels.
 #[allow(clippy::too_many_arguments)]
@@ -478,10 +473,12 @@ pub(super) fn mode_to_ipc_json(
     hovered_node: Option<&str>,
     cursor_pos: (f64, f64),
 ) -> Value {
+    let (modals, key_owner) = key_routing(console, picker, single_line, text);
     json!({
         "interaction_mode": mode.to_ipc_json(),
         "drag_state": drag.to_ipc_json(),
-        "modal": modal_word(console, picker, single_line, text),
+        "modals": modals,
+        "key_owner": key_owner,
         "hovered_node": hovered_node,
         "cursor_pos": xy_f64(cursor_pos),
     })
@@ -501,24 +498,8 @@ pub(super) fn editors_to_ipc_json(
         "color_picker": picker_to_ipc_json(picker),
         "single_line_edit": single_line.to_ipc_json(),
         "text_edit": text.to_ipc_json(),
-        "previews": previews_json(document),
+        "previews": MindMapDocument::ipc_previews_json(document),
     })
-}
-
-/// The document's `previews` half of `query.editors` (see
-/// `MindMapDocument::ipc_previews_json`), or an all-`null` object when
-/// no document is loaded.
-fn previews_json(document: Option<&MindMapDocument>) -> Value {
-    match document {
-        Some(doc) => doc.ipc_previews_json(),
-        None => json!({
-            "label_edit": null,
-            "portal_text_edit": null,
-            "color_picker": null,
-            "border": null,
-            "rect_select": null,
-        }),
-    }
 }
 
 #[cfg(test)]
@@ -528,6 +509,7 @@ mod tests {
         EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
         NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction,
     };
+    use crate::application::app::PendingPress;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::EdgeRef;
     use baumhard::mindmap::model::{Position, Size};
@@ -842,33 +824,168 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_the_modal_word_follows_the_keyboard_steal_order() {
-        let closed = (
-            ConsoleState::Closed,
-            ColorPickerState::Closed,
-            SingleLineEditor::Closed,
-            TextEditState::Closed,
-        );
-        assert_eq!(modal_word(&closed.0, &closed.1, &closed.2, &closed.3), "none");
-        let open_single = SingleLineEditor::Open {
+    fn open_picker() -> ColorPickerState {
+        use crate::application::color_picker::CROSSHAIR_CENTER_CELL;
+        ColorPickerState::Open(Box::new(OpenPicker {
+            mode: PickerMode::Standalone,
+            hue_deg: 120.0,
+            sat: 0.5,
+            val: 0.25,
+            last_cursor_pos: None,
+            max_cell_advance: 16.0,
+            max_ring_advance: 24.0,
+            measurement_font_size: 16.0,
+            arm_top_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            arm_bottom_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            arm_left_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            arm_right_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            preview_ink_offset: (0.0, 0.0),
+            layout: None,
+            center_override: None,
+            size_scale: 1.0,
+            gesture: None,
+            hovered_hit: None,
+            hover_preview: None,
+            pending_error_flash: false,
+            last_dynamic_apply: None,
+        }))
+    }
+
+    fn open_text_editor() -> TextEditState {
+        TextEditState::Open {
+            node_id: "1".into(),
+            section_idx: 0,
+            buffer: "hi".into(),
+            cursor_grapheme_pos: 2,
+            buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+            original_text: String::new(),
+            original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+            selection_anchor: None,
+            exit_to_default_on_close: false,
+        }
+    }
+
+    fn open_single_line() -> SingleLineEditor {
+        SingleLineEditor::Open {
             target: SingleLineEditTarget::EdgeLabel {
                 edge_ref: EdgeRef::new("a", "b", "cross_link"),
             },
             buffer: String::new(),
             cursor_grapheme_pos: 0,
             original: None,
+        }
+    }
+
+    /// **Key routing is a stack, not one owner** (review of #174): an
+    /// open color picker claims only its own keys, so it is listed in
+    /// `modals` and is never the `key_owner`; an ordinary key goes to
+    /// the console, else the editors in `ModalEditor::STEAL_ORDER`.
+    #[test]
+    fn test_key_routing_lists_every_open_modal_and_names_who_gets_an_ordinary_key() {
+        let closed = (
+            ConsoleState::Closed,
+            ColorPickerState::Closed,
+            SingleLineEditor::Closed,
+            TextEditState::Closed,
+        );
+        assert_eq!(
+            key_routing(&closed.0, &closed.1, &closed.2, &closed.3),
+            (vec![], "none")
+        );
+        assert_eq!(
+            key_routing(&closed.0, &closed.1, &open_single_line(), &closed.3),
+            (vec!["single_line_edit"], "single_line_edit")
+        );
+        assert_eq!(
+            key_routing(&closed.0, &open_picker(), &closed.2, &closed.3),
+            (vec!["color_picker"], "none"),
+            "a picker alone leaves ordinary keys to normal dispatch"
+        );
+        assert_eq!(
+            key_routing(&closed.0, &open_picker(), &closed.2, &open_text_editor()),
+            (vec!["color_picker", "text_edit"], "text_edit"),
+            "the picker is open, but every key it does not claim goes to the text editor"
+        );
+        let console = ConsoleState::open(vec![]);
+        assert_eq!(
+            key_routing(&console, &open_picker(), &open_single_line(), &open_text_editor()),
+            (
+                vec!["console", "color_picker", "single_line_edit", "text_edit"],
+                "console"
+            ),
+            "the console takes every key, and the editors list in steal order"
+        );
+    }
+
+    #[test]
+    fn test_the_editors_steal_order_is_the_one_list() {
+        assert_eq!(
+            ModalEditor::stealing_from(true, true),
+            Some(ModalEditor::SingleLine)
+        );
+        assert_eq!(ModalEditor::stealing_from(false, true), Some(ModalEditor::Text));
+        assert_eq!(ModalEditor::stealing_from(false, false), None);
+        assert_eq!(
+            ModalEditor::open_in_steal_order(true, true).collect::<Vec<_>>(),
+            ModalEditor::STEAL_ORDER.to_vec()
+        );
+    }
+
+    /// The grab order `query.mode` reports is the order the
+    /// threshold-cross step resolves (review of #174): the press that
+    /// hit an edge label *and* an edge handle reports the label first,
+    /// because that is the gesture it becomes.
+    #[test]
+    fn test_pending_grabs_report_in_the_threshold_cross_precedence() {
+        let key = baumhard::mindmap::scene_cache::EdgeKey::new("a", "b", "cross_link");
+        let press = PendingPress {
+            start_pos: (0.0, 0.0),
+            hit_node: Some("1".into()),
+            hit_section_idx: None,
+            hit_edge_handle: Some((EdgeRef::new("a", "b", "cross_link"), EdgeHandleKind::Midpoint)),
+            hit_portal_label: None,
+            hit_edge_label: Some(key),
+            hit_section_resize_handle: Some(("1".into(), 0, ResizeHandleSide::N)),
+            hit_node_resize_handle: Some(("1".into(), ResizeHandleSide::S)),
         };
+        assert_eq!(press.first_grab(), Some(Grab::EdgeLabel));
         assert_eq!(
-            modal_word(&closed.0, &closed.1, &open_single, &closed.3),
-            "single_line_edit"
+            press.grabs().map(Grab::word).collect::<Vec<_>>(),
+            vec![
+                "edge_label",
+                "edge_handle",
+                "node_resize_handle",
+                "section_resize_handle"
+            ]
         );
-        let open_console = ConsoleState::open(vec![]);
-        assert_eq!(
-            modal_word(&open_console, &closed.1, &open_single, &closed.3),
-            "console",
-            "the console steals first"
-        );
+        let bare = PendingPress {
+            start_pos: (0.0, 0.0),
+            hit_node: None,
+            hit_section_idx: None,
+            hit_edge_handle: None,
+            hit_portal_label: None,
+            hit_edge_label: None,
+            hit_section_resize_handle: None,
+            hit_node_resize_handle: None,
+        };
+        assert_eq!(bare.first_grab(), None);
+        for grab in Grab::PRECEDENCE {
+            assert_eq!(
+                Grab::PRECEDENCE.iter().filter(|g| **g == grab).count(),
+                1,
+                "{grab:?} appears once in the precedence list"
+            );
+        }
+    }
+
+    #[test]
+    fn test_an_open_picker_reports_its_mode_and_hsv() {
+        let json = picker_to_ipc_json(&open_picker());
+        assert_eq!(json["mode"], json!({ "kind": "Standalone" }));
+        assert_eq!(json["hue_deg"], json!(120.0));
+        assert_eq!(json["sat"], json!(0.5));
+        assert_eq!(json["val"], json!(0.25));
+        assert_eq!(json["gesture"], Value::Null);
     }
 
     #[test]
@@ -894,7 +1011,8 @@ mod tests {
             json!({
                 "interaction_mode": { "kind": "Default" },
                 "drag_state": { "kind": "None" },
-                "modal": "none",
+                "modals": [],
+                "key_owner": "none",
                 "hovered_node": "1.2",
                 "cursor_pos": { "x": 10.0, "y": 20.5 },
             })
@@ -904,25 +1022,5 @@ mod tests {
             assert_eq!(editors[key], Value::Null, "{key}");
         }
         assert!(editors["previews"].is_object());
-    }
-
-    #[test]
-    fn test_previews_are_all_null_without_a_document_and_with_no_preview_live() {
-        let none = previews_json(None);
-        let doc = load_test_doc();
-        assert_eq!(
-            none,
-            previews_json(Some(&doc)),
-            "a fresh document has no preview live"
-        );
-        for key in [
-            "label_edit",
-            "portal_text_edit",
-            "color_picker",
-            "border",
-            "rect_select",
-        ] {
-            assert_eq!(none[key], Value::Null, "{key}");
-        }
     }
 }

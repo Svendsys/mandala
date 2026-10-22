@@ -126,6 +126,10 @@ impl CommandTarget for IpcCommandTarget<'_> {
         self.ctx.document.as_ref()
     }
 
+    fn animation_pause(&self) -> Option<u64> {
+        *self.ctx.anim_pause_start_ms
+    }
+
     fn shell_state(&self, which: ShellState) -> Value {
         match which {
             ShellState::Camera => ipc_state::camera_to_ipc_json(self.ctx.renderer.camera()),

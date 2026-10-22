@@ -100,6 +100,12 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// `execute_console_line` can rebuild the Map tier without
     /// taking a separate ad-hoc borrow.
     pub macros: &'a mut MacroRegistry,
+    /// The app-clock ms at which a tree-mutating drag suspended the
+    /// animation tick, or `None` when ticks are running. Read-only
+    /// here: `drain_inputs` is its only writer. IPC's
+    /// `query.animations` reads it so a poll mid-drag reports the
+    /// pause instead of a clock that is not advancing the animations.
+    pub anim_pause_start_ms: &'a Option<u64>,
 }
 
 impl<'a> InputHandlerContext<'a> {

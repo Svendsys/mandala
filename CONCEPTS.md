@@ -3202,10 +3202,10 @@ parallel control path, so undo, gates and side effects match the
 keystroke each stands in for. The `query` family is the read half of
 the loop: `query.document`, `.selection`, `.camera`, `.mode`,
 `.status`, `.animations`, `.editors` and `.undo` return what a person
-reads off the chrome. They go through `observe()` and two `&self`
-reads on `CommandTarget` (`document()` and `shell_state()`), so a
-query cannot dirty the document, push undo or ask for a frame. Each
-wire form is an exhaustive-`match` projection beside the state it
+reads off the chrome. They go through `observe()` and `&self`
+reads on `CommandTarget` (`document()`, `animation_pause()` and
+`shell_state()`), so a query cannot dirty the document, push undo or
+ask for a frame. Each wire form is an exhaustive-`match` projection beside the state it
 exposes (`document/ipc_state.rs`, `app/ipc_state.rs`), not a mirror
 struct, so a new `SelectionState`, `InteractionMode`, `DragState` or
 `UndoAction` variant breaks the build until it is given one.

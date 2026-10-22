@@ -23,8 +23,10 @@
 //! Native-only with the IPC module that consumes it (`CLAUDE.md`
 //! "Dual-target status"): the browser serves no socket.
 
+use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_json::{json, Value};
 
+use baumhard::mindmap::model::MindMap;
 use baumhard::mindmap::scene_cache::EdgeKey;
 
 use super::nodes::BorderPreviewTarget;
@@ -115,19 +117,27 @@ impl SelectionState {
 
 impl AnimationInstance {
     /// One running animation as `query.animations` reports it, read
-    /// against `now_ms` (the app clock, virtual when
-    /// `clock.set_mode virtual` is active).
+    /// against `now_ms`, the app's wall clock (`common::now_ms()`,
+    /// milliseconds since process start) and the same clock the
+    /// per-frame drain ticks animations against. (A virtual clock,
+    /// which would make this deterministic, is IPC-09's `clock`
+    /// family and does not exist yet.)
     ///
     /// Projection: the target, the mutation id, the clock fields and
     /// the timing envelope (the type's own serializer). **Omitted by
     /// name:** `from_node` / `to_node` (two whole-node snapshots, the
     /// document's own business, and large) and `cm`'s mutation list.
     ///
-    /// `phase` is `"delay"` before the delay elapses, `"running"`
-    /// while it interpolates, and `"due"` once the full envelope has
-    /// elapsed and the next tick will commit it. `progress` is the
-    /// linear `0..=1` position through `duration_ms`, before easing.
-    pub(crate) fn to_ipc_json(&self, now_ms: u64) -> Value {
+    /// `paused` is whether a tree-mutating drag has suspended the
+    /// tick. The caller then passes the clock *frozen at the pause's
+    /// start*, because that is the value the resume shift
+    /// (`shift_active_animations_start_ms`) restores, and `phase` is
+    /// `"paused"`. Otherwise `phase` is `"delay"` before the delay
+    /// elapses, `"running"` while it interpolates, and `"due"` once
+    /// the full envelope has elapsed and the next tick commits it.
+    /// `progress` is the linear `0..=1` position through
+    /// `duration_ms`, before easing.
+    pub(crate) fn to_ipc_json(&self, now_ms: u64, paused: bool) -> Value {
         let timing = self.timing();
         let elapsed = now_ms.saturating_sub(self.start_ms);
         let delay = u64::from(timing.delay_ms);
@@ -146,7 +156,7 @@ impl AnimationInstance {
             "mutation_id": self.mutation_id(),
             "start_ms": self.start_ms,
             "elapsed_ms": elapsed,
-            "phase": phase,
+            "phase": if paused { "paused" } else { phase },
             "progress": progress,
             "timing": serde_json::to_value(timing).unwrap_or(Value::Null),
         })
@@ -256,21 +266,21 @@ impl DocumentField {
 }
 
 impl MindMapDocument {
-    /// One part of `query.document`'s reply.
-    ///
-    /// Cost: every field but [`DocumentField::Mindmap`] and
-    /// [`DocumentField::Counts`] is O(1); `Counts` walks the nodes
-    /// once and `Mindmap` serializes the whole model, which is why a
-    /// request names it explicitly.
-    pub(crate) fn ipc_field_json(&self, field: DocumentField) -> Value {
+    /// One part of `query.document`'s reply, written through
+    /// `serializer`. The one body behind both the inline reply (a
+    /// `serde_json::Value`) and the `to_file` stream, so the two
+    /// cannot differ. [`DocumentField::Mindmap`] serializes the model
+    /// straight from `&self.mindmap`, with no intermediate value tree.
+    fn serialize_field<S: Serializer>(&self, field: DocumentField, serializer: S) -> Result<S::Ok, S::Error> {
         match field {
-            DocumentField::FilePath => json!(self.file_path),
-            DocumentField::Dirty => json!(self.dirty),
-            DocumentField::UndoDepth => json!(self.undo_stack.len()),
+            DocumentField::FilePath => self.file_path.serialize(serializer),
+            DocumentField::Dirty => self.dirty.serialize(serializer),
+            DocumentField::UndoDepth => self.undo_stack.len().serialize(serializer),
             DocumentField::Map => json!({
                 "name": self.mindmap.name,
                 "version": self.mindmap.version,
-            }),
+            })
+            .serialize(serializer),
             DocumentField::Counts => json!({
                 "nodes": self.mindmap.nodes.len(),
                 "edges": self.mindmap.edges.len(),
@@ -278,21 +288,94 @@ impl MindMapDocument {
                 "palettes": self.mindmap.palettes.len(),
                 "custom_mutations": self.mindmap.custom_mutations.len(),
                 "macros": self.mindmap.macros.len(),
-            }),
-            DocumentField::Mindmap => serde_json::to_value(&self.mindmap).unwrap_or(Value::Null),
+            })
+            .serialize(serializer),
+            DocumentField::Mindmap => self.mindmap.serialize(serializer),
         }
     }
 
-    /// `query.animations`: whether the per-frame drain is ticking and
-    /// every running instance, in the order they were started.
-    pub(crate) fn ipc_animations_json(&self, now_ms: u64) -> Value {
+    /// One part of `query.document`'s reply as a value.
+    ///
+    /// Cost: every field but [`DocumentField::Mindmap`] and
+    /// [`DocumentField::Counts`] is O(1); `Counts` walks the nodes
+    /// once and `Mindmap` builds the whole model as a value tree,
+    /// which is why a request names it explicitly (and why
+    /// `to_file` and `pointer` do not go through here).
+    // Test-gated: the reply is built through `DocumentReply`; this is
+    // the single-field read the tests assert against.
+    #[cfg(test)]
+    pub(crate) fn ipc_field_json(&self, field: DocumentField) -> Value {
+        self.serialize_field(field, serde_json::value::Serializer)
+            .unwrap_or(Value::Null)
+    }
+
+    /// The value at JSON Pointer `pointer` (RFC 6901) in the
+    /// serialized model, or `None` when it names nothing there.
+    /// Equivalent to `serde_json::to_value(&self.mindmap)?.pointer(p)`,
+    /// but builds a value tree only for the **selected subtree**: the
+    /// first one or two tokens are resolved against the typed model
+    /// (`/nodes/<id>`, `/edges/<index>`, `/palettes/<name>`, …), so a
+    /// poll for `/nodes/0/position` costs one node's serialization
+    /// and not the whole map's. Only the empty pointer, which names
+    /// the whole model, builds all of it.
+    ///
+    /// The destructure of `MindMap` below names every field and has
+    /// no `..`: a new serialized field breaks the build here until it
+    /// is given a pointer arm, and `skip_serializing_if` fields
+    /// (`palettes`, `custom_mutations`, `macros`) are absent while
+    /// empty, as they are in the serialized form.
+    pub(crate) fn ipc_model_pointer(&self, pointer: &str) -> Option<Value> {
+        let tokens = pointer_tokens(pointer)?;
+        let MindMap {
+            version,
+            name,
+            canvas,
+            palettes,
+            nodes,
+            edges,
+            custom_mutations,
+            macros,
+            unknown_keys: _,
+            skipped_constructs: _,
+        } = &self.mindmap;
+        let Some((first, rest)) = tokens.split_first() else {
+            return serde_json::to_value(&self.mindmap).ok();
+        };
+        let (subtree, rest) = match first.as_str() {
+            "version" => (serde_json::to_value(version).ok()?, rest),
+            "name" => (serde_json::to_value(name).ok()?, rest),
+            "canvas" => (serde_json::to_value(canvas).ok()?, rest),
+            "palettes" if !palettes.is_empty() => keyed(palettes, rest)?,
+            "nodes" => keyed(nodes, rest)?,
+            "edges" => indexed(edges, rest)?,
+            "custom_mutations" if !custom_mutations.is_empty() => indexed(custom_mutations, rest)?,
+            "macros" if !macros.is_empty() => indexed(macros, rest)?,
+            _ => return None,
+        };
+        descend(subtree, rest)
+    }
+
+    /// `query.animations`: whether any instance is running, whether a
+    /// tree-mutating drag has suspended the tick (`paused_since`, the
+    /// app-clock ms the pause began, `None` when not paused), and
+    /// every instance, in the order they were started.
+    ///
+    /// While paused the instances are read at the *pause's start*:
+    /// the drain skips ticks for the whole drag, and on release shifts
+    /// each `start_ms` forward by the pause, so the elapsed time at
+    /// the pause's start is exactly what the animation resumes from.
+    /// A reply that kept advancing `elapsed_ms` through the drag
+    /// would promise a commit the next tick does not make.
+    pub(crate) fn ipc_animations_json(&self, now_ms: u64, paused_since: Option<u64>) -> Value {
+        let clock = paused_since.map_or(now_ms, |since| since.min(now_ms));
         json!({
             "active": self.has_active_animations(),
+            "paused": paused_since.is_some(),
             "count": self.active_animations.len(),
             "animations": self
                 .active_animations
                 .iter()
-                .map(|a| a.to_ipc_json(now_ms))
+                .map(|a| a.to_ipc_json(clock, paused_since.is_some()))
                 .collect::<Vec<_>>(),
         })
     }
@@ -318,25 +401,32 @@ impl MindMapDocument {
     /// (that is what makes them previews), so an agent that sees
     /// pixels disagree with `query.document` reads them here.
     ///
+    /// An associated function over `Option<&Self>` so that **one**
+    /// list of keys serves both the document and no document at all,
+    /// where every preview is `null`. A preview added here is
+    /// therefore present in both replies by construction.
+    ///
     /// **Omitted by name:** a border preview's `edits` (a
     /// `BorderConfigEdits` bundle with no serializer): the target says
     /// *what* is being previewed, not the staged values.
-    pub(crate) fn ipc_previews_json(&self) -> Value {
+    pub(crate) fn ipc_previews_json(doc: Option<&Self>) -> Value {
         json!({
-            "label_edit": self.label_edit_preview.as_ref().map(|(key, buffer)| json!({
+            "label_edit": doc.and_then(|d| d.label_edit_preview.as_ref()).map(|(key, buffer)| json!({
                 "edge": edge_key_json(key),
                 "buffer": buffer,
             })),
-            "portal_text_edit": self.portal_text_edit_preview.as_ref().map(|(key, endpoint, buffer)| json!({
-                "edge": edge_key_json(key),
-                "endpoint_node_id": endpoint,
-                "buffer": buffer,
-            })),
-            "color_picker": self.color_picker_preview.as_ref().map(|p| json!({
+            "portal_text_edit": doc
+                .and_then(|d| d.portal_text_edit_preview.as_ref())
+                .map(|(key, endpoint, buffer)| json!({
+                    "edge": edge_key_json(key),
+                    "endpoint_node_id": endpoint,
+                    "buffer": buffer,
+                })),
+            "color_picker": doc.and_then(|d| d.color_picker_preview.as_ref()).map(|p| json!({
                 "edge": edge_key_json(&p.key),
                 "color": p.color,
             })),
-            "border": self.border_preview.as_ref().map(|p| match &p.target {
+            "border": doc.and_then(|d| d.border_preview.as_ref()).map(|p| match &p.target {
                 BorderPreviewTarget::Nodes(ids) => json!({ "kind": "Nodes", "node_ids": ids }),
                 BorderPreviewTarget::Sections(sections) => json!({
                     "kind": "Sections",
@@ -351,15 +441,147 @@ impl MindMapDocument {
                     json!({ "kind": "CanvasSectionFrameFocused" })
                 }
             }),
-            "rect_select": self.rect_select_preview(),
+            "rect_select": doc.and_then(|d| d.rect_select_preview()),
         })
+    }
+}
+
+/// The JSON Pointer's reference tokens, unescaped (`~1` is `/`, then
+/// `~0` is `~`, in that order, per RFC 6901). `""` is the empty
+/// token list, the whole document; any other pointer must begin with
+/// `/`.
+fn pointer_tokens(pointer: &str) -> Option<Vec<String>> {
+    if pointer.is_empty() {
+        return Some(Vec::new());
+    }
+    Some(
+        pointer
+            .strip_prefix('/')?
+            .split('/')
+            .map(|token| token.replace("~1", "/").replace("~0", "~"))
+            .collect(),
+    )
+}
+
+/// An array index token: `0`, or digits with no leading zero and no
+/// sign (RFC 6901, and what `Value::pointer` accepts).
+fn array_index(token: &str) -> Option<usize> {
+    let well_formed = token == "0"
+        || (token.starts_with(|c: char| ('1'..='9').contains(&c))
+            && token.bytes().all(|b| b.is_ascii_digit()));
+    if well_formed {
+        token.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// The value of a map-shaped top-level field: the entry `rest`'s
+/// first token names, or the whole collection when there is none.
+fn keyed<'t, V: Serialize>(
+    entries: &std::collections::HashMap<String, V>,
+    rest: &'t [String],
+) -> Option<(Value, &'t [String])> {
+    match rest.split_first() {
+        Some((key, rest)) => Some((serde_json::to_value(entries.get(key)?).ok()?, rest)),
+        None => Some((serde_json::to_value(entries).ok()?, rest)),
+    }
+}
+
+/// [`keyed`], for an array-shaped top-level field.
+fn indexed<'t, V: Serialize>(items: &[V], rest: &'t [String]) -> Option<(Value, &'t [String])> {
+    match rest.split_first() {
+        Some((index, rest)) => Some((serde_json::to_value(items.get(array_index(index)?)?).ok()?, rest)),
+        None => Some((serde_json::to_value(items).ok()?, rest)),
+    }
+}
+
+/// Walk `tokens` down `value`, consuming it, and return what they
+/// name. Moves the answer out rather than cloning it.
+fn descend(mut value: Value, tokens: &[String]) -> Option<Value> {
+    for token in tokens {
+        value = match value {
+            Value::Object(mut map) => map.remove(token)?,
+            Value::Array(mut items) => {
+                let index = array_index(token)?;
+                if index >= items.len() {
+                    return None;
+                }
+                items.swap_remove(index)
+            }
+            _ => return None,
+        };
+    }
+    Some(value)
+}
+
+/// `query.document`'s reply: the chosen [`DocumentField`]s of one
+/// document, as a serializable object. Serialize it to a `Value` for an
+/// inline reply, or **stream it into a writer** for `to_file`: either
+/// way the model is serialized straight from `&MindMap`, with no value
+/// tree held beside it. Only a `pointer` into the model builds a value,
+/// and only for the subtree it selects.
+pub(crate) struct DocumentReply<'a> {
+    doc: &'a MindMapDocument,
+    fields: &'a [DocumentField],
+    /// The value a `pointer` selected, standing in for the whole
+    /// model under [`DocumentField::Mindmap`].
+    subtree: Option<Value>,
+}
+
+/// A `pointer` that names nothing in the model.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PointerMiss;
+
+impl MindMapDocument {
+    /// The reply for `fields`, with `pointer` (when the model is among
+    /// them) resolved **up front**, so a miss is known before anything
+    /// is written anywhere and serializing the reply cannot fail on it.
+    pub(crate) fn ipc_document_reply<'a>(
+        &'a self,
+        fields: &'a [DocumentField],
+        pointer: Option<&str>,
+    ) -> Result<DocumentReply<'a>, PointerMiss> {
+        let subtree = match pointer {
+            Some(pointer) if fields.contains(&DocumentField::Mindmap) => {
+                Some(self.ipc_model_pointer(pointer).ok_or(PointerMiss)?)
+            }
+            _ => None,
+        };
+        Ok(DocumentReply {
+            doc: self,
+            fields,
+            subtree,
+        })
+    }
+}
+
+impl Serialize for DocumentReply<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        /// One field's value, serialized in place.
+        struct Entry<'r, 'a>(&'r DocumentReply<'a>, DocumentField);
+
+        impl Serialize for Entry<'_, '_> {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                match (&self.0.subtree, self.1) {
+                    (Some(subtree), DocumentField::Mindmap) => subtree.serialize(serializer),
+                    (_, field) => self.0.doc.serialize_field(field, serializer),
+                }
+            }
+        }
+
+        let mut map = serializer.serialize_map(Some(self.fields.len()))?;
+        for &field in self.fields {
+            map.serialize_entry(field.name(), &Entry(self, field))?;
+        }
+        map.end()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::tests_common::load_test_doc;
+    use crate::application::document::tests_common::{load_test_doc, TestNudgeMutation};
     use crate::application::document::{
         EdgeLabelSel, GraphemeRange, PortalLabelSel, SectionSpan, SelectionState,
     };
@@ -687,9 +909,9 @@ mod tests {
             let _ = doc.ipc_field_json(field);
         }
         let _ = doc.selection.to_ipc_json();
-        let _ = doc.ipc_animations_json(123);
+        let _ = doc.ipc_animations_json(123, None);
         let _ = doc.ipc_undo_json(10);
-        let _ = doc.ipc_previews_json();
+        let _ = MindMapDocument::ipc_previews_json(Some(&doc));
 
         assert!(doc.dirty, "dirty is untouched");
         assert_eq!(doc.undo_stack.len(), 1, "no undo entry is pushed or popped");
@@ -699,6 +921,240 @@ mod tests {
             model_before
         );
         assert!(!doc.has_active_animations());
+    }
+
+    /// **The typed pointer path answers exactly what a pointer into the
+    /// whole serialized model would** (review of #174), for every kind
+    /// of first token, present, absent and skipped-when-empty.
+    #[test]
+    fn test_ipc_model_pointer_agrees_with_a_pointer_into_the_whole_value() {
+        let doc = load_test_doc();
+        let whole = serde_json::to_value(&doc.mindmap).expect("serializes");
+        let node = doc
+            .mindmap
+            .nodes
+            .keys()
+            .next()
+            .expect("fixture has nodes")
+            .clone();
+        let palette = doc
+            .mindmap
+            .palettes
+            .keys()
+            .next()
+            .expect("fixture has palettes")
+            .clone();
+        let pointers = [
+            String::new(),
+            "/version".into(),
+            "/name".into(),
+            "/canvas".into(),
+            "/canvas/background_color".into(),
+            "/canvas/no_such_key".into(),
+            "/palettes".into(),
+            format!("/palettes/{palette}"),
+            "/palettes/no_such_palette".into(),
+            "/nodes".into(),
+            format!("/nodes/{node}"),
+            format!("/nodes/{node}/position"),
+            format!("/nodes/{node}/position/x"),
+            format!("/nodes/{node}/sections/0"),
+            format!("/nodes/{node}/sections/0/text"),
+            format!("/nodes/{node}/sections/99"),
+            format!("/nodes/{node}/sections/00"),
+            format!("/nodes/{node}/sections/-1"),
+            "/nodes/no_such_node".into(),
+            "/edges".into(),
+            "/edges/0".into(),
+            "/edges/0/from_id".into(),
+            "/edges/00".into(),
+            "/edges/+1".into(),
+            "/edges/999999".into(),
+            "/edges/x".into(),
+            "/custom_mutations".into(),
+            "/macros".into(),
+            "/unknown_keys".into(),
+            "/skipped_constructs".into(),
+            "/nothing".into(),
+            "nodes".into(),
+            "/".into(),
+        ];
+        for pointer in &pointers {
+            assert_eq!(
+                doc.ipc_model_pointer(pointer).as_ref(),
+                whole.pointer(pointer),
+                "pointer `{pointer}`"
+            );
+        }
+    }
+
+    /// The same equivalence for fields the testament fixture leaves
+    /// empty, and so absent from its serialized form: they come back
+    /// when the model carries them, and are `None` when it does not.
+    #[test]
+    fn test_ipc_model_pointer_treats_empty_skipped_fields_as_absent() {
+        let mut doc = load_test_doc();
+        assert!(doc.mindmap.macros.is_empty() && doc.mindmap.custom_mutations.is_empty());
+        assert_eq!(doc.ipc_model_pointer("/macros"), None);
+        assert_eq!(doc.ipc_model_pointer("/custom_mutations"), None);
+        doc.mindmap.macros.push(json!({ "id": "m" }));
+        doc.mindmap.custom_mutations.push(
+            TestNudgeMutation::new("cm", baumhard::mindmap::custom_mutation::TargetScope::SelfOnly).build(),
+        );
+        let whole = serde_json::to_value(&doc.mindmap).expect("serializes");
+        for pointer in [
+            "/macros",
+            "/macros/0",
+            "/macros/0/id",
+            "/custom_mutations",
+            "/custom_mutations/0/id",
+        ] {
+            assert_eq!(
+                doc.ipc_model_pointer(pointer).as_ref(),
+                whole.pointer(pointer),
+                "pointer `{pointer}`"
+            );
+            assert!(
+                whole.pointer(pointer).is_some(),
+                "`{pointer}` exists once populated"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pointer_tokens_unescape_in_the_rfc_order() {
+        assert_eq!(pointer_tokens(""), Some(vec![]));
+        assert_eq!(pointer_tokens("/"), Some(vec![String::new()]));
+        assert_eq!(pointer_tokens("/a/b"), Some(vec!["a".into(), "b".into()]));
+        assert_eq!(
+            pointer_tokens("/a~1b/m~0n/~01"),
+            Some(vec!["a/b".into(), "m~n".into(), "~1".into()]),
+            "`~01` is a literal `~1`, not a slash"
+        );
+        assert_eq!(pointer_tokens("a"), None);
+    }
+
+    #[test]
+    fn test_descend_moves_the_answer_out_without_a_clone() {
+        let value = json!({ "a": [10, { "b": "x" }], "c": null });
+        let tokens = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            descend(value.clone(), &tokens(&["a", "1", "b"])),
+            Some(json!("x"))
+        );
+        assert_eq!(descend(value.clone(), &tokens(&["c"])), Some(Value::Null));
+        assert_eq!(descend(value.clone(), &tokens(&["a", "2"])), None);
+        assert_eq!(descend(value.clone(), &tokens(&["a", "01"])), None);
+        assert_eq!(descend(value.clone(), &tokens(&["c", "x"])), None);
+        assert_eq!(
+            descend(value, &[]),
+            Some(json!({ "a": [10, { "b": "x" }], "c": null }))
+        );
+    }
+
+    /// The streamed reply is the inline reply: serializing a
+    /// `DocumentReply` to bytes and to a value agree, with and
+    /// without a pointer, and a miss is known before anything is
+    /// serialized.
+    #[test]
+    fn test_document_reply_streams_what_it_builds_inline() {
+        let doc = load_test_doc();
+        let fields = DocumentField::ALL;
+        let reply = doc.ipc_document_reply(&fields, None).expect("no pointer");
+        let value = serde_json::to_value(&reply).expect("value");
+        let streamed: Value =
+            serde_json::from_slice(&serde_json::to_vec(&reply).expect("bytes")).expect("JSON");
+        assert_eq!(streamed, value);
+        for field in DocumentField::ALL {
+            assert_eq!(value[field.name()], doc.ipc_field_json(field), "{}", field.name());
+        }
+
+        let pointed = doc
+            .ipc_document_reply(&fields, Some("/nodes"))
+            .expect("pointer resolves");
+        let value = serde_json::to_value(&pointed).expect("value");
+        assert_eq!(value["mindmap"], doc.ipc_model_pointer("/nodes").expect("nodes"));
+        assert_eq!(value["dirty"], json!(false), "the other fields are unaffected");
+
+        assert_eq!(
+            doc.ipc_document_reply(&fields, Some("/nodes/no_such_node")).err(),
+            Some(PointerMiss)
+        );
+        assert!(
+            doc.ipc_document_reply(&[DocumentField::Dirty], Some("/nodes/no_such_node"))
+                .is_ok(),
+            "a pointer narrows the model, so without the model it is not resolved"
+        );
+    }
+
+    /// **One list of preview keys** (review of #174): with no
+    /// document, and with a document that has no preview live, the
+    /// reply is the same all-`null` object; a live preview fills in
+    /// exactly its own key and the key set never changes.
+    #[test]
+    fn test_previews_share_one_key_list_with_and_without_a_document() {
+        let mut doc = load_test_doc();
+        let none = MindMapDocument::ipc_previews_json(None);
+        assert_eq!(none, MindMapDocument::ipc_previews_json(Some(&doc)));
+        let keys: Vec<&String> = none.as_object().expect("object").keys().collect();
+        for key in &keys {
+            assert_eq!(none[key.as_str()], Value::Null, "{key}");
+        }
+
+        doc.label_edit_preview = Some((EdgeKey::new("a", "b", "cross_link"), "typing".into()));
+        let live = MindMapDocument::ipc_previews_json(Some(&doc));
+        assert_eq!(live.as_object().expect("object").keys().collect::<Vec<_>>(), keys);
+        assert_eq!(live["label_edit"]["buffer"], json!("typing"));
+        for key in keys.iter().filter(|k| k.as_str() != "label_edit") {
+            assert_eq!(live[key.as_str()], Value::Null, "{key}");
+        }
+    }
+
+    /// **`query.animations` reports a drag pause** (review of #174):
+    /// while a tree-mutating drag has suspended the tick, the
+    /// instances read at the pause's start (the value the resume
+    /// shift restores), never advance with the wall clock, never
+    /// reach `due`, and say `paused`.
+    #[test]
+    fn test_animations_report_the_pause_a_drag_puts_on_the_tick() {
+        use baumhard::mindmap::animation::{AnimationTiming, Easing};
+        let mut doc = load_test_doc();
+        let node_id = doc
+            .mindmap
+            .nodes
+            .keys()
+            .next()
+            .expect("fixture has nodes")
+            .clone();
+        let cm = TestNudgeMutation::new("anim", baumhard::mindmap::custom_mutation::TargetScope::SelfOnly)
+            .magnitude(100.0)
+            .timing(AnimationTiming {
+                duration_ms: 1000,
+                delay_ms: 0,
+                easing: Easing::Linear,
+                then: None,
+            })
+            .build();
+        doc.start_animation(&cm, &node_id, 10_000);
+
+        let running = doc.ipc_animations_json(10_250, None);
+        assert_eq!(running["active"], json!(true));
+        assert_eq!(running["paused"], json!(false));
+        assert_eq!(running["animations"][0]["phase"], json!("running"));
+        assert_eq!(running["animations"][0]["elapsed_ms"], json!(250));
+        assert_eq!(running["animations"][0]["progress"], json!(0.25));
+
+        // Paused at 10_250; a poll at 99_999 still reads 250 ms in, not due.
+        let paused = doc.ipc_animations_json(99_999, Some(10_250));
+        assert_eq!(paused["active"], json!(true));
+        assert_eq!(paused["paused"], json!(true));
+        assert_eq!(paused["animations"][0]["phase"], json!("paused"));
+        assert_eq!(paused["animations"][0]["elapsed_ms"], json!(250));
+        assert_eq!(paused["animations"][0]["progress"], json!(0.25));
+
+        // Unpaused far later it would be due: the pause is what differs.
+        let due = doc.ipc_animations_json(99_999, None);
+        assert_eq!(due["animations"][0]["phase"], json!("due"));
     }
 
     #[test]

@@ -451,10 +451,21 @@ pub(crate) mod tests {
     /// app attached, and return the reply as it would appear on the
     /// wire plus the repaint flag.
     pub(crate) fn run_detached(frame: &str) -> (Value, bool) {
+        run_with(frame, None)
+    }
+
+    /// [`run_detached`] with an app attached: the same decoder, the
+    /// same [`execute`], the same wire encoding, and a `target` to
+    /// reach.
+    pub(crate) fn run_attached(frame: &str, target: &mut dyn CommandTarget) -> (Value, bool) {
+        run_with(frame, Some(target))
+    }
+
+    fn run_with(frame: &str, target: Option<&mut dyn CommandTarget>) -> (Value, bool) {
         let Decoded::Request(request) = decode_line(frame.as_bytes(), 0, 1) else {
             panic!("{frame} must decode to a request");
         };
-        let executed = execute(&request, None);
+        let executed = execute(&request, target);
         let bytes = Frame::Reply(executed.reply)
             .encode(OUTBOUND_FRAME_CAP)
             .expect("encodes");

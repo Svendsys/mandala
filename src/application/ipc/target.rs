@@ -103,6 +103,13 @@ pub(crate) trait CommandTarget {
     /// an undo entry or rebuilds a scene.
     fn document(&self) -> Option<&MindMapDocument>;
 
+    /// The app-clock ms at which a tree-mutating drag suspended the
+    /// animation tick, or `None` while ticks run. `query.animations`
+    /// reads it: during the pause the animations are frozen, and a
+    /// reply that kept advancing their clocks would promise a commit
+    /// the next tick does not make.
+    fn animation_pause(&self) -> Option<u64>;
+
     /// One part of the app shell's state, projected to JSON.
     /// Read-only, and it reports no view change
     /// ([`Self::changed_view`] is untouched), so a query polled in a

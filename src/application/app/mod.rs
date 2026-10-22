@@ -679,6 +679,73 @@ struct PendingPress {
     hit_node_resize_handle: Option<(String, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
 }
 
+/// One thing a press can have landed on that promotes a drag past the
+/// threshold, **in the precedence the threshold-cross step resolves
+/// them** (`event_cursor_moved.rs`). This list is the single source of
+/// that order: [`PendingPress::first_grab`] reads it, the threshold-
+/// cross `match` dispatches on what `first_grab` returns, and
+/// `query.mode` reports [`PendingPress::grabs`] in it, so the three
+/// cannot disagree. Portal *text* is intentionally absent: dragging a
+/// portal's text sub-part is not a gesture, the icon carries the drag.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grab {
+    EdgeLabel,
+    PortalLabel,
+    EdgeHandle,
+    NodeResizeHandle,
+    SectionResizeHandle,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Grab {
+    /// Every grab, first-resolved first.
+    const PRECEDENCE: [Grab; 5] = [
+        Grab::EdgeLabel,
+        Grab::PortalLabel,
+        Grab::EdgeHandle,
+        Grab::NodeResizeHandle,
+        Grab::SectionResizeHandle,
+    ];
+
+    /// The grab's name as `query.mode` reports it.
+    fn word(self) -> &'static str {
+        match self {
+            Grab::EdgeLabel => "edge_label",
+            Grab::PortalLabel => "portal_label",
+            Grab::EdgeHandle => "edge_handle",
+            Grab::NodeResizeHandle => "node_resize_handle",
+            Grab::SectionResizeHandle => "section_resize_handle",
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PendingPress {
+    /// Whether the press recorded `grab`.
+    fn has(&self, grab: Grab) -> bool {
+        match grab {
+            Grab::EdgeLabel => self.hit_edge_label.is_some(),
+            Grab::PortalLabel => self.hit_portal_label.is_some(),
+            Grab::EdgeHandle => self.hit_edge_handle.is_some(),
+            Grab::NodeResizeHandle => self.hit_node_resize_handle.is_some(),
+            Grab::SectionResizeHandle => self.hit_section_resize_handle.is_some(),
+        }
+    }
+
+    /// Every grab the press recorded, in [`Grab::PRECEDENCE`] order.
+    fn grabs(&self) -> impl Iterator<Item = Grab> + '_ {
+        Grab::PRECEDENCE.into_iter().filter(|grab| self.has(*grab))
+    }
+
+    /// The grab the threshold-cross step resolves, if any: the first
+    /// recorded one in [`Grab::PRECEDENCE`]. `None` leaves the press
+    /// to the node-move / rect-select / pan arms.
+    fn first_grab(&self) -> Option<Grab> {
+        self.grabs().next()
+    }
+}
+
 /// Tracks the current drag interaction state.
 ///
 /// Continuous, high-rate-input-driven drag variants

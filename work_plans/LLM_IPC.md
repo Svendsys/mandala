@@ -534,9 +534,11 @@ frame. (The first IPC-03 cut keyed it on the `&mut` borrow, and review
 caught every failed or read-only command forcing a render.)
 
 *As built by IPC-04 (#64):* the read half needed no new funnel. The
-trait gained two `&self` reads, `document()` (a `&MindMapDocument`) and
-`shell_state(ShellState)` (a JSON projection of the app-private state:
-camera, mode, status, editors), because `DragState` and the modal
+trait gained three `&self` reads: `document()` (a `&MindMapDocument`),
+`animation_pause()` (the drag pause on the animation tick, which lives in
+`InitState` and not in the document) and `shell_state(ShellState)` (a
+JSON projection of the app-private state: camera, mode, status,
+editors), because `DragState` and the modal
 editors are private to `app` and the `ipc` modules never name them.
 The projections are inherent methods beside the state
 (`document/ipc_state.rs`, `app/ipc_state.rs`), each an exhaustive
