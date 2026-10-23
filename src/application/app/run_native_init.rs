@@ -14,6 +14,7 @@ use winit::window::Window;
 use crate::application::platform::input::Modifiers as ModifiersState;
 
 use super::console_input::load_console_history;
+use super::freeze_watchdog::FreezeWatchdog;
 use super::run_native::InitState;
 use super::scene_rebuild::{rebuild_all, warm_scene_at_load};
 use super::single_line_edit::SingleLineEditor;
@@ -36,7 +37,7 @@ use crate::application::renderer::Renderer;
 /// with the loader's message on the canvas, the camera fits it,
 /// input works, and `open` can be typed into the console without
 /// restarting the process.
-pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
+pub(super) fn build(options: &Options, window: Arc<Window>, watchdog: FreezeWatchdog) -> InitState {
     baumhard::font::fonts::init();
 
     let mut renderer = block_on(Renderer::bootstrap_native(Arc::clone(&window)));
@@ -191,5 +192,6 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
         injected: crate::application::ipc::injected::InjectedQueue::default(),
         artifacts: crate::application::capture::artifacts::Artifacts::for_this_process(),
+        watchdog,
     }
 }

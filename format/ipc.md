@@ -1524,7 +1524,7 @@ state rather than the last frame's.
 | `width`, `height` | integer | current surface size | The view's size, in window pixels; sent together. Camera center and zoom are preserved, so a larger view shows more canvas. Each side must lie in `1..=16384`, and the image (`width × height × scale²`) must not exceed **67,108,864** pixels (64 Mpx, ~8K square) nor the GPU's largest texture side; a request over any bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
 | `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space, `w` and `h` positive: frame this rect instead of the current camera view. `width`/`height` still set the view's size; the aspect rule below governs mismatches. A region so large it would need a zoom below the minimum (`0.05`) is `invalid_params` (it could not be shown whole); one so small it needs more than the maximum (`5.0`) is framed at the maximum, still whole. |
 | `space` | string | `"canvas"` | Coordinate space of `region`: `"canvas"` (default) or `"surface"` (converted through the camera as of capture time). For `"surface"`, the pixel grid is the **live window surface** (the camera's current surface size), *not* the requested `width`/`height` offscreen target — the region is resolved against the window the human sees, then the camera it derives is rendered into the offscreen target. Only valid with `region`. |
-| `fit` | boolean | `false` | Frame the whole drawn document as the load-time fit does: its content box, with the same margin (`FIT_PADDING_FRACTION`, 5% of the view on each side). `invalid_params` with `region`, and when the document draws nothing. |
+| `fit` | boolean | `false` | Frame the whole drawn document as the load-time fit does: its content box, with the same margin (`FIT_PADDING_FRACTION`, 5% of the view on each side). `invalid_params` with `region`, when the document draws nothing, and when it would need a zoom below the minimum (`0.05`) to fit — framed at the minimum it would be cut off. |
 | `scale` | number | `1.0` | Image pixels per view pixel, in `0.1..=4.0`. It changes the resolution and nothing else: the image is `round(width × scale) × round(height × scale)` pixels of the same view, with the same elements in it — zoom windows and connection glyph sizes are decided at the view's zoom, never at `zoom × scale`. Outside the range is `invalid_params`. |
 | `format` | string | `"png"` | `"png"` is the only value at pin time; the param exists so adding one is non-breaking. |
 | `sidecar` | boolean | `true` | Write the geometry sidecar next to the PNG (`<path>.geometry.json`). |
@@ -1567,9 +1567,22 @@ never defers its reply.
 zoom other than the live one while a node drag is in flight (the
 zoom-dependent scene would have to be re-projected from a model the
 drag has not written yet; capture at the live zoom, or after the
-release), and `internal` when the GPU does not finish within five seconds
-(`renderer::capture::GPU_WAIT`, half the `FreezeWatchdog`'s
-threshold) or the disk refuses the write; `message` says which.
+release), and `internal` when the GPU does not finish a band of the readback
+within five seconds (`renderer::capture::GPU_WAIT`, half the
+`FreezeWatchdog`'s threshold) or the disk refuses the write; `message`
+says which. A large capture is long main-thread work — the readback
+runs in bands that fit the GPU's buffer limit, and the PNG encodes in
+4 MiB slices — so it ticks the watchdog after every band and every
+slice, the pattern `clock.step` follows per heartbeat: a capture that
+is progressing never reads as a hang, and one that stops does.
+
+**Screen-space overlays.** The FPS readout and the mode-status line
+are drawn at their fixed offsets from the top-left corner, scaled by
+`scale`. An open modal — the console or the color picker — is laid
+out against the window's size, so it is drawn only when the capture
+is the window's size (`width`/`height` unset, or equal to it); a
+capture of any other size leaves it out rather than drawing it where
+it would not be in any window.
 
 **State after a capture is state before it.** The renderer's camera
 is never moved: the capture draws through a camera of its own. A
@@ -1621,8 +1634,8 @@ guards, and differs where a person is typing: a relative path is read
 against the working directory (as `save` reads its own), no path means
 `mandala-<unix ms>.png` there rather than the artifacts dir, and an
 open console is left out of the picture it was asked from.
-`capture.screenshot` keeps it — over IPC the capture shows what the
-window shows.
+`capture.screenshot` keeps it at the window's size — over IPC the
+capture shows what the window shows.
 
 ### `capture.record_start` / `capture.record_stop` (IPC-08)
 

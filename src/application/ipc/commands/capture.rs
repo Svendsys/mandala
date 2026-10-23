@@ -32,7 +32,7 @@ use crate::application::ipc::envelope::Reply;
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
 use crate::application::ipc::space::Space;
 use crate::application::ipc::Screenshot;
-use crate::application::renderer::ConsoleLayer;
+use crate::application::renderer::ModalLayer;
 
 use super::refusal::{no_loaded_document, refuse, Refusal};
 
@@ -300,8 +300,8 @@ fn parse(call: &Call<'_>) -> Result<Parsed, Refusal> {
             framing,
             scale,
             // Over IPC the capture shows what the window shows, an
-            // open console included.
-            console: ConsoleLayer::Drawn,
+            // open modal included (at the window's size).
+            modal: ModalLayer::Drawn,
         },
         destination,
         sidecar: call.param("sidecar").and_then(Value::as_bool).unwrap_or(true),
@@ -512,7 +512,7 @@ mod tests {
                         space: Space::Surface,
                     }),
                     scale: 1.5,
-                    console: ConsoleLayer::Drawn,
+                    modal: ModalLayer::Drawn,
                 },
                 destination: Destination::Path {
                     path: PathBuf::from("/tmp/x.png"),

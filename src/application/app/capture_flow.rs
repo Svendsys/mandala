@@ -29,12 +29,13 @@ use baumhard::mindmap::scene_cache::SceneConnectionCache;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 use crate::application::capture::artifacts::Artifacts;
-use crate::application::capture::plan::{plan, CaptureRequest, PlanContext};
+use crate::application::capture::plan::{plan, CaptureRequest, Framing, PlanContext};
 use crate::application::capture::{geometry, resolve, write, CaptureError, CaptureOutcome, Destination};
 use crate::application::document::MindMapDocument;
-use crate::application::renderer::{content_bounds, CaptureFailure, Renderer};
+use crate::application::renderer::{content_bounds, CaptureFailure, ModalLayer, Renderer};
 use crate::application::scene_host::AppScene;
 
+use super::freeze_watchdog::FreezeWatchdog;
 use super::scene_rebuild::rebuild_camera_geometry_at;
 use super::InteractionMode;
 
@@ -51,6 +52,9 @@ pub(super) struct CaptureScene<'a> {
     pub(super) interaction_mode: &'a InteractionMode,
     /// A node drag is in flight (`ThrottledDrag::MovingNode`).
     pub(super) moving_node: bool,
+    /// Ticked after every readback band and every encoded chunk: a
+    /// large capture is long main-thread work that keeps progressing.
+    pub(super) watchdog: &'a FreezeWatchdog,
 }
 
 /// Take one screenshot: plan `request` and resolve `destination` —
@@ -75,7 +79,9 @@ pub(super) fn capture(
         scene_cache,
         interaction_mode,
         moving_node,
+        watchdog,
     } = scene;
+    let mut progress = || watchdog.tick();
     let Some(doc) = document.as_ref() else {
         return Err(CaptureError::Internal("no document is loaded".into()));
     };
@@ -97,7 +103,11 @@ pub(super) fn capture(
         &PlanContext {
             live,
             max_texture_side: renderer.max_texture_side(),
-            content: mindmap_tree.as_ref().and_then(|tree| content_bounds(&tree.tree)),
+            // A walk of the whole node tree, which only `fit` reads.
+            content: match request.framing {
+                Framing::Fit => mindmap_tree.as_ref().and_then(|tree| content_bounds(&tree.tree)),
+                Framing::View | Framing::Region(_) => None,
+            },
         },
     )?;
 
@@ -123,7 +133,13 @@ pub(super) fn capture(
             scene_cache,
         );
     }
-    let drawn = renderer.capture_frame(&camera, request.console);
+    // A modal is laid out against the window's size; a capture sized
+    // otherwise leaves it out rather than drawing it somewhere arbitrary.
+    let modal = match request.size {
+        Some(size) if size != live.viewport_size => ModalLayer::Omitted,
+        _ => request.modal,
+    };
+    let drawn = renderer.capture_frame(&camera, modal, &mut progress);
     if reproject {
         rebuild_camera_geometry_at(live.zoom, doc, interaction_mode, app_scene, renderer, scene_cache);
     }
@@ -131,12 +147,6 @@ pub(super) fn capture(
     let pixels = match drawn {
         Ok(pixels) => pixels,
         Err(CaptureFailure::Skipped(skip)) => return Ok(CaptureOutcome::Skipped { camera, skip }),
-        Err(CaptureFailure::TooLarge { max_side }) => {
-            return Err(CaptureError::Internal(format!(
-                "the planned {}×{} image exceeds this GPU's largest texture side, {max_side} pixels",
-                camera.viewport_size.0, camera.viewport_size.1
-            )))
-        }
         Err(CaptureFailure::UnsupportedFormat(format)) => {
             return Err(CaptureError::Internal(format!(
                 "the window's surface format, {format:?}, is not one a capture can read back"
@@ -152,7 +162,7 @@ pub(super) fn capture(
             crate::application::ipc::PROTOCOL_VERSION,
         )
     });
-    write(&target, &pixels, map.as_ref(), artifacts)?;
+    write(&target, &pixels, map.as_ref(), artifacts, &mut progress)?;
     Ok(CaptureOutcome::Written {
         camera,
         path: target.path,

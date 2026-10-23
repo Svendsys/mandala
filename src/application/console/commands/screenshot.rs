@@ -193,8 +193,10 @@ fn read_line<'a>(
         Some(v) if v.eq_ignore_ascii_case("view") => ScreenshotFrame::View,
         Some(v) if v.eq_ignore_ascii_case("fit") => ScreenshotFrame::Fit,
         Some(v) => {
-            let numbers: Vec<f32> = v.split(',').map_while(|n| n.trim().parse::<f32>().ok()).collect();
-            let [x, y, w, h] = numbers[..] else {
+            // Every token must parse: `1,2,3,4,junk` is refused, not read
+            // as the four numbers before the junk.
+            let numbers: Option<Vec<f32>> = v.split(',').map(|n| n.trim().parse::<f32>().ok()).collect();
+            let Some([x, y, w, h]) = numbers.as_deref().and_then(|n| <[f32; 4]>::try_from(n).ok()) else {
                 return Err(format!("screenshot: frame='{v}' must be view, fit, or x,y,w,h"));
             };
             ScreenshotFrame::Region {
@@ -318,11 +320,13 @@ mod tests {
             (&["scale=inf"][..], "not a number"),
             (&["frame=1,2,3"][..], "view, fit, or x,y,w,h"),
             (&["frame=1,2,3,4,5"][..], "view, fit, or x,y,w,h"),
+            (&["frame=1,2,3,4,junk"][..], "view, fit, or x,y,w,h"),
+            (&["frame=1,2,3,4,"][..], "view, fit, or x,y,w,h"),
             (&["frame=fit", "space=surface"][..], "give it with one"),
             (&["space=world", "frame=0,0,1,1"][..], "canvas or surface"),
             (&["overwrite=yes"][..], "on or off"),
             (&["a.png", "b.png"][..], "b.png"),
-            (&["colour=red"][..], "colour"),
+            (&["color=red"][..], "color"),
         ] {
             let (result, side, _) = run(args);
             assert!(side.is_none(), "`screenshot {args:?}` must not reach the engine");

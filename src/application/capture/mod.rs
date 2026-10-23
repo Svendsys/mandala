@@ -163,12 +163,14 @@ pub(crate) fn resolve(
 /// a sidecar path.
 ///
 /// A sidecar that fails after its PNG was written says so: the PNG is
-/// good and stays.
+/// good and stays. `progress` is called as the PNG encodes
+/// ([`png::encode`]).
 pub(crate) fn write(
     target: &Target,
     pixels: &CapturedPixels,
     sidecar: Option<&Sidecar>,
     artifacts: &mut Artifacts,
+    progress: &mut dyn FnMut(),
 ) -> Result<(), CaptureError> {
     let refused = |refusal: PublishRefusal| match refusal {
         PublishRefusal::Invalid(message) => CaptureError::Invalid {
@@ -177,8 +179,10 @@ pub(crate) fn write(
         },
         PublishRefusal::Internal(message) => CaptureError::Internal(message),
     };
-    let png_bytes = guarded_file::publish(&target.path, target.overwrite, |out| png::encode(pixels, out))
-        .map_err(refused)?;
+    let png_bytes = guarded_file::publish(&target.path, target.overwrite, |out| {
+        png::encode(pixels, out, &mut *progress)
+    })
+    .map_err(refused)?;
     let mut written = vec![(target.path.clone(), png_bytes)];
     if let (Some(sidecar), Some(sidecar_path)) = (sidecar, target.sidecar.as_ref()) {
         let json_bytes = guarded_file::publish(sidecar_path, target.overwrite, |out| {
@@ -237,7 +241,7 @@ mod tests {
         artifacts: &mut Artifacts,
     ) -> Result<(PathBuf, Option<PathBuf>), CaptureError> {
         let target = resolve(destination, map.is_some(), artifacts)?;
-        write(&target, &pixels(), map, artifacts)?;
+        write(&target, &pixels(), map, artifacts, &mut || {})?;
         Ok((target.path, target.sidecar))
     }
 

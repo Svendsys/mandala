@@ -24,9 +24,10 @@
 //! well.
 //!
 //! **Blocking, and bounded.** The readback waits for the GPU on the main
-//! thread, as a synchronous screenshot must, with a timeout
-//! ([`GPU_WAIT`]) well inside the `FreezeWatchdog`'s threshold, so a
-//! wedged driver fails the capture rather than the process.
+//! thread, as a synchronous screenshot must, each wait with a timeout
+//! ([`GPU_WAIT`]) well inside the `FreezeWatchdog`'s threshold, and
+//! reports progress after each, so a wedged driver fails the capture
+//! rather than the process while a large one runs to completion.
 //!
 //! Native-only at this module boundary: a browser cannot block on a
 //! buffer map (`CLAUDE.md` "Dual-target status", "Screenshot capture").
@@ -37,14 +38,15 @@ use std::time::Duration;
 use baumhard::gfx_structs::camera::Camera2D;
 use web_time::Instant;
 
-use super::render::{ConsoleLayer, FrameSkip};
+use super::render::{FrameSkip, ModalLayer};
 use super::Renderer;
 
 /// How long a capture waits for the GPU to finish one band of its frame
 /// and copy before it gives up. Half the `FreezeWatchdog`'s abort
-/// threshold (a test beside the watchdog holds the two together), so a
-/// GPU that never answers costs the agent a failed capture and the
-/// watchdog never sees the main thread stall.
+/// threshold (a test beside the watchdog holds the two together), and
+/// the engine ticks the watchdog after every band and every encoded
+/// chunk: a GPU that never answers costs the agent a failed capture,
+/// and a capture that is still progressing never reads as a hang.
 pub(crate) const GPU_WAIT: Duration = Duration::from_secs(5);
 
 /// The order a 4-byte-per-pixel surface format stores its channels in.
@@ -79,8 +81,6 @@ pub(crate) enum CaptureFailure {
     /// would not have been. Not an error: what the reply reports as
     /// `rendered: false`.
     Skipped(FrameSkip),
-    /// A side of the target exceeds the GPU's 2D texture limit.
-    TooLarge { max_side: u32 },
     /// The surface format is not one [`ChannelOrder::of`] can read.
     UnsupportedFormat(wgpu::TextureFormat),
     /// The GPU failed the readback: the wait timed out, or the buffer
@@ -162,7 +162,7 @@ impl Renderer {
 
     /// Draw one frame through `camera` into an offscreen texture of
     /// `camera.viewport_size` pixels and read it back, with or without
-    /// the console overlay as `console` says.
+    /// the open modal as `modal` says.
     ///
     /// Refreshes the screen-space overlays the way `process()` does
     /// before its render — the mode-status line and the FPS readout
@@ -173,12 +173,16 @@ impl Renderer {
     ///
     /// One full frame prepare and encode, a texture and a staging
     /// buffer of the target's size (the buffer at most `max_buffer_size`,
-    /// reused per row band), and one blocking GPU wait per band. The
-    /// result holds the image once, packed.
+    /// reused per row band), and one blocking GPU wait per band, each
+    /// bounded by [`GPU_WAIT`], with `progress` called after every band
+    /// that lands — so a large capture reports its progress band by band
+    /// and a band the GPU never finishes fails the capture. The result
+    /// holds the image once, packed.
     pub(crate) fn capture_frame(
         &mut self,
         camera: &Camera2D,
-        console: ConsoleLayer,
+        modal: ModalLayer,
+        progress: &mut dyn FnMut(),
     ) -> Result<CapturedPixels, CaptureFailure> {
         if !self.should_render {
             return Err(CaptureFailure::Skipped(FrameSkip::NotStarted));
@@ -186,17 +190,19 @@ impl Renderer {
         let format = self.config.format;
         let order = ChannelOrder::of(format).ok_or(CaptureFailure::UnsupportedFormat(format))?;
         let (width, height) = camera.viewport_size;
-        let max_side = self.max_texture_side();
-        if width == 0 || height == 0 || width > max_side || height > max_side {
-            return Err(CaptureFailure::TooLarge { max_side });
-        }
+        // `capture::plan` is the one way here, and it refuses any side the
+        // GPU cannot hold and never plans an empty one.
+        debug_assert!(
+            (1..=self.max_texture_side()).contains(&width) && (1..=self.max_texture_side()).contains(&height),
+            "an unplanned capture target: {width}×{height}"
+        );
         let started = Instant::now();
         if self.fps_display_mode != crate::application::common::FpsDisplayMode::Off {
             self.rebuild_fps_overlay_if_needed();
         }
         self.rebuild_mode_status_overlay_if_needed();
         let prepared = self
-            .prepare_frame(camera, console)
+            .prepare_frame(camera, modal)
             .map_err(CaptureFailure::Skipped)?;
 
         let extent = wgpu::Extent3d {
@@ -263,6 +269,7 @@ impl Renderer {
             self.read_band(&staging, submission, |band| {
                 pack_rows(band, width, padded_row, rows, order, &mut rgba)
             })?;
+            progress();
         }
         self.atlas.trim();
         log::debug!(

@@ -25,7 +25,7 @@ use glam::Vec2;
 
 use crate::application::console::commands::screenshot::{ScreenshotFrame, ScreenshotLine};
 use crate::application::ipc::space::Space;
-use crate::application::renderer::{ConsoleLayer, FIT_PADDING_FRACTION};
+use crate::application::renderer::{ModalLayer, FIT_PADDING_FRACTION};
 
 /// The largest `width` or `height` a capture accepts, in pixels.
 pub(crate) const MAX_SIDE: u32 = 16_384;
@@ -70,11 +70,14 @@ pub(crate) struct CaptureRequest {
     pub(crate) framing: Framing,
     /// Image pixels per view pixel.
     pub(crate) scale: f32,
-    /// Whether an open console is in the picture. Over IPC it is: the
-    /// capture shows what the window shows. From the console's own
-    /// `screenshot` verb it is not, because the prompt that asked is
-    /// not what the user wanted a picture of.
-    pub(crate) console: ConsoleLayer,
+    /// Whether an open modal (the console or the color picker) is in
+    /// the picture. Over IPC it is: the capture shows what the window
+    /// shows. From the console's own `screenshot` verb it is not,
+    /// because the prompt that asked is not what the user wanted a
+    /// picture of. Either way the engine also leaves it out of a capture
+    /// sized unlike the window, where it has no coherent place
+    /// ([`ModalLayer`]).
+    pub(crate) modal: ModalLayer,
 }
 
 impl Default for CaptureRequest {
@@ -85,7 +88,7 @@ impl Default for CaptureRequest {
             size: None,
             framing: Framing::View,
             scale: 1.0,
-            console: ConsoleLayer::Drawn,
+            modal: ModalLayer::Drawn,
         }
     }
 }
@@ -110,7 +113,7 @@ impl CaptureRequest {
                 }),
             },
             scale: line.scale.unwrap_or(CaptureRequest::default().scale),
-            console: ConsoleLayer::Omitted,
+            modal: ModalLayer::Omitted,
         }
     }
 }
@@ -140,7 +143,8 @@ pub(crate) struct PlanContext {
     /// The GPU's largest 2D texture side.
     pub(crate) max_texture_side: u32,
     /// The canvas box around the drawn nodes, for `fit`; `None` when
-    /// nothing is drawn.
+    /// nothing is drawn. Only `fit` reads it, and the caller computes it
+    /// only then: it is a walk of the whole node tree.
     pub(crate) content: Option<(Vec2, Vec2)>,
 }
 
@@ -218,10 +222,34 @@ pub(crate) fn plan(request: &CaptureRequest, context: &PlanContext) -> Result<Ca
             let Some((min, max)) = context.content else {
                 return Err(PlanError::new("fit", "the document draws nothing to fit"));
             };
-            camera.fit_to_bounds(min, max, FIT_PADDING_FRACTION);
+            // The same refusal a region gets: below the minimum zoom the
+            // clamp would cut the document off and still answer "fit".
+            match camera.fit_zoom(min, max, FIT_PADDING_FRACTION) {
+                Some(zoom) if zoom < Camera2D::MIN_ZOOM => {
+                    return Err(PlanError::new(
+                        "fit",
+                        format!(
+                            "the document is too large to fit a {} view: it needs zoom {zoom}, below the \
+                             minimum {}; ask for a larger width and height",
+                            view_size(&camera),
+                            Camera2D::MIN_ZOOM
+                        ),
+                    ))
+                }
+                _ => camera.fit_to_bounds(min, max, FIT_PADDING_FRACTION),
+            }
         }
     }
     Ok(camera)
+}
+
+/// `camera`'s view, `width×height` in view pixels, for a refusal.
+fn view_size(camera: &Camera2D) -> String {
+    format!(
+        "{}×{}",
+        (camera.viewport_size.0 as f32 / camera.pixel_ratio).round(),
+        (camera.viewport_size.1 as f32 / camera.pixel_ratio).round()
+    )
 }
 
 /// One side of the image: `side × scale`, rounded, and never empty.
@@ -261,10 +289,9 @@ fn frame_region(camera: &mut Camera2D, live: &Camera2D, region: Region) -> Resul
         return Err(PlanError::new(
             "region",
             format!(
-                "`region` is too large to frame at a {}×{} view: it needs zoom {zoom}, below the \
+                "`region` is too large to frame at a {} view: it needs zoom {zoom}, below the \
                  minimum {}; ask for a larger width and height",
-                (camera.viewport_size.0 as f32 / camera.pixel_ratio).round(),
-                (camera.viewport_size.1 as f32 / camera.pixel_ratio).round(),
+                view_size(camera),
                 Camera2D::MIN_ZOOM
             ),
         ));
@@ -537,7 +564,7 @@ mod tests {
                     space: Space::Surface
                 }),
                 scale: 2.0,
-                console: ConsoleLayer::Omitted,
+                modal: ModalLayer::Omitted,
             }
         );
         let bare = ScreenshotLine {
@@ -550,7 +577,7 @@ mod tests {
             CaptureRequest::from_console_line(&bare),
             CaptureRequest {
                 framing: Framing::Fit,
-                console: ConsoleLayer::Omitted,
+                modal: ModalLayer::Omitted,
                 ..CaptureRequest::default()
             }
         );
@@ -614,6 +641,20 @@ mod tests {
         };
         expected.fit_to_bounds(min, max, FIT_PADDING_FRACTION);
         assert_eq!(camera, expected);
+
+        // Content that would need a zoom below the minimum is refused,
+        // as a region is, rather than framed cut off.
+        let vast = PlanContext {
+            content: Some((Vec2::ZERO, Vec2::new(1.0e7, 10.0))),
+            ..context()
+        };
+        let refused = plan(&request(None, Framing::Fit, 1.0), &vast).expect_err("cut off");
+        assert_eq!(refused.param, "fit");
+        assert!(
+            refused.message.contains("larger width and height"),
+            "{}",
+            refused.message
+        );
 
         let empty = PlanContext {
             content: None,

@@ -32,14 +32,20 @@ pub(super) struct PreparedFrame {
     palette_vertices: u32,
 }
 
-/// Whether a frame draws the console overlay. The window always does; a
-/// capture taken *from* the console omits it, because the prompt that
-/// asked for the picture is not what the picture is of. Only the console
-/// is ever omitted, and only while it is open: the color picker, the FPS
-/// readout and the mode-status line are part of what the window shows.
+/// Whether a frame draws the screen-space modal — the console or the
+/// glyph-wheel color picker, whichever is open (they are mutually
+/// exclusive). The window always does. A capture omits it in two cases:
+/// taken *from* the console, because the prompt that asked for the
+/// picture is not what the picture is of; and drawn at a size other than
+/// the window's, because a modal is laid out against the window's size
+/// and has no coherent place in another one. The FPS readout and the
+/// mode-status line are never omitted: they sit at fixed offsets from
+/// the top-left corner, which every size has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConsoleLayer {
+pub(crate) enum ModalLayer {
     Drawn,
+    // Native-only producer: the capture engine; the window always draws.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Omitted,
 }
 
@@ -158,7 +164,7 @@ impl Renderer {
         // On lock contention or prepare failure, skip the rest of this
         // frame — before acquiring a surface texture, so a skipped
         // frame takes no vsync backpressure.
-        let Ok(prepared) = self.prepare_frame(&camera, ConsoleLayer::Drawn) else {
+        let Ok(prepared) = self.prepare_frame(&camera, ModalLayer::Drawn) else {
             return;
         };
         let frame = match self.surface.get_current_texture() {
@@ -189,8 +195,8 @@ impl Renderer {
     /// it with the canvas. For the window, `camera` is the live one and
     /// the ratio is 1.
     ///
-    /// With [`ConsoleLayer::Omitted`] and the console open, its backdrop
-    /// and glyphs are left out of the frame; nothing else changes.
+    /// With [`ModalLayer::Omitted`], an open modal's backdrop and glyphs
+    /// are left out of the frame; nothing else changes.
     ///
     /// Leaves the glyphon viewport at the target's resolution; the next
     /// frame's prepare sets it to its own. `Viewport::update` writes
@@ -198,7 +204,7 @@ impl Renderer {
     pub(super) fn prepare_frame(
         &mut self,
         camera: &Camera2D,
-        console: ConsoleLayer,
+        modal: ModalLayer,
     ) -> Result<PreparedFrame, FrameSkip> {
         let (width, height) = camera.viewport_size;
         let vp_w_px = width as f32;
@@ -251,8 +257,14 @@ impl Renderer {
         // with no tinting, over any canvas background.
         self.console_rect_vertices.clear();
         let ratio = camera.pixel_ratio;
-        let console_backdrop = self.console_backdrop.filter(|_| console == ConsoleLayer::Drawn);
-        for (left, top, w, h) in console_backdrop.into_iter().chain(self.color_picker_backdrop) {
+        let backdrops = match modal {
+            ModalLayer::Drawn => self
+                .console_backdrop
+                .into_iter()
+                .chain(self.color_picker_backdrop),
+            ModalLayer::Omitted => None.into_iter().chain(None),
+        };
+        for (left, top, w, h) in backdrops {
             let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
                 left * ratio,
                 top * ratio,
@@ -308,8 +320,8 @@ impl Renderer {
         // the atlas. Shared with `prewarm()` (through `render`) so the
         // warm-up sees exactly the same glyph set that the next real
         // frame will draw — no risk of warming a different set than
-        // gets rasterised.
-        self.prepare_text_for_pass(camera, console)?;
+        // gets rasterized.
+        self.prepare_text_for_pass(camera, modal)?;
         Ok(PreparedFrame {
             main_bytes: main_bytes_len as u64,
             palette_bytes: palette_bytes_len as u64,
@@ -424,7 +436,7 @@ impl Renderer {
     /// would reject it across a method boundary, which is why the
     /// prepare call lives in this method rather than splitting into
     /// a `collect_text_areas` helper.
-    fn prepare_text_for_pass(&mut self, camera: &Camera2D, console: ConsoleLayer) -> Result<(), FrameSkip> {
+    fn prepare_text_for_pass(&mut self, camera: &Camera2D, modal_layer: ModalLayer) -> Result<(), FrameSkip> {
         let vp_w = camera.viewport_size.0 as i32;
         let vp_h = camera.viewport_size.1 as i32;
         let ratio = camera.pixel_ratio;
@@ -485,14 +497,12 @@ impl Renderer {
         // `rebuild_overlay_scene_buffers` from the respective
         // overlay tree in `AppScene`) — they are mutually exclusive
         // screen-space modals sharing this one pass — which is also
-        // why an omitted console omits the whole sub-scene: while the
-        // console is open, it is the console.
-        let modal: &[super::scene_shape_cache::ShapedSceneElement] =
-            if console == ConsoleLayer::Omitted && self.console_backdrop.is_some() {
-                &[]
-            } else {
-                &self.overlay_scene_elements
-            };
+        // why omitting the modal omits the whole sub-scene: it holds
+        // nothing else.
+        let modal: &[super::scene_shape_cache::ShapedSceneElement] = match modal_layer {
+            ModalLayer::Drawn => &self.overlay_scene_elements,
+            ModalLayer::Omitted => &[],
+        };
         let palette_capacity = super::scene_shape_cache::buffer_count(modal)
             + self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len();

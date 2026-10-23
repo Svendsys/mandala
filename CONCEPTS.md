@@ -3296,8 +3296,10 @@ replaced unasked — the writer the IPC `to_file` sidecar uses too.
 
 A frame the renderer skips (`FrameSkip`: not started, font system
 contended, glyph prepare failed) is reported as not rendered and
-writes no file. The console verb leaves an open console out of its
-own picture (`ConsoleLayer::Omitted`); the IPC command keeps it.
+writes no file. An open modal (console or color picker) is laid out
+against the window, so a capture of another size leaves it out
+(`ModalLayer::Omitted`), and so does the console verb, from its own
+picture; the IPC command at the window's size keeps it.
 
 **Caveat:** native-only — the readback blocks on a buffer map, which
 a browser cannot do (`CLAUDE.md` "Dual-target status"; browser

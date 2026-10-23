@@ -37,6 +37,7 @@ pub(super) fn take(ctx: &mut InputHandlerContext<'_>, line: &ScreenshotLine) -> 
         renderer: ctx.renderer,
         scene_cache: ctx.scene_cache,
         interaction_mode: ctx.interaction_mode,
+        watchdog: ctx.watchdog,
     };
     let destination = Destination::Path {
         path,

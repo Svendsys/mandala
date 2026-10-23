@@ -150,7 +150,11 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         let window = event_loop
             .create_window(Window::default_attributes())
             .expect("Failed to create application window");
-        self.init = Some(run_native_init::build(&self.options, Arc::new(window)));
+        self.init = Some(run_native_init::build(
+            &self.options,
+            Arc::new(window),
+            self.watchdog.clone(),
+        ));
         // Ping once as soon as the window is up so the watchdog
         // knows the main loop has reached a live state. Before
         // this point, the watchdog treats the zeroed atomic as
@@ -368,6 +372,10 @@ pub(super) struct InitState {
     /// first use, bounded, and removed in `NativeApp::exiting`
     /// (`format/ipc.md` §`capture`, "Artifact lifecycle").
     pub(super) artifacts: Artifacts,
+    /// A handle on the event loop's freeze watchdog, for main-thread
+    /// work that runs long while making progress — a screenshot ticks
+    /// it per band and per encoded chunk (`app::capture_flow`).
+    pub(super) watchdog: FreezeWatchdog,
 }
 
 impl InitState {
@@ -399,6 +407,7 @@ impl InitState {
             keybinds: &self.keybinds,
             macros: &mut self.macros,
             artifacts: &mut self.artifacts,
+            watchdog: &self.watchdog,
         }
     }
 

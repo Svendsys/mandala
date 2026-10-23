@@ -297,6 +297,7 @@ impl CommandTarget for IpcCommandTarget<'_> {
             renderer: &mut init.renderer,
             scene_cache: &mut init.scene_cache,
             interaction_mode: &init.interaction_mode,
+            watchdog: &init.watchdog,
         };
         let taken = capture_flow::capture(scene, request, destination, sidecar, &mut init.artifacts);
         // After the capture, which ran the camera-geometry rebuild the

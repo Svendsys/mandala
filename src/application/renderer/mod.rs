@@ -100,7 +100,7 @@ pub(crate) use capture::{CaptureFailure, CapturedPixels};
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use capture::GPU_WAIT as CAPTURE_GPU_WAIT;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use render::{ConsoleLayer, FrameSkip};
+pub(crate) use render::{FrameSkip, ModalLayer};
 // The console overlay's geometry vocabulary, re-exported for the
 // app-side console shell (`app::console_input`) that fills it in.
 // That shell is native-gated, so on wasm32 nothing consumes these —
