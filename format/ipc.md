@@ -1901,8 +1901,8 @@ observation that produced it.
 | `selection_changed` | `selection` (as `query.selection` reports it) | the selection differs |
 | `camera_changed` | `camera` (as `query.camera` reports it) | the camera's center, zoom or surface size differs |
 | `mode_changed` | `mode` (the interaction mode, as `query.mode` reports it under `interaction_mode`) | the interaction mode differs |
-| `animation_started` | `animations`: `[{target_id, section_idx, mutation_id}]` | animations began; an animation re-triggered after it ended is a new one |
-| `animation_completed` | `animations`, as above | animations committed or ended |
+| `animation_started` | `animations`: `[{id, target_id, section_idx, mutation_id}]` | animations began; `id` names the running animation and never changes while it runs, so an animation re-triggered after it ended is a new `id` under the same `(target_id, section_idx, mutation_id)` |
+| `animation_completed` | `animations`, as above | animations committed or ended, by `id`. When one observation holds both the end of an animation and its re-trigger, `animation_completed` is sent first |
 
 `source` says which funnel was driving when the document's revision
 last advanced: `action` (`dispatch_action`: a key binding, a gesture,
@@ -1929,7 +1929,10 @@ the swap's `document_revision` is the same in both.
   `animation_*` classes carry *deltas* (what began or ended since the
   last look), so coalescing them concatenates their `animations`
   rather than keeping the newest: no start or completion is lost to
-  a later one. With `verbose`, every observation is its own event and
+  a later one. A delta is folded into the newest queued event of its
+  class only when no event of the other delta class was queued after
+  it, so a re-trigger never reaches the client ahead of the
+  completion it follows. With `verbose`, every observation is its own event and
   a macro **an agent runs** (`act.macro`) is observed **between its
   steps** as well, so the same macro yields an event per step that
   changed something. A macro a person triggers from the keyboard is
@@ -1947,8 +1950,10 @@ the swap's `document_revision` is the same in both.
   newer event of its class replaces it (deltas fold instead, see
   above), so a client that is slow to read loses *stale* events,
   never its session; the outbound thread wakes the loop when there is
-  room. (A `verbose` queue is capped at 4096 events and drops the
-  oldest.) Events already in the queue are not recalled.
+  room. (A queue is capped at 4096 events and
+  drops the oldest, which only a `verbose` subscription, or a client
+  that stops reading while animations alternate between starting and
+  ending, can reach.) Events already in the queue are not recalled.
 - No subscription, no observation between commands: the event loop's
   tap is a branch on the empty subscription set.
 

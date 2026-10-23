@@ -161,6 +161,14 @@ fn test_a_successor_continues_the_counter_and_moves_the_generation_on() {
     assert_eq!(next.generation(), 1);
     assert!(!next.dirty, "a replacement is not unsaved work");
 
+    let mut console = load_test_doc();
+    console.with_source(ChangeSource::Console, |next| next.succeed(&old));
+    assert_eq!(
+        console.last_change_source(),
+        ChangeSource::Console,
+        "the swap is stamped by whichever funnel performs it"
+    );
+
     let mut third = load_test_doc();
     third.succeed(&next);
     assert_eq!((third.revision(), third.generation()), (4, 2));
@@ -216,5 +224,41 @@ fn test_no_production_code_sets_dirty_directly() {
         offenders.is_empty(),
         "these set `dirty` without advancing the revision; call `mark_dirty()`:\n  {}",
         offenders.join("\n  ")
+    );
+}
+
+#[test]
+fn test_an_animations_identity_is_new_per_start_and_never_repeats_across_a_swap() {
+    let slide = || {
+        TestNudgeMutation::new("slide", TargetScope::SelfOnly)
+            .magnitude(10.0)
+            .timing(AnimationTiming {
+                duration_ms: 100,
+                delay_ms: 0,
+                easing: Easing::Linear,
+                then: None,
+            })
+            .build()
+    };
+    let mut doc = load_test_doc();
+    let node = first_testament_node_id(&doc);
+    doc.start_animation(&slide(), &node, 0);
+    let first = doc.active_animations[0].seq;
+    doc.shift_active_animations_start_ms(500);
+    assert_eq!(
+        doc.active_animations[0].seq, first,
+        "a running animation keeps its identity"
+    );
+    doc.tick_animations(10_000, None);
+    doc.start_animation(&slide(), &node, 20_000);
+    let second = doc.active_animations[0].seq;
+    assert!(second > first, "a re-trigger is a new animation");
+
+    let mut next = load_test_doc();
+    next.succeed(&doc);
+    next.start_animation(&slide(), &node, 0);
+    assert!(
+        next.active_animations[0].seq > second,
+        "the replacement carries the counter on, so no identity repeats in a process"
     );
 }

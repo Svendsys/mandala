@@ -230,38 +230,36 @@ impl CameraKey {
     }
 }
 
-/// A running animation, as the tracker names it: the re-trigger dedup
-/// key `start_animation` uses.
+/// A running animation, as the tracker names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AnimationKey {
+    /// The animation's identity (`AnimationInstance::seq`): constant
+    /// while it runs, new when the same `(target_id, section_idx,
+    /// mutation_id)` is triggered again after it ended. Compared
+    /// alone; the rest is for the payload.
+    seq: u64,
     target_id: String,
     section_idx: Option<usize>,
     mutation_id: String,
-    /// What tells a restart from the animation it replaced: one that
-    /// completed and was triggered again between two observations has
-    /// the same name and a later start.
-    start_ms: u64,
 }
 
 impl AnimationKey {
     fn of(animation: &crate::application::document::AnimationInstance) -> Self {
         AnimationKey {
+            seq: animation.seq,
             target_id: animation.target_id.clone(),
             section_idx: animation.section_idx,
             mutation_id: animation.mutation_id().to_string(),
-            start_ms: animation.start_ms,
         }
     }
 
     fn is(&self, animation: &crate::application::document::AnimationInstance) -> bool {
-        self.target_id == animation.target_id
-            && self.section_idx == animation.section_idx
-            && self.mutation_id == animation.mutation_id()
-            && self.start_ms == animation.start_ms
+        self.seq == animation.seq
     }
 
     fn to_json(&self) -> Value {
         json!({
+            "id": self.seq,
             "target_id": self.target_id,
             "section_idx": self.section_idx,
             "mutation_id": self.mutation_id,
@@ -431,14 +429,17 @@ impl Tracker {
                 .filter(|key| !animations.iter().any(|anim| key.is(anim)))
                 .map(AnimationKey::to_json)
                 .collect();
-            if !started.is_empty() {
-                push(Class::AnimationStarted, object(json!({ "animations": started })));
-            }
+            // Completed first: an animation that ended and was triggered
+            // again since the last look must read as the old one ending
+            // and the new one beginning, in that order.
             if !completed.is_empty() {
                 push(
                     Class::AnimationCompleted,
                     object(json!({ "animations": completed })),
                 );
+            }
+            if !started.is_empty() {
+                push(Class::AnimationStarted, object(json!({ "animations": started })));
             }
         }
 
@@ -570,14 +571,27 @@ impl Session {
         for Change { class, data } in changes {
             if !self.subscriptions.verbose {
                 if class.is_delta() {
-                    // A delta event is folded into the one waiting, in
-                    // its place, so what it says survives and the
-                    // order of started and completed does too.
-                    if let Some(waiting) = self.pending.iter_mut().rev().find(|queued| queued.class == class)
-                    {
+                    // A delta event is folded into the newest one of its
+                    // class that is waiting, in its place, so what it
+                    // says survives. Only when no delta of the *other*
+                    // class was queued after that one: folding across it
+                    // would announce a restart ahead of the completion
+                    // it follows, so the new delta goes to the back.
+                    let waiting = self
+                        .pending
+                        .iter()
+                        .rposition(|queued| queued.class == class)
+                        .filter(|at| {
+                            !self
+                                .pending
+                                .iter()
+                                .skip(at + 1)
+                                .any(|queued| queued.class.is_delta())
+                        });
+                    if let Some(at) = waiting {
                         let mut newer = Event::change(class.name(), data);
-                        fold_animations(&mut waiting.event, &mut newer);
-                        waiting.event = newer;
+                        fold_animations(&mut self.pending[at].event, &mut newer);
+                        self.pending[at].event = newer;
                         continue;
                     }
                 } else {
@@ -737,7 +751,7 @@ pub(crate) mod fixture {
 mod tests {
     use super::*;
     use crate::application::document::tests_common::{
-        first_testament_node_id, load_test_doc, TestNudgeMutation,
+        first_testament_node_id, load_test_doc, two_testament_node_ids, TestNudgeMutation,
     };
     use crate::application::document::{ChangeSource, SelectionState};
     use baumhard::mindmap::animation::{AnimationTiming, Easing};
@@ -979,7 +993,7 @@ mod tests {
         world.doc.start_animation(&cm, &node, 0);
         let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["animation_started"]);
-        let entry = json!({ "target_id": node, "section_idx": null, "mutation_id": "slide" });
+        let entry = json!({ "id": 1, "target_id": node, "section_idx": null, "mutation_id": "slide" });
         assert_eq!(
             find(&changes, Class::AnimationStarted)["animations"],
             json!([entry.clone()])
@@ -998,6 +1012,182 @@ mod tests {
         assert_eq!(
             find(&changes, Class::DocumentChanged)["source"],
             json!("mutation")
+        );
+    }
+
+    fn slide(id: &str) -> baumhard::mindmap::custom_mutation::CustomMutation {
+        TestNudgeMutation::new(id, TargetScope::SelfOnly)
+            .magnitude(100.0)
+            .timing(AnimationTiming {
+                duration_ms: 500,
+                delay_ms: 0,
+                easing: Easing::Linear,
+                then: None,
+            })
+            .build()
+    }
+
+    fn animation_targets(data: &Value) -> Vec<String> {
+        data["animations"]
+            .as_array()
+            .expect("animations")
+            .iter()
+            .map(|entry| entry["target_id"].as_str().expect("target").to_string())
+            .collect()
+    }
+
+    /// The animation events a session holds, in delivery order, as
+    /// `(class, targets)`.
+    fn animation_events(session: &mut Session) -> Vec<(&'static str, Vec<String>)> {
+        drain(session)
+            .into_iter()
+            .filter(|(name, _)| name.starts_with("animation"))
+            .map(|(name, data)| (name, animation_targets(&data)))
+            .collect()
+    }
+
+    #[test]
+    fn test_animations_that_start_in_one_drain_are_one_event_carrying_all_of_them() {
+        let mut world = World::new();
+        let (a, b) = two_testament_node_ids(&world.doc);
+        let mut session = Session::default();
+        session.subscribe(ALL(), false);
+        session.baseline(&world.now());
+        world.doc.start_animation(&slide("slide"), &a, 0);
+        session.observe(&world.now(), Driver::Ipc);
+        world.doc.start_animation(&slide("slide"), &b, 0);
+        session.observe(&world.now(), Driver::Ipc);
+        let events = drain(&mut session);
+        assert_eq!(events.len(), 1, "coalesced");
+        assert_eq!(events[0].0, "animation_started");
+        assert_eq!(animation_targets(&events[0].1), [a, b], "neither start is lost");
+        assert_eq!(
+            events[0].1["revision"],
+            json!(2),
+            "stamped with the newest revision"
+        );
+    }
+
+    #[test]
+    fn test_animations_in_one_burst_fold_into_one_event_per_class_in_order() {
+        let mut world = World::new();
+        let (a, b) = two_testament_node_ids(&world.doc);
+        let mut session = Session::default();
+        session.subscribe(ALL(), false);
+        session.baseline(&world.now());
+        world.doc.start_animation(&slide("slide"), &a, 0);
+        session.observe(&world.now(), Driver::App);
+        world.doc.start_animation(&slide("slide"), &b, 0);
+        session.observe(&world.now(), Driver::App);
+        world.doc.tick_animations(1_000, None);
+        session.observe(&world.now(), Driver::App);
+        assert_eq!(
+            animation_events(&mut session),
+            [
+                ("animation_started", vec![a.clone(), b.clone()]),
+                ("animation_completed", vec![a, b]),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_new_delta_is_not_folded_across_the_other_class_queued_after_its_sibling() {
+        let mut world = World::new();
+        let (a, x) = two_testament_node_ids(&world.doc);
+        let mut session = Session::default();
+        session.subscribe(ALL(), false);
+        world.doc.start_animation(&slide("slide"), &a, 0);
+        session.baseline(&world.now());
+        // started{x} and completed{a} wait, in that order. `x` starts
+        // late enough to still be running when `a` ends.
+        world.doc.start_animation(&slide("slide"), &x, 900);
+        session.observe(&world.now(), Driver::App);
+        world.doc.tick_animations(1_000, None);
+        session.observe(&world.now(), Driver::App);
+        // `a` is triggered again.
+        world.doc.start_animation(&slide("slide"), &a, 2_000);
+        session.observe(&world.now(), Driver::App);
+        assert_eq!(
+            animation_events(&mut session),
+            [
+                ("animation_started", vec![x]),
+                ("animation_completed", vec![a.clone()]),
+                ("animation_started", vec![a]),
+            ],
+            "the restart arrives after the completion it follows, and on its own"
+        );
+    }
+
+    #[test]
+    fn test_a_held_back_delta_is_never_superseded() {
+        let mut world = World::new();
+        let (a, b) = two_testament_node_ids(&world.doc);
+        let mut session = Session::default();
+        session.subscribe(ALL(), false);
+        session.baseline(&world.now());
+        world.doc.start_animation(&slide("slide"), &a, 0);
+        session.observe(&world.now(), Driver::App);
+        let held = session.pop_pending().expect("queued");
+        world.doc.start_animation(&slide("slide"), &b, 0);
+        session.observe(&world.now(), Driver::App);
+        session.requeue(held);
+        assert_eq!(
+            animation_events(&mut session),
+            [("animation_started", vec![a]), ("animation_started", vec![b])],
+            "both delivered, the held one first"
+        );
+    }
+
+    #[test]
+    fn test_an_animation_restarted_between_observations_is_a_completion_then_a_start_with_a_new_id() {
+        let mut world = World::new();
+        let node = first_testament_node_id(&world.doc);
+        world.doc.start_animation(&slide("slide"), &node, 0);
+        let mut tracker = baselined(&world);
+        world.doc.tick_animations(1_000, None);
+        world.doc.start_animation(&slide("slide"), &node, 2_000);
+        let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
+        assert!(revisions.revision > 0);
+        assert_eq!(
+            names(&changes),
+            ["document_changed", "animation_completed", "animation_started"],
+            "the old one ends before the new one begins"
+        );
+        let ended = &find(&changes, Class::AnimationCompleted)["animations"][0];
+        let began = &find(&changes, Class::AnimationStarted)["animations"][0];
+        assert_eq!(ended["target_id"], began["target_id"]);
+        assert_eq!(ended["mutation_id"], began["mutation_id"]);
+        assert_ne!(ended["id"], began["id"], "the payload says which one is new");
+    }
+
+    #[test]
+    fn test_shifting_the_start_of_running_animations_is_not_a_change() {
+        // A tree-mutating drag released after a pause moves every
+        // running animation's start forward so none snaps to its end.
+        let mut world = World::new();
+        let (a, b) = two_testament_node_ids(&world.doc);
+        world.doc.start_animation(&slide("slide"), &a, 0);
+        world.doc.start_animation(&slide("slide"), &b, 100);
+        let mut tracker = baselined(&world);
+        world.doc.shift_active_animations_start_ms(750);
+        let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
+        assert!(changes.is_empty(), "{:?}", names(&changes));
+        assert_eq!(revisions.revision, 0);
+    }
+
+    #[test]
+    fn test_reordering_the_running_animations_is_not_a_change() {
+        let mut world = World::new();
+        let (a, b) = two_testament_node_ids(&world.doc);
+        world.doc.start_animation(&slide("slide"), &a, 0);
+        world.doc.start_animation(&slide("slide"), &b, 0);
+        let mut tracker = baselined(&world);
+        world.doc.active_animations.reverse();
+        let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
+        assert!(changes.is_empty());
+        assert_eq!(
+            revisions.revision, 0,
+            "the same animations in another order: nothing happened"
         );
     }
 

@@ -81,6 +81,10 @@ pub struct Revision {
     source: ChangeSource,
     /// The funnel driving right now.
     driver: ChangeSource,
+    /// Animations started so far, carried across a replacement like
+    /// the counters are: the identity of a running animation
+    /// (`AnimationInstance::seq`) must not repeat in one process.
+    animation_seq: u64,
 }
 
 impl MindMapDocument {
@@ -146,6 +150,12 @@ impl MindMapDocument {
         result
     }
 
+    /// The identity for an animation that is starting now.
+    pub(super) fn next_animation_seq(&mut self) -> u64 {
+        self.revision.animation_seq += 1;
+        self.revision.animation_seq
+    }
+
     /// Make `self` the successor of `predecessor` in this process: the
     /// revision continues from where it stopped, one past it, so the
     /// swap is itself a change, and the generation moves on. Called
@@ -155,6 +165,7 @@ impl MindMapDocument {
     pub fn succeed(&mut self, predecessor: &MindMapDocument) {
         self.revision.generation = predecessor.revision.generation + 1;
         self.revision.count = predecessor.revision.count;
+        self.revision.animation_seq = predecessor.revision.animation_seq;
         self.advance_revision();
     }
 }

@@ -329,7 +329,9 @@ impl MindMapDocument {
         // same datum.
         let mut cm_for_completion = cm.clone();
         cm_for_completion.timing = None;
+        let seq = self.next_animation_seq();
         self.active_animations.push(AnimationInstance {
+            seq,
             target_id: target_id.to_string(),
             section_idx,
             from_node,
