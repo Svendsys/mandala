@@ -23,8 +23,9 @@
 //!
 //! **Nothing here can wedge the loop.** A frame is one render and one
 //! readback, ticked into the watchdog as a screenshot's are; the encode
-//! that follows is deferred until `PENDING_BYTES` of frames wait (or the
-//! recording ends) and ticks the watchdog per chunk; a frame that
+//! that follows is deferred — to loop time that would otherwise be slept
+//! through ([`idle`]), to the moment `PENDING_BYTES` of frames wait, or
+//! to the end of the recording — and ticks the watchdog per chunk; a frame that
 //! cannot be taken is a gap in the manifest, not an error, and a
 //! recording that can no longer be written ends itself with the reason.
 //!
@@ -136,8 +137,10 @@ pub(super) fn start(
         height,
         fps,
         max_frames,
+        // The report of a recording that ended on its own and was never
+        // collected is replaced by this one; it is handed back instead.
+        previous: recorder.finished.take(),
     };
-    recorder.finished = None;
     recorder.active = Some(recording);
     // A first frame can already be the last of a one-frame recording.
     settle(recorder, artifacts, watchdog, now);
@@ -302,10 +305,19 @@ pub(super) fn stop(
 }
 
 /// The app is closing: finish the recording in progress so its frames
-/// and manifest are on disk. A recording in the artifacts dir goes with
-/// the dir.
+/// and manifest are on disk. A recording in the artifacts dir is
+/// dropped unfinished, since the dir goes with the exit.
 pub(super) fn shutdown(recorder: &mut Recorder, artifacts: &mut Artifacts, watchdog: &FreezeWatchdog) {
-    if recorder.active.is_none() {
+    let Some(active) = recorder.active.as_ref() else {
+        return;
+    };
+    // The artifacts dir is removed whole right after this, so finishing a
+    // recording in it would encode the frames that wait and write a
+    // manifest only to delete them: the exit would stall on work nobody
+    // can read.
+    if active.in_artifacts() {
+        log::info!("record: dropping the recording in the artifacts dir on exit");
+        recorder.active = None;
         return;
     }
     end(recorder, artifacts, watchdog, Stopped::Shutdown, None);
@@ -518,6 +530,27 @@ mod tests {
         recorder.active = Some(over);
         settle(&mut recorder, &mut artifacts, &watchdog, now_ms());
         assert!(matches!(&recorder.finished, Some(Ok(s)) if s.stopped == Stopped::DiskBudget));
+        artifacts.remove();
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    /// On exit a recording in the artifacts dir is dropped, not finished:
+    /// the dir is removed right after, so encoding the waiting frames
+    /// would be seconds of work for files nobody can read.
+    #[test]
+    fn test_shutdown_drops_a_recording_in_the_artifacts_dir_unfinished() {
+        let root = scratch_dir("flow-shutdown-artifacts");
+        let mut artifacts = Artifacts::under(root.clone(), BUDGET_BYTES);
+        let watchdog = watchdog();
+        let rec = artifacts.next_dir("recording").expect("dir");
+        let mut recorder = recorder_with(recording(rec.clone(), 3, 10, Some(BUDGET_BYTES)));
+        shutdown(&mut recorder, &mut artifacts, &watchdog);
+        assert!(recorder.active.is_none() && recorder.finished.is_none());
+        assert_eq!(
+            crate::application::guarded_file::tests::names_in(&rec),
+            Vec::<String>::new(),
+            "nothing was encoded and no manifest written"
+        );
         artifacts.remove();
         std::fs::remove_dir_all(&root).expect("cleanup");
     }

@@ -9,13 +9,14 @@
 //! **A recording is a sequence of screenshots and a manifest.** Each
 //! frame is drawn by the same engine a screenshot is
 //! (`app::capture_flow::draw`), then held in memory as raw pixels and
-//! encoded to `frame_%05d.png` in the recording's directory only when
-//! [`PENDING_BYTES`] of them have piled up, and when the recording
-//! ends. A frame costs the loop one render and one readback, never an
-//! encode: "encoding after `stop`, not during capture, keeps per-frame
-//! cost to a texture copy." `manifest.json` is the contract with
-//! whatever assembles the frames (`mandalactl record assemble`, or any
-//! tool that reads JSON).
+//! encoded to `frame_%05d.png` in the recording's directory later, in
+//! three places: in loop time that would otherwise be slept through
+//! ([`Recording::encode_in_idle`]), when [`PENDING_BYTES`] of them have
+//! piled up, and when the recording ends. A frame costs the loop one
+//! render and one readback and never an encode: "encoding after `stop`,
+//! not during capture, keeps per-frame cost to a texture copy."
+//! `manifest.json` is the contract with whatever assembles the frames
+//! (`mandalactl record assemble`, or any tool that reads JSON).
 //!
 //! **Pacing is a pure function of the clock.** [`Timeline`] decides,
 //! from the elapsed time alone, when the next frame is due and how
@@ -45,7 +46,7 @@
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -89,11 +90,44 @@ pub(crate) const MAX_UNRENDERED_STREAK: u32 = 100;
 /// make the next boundary late.
 const IDLE_ENCODE_MARGIN: f64 = 1.5;
 
+/// How often idle-time encoding rewrites the manifest at most. The
+/// manifest grows with the frames, and a rewrite is a temp file, an
+/// `fsync` and a rename: once per frame would be quadratic in the
+/// recording's length and an unbudgeted stall in the idle time it
+/// spends. A flush and the end of the recording always write it.
+const IDLE_MANIFEST_EVERY: Duration = Duration::from_secs(2);
+
 /// The manifest's file name, in the recording's directory.
 pub(crate) const MANIFEST_FILE: &str = "manifest.json";
 
 /// The manifest's `pacing` when frame times are the wall clock's.
 pub(crate) const PACING_REALTIME: &str = "realtime";
+
+/// A count the caller may have typed: `typed` if it lies in `range`,
+/// `default` if there is none. `Err` carries the range so each surface
+/// can word the refusal in its own terms. The one check behind
+/// `fps` and `max_frames` on every surface (IPC and console), so the
+/// bounds cannot drift apart.
+pub(crate) fn bounded(
+    typed: Option<u64>,
+    range: RangeInclusive<u32>,
+    default: u32,
+) -> Result<u32, RangeInclusive<u32>> {
+    match typed {
+        None => Ok(default),
+        Some(n) => u32::try_from(n).ok().filter(|n| range.contains(n)).ok_or(range),
+    }
+}
+
+/// `fps`, as typed or the default, within [`FPS_RANGE`].
+pub(crate) fn fps_of(typed: Option<u64>) -> Result<u32, RangeInclusive<u32>> {
+    bounded(typed, FPS_RANGE, DEFAULT_FPS)
+}
+
+/// `max_frames`, as typed or the default, within `1..=`[`MAX_FRAMES`].
+pub(crate) fn max_frames_of(typed: Option<u64>) -> Result<u32, RangeInclusive<u32>> {
+    bounded(typed, 1..=MAX_FRAMES, DEFAULT_MAX_FRAMES)
+}
 
 /// The file name of frame `index`.
 pub(crate) fn frame_file(index: u32) -> String {
@@ -269,6 +303,10 @@ pub(crate) struct Started {
     pub(crate) height: u32,
     pub(crate) fps: u32,
     pub(crate) max_frames: u32,
+    /// How an earlier recording that ended on its own ended, if no stop
+    /// had collected it: starting a new one discards that report, and
+    /// says so here rather than letting it go unseen.
+    pub(crate) previous: Option<Result<Summary, String>>,
 }
 
 /// What a finished recording amounts to.
@@ -316,6 +354,8 @@ pub(crate) struct Recording {
     written_bytes: u64,
     /// The size of the manifest as last written.
     manifest_bytes: u64,
+    /// When the manifest was last written.
+    manifest_written: Option<Instant>,
     /// Frames in a row the renderer did not draw ([`MAX_UNRENDERED_STREAK`]).
     unrendered_streak: u32,
     /// Where the PNGs may not pass, for a recording in the artifacts
@@ -352,6 +392,7 @@ impl Recording {
             encode_ms: None,
             written_bytes: 0,
             manifest_bytes: 0,
+            manifest_written: None,
             unrendered_streak: 0,
             disk_limit,
         }
@@ -526,8 +567,8 @@ impl Recording {
     /// has measured to cost): the encode the loop does in time it would
     /// otherwise sleep through, so that the rest of the recording's
     /// encode — which [`Self::flush`] pays all at once — is as little as
-    /// it can be. The manifest is rewritten after, so what landed is
-    /// named.
+    /// it can be. The manifest is rewritten after, at most every
+    /// [`IDLE_MANIFEST_EVERY`], so what landed is named.
     pub(crate) fn encode_in_idle(
         &mut self,
         mut budget_ms: f64,
@@ -545,9 +586,14 @@ impl Recording {
             budget_ms -= started.elapsed().as_secs_f64() * 1000.0;
             encoded = true;
         }
-        if encoded {
+        if encoded
+            && self
+                .manifest_written
+                .is_none_or(|at| at.elapsed() >= IDLE_MANIFEST_EVERY)
+        {
             // So a recording the app never finishes is still readable:
-            // the manifest names the files that landed.
+            // the manifest names the files that landed, as of a moment
+            // ago.
             self.write_manifest(now_ms, None)?;
         }
         Ok(())
@@ -636,6 +682,7 @@ impl Recording {
             gaps: &self.gaps,
         };
         let path = self.manifest_path();
+        self.manifest_written = Some(Instant::now());
         self.manifest_bytes = guarded_file::publish(&path, true, |out| {
             serde_json::to_writer(out, &manifest).map_err(|e| e.to_string())
         })
@@ -1339,5 +1386,54 @@ mod tests {
         assert_eq!(dir_bytes(&dir), 15);
         assert_eq!(dir_bytes(&dir.join("missing")), 0);
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// Idle encoding does not rewrite the manifest for every frame — it
+    /// grows with the recording, and a rewrite is an `fsync` — but only
+    /// once it is stale; a flush always brings it up to date.
+    #[test]
+    fn test_idle_encoding_rewrites_the_manifest_at_most_every_couple_of_seconds() {
+        let dir = scratch_dir("record-idle-throttle");
+        let mut recording = Recording::begin(config(10, 10), dir.clone(), 0.0, None);
+        recording.push_frame(0.0, 1, camera(), pixels(1));
+        recording.encode_in_idle(1.0e9, 0.0, &mut || {}).expect("first");
+        assert_eq!(read_manifest(&dir)["frames"].as_array().expect("frames").len(), 1);
+
+        recording.push_frame(100.0, 1, camera(), pixels(2));
+        recording
+            .encode_in_idle(1.0e9, 100.0, &mut || {})
+            .expect("second");
+        assert!(dir.join("frame_00001.png").exists(), "the frame was encoded");
+        assert_eq!(
+            read_manifest(&dir)["frames"].as_array().expect("frames").len(),
+            1,
+            "the manifest was written a moment ago and is not rewritten yet"
+        );
+
+        recording.manifest_written = Instant::now().checked_sub(IDLE_MANIFEST_EVERY);
+        recording.push_frame(200.0, 1, camera(), pixels(3));
+        recording.encode_in_idle(1.0e9, 200.0, &mut || {}).expect("third");
+        assert_eq!(
+            read_manifest(&dir)["frames"].as_array().expect("frames").len(),
+            3,
+            "stale: rewritten"
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// The two bounds, as every surface asks for them.
+    #[test]
+    fn test_the_shared_bounds_check_defaults_and_refuses() {
+        assert_eq!(fps_of(None), Ok(DEFAULT_FPS));
+        assert_eq!(fps_of(Some(1)), Ok(1));
+        assert_eq!(fps_of(Some(60)), Ok(60));
+        assert_eq!(fps_of(Some(0)), Err(1..=60));
+        assert_eq!(fps_of(Some(61)), Err(1..=60));
+        assert_eq!(fps_of(Some(u64::MAX)), Err(1..=60));
+        assert_eq!(max_frames_of(None), Ok(DEFAULT_MAX_FRAMES));
+        assert_eq!(max_frames_of(Some(3600)), Ok(3600));
+        assert_eq!(max_frames_of(Some(0)), Err(1..=3600));
+        assert_eq!(max_frames_of(Some(3601)), Err(1..=3600));
+        assert_eq!(max_frames_of(Some(u64::from(u32::MAX) + 1)), Err(1..=3600));
     }
 }

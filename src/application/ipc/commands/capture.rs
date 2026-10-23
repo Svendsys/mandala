@@ -27,9 +27,7 @@ use serde_json::{json, Map, Value};
 
 use crate::application::capture::geometry::CameraInfo;
 use crate::application::capture::plan::{CaptureRequest, Framing, Region};
-use crate::application::capture::record::{
-    RecordDestination, DEFAULT_FPS, DEFAULT_MAX_FRAMES, FPS_RANGE, MAX_FRAMES,
-};
+use crate::application::capture::record::{fps_of, max_frames_of, RecordDestination, Summary};
 use crate::application::capture::{CaptureError, CaptureOutcome, Destination};
 use crate::application::ipc::envelope::Reply;
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
@@ -237,6 +235,13 @@ pub(super) const FAMILY: Family = Family {
                 ParamType::Integer,
                 "The frame count at which the recording stops itself.",
             ),
+            ResultSpec::new(
+                "previous",
+                ParamType::Object,
+                "Present when an earlier recording ended on its own and no `capture.record_stop` had \
+                 collected it: that report (what `capture.record_stop` returns), or {error} for one that \
+                 failed. Starting a recording discards it, so it is handed back here.",
+            ),
         ],
         run: record_start,
     },
@@ -312,14 +317,26 @@ fn record_start(call: &mut Call<'_>) -> Reply {
     };
     match app.record_start(&parsed.request, parsed.fps, parsed.max_frames, parsed.destination) {
         None => no_loaded_document(call),
-        Some(Ok(started)) => call.ok(json!({
-            "dir": started.dir.to_string_lossy(),
-            "manifest_path": started.manifest_path.to_string_lossy(),
-            "width": started.width,
-            "height": started.height,
-            "fps": started.fps,
-            "max_frames": started.max_frames,
-        })),
+        Some(Ok(started)) => {
+            let mut result = json!({
+                "dir": started.dir.to_string_lossy(),
+                "manifest_path": started.manifest_path.to_string_lossy(),
+                "width": started.width,
+                "height": started.height,
+                "fps": started.fps,
+                "max_frames": started.max_frames,
+            });
+            if let (Some(previous), Some(object)) = (&started.previous, result.as_object_mut()) {
+                object.insert(
+                    "previous".into(),
+                    match previous {
+                        Ok(summary) => summary_json(summary),
+                        Err(error) => json!({ "error": error }),
+                    },
+                );
+            }
+            call.ok(result)
+        }
         Some(Err(error)) => refuse(call, refusal_of(error)),
     }
 }
@@ -330,20 +347,25 @@ fn record_stop(call: &mut Call<'_>) -> Reply {
         return call.no_document();
     };
     match app.record_stop() {
-        Ok(summary) => call.ok(json!({
-            "dir": summary.dir.to_string_lossy(),
-            "manifest_path": summary.manifest_path.to_string_lossy(),
-            "frames": summary.frames,
-            "dropped_frames": summary.dropped_frames,
-            "duration_ms": summary.duration_ms,
-            "stopped": summary.stopped.word(),
-            "bytes": summary.bytes,
-            "width": summary.width,
-            "height": summary.height,
-            "fps": summary.fps,
-        })),
+        Ok(summary) => call.ok(summary_json(&summary)),
         Err(error) => refuse(call, refusal_of(error)),
     }
+}
+
+/// A finished recording, as `capture.record_stop` reports it.
+fn summary_json(summary: &Summary) -> Value {
+    json!({
+        "dir": summary.dir.to_string_lossy(),
+        "manifest_path": summary.manifest_path.to_string_lossy(),
+        "frames": summary.frames,
+        "dropped_frames": summary.dropped_frames,
+        "duration_ms": summary.duration_ms,
+        "stopped": summary.stopped.word(),
+        "bytes": summary.bytes,
+        "width": summary.width,
+        "height": summary.height,
+        "fps": summary.fps,
+    })
 }
 
 /// A recording's request, as the engine takes it.
@@ -359,22 +381,23 @@ struct ParsedRecording {
 /// cadence and length are bounded here, and its directory is vetted by
 /// the engine, which has the disk.
 fn parse_recording(call: &Call<'_>) -> Result<ParsedRecording, Refusal> {
-    let bounded = |name: &'static str, range: std::ops::RangeInclusive<u32>, default: u32| {
-        call.param(name).map_or(Ok(default), |value| {
-            value
-                .as_u64()
-                .and_then(|v| u32::try_from(v).ok())
-                .filter(|v| range.contains(v))
-                .ok_or_else(|| {
-                    Refusal::Invalid(
-                        name,
-                        format!(
-                            "`{name}` must be a whole number in {}..={}, got {value}",
-                            range.start(),
-                            range.end()
-                        ),
-                    )
-                })
+    // The bounds are `record`'s own (`record::{fps_of, max_frames_of}`),
+    // the same two checks the console runs; only the wording is this
+    // surface's. A value that is no whole number reads as one out of
+    // every range.
+    let bounded = |name: &'static str,
+                   check: fn(Option<u64>) -> Result<u32, std::ops::RangeInclusive<u32>>| {
+        let typed = call.param(name);
+        check(typed.map(|value| value.as_u64().unwrap_or(u64::MAX))).map_err(|range| {
+            Refusal::Invalid(
+                name,
+                format!(
+                    "`{name}` must be a whole number in {}..={}, got {}",
+                    range.start(),
+                    range.end(),
+                    typed.map_or(String::new(), |value| value.to_string())
+                ),
+            )
         })
     };
     Ok(ParsedRecording {
@@ -382,8 +405,8 @@ fn parse_recording(call: &Call<'_>) -> Result<ParsedRecording, Refusal> {
         destination: call.str_param("dir").map_or(RecordDestination::Artifacts, |dir| {
             RecordDestination::Path(PathBuf::from(dir))
         }),
-        fps: bounded("fps", FPS_RANGE, DEFAULT_FPS)?,
-        max_frames: bounded("max_frames", 1..=MAX_FRAMES, DEFAULT_MAX_FRAMES)?,
+        fps: bounded("fps", fps_of)?,
+        max_frames: bounded("max_frames", max_frames_of)?,
     })
 }
 
@@ -598,6 +621,7 @@ mod tests {
                     height: 720,
                     fps: 30,
                     max_frames: 600,
+                    previous: None,
                 }),
                 recordings: Vec::new(),
                 stopped: Ok(Summary {
@@ -1107,5 +1131,51 @@ mod tests {
         let (reply, _) = run_attached(r#"{"id":2,"cmd":"capture.record_stop","extra":1}"#, &mut app);
         assert_eq!(reply["error"]["code"], json!("invalid_params"), "{reply}");
         assert_eq!(app.stops, 1, "an unknown parameter never reaches the engine");
+    }
+
+    /// A recording that ended on its own and was never collected is
+    /// handed back when the next one starts, instead of being dropped
+    /// without a word: its report, or its failure.
+    #[test]
+    fn test_starting_a_recording_hands_back_the_report_it_discards() {
+        let summary = Summary {
+            dir: PathBuf::from("/tmp/old"),
+            manifest_path: PathBuf::from("/tmp/old/manifest.json"),
+            frames: 600,
+            dropped_frames: 0,
+            duration_ms: 20_000.0,
+            stopped: Stopped::MaxFrames,
+            bytes: 9,
+            width: 800,
+            height: 600,
+            fps: 30,
+        };
+        let mut app = CaptureApp::written();
+        if let Ok(started) = &mut app.started {
+            started.previous = Some(Ok(summary));
+        }
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"capture.record_start"}"#, &mut app);
+        assert_eq!(reply["result"]["previous"]["dir"], "/tmp/old");
+        assert_eq!(reply["result"]["previous"]["stopped"], "max_frames");
+        assert_eq!(reply["result"]["previous"]["frames"], 600);
+
+        let mut failed = CaptureApp::written();
+        if let Ok(started) = &mut failed.started {
+            started.previous = Some(Err("the recording ended early: disk full".into()));
+        }
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"capture.record_start"}"#, &mut failed);
+        assert_eq!(
+            reply["result"]["previous"],
+            json!({"error": "the recording ended early: disk full"})
+        );
+
+        let (reply, _) = run_attached(
+            r#"{"id":1,"cmd":"capture.record_start"}"#,
+            &mut CaptureApp::written(),
+        );
+        assert!(
+            reply["result"].get("previous").is_none(),
+            "absent when there was nothing"
+        );
     }
 }

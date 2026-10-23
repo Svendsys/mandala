@@ -905,17 +905,8 @@ impl InitState {
         if self.recorder.active.is_none() {
             return;
         }
-        let scene = super::capture_flow::CaptureScene {
-            moving_node: self.drag_state.is_moving_node(),
-            document: &self.document,
-            mindmap_tree: &self.mindmap_tree,
-            app_scene: &mut self.app_scene,
-            renderer: &mut self.renderer,
-            scene_cache: &mut self.scene_cache,
-            interaction_mode: &self.interaction_mode,
-            watchdog: &self.watchdog,
-        };
-        super::record_flow::tick(scene, &mut self.recorder, &mut self.artifacts);
+        let (scene, artifacts, recorder) = super::capture_flow::CaptureScene::of_init(self);
+        super::record_flow::tick(scene, recorder, artifacts);
     }
 
     /// The loop is about to park with a recording running: encode what

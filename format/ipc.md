@@ -1684,7 +1684,11 @@ directory in the per-session artifacts dir, counted into that dir's
 budget when the recording ends.
 
 Result: `{"dir", "manifest_path", "width", "height", "fps",
-"max_frames"}`. `manifest_path` is where `manifest.json` will be — the
+"max_frames"}`, plus `previous` when an earlier recording had ended on its
+own and no `capture.record_stop` had collected it: starting a recording
+discards that report, so it is handed back here — the same object
+`capture.record_stop` would have returned, or `{"error"}` for a
+recording that failed — and never dropped without a word. `manifest_path` is where `manifest.json` will be — the
 file is written whenever frames are, and complete when the recording
 ends. **The first frame is taken before the reply**, so it shows the
 state the next command acts on; a first frame the renderer cannot draw
@@ -1695,7 +1699,9 @@ capturing across a client disconnect, and a reconnecting controller
 stops it with `capture.record_stop`. It ends by itself at `max_frames`,
 when its PNGs pass the artifacts dir's budget (256 MiB, a recording in
 that dir only), when the renderer has drawn nothing for 100 frames in
-a row, or when the app exits — and a recording that ended on its own is
+a row, or when the app exits (finished first, its frames and manifest
+on disk — except for a recording in the artifacts dir, which is dropped
+unfinished because the dir goes with the exit) — and a recording that ended on its own is
 kept until `capture.record_stop` collects its report, so an agent that
 looked away still finds where its frames went. A recording started
 after that discards the report; the files stay.
@@ -1725,8 +1731,9 @@ and are encoded (a) in time the loop would otherwise sleep through —
 only when no animation frame, redraw or queued command is owed, and
 only as far as the time before the next boundary reaches, judged from
 the measured cost of an encode (the first, unmeasured, is a probe that
-may be late by its own cost, once), the manifest rewritten after so
-what landed is named — (b) when 256 MiB of them have piled up (a stall the loop pays
+may be late by its own cost, once), the manifest rewritten after, at most every two seconds (it grows
+with the recording, and a rewrite is an `fsync`), so what landed is
+named — (b) when 256 MiB of them have piled up (a stall the loop pays
 rarely, ticking the watchdog per 4 MiB chunk, and the boundaries it
 costs are `dropped_frames`), and (c) when the recording ends, which is
 what `capture.record_stop` pays for whatever (a) did not reach. A busy

@@ -31,6 +31,7 @@ use baumhard::mindmap::tree_builder::MindMapTree;
 
 use crate::application::capture::artifacts::Artifacts;
 use crate::application::capture::plan::{plan, CaptureRequest, Framing, PlanContext};
+use crate::application::capture::record::Recorder;
 use crate::application::capture::{geometry, resolve, write, CaptureError, CaptureOutcome, Destination};
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::{
@@ -39,6 +40,8 @@ use crate::application::renderer::{
 use crate::application::scene_host::AppScene;
 
 use super::freeze_watchdog::FreezeWatchdog;
+use super::input_context::InputHandlerContext;
+use super::run_native::InitState;
 use super::scene_rebuild::rebuild_camera_geometry_at;
 use super::InteractionMode;
 
@@ -58,6 +61,46 @@ pub(super) struct CaptureScene<'a> {
     /// Ticked after every readback band and every encoded chunk: a
     /// large capture is long main-thread work that keeps progressing.
     pub(super) watchdog: &'a FreezeWatchdog,
+}
+
+impl<'a> CaptureScene<'a> {
+    /// The scene a capture reads out of the event loop's state, with the
+    /// two other things a capture or a recording needs from it — the
+    /// artifacts dir and the recorder — split off beside it: they are
+    /// different fields, so all three are borrowed at once. The one
+    /// place the loop's scene is assembled, so a field added to
+    /// [`CaptureScene`] (as `moving_node` was) is added once.
+    pub(super) fn of_init(init: &'a mut InitState) -> (Self, &'a mut Artifacts, &'a mut Recorder) {
+        let scene = CaptureScene {
+            moving_node: init.drag_state.is_moving_node(),
+            document: &init.document,
+            mindmap_tree: &init.mindmap_tree,
+            app_scene: &mut init.app_scene,
+            renderer: &mut init.renderer,
+            scene_cache: &mut init.scene_cache,
+            interaction_mode: &init.interaction_mode,
+            watchdog: &init.watchdog,
+        };
+        (scene, &mut init.artifacts, &mut init.recorder)
+    }
+
+    /// The same out of an input handler's context, which the console's
+    /// `screenshot` and `record` verbs run in.
+    pub(super) fn of_context(
+        ctx: &'a mut InputHandlerContext<'_>,
+    ) -> (Self, &'a mut Artifacts, &'a mut Recorder) {
+        let scene = CaptureScene {
+            moving_node: ctx.drag_state.is_moving_node(),
+            document: &*ctx.document,
+            mindmap_tree: &*ctx.mindmap_tree,
+            app_scene: &mut *ctx.app_scene,
+            renderer: &mut *ctx.renderer,
+            scene_cache: &mut *ctx.scene_cache,
+            interaction_mode: &*ctx.interaction_mode,
+            watchdog: ctx.watchdog,
+        };
+        (scene, &mut *ctx.artifacts, &mut *ctx.recorder)
+    }
 }
 
 /// What drawing a frame produced.

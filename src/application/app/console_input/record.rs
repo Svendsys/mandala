@@ -18,9 +18,7 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use crate::application::capture::plan::CaptureRequest;
-use crate::application::capture::record::{
-    RecordDestination, Started, Summary, DEFAULT_FPS, DEFAULT_MAX_FRAMES, FPS_RANGE, MAX_FRAMES,
-};
+use crate::application::capture::record::{fps_of, max_frames_of, RecordDestination, Started, Summary};
 use crate::application::capture::CaptureError;
 use crate::application::console::commands::record::{RecordLine, RecordStartLine};
 use crate::application::console::ExecResult;
@@ -43,37 +41,30 @@ fn start_recording(ctx: &mut InputHandlerContext<'_>, start: &RecordStartLine) -
         Ok(cwd) => console_dir(start.dir.as_deref(), &cwd, unix_ms()),
         Err(e) => return ExecResult::err(format!("record: the working directory cannot be read: {e}")),
     };
-    let bounded = |name: &str, typed: Option<u32>, range: RangeInclusive<u32>, default: u32| match typed {
-        None => Ok(default),
-        Some(n) if range.contains(&n) => Ok(n),
-        Some(n) => Err(format!(
-            "record: {name}={n} must be in {}..={}",
+    // The bounds are `record`'s own, the same two checks IPC runs; only
+    // the wording is the console's.
+    let refusal = |name: &str, typed: Option<u32>, range: RangeInclusive<u32>| {
+        format!(
+            "record: {name}={} must be in {}..={}",
+            typed.map_or(String::new(), |n| n.to_string()),
             range.start(),
             range.end()
-        )),
+        )
     };
-    let (fps, max_frames) = match (
-        bounded("fps", start.fps, FPS_RANGE, DEFAULT_FPS),
-        bounded("max_frames", start.max_frames, 1..=MAX_FRAMES, DEFAULT_MAX_FRAMES),
-    ) {
-        (Ok(fps), Ok(max_frames)) => (fps, max_frames),
-        (Err(message), _) | (_, Err(message)) => return ExecResult::err(message),
+    let fps = match fps_of(start.fps.map(u64::from)) {
+        Ok(fps) => fps,
+        Err(range) => return ExecResult::err(refusal("fps", start.fps, range)),
     };
-    let scene = CaptureScene {
-        moving_node: ctx.drag_state.is_moving_node(),
-        document: ctx.document,
-        mindmap_tree: ctx.mindmap_tree,
-        app_scene: ctx.app_scene,
-        renderer: ctx.renderer,
-        scene_cache: ctx.scene_cache,
-        interaction_mode: ctx.interaction_mode,
-        watchdog: ctx.watchdog,
+    let max_frames = match max_frames_of(start.max_frames.map(u64::from)) {
+        Ok(max_frames) => max_frames,
+        Err(range) => return ExecResult::err(refusal("max_frames", start.max_frames, range)),
     };
+    let (scene, artifacts, recorder) = CaptureScene::of_context(ctx);
     report_start(
         record_flow::start(
             scene,
-            ctx.recorder,
-            ctx.artifacts,
+            recorder,
+            artifacts,
             &CaptureRequest::from_console_view(&start.view),
             fps,
             max_frames,
@@ -98,13 +89,27 @@ fn console_dir(typed: Option<&str>, cwd: &Path, now_ms: u128) -> PathBuf {
 /// what IPC calls `region` and `fit`.
 fn report_start(started: Result<Started, CaptureError>, max_frames: u32) -> ExecResult {
     match started {
-        Ok(started) => ExecResult::ok_msg(format!(
-            "record: {}×{} at {} fps into {} (stops itself after {max_frames} frames; `record stop` ends it)",
-            started.width,
-            started.height,
-            started.fps,
-            started.dir.display()
-        )),
+        Ok(started) => {
+            let discarded = match &started.previous {
+                None => String::new(),
+                Some(Ok(earlier)) => format!(
+                    "; an earlier recording had ended ({}) with {} frames in {}, and its report is discarded",
+                    earlier.stopped.word(),
+                    earlier.frames,
+                    earlier.dir.display()
+                ),
+                Some(Err(why)) => {
+                    format!("; an earlier recording had failed and its report is discarded: {why}")
+                }
+            };
+            ExecResult::ok_msg(format!(
+                "record: {}×{} at {} fps into {} (stops itself after {max_frames} frames; `record stop` ends it){discarded}",
+                started.width,
+                started.height,
+                started.fps,
+                started.dir.display()
+            ))
+        }
         Err(CaptureError::Invalid { param, message }) => {
             let key = match param {
                 "region" | "fit" => "frame",

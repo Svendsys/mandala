@@ -58,9 +58,8 @@ pub enum ScreenshotFrame {
 pub struct ScreenshotLine {
     /// As typed; `None` for the working-directory default.
     pub path: Option<String>,
-    pub size: Option<(u32, u32)>,
-    pub scale: Option<f32>,
-    pub frame: ScreenshotFrame,
+    /// The view it frames; `record start` reads the same one.
+    pub view: ConsoleView,
     pub overwrite: bool,
     pub sidecar: bool,
 }
@@ -245,9 +244,7 @@ fn read_line<'a>(
     let view = read_view("screenshot", &value)?;
     Ok(ScreenshotLine {
         path: path.map(str::to_string),
-        size: view.size,
-        scale: view.scale,
-        frame: view.frame,
+        view,
         overwrite: read_switch("screenshot", &value, "overwrite", false)?,
         sidecar: read_switch("screenshot", &value, "sidecar", true)?,
     })
@@ -286,9 +283,11 @@ mod tests {
             line(&[]),
             ScreenshotLine {
                 path: None,
-                size: None,
-                scale: None,
-                frame: ScreenshotFrame::View,
+                view: ConsoleView {
+                    size: None,
+                    scale: None,
+                    frame: ScreenshotFrame::View,
+                },
                 overwrite: false,
                 sidecar: true,
             }
@@ -311,15 +310,17 @@ mod tests {
             ]),
             ScreenshotLine {
                 path: Some("shots/a.png".into()),
-                size: Some((1920, 1080)),
-                scale: Some(1.5),
-                frame: ScreenshotFrame::Fit,
+                view: ConsoleView {
+                    size: Some((1920, 1080)),
+                    scale: Some(1.5),
+                    frame: ScreenshotFrame::Fit,
+                },
                 overwrite: true,
                 sidecar: false,
             }
         );
         assert_eq!(
-            line(&["frame=-10,20.5, 300,200"]).frame,
+            line(&["frame=-10,20.5, 300,200"]).view.frame,
             ScreenshotFrame::Region {
                 x: -10.0,
                 y: 20.5,
@@ -329,7 +330,7 @@ mod tests {
             }
         );
         assert_eq!(
-            line(&["frame=0,0,640,360", "space=surface"]).frame,
+            line(&["frame=0,0,640,360", "space=surface"]).view.frame,
             ScreenshotFrame::Region {
                 x: 0.0,
                 y: 0.0,

@@ -406,10 +406,12 @@ fn scaled_height(width: u32, height: u32, to_width: u32) -> u32 {
 
 /// `rgba` (`width`×`height`) scaled down to `to_width`×`to_height` by
 /// averaging the source pixels each target pixel covers. The one pass
-/// is O(source pixels); a target as large as the source is the source.
-pub fn shrink(rgba: &[u8], width: u32, height: u32, to_width: u32, to_height: u32) -> Vec<u8> {
+/// is O(source pixels); a target as large as the source is the source
+/// itself, handed back as it came, so the usual unscaled GIF copies no
+/// frame.
+pub fn shrink(rgba: Vec<u8>, width: u32, height: u32, to_width: u32, to_height: u32) -> Vec<u8> {
     if (to_width, to_height) == (width, height) {
-        return rgba.to_vec();
+        return rgba;
     }
     let (width, height) = (width as usize, height as usize);
     let (to_w, to_h) = (to_width as usize, to_height as usize);
@@ -518,7 +520,7 @@ fn write_gif(
     for planned in &plan.frames {
         let frame = &manifest.frames[planned.index];
         let rgba = decode_frame(&dir.join(&frame.file), (manifest.width, manifest.height))?;
-        let mut rgba = shrink(&rgba, manifest.width, manifest.height, width, height);
+        let mut rgba = shrink(rgba, manifest.width, manifest.height, width, height);
         let mut image =
             gif::Frame::from_rgba_speed(width as u16, height as u16, &mut rgba, GIF_QUANTIZER_SPEED);
         image.delay = planned.delay_cs;
@@ -762,6 +764,9 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
 /// command line was wrong; `2` and `4` are the socket's, and nothing
 /// here opens one.
 pub fn run(invocation: &Invocation, io: &mut Io<'_>) -> Exit {
+    if let Err(why) = refuse_socket_options(&invocation.options) {
+        return crate::run::usage(io, &why);
+    }
     let args = match parse_args(&invocation.words, io.cwd) {
         Ok(args) => args,
         Err(why) => return crate::run::usage(io, &why),
@@ -808,6 +813,40 @@ pub fn run(invocation: &Invocation, io: &mut Io<'_>) -> Exit {
     };
     crate::run::emit(io.out, &text);
     Exit::Success
+}
+
+/// The global flags that are about the socket, which this command never
+/// opens: refused as they are for a command they cannot serve
+/// (`--wait-settled` on a read-only verb, `--count` outside a watch), so
+/// an agent that passes one learns it did nothing instead of assuming it
+/// did. `--json` is the one that means something here.
+fn refuse_socket_options(options: &crate::cli::Options) -> Result<(), String> {
+    let defaults = crate::cli::Options::default();
+    let mut given = Vec::new();
+    if options.ipc.is_some() {
+        given.push("--ipc");
+    }
+    if options.wait_settled {
+        given.push("--wait-settled");
+    }
+    if options.timeout != defaults.timeout {
+        given.push("--timeout");
+    }
+    if options.force {
+        given.push("--force");
+    }
+    if options.count.is_some() {
+        given.push("--count");
+    }
+    if given.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "`record {SUBCOMMAND}` reads a recording's files and never talks to the app, so {} would do nothing \
+         here. Remove {}; only --json applies",
+        given.join(", "),
+        if given.len() == 1 { "it" } else { "them" }
+    ))
 }
 
 fn failed(io: &mut Io<'_>, why: &str) -> Exit {
@@ -1223,16 +1262,16 @@ mod tests {
             0, 0, 0, 255, 100, 0, 0, 255, 200, 200, 0, 255, 0, 0, 0, 255, //
             0, 0, 0, 255, 100, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
         ];
-        assert_eq!(shrink(&rgba, 4, 2, 2, 1), [50, 0, 0, 255, 50, 50, 0, 255]);
+        assert_eq!(shrink(rgba.to_vec(), 4, 2, 2, 1), [50, 0, 0, 255, 50, 50, 0, 255]);
         assert_eq!(
-            shrink(&rgba, 4, 2, 4, 2),
+            shrink(rgba.to_vec(), 4, 2, 4, 2),
             rgba,
             "the same size is the same pixels"
         );
         // A ratio that does not divide still covers every target pixel
         // and reads only inside the source.
         let odd = vec![200u8; 7 * 5 * 4];
-        let small = shrink(&odd, 7, 5, 3, 2);
+        let small = shrink(odd, 7, 5, 3, 2);
         assert_eq!(small.len(), 3 * 2 * 4);
         assert!(small.iter().all(|&b| b == 200));
         assert_eq!(scaled_height(1280, 720, 640), 360);
@@ -1833,5 +1872,79 @@ mod tests {
             matches!(&refused, Err(m) if m.contains("x.gif.partial") && m.contains("interrupted")),
             "{refused:?}"
         );
+    }
+
+    /// The flags that are about the socket are refused for a command
+    /// that never opens one, each named; `--json` is the one that
+    /// applies.
+    #[test]
+    fn test_socket_flags_are_refused_for_a_client_side_command() {
+        let cwd = Path::new("/w");
+        for (options, named) in [
+            (
+                crate::cli::Options {
+                    wait_settled: true,
+                    ..crate::cli::Options::default()
+                },
+                "--wait-settled",
+            ),
+            (
+                crate::cli::Options {
+                    ipc: Some("/s".into()),
+                    ..crate::cli::Options::default()
+                },
+                "--ipc",
+            ),
+            (
+                crate::cli::Options {
+                    force: true,
+                    ..crate::cli::Options::default()
+                },
+                "--force",
+            ),
+            (
+                crate::cli::Options {
+                    count: Some(2),
+                    ..crate::cli::Options::default()
+                },
+                "--count",
+            ),
+            (
+                crate::cli::Options {
+                    timeout: std::time::Duration::from_secs(3),
+                    ..crate::cli::Options::default()
+                },
+                "--timeout",
+            ),
+        ] {
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let mut stdin = std::io::empty();
+            let exit = run(
+                &Invocation {
+                    options,
+                    command: COMMAND.to_string(),
+                    words: words(&["assemble", "d"]),
+                },
+                &mut Io {
+                    out: &mut out,
+                    err: &mut err,
+                    cwd: Some(cwd),
+                    stdin: &mut stdin,
+                },
+            );
+            let err = String::from_utf8(err).expect("UTF-8");
+            assert_eq!(exit, Exit::UsageError, "{named}: {err}");
+            assert!(
+                err.contains(named) && err.contains("never talks to the app"),
+                "{named}: {err}"
+            );
+            assert!(out.is_empty());
+        }
+        assert!(refuse_socket_options(&crate::cli::Options {
+            json: true,
+            ..crate::cli::Options::default()
+        })
+        .is_ok());
     }
 }
