@@ -49,6 +49,43 @@ cargo run -- maps/testament.mindmap.json   # native only
 trunk serve                                 # WASM only (loads via ?map=…)
 ```
 
+## Driving the app from a terminal
+
+A running instance can be driven, inspected and screenshotted over a local
+socket (native, Unix; protocol in [`format/ipc.md`](format/ipc.md)).
+`mandalactl` is the command-line client for it: one invocation is one command,
+with typed arguments, a deadline on every wait, and an exit code that says
+whether the app answered.
+
+```sh
+cargo build --release -p mandalactl          # target/release/mandalactl
+
+# 1. launch the app with IPC on (the socket is owner-only)
+./target/release/mandala maps/testament.mindmap.json --ipc "$XDG_RUNTIME_DIR/mandala.sock"
+
+# 2. from another shell
+export MANDALA_IPC="$XDG_RUNTIME_DIR/mandala.sock"
+mandalactl ping                                  # now_ms: 4100.5
+mandalactl scene.find_text Introduction          # where is it, on screen or not?
+mandalactl input.click_node 1.2                  # act on the node
+mandalactl capture.screenshot /tmp/after.png fit=true
+mandalactl query.selection --json                # the reply envelope, as received
+```
+
+Output is `path: value` lines, one per field (`--json` prints the reply as the
+app wrote it). Exit codes: `0` the app answered, `1` it said no (code and
+message on stderr), `2` it could not be reached or the request did not go
+out whole (not running, busy, wrong protocol: nothing ran), `3` a bad command
+line, `4` the request was sent and the invocation did not complete (no reply,
+or the wait failed): it may have run, so read the app's state before repeating
+it. With an app that serves `clock.wait`, `--wait-settled` on a command that
+changes the app returns only once the result is rendered. Relative `path=` /
+`to_file=` arguments are made absolute against the current directory.
+`mandalactl --help` lists every
+command with a copy-pasteable example, `mandalactl describe` lists what the
+connected app serves, and `mandalactl raw -` takes a request frame on stdin for
+anything the argument spelling cannot say.
+
 ## Where to read next
 
 | Document                                        | What it covers                                                            |
@@ -69,6 +106,8 @@ trunk serve                                 # WASM only (loads via ?map=…)
 - [`crates/maptool/`](crates/maptool/) — CLI for working with
   `.mindmap.json` files: `show`, `grep`, `apply`, `export`,
   `convert --legacy`, `verify`.
+- [`crates/mandalactl/`](crates/mandalactl/) — CLI client for a running
+  app's `--ipc` socket (see "Driving the app from a terminal").
 - [`lib/mandala_derive/`](lib/mandala_derive/) — proc-macro support.
 
 ## License

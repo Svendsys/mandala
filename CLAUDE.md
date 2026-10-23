@@ -62,6 +62,16 @@ borders, connection paths — is laid out as positioned font glyphs.
   files: `show`, `grep`, `apply`, `export`, `convert --legacy`
   (migration from miMind-derived format), and `verify` (structural
   validation).
+- **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
+  socket: one invocation, one command, JSON or `path: value` lines on
+  stdout, exit code `0` / `1` (the app said no) / `2` (could not reach
+  it, nothing ran) / `3` (bad command line) / `4` (sent, not confirmed:
+  it may have run). The sibling of `maptool`, not a mode of
+  it: `maptool` reads files and never talks to a process, `mandalactl`
+  talks to a process and never reads a map. `mandalactl --help` is the
+  agent-facing reference; `verbs::VERBS` is its command table, and the
+  app crate's tests hold it to the IPC registry in both directions, so
+  **a new IPC command ships its `mandalactl` verb in the same PR**.
 - **`lib/baumhard/src/mindmap/`** — the data model, loaders, scene
   builders, and the tree bridge. Most interesting logic lives here.
 - **`src/application/`** — the app shell: event loop, document state,
@@ -78,7 +88,10 @@ the parity trajectory (or why none is owed):
   IPC-02/#62, command registry and `act` bridge since IPC-03/#63)
   — native-only by transport nature: browsers cannot
   serve local sockets, and the consumer is an agent driving a
-  desktop/Xvfb instance. Protocol: `format/ipc.md`; design:
+  desktop/Xvfb instance. The client, `crates/mandalactl`, compiles on
+  every target (the workspace is type-checked for wasm32) but connects
+  over Unix sockets only: off Unix its connect fails naming the same
+  gap (#169) the server's `--ipc` does. Protocol: `format/ipc.md`; design:
   `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
   transport + browser-side capture, same envelope and commands) is
   parked in IPC-15 (#75). Within native the transport is Unix-only
@@ -203,9 +216,9 @@ the parity trajectory (or why none is owed):
 
 ## Common tasks
 
-- **Run tests**: `./test.sh` runs `cargo test --workspace` — all four
-  members, `mandala`, `baumhard`, `mandala_derive` and `maptool` —
-  prints a test count, then type-checks the benchmark targets
+- **Run tests**: `./test.sh` runs `cargo test --workspace` — all five
+  members, `mandala`, `baumhard`, `mandala_derive`, `maptool` and
+  `mandalactl` — prints a test count, then type-checks the benchmark targets
   (`cargo check --workspace --benches`, which runs no benchmark) and
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
   cross-platform drift can pass a green run. **With one caveat about
@@ -244,8 +257,8 @@ the parity trajectory (or why none is owed):
   items, while the wasm32 doc leg narrows to `-p mandala`, because
   baumhard cannot be documented standalone for wasm32 — its `rand` →
   `getrandom` edge needs the `wasm_js` feature that only the root
-  manifest declares — and maptool and mandala_derive have no wasm32
-  half to document. Both wasm32 legs are skipped with a note when the
+  manifest declares — and maptool, mandalactl and mandala_derive have
+  no wasm32 half to document. Both wasm32 legs are skipped with a note when the
   target isn't installed. CI runs `./test.sh --lint`, so these gates
   hold on every pull request and not only on the machine of whoever
   remembered the flag. They can be hard because the toolchain is
@@ -280,10 +293,11 @@ the parity trajectory (or why none is owed):
   build run most often while iterating.
 - **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
   `cargo test -p mandala <pattern>`,
-  `cargo test -p mandala_derive` or `cargo test -p maptool`. `--lib`
-  narrows to a library target, so it belongs only to the two members
-  that have one — baumhard and mandala_derive. `mandala` and
-  `maptool` are binary crates, where adding it narrows nothing and
+  `cargo test -p mandala_derive`, `cargo test -p maptool` or
+  `cargo test -p mandalactl`. `--lib` narrows to a library target, so
+  it belongs only to the three members that have one — baumhard,
+  mandala_derive and mandalactl (a `src/lib.rs` beside its binary).
+  `mandala` and `maptool` are binary crates, where adding it narrows nothing and
   exits 101 with `no library targets found in package 'mandala'`
   before a test runs (#148).
   `test_no_documented_command_targets_a_lib_the_package_lacks` holds
@@ -304,3 +318,15 @@ the parity trajectory (or why none is owed):
   `{"id":3,"cmd":"act.action","action":"ZoomIn"}` drives an Action,
   and `act.console` / `act.macro` run a console line or a macro;
   `format/ipc.md` is the full protocol.
+  **From a shell, use `mandalactl` instead of `nc`**: `export
+  MANDALA_IPC=$XDG_RUNTIME_DIR/mandala.sock`, then `mandalactl ping`,
+  `mandalactl act.action ZoomIn`,
+  `mandalactl scene.find_text Introduction` — no JSON to hand-quote,
+  typed arguments, a timeout on every wait, and an exit code that says
+  whether the app answered. `mandalactl --help` lists every command
+  with an example; `mandalactl raw -` takes a request frame on stdin
+  for anything its argument spelling cannot say. Exit `4` means the
+  request went out and no answer was read: check the app's state
+  before repeating a command that changes it. (`--wait-settled` needs
+  an app that serves `clock.wait`; it is detected first, and nothing is
+  sent when it is missing.)

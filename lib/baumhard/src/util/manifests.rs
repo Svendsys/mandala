@@ -1209,6 +1209,7 @@ name = "test_bench"
             "lib/baumhard/Cargo.toml",
             "lib/mandala_derive/Cargo.toml",
             "crates/maptool/Cargo.toml",
+            "crates/mandalactl/Cargo.toml",
         ] {
             assert!(
                 manifests.iter().any(|m| m == expected),
@@ -1228,8 +1229,9 @@ name = "test_bench"
     /// dependency updates a number here, which is the intended
     /// trade: manifest edits in this workspace are rare and are
     /// exactly what these tests exist to look at.
-    const DECLARATIONS_PER_MANIFEST: [(&str, usize); 4] = [
-        ("Cargo.toml", 24),
+    const DECLARATIONS_PER_MANIFEST: [(&str, usize); 5] = [
+        ("Cargo.toml", 25),
+        ("crates/mandalactl/Cargo.toml", 2),
         ("crates/maptool/Cargo.toml", 4),
         ("lib/baumhard/Cargo.toml", 27),
         ("lib/mandala_derive/Cargo.toml", 3),

@@ -1218,6 +1218,11 @@ mod tests {
         );
         assert_eq!(targets.get("maptool"), Some(&false), "maptool has no benches");
         assert_eq!(
+            targets.get("mandalactl"),
+            Some(&false),
+            "mandalactl has no benches"
+        );
+        assert_eq!(
             targets.get("mandala_derive"),
             Some(&false),
             "mandala_derive has no benches"
@@ -1239,5 +1244,10 @@ mod tests {
         );
         assert_eq!(targets.get("mandala"), Some(&false), "mandala is a binary crate");
         assert_eq!(targets.get("maptool"), Some(&false), "maptool is a binary crate");
+        assert_eq!(
+            targets.get("mandalactl"),
+            Some(&true),
+            "mandalactl has a `src/lib.rs` beside its binary: the app crate's tests read its verb table"
+        );
     }
 }
