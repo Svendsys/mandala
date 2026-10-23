@@ -2890,3 +2890,26 @@ fn test_shipped_keybinds_template_escape_exits_the_mode() {
         Some(Action::ExitMode),
     );
 }
+
+/// The space bar inserts a space in every editor whether or not Shift
+/// is still held: bindings match modifiers exactly, and typing
+/// "New York" quickly presses Space with Shift down from the capital.
+/// Each editor's insert-space Action answers both forms, and nothing
+/// else in its context claims them.
+#[test]
+fn test_space_inserts_a_space_with_or_without_shift_in_every_editor() {
+    let resolved = KeybindConfig::default().resolve();
+    for (context, insert) in [
+        (InputContext::Console, Action::ConsoleInsertSpace),
+        (InputContext::TextEdit, Action::TextEditInsertSpace),
+        (InputContext::LabelEdit, Action::LabelEditInsertSpace),
+    ] {
+        for shift in [false, true] {
+            assert_eq!(
+                resolved.action_for_context(context, "space", false, shift, false),
+                Some(insert.clone()),
+                "{context:?}, shift {shift}"
+            );
+        }
+    }
+}
