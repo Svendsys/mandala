@@ -583,6 +583,34 @@ one, and the camera's wire projection moved to `ipc/space.rs` beside
 the coordinate spaces it describes, shared by `query.camera` and every
 dump.
 
+*As built by IPC-06 (#66):* the fidelity contract made the seam
+literal. `handle_event`'s mouse, wheel, cursor, touch and keyboard
+arms became `InitState::on_*` methods, and the `input` family's
+samples are delivered to exactly those — so the target now holds
+`&mut InitState` (and the `ActiveEventLoop` the keyboard handler
+takes) and builds the `InputHandlerContext` per call, where IPC-03's
+cut wrapped one. `dispatch_touch_event` takes the touch payload
+rather than winit's `Touch`, whose `DeviceId` cannot be built outside
+winit. The injected-input queue (`ipc/injected.rs`) lives on
+`InitState`, is drained one sample per `about_to_wait` ahead of
+`drain_inputs`, and is a `needs_continuation` source. Only
+`input.drag` paces through it; every other command is one ordered
+burst applied before its reply, because nothing between its events
+is drained per frame — a double-click's detector reads the clock and
+the hit, and two clicks in one iteration are still a double-click —
+and a burst sent behind queued samples waits for them, so order
+holds. The family is nine commands: the six in the family map plus
+`input.drag` and `input.click_node`, the sugar the issue named, and
+`input.pending`, the queue-depth read an agent polls until
+IPC-09's `settled` exists. `input.key` spells named keys the way
+winit's `NamedKey` deserializes (winit's `serde` feature), which is
+the spelling `key_to_name` already reads off a live event, so the
+wire vocabulary is the keybind vocabulary. Driving the real app
+through it surfaced one app defect, fixed in the same change: winit
+delivers the space bar as `Key::Named(Space)`, and the node text
+editor and the single-line label editor inserted only
+`Key::Character` payloads, so a space typed by hand was dropped.
+
 ## D6 — Cross-platform stance (§4): explicit native carve-out
 
 **Decision.** IPC is native-only at the `src/application/ipc/`

@@ -47,8 +47,11 @@ pub const INACTIVE_NODE_ALPHA_MULTIPLIER: f32 = 0.5;
 /// Inlined so per-section iteration stays branchless on the
 /// happy path — most authored sections fill the node, so the
 /// `size.is_none()` branch is the predicted side.
+///
+/// Public so the app's IPC `input.click_node` aims at a section by
+/// this same rule rather than a second copy of it.
 #[inline]
-pub(super) fn section_aabb(
+pub fn section_aabb(
     section: &crate::mindmap::model::MindSection,
     node_pos_x: f32,
     node_pos_y: f32,

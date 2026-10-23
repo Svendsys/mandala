@@ -393,7 +393,7 @@ additions are non-breaking):
 | `invalid_params` | Missing/mistyped/unknown parameter. `data.param` names the offender. |
 | `unsupported` | Command exists but not on this platform/build (e.g. future Windows gaps). |
 | `busy` | A single-instance command was already pending when another was issued — today, a second `clock.wait` while one is in flight (waits are exclusive per controller). Distinct from the connection-level `connection_rejected` event. |
-| `overloaded` | Request queue full (1024 pending); resend after draining replies. |
+| `overloaded` | Request queue full (1024 pending); resend after draining replies. Also an `input` command whose samples would overflow the injected-input queue (cap 1024, `data`: `{"pending", "cap"}`); nothing was queued, resend once `input.pending` has dropped. |
 | `reply_too_large` | Serialized reply exceeded 8 MiB; `data.bytes` is its size, and `data.hint` names the file-sidecar parameter when the command has one. |
 | `no_document` | Command needs a loaded document and none is. |
 | `not_found` | A referenced entity (node id, macro id, mutation id) does not exist. |
@@ -619,9 +619,11 @@ command invokes are `dispatch_action`, `dispatch_macro`,
 *sibling* of `app`, so a command handler cannot see them directly.
 Command handlers therefore run against an **app-side execution
 context**: the `CommandTarget` trait (`ipc/target.rs`). Its native
-implementation, `IpcCommandTarget` (`app/ipc_target.rs`), wraps the
-same `InputHandlerContext` a winit input handler receives. Each
-method is one funnel and nothing else. This is the indirection
+implementation, `IpcCommandTarget` (`app/ipc_target.rs`), holds the
+event loop's own state and builds the same `InputHandlerContext` a
+winit input handler receives, per call. Each method is one funnel and
+nothing else; the `input` family's is the `InitState::on_*` entry
+points `handle_event`'s winit arms call. This is the indirection
 `dispatch_macro` already uses through `MacroDispatchTarget`
 (`app/dispatch/macro_core.rs`). It keeps the funnels private and the
 `ipc` modules free of `app` internals. A handler reaches the app
@@ -743,7 +745,7 @@ PR that implements them.
 | `act` | `act.rs` | IPC-03 | `act.action`, `act.console`, `act.macro` |
 | `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.animations`, `query.editors`, `query.undo` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
-| `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch` |
+| `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
 | `capture` | `capture.rs` | IPC-07 (+ IPC-08) | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
 | `clock` | `clock.rs` | IPC-09 | `clock.status`, `clock.set_mode`, `clock.step`, `clock.wait` |
 | `events` | `events.rs` | IPC-14 | `events.subscribe`, `events.unsubscribe`, `events.revision` |
@@ -1248,39 +1250,230 @@ always `text`).
 ## `input` — synthetic raw input (IPC-06)
 
 Below-the-funnel input with human fidelity, for the gestures that
-are not discrete Actions: drags, hovers, modal typing, IME-ish text.
-`input.mouse_move` (`x`, `y`, `space?`), `input.mouse_button`
-(`button`, `state`: `press`/`release`/`click`, optional position),
-`input.wheel` (`dy`, optional position), `input.key` (logical key +
-modifiers, press/release), `input.text` (string, delivered to the
-open modal editor as typed characters), `input.touch` (`phase`,
-`pointer_id`, `x`, `y` — the recognizer's vocabulary; the finger
-identifier is `pointer_id`, not `id`, per the
-[reserved-word rule](#request)). The fidelity contract:
-these enter **the same handler entry points** winit events enter, so
-selection state machines, drag thresholds, double-click timing, and
-modal steals behave byte-for-byte as with real input. Field-level
-reference lands with IPC-06, appended here.
+are not discrete Actions: drags, hovers, modal typing, touch. Where
+`act.action` applies an Action, these are the hand on the mouse and
+the keyboard. The fidelity contract: each command becomes the
+payload a winit event carries, and the app delivers it to **the same
+entry point** that winit event reaches — the `InitState::on_*`
+methods `handle_event`'s arms call, and below them
+`handle_mouse_input`, `handle_cursor_moved`, `handle_keyboard_input`
+and the touch recognizer. From there down nothing can tell the two
+apart, and no handler has a branch for injected input. So the click
+ladder, drag thresholds and state machines, double-click timing (on
+the real clock), the modal steals, keybind resolution and the macro /
+custom-mutation fall-through behave byte-for-byte as with real
+input. The finger identifier is `pointer_id`, not `id`, per the
+[reserved-word rule](#request).
+
+**Positions** default to `surface` pixels, the space of a real
+pointer ([Coordinate spaces](#coordinate-spaces)). A `canvas`
+position is converted once, when the command executes, through the
+camera as it stands then: a hand points at the screen, not at the
+world behind it, and a pan-drag given in canvas space would otherwise
+chase its own camera. The pointer stays where an `input` command put
+it — unlike `act.action`'s pointer, which is put back — because
+moving the pointer is what these commands are for: it is the hover
+an agent wants to observe.
+
+**Modifiers.** `mods` (array of `"ctrl"`, `"shift"`, `"alt"`,
+`"super"`) holds those modifiers for each of the command's events and
+puts back the state the OS last reported after each one, so a
+keystroke of the user's own between two frames of a paced drag still
+sees their own modifiers. Omitted, the reported state stays in
+force; `[]` holds none. A drag carries them on every sample, which is
+what makes a `"shift"` drag on empty canvas a rubber-band select: the
+rubber band reads Shift at the threshold-crossing move.
 
 **Pacing model (pinned here because `settled` and virtual time
 depend on it).** A gesture whose fidelity depends on events landing
-in *different* frames — a drag (press, then moves past threshold,
-then release), a double-click (two clicks within the time window) —
-cannot fire its sub-events in a single `user_event` drain or they
-collapse to one instant and the timing logic misreads them. So
-`input.*` events that carry a frame-spanning gesture enqueue into a
-bounded **injected-input queue** (cap **1024**; overflow →
-`overloaded`) that the heartbeat drains **one sample per frame**,
-stamped with the current `now_ms()`. Under `clock.set_mode virtual`,
-`clock.step` advances this queue one sample per virtual heartbeat,
-so injected drags/double-clicks are deterministic too. A single
-discrete injection (one `mouse_move`, one `key` press) applies
-immediately. `clock.wait until=settled` requires this queue empty
-(condition (b) below), so "wait until my synthesized drag finished"
-is expressible. The queue, the one-per-frame cadence, and the
-virtual-clock coupling are IPC-06's to implement, but their shape is
-pinned here so IPC-09's `settled` and IPC-06's fidelity contract
-agree on one model rather than each inventing its own.
+in *different* frames cannot fire its sub-events in a single drain.
+A drag is the case: `drain_inputs` drives the throttled drag
+(`ThrottledInteraction`) between its moves, and a press, a dozen
+moves and a release run back to back would skip that drain entirely
+and test a path no human hits. So `input.drag` enqueues its samples
+into a bounded **injected-input queue** (cap **1024**; a command that
+would overflow it is refused whole with `overloaded`, and enqueues
+nothing) that the heartbeat drains **one sample per frame**, applied
+ahead of `drain_inputs` — where a winit event lands — at the current
+`now_ms()`. A non-empty queue is a continuation source, so the loop
+keeps iterating and redrawing until it is empty. Every other command
+is one ordered burst, applied before its reply as winit delivers
+several events in one iteration: a move, a click, a tap, a typed
+string. A double-click needs no pacing — the detector compares the
+clock and the hit, and two clicks sent as two `input.mouse_button`
+commands are as far apart as the agent sent them. **A burst sent while
+samples are queued waits behind them**, so injected input always
+lands in the order it was sent; its reply then says `applied: false`.
+Under `clock.set_mode virtual` (IPC-09), `clock.step` is to advance
+this queue one sample per virtual heartbeat, so injected drags are
+deterministic too. `clock.wait until=settled` requires this queue
+empty (condition (b) below), so "wait until my synthesized drag
+finished" is expressible; until IPC-09 lands, poll `input.pending`
+to 0.
+
+Every command needs the app: before its window exists each answers
+`no_document`. Raw input needs no document — a hand can click an
+empty window — and only `input.click_node` answers `no_document`
+when none is loaded. Each validates its whole request first, so a
+refused one (`invalid_params`, naming the parameter) injects nothing.
+A command whose events reached a handler asks for a redraw exactly
+when the winit arm it stands in for would have.
+
+**Result**, for every command but `input.pending`: `applied`
+(boolean) — `true` when the events reached the handlers before the
+reply, `false` when they joined the queue — and `pending` (integer),
+the samples still queued afterwards. `pending: 0` means everything
+sent so far has landed.
+
+```jsonc
+{"id": 1, "cmd": "input.drag", "from_x": 400, "from_y": 300, "to_x": 640, "to_y": 300}
+{"id": 1, "ok": true, "result": {"applied": false, "pending": 13}}
+{"id": 2, "cmd": "input.pending"}
+{"id": 2, "ok": true, "result": {"pending": 0}}
+{"id": 3, "cmd": "input.text", "text": "hello 👋"}
+{"id": 3, "ok": true, "result": {"applied": true, "pending": 0}}
+```
+
+### `input.mouse_move`
+
+A `CursorMoved` event: the pointer is now at the position. Hover
+behavior, the drag threshold and an armed drag's update follow from
+it; in the Reparent and Connect modes, the hovered target
+(`query.mode`'s `hovered_node`) updates.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `x`, `y` | number | yes | The position. |
+| `space` | string | no | `"surface"` (default) or `"canvas"`. |
+| `mods` | array | no | Modifiers held for the event. |
+
+### `input.mouse_button`
+
+`MouseInput` events: the click ladder on a left press, the drag
+commits and click resolution on a release, the right- and
+middle-button gestures and the bound `MouseGesture`s.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `button` | string | yes | `"left"`, `"right"` or `"middle"`. |
+| `state` | string | yes | `"press"`, `"release"`, or `"click"` (a press, then a release). |
+| `x`, `y` | number | no, together | Move the pointer here first; without them the event lands where the pointer already is. |
+| `space` | string | no | `"surface"` (default) or `"canvas"`; only with `x`/`y`. |
+| `mods` | array | no | Modifiers held for the events. |
+
+A second `click` on the same target within the double-click window
+reaches the same `DoubleClickActivate` path a physical double-click
+does.
+
+### `input.wheel`
+
+A `MouseWheel` event of `dy` lines (`LineDelta(0, dy)`): the Action
+bound to `WheelUp` (positive `dy`) or `WheelDown` (negative), zooming
+at the pointer by default — or, while the console is open, its
+scrollback.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `dy` | number | yes | Lines; positive scrolls up. |
+| `x`, `y` | number | no, together | Move the pointer here first, so a zoom focuses there. |
+| `space` | string | no | `"surface"` (default) or `"canvas"`; only with `x`/`y`. |
+| `mods` | array | no | Modifiers held for the events. |
+
+### `input.key`
+
+`KeyboardInput` for one logical key, through the whole keystroke
+ladder: the console, color picker and text editors' steals first,
+then the keybind table in the current context, type-to-edit on a
+selected label, and the macro and custom-mutation fall-through.
+`act.action` skips all of that; this is the command that drives it.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `key` | string | yes | One typed character (`"a"`, `"/"`, `"é"`, `"👋"`), or a named key spelled as winit's `NamedKey` spells it, case-exact: `"Enter"`, `"Tab"`, `"Escape"`, `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"F2"`. That is the spelling a keybind matches after lowercasing, so any key a binding names can be pressed. A space is the `Space` key, as winit delivers the space bar. A control character is `invalid_params`. |
+| `state` | string | no | `"tap"` (default: a press, then a release), `"press"` or `"release"`. The app acts on presses; a release reaches the same arm a real one does, which does nothing. |
+| `mods` | array | no | Modifiers held for the events: `"key": "z", "mods": ["ctrl"]` is Ctrl+Z. |
+
+### `input.text`
+
+Type a string: one key tap per grapheme cluster, so `"hello 👋"` is
+seven taps and a ZWJ sequence or a base with its combining marks is
+one. Each reaches whatever has the keyboard — an open text editor or
+the console inserts it at the cursor — and with none open, the
+keybind table, as typing does. A space, a newline (`\n`, `\r\n` or
+`\r`) and a tab arrive as the `Space`, `Enter` and `Tab` keys, as winit
+delivers them, so a newline commits the console line and inserts a
+line break in the node text editor. Modifiers are those the OS
+reports.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `text` | string | yes | What to type: 1 to 512 graphemes (two samples each, so one command never outgrows the queue). Any other control character is `invalid_params`. |
+
+### `input.touch`
+
+One finger event, as `WindowEvent::Touch`, into the touch-gesture
+recognizer (tap, long-press, one-finger pan, pinch). The recognizer
+measures time on the real clock, so a long-press is a `started`, a
+wait, and the finger's next event.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `phase` | string | yes | `"started"`, `"moved"`, `"ended"` or `"cancelled"`. |
+| `pointer_id` | integer | yes | The finger, ≥ 0; one value for one finger's whole stroke. |
+| `x`, `y` | number | yes | The position. |
+| `space` | string | no | `"surface"` (default) or `"canvas"`. |
+
+### `input.drag`
+
+Sugar for the drag a hand makes, paced one sample per frame: a move
+to `from`, a press, `steps` moves evenly spaced and ending exactly on
+`to`, and a release — `steps + 3` samples. What it drags is what a
+press at `from` arms: a node (moved, with its subtree unless `"alt"`
+is held), a section, a resize handle in Resize mode, a label, the
+canvas (a pan), or with `"shift"` on empty canvas a rubber-band
+select. Where a moved node lands is decided by the throttled drag's
+drains, so it lands where the same gesture by hand would.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `from_x`, `from_y` | number | yes | The press position. |
+| `to_x`, `to_y` | number | yes | The release position. |
+| `space` | string | no | Space of both positions: `"surface"` (default) or `"canvas"`. |
+| `button` | string | no | `"left"` (default), `"right"` or `"middle"`. |
+| `steps` | integer | no | Moves after the press, 1 to 1021; default 10. |
+| `mods` | array | no | Modifiers held for every sample. |
+
+Always `applied: false`: the reply arrives before the first sample
+lands.
+
+### `input.click_node`
+
+Sugar for a move to the center of a node's model AABB
+(`position + size / 2`) — or, with `section`, of that section's AABB
+by the tree builder's own rule (`offset` inside the node, filling the
+node when it has no `size`) — and a click there. It adds no semantics
+of its own: the click is the primitives', so it lands on whatever
+the click ladder finds drawn at that point, which is the node unless
+something is drawn over it, and does what a click there does (a
+second one within the double-click window is a double-click).
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `node_id` | string | yes | The node. |
+| `section` | integer | no | Click this section's center instead. One the node does not have is `invalid_params`. |
+| `button` | string | no | `"left"` (default), `"right"` or `"middle"`. |
+| `mods` | array | no | Modifiers held for the click: `["shift"]` adds the node to the selection, as a Shift+click does. |
+
+Result: `applied`, `pending`, and `x`, `y` (number), the surface point
+clicked. A node the document does not have, one hidden by a folded
+ancestor (nothing of it is drawn), and one whose center is off the
+surface (a hand cannot click there; bring it into view first) are
+`not_found`.
+
+### `input.pending`
+
+Params: none. Result: `pending` (integer), the samples still queued.
+Poll it to 0 before reading what a paced gesture did.
 
 ## `capture` — screenshots and recordings (IPC-07, IPC-08)
 

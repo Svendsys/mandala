@@ -146,7 +146,11 @@ bytemuck = "1.25.2"
 glyphon = "0.12.0"
 # Alternative: https://crates.io/crates/ab_glyph
 glam.workspace = true
-winit = "0.30.13"
+# `serde`: the IPC `input.key` command spells a named key the way
+# winit's own `NamedKey` deserializes ("Enter", "ArrowLeft"), which is
+# also the spelling `keybinds::key_to_name` reads off a live event, so
+# the wire vocabulary and the keybind vocabulary are one list.
+winit = { version = "0.30.13", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 # `release_max_level_warn` and the reasoning behind it now live once,

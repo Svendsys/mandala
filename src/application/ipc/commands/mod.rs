@@ -6,6 +6,7 @@
 //! and touches nothing else that another family's PR touches.
 
 mod act;
+mod input;
 mod meta;
 mod query;
 mod refusal;
@@ -16,7 +17,13 @@ use super::registry::Family;
 
 /// Every registered family. `describe` and dispatch both walk this
 /// table and nothing else.
-pub(super) const FAMILIES: &[Family] = &[meta::FAMILY, act::FAMILY, query::FAMILY, scene::FAMILY];
+pub(super) const FAMILIES: &[Family] = &[
+    meta::FAMILY,
+    act::FAMILY,
+    query::FAMILY,
+    scene::FAMILY,
+    input::FAMILY,
+];
 
 #[cfg(test)]
 mod tests {

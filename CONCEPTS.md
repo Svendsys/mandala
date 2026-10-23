@@ -3224,9 +3224,18 @@ struct, so a new `SelectionState`, `InteractionMode`, `DragState` or
 renderer's own cull verdict, and the text after run coverage — and
 name each element through its role's hit-test index. `scene.hit_test`
 runs the canonical click ladder on the app side
-(`CommandTarget::hit_test`) rather than a copy of it.
+(`CommandTarget::hit_test`) rather than a copy of it. The `input`
+family is the hand on the mouse and keyboard, below the Action
+funnel: `input.mouse_move`, `.mouse_button`, `.wheel`, `.key`,
+`.text` and `.touch` become the payloads winit events carry and are
+delivered to the same `InitState::on_*` entry points those events
+reach, so the drag state machines, double-click timing and modal
+steals cannot tell them apart. `input.drag` paces its samples one per
+frame through the injected-input queue (`ipc/injected.rs`), so the
+throttled drag drains between its moves as under a real hand;
+`input.click_node` is a move and a click at a node's center.
 
-**Vision:** the families after `scene` (input, capture, clock, events)
+**Vision:** the families after `input` (capture, clock, events)
 each add one module and one line to the registry's family table; the
 capture sidecar (IPC-07) is the scene serializer's output.
 **Caveat:** Unix-only today — Windows fails `--ipc` at startup until

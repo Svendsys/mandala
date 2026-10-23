@@ -7,9 +7,9 @@
 //! The funnels a command reaches are `dispatch_action`,
 //! `dispatch_macro` and `execute_console_line`. They are private to
 //! `crate::application::app`, and this module is that module's
-//! sibling. So `app` implements [`CommandTarget`] over the same
-//! `InputHandlerContext` an input handler receives and passes it in
-//! as `&mut dyn`. `MacroDispatchTarget` uses the same indirection,
+//! sibling. So `app` implements [`CommandTarget`] over the event
+//! loop's own state, building the same `InputHandlerContext` an input
+//! handler receives, and passes it in as `&mut dyn`. `MacroDispatchTarget` uses the same indirection,
 //! and it keeps both the funnels private and this module free of
 //! `app` internals.
 //!
@@ -29,6 +29,7 @@ use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::scene_host::AppScene;
 
+use super::injected::{Overloaded, Pacing, Sample};
 use super::space::Point;
 
 /// A part of the app shell's own state that a `query` command reads.
@@ -156,4 +157,31 @@ pub(crate) trait CommandTarget {
     /// [`Self::changed_view`] stays as it was, so a probe costs no
     /// frame.
     fn hit_test(&mut self, point: Point) -> Option<Value>;
+
+    /// `point` in surface pixels, through the renderer's camera as it
+    /// stands now: the position a synthetic pointer is placed at.
+    fn surface_point(&self, point: Point) -> (f64, f64);
+
+    /// Deliver raw input to the handler entry points winit events
+    /// reach (`format/ipc.md` §`input`). A [`Pacing::Burst`] applies
+    /// now when nothing is queued ahead of it, and the reply's
+    /// `applied` says so; anything else joins the injected-input
+    /// queue, which the heartbeat drains one sample per frame. A
+    /// command that would overflow the queue enqueues nothing.
+    ///
+    /// Applying a sample marks the view changed exactly when the
+    /// winit arm it stands in for would have requested a redraw.
+    fn inject(&mut self, samples: Vec<Sample>, pacing: Pacing) -> Result<Injected, Overloaded>;
+
+    /// Samples still waiting in the injected-input queue. Read-only.
+    fn injected_pending(&self) -> usize;
+}
+
+/// What [`CommandTarget::inject`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Injected {
+    /// The samples were applied before the command returned.
+    pub(crate) applied: bool,
+    /// Samples still waiting in the queue afterwards.
+    pub(crate) pending: usize,
 }

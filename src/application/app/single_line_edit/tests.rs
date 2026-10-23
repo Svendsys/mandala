@@ -335,8 +335,10 @@ fn test_route_single_line_typed_control_chars_are_skipped() {
 /// After Phase 5 the structural keys (Backspace / Delete /
 /// arrows / Home / End) flow through
 /// `dispatch::apply_label_edit_action_to_buffer`, not the
-/// router. The router now ignores all `Key::Named` events; only
-/// `Key::Character` printable payloads are inserted. This pins
+/// router. The router now ignores every structural `Key::Named`
+/// event; it inserts `Key::Character` printable payloads and the
+/// space bar, which winit delivers as `Key::Named(NamedKey::Space)`
+/// (pinned below). This pins
 /// the new contract — a future regression that re-introduces
 /// `Key::Named(Backspace) → delete` would leak the structural
 /// behavior past the action layer and let users no longer
@@ -354,6 +356,21 @@ fn test_route_named_key_is_noop_post_phase_5() {
     let changed = route_single_line_key(&Key::Named(NamedKey::Delete), &mut buf, &mut cursor);
     assert!(!changed);
     assert_eq!(buf, "abc");
+    assert_eq!(cursor, 3);
+}
+
+/// The space bar types a space: winit delivers it as
+/// `Key::Named(NamedKey::Space)`, not as a `" "` character, and a
+/// label or caption with a space in it was untypeable before the
+/// router named it.
+#[test]
+fn test_route_space_bar_inserts_a_space_at_the_grapheme_cursor() {
+    use crate::application::platform::input::NamedKey;
+    let mut buf = String::from("a👋b");
+    let mut cursor = 2;
+    let changed = route_single_line_key(&Key::Named(NamedKey::Space), &mut buf, &mut cursor);
+    assert!(changed);
+    assert_eq!(buf, "a👋 b");
     assert_eq!(cursor, 3);
 }
 

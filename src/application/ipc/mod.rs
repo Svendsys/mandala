@@ -32,6 +32,7 @@
 mod commands;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod envelope;
+pub(crate) mod injected;
 mod registry;
 pub(crate) mod space;
 mod target;
@@ -39,7 +40,7 @@ mod target;
 mod transport;
 
 pub(crate) use registry::execute;
-pub(crate) use target::{CommandTarget, SceneView, ShellState};
+pub(crate) use target::{CommandTarget, Injected, SceneView, ShellState};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
 

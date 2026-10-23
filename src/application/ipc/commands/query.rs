@@ -576,6 +576,20 @@ mod tests {
         fn hit_test(&mut self, _: Point) -> Option<Value> {
             panic!("a query must not hit-test the scene");
         }
+        fn surface_point(&self, _: Point) -> (f64, f64) {
+            panic!("a query must not place a pointer");
+        }
+        fn inject(
+            &mut self,
+            _: Vec<crate::application::ipc::injected::Sample>,
+            _: crate::application::ipc::injected::Pacing,
+        ) -> Result<crate::application::ipc::Injected, crate::application::ipc::injected::Overloaded>
+        {
+            panic!("a query must not inject input");
+        }
+        fn injected_pending(&self) -> usize {
+            panic!("a query must not read the injected-input queue");
+        }
     }
 
     const ALL_QUERIES: [&str; 8] = [

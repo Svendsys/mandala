@@ -525,9 +525,12 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     renderer.reshape_buffer_for(indextree_node_id, &tree.tree);
 }
 
-/// Apply a literal-character keystroke (Enter, Tab, or printable
-/// chars from a `Key::Character` payload) to the open editor
-/// state. Returns `true` if the buffer / cursor / regions changed.
+/// Apply a literal-character keystroke (Enter, Tab, the space bar,
+/// or printable chars from a `Key::Character` payload) to the open
+/// editor state. winit delivers the space bar as
+/// `Key::Named(NamedKey::Space)`, not as a `" "` character, so it is
+/// named here beside Enter and Tab; without it a space typed into
+/// node text was dropped. Returns `true` if the buffer / cursor / regions changed.
 /// Mirrors the no-Action fall-through path of
 /// `handle_text_edit_key`: every successful insertion clears the
 /// shift-select anchor so a subsequent close lifts only what the
@@ -559,6 +562,12 @@ pub(in crate::application::app) fn apply_literal_char_insert(
         Some("tab") => {
             regions.insert_regions_at(*cursor, 1);
             *cursor = insert_at_cursor(buffer, *cursor, '\t');
+            *anchor = None;
+            true
+        }
+        Some("space") => {
+            regions.insert_regions_at(*cursor, 1);
+            *cursor = insert_at_cursor(buffer, *cursor, ' ');
             *anchor = None;
             true
         }
@@ -720,6 +729,35 @@ mod tests {
             } => (buffer, *cursor_grapheme_pos),
             TextEditState::Closed => panic!("expected open text edit state"),
         }
+    }
+
+    /// The space bar types a space. winit delivers it as
+    /// `Key::Named(NamedKey::Space)`, which the keyboard handler names
+    /// `"space"`; no default TextEdit binding claims that name, so the
+    /// keystroke reaches the literal path, which must insert it. It
+    /// used to fall through to the `Key::Character` arm and vanish.
+    #[test]
+    fn literal_insert_types_a_space_for_the_space_bar() {
+        use crate::application::keybinds::{key_to_name, InputContext, KeybindConfig};
+        use crate::application::platform::input::NamedKey;
+
+        let space = Key::Named(NamedKey::Space);
+        let name = key_to_name(&space);
+        assert_eq!(name.as_deref(), Some("space"));
+        assert_eq!(
+            KeybindConfig::default().resolve().action_for_context(
+                InputContext::TextEdit,
+                "space",
+                false,
+                false,
+                false
+            ),
+            None,
+            "no default TextEdit Action claims the space bar"
+        );
+        let mut state = open_state("ab", 1);
+        assert!(apply_literal_char_insert(name.as_deref(), &space, &mut state));
+        assert_eq!(text_state_buffer_and_cursor(&state), ("a b", 2));
     }
 
     #[test]
