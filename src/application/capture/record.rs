@@ -180,7 +180,7 @@ impl Timeline {
     pub(crate) fn poll(&mut self, elapsed_ms: f64) -> Tick {
         let due = self.due_ms();
         // A clock that reads before the start (or NaN) owes nothing.
-        if !(elapsed_ms >= due) {
+        if elapsed_ms.is_nan() || elapsed_ms < due {
             return Tick::Wait { until_ms: due };
         }
         // The latest boundary at or before now. The product is exact for

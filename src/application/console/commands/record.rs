@@ -16,7 +16,7 @@
 //! is left out of the frames.
 //!
 //! The view keys are `screenshot`'s, read by the same code
-//! ([`screenshot::read_view`]).
+//! ([`super::screenshot::read_view`]).
 
 use super::screenshot::{read_view, ConsoleView, VIEW_KEYS};
 use super::Command;
