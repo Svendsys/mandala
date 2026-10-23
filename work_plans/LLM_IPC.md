@@ -887,6 +887,30 @@ Moved later, by the issue that found the need:
   outcome. §D4 places `act.macro`'s anonymous `steps` at `User`.
   §D5's module layout and boundary trait are recorded as built.
 
+- **IPC-07 (#67)** — §D7's `capture.screenshot` shape, refined where
+  building it found the pinned text ambiguous or silent, each in
+  `format/ipc.md` §`capture.screenshot` in the same PR. (1) `scale` is
+  image pixels per view pixel and never a zoom: the image is
+  `round(width × scale) × round(height × scale)` of the same view,
+  with zoom windows and connection glyph sizes decided at the view's
+  zoom — carried by a `pixel_ratio` on Baumhard's `Camera2D`, so the
+  renderer and the sidecar keep using the one cull predicate. (2) The
+  bounds are refusals, as D7's own "over-bound … is `invalid_params`"
+  says; the table's "clamped" wording is gone. (3) `fit` frames the
+  drawn document as the load-time fit does — the issue's third framing,
+  which D7's table lacked — and is exclusive with `region`; `space`
+  without `region` and `overwrite` without `path` are `invalid_params`,
+  the house rule for a qualifier with nothing to qualify. (4) The
+  result reports `rendered` (with `skipped` naming a frame the
+  renderer did not draw, and no file written), `scale`, the `camera`
+  the image was drawn through, and `settled`. Waiting stays
+  `clock.wait`'s: a screenshot reports whether the app was settled and
+  never defers its reply. (5) A capture framed at another zoom during a
+  node drag is `busy`, because its re-projection would draw from a
+  model the drag has not written. (6) The offscreen target is the
+  surface's own format — #7's single source, `config.format` — not a
+  constant beside it.
+
 ## Change governance
 
 This document and `format/ipc.md` change **together or not at all**:

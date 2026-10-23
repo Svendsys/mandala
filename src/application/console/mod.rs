@@ -114,6 +114,11 @@ pub enum ConsoleSideEffect {
     /// section editor"; the verb is the only producer of this
     /// variant.
     OpenSectionEdit { node_id: String, section_idx: usize },
+    /// Take a screenshot. Set by the `screenshot` verb, which only
+    /// reads the line; the executor hands it to the screenshot engine
+    /// and the engine's report becomes the line's output. Draws
+    /// nothing and mutates nothing, so it costs no rebuild.
+    Screenshot(commands::screenshot::ScreenshotLine),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -133,6 +138,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::SetFpsDisplay(m) => f.debug_tuple("SetFpsDisplay").field(m).finish(),
             Self::ReplaceDocument(_) => write!(f, "ReplaceDocument(<doc>)"),
             Self::SetInteractionMode(m) => f.debug_tuple("SetInteractionMode").field(m).finish(),
+            Self::Screenshot(line) => f.debug_tuple("Screenshot").field(line).finish(),
             Self::OpenSectionEdit { node_id, section_idx } => f
                 .debug_struct("OpenSectionEdit")
                 .field("node_id", node_id)

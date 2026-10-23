@@ -91,6 +91,7 @@ pub mod node;
 pub mod open;
 pub mod range_kv;
 pub mod save;
+pub mod screenshot;
 pub mod section;
 pub mod spacing;
 pub mod zoom;
@@ -166,6 +167,7 @@ pub const COMMANDS: &[Command] = &[
     mode::COMMAND,
     mutation::COMMAND,
     save::COMMAND,
+    screenshot::COMMAND,
     open::COMMAND,
     new::COMMAND,
     node::COMMAND,

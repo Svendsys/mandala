@@ -39,8 +39,9 @@ mod target;
 #[cfg(unix)]
 mod transport;
 
+pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
-pub(crate) use target::{CommandTarget, Injected, SceneView, ShellState};
+pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
 

@@ -46,13 +46,33 @@ impl Visibility {
 /// - Screen space: pixel positions on the window (0,0 at top-left)
 ///
 /// The camera's `position` is the canvas coordinate at the center of the viewport.
+///
+/// **Zoom and pixel density are two numbers.** `zoom` is how far in the
+/// view is — the number zoom windows ([`ZoomVisibility`]) and
+/// zoom-dependent layout (a connection's screen-clamped glyph size) are
+/// decided against. `pixel_ratio` is how many pixels of *this* surface
+/// one pixel of that view occupies. A camera's pixels per canvas unit
+/// is their product ([`Self::pixels_per_unit`]), and every conversion
+/// between the two spaces goes through it. The live window draws at
+/// `pixel_ratio` 1.0, so the two coincide there; an offscreen capture
+/// at a supersampling scale draws the same view, with the same
+/// elements in it, at more pixels.
+///
+/// `Copy`: four plain numbers. A capture frames its own camera from
+/// the live one by value, and a test compares two of them whole.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera2D {
     /// Canvas coordinate at the center of the viewport
     pub position: Vec2,
     /// Zoom factor (1.0 = no zoom, >1.0 = zoomed in, <1.0 = zoomed out)
     pub zoom: f32,
-    /// Viewport dimensions in screen pixels
+    /// Viewport dimensions in pixels of the surface this camera draws on.
     pub viewport_size: (u32, u32),
+    /// Surface pixels per pixel of the view: 1.0 for the live window,
+    /// the capture's `scale` for a supersampled offscreen render. Zoom
+    /// windows read [`Self::zoom`], never this, so a capture at any
+    /// pixel ratio shows the elements the window shows.
+    pub pixel_ratio: f32,
 }
 
 /// A single camera-state delta — the mutation vocabulary for
@@ -123,7 +143,17 @@ impl Camera2D {
             position: Vec2::ZERO,
             zoom: 1.0,
             viewport_size: (viewport_width, viewport_height),
+            pixel_ratio: 1.0,
         }
+    }
+
+    /// Surface pixels per canvas unit: [`Self::zoom`] ×
+    /// [`Self::pixel_ratio`]. The scale every canvas ↔ surface
+    /// conversion applies, and the scale a renderer draws canvas-space
+    /// glyphs and fills at. O(1).
+    #[inline]
+    pub fn pixels_per_unit(&self) -> f32 {
+        self.zoom * self.pixel_ratio
     }
 
     /// Convert a canvas-space position to screen-space pixels.
@@ -133,7 +163,7 @@ impl Camera2D {
             self.viewport_size.0 as f32 / 2.0,
             self.viewport_size.1 as f32 / 2.0,
         );
-        (canvas_pos - self.position) * self.zoom + screen_center
+        (canvas_pos - self.position) * self.pixels_per_unit() + screen_center
     }
 
     /// Convert a screen-space pixel position to canvas-space.
@@ -143,7 +173,7 @@ impl Camera2D {
             self.viewport_size.0 as f32 / 2.0,
             self.viewport_size.1 as f32 / 2.0,
         );
-        (screen_pos - screen_center) / self.zoom + self.position
+        (screen_pos - screen_center) / self.pixels_per_unit() + self.position
     }
 
     /// Pan by a delta in screen pixels.
@@ -151,7 +181,7 @@ impl Camera2D {
     pub fn pan(&mut self, screen_delta: Vec2) {
         // Moving the mouse right should move the view right,
         // which means the camera position moves left in canvas space
-        self.position -= screen_delta / self.zoom;
+        self.position -= screen_delta / self.pixels_per_unit();
     }
 
     /// Zoom centered on a screen-space point (e.g., the cursor).
@@ -166,7 +196,7 @@ impl Camera2D {
             self.viewport_size.0 as f32 / 2.0,
             self.viewport_size.1 as f32 / 2.0,
         );
-        self.position = canvas_focus - (screen_focus - screen_center) / self.zoom;
+        self.position = canvas_focus - (screen_focus - screen_center) / self.pixels_per_unit();
     }
 
     /// Zoom centered on the viewport center.
@@ -185,19 +215,34 @@ impl Camera2D {
 
     /// Fit the camera to show a bounding box defined by min/max canvas coordinates.
     /// Adds padding as a fraction of the viewport (e.g., 0.1 = 10% padding on each side).
+    ///
+    /// The zoom is clamped to `MIN_ZOOM..=MAX_ZOOM`; [`Self::fit_zoom`]
+    /// is the unclamped zoom, for a caller that must know whether the
+    /// clamp cut the bounds off.
     pub fn fit_to_bounds(&mut self, min: Vec2, max: Vec2, padding_fraction: f32) {
-        let canvas_size = max - min;
-        let canvas_center = (min + max) / 2.0;
-        self.position = canvas_center;
-
-        let usable_width = self.viewport_size.0 as f32 * (1.0 - 2.0 * padding_fraction);
-        let usable_height = self.viewport_size.1 as f32 * (1.0 - 2.0 * padding_fraction);
-
-        if canvas_size.x > 0.0 && canvas_size.y > 0.0 {
-            let zoom_x = usable_width / canvas_size.x;
-            let zoom_y = usable_height / canvas_size.y;
-            self.zoom = zoom_x.min(zoom_y).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
+        self.position = (min + max) / 2.0;
+        if let Some(zoom) = self.fit_zoom(min, max, padding_fraction) {
+            self.zoom = zoom.clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
         }
+    }
+
+    /// The largest zoom at which the canvas box `[min, max]` fits inside
+    /// the viewport with `padding_fraction` of it held back on each
+    /// side, **before** the `MIN_ZOOM..=MAX_ZOOM` clamp. `None` when the
+    /// box has no area, which fits at every zoom.
+    ///
+    /// Reads the viewport in view pixels (the surface divided by
+    /// [`Self::pixel_ratio`]), so a supersampled camera frames the box
+    /// at the zoom a ratio-1 camera of the same view would. O(1).
+    pub fn fit_zoom(&self, min: Vec2, max: Vec2, padding_fraction: f32) -> Option<f32> {
+        let canvas_size = max - min;
+        if !(canvas_size.x > 0.0 && canvas_size.y > 0.0) {
+            return None;
+        }
+        let usable = 1.0 - 2.0 * padding_fraction;
+        let usable_width = self.viewport_size.0 as f32 / self.pixel_ratio * usable;
+        let usable_height = self.viewport_size.1 as f32 / self.pixel_ratio * usable;
+        Some((usable_width / canvas_size.x).min(usable_height / canvas_size.y))
     }
 
     /// Apply one [`CameraMutation`]. Single dispatch point so
@@ -261,7 +306,7 @@ impl Camera2D {
     #[inline]
     pub fn is_visible(&self, canvas_pos: Vec2, canvas_size: Vec2) -> bool {
         let screen_pos = self.canvas_to_screen(canvas_pos);
-        let screen_size = canvas_size * self.zoom;
+        let screen_size = canvas_size * self.pixels_per_unit();
 
         let right = screen_pos.x + screen_size.x;
         let bottom = screen_pos.y + screen_size.y;

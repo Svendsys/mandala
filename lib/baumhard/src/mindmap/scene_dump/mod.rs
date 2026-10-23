@@ -136,11 +136,12 @@ impl SceneRect {
 
     /// This canvas rect in surface pixels at `camera`: the corner
     /// through [`Camera2D::canvas_to_screen`], the extent scaled by the
-    /// zoom. The one place a scene rect changes space. O(1).
+    /// camera's [`Camera2D::pixels_per_unit`]. The one place a scene
+    /// rect changes space. O(1).
     pub fn to_surface(&self, camera: &Camera2D) -> SceneRect {
         SceneRect::new(
             camera.canvas_to_screen(Vec2::new(self.x, self.y)),
-            Vec2::new(self.w, self.h) * camera.zoom,
+            Vec2::new(self.w, self.h) * camera.pixels_per_unit(),
         )
     }
 }

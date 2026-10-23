@@ -746,7 +746,7 @@ PR that implements them.
 | `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.animations`, `query.editors`, `query.undo` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
-| `capture` | `capture.rs` | IPC-07 (+ IPC-08) | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
+| `capture` | `capture.rs` | IPC-07; IPC-08 adds `capture.record_start`, `capture.record_stop` | `capture.screenshot` |
 | `clock` | `clock.rs` | IPC-09 | `clock.status`, `clock.set_mode`, `clock.step`, `clock.wait` |
 | `events` | `events.rs` | IPC-14 | `events.subscribe`, `events.unsubscribe`, `events.revision` |
 
@@ -1487,37 +1487,98 @@ Poll it to 0 before reading what a paced gesture did.
 ## `capture` — screenshots and recordings (IPC-07, IPC-08)
 
 Shapes pinned here in full; `mandalactl` and the `mandala-drive` /
-`mandala-record` skills build against them.
+`mandala-record` skills build against them. `capture.screenshot` is
+implemented (IPC-07); the recording pair below is IPC-08's.
 
 **Artifact lifecycle.** The per-item caps (64 Mpx per image, 3600
 frames per recording) bound each artifact but not their number. The
-**server-chosen** artifacts dir is bounded: it is created under
-`$XDG_RUNTIME_DIR` (or a temp dir), scoped to the process, capped at
-a total byte budget with oldest-evicted (ring-buffer), and removed
-on graceful exit — a long session cannot silently fill the disk.
-Artifacts written to a **client-supplied** `path` / `dir` are the
-client's to manage; the server neither caps nor reclaims them (the
-client asked for that location explicitly).
+**server-chosen** artifacts dir is bounded: it is created on first
+use under `$XDG_RUNTIME_DIR` (or the system temp dir when that is
+unset) as `mandala-<pid>-artifacts`, owner-only (`0700`) and never
+adopted if the name already exists (the next free suffix is taken
+instead), scoped to the process, capped at 256 MiB
+(`capture::artifacts::BUDGET_BYTES`) with the oldest captures evicted
+first — a capture's PNG and sidecar together, and never the newest
+one, whose reply has not been read yet — and removed on graceful
+exit. A long session cannot silently fill the disk. Artifacts written
+to a **client-supplied** `path` / `dir` are the client's to manage;
+the server neither caps nor reclaims them (the client asked for that
+location explicitly).
 
 ### `capture.screenshot` (IPC-07)
 
 Offscreen render of the current document state — never a window
 grab, so it works identically under a compositor, Xvfb, or (post
-IPC-10) no display at all.
+IPC-10) no display at all. The frame is drawn by the very prepare /
+encode pair the window is drawn with, into a texture of the
+surface's own format, and read back; a capture at the default
+parameters therefore holds the pixels the window shows. Before
+drawing, the camera-geometry rebuild the next frame owes (a zoom the
+client sent a moment ago) is run, so the capture shows the current
+state rather than the last frame's.
 
 | param | type | default | meaning |
 |---|---|---|---|
-| `path` | string | server-chosen file in a per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (`O_NOFOLLOW`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file is `invalid_params`. |
-| `overwrite` | boolean | `false` | Allow overwriting an existing file outside the artifacts dir. Inside the artifacts dir, overwrite is always allowed. |
-| `width`, `height` | integer | current surface size | Offscreen target size in physical pixels; camera center/zoom preserved, aspect follows the target. Each side is clamped to `1..=16384`, and `width × height × scale²` must not exceed **67,108,864** device pixels (64 Mpx, ~8K square); a request over either bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
-| `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space: frame this rect instead of the current camera view. `width`/`height` still set the target resolution; the aspect rule below governs mismatches. |
-| `space` | string | `"canvas"` | Coordinate space of `region`: `"canvas"` (default) or `"surface"` (converted through the camera as of capture time). For `"surface"`, the pixel grid is the **live window surface** (the camera's current surface size), *not* the requested `width`/`height` offscreen target — the region is resolved against the window the human sees, then the camera it derives is rendered into the offscreen target. Ignored without `region`. |
-| `scale` | number | `1.0` | Supersampling factor, clamped to `0.1..=4.0`. |
+| `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (`O_NOFOLLOW`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
+| `overwrite` | boolean | `false` | Allow overwriting an existing file outside the artifacts dir. Inside the artifacts dir, overwrite is always allowed. Only valid with `path`. |
+| `width`, `height` | integer | current surface size | The view's size, in window pixels; sent together. Camera center and zoom are preserved, so a larger view shows more canvas. Each side must lie in `1..=16384`, and the image (`width × height × scale²`) must not exceed **67,108,864** pixels (64 Mpx, ~8K square) nor the GPU's largest texture side; a request over any bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
+| `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space, `w` and `h` positive: frame this rect instead of the current camera view. `width`/`height` still set the view's size; the aspect rule below governs mismatches. A region so large it would need a zoom below the minimum (`0.05`) is `invalid_params` (it could not be shown whole); one so small it needs more than the maximum (`5.0`) is framed at the maximum, still whole. |
+| `space` | string | `"canvas"` | Coordinate space of `region`: `"canvas"` (default) or `"surface"` (converted through the camera as of capture time). For `"surface"`, the pixel grid is the **live window surface** (the camera's current surface size), *not* the requested `width`/`height` offscreen target — the region is resolved against the window the human sees, then the camera it derives is rendered into the offscreen target. Only valid with `region`. |
+| `fit` | boolean | `false` | Frame the whole drawn document as the load-time fit does: its content box, with the same margin (`FIT_PADDING_FRACTION`, 5% of the view on each side). `invalid_params` with `region`, and when the document draws nothing. |
+| `scale` | number | `1.0` | Image pixels per view pixel, in `0.1..=4.0`. It changes the resolution and nothing else: the image is `round(width × scale) × round(height × scale)` pixels of the same view, with the same elements in it — zoom windows and connection glyph sizes are decided at the view's zoom, never at `zoom × scale`. Outside the range is `invalid_params`. |
 | `format` | string | `"png"` | `"png"` is the only value at pin time; the param exists so adding one is non-breaking. |
 | `sidecar` | boolean | `true` | Write the geometry sidecar next to the PNG (`<path>.geometry.json`). |
 
-Result: `{"path", "sidecar_path"?, "width", "height"}` (plus
-`revision` at the envelope level once IPC-14 lands).
+**Result** (plus `revision` at the envelope level once IPC-14 lands):
+
+| field | type | meaning |
+|---|---|---|
+| `rendered` | boolean | Whether the frame was drawn. |
+| `skipped` | string | Present exactly when not `rendered`: why (table below). |
+| `path` | string | Present exactly when `rendered`: the absolute path of the PNG. |
+| `sidecar_path` | string | Present exactly when `rendered` with `sidecar`: the absolute path of the geometry sidecar. |
+| `width`, `height` | integer | The image's size, in pixels. |
+| `scale` | number | Image pixels per view pixel, as asked. |
+| `camera` | object | `{"center_x", "center_y", "zoom"}`: the camera the image was drawn through. A canvas point `p` is at image pixel `(p - center) × zoom × scale + (width, height) / 2`. |
+| `settled` | boolean | Whether the app needed no further frame once the capture was taken (below). |
+
+A frame the renderer did **not** draw is not an error and not a
+picture: the reply is `ok:true` with `rendered: false` and `skipped`,
+and no file is written, because a PNG of a skipped frame would be
+indistinguishable from a frame that rendered black. `skipped` names
+why:
+
+| `skipped` | meaning |
+|---|---|
+| `not_started` | The renderer has not been started yet (no scene to draw). |
+| `font_system_contended` | The font system was held elsewhere when the frame asked for it. Transient; retry. |
+| `prepare_failed` | A glyph prepare failed — the glyph atlas has reached the GPU's texture limit, which can be permanent. The same failure the window logs. |
+
+`settled` is whether the app needed no further frame once the capture
+was taken: no animation running, no throttled drag or picker hover
+pending, no injected input queued, no camera geometry waiting to
+rebuild — `needs_continuation()` false, the first two conditions of
+`clock.wait until=settled`. A capture taken unsettled may hold a
+frame the next one moves on from. Waiting for the app to settle is
+`clock.wait`'s job (IPC-09), not this command's: `capture.screenshot`
+never defers its reply.
+
+**Errors.** Beyond `invalid_params`: `busy` when the capture frames a
+zoom other than the live one while a node drag is in flight (the
+zoom-dependent scene would have to be re-projected from a model the
+drag has not written yet; capture at the live zoom, or after the
+release), and `internal` when the GPU does not finish within five seconds
+(`renderer::capture::GPU_WAIT`, half the `FreezeWatchdog`'s
+threshold) or the disk refuses the write; `message` says which.
+
+**State after a capture is state before it.** The renderer's camera
+is never moved: the capture draws through a camera of its own. A
+capture framed at another zoom re-projects the zoom-dependent roles
+(connections, their labels, portals — their glyph sizes are clamped in
+screen points) at that zoom, draws, and re-projects them at the live
+zoom before replying, so `query.camera`, `scene.*` and every hit test
+afterwards answer exactly as before. Nothing is redrawn on the
+window's behalf.
 
 **Aspect rule.** When `region`'s aspect ratio differs from the
 target's, the capture is **extended, never distorted or
@@ -1538,16 +1599,30 @@ at what it sees:
   "camera": {"center_x": 12.0, "center_y": -340.5, "zoom": 0.75},
   "nodes": [
     {"id": "1.2.3",
-     "rect": {"x": 401.0, "y": 92.5, "w": 218.0, "h": 64.0},  // surface px, pre-clip
+     "rect": {"x": 401.0, "y": 92.5, "w": 218.0, "h": 64.0},  // image px, pre-clip
      "clipped": false,                     // true when partially outside the target
      "sections": [{"index": 0, "rect": {"x": 401.0, "y": 92.5, "w": 218.0, "h": 30.0}}]}
   ]
 }
 ```
 
-Elements suppressed by `ZoomVisibility` or folding at capture zoom
-are absent — the sidecar describes the rendered image, not the
-document (that is `scene.dump`'s job).
+`surface` is the image (its pixel size and the `scale` it was drawn
+at) and `camera` the same object the reply carries; every `rect` is in
+the image's pixels, through the formula above. Elements suppressed by
+`ZoomVisibility` or folding at capture zoom, and nodes the framing
+leaves outside the image, are absent — the sidecar describes the
+rendered image, not the document (that is `scene.dump`'s job). A node
+or section is present exactly when the renderer drew some part of it.
+
+**Also a console verb.** `screenshot [<path>] [width= height=]
+[scale=] [frame=view|fit|x,y,w,h] [space=] [overwrite=on|off]
+[sidecar=on|off]` calls the same engine with the same bounds and write
+guards, and differs where a person is typing: a relative path is read
+against the working directory (as `save` reads its own), no path means
+`mandala-<unix ms>.png` there rather than the artifacts dir, and an
+open console is left out of the picture it was asked from.
+`capture.screenshot` keeps it — over IPC the capture shows what the
+window shows.
 
 ### `capture.record_start` / `capture.record_stop` (IPC-08)
 

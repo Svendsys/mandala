@@ -14,9 +14,10 @@
 //!
 //! - [`pipeline`] — the small `RenderPipeline` factory shared
 //!   across every text + rect pass.
-//! - [`render`] — the per-frame `RenderPass` driver
-//!   (`Renderer::process`); composes the buffer layers in
-//!   draw order.
+//! - [`render`] — one frame as a prepare / encode pair
+//!   parameterized over camera and target, and the window's
+//!   per-frame driver over it (`Renderer::process`); composes the
+//!   buffer layers in draw order.
 //! - [`tree_buffers`] / [`tree_walker`] — `GfxElement` tree
 //!   → text-buffer + rect-buffer projection. The tree walker
 //!   is where the bulk of canvas-content shaping happens.
@@ -30,6 +31,9 @@
 //! - [`camera`] — camera framing and the screen-space ↔
 //!   canvas-space mapping (`screen_to_canvas`,
 //!   `canvas_per_pixel`, `fit_camera_to_tree`).
+//! - `capture` (native-only) — the offscreen frame a screenshot
+//!   draws through the same prepare / encode pair as the window,
+//!   and its readback.
 //! - [`decree`] — the `RenderDecree` queue the event loop
 //!   feeds the renderer (resize, zoom, camera-pan, etc.).
 //! - [`overlay_dispatch`] — overlay-vs-canvas slot routing
@@ -43,6 +47,11 @@
 // lint, which can see the shell, stays armed.
 mod borders;
 mod camera;
+// Offscreen capture and readback. Native-only at the module boundary:
+// a browser cannot block on a buffer map (CLAUDE.md "Dual-target
+// status", "Screenshot capture").
+#[cfg(not(target_arch = "wasm32"))]
+mod capture;
 // Color-picker overlay tree + mutators. Shell: the native-gated
 // `app::color_picker_flow`.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -81,6 +90,17 @@ mod tree_buffers;
 mod tree_walker;
 
 pub use borders::measure_max_glyph_advance;
+// The screenshot engine's half of the renderer's surface, native-only
+// with the engine (`application::capture`).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use camera::{content_bounds, FIT_PADDING_FRACTION};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use capture::{CaptureFailure, CapturedPixels};
+// For the watchdog's test that holds the two bounds together.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use capture::GPU_WAIT as CAPTURE_GPU_WAIT;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use render::{ConsoleLayer, FrameSkip};
 // The console overlay's geometry vocabulary, re-exported for the
 // app-side console shell (`app::console_input`) that fills it in.
 // That shell is native-gated, so on wasm32 nothing consumes these —
@@ -110,7 +130,7 @@ use std::time::Duration;
 use web_time::Instant;
 
 use baumhard::font::{Attrs, Buffer};
-use glyphon::{Cache, Resolution, SwashCache, TextAtlas, TextRenderer, Viewport};
+use glyphon::{Cache, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
 
 use rustc_hash::FxHashMap;
@@ -1229,7 +1249,8 @@ impl Renderer {
         self.config.height = height;
 
         self.surface.configure(&self.device, &self.config);
-        self.viewport.update(&self.queue, Resolution { width, height });
+        // The glyphon viewport follows on the next frame: every frame's
+        // `prepare_frame` sizes it to the target it draws.
         self.camera.set_viewport_size(width, height);
         // Canvas-space glyph positions and shaped buffers survive a
         // viewport resize; the per-frame `visible_at` cull handles

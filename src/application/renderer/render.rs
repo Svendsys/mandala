@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Frame rendering: the `Renderer::render()` body and its geometry
-//! / vertex helpers.
+//! Frame rendering: one frame as a CPU half
+//! ([`Renderer::prepare_frame`]) and a GPU half
+//! ([`Renderer::encode_frame`]), parameterized over the camera that
+//! projects the canvas and the texture it lands in, with their
+//! geometry / vertex helpers. The window (`Renderer::render`) is one
+//! caller of the pair and the offscreen capture is the other, so a
+//! screenshot draws through the very code the window does.
 
 use glam::Vec2;
 use glyphon::{TextArea, TextBounds};
@@ -13,7 +18,64 @@ use baumhard::util::color_conversion::convert_u8_to_f32;
 
 use super::{Renderer, RECT_VBUF_INITIAL_CAPACITY, RECT_VERTEX_FLOATS};
 
+use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::shape::SHAPE_ID_RECTANGLE;
+use glyphon::Resolution;
+
+/// Where [`Renderer::prepare_frame`] left one frame's two rect batches in
+/// the shared vertex buffer — `[main | palette]` — for
+/// [`Renderer::encode_frame`] to draw.
+pub(super) struct PreparedFrame {
+    main_bytes: u64,
+    palette_bytes: u64,
+    main_vertices: u32,
+    palette_vertices: u32,
+}
+
+/// Whether a frame draws the console overlay. The window always does; a
+/// capture taken *from* the console omits it, because the prompt that
+/// asked for the picture is not what the picture is of. Only the console
+/// is ever omitted, and only while it is open: the color picker, the FPS
+/// readout and the mode-status line are part of what the window shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConsoleLayer {
+    Drawn,
+    Omitted,
+}
+
+/// Why a frame was not drawn. The window's frame shrugs and the next one
+/// retries; a capture reports it, because "nothing was drawn" and "black
+/// was drawn" look alike in a PNG and must not to an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameSkip {
+    /// The renderer has not been told to start (`RenderDecree::StartRender`
+    /// has not arrived), so there is no scene to draw yet.
+    // Native-only producer: the capture asks before it prepares; the
+    // window's `render` returns before there is a skip to report.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    NotStarted,
+    /// The font system was held elsewhere when the text prepare asked
+    /// for it. Transient: the next frame retries.
+    FontSystemContended,
+    /// A glyphon prepare failed — `AtlasFull` once the glyph atlas has
+    /// reached the GPU's texture limit, which can be permanent.
+    PrepareFailed,
+}
+
+impl FrameSkip {
+    /// The wire word a capture reports it by (`format/ipc.md`
+    /// §`capture.screenshot`, `skipped`).
+    // Native-only consumer: the capture engine; the browser renders
+    // through `render` alone, which only ever drops the skip.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            FrameSkip::NotStarted => "not_started",
+            FrameSkip::FontSystemContended => "font_system_contended",
+            FrameSkip::PrepareFailed => "prepare_failed",
+        }
+    }
+}
 
 impl Renderer {
     /// Push the six vertices (two triangles) of a filled axis-aligned
@@ -82,16 +144,69 @@ impl Renderer {
         // ndc_min = (x0, y_bottom), ndc_max = (x1, y_top)
         (Vec2::new(x0, y_bottom), Vec2::new(x1, y_top))
     }
+    /// Draw one frame to the window: [`Self::prepare_frame`] at the live
+    /// camera, then [`Self::encode_frame`] into the swapchain texture,
+    /// then present. The window is one caller of the pair; an offscreen
+    /// capture (`renderer::capture`) is the other, with its own camera
+    /// and target.
     #[inline]
     pub(super) fn render(&mut self) {
         if !self.should_render {
             return;
         }
-        let vp_w_px = self.config.width as f32;
-        let vp_h_px = self.config.height as f32;
+        let camera = self.camera;
+        // On lock contention or prepare failure, skip the rest of this
+        // frame — before acquiring a surface texture, so a skipped
+        // frame takes no vsync backpressure.
+        let Ok(prepared) = self.prepare_frame(&camera, ConsoleLayer::Drawn) else {
+            return;
+        };
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            other => {
+                debug!("Failed to get the surface texture ({other:?}), can't render.");
+                return;
+            }
+        };
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let encoder = self.encode_frame(&prepared, &view);
+        self.queue.submit(Some(encoder.finish()));
+        self.queue.present(frame);
+        self.atlas.trim();
+    }
+
+    /// The CPU half of a frame, for a target `camera.viewport_size`
+    /// pixels large: rebuild both rect batches through `camera` and
+    /// upload them, size the glyphon viewport to the target, and run
+    /// both glyphon prepares ([`Self::prepare_text_for_pass`]).
+    ///
+    /// **Everything the frame draws is projected through `camera`, and
+    /// nothing else.** Canvas content goes through its transform and
+    /// its cull ([`Camera2D::visibility`], via `visible_at`); the
+    /// screen-space layer — console, color picker, FPS readout, mode
+    /// status — is laid out in window pixels and drawn at
+    /// `camera.pixel_ratio` of them, so a supersampled capture scales
+    /// it with the canvas. For the window, `camera` is the live one and
+    /// the ratio is 1.
+    ///
+    /// With [`ConsoleLayer::Omitted`] and the console open, its backdrop
+    /// and glyphs are left out of the frame; nothing else changes.
+    ///
+    /// Leaves the glyphon viewport at the target's resolution; the next
+    /// frame's prepare sets it to its own. `Viewport::update` writes
+    /// only on a change, so the window's frames pay a compare.
+    pub(super) fn prepare_frame(
+        &mut self,
+        camera: &Camera2D,
+        console: ConsoleLayer,
+    ) -> Result<PreparedFrame, FrameSkip> {
+        let (width, height) = camera.viewport_size;
+        let vp_w_px = width as f32;
+        let vp_h_px = height as f32;
+        self.viewport.update(&self.queue, Resolution { width, height });
 
         // Rebuild the "main" rect batch: canvas-space node
-        // backgrounds transformed to NDC via the current camera.
+        // backgrounds transformed to NDC via `camera`.
         // Cheap: one push per visible node, no text shaping.
         // Visible-range test mirrors the text-area cull below so
         // clipped-offscreen nodes don't waste vertices either.
@@ -103,11 +218,11 @@ impl Renderer {
                 &self.canvas_scene_elements,
             ))
         {
-            if !rect.visible_at(&self.camera) {
+            if !rect.visible_at(camera) {
                 continue;
             }
-            let screen_tl = self.camera.canvas_to_screen(rect.position);
-            let screen_size = rect.size * self.camera.zoom;
+            let screen_tl = camera.canvas_to_screen(rect.position);
+            let screen_size = rect.size * camera.pixels_per_unit();
             let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
                 screen_tl.x,
                 screen_tl.y,
@@ -128,35 +243,29 @@ impl Renderer {
 
         // Rebuild the "palette" rect batch: one opaque backdrop
         // behind the command palette and/or the glyph-wheel color
-        // picker, in screen space. The two modals are mutually
-        // exclusive but a single batch handles either case (or
-        // both, if a future variant ever overlaps them).
+        // picker, in screen space at the camera's pixel ratio. The two
+        // modals are mutually exclusive but a single batch handles
+        // either case (or both, if a future variant ever overlaps
+        // them). Both are pitch black: the palette's cyan frame and the
+        // picker's saturated hue-ring glyphs pop against true black
+        // with no tinting, over any canvas background.
         self.console_rect_vertices.clear();
-        if let Some((left, top, w, h)) = self.console_backdrop {
-            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(left, top, w, h, vp_w_px, vp_h_px);
-            // Pitch black. Sits cleanly against the cyan frame and
-            // any canvas background without tinting the palette's
-            // cyan foreground.
-            let bg_color = [0.0, 0.0, 0.0, 1.0];
-            Self::push_rect_ndc(
-                &mut self.console_rect_vertices,
-                ndc_min,
-                ndc_max,
-                bg_color,
-                SHAPE_ID_RECTANGLE,
+        let ratio = camera.pixel_ratio;
+        let console_backdrop = self.console_backdrop.filter(|_| console == ConsoleLayer::Drawn);
+        for (left, top, w, h) in console_backdrop.into_iter().chain(self.color_picker_backdrop) {
+            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
+                left * ratio,
+                top * ratio,
+                w * ratio,
+                h * ratio,
+                vp_w_px,
+                vp_h_px,
             );
-        }
-        if let Some((left, top, w, h)) = self.color_picker_backdrop {
-            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(left, top, w, h, vp_w_px, vp_h_px);
-            // Same pitch black as the palette — the picker's hue
-            // ring glyphs and crosshair cells are saturated colors
-            // that pop against true black with no tinting.
-            let bg_color = [0.0, 0.0, 0.0, 1.0];
             Self::push_rect_ndc(
                 &mut self.console_rect_vertices,
                 ndc_min,
                 ndc_max,
-                bg_color,
+                [0.0, 0.0, 0.0, 1.0],
                 SHAPE_ID_RECTANGLE,
             );
         }
@@ -194,27 +303,34 @@ impl Renderer {
                 bytemuck::cast_slice(&self.console_rect_vertices),
             );
         }
-        let main_vertex_count = (self.main_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
-        let palette_vertex_count = (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
 
         // Collect text areas + run both glyphon prepares against
-        // the atlas. Shared with `prewarm()` so the warm-up sees
-        // exactly the same glyph set that the next real frame will
-        // draw — no risk of warming a different set than gets
-        // rasterised. On lock contention or prepare failure, skip
-        // the rest of this frame.
-        if !self.prepare_text_for_pass() {
-            return;
-        }
+        // the atlas. Shared with `prewarm()` (through `render`) so the
+        // warm-up sees exactly the same glyph set that the next real
+        // frame will draw — no risk of warming a different set than
+        // gets rasterised.
+        self.prepare_text_for_pass(camera, console)?;
+        Ok(PreparedFrame {
+            main_bytes: main_bytes_len as u64,
+            palette_bytes: palette_bytes_len as u64,
+            main_vertices: (self.main_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32,
+            palette_vertices: (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32,
+        })
+    }
 
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            other => {
-                debug!("Failed to get the surface texture ({other:?}), can't render.");
-                return;
-            }
-        };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    /// The GPU half of a frame: one render pass into `view`, cleared to
+    /// the canvas color, drawing what [`Self::prepare_frame`] uploaded.
+    /// Returns the encoder unsubmitted, so a caller can record more
+    /// after the pass — the capture records its texture-to-buffer copy
+    /// there.
+    ///
+    /// `view` must be a texture of the surface format, the one both
+    /// pipelines were built for, at the size the frame was prepared for.
+    pub(super) fn encode_frame(
+        &self,
+        prepared: &PreparedFrame,
+        view: &wgpu::TextureView,
+    ) -> wgpu::CommandEncoder {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -222,7 +338,7 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -237,10 +353,10 @@ impl Renderer {
             });
 
             // 1. Node backgrounds (rect pipeline, camera-transformed).
-            if main_vertex_count > 0 {
+            if prepared.main_vertices > 0 {
                 pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..main_bytes_len as u64));
-                pass.draw(0..main_vertex_count, 0..1);
+                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..prepared.main_bytes));
+                pass.draw(0..prepared.main_vertices, 0..1);
             }
 
             // 2. Main text pass — node text, borders, connections,
@@ -248,7 +364,7 @@ impl Renderer {
             //    overlays, all drawn on top of the node backgrounds.
             //    Interactive path: log and continue on render failure
             //    so a single bad atlas frame doesn't crash the editor.
-            //    Unreachable as of glyphon 0.11.0 — `TextRenderer::
+            //    Unreachable as of glyphon 0.12.0 — `TextRenderer::
             //    render` returns `Ok(())` on every path and neither
             //    `RenderError` variant is ever constructed — so this
             //    is forward-compat cover, not a live warn, and it
@@ -256,53 +372,50 @@ impl Renderer {
             //    the signature is fallible and a future glyphon may
             //    start using it.
             if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
-                log::warn!("text_renderer.render failed: {e}");
+                log::warn!("renderer: text_renderer.render failed: {e}");
             }
 
             // 3. Palette backdrop (rect pipeline, screen-space).
             //    Drawn AFTER the main text pass so node text
             //    sitting behind the palette is fully occluded.
-            if palette_vertex_count > 0 {
+            if prepared.palette_vertices > 0 {
                 pass.set_pipeline(&self.rect_pipeline);
                 pass.set_vertex_buffer(
                     0,
                     self.rect_vertex_buffer
-                        .slice(main_bytes_len as u64..(main_bytes_len + palette_bytes_len) as u64),
+                        .slice(prepared.main_bytes..prepared.main_bytes + prepared.palette_bytes),
                 );
-                pass.draw(0..palette_vertex_count, 0..1);
+                pass.draw(0..prepared.palette_vertices, 0..1);
             }
 
             // 4. Palette text pass — cyan border, query line,
             //    filtered action rows. Drawn on top of the palette
             //    backdrop so every glyph sits cleanly on solid fill.
             //    Interactive path: log and continue on render failure.
-            //    Unreachable in glyphon 0.11.0 for the same reason as
+            //    Unreachable in glyphon 0.12.0 for the same reason as
             //    the main pass above; kept as forward-compat cover.
             if let Err(e) = self
                 .console_text_renderer
                 .render(&self.atlas, &self.viewport, &mut pass)
             {
-                log::warn!("console_text_renderer.render failed: {e}");
+                log::warn!("renderer: console_text_renderer.render failed: {e}");
             }
         }
-        self.queue.submit(Some(encoder.finish()));
-        self.queue.present(frame);
-        self.atlas.trim();
+        encoder
     }
 
-    /// Collect every visible text-area from the renderer's buffer
-    /// maps (mindmap nodes, overlays, canvas-scene — which carries
-    /// borders, connections, labels, and handles through the tree
-    /// pipeline — console, color picker, FPS
-    /// overlay) and run both `text_renderer.prepare()` and
-    /// `console_text_renderer.prepare()` against the atlas. Returns
-    /// `false` (and skips the rest of the caller's frame) on
-    /// font-system lock contention or on either prepare failing —
-    /// the same degrade path the inline render() code had.
+    /// Collect every text-area `camera` shows from the renderer's
+    /// buffer maps (mindmap nodes, overlays, canvas-scene — which
+    /// carries borders, connections, labels, and handles through the
+    /// tree pipeline — console, color picker, FPS overlay) and run both
+    /// `text_renderer.prepare()` and `console_text_renderer.prepare()`
+    /// against the atlas. Returns the [`FrameSkip`] (and the caller
+    /// skips the rest of its frame) on font-system lock contention or
+    /// on either prepare failing.
     ///
-    /// Shared between `render()` (steady-state) and `prewarm()`
-    /// (one-shot at load) so the warm-up sees exactly the same
-    /// glyph set the next real frame will draw.
+    /// Reached through [`Self::prepare_frame`], by `render()`
+    /// (steady-state, and `prewarm()` through it) and by the offscreen
+    /// capture, so every frame the app draws sees one glyph set rule.
     ///
     /// Note: this performs disjoint mutable borrows of
     /// `text_renderer`, `atlas` and `swash_cache` while holding
@@ -311,9 +424,10 @@ impl Renderer {
     /// would reject it across a method boundary, which is why the
     /// prepare call lives in this method rather than splitting into
     /// a `collect_text_areas` helper.
-    fn prepare_text_for_pass(&mut self) -> bool {
-        let vp_w = self.config.width as i32;
-        let vp_h = self.config.height as i32;
+    fn prepare_text_for_pass(&mut self, camera: &Camera2D, console: ConsoleLayer) -> Result<(), FrameSkip> {
+        let vp_w = camera.viewport_size.0 as i32;
+        let vp_h = camera.viewport_size.1 as i32;
+        let ratio = camera.pixel_ratio;
         let vp_bounds = TextBounds {
             left: 0,
             top: 0,
@@ -346,16 +460,16 @@ impl Renderer {
                     &self.canvas_scene_elements,
                 ))
                 .filter_map(|tb| {
-                    if !tb.visible_at(&self.camera) {
+                    if !tb.visible_at(camera) {
                         return None;
                     }
                     let canvas_pos = Vec2::new(tb.pos.0, tb.pos.1);
-                    let screen_pos = self.camera.canvas_to_screen(canvas_pos);
+                    let screen_pos = camera.canvas_to_screen(canvas_pos);
                     Some(TextArea {
                         buffer: &tb.buffer,
                         left: screen_pos.x,
                         top: screen_pos.y,
-                        scale: self.camera.zoom,
+                        scale: camera.pixels_per_unit(),
                         bounds: vp_bounds,
                         default_color,
                         custom_glyphs: &[],
@@ -370,20 +484,28 @@ impl Renderer {
         // buffers in `overlay_scene_elements` (populated by
         // `rebuild_overlay_scene_buffers` from the respective
         // overlay tree in `AppScene`) — they are mutually exclusive
-        // screen-space modals sharing this one pass.
-        let palette_capacity = super::scene_shape_cache::buffer_count(&self.overlay_scene_elements)
+        // screen-space modals sharing this one pass — which is also
+        // why an omitted console omits the whole sub-scene: while the
+        // console is open, it is the console.
+        let modal: &[super::scene_shape_cache::ShapedSceneElement] =
+            if console == ConsoleLayer::Omitted && self.console_backdrop.is_some() {
+                &[]
+            } else {
+                &self.overlay_scene_elements
+            };
+        let palette_capacity = super::scene_shape_cache::buffer_count(modal)
             + self.fps_overlay_buffers.len()
             + self.mode_status_overlay_buffers.len();
         let mut palette_text_areas: Vec<TextArea> = Vec::with_capacity(palette_capacity);
         palette_text_areas.extend(
-            super::scene_shape_cache::text_buffers(&self.overlay_scene_elements)
+            super::scene_shape_cache::text_buffers(modal)
                 .chain(self.fps_overlay_buffers.iter())
                 .chain(self.mode_status_overlay_buffers.iter())
                 .map(|tb| TextArea {
                     buffer: &tb.buffer,
-                    left: tb.pos.0,
-                    top: tb.pos.1,
-                    scale: 1.0,
+                    left: tb.pos.0 * ratio,
+                    top: tb.pos.1 * ratio,
+                    scale: ratio,
                     bounds: vp_bounds,
                     default_color,
                     custom_glyphs: &[],
@@ -401,7 +523,7 @@ impl Renderer {
         let Some(mut font_system) = fonts::try_acquire_font_system_write("render::prepare_text_for_pass")
         else {
             log::debug!("renderer: font_system lock contended in prepare_text_for_pass, skipping");
-            return false;
+            return Err(FrameSkip::FontSystemContended);
         };
 
         // Interactive path: a glyphon prepare failure must degrade the
@@ -434,9 +556,9 @@ impl Renderer {
         ) {
             if !self.prepare_fault_logged {
                 self.prepare_fault_logged = true;
-                log::warn!("text_renderer.prepare failed, skipping frame: {e}");
+                log::warn!("renderer: text_renderer.prepare failed, skipping frame: {e}");
             }
-            return false;
+            return Err(FrameSkip::PrepareFailed);
         }
         if let Err(e) = self.console_text_renderer.prepare(
             &self.device,
@@ -449,13 +571,13 @@ impl Renderer {
         ) {
             if !self.prepare_fault_logged {
                 self.prepare_fault_logged = true;
-                log::warn!("console_text_renderer.prepare failed, skipping frame: {e}");
+                log::warn!("renderer: console_text_renderer.prepare failed, skipping frame: {e}");
             }
-            return false;
+            return Err(FrameSkip::PrepareFailed);
         }
         drop(font_system);
         self.prepare_fault_logged = false;
-        true
+        Ok(())
     }
 
     /// Pre-warm the render pipeline during map load: run one full

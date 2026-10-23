@@ -216,4 +216,16 @@ mod tests {
             /*now*/ 50, /*last*/ 100, /*parked*/ false, /*thr*/ 100
         ));
     }
+
+    /// A screenshot blocks the main thread on the GPU, and the wait is
+    /// bounded so a GPU that never answers fails the capture rather
+    /// than tripping this watchdog: the bound is half the threshold,
+    /// as `renderer::capture` and `format/ipc.md` say it is.
+    #[test]
+    fn test_a_captures_gpu_wait_is_half_the_freeze_threshold() {
+        assert_eq!(
+            crate::application::renderer::CAPTURE_GPU_WAIT * 2,
+            super::FREEZE_THRESHOLD
+        );
+    }
 }

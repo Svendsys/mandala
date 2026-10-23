@@ -523,14 +523,29 @@ pub(in crate::application::app) fn rebuild_camera_geometry(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
+    let zoom = renderer.camera_zoom();
+    rebuild_camera_geometry_at(zoom, doc, interaction_mode, app_scene, renderer, scene_cache);
+}
+
+/// [`rebuild_camera_geometry`] at a zoom other than the camera's: the
+/// zoom-dependent roles projected as a camera at `zoom` would see them.
+///
+/// The screenshot engine's seam (`app::capture_flow`): a capture that
+/// frames another zoom projects the scene at it, draws, and projects it
+/// back at the live zoom, so the trees the renderer and every hit test
+/// read are the live ones again before anything else runs. Nothing else
+/// should reach for it — the live scene is the camera's.
+pub(in crate::application::app) fn rebuild_camera_geometry_at(
+    zoom: f32,
+    doc: &MindMapDocument,
+    interaction_mode: &super::InteractionMode,
+    app_scene: &mut crate::application::scene_host::AppScene,
+    renderer: &mut Renderer,
+    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+) {
     scene_cache.clear();
     let offsets = std::collections::HashMap::new();
-    let mut frame = CanvasFrame::new(
-        doc,
-        &offsets,
-        interaction_mode.resize_handle_overrides(),
-        renderer.camera_zoom(),
-    );
+    let mut frame = CanvasFrame::new(doc, &offsets, interaction_mode.resize_handle_overrides(), zoom);
     frame.update_connection_trees(scene_cache, app_scene);
     frame.update_connection_label_tree(app_scene);
     frame.update_portal_tree(app_scene);

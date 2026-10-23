@@ -8,7 +8,9 @@
 //! IPC-driven action, console line or macro therefore takes the same
 //! arms, the same gates and the same undo entries as a keystroke
 //! would, and injected raw input enters through the very
-//! `InitState::on_*` methods `handle_event`'s winit arms call.
+//! `InitState::on_*` methods `handle_event`'s winit arms call. A
+//! screenshot is the screenshot engine (`capture_flow::capture`), the
+//! function the `screenshot` console verb calls too.
 //!
 //! Native-only at this module boundary, with the module it serves
 //! (`CLAUDE.md` "Dual-target status").
@@ -19,19 +21,22 @@ use glam::Vec2;
 use serde_json::{json, Value};
 use winit::event_loop::ActiveEventLoop;
 
+use crate::application::capture::plan::CaptureRequest;
+use crate::application::capture::{CaptureError, Destination};
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
 use crate::application::ipc::injected::{
     resolve_command, Delivery, InputEvent, Overloaded, Pacing, Sample, Surface,
 };
 use crate::application::ipc::space::{camera_json, Point, Space};
-use crate::application::ipc::{CommandTarget, Injected, SceneView, ShellState};
+use crate::application::ipc::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::platform::window::PhysicalPosition;
 use crate::application::renderer::Renderer;
 use crate::application::source_tier::SourceTier;
 
+use super::capture_flow::{self, CaptureScene};
 use super::console_input::exec::execute_console_line;
 use super::dispatch::{self, DispatchHit, DispatchOutcome};
 use super::input_context::InputHandlerContext;
@@ -274,5 +279,30 @@ impl CommandTarget for IpcCommandTarget<'_> {
 
     fn injected_pending(&self) -> usize {
         self.init.injected.len()
+    }
+
+    fn capture(
+        &mut self,
+        request: &CaptureRequest,
+        destination: Destination,
+        sidecar: bool,
+    ) -> Option<Result<Screenshot, CaptureError>> {
+        let init = &mut *self.init;
+        init.document.as_ref()?;
+        let scene = CaptureScene {
+            moving_node: init.drag_state.is_moving_node(),
+            document: &init.document,
+            mindmap_tree: &init.mindmap_tree,
+            app_scene: &mut init.app_scene,
+            renderer: &mut init.renderer,
+            scene_cache: &mut init.scene_cache,
+            interaction_mode: &init.interaction_mode,
+        };
+        let taken = capture_flow::capture(scene, request, destination, sidecar, &mut init.artifacts);
+        // After the capture, which ran the camera-geometry rebuild the
+        // next frame owed: what is left is what a frame would still
+        // move on from.
+        let settled = !init.needs_continuation();
+        Some(taken.map(|outcome| Screenshot { outcome, settled }))
     }
 }

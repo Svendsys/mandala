@@ -95,6 +95,18 @@ pub(in crate::application::app) fn execute_console_line(
     let close_after = effects.close_console;
     let had_side_effect = side_effect.is_some();
 
+    // A screenshot's report is the line's output, so it is taken here,
+    // before anything else could run, and replaces the verb's silent
+    // `Ok`. It draws through a camera of its own and mutates nothing:
+    // no rebuild, no modal, nothing for the window to redraw.
+    if let Some(ConsoleSideEffect::Screenshot(screenshot)) = &side_effect {
+        let outcome = LineOutcome::Ran(super::screenshot::take(ctx, screenshot));
+        return Some(LineRun {
+            outcome,
+            changed_view: false,
+        });
+    }
+
     // Decided before the pre-rebuild handler consumes the effect,
     // because two of its arms write state the rebuild has to see —
     // the document swap and the interaction-mode flip both land
@@ -238,12 +250,16 @@ fn console_line_needs_rebuild(document_mutated: bool, side_effect: Option<&Conso
 /// canvas draws, and so needs the rebuild even when the command
 /// never took `ConsoleEffects::document_mut`.
 ///
-/// Every variant does except one. `SetFpsDisplay` is the exception
-/// for the reason [`handle_pre_rebuild_side_effect`] already gives
-/// for running it early: the FPS overlay is screen-space and shares
-/// no state with the scene tree, so `fps on` / `fps debug` /
-/// `fps off` are the one modal-ish transition the scene does not
-/// have to be re-projected for.
+/// Every variant does except two. `SetFpsDisplay` is one, for the
+/// reason [`handle_pre_rebuild_side_effect`] already gives for
+/// running it early: the FPS overlay is screen-space and shares no
+/// state with the scene tree, so `fps on` / `fps debug` / `fps off`
+/// are the one modal-ish transition the scene does not have to be
+/// re-projected for. `Screenshot` is the other: a capture draws
+/// through a camera of its own and puts back any scene it
+/// re-projects, so it leaves the canvas exactly as it found it —
+/// and [`execute_console_line`] returns with its report before this
+/// is ever asked.
 ///
 /// Written as an exhaustive match rather than a `matches!` so a new
 /// variant cannot inherit an answer by omission — the default for a
@@ -253,6 +269,10 @@ fn side_effect_changes_the_canvas(side_effect: Option<&ConsoleSideEffect>) -> bo
     match side_effect {
         None => false,
         Some(ConsoleSideEffect::SetFpsDisplay(_)) => false,
+        // Taken before this question is asked (`execute_console_line`
+        // returns with its report); were it ever asked, the answer is
+        // that a capture draws nothing on the canvas.
+        Some(ConsoleSideEffect::Screenshot(_)) => false,
         Some(
             ConsoleSideEffect::ReplaceDocument(_)
             | ConsoleSideEffect::SetInteractionMode(_)
@@ -489,17 +509,20 @@ fn handle_post_rebuild_side_effect(
                 text_edit_state,
             );
         }
-        // Pre-rebuild variants — already consumed. Per
-        // CODE_CONVENTIONS §9 (interactive paths must not panic),
-        // log + soft-skip instead of `unreachable!`. A future
-        // contributor adding a variant that forgets the pre-
-        // rebuild arm will see a loud log line, not a crash.
+        // Variants consumed before the rebuild — three by
+        // `handle_pre_rebuild_side_effect`, `Screenshot` by
+        // `execute_console_line` itself. Per CODE_CONVENTIONS §9
+        // (interactive paths must not panic), log + soft-skip instead
+        // of `unreachable!`. A future contributor adding a variant
+        // that forgets its early arm will see a loud log line, not a
+        // crash.
         ConsoleSideEffect::ReplaceDocument(_)
         | ConsoleSideEffect::SetFpsDisplay(_)
-        | ConsoleSideEffect::SetInteractionMode(_) => {
+        | ConsoleSideEffect::SetInteractionMode(_)
+        | ConsoleSideEffect::Screenshot(_) => {
             log::error!(
-                "console: {:?} reached post-rebuild handler; should have been consumed by \
-                 handle_pre_rebuild_side_effect — ignoring to avoid crash",
+                "console: {:?} reached post-rebuild handler; should have been consumed before the \
+                 rebuild — ignoring to avoid crash",
                 eff
             );
             return false;

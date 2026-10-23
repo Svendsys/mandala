@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! The screenshot engine's app half: the one function both the IPC
+//! `capture.screenshot` command and the `screenshot` console verb call
+//! (`crate::application::capture` holds the rest).
+//!
+//! **A capture shows the current state, and leaves it as it found it.**
+//! It first runs the camera-geometry rebuild the next frame would run
+//! anyway, so a zoom the agent sent a moment ago is drawn with
+//! connections sampled at that zoom rather than the last one. A capture
+//! framed at another zoom then needs the zoom-dependent roles —
+//! connections, their labels, portals — projected at that zoom, because
+//! their glyph sizes are clamped in screen points; it projects them,
+//! draws, and projects them back at the live zoom before returning. The
+//! renderer's camera is never touched: the capture draws through a
+//! camera of its own. So the camera, the scene and every hit test
+//! afterwards are what they were before.
+//!
+//! **What it will not do.** Re-projecting during a node drag would draw
+//! the dragged node's connections where the model last had them and
+//! leave them there, because the drag keeps its offsets out of the
+//! model until release. A capture that needs another zoom while a node
+//! drag is in flight is therefore refused as busy; one at the live zoom
+//! draws the drag as the window does.
+//!
+//! Native-only with the engine (`CLAUDE.md` "Dual-target status").
+
+use baumhard::mindmap::scene_cache::SceneConnectionCache;
+use baumhard::mindmap::tree_builder::MindMapTree;
+
+use crate::application::capture::artifacts::Artifacts;
+use crate::application::capture::plan::{plan, CaptureRequest, PlanContext};
+use crate::application::capture::{geometry, resolve, write, CaptureError, CaptureOutcome, Destination};
+use crate::application::document::MindMapDocument;
+use crate::application::renderer::{content_bounds, CaptureFailure, Renderer};
+use crate::application::scene_host::AppScene;
+
+use super::scene_rebuild::rebuild_camera_geometry_at;
+use super::InteractionMode;
+
+/// The app state a capture reads and, for another zoom, briefly
+/// re-projects. Borrowed from `InitState` by the IPC target and from the
+/// `InputHandlerContext` by the console, so the two surfaces hand the
+/// engine the same fields.
+pub(super) struct CaptureScene<'a> {
+    pub(super) document: &'a Option<MindMapDocument>,
+    pub(super) mindmap_tree: &'a Option<MindMapTree>,
+    pub(super) app_scene: &'a mut AppScene,
+    pub(super) renderer: &'a mut Renderer,
+    pub(super) scene_cache: &'a mut SceneConnectionCache,
+    pub(super) interaction_mode: &'a InteractionMode,
+    /// A node drag is in flight (`ThrottledDrag::MovingNode`).
+    pub(super) moving_node: bool,
+}
+
+/// Take one screenshot: plan `request` and resolve `destination` —
+/// both before anything is drawn, so a refused request costs no frame —
+/// then draw it and write it, with its geometry sidecar when `sidecar`
+/// is set.
+///
+/// `Err(CaptureError::Internal)` when there is no document is the
+/// callers' to pre-empt; both answer it in their own words first.
+pub(super) fn capture(
+    scene: CaptureScene<'_>,
+    request: &CaptureRequest,
+    destination: Destination,
+    sidecar: bool,
+    artifacts: &mut Artifacts,
+) -> Result<CaptureOutcome, CaptureError> {
+    let CaptureScene {
+        document,
+        mindmap_tree,
+        app_scene,
+        renderer,
+        scene_cache,
+        interaction_mode,
+        moving_node,
+    } = scene;
+    let Some(doc) = document.as_ref() else {
+        return Err(CaptureError::Internal("no document is loaded".into()));
+    };
+
+    // What the next frame would rebuild before drawing, rebuilt now so
+    // the capture draws it too.
+    super::drain_frame::drain_camera_geometry_rebuild(
+        moving_node,
+        document,
+        interaction_mode,
+        app_scene,
+        renderer,
+        scene_cache,
+    );
+
+    let live = *renderer.camera();
+    let camera = plan(
+        request,
+        &PlanContext {
+            live,
+            max_texture_side: renderer.max_texture_side(),
+            content: mindmap_tree.as_ref().and_then(|tree| content_bounds(&tree.tree)),
+        },
+    )?;
+
+    let target = resolve(destination, sidecar, artifacts)?;
+
+    // Exact comparison on purpose: any difference in zoom is a
+    // difference in the connection samples the scene holds.
+    let reproject = camera.zoom.to_bits() != live.zoom.to_bits();
+    if reproject && moving_node {
+        return Err(CaptureError::Busy(
+            "a node drag is in progress; a capture at another zoom would leave its connections behind. \
+             Capture at the current zoom, or once the drag is released"
+                .into(),
+        ));
+    }
+    if reproject {
+        rebuild_camera_geometry_at(
+            camera.zoom,
+            doc,
+            interaction_mode,
+            app_scene,
+            renderer,
+            scene_cache,
+        );
+    }
+    let drawn = renderer.capture_frame(&camera, request.console);
+    if reproject {
+        rebuild_camera_geometry_at(live.zoom, doc, interaction_mode, app_scene, renderer, scene_cache);
+    }
+
+    let pixels = match drawn {
+        Ok(pixels) => pixels,
+        Err(CaptureFailure::Skipped(skip)) => return Ok(CaptureOutcome::Skipped { camera, skip }),
+        Err(CaptureFailure::TooLarge { max_side }) => {
+            return Err(CaptureError::Internal(format!(
+                "the planned {}×{} image exceeds this GPU's largest texture side, {max_side} pixels",
+                camera.viewport_size.0, camera.viewport_size.1
+            )))
+        }
+        Err(CaptureFailure::UnsupportedFormat(format)) => {
+            return Err(CaptureError::Internal(format!(
+                "the window's surface format, {format:?}, is not one a capture can read back"
+            )))
+        }
+        Err(CaptureFailure::Gpu(message)) => return Err(CaptureError::Internal(message)),
+    };
+    let map = target.sidecar.is_some().then(|| {
+        geometry::sidecar(
+            mindmap_tree.as_ref(),
+            &doc.mindmap,
+            &camera,
+            crate::application::ipc::PROTOCOL_VERSION,
+        )
+    });
+    write(&target, &pixels, map.as_ref(), artifacts)?;
+    Ok(CaptureOutcome::Written {
+        camera,
+        path: target.path,
+        sidecar_path: target.sidecar,
+    })
+}

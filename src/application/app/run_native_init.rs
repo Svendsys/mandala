@@ -190,5 +190,6 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         // first `WindowEvent::Touch` lands a finger.
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
         injected: crate::application::ipc::injected::InjectedQueue::default(),
+        artifacts: crate::application::capture::artifacts::Artifacts::for_this_process(),
     }
 }

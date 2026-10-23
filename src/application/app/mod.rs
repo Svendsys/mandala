@@ -56,6 +56,8 @@ pub(crate) mod dispatch;
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]
+mod capture_flow;
+#[cfg(not(target_arch = "wasm32"))]
 mod click;
 mod click_triggers;
 #[cfg(not(target_arch = "wasm32"))]
@@ -877,6 +879,16 @@ impl DragState {
     /// `dispatch::native` — should each have to spell.
     fn throttled(drag: ThrottledDrag) -> Self {
         Self::Throttled(Box::new(drag))
+    }
+
+    /// True while a node is being dragged. That drag keeps its
+    /// connections current itself, frame by frame, with offsets the
+    /// model does not hold until release — so a camera-geometry rebuild
+    /// in the middle of it, which projects from the model, would put
+    /// them back where they were. The per-frame drain skips the rebuild
+    /// then, and a capture at another zoom refuses.
+    fn is_moving_node(&self) -> bool {
+        matches!(self, Self::Throttled(d) if matches!(**d, ThrottledDrag::MovingNode(_)))
     }
 
     /// True when overwriting this state with a freshly-armed

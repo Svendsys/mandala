@@ -12,6 +12,7 @@ mod dispatch;
 mod edit;
 pub(in crate::application::app) mod exec;
 mod history;
+mod screenshot;
 
 pub(in crate::application::app) use dispatch::dispatch_console_action;
 pub(super) use dispatch::handle_console_key;

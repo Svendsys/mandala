@@ -1440,6 +1440,7 @@ dependencies = [
  "js-sys",
  "log",
  "mandala_derive",
+ "png",
  "pollster",
  "rustc-hash 2.1.3",
  "rustix 1.1.5",

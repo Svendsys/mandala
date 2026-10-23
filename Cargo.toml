@@ -180,6 +180,11 @@ web-time = "1.1.0"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "1.0.1"
 arboard = "3.7.0"
+# The screenshot engine's encoder (`src/application/capture/png.rs`).
+# Native-only with the engine: the readback blocks on a buffer map,
+# which a browser cannot. `arboard` already brings this exact version
+# into the native graph through `image`, so naming it adds no crate.
+png = "0.18.1"
 
 # The `--ipc` socket's lifecycle needs one POSIX call std does not
 # expose — `geteuid`, so the directories on the socket's path are only
