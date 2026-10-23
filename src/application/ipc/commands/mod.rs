@@ -191,6 +191,38 @@ mod tests {
         assert_eq!(mandalactl::FRAME_CAP, OUTBOUND_FRAME_CAP);
     }
 
+    /// The convention `ParamSpec::doc` states, held across the *whole*
+    /// registry and not only the commands `mandalactl` has a verb for:
+    /// a parameter named like a file location documents itself as an
+    /// "Absolute path", because `mandalactl` types a command it has no
+    /// verb for from `describe` and reads that opening to make a
+    /// relative argument absolute. Without it the shell user's
+    /// `mandalactl future.export out.json` is refused by the app.
+    #[test]
+    fn test_every_path_named_parameter_documents_itself_as_an_absolute_path() {
+        fn names_a_location(name: &str) -> bool {
+            matches!(name, "path" | "dir" | "to_file")
+                || ["_path", "_file", "_dir"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+        }
+        for family in FAMILIES {
+            for command in family.commands {
+                for param in command.params.iter().filter(|p| names_a_location(p.name)) {
+                    assert!(
+                        param.doc.starts_with("Absolute path"),
+                        "`{}` parameter `{}` is named like a file location, so its doc must start with \
+                         \"Absolute path\" (see `ParamSpec::doc`): `mandalactl` uses that to make \
+                         relative arguments absolute. Got: {:?}",
+                        command.name,
+                        param.name,
+                        param.doc
+                    );
+                }
+            }
+        }
+    }
+
     /// `mandalactl` makes a relative path argument absolute, so exactly
     /// the parameters the registry documents as an absolute path are
     /// flagged as paths in its table — no more (a text argument that

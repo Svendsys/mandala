@@ -92,6 +92,17 @@ pub(crate) struct ParamSpec {
     pub(crate) name: &'static str,
     pub(crate) ty: ParamType,
     pub(crate) required: bool,
+    /// What the parameter means, for an agent reading `describe`.
+    ///
+    /// **A parameter the app opens or writes as a file must have a doc
+    /// that starts with "Absolute path".** That opening is not only
+    /// prose: `mandalactl` reads it off `describe` to decide that a
+    /// relative argument (`out.json`) must be made absolute against the
+    /// shell's working directory before it is sent, for commands it has
+    /// no verb for. A path parameter documented any other way ("File to
+    /// write…", "Path, must be absolute") is sent as typed, and the
+    /// shell user's natural relative argument is refused. A test over
+    /// the whole registry holds the parameters named like paths to it.
     pub(crate) doc: &'static str,
 }
 
