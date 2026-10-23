@@ -750,7 +750,12 @@ Position in canvas space (the point at the viewport center),
 `SetPosition { canvas_pos }`, `SetZoom { factor }`,
 `FitToBounds { min, max, padding_fraction }`. Projection
 helpers `canvas_to_screen` / `screen_to_canvas` are the only
-place coordinate-space conversion lives. `Camera2D::visibility` is
+place coordinate-space conversion lives, and they scale by
+`pixels_per_unit()` — `zoom × pixel_ratio`. `pixel_ratio` is 1 for
+the live window and the supersampling `scale` for an offscreen
+capture: zoom windows and zoom-dependent layout read `zoom` alone,
+so a capture at any ratio shows the elements the window shows, at
+more pixels. `Camera2D::visibility` is
 the only place the cull lives: it answers whether an element with a
 given canvas rect and zoom window is drawn, and if not why
 (`Visibility::OutsideZoomWindow` before `Offscreen`). The renderer's
@@ -3239,14 +3244,67 @@ reach, so the drag state machines, double-click timing and modal
 steals cannot tell them apart. `input.drag` paces its samples one per
 frame through the injected-input queue (`ipc/injected.rs`), so the
 throttled drag drains between its moves as under a real hand;
-`input.click_node` is a move and a click at a node's center.
+`input.click_node` is a move and a click at a node's center. The
+`capture` family is what is drawn as pixels: `capture.screenshot` is
+a thin wire over the screenshot engine (see
+[Screenshot capture](#screenshot-capture)), which the `screenshot`
+console verb calls too.
 
-**Vision:** the families after `input` (capture, clock, events)
-each add one module and one line to the registry's family table; the
-capture sidecar (IPC-07) is the scene serializer's output.
+**Vision:** the families after `capture` (clock, events) each add one
+module and one line to the registry's family table; recording
+(IPC-08) and headless mode (IPC-10) draw through the same
+parameterized frame the screenshot engine does.
 **Caveat:** Unix-only today — Windows fails `--ipc` at startup until
 the named-pipe adapter lands, and the browser has no socket at all
 (`CLAUDE.md` "Dual-target status").
+
+### Screenshot capture
+
+One offscreen frame, drawn by the code that draws the window, read
+back and written as a PNG with a geometry sidecar mapping its pixels
+to node ids — the visual half of "inspect the app as well as a human
+does", for agents (`capture.screenshot`) and people (`screenshot`).
+
+A screenshot has to be the window's frame, not a lookalike of it, and
+it has to be truthful about the frames that were not drawn. The
+renderer's frame is therefore split into a CPU half
+(`Renderer::prepare_frame`) and a GPU half (`Renderer::encode_frame`),
+parameterized over the camera that projects the canvas and the
+texture it lands in; the window is one caller and the capture
+(`renderer::capture`) another, drawing into a texture of the
+surface's own format and reading it back in row bands that fit the
+device's buffer limit. At the default parameters the PNG is the
+window, pixel for pixel. Resolution is the camera's
+[`pixel_ratio`](#camera2d-and-cameramutation) rather than its zoom,
+so a supersampled capture shows the same elements the window does.
+
+`src/application/capture/` holds the engine: `plan` turns a request
+(size, framing — the view, a region by the aspect rule, or `fit` —
+and scale) into the one `Camera2D` the frame is drawn through,
+refusing what cannot be drawn before anything is allocated;
+`artifacts` is the bounded, owner-only, per-process dir a
+server-chosen capture lands in, removed on exit; `geometry` is the
+sidecar, read off the node tree through `scene_dump` at the capture's
+camera; `png` encodes. `app/capture_flow.rs` is the app half both
+surfaces call: it runs the camera-geometry rebuild the next frame
+owes, re-projects the zoom-dependent roles for a capture framed at
+another zoom and projects them back afterwards (so the live scene and
+camera are untouched), and refuses that re-projection as `busy`
+during a node drag. Every caller-chosen path is written through
+`guarded_file::publish` — atomic, no symlink followed, no file
+replaced unasked — the writer the IPC `to_file` sidecar uses too.
+
+A frame the renderer skips (`FrameSkip`: not started, font system
+contended, glyph prepare failed) is reported as not rendered and
+writes no file. An open modal (console or color picker) is laid out
+against the window, so a capture of another size leaves it out
+(`ModalLayer::Omitted`), and so does the console verb, from its own
+picture; the IPC command at the window's size keeps it.
+
+**Caveat:** native-only — the readback blocks on a buffer map, which
+a browser cannot do (`CLAUDE.md` "Dual-target status"; browser
+canvas capture is IPC-15's). **Vision:** IPC-08's recorder and
+IPC-10's headless pump draw through the same prepare / encode pair.
 
 ### `now_ms()`
 
@@ -3579,10 +3637,13 @@ first-class). Tab-completion is contextual and prefix-matched;
 scrollback shows command history with dimmed older lines.
 
 `src/application/console/mod.rs:1-170`.
-Native-only today. Verbs include `zoom`, `font`, `color`,
-`label`, `edge`, `portal`, `anchor`, `body`, `cap`, `spacing`,
-`fps`, `mutation` (with `list`, `help`, `apply`, `inspect`
-subverbs), `open`, `new`, `quit`, `save`. Visuals borrow
+Native-only today. The verbs are the `COMMANDS` table in
+`console/commands/mod.rs`: `help`, `anchor`, `body`, `border`,
+`canvas`, `cap`, `color`, `edge`, `font`, `fps`, `spacing`, `label`,
+`mode`, `mutation` (with `list`, `help`, `apply`, `inspect`
+subverbs), `save`, `screenshot` (see
+[Screenshot capture](#screenshot-capture)), `open`, `new`, `node`,
+`section`, `zoom`. Visuals borrow
 `baumhard::mindmap::border::BorderGlyphSet::box_drawing_rounded`
 for the frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK

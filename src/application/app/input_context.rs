@@ -100,6 +100,11 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// `execute_console_line` can rebuild the Map tier without
     /// taking a separate ad-hoc borrow.
     pub macros: &'a mut MacroRegistry,
+    /// Where a server-chosen screenshot lands, and the dir a
+    /// caller-chosen path may overwrite into.
+    pub artifacts: &'a mut crate::application::capture::artifacts::Artifacts,
+    /// The freeze watchdog, for a screenshot to tick as it progresses.
+    pub watchdog: &'a super::freeze_watchdog::FreezeWatchdog,
 }
 
 impl<'a> InputHandlerContext<'a> {

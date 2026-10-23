@@ -26,6 +26,7 @@ use super::{
     drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, Application, DragState,
     InteractionMode, LastClick, Options,
 };
+use crate::application::capture::artifacts::Artifacts;
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
@@ -149,7 +150,11 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         let window = event_loop
             .create_window(Window::default_attributes())
             .expect("Failed to create application window");
-        self.init = Some(run_native_init::build(&self.options, Arc::new(window)));
+        self.init = Some(run_native_init::build(
+            &self.options,
+            Arc::new(window),
+            self.watchdog.clone(),
+        ));
         // Ping once as soon as the window is up so the watchdog
         // knows the main loop has reached a live state. Before
         // this point, the watchdog treats the zeroed atomic as
@@ -284,11 +289,15 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         self.watchdog.parked();
     }
 
-    /// Graceful exit: the client hears `shutdown`, and the socket file
-    /// is removed.
+    /// Graceful exit: the client hears `shutdown`, the socket file is
+    /// removed, and so is the artifacts dir with every server-chosen
+    /// screenshot in it.
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(server) = self.ipc.take() {
             server.shutdown();
+        }
+        if let Some(init) = self.init.as_mut() {
+            init.artifacts.remove();
         }
     }
 }
@@ -359,6 +368,14 @@ pub(super) struct InitState {
     /// applied one sample per frame ahead of `drain_inputs`
     /// (`format/ipc.md` §`input`). Always empty without `--ipc`.
     pub(super) injected: InjectedQueue,
+    /// Where a screenshot lands when its caller names no path: made on
+    /// first use, bounded, and removed in `NativeApp::exiting`
+    /// (`format/ipc.md` §`capture`, "Artifact lifecycle").
+    pub(super) artifacts: Artifacts,
+    /// A handle on the event loop's freeze watchdog, for main-thread
+    /// work that runs long while making progress — a screenshot ticks
+    /// it per band and per encoded chunk (`app::capture_flow`).
+    pub(super) watchdog: FreezeWatchdog,
 }
 
 impl InitState {
@@ -389,6 +406,8 @@ impl InitState {
             picker_hover: &mut self.picker_hover,
             keybinds: &self.keybinds,
             macros: &mut self.macros,
+            artifacts: &mut self.artifacts,
+            watchdog: &self.watchdog,
         }
     }
 
@@ -707,11 +726,7 @@ impl InitState {
         // qualify — sections don't move the parent, and node
         // resize gestures' tree mutations are re-applied by
         // the next drain after any competing rebuild.
-        let is_moving_node = matches!(
-            self.drag_state,
-            DragState::Throttled(ref d)
-                if matches!(**d, super::throttled_interaction::ThrottledDrag::MovingNode(_))
-        );
+        let is_moving_node = self.drag_state.is_moving_node();
 
         // Suppress the animation tick during drags that mutate
         // the tree per-frame (`MovingNode`, `MovingSection`,

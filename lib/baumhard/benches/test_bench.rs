@@ -1612,6 +1612,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("camera_mutation_set_position_assigns_directly", |b| {
         b.iter(do_camera_mutation_set_position_assigns_directly)
     });
+    c.bench_function("pixel_ratio_scales_pixels_not_zoom_windows", |b| {
+        b.iter(do_pixel_ratio_scales_pixels_not_zoom_windows)
+    });
+    c.bench_function("fit_zoom_reads_the_view_not_the_surface", |b| {
+        b.iter(do_fit_zoom_reads_the_view_not_the_surface)
+    });
     // scene introspection (fixture load + build + dump) //
     c.bench_function("scene_dump_nodes_are_the_tree_in_pre_order", |b| {
         b.iter(do_scene_dump_nodes_are_the_tree_in_pre_order)

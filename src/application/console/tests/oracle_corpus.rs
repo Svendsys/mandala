@@ -423,6 +423,20 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // case-insensitively.
     (Sel::Node, "border TOP=x"),
     (Sel::Node, "font SIZE=14"),
+    // screenshot — the verb only reads the line; a well-formed one is a
+    // silent `OK` whose whole behavior is the side effect the signature
+    // drops (the engine runs in the executor, against a renderer).
+    (Sel::None, "screenshot"),
+    (
+        Sel::None,
+        "screenshot shot.png width=640 height=360 scale=2 frame=fit sidecar=off",
+    ),
+    (Sel::None, "screenshot width=640"),
+    (Sel::None, "screenshot frame=1,2,3"),
+    (Sel::None, "screenshot space=surface"),
+    (Sel::None, "screenshot overwrite=yes"),
+    (Sel::None, "screenshot a.png b.png"),
+    (Sel::None, "screenshot region=0,0,1,1"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for
@@ -616,6 +630,10 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     // `stage_kv` matches it that way, so an upper-case key offers
     // nothing rather than offering a row the verb would reject.
     (Sel::Node, "border TOP"),
+    // screenshot
+    (Sel::None, "screenshot "),
+    (Sel::None, "screenshot frame="),
+    (Sel::None, "screenshot sidecar="),
 ];
 
 /// The one outcome whose tail this machine chose rather than the

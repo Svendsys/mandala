@@ -29,6 +29,9 @@ use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::scene_host::AppScene;
 
+use crate::application::capture::plan::CaptureRequest;
+use crate::application::capture::{CaptureError, CaptureOutcome, Destination};
+
 use super::injected::{Overloaded, Pacing, Sample};
 use super::space::Point;
 
@@ -175,6 +178,34 @@ pub(crate) trait CommandTarget {
 
     /// Samples still waiting in the injected-input queue. Read-only.
     fn injected_pending(&self) -> usize;
+
+    /// Take a screenshot through the screenshot engine — the function
+    /// the `screenshot` console verb calls too (`app::capture_flow`) —
+    /// and report whether the app was settled once it was taken.
+    /// `None` when the app has no document.
+    ///
+    /// Changes nothing a frame would show: the capture draws through a
+    /// camera of its own, and a scene it re-projects for another zoom
+    /// is projected back before this returns. [`Self::changed_view`]
+    /// is untouched.
+    fn capture(
+        &mut self,
+        request: &CaptureRequest,
+        destination: Destination,
+        sidecar: bool,
+    ) -> Option<Result<Screenshot, CaptureError>>;
+}
+
+/// What [`CommandTarget::capture`] did.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Screenshot {
+    pub(crate) outcome: CaptureOutcome,
+    /// The app needed no further frame once the capture was taken: no
+    /// animation running, no throttled drag or picker hover pending, no
+    /// injected input queued, no camera geometry waiting to rebuild. A
+    /// capture taken unsettled may show a frame the next one moves on
+    /// from; `clock.wait until=settled` is what waits for it.
+    pub(crate) settled: bool,
 }
 
 /// What [`CommandTarget::inject`] did.

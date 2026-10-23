@@ -6,7 +6,8 @@
 //! Camera is platform-shared logic that must behave identically on
 //! native and WASM. These tests cover the canvas↔screen coordinate
 //! round-trip, zoom-at-cursor invariant, pan, fit-to-bounds (including
-//! degenerate inputs), and `CameraMutation` dispatch.
+//! degenerate inputs), `CameraMutation` dispatch, and the pixel ratio a
+//! supersampled capture draws through.
 //!
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
@@ -466,4 +467,110 @@ fn test_visibility_serializes_as_its_wire_words() {
             serde_json::Value::String(word.into())
         );
     }
+}
+
+// ── pixel ratio ─────────────────────────────────────────────────────
+
+#[test]
+fn test_pixel_ratio_scales_pixels_not_zoom_windows() {
+    do_pixel_ratio_scales_pixels_not_zoom_windows();
+}
+
+/// A camera at `pixel_ratio` 2 over a surface twice the size is the
+/// same view at twice the pixels: every canvas point lands at twice its
+/// ratio-1 position, a round trip still returns it, and every
+/// visibility verdict is the ratio-1 one — including for an element
+/// whose zoom window holds the camera's `zoom` but not its pixels per
+/// unit, which is the case a supersampled capture would otherwise cull.
+///
+/// Fails when: a conversion reads `zoom` instead of
+/// `pixels_per_unit` (the positions stop doubling), or the zoom-window
+/// test reads `pixels_per_unit` (the `[1.5, 3]` window, which holds
+/// zoom 2 and not 4, starts reporting `OutsideZoomWindow`).
+pub fn do_pixel_ratio_scales_pixels_not_zoom_windows() {
+    let mut view = Camera2D::new(800, 600);
+    view.position = Vec2::new(120.0, -45.0);
+    view.zoom = 2.0;
+    let supersampled = Camera2D {
+        viewport_size: (1600, 1200),
+        pixel_ratio: 2.0,
+        ..view
+    };
+    assert_eq!(supersampled.pixels_per_unit(), 4.0);
+
+    let windows = [
+        ZoomVisibility::unbounded(),
+        ZoomVisibility::from_pair(Some(1.5), Some(3.0)),
+        ZoomVisibility::from_pair(Some(3.0), None),
+    ];
+    let size = Vec2::new(30.0, 12.0);
+    for xi in -10..=10 {
+        for yi in -10..=10 {
+            let pos = Vec2::new(xi as f32 * 25.0 + 120.0, yi as f32 * 20.0 - 45.0);
+            assert!(
+                almost_equal_vec2(
+                    supersampled.canvas_to_screen(pos),
+                    view.canvas_to_screen(pos) * 2.0
+                ),
+                "{pos} lands at twice its ratio-1 position"
+            );
+            assert!(almost_equal_vec2(
+                supersampled.screen_to_canvas(supersampled.canvas_to_screen(pos)),
+                pos
+            ));
+            for window in windows {
+                assert_eq!(
+                    supersampled.visibility(pos, size, window),
+                    view.visibility(pos, size, window),
+                    "{pos} under {window:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        supersampled.visibility(Vec2::new(120.0, -45.0), size, windows[1]),
+        Visibility::Visible,
+        "zoom 2 is inside [1.5, 3] whatever the pixel ratio"
+    );
+}
+
+#[test]
+fn test_fit_zoom_reads_the_view_not_the_surface() {
+    do_fit_zoom_reads_the_view_not_the_surface();
+}
+
+/// `fit_zoom` is the zoom `fit_to_bounds` would clamp: unclamped, the
+/// same for a supersampled camera as for the ratio-1 view it renders,
+/// and `None` for a box with no area. A box that needs more zoom than
+/// `MAX_ZOOM` reports it, which is how a caller tells that the clamp
+/// still shows the whole box (zoomed out from the fit, so it fits) from
+/// one that would cut it off (below `MIN_ZOOM`).
+pub fn do_fit_zoom_reads_the_view_not_the_surface() {
+    let view = Camera2D::new(800, 600);
+    let supersampled = Camera2D {
+        viewport_size: (2400, 1800),
+        pixel_ratio: 3.0,
+        ..view
+    };
+    let (min, max) = (Vec2::new(-100.0, -50.0), Vec2::new(300.0, 250.0));
+    // Usable 720 × 540 against a 400 × 300 box: min(1.8, 1.8).
+    let fit = view.fit_zoom(min, max, 0.05).expect("the box has area");
+    assert!((fit - 1.8).abs() < 1e-5, "{fit}");
+    assert_eq!(supersampled.fit_zoom(min, max, 0.05), Some(fit));
+
+    let tiny = view
+        .fit_zoom(Vec2::ZERO, Vec2::new(2.0, 1.0), 0.0)
+        .expect("the box has area");
+    assert!(tiny > Camera2D::MAX_ZOOM, "unclamped: {tiny}");
+    let vast = view
+        .fit_zoom(Vec2::ZERO, Vec2::new(1.0e6, 1.0), 0.0)
+        .expect("the box has area");
+    assert!(vast < Camera2D::MIN_ZOOM, "unclamped: {vast}");
+
+    assert_eq!(view.fit_zoom(min, Vec2::new(min.x, max.y), 0.05), None);
+
+    let mut fitted = supersampled;
+    fitted.fit_to_bounds(min, max, 0.05);
+    assert_eq!(fitted.zoom, fit, "fit_to_bounds applies exactly that zoom");
+    assert!(almost_equal_vec2(fitted.position, (min + max) / 2.0));
 }

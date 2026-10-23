@@ -27,6 +27,10 @@
 //! - [`clipboard`] — cross-platform copy / paste plumbing.
 //! - `ipc` — the opt-in `--ipc` socket an agent drives the
 //!   running app through (native-only, so a plain code-span).
+//! - `capture` — the screenshot engine both the IPC
+//!   `capture.screenshot` command and the `screenshot` console verb
+//!   call, and `guarded_file`, the one writer behind every
+//!   caller-chosen path (both native-only).
 //! - [`scene_host`] — canvas vs overlay scene-tree slot
 //!   routing (the boundary between renderer and the modal
 //!   editors).
@@ -55,6 +59,11 @@
 // once, when parity lands.
 
 pub(crate) mod app;
+// Screenshot engine: request planning, PNG, the artifacts dir and the
+// geometry sidecar. Native-only: the readback blocks on a buffer map,
+// which a browser cannot do; see CLAUDE.md "Dual-target status".
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod capture;
 pub(crate) mod clipboard;
 // Picker layout math + state. Driver: `app::color_picker_flow`,
 // native-gated pending the browser modal shell.
@@ -71,6 +80,10 @@ pub(crate) mod common;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod console;
 pub(crate) mod document;
+// The one writer behind every caller-chosen path. Native-only with its
+// consumers, the IPC file sidecar and the screenshot engine.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod guarded_file;
 // Local socket control surface for agents and tooling. Native-only by
 // transport nature — browsers cannot serve local sockets; see
 // CLAUDE.md "Dual-target status".

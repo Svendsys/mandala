@@ -33,6 +33,13 @@ const WATCHDOG_POLL: Duration = Duration::from_secs(1);
 /// whole job is to catch a permanently-stuck main thread, so a
 /// mechanism that could be dropped-in-error and silently disable
 /// the safety net would defeat the point.
+///
+/// `Clone`: a clone is another handle on the same two atomics, not a
+/// second watchdog. The event loop holds one; `InitState` holds another
+/// so main-thread work that runs long *and progresses* — a screenshot
+/// encoding band by band — can [`tick`](Self::tick) per unit of
+/// progress, the pattern IPC-09's `clock.step` is pinned to.
+#[derive(Clone)]
 pub struct FreezeWatchdog {
     last_activity_ms: Arc<AtomicU64>,
     /// `true` while the main thread is legitimately parked in
@@ -215,5 +222,18 @@ mod tests {
         assert!(!should_abort(
             /*now*/ 50, /*last*/ 100, /*parked*/ false, /*thr*/ 100
         ));
+    }
+
+    /// A screenshot blocks the main thread on the GPU, and each wait is
+    /// bounded so a GPU that never answers fails the capture rather
+    /// than tripping this watchdog — the capture ticks it between
+    /// waits: the bound is half the threshold, as `renderer::capture`
+    /// and `format/ipc.md` say it is.
+    #[test]
+    fn test_a_captures_gpu_wait_is_half_the_freeze_threshold() {
+        assert_eq!(
+            crate::application::renderer::CAPTURE_GPU_WAIT * 2,
+            super::FREEZE_THRESHOLD
+        );
     }
 }

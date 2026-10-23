@@ -978,6 +978,15 @@ mod tests {
         fn injected_pending(&self) -> usize {
             self.queue.len()
         }
+        fn capture(
+            &mut self,
+            _: &crate::application::capture::plan::CaptureRequest,
+            _: crate::application::capture::Destination,
+            _: bool,
+        ) -> Option<Result<crate::application::ipc::Screenshot, crate::application::capture::CaptureError>>
+        {
+            panic!("an input command must not take a screenshot");
+        }
     }
 
     /// Where `point` lands on the surface through `camera`: the

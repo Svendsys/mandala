@@ -6,6 +6,7 @@
 //! and touches nothing else that another family's PR touches.
 
 mod act;
+mod capture;
 mod input;
 mod meta;
 mod query;
@@ -23,6 +24,7 @@ pub(super) const FAMILIES: &[Family] = &[
     query::FAMILY,
     scene::FAMILY,
     input::FAMILY,
+    capture::FAMILY,
 ];
 
 #[cfg(test)]

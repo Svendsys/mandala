@@ -813,6 +813,15 @@ mod tests {
         fn injected_pending(&self) -> usize {
             panic!("a scene read must not read the injected-input queue");
         }
+        fn capture(
+            &mut self,
+            _: &crate::application::capture::plan::CaptureRequest,
+            _: crate::application::capture::Destination,
+            _: bool,
+        ) -> Option<Result<crate::application::ipc::Screenshot, crate::application::capture::CaptureError>>
+        {
+            panic!("a scene read must not take a screenshot");
+        }
     }
 
     const ALL_SCENE_COMMANDS: [&str; 5] = [

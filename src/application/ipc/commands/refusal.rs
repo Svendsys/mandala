@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! How a read-family handler says no: one [`Refusal`] value a pure
+//! How a family handler says no: one [`Refusal`] value a pure
 //! helper can return and a test can compare, mapped onto the error
-//! reply in one place ([`refuse`]). Shared by the `query` and `scene`
-//! families, which refuse for the same three reasons and must word
+//! reply in one place ([`refuse`]). Shared by the `query`, `scene` and
+//! `capture` families, which refuse for the same reasons and must word
 //! the missing-document case the same way.
 
 use crate::application::ipc::envelope::{code, Reply};
@@ -20,6 +20,9 @@ pub(super) enum Refusal {
     NotFound(String),
     /// The command could not be honored: `internal`.
     Internal(String),
+    /// The app is in the middle of something the command would
+    /// disturb, and retrying once it is done will work: `busy`.
+    Busy(String),
 }
 
 /// The error reply for `refusal`.
@@ -28,6 +31,7 @@ pub(super) fn refuse(call: &Call<'_>, refusal: Refusal) -> Reply {
         Refusal::Invalid(param, message) => call.invalid_params(param, message),
         Refusal::NotFound(message) => call.error(code::NOT_FOUND, message, None),
         Refusal::Internal(message) => call.error(code::INTERNAL, message, None),
+        Refusal::Busy(message) => call.error(code::BUSY, message, None),
     }
 }
 

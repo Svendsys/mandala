@@ -84,6 +84,18 @@ the parity trajectory (or why none is owed):
   parked in IPC-15 (#75). Within native the transport is Unix-only
   for now: `--ipc` on Windows fails at startup naming the gap, until
   the named-pipe adapter lands (#169).
+- **Screenshot capture** (`src/application/capture/`,
+  `src/application/renderer/capture.rs`,
+  `src/application/app/capture_flow.rs`; IPC-07/#67) — the engine
+  behind `capture.screenshot` and the `screenshot` console verb is
+  native-only: the readback blocks the main thread on a GPU buffer
+  map, which a browser cannot do (wgpu's `poll` is a no-op on WebGPU,
+  and the map resolves only when the event loop yields). The frame it
+  draws is not gated: `Renderer::prepare_frame` / `encode_frame` are
+  the browser's render path too, so a browser capture would draw the
+  same frame. Parity is the browser canvas capture parked with the
+  WebSocket transport in IPC-15 (#75), resolving asynchronously
+  rather than blocking.
 - **Console modal shell** (`src/application/app/console_input/`) —
   the modal shell and its exec path are native-gated; the
   verb/parser layer (`src/application/console/`) is
