@@ -20,10 +20,14 @@
 
 use serde_json::Value;
 
+use baumhard::gfx_structs::camera::Camera2D;
+use baumhard::mindmap::tree_builder::MindMapTree;
+
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
+use crate::application::scene_host::AppScene;
 
 use super::space::Point;
 
@@ -45,6 +49,23 @@ pub(crate) enum ShellState {
     /// Every modal editor's live state and the document's previews
     /// (`query.editors`).
     Editors,
+}
+
+/// What the canvas draws right now, read-only: the inputs the `scene`
+/// family walks (`format/ipc.md` §`scene`). Every part is plain data
+/// with no GPU handle in it — the trees the renderer shapes, the
+/// identity indices their hit tests resolve through, and the camera
+/// that culls them — so a test stands one up without a renderer.
+pub(crate) struct SceneView<'a> {
+    /// The loaded document: its model answers what the trees do not
+    /// carry (a node's `folded` flag, the fold that hides a node).
+    pub(crate) document: &'a MindMapDocument,
+    /// The node tree, or `None` before the first scene build.
+    pub(crate) mindmap_tree: Option<&'a MindMapTree>,
+    /// The canvas role trees and their identity indices.
+    pub(crate) app_scene: &'a AppScene,
+    /// The camera the renderer culls and projects with.
+    pub(crate) camera: &'a Camera2D,
 }
 
 /// What a command may ask of the running application.
@@ -115,4 +136,24 @@ pub(crate) trait CommandTarget {
     /// ([`Self::changed_view`] is untouched), so a query polled in a
     /// loop costs no frame.
     fn shell_state(&self, which: ShellState) -> Value;
+
+    /// The drawn scene, read-only. `None` when the app has no
+    /// document (the initial load failed). Like
+    /// [`Self::document`], what it reaches is what `&` allows: the
+    /// `scene` family cannot rebuild a tree or move the camera.
+    fn scene(&self) -> Option<SceneView<'_>>;
+
+    /// What a click at `point` would target, through the canonical
+    /// click hit test (`compute_click_hit`, the one mouse presses and
+    /// touch taps run, never a fork of it) and its last rung, the
+    /// connection path under the pointer: the whole ladder, as JSON
+    /// (`format/ipc.md` §`scene.hit_test`). `None` when the app has no
+    /// document.
+    ///
+    /// `&mut` only because the hit tests memoize subtree AABBs in the
+    /// trees they descend. Nothing else is written: the document, the
+    /// selection, the cursor and the camera are untouched, and
+    /// [`Self::changed_view`] stays as it was, so a probe costs no
+    /// frame.
+    fn hit_test(&mut self, point: Point) -> Option<Value>;
 }

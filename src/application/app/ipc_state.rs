@@ -2,7 +2,9 @@
 
 //! IPC projections of the app shell's own state (`format/ipc.md`
 //! §`query`): the interaction mode, the drag state machine, the four
-//! modal editors, the camera. The document-layer half lives beside
+//! modal editors. The camera's projection is the protocol's own
+//! coordinate-space transform and lives with it (`ipc/space.rs`); the
+//! document-layer half lives beside
 //! the document (`document/ipc_state.rs`); this half lives in `app`
 //! because `DragState`, `TextEditState`, `SingleLineEditor` and the
 //! throttled gestures are private to it.
@@ -24,7 +26,6 @@
 
 use serde_json::{json, Value};
 
-use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::mindmap::tree_builder::{EdgeHandleKind, ResizeHandleSide};
 
 use crate::application::color_picker::{
@@ -56,20 +57,6 @@ fn xy_f64(point: (f64, f64)) -> Value {
 
 fn xy_vec2(point: glam::Vec2) -> Value {
     xy(f32_json(point.x), f32_json(point.y))
-}
-
-/// The camera as `query.camera` reports it: the `surface` ↔ `canvas`
-/// transform (`format/ipc.md` §Coordinate spaces). `center` is the
-/// canvas point at the middle of the viewport; a canvas point `p`
-/// lands at surface `(p - center) * zoom + surface / 2`.
-pub(super) fn camera_to_ipc_json(camera: &Camera2D) -> Value {
-    json!({
-        "center": xy_vec2(camera.position),
-        "zoom": f32_json(camera.zoom),
-        "zoom_min": f32_json(Camera2D::MIN_ZOOM),
-        "zoom_max": f32_json(Camera2D::MAX_ZOOM),
-        "surface": { "width": camera.viewport_size.0, "height": camera.viewport_size.1 },
-    })
 }
 
 impl ResizeTarget {
@@ -805,23 +792,6 @@ mod tests {
         );
         assert_eq!(json["input"], json!("fps"));
         assert_eq!(json["history_idx"], json!(0));
-    }
-
-    #[test]
-    fn test_camera_json_names_the_transform_and_the_zoom_clamp() {
-        let mut camera = Camera2D::new(1920, 1080);
-        camera.position = glam::Vec2::new(12.0, -340.5);
-        camera.zoom = 0.75;
-        assert_eq!(
-            camera_to_ipc_json(&camera),
-            json!({
-                "center": { "x": 12.0, "y": -340.5 },
-                "zoom": 0.75,
-                "zoom_min": 0.05,
-                "zoom_max": 5.0,
-                "surface": { "width": 1920, "height": 1080 },
-            })
-        );
     }
 
     fn open_picker() -> ColorPickerState {

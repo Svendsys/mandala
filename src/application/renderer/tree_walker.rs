@@ -32,27 +32,11 @@ pub(super) fn extract_background_rect(
     offset: Vec2,
 ) -> Option<NodeBackgroundRect> {
     let color = area.background_color?;
-    // Inflate the fill rect outward by `background_padding` —
-    // per-edge values so framed nodes whose eight border runs sit at
-    // different visible-stroke offsets get an asymmetric fill that
-    // matches each side. The `is_zero` fast-path skips the four-add
-    // arithmetic for unframed nodes (the common case);
-    // `EdgePadding::ZERO` means the fill coincides with the text
-    // rect, the historical behavior.
-    let pad = area.background_padding;
-    let pos = Vec2::new(area.position.x.0, area.position.y.0);
-    let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
-    let (rect_pos, rect_size) = if pad.is_zero() {
-        (pos, size)
-    } else {
-        (
-            Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
-            Vec2::new(
-                size.x + pad.left() + pad.right(),
-                size.y + pad.top() + pad.bottom(),
-            ),
-        )
-    };
+    // The fill rect — the box grown per edge by `background_padding`,
+    // so framed nodes whose border runs sit at different visible-stroke
+    // offsets get a matching asymmetric fill — is Baumhard's to state,
+    // so the scene introspection reports the rect drawn here.
+    let (rect_pos, rect_size) = area.background_rect()?;
     Some(NodeBackgroundRect {
         position: rect_pos + offset,
         size: rect_size,
@@ -190,18 +174,16 @@ pub(super) fn shape_one_element_into_buffers(
     // shapes the *same* span list — only the buffer position
     // differs — so the list is built once outside the loop rather
     // than once per offset.
-    if let Some(outline) = area.outline {
-        if outline.px > 0.0 {
-            let halo_color = Color::rgba(
-                outline.color[0],
-                outline.color[1],
-                outline.color[2],
-                outline.color[3],
-            );
-            rich_text_spans_into(&families, scale, line_height, Some(halo_color), &mut spans);
-            for (dx, dy) in outline.offsets() {
-                shape_and_yield(&spans, dx, dy, font_system);
-            }
+    if let Some(outline) = area.halo() {
+        let halo_color = Color::rgba(
+            outline.color[0],
+            outline.color[1],
+            outline.color[2],
+            outline.color[3],
+        );
+        rich_text_spans_into(&families, scale, line_height, Some(halo_color), &mut spans);
+        for (dx, dy) in outline.offsets() {
+            shape_and_yield(&spans, dx, dy, font_system);
         }
     }
 

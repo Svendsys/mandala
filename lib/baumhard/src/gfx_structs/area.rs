@@ -590,6 +590,52 @@ impl GlyphArea {
         self.position.to_vec2()
     }
 
+    /// The rect this area's background fill covers, as `(position,
+    /// size)` in the area's own space: its `position` / `render_bounds`
+    /// box grown outward by `background_padding`, per edge. `None` when
+    /// the area has no `background_color`, i.e. draws no fill.
+    ///
+    /// The one statement of that geometry: the renderer's fill-rect
+    /// extraction and the scene introspection
+    /// ([`crate::mindmap::scene_dump`]) both read it, so the rect a
+    /// fill is drawn and culled at and the rect an agent is told about
+    /// are the same rect. O(1), no allocation.
+    pub fn background_rect(&self) -> Option<(Vec2, Vec2)> {
+        self.background_color?;
+        let pad = self.background_padding;
+        let pos = self.position.to_vec2();
+        let size = Vec2::new(self.render_bounds.x.0, self.render_bounds.y.0);
+        Some((
+            Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
+            Vec2::new(
+                size.x + pad.left() + pad.right(),
+                size.y + pad.top() + pad.bottom(),
+            ),
+        ))
+    }
+
+    /// The outline this area's text is haloed with, when it draws one:
+    /// `outline` with a positive `px`. A zero-width outline stamps
+    /// nothing. O(1).
+    pub fn halo(&self) -> Option<OutlineStyle> {
+        self.outline.filter(|outline| outline.px > 0.0)
+    }
+
+    /// Where the renderer stamps this area's text, as offsets from
+    /// `position`: every [`Self::halo`] stamp first
+    /// ([`OutlineStyle::offsets`]), then the main glyph at `(0, 0)`.
+    /// Each stamp is a buffer of `render_bounds`, culled on its own.
+    /// Empty when the area has no text. O(1) per item, no allocation.
+    pub fn text_stamp_offsets(&self) -> impl Iterator<Item = (f32, f32)> {
+        let has_text = !self.text.is_empty();
+        let halos = self
+            .halo()
+            .filter(|_| has_text)
+            .into_iter()
+            .flat_map(|o| o.offsets());
+        halos.chain(has_text.then_some((0.0, 0.0)))
+    }
+
     /// Replace the position with `to_set`. O(1).
     pub fn set_position(&mut self, to_set: (f32, f32)) {
         self.position = OrderedVec2::new_f32(to_set.0, to_set.1);

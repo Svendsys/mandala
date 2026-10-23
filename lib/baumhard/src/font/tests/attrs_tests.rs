@@ -12,7 +12,8 @@ use cosmic_text::{Attrs, Color, Family, FontSystem};
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 use crate::font::attrs::{
-    attrs_list_from_regions, rich_text_spans_from_regions, rich_text_spans_into, RegionFamilies,
+    attrs_list_from_regions, displayed_text, rich_text_spans_from_regions, rich_text_spans_into,
+    RegionFamilies,
 };
 
 // ---------------------------------------------------------------------------
@@ -574,4 +575,50 @@ pub fn do_rich_text_spans_into_keeps_the_no_region_whole_text_span() {
     rich_text_spans_into(&families, 16.0, 18.0, None, &mut out);
     assert_eq!(out.len(), 1, "a second fill must replace, not append");
     assert_eq!(out[0].0, "whole");
+}
+
+#[test]
+fn test_displayed_text_is_the_concatenated_covered_slices() {
+    do_displayed_text_is_the_concatenated_covered_slices();
+}
+
+/// A run table that leaves a gap renders only the covered clusters:
+/// `"hello world"` covered at `[0, 5)` and `[6, 11)` shows
+/// `"helloworld"`, which is what `rich_text_spans_from_regions`
+/// shapes, span for span. Grapheme ranges, not bytes: the family
+/// emoji is one cluster.
+pub fn do_displayed_text_is_the_concatenated_covered_slices() {
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new(Range::new(0, 5), None, None));
+    regions.submit_region(ColorFontRegion::new(Range::new(6, 11), None, None));
+    assert_eq!(displayed_text("hello world", &regions), "helloworld");
+
+    let mut fs = FontSystem::new();
+    let families = RegionFamilies::resolve("hello world", &regions, &mut fs);
+    let shaped: String = rich_text_spans_from_regions(&families, 16.0, 18.0, None)
+        .into_iter()
+        .map(|(slice, _)| slice)
+        .collect();
+    assert_eq!(displayed_text("hello world", &regions), shaped);
+
+    let family = "a👨\u{200d}👩\u{200d}👧b";
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new(Range::new(1, 2), None, None));
+    assert_eq!(displayed_text(family, &regions), "👨\u{200d}👩\u{200d}👧");
+}
+
+#[test]
+fn test_displayed_text_without_regions_is_the_whole_text() {
+    do_displayed_text_without_regions_is_the_whole_text();
+}
+
+/// No regions means uniform default styling over the whole text,
+/// and zero-width or out-of-range regions contribute nothing.
+pub fn do_displayed_text_without_regions_is_the_whole_text() {
+    assert_eq!(displayed_text("whole", &ColorFontRegions::new_empty()), "whole");
+
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new(Range::new(3, 3), None, None));
+    regions.submit_region(ColorFontRegion::new(Range::new(9, 12), None, None));
+    assert_eq!(displayed_text("hello", &regions), "");
 }

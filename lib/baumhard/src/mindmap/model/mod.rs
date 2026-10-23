@@ -182,12 +182,21 @@ impl MindMap {
     }
 
     /// Returns true if any ancestor of this node is folded, meaning
-    /// this node should be hidden from view.
+    /// this node should be hidden from view. [`Self::folding_ancestor`]
+    /// answers which one.
     ///
     /// Cost: O(depth) parent-chain walk per call. When testing many
     /// nodes in one build (e.g. every node / edge endpoint in a scene),
     /// build the hidden set once with [`Self::fold_hidden_set`] and
     /// test membership instead.
+    pub fn is_hidden_by_fold(&self, node: &MindNode) -> bool {
+        self.folding_ancestor(node).is_some()
+    }
+
+    /// The nearest folded ancestor of `node` — the fold that hides it
+    /// — or `None` when no ancestor is folded and the node is in the
+    /// scene. Its own `folded` flag hides its descendants, not itself,
+    /// so it is not consulted.
     ///
     /// Defense in depth against a `parent_id` cycle that somehow
     /// reaches this walker despite the loader's load-time rejection
@@ -196,7 +205,10 @@ impl MindMap {
     /// chain can never exceed the node count. Hitting the cap logs
     /// and treats the node as visible rather than hanging — see
     /// CODE_CONVENTIONS §9 ("interactive paths must not panic").
-    pub fn is_hidden_by_fold(&self, node: &MindNode) -> bool {
+    ///
+    /// Cost: O(depth) parent-chain walk, one hash lookup per step, no
+    /// allocation.
+    pub fn folding_ancestor(&self, node: &MindNode) -> Option<&MindNode> {
         let mut current_id = node.parent_id.as_deref();
         let mut steps = 0usize;
         while let Some(pid) = current_id {
@@ -205,20 +217,16 @@ impl MindMap {
                     "mindmap: fold-visibility walk hit a parent_id cycle above node {:?}; treating as visible",
                     node.id
                 );
-                return false;
+                return None;
             }
             steps += 1;
-            match self.nodes.get(pid) {
-                Some(parent) => {
-                    if parent.folded {
-                        return true;
-                    }
-                    current_id = parent.parent_id.as_deref();
-                }
-                None => return false,
+            let parent = self.nodes.get(pid)?;
+            if parent.folded {
+                return Some(parent);
             }
+            current_id = parent.parent_id.as_deref();
         }
-        false
+        None
     }
 
     /// Collect all descendant IDs of a node, not including the node

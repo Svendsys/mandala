@@ -18,8 +18,8 @@ use serde_json::{json, Value};
 
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
-use crate::application::ipc::space::{Point, Space};
-use crate::application::ipc::{CommandTarget, ShellState};
+use crate::application::ipc::space::{camera_json, Point, Space};
+use crate::application::ipc::{CommandTarget, SceneView, ShellState};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::source_tier::SourceTier;
@@ -27,7 +27,7 @@ use crate::application::source_tier::SourceTier;
 use super::console_input::exec::execute_console_line;
 use super::dispatch::{self, DispatchHit, DispatchOutcome};
 use super::input_context::InputHandlerContext;
-use super::ipc_state;
+use super::{ipc_scene, ipc_state};
 
 /// How an anonymous `act.macro` step sequence is named in the macro
 /// dispatcher's diagnostics.
@@ -51,13 +51,10 @@ impl<'a> IpcCommandTarget<'a> {
         }
     }
 
-    /// Stand a synthetic pointer at `point`, as a real one would have
-    /// stood before its press: the cursor moves there, and the click
-    /// hit is what the canonical hit test finds under it
-    /// (`compute_click_hit`, the one mouse presses use, never a
-    /// fork of it).
-    fn place_pointer(&mut self, point: Point) -> DispatchHit {
-        let (surface, canvas) = match point.space {
+    /// `point` in both spaces, `(surface, canvas)`, through the
+    /// renderer's camera.
+    fn resolve(&self, point: Point) -> (Vec2, Vec2) {
+        match point.space {
             Space::Surface => (
                 Vec2::new(point.x, point.y),
                 self.ctx.renderer.screen_to_canvas(point.x, point.y),
@@ -66,7 +63,16 @@ impl<'a> IpcCommandTarget<'a> {
                 let canvas = Vec2::new(point.x, point.y);
                 (self.ctx.renderer.canvas_to_screen(canvas), canvas)
             }
-        };
+        }
+    }
+
+    /// Stand a synthetic pointer at `point`, as a real one would have
+    /// stood before its press: the cursor moves there, and the click
+    /// hit is what the canonical hit test finds under it
+    /// (`compute_click_hit`, the one mouse presses use, never a
+    /// fork of it).
+    fn place_pointer(&mut self, point: Point) -> DispatchHit {
+        let (surface, canvas) = self.resolve(point);
         *self.ctx.cursor_pos = (f64::from(surface.x), f64::from(surface.y));
         let parts = super::compute_click_hit(canvas, self.ctx.mindmap_tree.as_mut(), self.ctx.app_scene);
         DispatchHit {
@@ -132,7 +138,7 @@ impl CommandTarget for IpcCommandTarget<'_> {
 
     fn shell_state(&self, which: ShellState) -> Value {
         match which {
-            ShellState::Camera => ipc_state::camera_to_ipc_json(self.ctx.renderer.camera()),
+            ShellState::Camera => camera_json(self.ctx.renderer.camera()),
             ShellState::Mode => ipc_state::mode_to_ipc_json(
                 self.ctx.interaction_mode,
                 self.ctx.drag_state,
@@ -152,5 +158,28 @@ impl CommandTarget for IpcCommandTarget<'_> {
                 self.ctx.document.as_ref(),
             ),
         }
+    }
+
+    fn scene(&self) -> Option<SceneView<'_>> {
+        Some(SceneView {
+            document: self.ctx.document.as_ref()?,
+            mindmap_tree: self.ctx.mindmap_tree.as_ref(),
+            app_scene: self.ctx.app_scene,
+            camera: self.ctx.renderer.camera(),
+        })
+    }
+
+    fn hit_test(&mut self, point: Point) -> Option<Value> {
+        let (surface, canvas) = self.resolve(point);
+        let canvas_per_pixel = dispatch::CanvasPerPixel::of(self.ctx.renderer);
+        let doc = self.ctx.document.as_ref()?;
+        Some(ipc_scene::hit_report(
+            canvas,
+            surface,
+            self.ctx.mindmap_tree.as_mut(),
+            self.ctx.app_scene,
+            &doc.mindmap,
+            canvas_per_pixel,
+        ))
     }
 }

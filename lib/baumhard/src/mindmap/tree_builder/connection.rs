@@ -721,6 +721,21 @@ pub fn connection_identity_sequence(elements: &[ConnectionElement]) -> Vec<Conne
         .collect()
 }
 
+/// The [`EdgeChannelIndex`](super::EdgeChannelIndex) naming the
+/// per-edge `Void`s of the tree [`build_connection_tree`] builds (or
+/// that [`build_connection_mutator_tree`] updates) from the element
+/// slice whose [`connection_identity_sequence`] is `identity`: the
+/// edge at slice position `i` owns channel `i + 1`, as
+/// `connection_edge_layout` assigns it.
+///
+/// Takes the sequence by value because the dispatcher already builds
+/// it to hash the structural signature; the keys move into the index
+/// instead of being dropped, so naming the tree clones no `EdgeKey`.
+/// O(edges), one vector allocation.
+pub fn connection_channel_index(identity: Vec<ConnectionEdgeIdentity>) -> super::EdgeChannelIndex {
+    super::EdgeChannelIndex::from_keys(identity.into_iter().map(|(edge_key, ..)| edge_key))
+}
+
 /// Lay out the per-glyph shape data both connection build paths
 /// emit. Returns `(edge_channel, Vec<(child_channel, GlyphArea)>)`
 /// for one edge. Single source of truth — the initial-build path

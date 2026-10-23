@@ -26,7 +26,10 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > registry, reply `warnings`, and the `act` family — `act.action`,
 > `act.console`, `act.macro` (IPC-03, #63); the `query` family — `query.document`,
 > `query.selection`, `query.camera`, `query.mode`, `query.status`,
-> `query.animations`, `query.editors`, `query.undo` (IPC-04, #64).
+> `query.animations`, `query.editors`, `query.undo` (IPC-04, #64); the
+> `scene` family — `scene.dump`, `scene.visible_set`,
+> `scene.node_geometry`, `scene.hit_test`, `scene.find_text` (IPC-05,
+> #65).
 
 ## Transport
 
@@ -739,7 +742,7 @@ PR that implements them.
 | *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
 | `act` | `act.rs` | IPC-03 | `act.action`, `act.console`, `act.macro` |
 | `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.animations`, `query.editors`, `query.undo` |
-| `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.hit_test`, `scene.find_text` |
+| `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch` |
 | `capture` | `capture.rs` | IPC-07 (+ IPC-08) | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
 | `clock` | `clock.rs` | IPC-09 | `clock.status`, `clock.set_mode`, `clock.step`, `clock.wait` |
@@ -1050,14 +1053,197 @@ reported.
 
 ## `scene` — laid-out scene introspection (IPC-05)
 
-What is *actually on screen*: `scene.dump` (visible elements with
-resolved geometry and displayed text, honoring `ZoomVisibility` and
-fold state; takes `to_file` per [Large payloads](#large-payloads)),
-`scene.hit_test` (`x`, `y`, `space` → the same answer the click
-pipeline would produce, via the canonical hit-test path, never a
-fork of it), `scene.find_text` (locate nodes/sections/labels by
-displayed text). Field-level reference lands with IPC-05, appended
-here.
+What is *actually on screen*, as text: where each node, section,
+connection, edge label and portal marker is drawn, whether the camera
+shows it, and what text the user reads in it. Five commands:
+`scene.dump`, `scene.visible_set`, `scene.node_geometry`,
+`scene.hit_test`, `scene.find_text`. An agent answers "is node X on
+screen? where? overlapping what? saying what?" from these, without
+pixels.
+
+**The source of truth is the drawn trees.** Since the dual-pipeline
+consolidation (#22) every model-derived visual reaches the GPU through
+one `Tree<GfxElement, GfxMutator>` per canvas role, so those trees *are*
+the laid-out scene: positions after layout and in-flight drag offsets,
+sizes after text fitting, zoom windows after cascade, text after run
+coverage. The family reads them through Baumhard's serializer
+(`baumhard::mindmap::scene_dump`), never by re-deriving geometry from
+the model. The model is consulted only for what a tree does not carry:
+a node's own `folded` flag, and the fold that removed a node from the
+scene. Each element is named through the identity index its own hit
+test resolves through (the node tree's id maps, the connection and
+label trees' `EdgeChannelIndex`, the portal tree's `PortalHitIndex`), so
+an element is called here what a click on it is called.
+
+**Every element carries one placement**, three keys beside its own:
+
+| key | meaning |
+|---|---|
+| `canvas` | `{"x", "y", "w", "h"}`: the extent the renderer draws for the element, in canvas units, offset by its tree's scene offset: the union of its background fill (its box grown by its padding, per edge, the rect `GlyphArea::background_rect` states for the renderer's fill pass too) and every text stamp (the main glyph and each outline-halo stamp, each a box of the element's render bounds). An area that draws neither, an unfilled node container, is placed by its layout box. For a connection, the union of its glyphs. The hit test resolves against the layout box, which can be smaller than a padded fill: `scene.hit_test` answers what a click hits. |
+| `surface` | The same rect through the camera, in surface pixels ([Coordinate spaces](#coordinate-spaces)). Not clipped: a rect half off-screen runs past the surface edge. |
+| `visibility` | The renderer's own cull verdict, from the one predicate its per-frame cull calls (`Camera2D::visibility`), asked of each drawn part as the renderer asks it, so "visible" here and "drawn" there cannot disagree: `visible` when any part is drawn (a fill whose padding crosses the viewport edge, one halo stamp on screen); `outside_zoom_window`, when the camera's zoom falls outside the element's zoom window (no pan brings it back; checked first, so a part both outside its window and off-screen reports this); or `offscreen`, when it is inside its window but misses the viewport (a pan would show it). |
+
+**Displayed text, not model text.** A section with `text_runs` renders
+only the graphemes its runs cover (`format/text-runs.md`); its `text`
+here is that covered text, concatenated in run order, through the same
+coverage rule the shaper slices spans by
+(`baumhard::font::attrs::displayed_text`). A label being edited reports
+its live buffer with the caret, which is what is drawn.
+
+**What is not reported.** A node hidden by a folded ancestor is not in
+the scene (`scene.node_geometry` names the fold). A connection whose
+whole path is clipped inside its endpoint nodes draws no glyph and is
+absent. A portal endpoint with no caption draws only its icon. A role
+tree registered hidden draws nothing and reports nothing. Borders,
+section frames and handles are chrome around the elements above and are
+not reported; `query.mode` and `query.editors` describe the interaction
+state they reflect.
+
+**Read-only.** Four commands reach the app through `observe()` (`&`).
+`scene.hit_test` needs `drive()` only because a BVH descent memoizes
+subtree AABBs in the trees it walks; it writes nothing else — not the
+document, the selection, the cursor or the camera. No scene command
+asks for a frame. Before the app exists every one answers
+`no_document`; with the app up but its initial load failed, they answer
+`no_document` saying how to load one. Parameter failures are
+`invalid_params`, naming the parameter.
+
+Elements are listed in draw order: nodes in tree pre-order (parents
+before children, siblings in model order), every other kind in its
+tree's order. Edge identities are `{"from_id", "to_id", "edge_type"}`,
+as everywhere on the wire. Every coordinate is the shortest decimal
+that names its `f32` (`0.1`, not `0.10000000149011612`), inline and in
+a `to_file` sidecar alike. The visibility filter is applied before any
+text is resolved: an element a command drops costs no text walk, and
+`scene.visible_set` resolves none.
+
+### `scene.dump`
+
+The laid-out scene, by kind.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `include` | string | no | `"visible"` (default): only what the camera shows. `"all"`: every drawn element with its verdict, so an off-screen one can be found and panned to. With `"visible"`, a node is kept when it or any of its sections is visible, carrying only its visible sections. |
+| `kinds` | array | no | Which kinds to report, as strings: `nodes`, `edges`, `labels`, `portals`. Default: all four. A kind not asked for is absent from the reply and its tree is not walked. Empty or unknown words are `invalid_params`. |
+| `to_file` | string | no | An absolute path: the file sidecar of [Large payloads](#large-payloads), with the same atomic, no-symlink, no-clobber write `query.document` documents. The reply is then only `path` and `bytes`. |
+| `overwrite` | boolean | no | Only with `to_file`, as for `query.document`. |
+
+| result field | type | meaning |
+|---|---|---|
+| `camera` | object | The camera the verdicts and surface rects were taken at, exactly as [`query.camera`](#querycamera) reports it. |
+| `nodes` | array | `{"node_id", "folded", canvas, surface, visibility, "sections"}` per drawn node. `folded` is the model flag: this node's descendants are hidden; the node itself is drawn. Each section is `{"section_idx", canvas, surface, visibility, "text"}`, in model order; a section the tree builder skips (an empty or non-finite authored size) is absent. |
+| `edges` | array | `{"edge", canvas, surface, visibility, "glyphs", "visible_glyphs"}` per drawn connection: how many glyphs it draws along its path (caps included) and how many of them the camera shows. A portal-mode edge draws no path and appears under `portals`. |
+| `labels` | array | `{"edge", canvas, surface, visibility, "text"}` per drawn edge label. |
+| `portals` | array | `{"edge", "endpoint_node_id", "part", canvas, surface, visibility, "text"}` per drawn portal part: `part` is `icon` (the marker glyph) or `text` (its caption), and `endpoint_node_id` the node it floats above. |
+| `path`, `bytes` | string, integer | With `to_file` only, and then the *only* fields. |
+
+```jsonc
+{"id": 1, "cmd": "scene.dump", "kinds": ["nodes"]}
+{"id": 1, "ok": true, "result": {
+  "camera": {"center": {"x": 0.0, "y": 0.0}, "zoom": 1.0, "zoom_min": 0.05, "zoom_max": 5.0,
+             "surface": {"width": 1280, "height": 720}},
+  "nodes": [{"node_id": "1", "folded": false,
+             "canvas": {"x": -60.0, "y": -20.0, "w": 120.0, "h": 40.0},
+             "surface": {"x": 580.0, "y": 340.0, "w": 120.0, "h": 40.0},
+             "visibility": "visible",
+             "sections": [{"section_idx": 0, "canvas": {…}, "surface": {…},
+                           "visibility": "visible", "text": "…"}]}]}}
+```
+
+### `scene.visible_set`
+
+Params: none. Just the identities of what the camera shows, by kind —
+the default `scene.dump`'s ids, with no text resolved and no rect
+reported.
+
+| result field | type | meaning |
+|---|---|---|
+| `nodes` | array | Node ids, in draw order. A node is here when it or any of its sections is visible. |
+| `sections` | array | `{"node_id", "section_idx"}` per visible section. |
+| `edges` | array | Edge identities of the visible connections. |
+| `labels` | array | Edge identities of the visible labels. |
+| `portals` | array | `{"edge", "endpoint_node_id", "part"}` per visible portal part. |
+
+### `scene.node_geometry`
+
+One node's whole geometry story: what the model says, whether the scene
+draws it, and where.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `node_id` | string | yes | The node. One the document does not have is `not_found`. |
+
+| result field | type | meaning |
+|---|---|---|
+| `node_id` | string | The node described. |
+| `model` | object | `{"position": {"x", "y"}, "size": {"width", "height"}, "folded"}` as the model holds them: the authored values, before drag offsets and text fitting. |
+| `in_scene` | boolean | Whether the scene draws the node. |
+| `hidden_by` | string | The nearest folded ancestor, whose fold keeps the node out of the scene; `null` when none is folded. |
+| `absent_reason` | string | Why the scene does not draw the node: `folded` (`hidden_by` names the fold) or `not_built` (no scene has been built yet, or the tree builder placed no container for the node); `null` when `in_scene`. |
+| `canvas`, `surface`, `visibility` | object, object, string | Only when `in_scene`: the node's placement, as in `scene.dump`. |
+| `sections` | array | Only when `in_scene`: the drawn sections, as in `scene.dump`, visible or not. |
+| `overlaps` | array | Only when `in_scene`: the ids of the other drawn nodes whose canvas boxes share area with this one (boxes that only touch along an edge do not overlap), in draw order. |
+
+### `scene.hit_test`
+
+What a click at a point would target, through **the canonical click
+ladder** — `compute_click_hit`, the function a mouse press, a release
+and a touch tap run, never a fork of it — and its last rung,
+`edge_under_pointer`, the connection path under the pointer. A test
+holds it to a real click: over every node, label, portal part and
+connection of the fixture, the selection a production click leaves is
+the one this report's ladder names.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `x`, `y` | number | yes | The point. |
+| `space` | string | no | Its coordinate space: `"canvas"` (default) or `"surface"`. |
+
+| result field | type | meaning |
+|---|---|---|
+| `canvas`, `surface` | object | The point in both spaces, `{"x", "y"}`. |
+| `click_hit` | object | The collapsed hit a press records, which double-click detection compares and `DoubleClickActivate` routes on. `kind` is the variant's name: `Node` (`node_id`, `section_idx` — `null` unless the hit resolved to one section of a multi-section node), `PortalMarker` or `PortalText` (`edge`, `endpoint_node_id`), `EdgeLabel` (`edge`), or `Empty`. |
+| `node` | object | The node rung: `{"node_id", "section_idx"}`, or `null`. |
+| `portal` | object | The portal rung, tried only when no node was hit: `{"edge", "endpoint_node_id", "part"}` (`icon` or `text`), or `null`. |
+| `edge_label` | object | The edge-label rung, tried only when no node or portal was hit: the edge, or `null`. |
+| `edge` | object | The last rung, tried only when the ladder came up empty (`click_hit` is `Empty`), which is the only case a click consults it: the connection path within the click tolerance (`EDGE_HIT_TOLERANCE_PX` surface pixels, scaled to canvas units at the current zoom) of the point, or `null`. |
+
+A plain click selects the highest rung that is not `null`: a node
+(`Single`, or a section in `NodeEdit` on a multi-section node), a portal
+part (`PortalText` / `PortalLabel`), an edge label (`EdgeLabel`), the
+connection (`Edge`), or nothing. What the ladder does not see is what
+runs *before* it in a real click: an open modal editor's claim on the
+pointer and the `Reparent` / `Connect` target modes, which consult only
+the node rung. `query.mode` reports both.
+
+```jsonc
+{"id": 4, "cmd": "scene.hit_test", "x": 412, "y": 96, "space": "surface"}
+{"id": 4, "ok": true, "result": {
+  "canvas": {"x": -228.0, "y": -264.0}, "surface": {"x": 412.0, "y": 96.0},
+  "click_hit": {"kind": "Node", "node_id": "1.2", "section_idx": null},
+  "node": {"node_id": "1.2", "section_idx": null},
+  "portal": null, "edge_label": null, "edge": null}}
+```
+
+### `scene.find_text`
+
+Locate drawn text: the sections, edge labels and portal captions whose
+*displayed* text matches, visible or not, so an agent can find
+something off-screen and pan to it. A portal's icon is a marker glyph,
+not text, and is never matched. A node hidden by a fold displays
+nothing and is not found.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `text` | string | yes | What to look for. Empty is `invalid_params`. |
+| `exact` | boolean | no | Match the whole displayed text rather than a substring. Default `false`. |
+| `case_sensitive` | boolean | no | Default `false`: both sides are compared Unicode-lowercased, so `É` finds `é`. |
+
+Result: `matches` (array), in draw order: sections, then labels, then
+portal parts. Each is `{"kind", …ids, "text", canvas, surface,
+visibility}` where `kind` is `section` (`node_id`, `section_idx`),
+`label` (`edge`) or `portal` (`edge`, `endpoint_node_id`, `part`,
+always `text`).
 
 ## `input` — synthetic raw input (IPC-06)
 

@@ -75,6 +75,9 @@ pub(crate) mod serde_coverage;
 /// native-only only because every caller is.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod serde_probe;
+/// An `f32` as the shortest decimal that names it, for JSON written
+/// inline and streamed alike.
+pub mod shortest_float;
 /// Readers over the workspace's own source text — which bytes are
 /// shipped code, and whether a `test_*` name a comment writes down is
 /// one that exists. The single place `#[cfg(test)]` is reasoned

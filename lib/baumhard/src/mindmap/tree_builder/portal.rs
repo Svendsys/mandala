@@ -78,7 +78,10 @@ pub struct PortalTree {
 /// Which clickable sub-part of a portal endpoint a hit landed on.
 /// The two are separate tree leaves under the same endpoint void,
 /// so a click resolves to exactly one of them.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+///
+/// Serializes as `"icon"` / `"text"`.
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PortalPart {
     /// The portal marker glyph itself.
     Icon,

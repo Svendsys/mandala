@@ -709,7 +709,7 @@ impl<'a> CanvasFrame<'a> {
         use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
         use baumhard::mindmap::tree_builder::{
             build_connection_elements, build_connection_mutator_tree, build_connection_tree,
-            connection_identity_sequence, node_clip_aabbs,
+            connection_channel_index, connection_identity_sequence, node_clip_aabbs,
         };
 
         // Sample spacing is a function of the effective font size,
@@ -739,7 +739,12 @@ impl<'a> CanvasFrame<'a> {
             hidden,
         );
 
-        let signature = hash_canvas_signature(&connection_identity_sequence(&connections));
+        let identity = connection_identity_sequence(&connections);
+        let signature = hash_canvas_signature(&identity);
+        // Stamped on both arms, as the portal and label indices are:
+        // whichever arm runs, the registered tree is now the one this
+        // slice describes.
+        app_scene.set_connection_index(connection_channel_index(identity));
         match app_scene.canvas_dispatch(CanvasRole::Connections, signature) {
             CanvasDispatch::InPlaceMutator => {
                 let mutator = build_connection_mutator_tree(&connections);
@@ -947,7 +952,7 @@ impl<'a> CanvasFrame<'a> {
     /// Build or in-place update the connection-label tree under
     /// [`crate::application::scene_host::CanvasRole::ConnectionLabels`].
     /// Re-stamps the role's
-    /// [`ConnectionLabelHitIndex`](baumhard::mindmap::tree_builder::ConnectionLabelHitIndex)
+    /// [`EdgeChannelIndex`](baumhard::mindmap::tree_builder::EdgeChannelIndex)
     /// alongside the tree so
     /// [`AppScene::edge_label_at`](crate::application::scene_host::AppScene::edge_label_at)
     /// can name a BVH hit.

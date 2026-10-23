@@ -27,6 +27,7 @@ use baumhard::gfx_structs::tests::subtree_aabb_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
+use baumhard::mindmap::scene_dump::tests::scene_dump_tests::*;
 use baumhard::util::tests::arena_utils_tests::*;
 use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
@@ -34,6 +35,7 @@ use baumhard::util::tests::grapheme_chad_tests::*;
 use baumhard::util::tests::ordered_vec2_tests::*;
 use baumhard::util::tests::primes_test::{do_is_prime_above_the_sieve_ceiling, do_primes};
 use baumhard::util::tests::rust_source_tests::*;
+use baumhard::util::tests::shortest_float_tests::*;
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use std::collections::HashMap;
@@ -1331,6 +1333,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("rich_text_spans_into_keeps_the_no_region_whole_text_span", |b| {
         b.iter(do_rich_text_spans_into_keeps_the_no_region_whole_text_span)
     });
+    c.bench_function("shortest_f64_prints_and_round_trips_like_the_f32", |b| {
+        b.iter(do_shortest_f64_prints_and_round_trips_like_the_f32)
+    });
+    c.bench_function("displayed_text_is_the_concatenated_covered_slices", |b| {
+        b.iter(do_displayed_text_is_the_concatenated_covered_slices)
+    });
+    c.bench_function("displayed_text_without_regions_is_the_whole_text", |b| {
+        b.iter(do_displayed_text_without_regions_is_the_whole_text)
+    });
     // The grapheme-boundary slicing paths on both bridges: a region
     // range that lands mid-cluster is the input that turns a byte
     // slice into a panic, and the ZWJ cases are the widest clusters
@@ -1600,6 +1611,34 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("camera_mutation_set_position_assigns_directly", |b| {
         b.iter(do_camera_mutation_set_position_assigns_directly)
+    });
+    // scene introspection (fixture load + build + dump) //
+    c.bench_function("scene_dump_nodes_are_the_tree_in_pre_order", |b| {
+        b.iter(do_scene_dump_nodes_are_the_tree_in_pre_order)
+    });
+    c.bench_function("scene_dump_node_verdicts_name_the_cull_reason", |b| {
+        b.iter(do_scene_dump_node_verdicts_name_the_cull_reason)
+    });
+    c.bench_function("scene_dump_a_fold_removes_the_descendants", |b| {
+        b.iter(do_scene_dump_a_fold_removes_the_descendants)
+    });
+    c.bench_function("scene_dump_section_text_is_the_covered_text", |b| {
+        b.iter(do_scene_dump_section_text_is_the_covered_text)
+    });
+    c.bench_function("scene_dump_edge_roles_are_named_by_their_index", |b| {
+        b.iter(do_scene_dump_edge_roles_are_named_by_their_index)
+    });
+    c.bench_function("scene_dump_placement_spans_what_the_renderer_draws", |b| {
+        b.iter(do_scene_dump_placement_spans_what_the_renderer_draws)
+    });
+    c.bench_function("scene_dump_filter_keeps_before_it_resolves_text", |b| {
+        b.iter(do_scene_dump_filter_keeps_before_it_resolves_text)
+    });
+    c.bench_function("camera_visibility_names_each_reason", |b| {
+        b.iter(do_visibility_names_each_reason)
+    });
+    c.bench_function("camera_visibility_agrees_with_the_conjunction_it_replaced", |b| {
+        b.iter(do_visibility_agrees_with_the_conjunction_it_replaced)
     });
     // predicates + comparators //
     c.bench_function("comparator_equal_f32", |b| b.iter(do_comparator_equal_f32));
@@ -2182,6 +2221,64 @@ fn hit_index_resolve_benchmark(c: &mut Criterion) {
     });
 }
 
+/// The scene serializer alone, on the canonical fixture: the trees
+/// are built once outside the timed body, so each row is one dump and
+/// nothing else, apart from the `do_*()` rows above, which include the
+/// load and the build. One row per edge-shaped role, and the node dump
+/// under both the full filter and the text-free visible one.
+fn scene_dump_benchmark(c: &mut Criterion) {
+    use baumhard::gfx_structs::camera::Camera2D;
+    use baumhard::mindmap::scene_dump::{dump_edges, dump_labels, dump_nodes, DumpFilter};
+    use glam::Vec2;
+
+    let map = load_testament_map();
+    let tree = tree_builder::build_mindmap_tree(&map);
+    let offsets: HashMap<String, (f32, f32)> = HashMap::new();
+    let hidden = map.fold_hidden_set();
+    let mut cache = SceneConnectionCache::new();
+    cache.ensure_zoom(1.0);
+    let mut paths = tree_builder::EdgePathCache::new(&map, &offsets);
+    let clip = tree_builder::node_clip_aabbs(&map, &offsets, None, &hidden);
+    let (connections, _) = tree_builder::build_connection_elements(
+        &map, &offsets, &clip, None, None, &mut cache, &mut paths, 1.0, &hidden,
+    );
+    let connection_tree = tree_builder::build_connection_tree(&connections);
+    let connection_index =
+        tree_builder::connection_channel_index(tree_builder::connection_identity_sequence(&connections));
+    let labels = tree_builder::build_label_elements(&map, None, None, None, &mut paths, 1.0, &hidden);
+    let label_tree = tree_builder::build_connection_label_tree(&labels);
+    let camera = Camera2D::new(1920, 1080);
+
+    c.bench_function("scene_dump_nodes_testament", |b| {
+        b.iter(|| dump_nodes(&tree, &map, &camera, DumpFilter::ALL))
+    });
+    c.bench_function("scene_dump_visible_ids_testament", |b| {
+        b.iter(|| dump_nodes(&tree, &map, &camera, DumpFilter::VISIBLE_IDS))
+    });
+    c.bench_function("scene_dump_edges_testament", |b| {
+        b.iter(|| {
+            dump_edges(
+                &connection_tree,
+                Vec2::ZERO,
+                &camera,
+                &connection_index,
+                DumpFilter::ALL,
+            )
+        })
+    });
+    c.bench_function("scene_dump_labels_testament", |b| {
+        b.iter(|| {
+            dump_labels(
+                &label_tree.tree,
+                Vec2::ZERO,
+                &camera,
+                &label_tree.hit_index,
+                DumpFilter::ALL,
+            )
+        })
+    });
+}
+
 /// `dewey_cmp` sorting a node-id list, which is the shape every
 /// call site uses it in — `maptool grep` / `apply` ordering their
 /// hits, and `maptool verify` ordering its violations. Measured as
@@ -2268,6 +2365,7 @@ criterion_group!(
     fast_resize_anchor_inference_benchmark,
     section_frame_emission_benchmark,
     hit_index_resolve_benchmark,
+    scene_dump_benchmark,
     connection_geometry_benchmark,
 );
 criterion_main!(benches);
