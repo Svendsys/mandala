@@ -162,7 +162,7 @@ pub(crate) struct Observed<'a> {
 }
 
 /// The counters, as a reply carries them (`format/ipc.md` §Reply).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct Revisions {
     /// This module's counter: advances when any event class had
     /// something to report.
@@ -314,7 +314,11 @@ impl Tracker {
         let moved = seen.camera != camera;
         let moded = seen.mode != *now.mode;
         let animations_differ = seen.animations.len() != animations.len()
-            || seen.animations.iter().zip(animations).any(|(key, anim)| !key.is(anim));
+            || seen
+                .animations
+                .iter()
+                .zip(animations)
+                .any(|(key, anim)| !key.is(anim));
         let any = replaced || document || selected || moved || moded || animations_differ;
         if !any {
             return (self.revisions(now), Vec::new());
@@ -342,7 +346,9 @@ impl Tracker {
         if document {
             let source = match driver {
                 Driver::Ipc => "ipc",
-                Driver::App => now.document.map_or("input", |doc| doc.last_change_source().word()),
+                Driver::App => now
+                    .document
+                    .map_or("input", |doc| doc.last_change_source().word()),
             };
             push(
                 Class::DocumentChanged,
@@ -360,13 +366,22 @@ impl Tracker {
             );
         }
         if selected {
-            push(Class::SelectionChanged, object(json!({ "selection": selection.to_ipc_json() })));
+            push(
+                Class::SelectionChanged,
+                object(json!({ "selection": selection.to_ipc_json() })),
+            );
         }
         if moved {
-            push(Class::CameraChanged, object(json!({ "camera": camera_json(now.camera) })));
+            push(
+                Class::CameraChanged,
+                object(json!({ "camera": camera_json(now.camera) })),
+            );
         }
         if moded {
-            push(Class::ModeChanged, object(json!({ "mode": now.mode.to_ipc_json() })));
+            push(
+                Class::ModeChanged,
+                object(json!({ "mode": now.mode.to_ipc_json() })),
+            );
         }
         if animations_differ {
             let started: Vec<Value> = animations
@@ -384,7 +399,10 @@ impl Tracker {
                 push(Class::AnimationStarted, object(json!({ "animations": started })));
             }
             if !completed.is_empty() {
-                push(Class::AnimationCompleted, object(json!({ "animations": completed })));
+                push(
+                    Class::AnimationCompleted,
+                    object(json!({ "animations": completed })),
+                );
             }
         }
 
@@ -652,7 +670,9 @@ pub(crate) mod fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::tests_common::{first_testament_node_id, load_test_doc, TestNudgeMutation};
+    use crate::application::document::tests_common::{
+        first_testament_node_id, load_test_doc, TestNudgeMutation,
+    };
     use crate::application::document::{ChangeSource, SelectionState};
     use baumhard::mindmap::animation::{AnimationTiming, Easing};
     use baumhard::mindmap::custom_mutation::TargetScope;
@@ -689,7 +709,7 @@ mod tests {
         changes.iter().map(|change| change.class.name()).collect()
     }
 
-    fn find<'a>(changes: &'a [Change], class: Class) -> &'a Value {
+    fn find(changes: &[Change], class: Class) -> &Value {
         &changes
             .iter()
             .find(|change| change.class == class)
@@ -715,7 +735,11 @@ mod tests {
             assert!(!class.doc().trim().is_empty());
             assert_eq!(Class::parse(class.name()), Some(class));
         }
-        assert_eq!(Class::parse("hello"), None, "transport classes are not subscribable");
+        assert_eq!(
+            Class::parse("hello"),
+            None,
+            "transport classes are not subscribable"
+        );
         let by_name: Vec<&str> = Class::ALL.iter().map(|c| c.name()).collect();
         let mut sorted = by_name.clone();
         sorted.sort_unstable();
@@ -729,7 +753,10 @@ mod tests {
         set.insert(Class::CameraChanged);
         set.insert(Class::ModeChanged);
         set.insert(Class::CameraChanged);
-        assert_eq!(set.iter().collect::<Vec<_>>(), [Class::CameraChanged, Class::ModeChanged]);
+        assert_eq!(
+            set.iter().collect::<Vec<_>>(),
+            [Class::CameraChanged, Class::ModeChanged]
+        );
         set.remove([Class::CameraChanged].into_iter().collect());
         assert!(!set.contains(Class::CameraChanged) && set.contains(Class::ModeChanged));
     }
@@ -740,7 +767,13 @@ mod tests {
         let mut tracker = Tracker::default();
         let (first, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert!(changes.is_empty());
-        assert_eq!(first, Revisions { revision: 0, document_revision: 0 });
+        assert_eq!(
+            first,
+            Revisions {
+                revision: 0,
+                document_revision: 0
+            }
+        );
         let (second, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert!(changes.is_empty());
         assert_eq!(second, first, "looking again advances nothing");
@@ -750,14 +783,22 @@ mod tests {
     fn test_a_document_change_reports_both_counters_and_the_source() {
         let mut world = World::new();
         let mut tracker = baselined(&world);
-        world.doc.with_source(ChangeSource::Console, |doc| doc.mark_dirty());
+        world
+            .doc
+            .with_source(ChangeSource::Console, |doc| doc.mark_dirty());
         let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["document_changed"]);
         assert_eq!(
             find(&changes, Class::DocumentChanged),
             &json!({ "revision": 1, "document_revision": 1, "source": "console" })
         );
-        assert_eq!(revisions, Revisions { revision: 1, document_revision: 1 });
+        assert_eq!(
+            revisions,
+            Revisions {
+                revision: 1,
+                document_revision: 1
+            }
+        );
     }
 
     #[test]
@@ -776,9 +817,15 @@ mod tests {
         world.doc.mark_dirty();
         let (revisions, changes) = tracker.observe(&world.now(), Classes::default(), Driver::App);
         assert!(changes.is_empty());
-        assert_eq!(revisions.revision, 1, "the counter does not depend on who is listening");
+        assert_eq!(
+            revisions.revision, 1,
+            "the counter does not depend on who is listening"
+        );
         let (_, again) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert!(again.is_empty(), "subscribing later reports from then on, not the history");
+        assert!(
+            again.is_empty(),
+            "subscribing later reports from then on, not the history"
+        );
     }
 
     #[test]
@@ -790,7 +837,13 @@ mod tests {
         world.camera.zoom = 2.0;
         let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["document_changed", "camera_changed"]);
-        assert_eq!(revisions, Revisions { revision: 1, document_revision: 2 });
+        assert_eq!(
+            revisions,
+            Revisions {
+                revision: 1,
+                document_revision: 2
+            }
+        );
         assert_eq!(find(&changes, Class::DocumentChanged)["revision"], json!(1));
     }
 
@@ -806,7 +859,13 @@ mod tests {
             find(&changes, Class::SelectionChanged)["selection"],
             json!({ "kind": "Single", "node_id": node })
         );
-        assert_eq!(revisions, Revisions { revision: 1, document_revision: 0 });
+        assert_eq!(
+            revisions,
+            Revisions {
+                revision: 1,
+                document_revision: 0
+            }
+        );
     }
 
     #[test]
@@ -855,7 +914,10 @@ mod tests {
         let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["animation_started"]);
         let entry = json!({ "target_id": node, "section_idx": null, "mutation_id": "slide" });
-        assert_eq!(find(&changes, Class::AnimationStarted)["animations"], json!([entry.clone()]));
+        assert_eq!(
+            find(&changes, Class::AnimationStarted)["animations"],
+            json!([entry.clone()])
+        );
 
         let (_, quiet) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert!(quiet.is_empty(), "a running animation is not a change");
@@ -863,8 +925,14 @@ mod tests {
         world.doc.tick_animations(1_000, None);
         let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["document_changed", "animation_completed"]);
-        assert_eq!(find(&changes, Class::AnimationCompleted)["animations"], json!([entry]));
-        assert_eq!(find(&changes, Class::DocumentChanged)["source"], json!("mutation"));
+        assert_eq!(
+            find(&changes, Class::AnimationCompleted)["animations"],
+            json!([entry])
+        );
+        assert_eq!(
+            find(&changes, Class::DocumentChanged)["source"],
+            json!("mutation")
+        );
     }
 
     #[test]
@@ -904,16 +972,25 @@ mod tests {
         );
         assert!(subscribed.verbose);
         session.unsubscribe(Some([Class::CameraChanged].into_iter().collect()));
-        assert_eq!(session.subscriptions().classes.iter().collect::<Vec<_>>(), [Class::DocumentChanged]);
+        assert_eq!(
+            session.subscriptions().classes.iter().collect::<Vec<_>>(),
+            [Class::DocumentChanged]
+        );
         session.unsubscribe(None);
         assert!(!session.is_subscribed());
-        assert!(!session.subscriptions().verbose, "verbose goes with the last subscription");
+        assert!(
+            !session.subscriptions().verbose,
+            "verbose goes with the last subscription"
+        );
     }
 
     fn drain(session: &mut Session) -> Vec<(&'static str, Value)> {
         let mut out = Vec::new();
         while let Some(queued) = session.pop_pending() {
-            out.push((queued.class.name(), serde_json::to_value(&queued.event).expect("serializes")["data"].clone()));
+            out.push((
+                queued.class.name(),
+                serde_json::to_value(&queued.event).expect("serializes")["data"].clone(),
+            ));
         }
         out
     }
@@ -933,7 +1010,11 @@ mod tests {
         let events = drain(&mut session);
         let order: Vec<&str> = events.iter().map(|(name, _)| *name).collect();
         assert_eq!(order, ["document_changed", "camera_changed"]);
-        assert_eq!(events[0].1["document_revision"], json!(3), "the final state, once");
+        assert_eq!(
+            events[0].1["document_revision"],
+            json!(3),
+            "the final state, once"
+        );
     }
 
     #[test]
@@ -1000,7 +1081,11 @@ mod tests {
         session.observe(&world.now(), Driver::App);
         session.requeue(held);
         let events = drain(&mut session);
-        assert_eq!(events.len(), 1, "the newer document_changed replaced the held one");
+        assert_eq!(
+            events.len(),
+            1,
+            "the newer document_changed replaced the held one"
+        );
         assert_eq!(events[0].1["document_revision"], json!(3));
     }
 
@@ -1017,7 +1102,11 @@ mod tests {
         assert!(drain(&mut session).is_empty());
         world.doc.mark_dirty();
         let after = session.observe(&world.now(), Driver::App);
-        assert_eq!(after.revision, before.revision + 1, "the counter is the process's");
+        assert_eq!(
+            after.revision,
+            before.revision + 1,
+            "the counter is the process's"
+        );
     }
 
     #[test]

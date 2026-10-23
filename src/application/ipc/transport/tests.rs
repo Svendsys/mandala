@@ -587,7 +587,11 @@ fn test_ipc_loopback_a_polling_client_is_never_sent_an_event() {
     let first = client.next();
     let second = client.next();
     assert_eq!((&first["id"], &second["id"]), (&json!(1), &json!(2)));
-    assert_eq!(second["document_revision"], json!(1), "the poller sees the revision instead");
+    assert_eq!(
+        second["document_revision"],
+        json!(1),
+        "the poller sees the revision instead"
+    );
 }
 
 #[test]
@@ -600,7 +604,10 @@ fn test_ipc_loopback_a_change_the_user_made_is_reported_as_theirs() {
     // What `about_to_wait` does between the input drain and the IPC
     // drain while something is subscribed.
     assert!(harness.server().is_subscribed());
-    app.doc.with_source(crate::application::document::ChangeSource::Action, |doc| doc.mark_dirty());
+    app.doc
+        .with_source(crate::application::document::ChangeSource::Action, |doc| {
+            doc.mark_dirty()
+        });
     app.camera.zoom = 2.0;
     let now = crate::application::ipc::CommandTarget::observed(&app).expect("observable");
     harness.server().observe(&now);
@@ -611,7 +618,10 @@ fn test_ipc_loopback_a_change_the_user_made_is_reported_as_theirs() {
     assert_eq!(first["event"], json!("document_changed"));
     assert_eq!(first["data"]["source"], json!("action"));
     assert_eq!(second["event"], json!("camera_changed"));
-    assert_eq!(second["data"]["revision"], first["data"]["revision"], "one observation");
+    assert_eq!(
+        second["data"]["revision"], first["data"]["revision"],
+        "one observation"
+    );
 }
 
 #[test]
@@ -634,19 +644,33 @@ fn test_ipc_loopback_a_new_controller_starts_unsubscribed_and_the_revision_carri
         if client.next()["event"] == json!("hello") {
             break client;
         }
-        assert!(Instant::now() < deadline, "the first controller was never retired");
+        assert!(
+            Instant::now() < deadline,
+            "the first controller was never retired"
+        );
         thread::sleep(Duration::from_millis(10));
     };
     wake_and_drain(&mut harness, &mut app);
-    assert!(!harness.server().is_subscribed(), "subscriptions do not outlive their connection");
+    assert!(
+        !harness.server().is_subscribed(),
+        "subscriptions do not outlive their connection"
+    );
 
     second.send(r#"{"id":3,"cmd":"act.console","line":"any"}"#);
     wake_and_drain(&mut harness, &mut app);
     let reply = second.next();
-    assert_eq!(reply["revision"], json!(before + 1), "the counter is the process's");
+    assert_eq!(
+        reply["revision"],
+        json!(before + 1),
+        "the counter is the process's"
+    );
     second.send(r#"{"id":4,"cmd":"ping"}"#);
     wake_and_drain(&mut harness, &mut app);
-    assert_eq!(second.next()["id"], json!(4), "no event reached the unsubscribed successor");
+    assert_eq!(
+        second.next()["id"],
+        json!(4),
+        "no event reached the unsubscribed successor"
+    );
 }
 
 #[test]
@@ -672,10 +696,15 @@ fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() 
         .expect("room for one");
 
     let mut app = EventsApp::new();
+    server.session.subscribe(
+        [crate::application::ipc::events::Class::DocumentChanged]
+            .into_iter()
+            .collect(),
+        false,
+    );
     server
         .session
-        .subscribe([crate::application::ipc::events::Class::DocumentChanged].into_iter().collect(), false);
-    server.session.baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
+        .baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
     for _ in 0..3 {
         app.doc.mark_dirty();
         server.observe(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
@@ -714,10 +743,15 @@ fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
         flushed,
     });
     let mut app = EventsApp::new();
+    server.session.subscribe(
+        [crate::application::ipc::events::Class::DocumentChanged]
+            .into_iter()
+            .collect(),
+        false,
+    );
     server
         .session
-        .subscribe([crate::application::ipc::events::Class::DocumentChanged].into_iter().collect(), false);
-    server.session.baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
+        .baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
     app.doc.mark_dirty();
     server.observe(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
     server.stalled = Some(Outbound::Frame(Frame::Reply(

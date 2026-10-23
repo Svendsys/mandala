@@ -868,9 +868,9 @@ mod tests {
     use glam::Vec2;
 
     use crate::application::console::LineOutcome;
-    use crate::application::ipc::events::Observed;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::MindMapDocument;
+    use crate::application::ipc::events::Observed;
     use crate::application::ipc::injected::{resolve_command, Surface};
     use crate::application::ipc::injected::{Delivery, InjectedQueue, Overloaded};
     use crate::application::ipc::registry::tests::{run_attached, run_detached};

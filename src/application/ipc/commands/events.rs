@@ -101,7 +101,10 @@ fn parse_classes(names: &Value) -> Result<Classes, String> {
             }
             None => {
                 let known: Vec<&str> = Class::ALL.iter().map(|class| class.name()).collect();
-                return Err(format!("no event class '{word}'; the classes are {}", known.join(", ")));
+                return Err(format!(
+                    "no event class '{word}'; the classes are {}",
+                    known.join(", ")
+                ));
             }
         }
     }
@@ -210,10 +213,16 @@ mod tests {
         }
         let reply = subscribe(&mut app, &mut session, r#"["nope"]"#);
         assert!(
-            reply["error"]["message"].as_str().expect("message").contains("document_changed"),
+            reply["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("document_changed"),
             "the refusal lists the classes that do exist"
         );
-        assert!(!session.is_subscribed(), "a refused request subscribes to nothing");
+        assert!(
+            !session.is_subscribed(),
+            "a refused request subscribes to nothing"
+        );
         let (reply, _) = run(r#"{"id":1,"cmd":"events.subscribe"}"#, &mut app, &mut session);
         assert_eq!(reply["error"]["data"]["param"], json!("classes"));
     }
@@ -233,7 +242,11 @@ mod tests {
     fn test_subscribe_reports_what_is_subscribed_and_the_counters() {
         let mut app = EventsApp::new();
         let mut session = Session::default();
-        let reply = subscribe(&mut app, &mut session, r#"["selection_changed","document_changed"]"#);
+        let reply = subscribe(
+            &mut app,
+            &mut session,
+            r#"["selection_changed","document_changed"]"#,
+        );
         assert_eq!(
             reply["result"],
             json!({
@@ -260,7 +273,10 @@ mod tests {
         app.doc.mark_dirty();
         app.camera.zoom = 2.0;
         subscribe(&mut app, &mut session, r#"["document_changed"]"#);
-        assert!(queued(&mut session).is_empty(), "the change before the command is history");
+        assert!(
+            queued(&mut session).is_empty(),
+            "the change before the command is history"
+        );
         app.doc.mark_dirty();
         run(r#"{"id":2,"cmd":"ping"}"#, &mut app, &mut session);
         let events = queued(&mut session);
@@ -278,7 +294,11 @@ mod tests {
         subscribe(&mut app, &mut session, r#"["camera_changed"]"#);
         let events = queued(&mut session);
         let names: Vec<&Value> = events.iter().map(|e| &e["event"]).collect();
-        assert_eq!(names, [&json!("document_changed")], "document_changed was already wanted; camera_changed was not");
+        assert_eq!(
+            names,
+            [&json!("document_changed")],
+            "document_changed was already wanted; camera_changed was not"
+        );
     }
 
     #[test]
@@ -286,9 +306,17 @@ mod tests {
         let mut app = EventsApp::new();
         let mut session = Session::default();
         subscribe(&mut app, &mut session, r#"["document_changed"]"#);
-        let (reply, repaint) = run(r#"{"id":5,"cmd":"act.console","line":"anything"}"#, &mut app, &mut session);
+        let (reply, repaint) = run(
+            r#"{"id":5,"cmd":"act.console","line":"anything"}"#,
+            &mut app,
+            &mut session,
+        );
         assert!(repaint);
-        assert_eq!(reply["revision"], json!(1), "the reply includes the command's own effect");
+        assert_eq!(
+            reply["revision"],
+            json!(1),
+            "the reply includes the command's own effect"
+        );
         assert_eq!(reply["document_revision"], json!(1));
         let events = queued(&mut session);
         assert_eq!(
@@ -304,7 +332,11 @@ mod tests {
     fn test_a_read_costs_no_revision_and_every_reply_still_carries_one() {
         let mut app = EventsApp::new();
         let mut session = Session::default();
-        subscribe(&mut app, &mut session, r#"["document_changed","selection_changed","camera_changed"]"#);
+        subscribe(
+            &mut app,
+            &mut session,
+            r#"["document_changed","selection_changed","camera_changed"]"#,
+        );
         for frame in [
             r#"{"id":1,"cmd":"ping"}"#,
             r#"{"id":2,"cmd":"describe"}"#,
@@ -315,7 +347,10 @@ mod tests {
             assert_eq!(reply["revision"], json!(0), "{frame}");
             assert_eq!(reply["document_revision"], json!(0), "{frame}");
         }
-        assert!(queued(&mut session).is_empty(), "nothing changed, so nothing is announced");
+        assert!(
+            queued(&mut session).is_empty(),
+            "nothing changed, so nothing is announced"
+        );
     }
 
     #[test]
@@ -354,7 +389,11 @@ mod tests {
         let (reply, events) = run_macro(false);
         assert_eq!(reply["document_revision"], json!(3));
         assert_eq!(events.len(), 1, "200 steps or 3, one drain is one event");
-        assert_eq!(events[0]["data"]["document_revision"], json!(3), "carrying the final revision");
+        assert_eq!(
+            events[0]["data"]["document_revision"],
+            json!(3),
+            "carrying the final revision"
+        );
 
         let (_, events) = run_macro(true);
         let revisions: Vec<&Value> = events.iter().map(|e| &e["data"]["document_revision"]).collect();
@@ -421,6 +460,9 @@ mod tests {
             .filter_map(|c| c["name"].as_str())
             .filter(|name| name.starts_with("events."))
             .collect();
-        assert_eq!(commands, ["events.revision", "events.subscribe", "events.unsubscribe"]);
+        assert_eq!(
+            commands,
+            ["events.revision", "events.subscribe", "events.unsubscribe"]
+        );
     }
 }

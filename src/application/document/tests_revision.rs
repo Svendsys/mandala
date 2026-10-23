@@ -36,7 +36,10 @@ fn test_a_setter_advances_the_revision_and_a_no_op_setter_does_not() {
     let (edge, _) = pick_test_edge(&doc);
     assert!(doc.set_edge_color(&edge, Some("#123456")));
     assert_eq!(doc.revision(), 1);
-    assert!(!doc.set_edge_color(&edge, Some("#123456")), "same value: nothing to do");
+    assert!(
+        !doc.set_edge_color(&edge, Some("#123456")),
+        "same value: nothing to do"
+    );
     assert_eq!(doc.revision(), 1, "a no-op commits nothing");
 }
 
@@ -79,7 +82,10 @@ fn test_undo_advances_the_revision_without_dirtying_and_names_itself() {
         ChangeSource::Undo,
         "an undo reached through an Action is still an undo"
     );
-    assert!(!doc.dirty, "undo advances the revision and leaves the unsaved flag alone");
+    assert!(
+        !doc.dirty,
+        "undo advances the revision and leaves the unsaved flag alone"
+    );
 }
 
 #[test]

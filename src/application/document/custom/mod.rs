@@ -444,7 +444,9 @@ impl MindMapDocument {
     /// pushed capturing the pre-action canvas, and the document is marked
     /// dirty. Returns true if the canvas was modified.
     pub fn apply_document_actions(&mut self, custom: &CustomMutation) -> bool {
-        self.with_source(ChangeSource::Mutation, |doc| doc.apply_document_actions_body(custom))
+        self.with_source(ChangeSource::Mutation, |doc| {
+            doc.apply_document_actions_body(custom)
+        })
     }
 
     /// The body of [`Self::apply_document_actions`], run with the

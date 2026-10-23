@@ -340,8 +340,8 @@ mod tests {
     use glam::Vec2;
 
     use crate::application::console::LineOutcome;
-    use crate::application::ipc::events::Observed;
     use crate::application::document::MindMapDocument;
+    use crate::application::ipc::events::Observed;
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
     use crate::application::ipc::space::Point;
     use crate::application::ipc::{CommandTarget, SceneView, ShellState};

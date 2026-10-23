@@ -87,6 +87,8 @@ impl MindMapDocument {
     /// The revision: committed model changes so far. Strictly
     /// increases across every mutation, undo and replacement; a read,
     /// a preview and a selection change leave it alone. O(1).
+    // Read by the native-only IPC layer and the screenshot sidecar.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn revision(&self) -> u64 {
         self.revision.count
     }
@@ -148,6 +150,8 @@ impl MindMapDocument {
     /// revision continues from where it stopped, one past it, so the
     /// swap is itself a change, and the generation moves on. Called
     /// where a document replaces another (`open`, `new`).
+    // Called by the console's document swap, which the browser lacks.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn succeed(&mut self, predecessor: &MindMapDocument) {
         self.revision.generation = predecessor.revision.generation + 1;
         self.revision.count = predecessor.revision.count;

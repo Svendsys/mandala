@@ -702,9 +702,9 @@ mod tests {
     use baumhard::mindmap::tree_builder::MindMapTree;
 
     use crate::application::console::LineOutcome;
-    use crate::application::ipc::events::Observed;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::MindMapDocument;
+    use crate::application::ipc::events::Observed;
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
     use crate::application::ipc::space::{Point, Space};
     use crate::application::ipc::{CommandTarget, ShellState};

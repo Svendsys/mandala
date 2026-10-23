@@ -510,9 +510,9 @@ fn undo(call: &mut Call<'_>) -> Reply {
 mod tests {
     use super::*;
     use crate::application::console::LineOutcome;
-    use crate::application::ipc::events::Observed;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::UndoAction;
+    use crate::application::ipc::events::Observed;
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
     use crate::application::ipc::space::Point;
     use crate::application::keybinds::Action;

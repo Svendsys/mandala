@@ -118,6 +118,9 @@ pub use baumhard::mindmap::tree_builder::InteractionModeOverrides;
 pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
+// Named outside `document/` only by the native funnels and the IPC
+// event layer.
+#[cfg(not(target_arch = "wasm32"))]
 pub use revision::ChangeSource;
 pub use undo_action::UndoAction;
 

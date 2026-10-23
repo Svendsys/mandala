@@ -106,10 +106,11 @@ pub(crate) struct Reply {
     /// The counters as of the end of the command
     /// (`format/ipc.md` §`events`). Absent when the command ran with
     /// no app to observe, and on a reply the reader answers itself.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    revision: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    document_revision: Option<u64>,
+    /// Boxed for the reason `error` is: a `Reply` rides the `Err` side
+    /// of handler parse helpers, and the two counters would push it
+    /// past what `clippy::result_large_err` allows.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    revisions: Option<Box<super::events::Revisions>>,
 }
 
 /// One entry of a reply's `warnings` array.
@@ -178,8 +179,7 @@ impl Reply {
             result: Some(result),
             error: None,
             warnings: Vec::new(),
-            revision: None,
-            document_revision: None,
+            revisions: None,
         }
     }
 
@@ -199,8 +199,7 @@ impl Reply {
                 data,
             })),
             warnings: Vec::new(),
-            revision: None,
-            document_revision: None,
+            revisions: None,
         }
     }
 
@@ -212,8 +211,7 @@ impl Reply {
 
     /// The same reply, carrying the counters the command left behind.
     pub(crate) fn with_revisions(mut self, revisions: super::events::Revisions) -> Self {
-        self.revision = Some(revisions.revision);
-        self.document_revision = Some(revisions.document_revision);
+        self.revisions = Some(Box::new(revisions));
         self
     }
 
@@ -666,12 +664,12 @@ mod tests {
         let bare = wire(Frame::Reply(Reply::ok(json!(1), json!({}))));
         assert!(bare.get("revision").is_none() && bare.get("document_revision").is_none());
 
-        let stamped = wire(Frame::Reply(Reply::error(json!(2), code::NOT_FOUND, "no", None).with_revisions(
-            Revisions {
+        let stamped = wire(Frame::Reply(
+            Reply::error(json!(2), code::NOT_FOUND, "no", None).with_revisions(Revisions {
                 revision: 12,
                 document_revision: 7,
-            },
-        )));
+            }),
+        ));
         assert_eq!(stamped["revision"], json!(12));
         assert_eq!(stamped["document_revision"], json!(7), "failures are stamped too");
     }
