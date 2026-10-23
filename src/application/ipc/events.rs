@@ -1161,6 +1161,28 @@ mod tests {
     }
 
     #[test]
+    fn test_an_animations_id_is_the_same_in_the_query_and_in_its_events() {
+        let mut world = World::new();
+        let node = first_testament_node_id(&world.doc);
+        let mut tracker = baselined(&world);
+        world.doc.start_animation(&slide("slide"), &node, 0);
+        let (_, started) = tracker.observe(&world.now(), ALL(), Driver::App);
+        let queried = world.doc.active_animations[0].to_ipc_json(100, false)["id"].clone();
+        assert_eq!(
+            find(&started, Class::AnimationStarted)["animations"][0]["id"],
+            queried
+        );
+
+        world.doc.tick_animations(1_000, None);
+        let (_, completed) = tracker.observe(&world.now(), ALL(), Driver::App);
+        assert_eq!(
+            find(&completed, Class::AnimationCompleted)["animations"][0]["id"],
+            queried,
+            "the completion names the animation the query listed"
+        );
+    }
+
+    #[test]
     fn test_shifting_the_start_of_running_animations_is_not_a_change() {
         // A tree-mutating drag released after a pause moves every
         // running animation's start forward so none snaps to its end.

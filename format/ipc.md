@@ -1015,6 +1015,7 @@ first). Each entry:
 
 | key | meaning |
 |---|---|
+| `id` | The running animation's identity: the `id` the `animation_started` and `animation_completed` events carry for it. It never changes while the animation runs (a drag release shifts `start_ms`, not this), and a re-trigger after the animation ended is a new `id` under the same `(target_id, section_idx, mutation_id)`. An agent that subscribed late, or that recovers from missed events, matches a later `animation_completed` to the entry it holds by this. |
 | `target_id`, `section_idx` | The node animated, and the section when the trigger resolved to one (`null` otherwise). |
 | `mutation_id` | The `CustomMutation` id being animated. |
 | `start_ms`, `elapsed_ms` | The app-clock start and the time since. The app clock is the app's wall clock, milliseconds since process start (the one `ping` reports and the per-frame drain ticks against). It is **not** virtual today: the `clock` family that would make it so (IPC-09) has not landed, so `elapsed_ms` is not deterministic until it does. |
