@@ -1,0 +1,24 @@
+[package]
+name = "mandalactl"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+# A client for the running app's `--ipc` socket (`format/ipc.md`), and
+# the sibling of `maptool` rather than a mode of it: `maptool` reads
+# `.mindmap.json` files from disk and never talks to a process, this
+# talks to a process and never reads a map. The `[lib]` exists for one
+# reader beyond the binary — the app crate's tests hold `verbs::VERBS`
+# against the registry `describe` renders — and for the integration
+# tests, which drive `run` in-process.
+#
+# No `baumhard` and no logger: nothing here touches a map or a
+# degrade path that logs. No `tokio` either; the client is plain
+# blocking `std::os::unix::net` I/O, the way the server's boundary
+# threads are (CODE_CONVENTIONS §3).
+
+[dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -324,7 +324,7 @@ re-litigate them without a strong reason.
 ## §T11 Running the suite
 
 - `./test.sh` — full suite across every workspace member —
-  `mandala`, `baumhard`, `mandala_derive`, `maptool` — then a test
+  `mandala`, `baumhard`, `mandala_derive`, `maptool`, `mandalactl` — then a test
   count, then the bench-target type-check and the wasm32 type-check
   gate. Read that order literally: the count prints where the
   *suite* ends, not where the run does, so a `== N tests passed ==`
@@ -361,10 +361,11 @@ re-litigate them without a strong reason.
   mechanisms are off limits.
 - `cargo test -p baumhard --lib <pattern>`,
   `cargo test -p mandala <pattern>`,
-  `cargo test -p mandala_derive` or `cargo test -p maptool` —
-  targeted subset while iterating. `--lib` selects a library target,
-  so it belongs only to the two members that have one, baumhard and
-  mandala_derive; `mandala` and `maptool` are binary crates, where
+  `cargo test -p mandala_derive`, `cargo test -p maptool` or
+  `cargo test -p mandalactl` — targeted subset while iterating.
+  `--lib` selects a library target, so it belongs only to the three
+  members that have one, baumhard, mandala_derive and mandalactl;
+  `mandala` and `maptool` are binary crates, where
   adding it narrows nothing and exits 101 with `no library targets
   found in package 'mandala'` before a test runs. Both this document
   and `CLAUDE.md` put the flag on the mandala line anyway, copied off

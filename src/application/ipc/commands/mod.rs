@@ -116,4 +116,98 @@ mod tests {
             }
         }
     }
+
+    /// **`mandalactl` stays honest against the registry.** The client's
+    /// verb table (`crates/mandalactl/src/verbs.rs`) and this registry
+    /// name the same commands, so a command that lands without its verb
+    /// fails the PR that adds it — and `--help` can never list one the
+    /// app does not serve.
+    #[test]
+    fn test_mandalactl_has_a_verb_for_every_registered_command_and_no_other() {
+        use std::collections::BTreeSet;
+
+        let registered: BTreeSet<&str> = FAMILIES
+            .iter()
+            .flat_map(|family| family.commands.iter().map(|c| c.name))
+            .collect();
+        let verbs: BTreeSet<&str> = mandalactl::verbs::VERBS.iter().map(|v| v.name).collect();
+        let unclaimed: Vec<_> = registered.difference(&verbs).collect();
+        let stale: Vec<_> = verbs.difference(&registered).collect();
+        assert!(
+            unclaimed.is_empty(),
+            "registered with no `mandalactl` verb: {unclaimed:?}. Add a `Verb` to crates/mandalactl/src/verbs.rs \
+             (summary, parameters as `describe` reports them, an example)"
+        );
+        assert!(
+            stale.is_empty(),
+            "`mandalactl` verbs for commands this registry lacks: {stale:?}. Remove them from \
+             crates/mandalactl/src/verbs.rs"
+        );
+    }
+
+    /// Each verb's parameters are the registered command's — name,
+    /// type word and required flag, in registry order — because
+    /// `mandalactl` types `name=value` arguments from them.
+    #[test]
+    fn test_every_mandalactl_verb_declares_the_parameters_its_command_registers() {
+        for verb in mandalactl::verbs::VERBS {
+            let (_, command) = crate::application::ipc::registry::lookup(verb.name)
+                .unwrap_or_else(|| panic!("`mandalactl` has a verb for unregistered `{}`", verb.name));
+            let registered: Vec<(String, String, bool)> = command
+                .params
+                .iter()
+                .map(|p| (p.name.to_string(), p.ty.word(), p.required))
+                .collect();
+            let declared: Vec<(String, String, bool)> = verb
+                .params
+                .iter()
+                .map(|p| (p.name.to_string(), mandalactl::verbs::type_word(p.ty), p.required))
+                .collect();
+            assert_eq!(
+                declared, registered,
+                "`{}`: crates/mandalactl/src/verbs.rs disagrees with the registry's parameters",
+                verb.name
+            );
+        }
+    }
+
+    /// The client refuses a server whose greeting names another
+    /// protocol, so its constant must be the server's.
+    #[test]
+    fn test_mandalactl_speaks_the_protocol_this_server_greets_with() {
+        assert_eq!(
+            mandalactl::PROTOCOL,
+            u64::from(crate::application::ipc::PROTOCOL_VERSION)
+        );
+    }
+
+    /// The client refuses a request longer than the server reads and
+    /// refuses to buffer a reply longer than the server writes, so its
+    /// two caps must be the server's.
+    #[test]
+    fn test_mandalactl_holds_the_same_line_caps_as_the_server() {
+        use crate::application::ipc::envelope::{INBOUND_LINE_CAP, OUTBOUND_FRAME_CAP};
+        assert_eq!(mandalactl::REQUEST_CAP, INBOUND_LINE_CAP);
+        assert_eq!(mandalactl::FRAME_CAP, OUTBOUND_FRAME_CAP);
+    }
+
+    /// A verb that prints a result field as bare lines names a field its
+    /// command really returns; `Describe` rendering belongs to
+    /// `describe` alone.
+    #[test]
+    fn test_mandalactl_renders_only_fields_its_command_returns() {
+        use mandalactl::verbs::Render;
+        for verb in mandalactl::verbs::VERBS {
+            let (_, command) = crate::application::ipc::registry::lookup(verb.name).expect("registered");
+            match verb.render {
+                Render::Flat => {}
+                Render::Lines(key) => assert!(
+                    command.result.iter().any(|field| field.name == key),
+                    "`{}` prints `{key}` as lines, which the command does not return",
+                    verb.name
+                ),
+                Render::Describe => assert_eq!(verb.name, "describe"),
+            }
+        }
+    }
 }

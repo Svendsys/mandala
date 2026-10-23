@@ -772,10 +772,12 @@ fn test_above_test_modules_knows_every_shape_in_this_tree() {
         let gated = reached_only_under_test_cfg(path);
         if named_tests && !gated {
             assert!(
-                relative.starts_with("lib/baumhard/"),
+                relative.starts_with("lib/baumhard/") || is_cargo_integration_test(&relative),
                 "{relative} is kept out of this sweep only by the §B8 `pub mod tests;` \
-                 carve-out, which is a baumhard rule — an un-gated `tests` module outside \
-                 that crate is test code with nothing declaring it so"
+                 carve-out, which is a baumhard rule, or by being a package's own `tests/` \
+                 directory, which cargo builds as test targets and nothing ships — an \
+                 un-gated `tests` module anywhere else is test code with nothing declaring \
+                 it so"
             );
         }
         if named_tests || gated {
@@ -880,6 +882,30 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
+}
+
+/// Whether a repo-relative path is cargo's integration-test directory
+/// of a `crates/` package: `crates/<package>/tests/…`. Cargo compiles
+/// each file there as its own test target, so no shipped build reaches
+/// it and no `cfg` gate is needed to say so — the path is the
+/// declaration, the way `lib/baumhard/tests/wasm_font_lock.rs` is
+/// covered by the baumhard carve-out.
+#[cfg(test)]
+fn is_cargo_integration_test(relative: &str) -> bool {
+    matches!(
+        relative.split('/').collect::<Vec<_>>().as_slice(),
+        ["crates", _, "tests", ..]
+    )
+}
+
+#[cfg(test)]
+#[test]
+fn test_a_crates_package_tests_directory_is_cargos_and_a_src_tests_module_is_not() {
+    assert!(is_cargo_integration_test("crates/mandalactl/tests/binary.rs"));
+    assert!(is_cargo_integration_test("crates/maptool/tests/fixtures/x.rs"));
+    assert!(!is_cargo_integration_test("crates/mandalactl/src/tests/mod.rs"));
+    assert!(!is_cargo_integration_test("src/tests/mod.rs"));
+    assert!(!is_cargo_integration_test("crates/tests/x.rs"));
 }
 
 /// Whether `path`'s module — or any module above it — is declared

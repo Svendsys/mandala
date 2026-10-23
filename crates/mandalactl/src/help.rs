@@ -1,0 +1,326 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! `--help`, written for an agent that has not seen this tool: what it
+//! connects to, how arguments are spelled, what the exit codes mean,
+//! and — for every command — a line saying what it does and a command
+//! line to copy.
+//!
+//! The per-command part is generated from [`crate::verbs::VERBS`], so
+//! it cannot list a command that does not exist or omit one that does;
+//! the rest is prose that a test holds to the flags and examples the
+//! parser really accepts.
+
+use crate::verbs::{self, family, type_word, Effect, Verb, VERBS};
+
+/// Single-line commands the overview teaches. Each is parsed in the
+/// tests, so none can rot into advice that no longer works.
+pub const WORKFLOW: &[&str] = &[
+    "mandalactl ping",
+    "mandalactl describe input.drag",
+    "mandalactl query.selection --json",
+    "mandalactl scene.find_text Introduction",
+    "mandalactl input.click_node 1.2 --wait-settled",
+    "mandalactl input.drag 400 300 640 300 --wait-settled",
+    "mandalactl capture.screenshot /tmp/after.png fit=true",
+];
+
+/// Argument spellings the overview teaches, one per line. Also parsed
+/// in the tests.
+pub const SPELLINGS: &[&str] = &[
+    "mandalactl scene.hit_test 412 96",
+    "mandalactl scene.hit_test x=412 y=96 space=surface",
+    "mandalactl input.key z mods=ctrl,shift",
+    "mandalactl capture.screenshot region:='{\"x\":0,\"y\":0,\"w\":200,\"h\":100}'",
+    "mandalactl act.console -- 'fps=on'",
+];
+
+/// The overview: everything but the per-command reference is prose.
+pub fn overview() -> String {
+    let mut text = String::new();
+    text.push_str(HEAD);
+    text.push_str("\nSPELLINGS\n");
+    for line in SPELLINGS {
+        text.push_str(&format!("  {line}\n"));
+    }
+    text.push_str(MIDDLE);
+    text.push_str("\nWORKFLOW\n");
+    for line in WORKFLOW {
+        text.push_str(&format!("  {line}\n"));
+    }
+    text.push_str(RAW_EXAMPLE);
+    text.push_str("\nCOMMANDS  ([mutates] = changes the app, so --wait-settled applies)\n");
+    let mut current = "";
+    for verb in VERBS {
+        let family = family(verb.name);
+        if family != current {
+            text.push_str(&format!("\n  {family}\n"));
+            current = family;
+        }
+        let tag = if verb.effect == Effect::Mutates {
+            " [mutates]"
+        } else {
+            ""
+        };
+        text.push_str(&format!("    {}{tag}\n", usage(verb)));
+        text.push_str(&format!("        {}\n", verb.summary));
+        text.push_str(&format!("        $ {}\n", verb.example));
+    }
+    text.push_str(TAIL);
+    text
+}
+
+/// One command's help: usage, parameters, example.
+///
+/// `Err` when `name` is not in the table; the message says where the
+/// connected app's own list is.
+pub fn command_help(name: &str) -> Result<String, String> {
+    if name == "raw" {
+        return Ok(RAW_HELP.to_string());
+    }
+    let Some(verb) = verbs::lookup(name) else {
+        return Err(format!(
+            "`{name}` is not in this build's command table. If the connected app serves it, `mandalactl describe {name}` \
+             documents it and `mandalactl {name} name=value ...` calls it"
+        ));
+    };
+    let mut text = format!("{}\n    {}\n", usage(verb), verb.summary);
+    if verb.params.is_empty() {
+        text.push_str("\n  takes no parameters\n");
+    } else {
+        text.push_str("\n  parameters:\n");
+        for param in verb.params {
+            let position = verb
+                .positional
+                .iter()
+                .position(|p| *p == param.name)
+                .map_or(String::new(), |i| format!("  (bare word {})", i + 1));
+            text.push_str(&format!(
+                "    {:<16}{:<16}{}{position}\n",
+                param.name,
+                type_word(param.ty),
+                if param.required { "required" } else { "optional" }
+            ));
+        }
+    }
+    text.push_str(&format!("\n  example: {}\n", verb.example));
+    if verb.effect == Effect::Mutates {
+        text.push_str("  changes the app: add --wait-settled to return only once the result is rendered\n");
+    }
+    text.push_str(&format!(
+        "  every parameter and result field is documented by the app itself: mandalactl describe {name}\n"
+    ));
+    Ok(text)
+}
+
+/// `mandalactl name <positional> [optional positional] [name=<type>] ...`
+pub fn usage(verb: &Verb) -> String {
+    let mut line = format!("mandalactl {}", verb.name);
+    for name in verb.positional {
+        let required = verb.params.iter().any(|p| p.name == *name && p.required);
+        if required {
+            line.push_str(&format!(" <{name}>"));
+        } else {
+            line.push_str(&format!(" [{name}]"));
+        }
+    }
+    for param in verb.params.iter().filter(|p| !verb.positional.contains(&p.name)) {
+        if param.required {
+            line.push_str(&format!(" {}=<{}>", param.name, type_word(param.ty)));
+        } else {
+            line.push_str(&format!(" [{}=<{}>]", param.name, type_word(param.ty)));
+        }
+    }
+    line
+}
+
+const HEAD: &str = "\
+mandalactl - drive a running Mandala from the shell, over its --ipc socket
+
+USAGE
+  mandalactl [--ipc <socket>] [--json] [--wait-settled] [--timeout <secs>] <command> [args...]
+  mandalactl raw '<json request>'     send one request frame as written ('raw -' reads stdin)
+  mandalactl help [<command>]         this text, or one command's parameters
+
+Each <command> is a wire command of format/ipc.md, spelled as the wire spells it. `mandalactl
+describe` lists what the connected app serves, with every parameter and result, so a command newer
+than this build is still callable (name=value arguments are then typed from that list).
+
+SOCKET
+  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
+  Name it here with --ipc <path>, or once per shell with:  export MANDALA_IPC=<path>
+  One client is served at a time. A refusal for that is retried for 2 s, then reported.
+
+ARGUMENTS
+  <value>        a bare word fills the command's next positional parameter (<name> in the list below)
+  name=value     a parameter, typed as the command declares it: x=412 is a number, text=412 a string,
+                 fit=true a boolean, mods=ctrl,shift a list (mods= is the empty list, \"hold none\")
+  name:=<json>   a parameter sent as the JSON written, for anything else
+  --             ends flags: every word after it is a bare word, even one that looks like name=value
+  Quote words with spaces or JSON; single quotes keep JSON intact.";
+
+const MIDDLE: &str = "
+FLAGS (anywhere before a bare --)
+  --ipc <path>      the socket (else $MANDALA_IPC)
+  --json            print the app's reply exactly as received, one JSON line per request, instead of a summary
+  --wait-settled    after a command that changes the app, wait until its consequences are rendered
+                    (clock.wait until=settled), so the next read or screenshot sees them; refused on
+                    read-only commands. An app without clock.wait is detected first: exit 1, and the
+                    command is not sent.
+  --timeout <secs>  patience for the connection and for each reply (default 15; the wait gets the same)
+  --force           drive an app whose protocol differs from this build's
+  --help, --version
+
+OUTPUT
+  stdout: one `path: value` line per field, values as JSON (so \"1\" and 1 differ), or with --json the
+  app's reply envelope. act.console prints the console's own lines. stderr: errors as
+  `error: <code>: <message>` and the app's warnings as `warning: <code>: <message>`.
+
+EXIT CODES
+  0  success: the app answered ok:true (warnings do not change this)
+  1  the app said no: ok:false, code and message on stderr
+  2  the app could not be talked to: not running, busy, timed out, closed, wrong protocol
+  3  bad command line: nothing was sent";
+
+const RAW_HELP: &str = "\
+mandalactl raw '<json request>'
+mandalactl raw -
+    Send one request frame exactly as written and print the reply. The frame is a JSON object with
+    \"cmd\" and the command's parameters flat beside it, as format/ipc.md writes them; \"id\" is optional
+    and one is supplied when absent. `-` reads the frame from stdin, the way to send JSON with no
+    shell quoting at all (stdin is read to its end, so run it from a pipe or a heredoc, not a bare
+    terminal). --json, --wait-settled, --timeout and the exit codes work as for any command.
+
+  example: mandalactl raw '{\"cmd\":\"ping\"}'
+";
+
+const RAW_EXAMPLE: &str = "  mandalactl raw - <<'JSON'
+  {\"cmd\":\"act.macro\",\"steps\":[{\"kind\":\"Action\",\"action\":\"ZoomFit\"}]}
+  JSON";
+
+const TAIL: &str = "
+A command the app serves but this list lacks (the clock, events and recording families, for one) is
+called by name with name=value arguments: mandalactl clock.step ms=100. `mandalactl describe` shows
+what the connected app has.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{parse, Parsed};
+    use crate::params::{build_params, tokenize, Signature};
+    use crate::testing::split;
+
+    /// Run a taught command line through the real parser and argument
+    /// builder, returning the command it names.
+    fn accepted(line: &str) -> String {
+        let words = split(line);
+        assert_eq!(words[0], "mandalactl", "{line}");
+        let Parsed::Invoke(call) = parse(&words[1..]).unwrap_or_else(|e| panic!("`{line}`: {e}")) else {
+            panic!("`{line}` is not an invocation");
+        };
+        let verb = verbs::lookup(&call.command).unwrap_or_else(|| panic!("`{line}`: no such verb"));
+        build_params(&Signature::of(verb), &tokenize(&call.words))
+            .unwrap_or_else(|e| panic!("`{line}`: {e}"));
+        if call.options.wait_settled {
+            assert_eq!(
+                verb.effect,
+                Effect::Mutates,
+                "`{line}`: --wait-settled on a read-only command"
+            );
+        }
+        call.command
+    }
+
+    #[test]
+    fn test_every_verb_example_is_a_command_line_that_parses_for_its_own_verb() {
+        for verb in VERBS {
+            assert_eq!(
+                accepted(verb.example),
+                verb.name,
+                "the example of `{}` runs another command",
+                verb.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_every_taught_workflow_and_spelling_parses() {
+        for line in WORKFLOW.iter().chain(SPELLINGS) {
+            accepted(line);
+        }
+    }
+
+    #[test]
+    fn test_the_overview_lists_every_verb_with_its_summary_and_example() {
+        let text = overview();
+        for verb in VERBS {
+            assert!(text.contains(&usage(verb)), "no usage line for {}", verb.name);
+            assert!(text.contains(verb.summary), "no summary for {}", verb.name);
+            assert!(
+                text.contains(&format!("$ {}", verb.example)),
+                "no example for {}",
+                verb.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_the_overview_names_every_flag_exit_code_and_the_discovery_variable() {
+        let text = overview();
+        for needle in [
+            "--ipc",
+            "--json",
+            "--wait-settled",
+            "--timeout",
+            "--force",
+            "--help",
+            "--version",
+            "MANDALA_IPC",
+            "raw",
+            "describe",
+            "  0  ",
+            "  1  ",
+            "  2  ",
+            "  3  ",
+        ] {
+            assert!(text.contains(needle), "the overview never mentions {needle:?}");
+        }
+    }
+
+    #[test]
+    fn test_usage_marks_required_optional_and_named_parameters() {
+        let hit = usage(verbs::lookup("scene.hit_test").expect("known"));
+        assert_eq!(hit, "mandalactl scene.hit_test <x> <y> [space=<string>]");
+        let undo = usage(verbs::lookup("query.undo").expect("known"));
+        assert_eq!(undo, "mandalactl query.undo [limit]");
+        let key = usage(verbs::lookup("input.key").expect("known"));
+        assert_eq!(key, "mandalactl input.key <key> [state=<string>] [mods=<array>]");
+    }
+
+    #[test]
+    fn test_command_help_lists_parameters_with_their_bare_word_positions() {
+        let text = command_help("scene.hit_test").expect("known");
+        assert!(
+            text.contains("(bare word 1)") && text.contains("(bare word 2)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("example: mandalactl scene.hit_test 412 96 space=surface"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("--wait-settled"),
+            "a read-only command does not advertise it: {text}"
+        );
+        let text = command_help("input.drag").expect("known");
+        assert!(text.contains("--wait-settled"), "{text}");
+        assert!(command_help("ping")
+            .expect("known")
+            .contains("takes no parameters"));
+    }
+
+    #[test]
+    fn test_command_help_for_a_stranger_points_at_describe() {
+        let err = command_help("clock.step").expect_err("not in the table");
+        assert!(err.contains("mandalactl describe clock.step"), "{err}");
+    }
+}

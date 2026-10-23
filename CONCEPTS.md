@@ -3435,7 +3435,7 @@ gap where keyboard-triggered custom mutations skipped both.
 
 Authoring surface concepts are the parts a user actually touches:
 modal editors, the console, keybinds, the color picker, clipboard,
-and (briefly) the `maptool` CLI. Most are native-only today; the
+and (briefly) the `maptool` and `mandalactl` CLIs. Most are native-only today; the
 parity story for each is honest.
 
 ### Inline node-text editor
@@ -4019,6 +4019,35 @@ copied from another app between Mandala copy and paste).
 Failures (permission denied, unavailable) log via `log::warn!`
 and return `None` — interactive paths must not panic. WASM
 stubs warn-and-noop pending the browser's async clipboard API.
+
+### `mandalactl` CLI
+
+A separate binary in `crates/mandalactl/` that
+drives a *running* app over its `--ipc` socket from the shell:
+`mandalactl <family.verb> [args...]`, one connection and one command per
+invocation, the reply printed as `path: value` lines (`--json` for the
+envelope as received).
+
+The shell is an agent's native tool, and hand-built JSON over `nc` is the
+fragile incantation it replaces. `name=value` arguments are typed from the
+command's declared parameter types, so `x=412` is a number and `text=412` a
+string; a command newer than the build is typed from the app's own
+`describe`, so the client needs no release to call it. `--wait-settled`
+issues the command and then `clock.wait until=settled`. Every wait has a
+deadline and a message naming what to suspect, and the exit code is the
+contract: `0` answered, `1` the app said no, `2` the app could not be
+reached, `3` a bad command line. A refusal for `busy` (the single-controller
+slot) is retried briefly, because two invocations in a row can find the
+previous controller not yet noticed as gone.
+
+`verbs::VERBS` is the table of commands the build knows, for `--help` and for
+bare (positional) arguments. The app crate's tests hold it against the IPC
+registry in both directions, so a server command without its verb fails the
+PR that adds it. The sibling of `maptool`, not a mode of it: `maptool` reads
+`.mindmap.json` files and never talks to a process.
+
+`crates/mandalactl/`. Protocol: [`format/ipc.md`](./format/ipc.md); the full
+agent-facing reference is `mandalactl --help`.
 
 ### `maptool` CLI
 

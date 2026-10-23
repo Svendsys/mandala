@@ -29,7 +29,9 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > `query.animations`, `query.editors`, `query.undo` (IPC-04, #64); the
 > `scene` family — `scene.dump`, `scene.visible_set`,
 > `scene.node_geometry`, `scene.hit_test`, `scene.find_text` (IPC-05,
-> #65).
+> #65); the `input` family (IPC-06, #66); `capture.screenshot` (IPC-07,
+> #67); and the client, `mandalactl` ([Client](#client-mandalactl),
+> IPC-11, #71).
 
 ## Transport
 
@@ -1851,6 +1853,58 @@ and `error!` in release builds. Whether to ship one is IPC-14's call
 (see [Warnings](#warnings--per-command-diagnostics)). Tree-level
 (Baumhard `EventSubscriber`) events are out of scope until the #43
 reshape lands; app-funnel events above do not depend on it.
+
+## Client: `mandalactl`
+
+`mandalactl` (`crates/mandalactl`) is the command-line client for this
+protocol: one invocation is one connection, one command and its reply.
+It adds no wire vocabulary, so what it does is what this document says
+a client does:
+
+- **Command names and parameters are the wire's.** `mandalactl
+  scene.hit_test 412 96 space=surface` sends `{"id":1,"cmd":"scene.hit_test",
+  "x":412,"y":96,"space":"surface"}`. A parameter is typed from the type
+  word `describe` publishes for it (`x=412` the number, `text=412` the
+  string); a command the client has no verb for is typed from the
+  connected app's own `describe`, so a new command is callable before a
+  client release. `mandalactl raw '<json>'` (or `raw -` on stdin) sends one
+  frame as written, supplying an `id` when it has none.
+- **Socket discovery:** `--ipc <path>`, else `$MANDALA_IPC`, else a usage
+  error that says how to launch the app.
+- **The handshake is checked before anything is sent.** The first frame
+  must be `hello` with `"app": "mandala"` and `"protocol"` equal to the
+  client's own (currently 1); anything else is refused unless `--force`
+  ([Handshake and versioning](#handshake-and-versioning)). A
+  `connection_rejected` first frame is retried for two seconds, because
+  the departure of the previous controller is noticed "a moment after the
+  socket closes" ([Single controller](#single-controller)) and two
+  invocations in a row would otherwise race it; a slot still held after
+  that is reported as another client holding it.
+- **Every wait has a deadline** (`--timeout`, default 15 s, longer than the
+  10 s `FreezeWatchdog` threshold): the connect, the greeting and each
+  reply. A reply is matched by `id`, with the `null`-id `parse_error` taken
+  as the answer to the one request in flight; events the client did not
+  subscribe to are skipped, and `shutdown` ends the invocation.
+- **`--wait-settled`** first asks `describe command=clock.wait`, so an
+  app without the clock family is reported (exit 1) *before* the command
+  is sent: a wait found missing afterwards would fail a command that had
+  succeeded, and a caller branching on the code would repeat a mutation.
+  After a command that succeeds it sends `clock.wait` with `until:
+  "settled"` and `timeout_ms` equal to the client's timeout (clamped to
+  the server's `1..=60000`), on the same connection, and reports its
+  result too. It is refused up front (exit 3), through `raw` as well, for
+  a command the client knows only reads.
+- **Exit codes:** `0` the reply was `ok:true` (warnings do not change it);
+  `1` it was `ok:false`; `2` the app could not be talked to (not running,
+  stale socket, busy, silent, closed, wrong protocol, a frame the client
+  cannot read); `3` the command line was wrong and nothing was sent.
+  Errors go to stderr as `error: <code>: <message>`, warnings as
+  `warning: <code>: <message>`. `--json` prints each reply line exactly as
+  received, one per request.
+
+The client's table of commands (`verbs::VERBS`) is held to the registry in
+both directions by tests in the app crate, so it is as honest as `describe`
+is against this document.
 
 ## Change discipline
 
