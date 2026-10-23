@@ -258,7 +258,7 @@ pub(super) const FAMILY: Family = Family {
             ResultSpec::new(
                 "stopped",
                 ParamType::String,
-                "Why it ended: \"client\", \"max_frames\", \"disk_budget\" or \"shutdown\".",
+                "Why it ended: \"client\", \"max_frames\" or \"disk_budget\".",
             ),
             ResultSpec::new("bytes", ParamType::Integer, "The size of the frames and manifest on disk."),
             ResultSpec::new("width", ParamType::Integer, "Every frame's width in pixels."),

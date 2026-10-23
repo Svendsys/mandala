@@ -249,7 +249,8 @@ mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps
     width=         scale the frames down to this many pixels wide, keeping their shape. The way to bring a
                    GIF under GitHub's 10 MiB inline limit, which the result warns about.
     fps=           show at most this many frames a second (1-60): fewer frames, same speed.
-    max_frames=    keep at most this many frames (default 600, up to 3600), thinned evenly, same speed.
+    max_frames=    GIF only: keep at most this many frames (default 600, up to 3600), thinned evenly, same
+                   speed. (An mp4 keeps every frame; fps= sets its frame rate.)
 
     stdout: one `path: value` line per field (--json: one JSON object): out, format, frames_in,
     frames_out, width, height, duration_ms, bytes. stderr: warnings. Exit 0 made, 1 could not (no

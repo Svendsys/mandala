@@ -89,10 +89,6 @@ pub(crate) const MAX_UNRENDERED_STREAK: u32 = 100;
 /// make the next boundary late.
 const IDLE_ENCODE_MARGIN: f64 = 1.5;
 
-/// What an idle-time encode assumes one frame costs, in ms, until it has
-/// measured one.
-const IDLE_ENCODE_FIRST_GUESS_MS: f64 = 30.0;
-
 /// The manifest's file name, in the recording's directory.
 pub(crate) const MANIFEST_FILE: &str = "manifest.json";
 
@@ -114,7 +110,8 @@ pub(crate) enum Stopped {
     MaxFrames,
     /// Its PNGs passed the artifacts dir's budget.
     DiskBudget,
-    /// The app was closing.
+    /// The app was closing. Only the manifest says so: the app is gone
+    /// before any command could ask for the report.
     Shutdown,
     /// A write failed; the message went to the stop that collected it.
     Error,
@@ -152,9 +149,14 @@ pub(crate) struct Timeline {
 pub(crate) enum Tick {
     /// No boundary has been crossed; the next is at `until_ms`.
     Wait { until_ms: f64 },
-    /// Take a frame now. `missed` boundaries before the latest crossed
-    /// one were stepped over without one, the first at `first_missed_ms`.
-    Due { missed: u32, first_missed_ms: f64 },
+    /// Take a frame now, for the latest boundary crossed, at
+    /// `boundary_ms`. `missed` boundaries before it were stepped over
+    /// without one, the first at `first_missed_ms`.
+    Due {
+        missed: u32,
+        first_missed_ms: f64,
+        boundary_ms: f64,
+    },
 }
 
 impl Timeline {
@@ -193,6 +195,7 @@ impl Timeline {
         Tick::Due {
             missed,
             first_missed_ms,
+            boundary_ms: self.boundary_ms(latest),
         }
     }
 }
@@ -325,8 +328,9 @@ pub(crate) struct Recording {
 pub(crate) enum Step {
     /// Nothing is due; the next frame is `in_ms` away.
     Wait { in_ms: f64 },
-    /// Take a frame now, stamped `t_ms`.
-    Capture { t_ms: f64 },
+    /// Take a frame now, stamped `t_ms`, for the boundary due at
+    /// `due_ms` (where a gap in its place is filed).
+    Capture { t_ms: f64, due_ms: f64 },
     /// The recording has its `max_frames`.
     Full,
 }
@@ -379,12 +383,14 @@ impl Recording {
             Tick::Due {
                 missed,
                 first_missed_ms,
+                boundary_ms,
             } => {
                 if missed > 0 {
                     self.push_gap(first_missed_ms, missed, "overrun".into());
                 }
                 Step::Capture {
                     t_ms: round_ms(elapsed),
+                    due_ms: boundary_ms,
                 }
             }
         }
@@ -424,11 +430,37 @@ impl Recording {
         self.unrendered_streak = 0;
     }
 
-    /// File a frame that was due at `t_ms` and could not be taken, for
+    /// File a frame that was due at `due_ms` and could not be taken, for
     /// `reason`: a gap of one, counted toward [`MAX_UNRENDERED_STREAK`].
-    pub(crate) fn push_unrendered(&mut self, t_ms: f64, reason: &str) {
-        self.push_gap(t_ms, 1, reason.to_string());
+    pub(crate) fn push_unrendered(&mut self, due_ms: f64, reason: &str) {
+        self.push_gap(due_ms, 1, reason.to_string());
         self.unrendered_streak += 1;
+    }
+
+    /// File a frame due at `due_ms` that a node drag made undrawable. A
+    /// gap like any other, but not counted toward the stall: the drag
+    /// ends by itself, and a recording of one is what recordings are for.
+    pub(crate) fn push_busy(&mut self, due_ms: f64) {
+        self.push_gap(due_ms, 1, "busy".to_string());
+    }
+
+    /// Account for the boundaries crossed since the last [`Self::step`],
+    /// as the frames they are missing: called as the recording ends, so
+    /// a stop that follows a long command does not leave `duration_ms`
+    /// covering frames that are neither taken nor reported.
+    fn account_boundaries(&mut self, now_ms: f64) {
+        if self.is_full() {
+            return;
+        }
+        let elapsed = (now_ms - self.started_ms).max(0.0);
+        if let Tick::Due {
+            missed,
+            first_missed_ms,
+            ..
+        } = self.timeline.poll(elapsed)
+        {
+            self.push_gap(first_missed_ms, missed.saturating_add(1), "overrun".into());
+        }
     }
 
     /// Whether the renderer has failed to draw [`MAX_UNRENDERED_STREAK`]
@@ -494,19 +526,29 @@ impl Recording {
     /// has measured to cost): the encode the loop does in time it would
     /// otherwise sleep through, so that the rest of the recording's
     /// encode — which [`Self::flush`] pays all at once — is as little as
-    /// it can be. Writes no manifest; the next flush does.
+    /// it can be. The manifest is rewritten after, so what landed is
+    /// named.
     pub(crate) fn encode_in_idle(
         &mut self,
         mut budget_ms: f64,
         now_ms: f64,
         progress: &mut dyn FnMut(),
     ) -> Result<(), String> {
+        let mut encoded = false;
+        // Until one encode has been measured nothing says what one costs,
+        // so the first is a probe: it may be late by its own cost, once.
         while !self.pending.is_empty()
-            && budget_ms >= self.encode_ms.unwrap_or(IDLE_ENCODE_FIRST_GUESS_MS) * IDLE_ENCODE_MARGIN
+            && budget_ms >= self.encode_ms.map_or(0.0, |cost| cost * IDLE_ENCODE_MARGIN)
         {
             let started = Instant::now();
             self.encode_oldest(now_ms, progress)?;
             budget_ms -= started.elapsed().as_secs_f64() * 1000.0;
+            encoded = true;
+        }
+        if encoded {
+            // So a recording the app never finishes is still readable:
+            // the manifest names the files that landed.
+            self.write_manifest(now_ms, None)?;
         }
         Ok(())
     }
@@ -551,7 +593,12 @@ impl Recording {
         now_ms: f64,
         progress: &mut dyn FnMut(),
     ) -> Result<Summary, String> {
-        self.flush(now_ms, progress)?;
+        self.account_boundaries(now_ms);
+        if let Err(message) = self.flush(now_ms, progress) {
+            // The manifest says how it ended, as far as it can.
+            let _ = self.write_manifest(now_ms, Some(Stopped::Error));
+            return Err(message);
+        }
         self.write_manifest(now_ms, Some(stopped))?;
         Ok(Summary {
             manifest_path: self.manifest_path(),
@@ -595,6 +642,20 @@ impl Recording {
         .map_err(message_of)?;
         Ok(())
     }
+}
+
+/// The bytes in `dir`'s files, for counting a recording against the
+/// artifacts budget however it ended. A directory that cannot be read
+/// counts as empty: the count is a bound, not a record.
+pub(crate) fn dir_bytes(dir: &Path) -> u64 {
+    std::fs::read_dir(dir).map_or(0, |entries| {
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.metadata().ok())
+            .filter(|meta| meta.is_file())
+            .map(|meta| meta.len())
+            .sum()
+    })
 }
 
 fn message_of(refusal: PublishRefusal) -> String {
@@ -770,7 +831,8 @@ mod tests {
             timeline.poll(0.0),
             Tick::Due {
                 missed: 0,
-                first_missed_ms: 0.0
+                first_missed_ms: 0.0,
+                boundary_ms: 0.0
             }
         );
         assert_eq!(timeline.poll(99.9), Tick::Wait { until_ms: 100.0 });
@@ -796,8 +858,10 @@ mod tests {
             Tick::Due {
                 missed,
                 first_missed_ms,
+                boundary_ms,
             } => {
                 assert_eq!(missed, 2, "boundary 3 gets the frame, 1 and 2 are missed");
+                assert_eq!(boundary_ms, 100.0, "the frame is for the latest boundary");
                 assert!(
                     (first_missed_ms - 1000.0 / 30.0).abs() < 1e-9,
                     "{first_missed_ms}"
@@ -818,19 +882,37 @@ mod tests {
     #[test]
     fn test_steps_stamp_frames_record_overruns_and_end_at_max_frames() {
         let mut recording = Recording::begin(config(10, 3), PathBuf::from("/unused"), 1000.0, None);
-        assert_eq!(recording.step(1000.0), Step::Capture { t_ms: 0.0 });
+        assert_eq!(
+            recording.step(1000.0),
+            Step::Capture {
+                t_ms: 0.0,
+                due_ms: 0.0
+            }
+        );
         recording.push_frame(0.0, 7, camera(), pixels(1));
         assert_eq!(recording.step(1050.0), Step::Wait { in_ms: 50.0 });
         assert_eq!(recording.wait_ms(1050.0), 50.0);
         // 250 ms in: boundaries 1 and 2 (100, 200) passed, the frame is
         // for boundary 2, so boundary 1 is the gap.
-        assert_eq!(recording.step(1250.0), Step::Capture { t_ms: 250.0 });
+        assert_eq!(
+            recording.step(1250.0),
+            Step::Capture {
+                t_ms: 250.0,
+                due_ms: 200.0
+            }
+        );
         recording.push_frame(250.0, 8, camera(), pixels(2));
         assert_eq!(recording.dropped_frames(), 1);
         assert_eq!(recording.gaps[0].t_ms, 100.0);
         assert_eq!(recording.gaps[0].reason, "overrun");
         // Boundary 3 is at 300 ms; the third frame fills the recording.
-        assert_eq!(recording.step(1300.0), Step::Capture { t_ms: 300.0 });
+        assert_eq!(
+            recording.step(1300.0),
+            Step::Capture {
+                t_ms: 300.0,
+                due_ms: 300.0
+            }
+        );
         recording.push_frame(300.0, 8, camera(), pixels(3));
         assert!(recording.is_full());
         assert_eq!(recording.step(1400.0), Step::Full);
@@ -850,7 +932,13 @@ mod tests {
     #[test]
     fn test_a_clock_before_the_start_stamps_zero() {
         let mut recording = Recording::begin(config(10, 3), PathBuf::from("/unused"), 500.0, None);
-        assert_eq!(recording.step(400.0), Step::Capture { t_ms: 0.0 });
+        assert_eq!(
+            recording.step(400.0),
+            Step::Capture {
+                t_ms: 0.0,
+                due_ms: 0.0
+            }
+        );
     }
 
     fn read_manifest(dir: &Path) -> serde_json::Value {
@@ -869,6 +957,8 @@ mod tests {
         recording.push_gap(100.0, 2, "overrun".into());
         recording.push_gap(300.0, 1, "font_system_contended".into());
         recording.push_frame(350.0, 4, camera(), pixels(20));
+        // The boundaries up to 500 ms have been stepped, as the loop does.
+        recording.timeline.next = 6;
         let mut ticks = 0;
         recording.flush(400.0, &mut || ticks += 1).expect("flushed");
         assert!(ticks > 0, "the watchdog hears about the encode");
@@ -955,7 +1045,8 @@ mod tests {
             "{failed:?}"
         );
         let manifest = read_manifest(&dir);
-        assert_eq!(manifest["complete"], false);
+        assert_eq!(manifest["complete"], true, "ended, and says how");
+        assert_eq!(manifest["stopped"], "error");
         assert_eq!(manifest["frames"].as_array().expect("frames").len(), 1);
         assert!(dir.join("frame_00000.png").exists());
         assert!(!dir.join("frame_00002.png").exists(), "nothing after the failure");
@@ -1162,6 +1253,91 @@ mod tests {
         );
         assert_eq!((recording.pending.len(), recording.pending_bytes), (0, 0));
         assert_eq!(read_manifest(&dir)["frames"].as_array().expect("frames").len(), 1);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// A drag-made gap is a gap and is stamped where the frame was due,
+    /// but it does not count toward the stall: the drag ends by itself,
+    /// and a recording of one is the point.
+    #[test]
+    fn test_a_busy_frame_is_a_gap_that_never_stalls_the_recording() {
+        let mut recording = Recording::begin(config(10, 10), PathBuf::from("/unused"), 0.0, None);
+        for n in 0..3 * MAX_UNRENDERED_STREAK {
+            recording.push_busy(f64::from(n) * 100.0);
+        }
+        assert!(!recording.is_stalled());
+        assert_eq!(recording.dropped_frames(), 3 * MAX_UNRENDERED_STREAK);
+        assert_eq!(
+            recording.gaps[2].t_ms, 200.0,
+            "stamped with the boundary it was due at"
+        );
+        assert!(recording.gaps.iter().all(|gap| gap.reason == "busy"));
+    }
+
+    /// Boundaries crossed since the last step are accounted for as the
+    /// recording ends — a stop after a long command leaves no stretch
+    /// that `duration_ms` covers and nothing explains — and a recording
+    /// that is full owes nothing more.
+    #[test]
+    fn test_the_boundaries_before_a_stop_are_gaps_not_silence() {
+        let dir = scratch_dir("record-last");
+        let mut recording = Recording::begin(config(10, 10), dir.clone(), 0.0, None);
+        assert!(matches!(recording.step(0.0), Step::Capture { .. }));
+        recording.push_frame(0.0, 1, camera(), pixels(1));
+        // Boundaries 1..=5 (100..500 ms) pass with no heartbeat.
+        let summary = recording
+            .finish(Stopped::Client, 520.0, &mut || {})
+            .expect("finished");
+        assert_eq!((summary.frames, summary.dropped_frames), (1, 5));
+        let manifest = read_manifest(&dir);
+        assert_eq!(
+            manifest["gaps"],
+            serde_json::json!([{"t_ms": 100.0, "frames": 5, "reason": "overrun"}])
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+
+        let dir = scratch_dir("record-last-full");
+        let mut full = Recording::begin(config(10, 1), dir.clone(), 0.0, None);
+        assert!(matches!(full.step(0.0), Step::Capture { .. }));
+        full.push_frame(0.0, 1, camera(), pixels(1));
+        let summary = full
+            .finish(Stopped::MaxFrames, 900.0, &mut || {})
+            .expect("finished");
+        assert_eq!(
+            summary.dropped_frames, 0,
+            "a full recording took what it was asked for"
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// Frames encoded in idle time are named by a manifest at once, so a
+    /// recording that dies before it is finished is still readable — and
+    /// the first idle encode, with nothing measured yet, is a probe that
+    /// runs whatever time there is.
+    #[test]
+    fn test_idle_encoding_leaves_a_readable_manifest_behind() {
+        let dir = scratch_dir("record-idle-manifest");
+        let mut recording = Recording::begin(config(10, 10), dir.clone(), 0.0, None);
+        recording.push_frame(0.0, 1, camera(), pixels(1));
+        assert!(recording.encode_ms.is_none());
+        recording.encode_in_idle(0.0, 50.0, &mut || {}).expect("probed");
+        assert!(recording.encode_ms.is_some(), "the probe measured one");
+        let manifest = read_manifest(&dir);
+        assert_eq!(manifest["complete"], false);
+        assert_eq!(manifest["frames"].as_array().expect("frames").len(), 1);
+        assert!(dir.join("frame_00000.png").exists());
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// The artifacts dir counts what a recording left, in bytes.
+    #[test]
+    fn test_dir_bytes_counts_the_files_in_the_directory() {
+        let dir = scratch_dir("record-bytes");
+        std::fs::write(dir.join("a"), [0u8; 10]).expect("a");
+        std::fs::write(dir.join("b"), [0u8; 5]).expect("b");
+        std::fs::create_dir(dir.join("sub")).expect("sub");
+        assert_eq!(dir_bytes(&dir), 15);
+        assert_eq!(dir_bytes(&dir.join("missing")), 0);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 }

@@ -193,7 +193,8 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
 fn is_plain_file_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
-        && !name.contains(['/', '\\', '\0'])
+        && !name.contains(['/', '\\'])
+        && !name.chars().any(char::is_control)
         && Path::new(name).file_name().is_some_and(|f| f == name)
 }
 
@@ -217,16 +218,16 @@ pub struct Planned {
 }
 
 /// What [`plan_gif`] decided.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GifPlan {
     pub frames: Vec<Planned>,
     /// The manifest frames the GIF leaves out: too close to the one
     /// before (the 20 ms floor, `fps=`) or thinned for `max_frames=`.
     pub dropped: usize,
-    /// The shortest time between two shown frames the plan settled on,
-    /// in hundredths of a second: [`GIF_MIN_DELAY_CS`], or more when
-    /// `fps=` or `max_frames=` asked for fewer.
-    pub spacing_cs: u64,
+    /// The spacing between shown frames the plan settled on, in
+    /// hundredths of a second: [`GIF_MIN_DELAY_CS`], or more when `fps=`
+    /// or `max_frames=` asked for fewer.
+    pub spacing_cs: f64,
 }
 
 /// Which frames the GIF shows, and for how long each, from the frames'
@@ -235,60 +236,92 @@ pub struct GifPlan {
 /// [`GIF_MIN_DELAY_CS`]) between two shown frames; `cap` the most
 /// frames to keep.
 ///
-/// A frame is shown when it starts at least `spacing_cs` after the one
-/// shown before it, counting from start times rounded to hundredths;
+/// Frames are chosen against a clock that ticks every `spacing_cs`
+/// ([`select_frames`]), counting from start times rounded to hundredths;
 /// each shown frame lasts until the next shown one starts, so the
-/// delays add up to the recording's length within a hundredth, and a
-/// frame is never shown for less than `spacing_cs`. Past `cap` the
-/// spacing is widened until the frames fit, which thins them evenly
-/// and keeps the speed.
+/// delays add up to the recording's length within a hundredth, and no
+/// frame is shown for less than the floor. Past `cap` the spacing is
+/// widened — by bisection, to the narrowest that fits — which thins the
+/// frames evenly, keeps as many as `cap` allows, and keeps the speed.
 ///
 /// Pure: times in, delays out, which is why the pacing — the part that
 /// makes the GIF true to what happened — is tested without a file.
-pub fn plan_gif(times_ms: &[f64], end_ms: f64, spacing_cs: u64, cap: usize) -> GifPlan {
+pub fn plan_gif(times_ms: &[f64], end_ms: f64, spacing_cs: f64, cap: usize) -> GifPlan {
     let cap = cap.max(1);
-    let mut spacing = spacing_cs.max(GIF_MIN_DELAY_CS);
+    let floor = GIF_MIN_DELAY_CS as f64;
+    let requested = if spacing_cs.is_finite() {
+        spacing_cs.max(floor)
+    } else {
+        floor
+    };
     let starts: Vec<u64> = times_ms.iter().map(|t| (t / 10.0).round() as u64).collect();
     let recorded_end_cs = (end_ms / 10.0).round() as u64;
-    loop {
-        let mut shown: Vec<usize> = Vec::new();
-        for (i, start) in starts.iter().enumerate() {
-            if shown.last().is_none_or(|&last| start - starts[last] >= spacing) {
-                shown.push(i);
+
+    // The widest spacing that keeps `cap` frames: the requested one when
+    // it already does, else the narrowest that does, found by bisection
+    // (the frames kept only ever shrink as the spacing grows).
+    let mut spacing = requested;
+    if select_frames(&starts, spacing).len() > cap {
+        let (mut lo, mut hi) = (spacing, starts.last().copied().unwrap_or(0) as f64 + floor);
+        for _ in 0..60 {
+            let mid = (lo + hi) / 2.0;
+            if select_frames(&starts, mid).len() > cap {
+                lo = mid;
+            } else {
+                hi = mid;
             }
         }
-        if shown.len() <= cap {
-            // The last *shown* frame lasts to the recording's end, and
-            // never less than the browser floor: a frame dropped after
-            // it must not cut it short, and widening the spacing for
-            // `cap` is about the frames between, not how long the
-            // last one is held.
-            let end_cs = recorded_end_cs.max(shown.last().map_or(0, |&last| starts[last]) + GIF_MIN_DELAY_CS);
-            let frames = shown
-                .iter()
-                .enumerate()
-                .map(|(n, &index)| {
-                    let until = shown.get(n + 1).map_or(end_cs, |&next| starts[next]);
-                    // At least `spacing` for all but the last, which is
-                    // at least the floor: see `end_cs`.
-                    let delay = until.saturating_sub(starts[index]);
-                    Planned {
-                        index,
-                        delay_cs: u16::try_from(delay).unwrap_or(u16::MAX),
-                    }
-                })
-                .collect();
-            return GifPlan {
-                dropped: times_ms.len() - shown.len(),
-                frames,
-                spacing_cs: spacing,
-            };
-        }
-        // Too many: widen the spacing in proportion to the excess, and
-        // by at least one so the loop ends.
-        let wanted = (spacing as f64 * shown.len() as f64 / cap as f64).ceil() as u64;
-        spacing = wanted.max(spacing + 1);
+        spacing = hi;
     }
+    let shown = select_frames(&starts, spacing);
+    // The last *shown* frame lasts to the recording's end, and never
+    // less than the browser floor: a frame dropped after it must not cut
+    // it short, and widening the spacing for `cap` is about the frames
+    // between, not how long the last one is held.
+    let end_cs = recorded_end_cs.max(shown.last().map_or(0, |&last| starts[last]) + GIF_MIN_DELAY_CS);
+    let frames = shown
+        .iter()
+        .enumerate()
+        .map(|(n, &index)| {
+            let until = shown.get(n + 1).map_or(end_cs, |&next| starts[next]);
+            // At least the floor for every frame, by `select_frames`.
+            let delay = until.saturating_sub(starts[index]);
+            Planned {
+                index,
+                delay_cs: u16::try_from(delay).unwrap_or(u16::MAX),
+            }
+        })
+        .collect();
+    GifPlan {
+        dropped: times_ms.len() - shown.len(),
+        frames,
+        spacing_cs: spacing,
+    }
+}
+
+/// Which frames (by index) are shown at a `spacing` of hundredths of a
+/// second: those that land on or after a target clock that ticks every
+/// `spacing` — fractionally, so a spacing of 3.33 keeps thirty frames a
+/// second and not twenty-five — within half a hundredth (starts are
+/// rounded), and never closer than the browser floor to the frame shown
+/// before. A target that a gap in the recording left behind restarts
+/// from the next frame shown.
+fn select_frames(starts: &[u64], spacing: f64) -> Vec<usize> {
+    let mut shown: Vec<usize> = Vec::new();
+    let mut target = 0.0;
+    for (i, &start) in starts.iter().enumerate() {
+        let far_enough = shown
+            .last()
+            .is_none_or(|&last| start - starts[last] >= GIF_MIN_DELAY_CS);
+        if far_enough && (shown.is_empty() || start as f64 + 0.5 >= target) {
+            shown.push(i);
+            target += spacing;
+            if shown.len() == 1 || target <= start as f64 {
+                target = start as f64 + spacing;
+            }
+        }
+    }
+    shown
 }
 
 /// Decode one frame's PNG to tightly packed RGBA8, checking it is the
@@ -323,12 +356,20 @@ fn decode_frame(path: &Path, want: (u32, u32)) -> Result<Vec<u8>, String> {
         .next_frame(&mut pixels)
         .map_err(|e| format!("could not decode frame `{shown}`: {e}"))?;
     pixels.truncate(info.buffer_size());
-    to_rgba(pixels, info.color_type).ok_or_else(|| {
+    let rgba = to_rgba(pixels, info.color_type).ok_or_else(|| {
         format!(
             "frame `{shown}` is {:?}, and this reads only RGB, RGBA and grayscale PNGs",
             info.color_type
         )
-    })
+    })?;
+    // What the scaler and the encoder index by: a PNG that decodes short
+    // of its own header is refused, not a panic.
+    if rgba.len() != width as usize * height as usize * 4 {
+        return Err(format!(
+            "frame `{shown}` did not decode to {width}×{height} pixels"
+        ));
+    }
+    Ok(rgba)
 }
 
 /// `pixels`, 8 bits a channel in `color`'s layout, as RGBA.
@@ -410,6 +451,9 @@ pub struct Assembled {
     /// How long the result plays, in ms.
     pub duration_ms: f64,
     pub bytes: u64,
+    /// The GIF kept fewer frames than the `fps=` asked for because
+    /// `max_frames=` would not hold more.
+    pub cap_hit: bool,
 }
 
 /// What to make, as asked.
@@ -441,12 +485,11 @@ fn output_size(manifest: &Manifest, options: &Options) -> (u32, u32) {
 }
 
 /// The spacing `fps=` asks for between shown frames, in hundredths of
-/// a second, rounded up so the rate is never exceeded; at least the
-/// GIF floor.
-fn spacing_for(fps: Option<u32>) -> u64 {
-    fps.map_or(GIF_MIN_DELAY_CS, |fps| {
-        (100u64.div_ceil(u64::from(fps.max(1)))).max(GIF_MIN_DELAY_CS)
-    })
+/// a second, fractional so the rate is met and not undershot; at least
+/// the GIF floor.
+fn spacing_for(fps: Option<u32>) -> f64 {
+    let floor = GIF_MIN_DELAY_CS as f64;
+    fps.map_or(floor, |fps| (100.0 / f64::from(fps.max(1))).max(floor))
 }
 
 /// Write `plan`'s frames of the recording in `dir` as an animated GIF
@@ -501,15 +544,17 @@ pub fn ffmpeg_list(dir: &Path, manifest: &Manifest) -> String {
         let path = dir.join(file).display().to_string().replace('\'', r"'\''");
         format!("file '{path}'\n")
     };
+    // Whole milliseconds from the *cumulative* rounded times, so the
+    // rounding of one frame is paid back by the next and a recording of
+    // thousands of frames does not play short.
+    let at = |ms: f64| ms.round() as i64;
     let end = end_ms(manifest);
     let mut list = String::new();
     for (n, frame) in manifest.frames.iter().enumerate() {
         let until = manifest.frames.get(n + 1).map_or(end, |next| next.t_ms);
         list.push_str(&quoted(&frame.file));
-        list.push_str(&format!(
-            "duration {:.3}\n",
-            ((until - frame.t_ms) / 1000.0).max(0.001)
-        ));
+        let ms = (at(until) - at(frame.t_ms)).max(1);
+        list.push_str(&format!("duration {}.{:03}\n", ms / 1000, ms % 1000));
     }
     if let Some(last) = manifest.frames.last() {
         list.push_str(&quoted(&last.file));
@@ -519,8 +564,10 @@ pub fn ffmpeg_list(dir: &Path, manifest: &Manifest) -> String {
 
 /// `ffmpeg`'s arguments: read `list`, write `out` as H.264 in an MP4
 /// that any player opens (yuv420p, even sides, the index up front) at
-/// the recording's frame rate, scaled to `scale_to`'s width when given.
-pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>, overwrite: bool) -> Vec<String> {
+/// `fps`, scaled to `scale_to`'s width when given. `out` is a file of
+/// ours (the `.partial` beside the real one), so it is always replaced,
+/// and its format is named because its name does not say.
+pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>) -> Vec<String> {
     let mut filters = Vec::new();
     if let Some(width) = scale_to {
         filters.push(format!("scale={width}:-2"));
@@ -528,7 +575,7 @@ pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>, ove
     filters.push("pad=ceil(iw/2)*2:ceil(ih/2)*2".to_string());
     filters.push("format=yuv420p".to_string());
     let mut args: Vec<String> = [
-        if overwrite { "-y" } else { "-n" },
+        "-y",
         "-hide_banner",
         "-loglevel",
         "error",
@@ -545,7 +592,7 @@ pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>, ove
     args.extend(["-vf".to_string(), filters.join(",")]);
     args.extend(["-r".to_string(), fps.to_string()]);
     args.extend(
-        ["-c:v", "libx264", "-movflags", "+faststart"]
+        ["-c:v", "libx264", "-movflags", "+faststart", "-f", "mp4"]
             .iter()
             .map(|s| s.to_string()),
     );
@@ -553,12 +600,42 @@ pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>, ove
     args
 }
 
+/// A new file for `ffmpeg`'s frame list in the temp dir, made
+/// exclusively — `O_EXCL` neither follows a symlink nor reuses a name
+/// someone planted — under a name that is this process's and this
+/// moment's, tried a few times if taken.
+fn create_temp_list() -> Result<(PathBuf, File), String> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    for attempt in 0..16u32 {
+        let path = std::env::temp_dir().join(format!(
+            "mandalactl-{}-{nanos}-{attempt}-frames.txt",
+            std::process::id()
+        ));
+        match File::options().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(format!(
+                    "could not make ffmpeg's frame list `{}`: {e}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    Err("could not find a free name for ffmpeg's frame list in the temp dir".into())
+}
+
 /// Run the host's `ffmpeg` over the recording. Missing is a refusal
 /// that names the GIF, which needs nothing; a failure carries what
 /// `ffmpeg` said.
 fn run_ffmpeg(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) -> Result<(), String> {
-    let list_path = std::env::temp_dir().join(format!("mandalactl-{}-frames.txt", std::process::id()));
-    std::fs::write(&list_path, ffmpeg_list(dir, manifest)).map_err(|e| {
+    let (list_path, list_file) = create_temp_list()?;
+    let list = ffmpeg_list(dir, manifest);
+    // Written and closed before ffmpeg reads it.
+    std::io::Write::write_all(&mut { list_file }, list.as_bytes()).map_err(|e| {
+        let _ = std::fs::remove_file(&list_path);
         format!(
             "could not write ffmpeg's frame list `{}`: {e}",
             list_path.display()
@@ -570,7 +647,6 @@ fn run_ffmpeg(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) ->
             out,
             options.fps.unwrap_or(manifest.fps),
             options.width.filter(|w| *w < manifest.width),
-            options.overwrite,
         ))
         .output();
     let _ = std::fs::remove_file(&list_path);
@@ -628,7 +704,13 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
                 .write(true)
                 .create_new(true)
                 .open(&partial)
-                .map_err(|e| format!("could not create `{}`: {e}", partial.display()))?;
+                .map_err(|e| match e.kind() {
+                    std::io::ErrorKind::AlreadyExists => format!(
+                        "`{}` is in the way: an earlier run was interrupted. Delete it and run again",
+                        partial.display()
+                    ),
+                    _ => format!("could not create `{}`: {e}", partial.display()),
+                })?;
             let mut writer = BufWriter::new(file);
             write_gif(dir, manifest, &plan, size, &mut writer).map_err(discard)?;
             let file = writer
@@ -639,6 +721,7 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
             std::fs::rename(&partial, out)
                 .map_err(|e| discard(format!("could not move the GIF into `{}`: {e}", out.display())))?;
             let shown_cs: u64 = plan.frames.iter().map(|f| u64::from(f.delay_cs)).sum();
+            let cap_hit = plan.spacing_cs > spacing_for(options.fps) + 1e-9;
             Ok(Assembled {
                 out: out.to_path_buf(),
                 format: "gif",
@@ -648,17 +731,16 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
                 height: size.1,
                 duration_ms: shown_cs as f64 * 10.0,
                 bytes: std::fs::metadata(out).map_or(0, |m| m.len()),
+                cap_hit,
             })
         }
         Format::Mp4 => {
-            // `ffmpeg` writes the file itself; one it started and could
-            // not finish is not left behind.
-            let existed = std::fs::symlink_metadata(out).is_ok();
-            run_ffmpeg(dir, manifest, out, options).inspect_err(|_| {
-                if !existed {
-                    let _ = std::fs::remove_file(out);
-                }
-            })?;
+            // `ffmpeg` writes beside the final name, and the file is
+            // moved into place only once it has finished: a failure
+            // never leaves a truncated video where a good one was.
+            run_ffmpeg(dir, manifest, &partial, options).map_err(discard)?;
+            std::fs::rename(&partial, out)
+                .map_err(|e| discard(format!("could not move the video into `{}`: {e}", out.display())))?;
             Ok(Assembled {
                 out: out.to_path_buf(),
                 format: "mp4",
@@ -668,6 +750,7 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
                 height: size.1,
                 duration_ms: end_ms(manifest),
                 bytes: std::fs::metadata(out).map_or(0, |m| m.len()),
+                cap_hit: false,
             })
         }
     }
@@ -745,20 +828,21 @@ fn notes(manifest: &Manifest, made: &Assembled, options: &Options) -> Vec<String
         ));
     }
     if made.format == "gif" && made.frames_out < made.frames_in {
+        let mut why = vec![format!(
+            "a GIF cannot show frames closer than {} ms apart",
+            GIF_MIN_DELAY_CS * 10
+        )];
+        if let Some(fps) = options.fps {
+            why.push(format!("fps={fps} was asked for"));
+        }
+        if made.cap_hit {
+            why.push(format!("max_frames={} would not hold more", options.max_frames));
+        }
         notes.push(format!(
-            "{} of {} frames were left out: a GIF cannot show frames closer than {} ms apart{}{}; the speed is \
-             unchanged",
+            "{} of {} frames were left out ({}); the speed is unchanged",
             made.frames_in - made.frames_out,
             made.frames_in,
-            GIF_MIN_DELAY_CS * 10,
-            options
-                .fps
-                .map_or(String::new(), |fps| format!(", and fps={fps} was asked for")),
-            if made.frames_out >= options.max_frames {
-                format!(", and max_frames={} was reached", options.max_frames)
-            } else {
-                String::new()
-            },
+            why.join(", ")
         ));
     }
     if made.format == "gif" && made.bytes > GITHUB_INLINE_BYTES {
@@ -927,6 +1011,9 @@ mod tests {
         (0..n).map(|i| i as f64 * 1000.0 / f64::from(fps)).collect()
     }
 
+    /// The browser floor as a spacing.
+    const FLOOR: f64 = GIF_MIN_DELAY_CS as f64;
+
     fn total_cs(plan: &GifPlan) -> u64 {
         plan.frames.iter().map(|f| u64::from(f.delay_cs)).sum()
     }
@@ -1019,7 +1106,7 @@ mod tests {
     #[test]
     fn test_thirty_fps_keeps_its_length_without_rounding_drift() {
         let times = evenly(90, 30);
-        let plan = plan_gif(&times, 3000.0, GIF_MIN_DELAY_CS, 600);
+        let plan = plan_gif(&times, 3000.0, FLOOR, 600);
         assert_eq!(plan.frames.len(), 90);
         assert_eq!(plan.dropped, 0);
         assert!(
@@ -1038,7 +1125,7 @@ mod tests {
     #[test]
     fn test_sixty_fps_is_thinned_to_what_a_browser_plays_at_speed() {
         let times = evenly(120, 60);
-        let plan = plan_gif(&times, 2000.0, GIF_MIN_DELAY_CS, 600);
+        let plan = plan_gif(&times, 2000.0, FLOOR, 600);
         assert!(plan.frames.iter().all(|f| f.delay_cs >= 2), "{plan:?}");
         assert_eq!(plan.frames.len() + plan.dropped, 120);
         // 16.7 ms apart is 1.67 hundredths: every frame whose start is
@@ -1052,16 +1139,16 @@ mod tests {
     /// ended.
     #[test]
     fn test_a_gap_holds_the_frame_before_it_and_the_last_frame_runs_to_the_end() {
-        let plan = plan_gif(&[0.0, 50.0, 100.0, 500.0, 550.0], 600.0, GIF_MIN_DELAY_CS, 600);
+        let plan = plan_gif(&[0.0, 50.0, 100.0, 500.0, 550.0], 600.0, FLOOR, 600);
         assert_eq!(
             plan.frames.iter().map(|f| f.delay_cs).collect::<Vec<_>>(),
             [5, 5, 40, 5, 5]
         );
         // A recording stopped the instant its last frame landed still
         // shows that frame, for one period.
-        let plan = plan_gif(&[0.0, 100.0], 100.0, GIF_MIN_DELAY_CS, 600);
+        let plan = plan_gif(&[0.0, 100.0], 100.0, FLOOR, 600);
         assert_eq!(plan.frames[1].delay_cs, 2, "never less than the floor");
-        let one = plan_gif(&[0.0], 0.0, GIF_MIN_DELAY_CS, 600);
+        let one = plan_gif(&[0.0], 0.0, FLOOR, 600);
         assert_eq!(
             one.frames,
             vec![Planned {
@@ -1071,24 +1158,33 @@ mod tests {
         );
     }
 
-    /// `fps=` is a ceiling on the rate, rounded so it is never
-    /// exceeded: ten a second is a frame every ten hundredths, at the
-    /// recording's speed.
+    /// `fps=` is a ceiling on the rate that is *met*: ten a second is a
+    /// frame every ten hundredths, and thirty a second keeps a thirty
+    /// frames-a-second recording whole — not the twenty-five a spacing
+    /// rounded up to whole hundredths would leave — at the recording's
+    /// speed.
     #[test]
-    fn test_an_fps_ceiling_thins_without_changing_the_speed() {
-        assert_eq!(spacing_for(None), 2);
-        assert_eq!(spacing_for(Some(10)), 10);
-        assert_eq!(
-            spacing_for(Some(30)),
-            4,
-            "3.33 rounds up: never faster than asked"
-        );
-        assert_eq!(spacing_for(Some(60)), 2, "the browser floor still holds");
+    fn test_an_fps_ceiling_thins_to_the_rate_asked_without_changing_the_speed() {
+        assert_eq!(spacing_for(None), 2.0);
+        assert_eq!(spacing_for(Some(10)), 10.0);
+        assert!((spacing_for(Some(30)) - 100.0 / 30.0).abs() < 1e-12);
+        assert_eq!(spacing_for(Some(60)), 2.0, "the browser floor still holds");
         let plan = plan_gif(&evenly(60, 30), 2000.0, spacing_for(Some(10)), 600);
         assert_eq!(plan.frames.len(), 20);
-        assert_eq!(plan.spacing_cs, 10);
+        assert_eq!(plan.spacing_cs, 10.0);
         assert!(plan.frames.iter().all(|f| f.delay_cs >= 10));
         assert_eq!(total_cs(&plan), 200);
+
+        // A recording at the rate asked for loses nothing.
+        let whole = plan_gif(&evenly(600, 30), 20_000.0, spacing_for(Some(30)), 600);
+        assert_eq!(whole.frames.len(), 600, "{}", whole.dropped);
+        let slower = plan_gif(&evenly(600, 30), 20_000.0, spacing_for(Some(25)), 600);
+        assert!(
+            (490..=510).contains(&slower.frames.len()),
+            "25 of every 30: {}",
+            slower.frames.len()
+        );
+        assert_eq!(total_cs(&slower), 2000);
     }
 
     /// Past `max_frames` the frames are thinned evenly, not cut off at
@@ -1097,18 +1193,27 @@ mod tests {
     #[test]
     fn test_more_frames_than_the_cap_are_thinned_evenly_not_truncated() {
         let times = evenly(1000, 30);
-        let plan = plan_gif(&times, 33_400.0, GIF_MIN_DELAY_CS, 100);
+        let plan = plan_gif(&times, 33_400.0, FLOOR, 100);
         assert!(plan.frames.len() <= 100, "{}", plan.frames.len());
         assert!(
-            plan.frames.len() >= 60,
-            "thinned, not gutted: {}",
+            plan.frames.len() >= 95,
+            "as many as the cap allows: {}",
             plan.frames.len()
         );
         assert_eq!(plan.frames.len() + plan.dropped, 1000);
         assert_eq!(total_cs(&plan), 3340, "the whole recording");
         let last = plan.frames.last().expect("frames").index;
         assert!(last > 900, "the end of the recording is in it: {last}");
-        assert!(plan.spacing_cs > GIF_MIN_DELAY_CS);
+        assert!(plan.spacing_cs > FLOOR);
+        // One frame over the cap thins a few frames, not a third of them
+        // (a clock cannot drop exactly one, but it drops about one in
+        // fifty).
+        let barely = plan_gif(&evenly(601, 30), 20_100.0, FLOOR, 600);
+        assert!(
+            (580..=600).contains(&barely.frames.len()),
+            "{}",
+            barely.frames.len()
+        );
     }
 
     #[test]
@@ -1225,6 +1330,7 @@ mod tests {
                 height: 6,
                 duration_ms: 400.0,
                 bytes: std::fs::metadata(&out).expect("written").len(),
+                cap_hit: false,
             }
         );
         let frames = read_gif(&out);
@@ -1348,13 +1454,33 @@ mod tests {
         );
     }
 
+    /// Durations are cut from cumulative rounded times, so 33.333 ms
+    /// frames do not each lose a third of a millisecond: six hundred of
+    /// them still add up to twenty seconds.
+    #[test]
+    fn test_the_ffmpeg_durations_do_not_drift() {
+        let frames: Vec<String> = evenly(600, 30)
+            .iter()
+            .enumerate()
+            .map(|(n, t)| frame(*t, &format!("f{n}.png")))
+            .collect();
+        let text = manifest_text(&frames.join(",")).replace("400.0", "20000.0");
+        let manifest = parse_manifest(&text).expect("manifest");
+        let total_ms: u64 = ffmpeg_list(Path::new("/r"), &manifest)
+            .lines()
+            .filter_map(|line| line.strip_prefix("duration "))
+            .map(|d| (d.parse::<f64>().expect("seconds") * 1000.0).round() as u64)
+            .sum();
+        assert_eq!(total_ms, 20_000);
+    }
+
     #[test]
     fn test_the_ffmpeg_arguments_make_an_mp4_any_player_opens() {
-        let args = ffmpeg_args(Path::new("/l.txt"), Path::new("/o.mp4"), 30, Some(640), false);
+        let args = ffmpeg_args(Path::new("/l.txt"), Path::new("/o.mp4.partial"), 30, Some(640));
         assert_eq!(
             args,
             [
-                "-n",
+                "-y",
                 "-hide_banner",
                 "-loglevel",
                 "error",
@@ -1372,12 +1498,36 @@ mod tests {
                 "libx264",
                 "-movflags",
                 "+faststart",
-                "/o.mp4"
+                "-f",
+                "mp4",
+                "/o.mp4.partial"
             ]
         );
-        let overwriting = ffmpeg_args(Path::new("/l.txt"), Path::new("/o.mp4"), 12, None, true);
-        assert_eq!(overwriting[0], "-y");
-        assert!(overwriting.contains(&"pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p".to_string()));
+        let unscaled = ffmpeg_args(Path::new("/l.txt"), Path::new("/o"), 12, None);
+        assert!(unscaled.contains(&"pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p".to_string()));
+    }
+
+    /// The frame list is made exclusively: a name someone planted — as
+    /// a symlink to a file of yours, say — is never written through.
+    #[test]
+    #[cfg(unix)]
+    fn test_the_ffmpeg_list_is_never_written_through_a_planted_name() {
+        let (path, mut file) = create_temp_list().expect("a list");
+        file.write_all(b"x").expect("written");
+        assert!(path.starts_with(std::env::temp_dir()));
+        let again = create_temp_list().expect("another");
+        assert_ne!(path, again.0, "each is a name of its own");
+        let target = tempfile::NamedTempFile::new().expect("a victim");
+        std::fs::write(target.path(), "precious").expect("seed");
+        let planted = std::env::temp_dir().join("mandalactl-planted-frames.txt");
+        let _ = std::fs::remove_file(&planted);
+        std::os::unix::fs::symlink(target.path(), &planted).expect("plant");
+        let refused = File::options().write(true).create_new(true).open(&planted);
+        assert!(refused.is_err(), "O_EXCL refuses a symlink, dangling or not");
+        assert_eq!(std::fs::read_to_string(target.path()).expect("read"), "precious");
+        for p in [&path, &again.0, &planted] {
+            let _ = std::fs::remove_file(p);
+        }
     }
 
     /// With a real `ffmpeg` on the host the MP4 is made and is a video;
@@ -1605,6 +1755,7 @@ mod tests {
             height: 6,
             duration_ms: 100.0,
             bytes: 1000,
+            cap_hit: false,
         };
         assert!(notes(&manifest, &clean, &options()).is_empty());
         let big = Assembled {
@@ -1627,5 +1778,60 @@ mod tests {
                 && notes[0].contains("speed is unchanged")
         );
         assert!(notes[1].contains("10 MiB") && notes[1].contains("width="));
+        // When the cap did the thinning, the note says the cap did.
+        let capped = Assembled {
+            frames_out: 6,
+            cap_hit: true,
+            ..clean_for_cap()
+        };
+        let said = super::notes(
+            &manifest,
+            &capped,
+            &Options {
+                max_frames: 6,
+                ..options()
+            },
+        );
+        assert!(said[0].contains("max_frames=6 would not hold more"), "{said:?}");
+        assert!(!said[0].contains("fps="), "{said:?}");
+    }
+
+    fn clean_for_cap() -> Assembled {
+        Assembled {
+            out: PathBuf::from("/o.gif"),
+            format: "gif",
+            frames_in: 10,
+            frames_out: 10,
+            width: 8,
+            height: 6,
+            duration_ms: 100.0,
+            bytes: 1000,
+            cap_hit: false,
+        }
+    }
+
+    /// A manifest's `file` that holds a control character is refused: a
+    /// newline would split a line of ffmpeg's frame list.
+    #[test]
+    fn test_a_file_name_with_a_control_character_is_refused() {
+        let refused = parse_manifest(&manifest_text(&frame(0.0, "a\\nfile 'b'.png")));
+        assert!(
+            matches!(&refused, Err(m) if m.contains("plain file name")),
+            "{refused:?}"
+        );
+    }
+
+    /// A stale `.partial` from an interrupted run is named in the
+    /// refusal, so the way out is in the message.
+    #[test]
+    fn test_a_leftover_partial_file_is_named_in_the_refusal() {
+        let (_keep, dir) = recording("assemble-partial", &[[1, 2, 3]], &[0.0], 100.0);
+        let manifest = read_manifest(&dir.join(MANIFEST_FILE)).expect("manifest");
+        std::fs::write(dir.join("x.gif.partial"), "stale").expect("seed");
+        let refused = assemble(&dir, &manifest, &dir.join("x.gif"), &options());
+        assert!(
+            matches!(&refused, Err(m) if m.contains("x.gif.partial") && m.contains("interrupted")),
+            "{refused:?}"
+        );
     }
 }

@@ -1722,9 +1722,11 @@ runs against virtual time and `clock.step` drives the frames, so
 render and one readback, ticking the `FreezeWatchdog` as a screenshot
 does. The PNG encode is *not* in the frame: raw frames wait in memory
 and are encoded (a) in time the loop would otherwise sleep through —
-only when nothing else needs a frame, and only as far as the time
-before the next boundary reaches, judged from the measured cost of an
-encode — (b) when 256 MiB of them have piled up (a stall the loop pays
+only when no animation frame, redraw or queued command is owed, and
+only as far as the time before the next boundary reaches, judged from
+the measured cost of an encode (the first, unmeasured, is a probe that
+may be late by its own cost, once), the manifest rewritten after so
+what landed is named — (b) when 256 MiB of them have piled up (a stall the loop pays
 rarely, ticking the watchdog per 4 MiB chunk, and the boundaries it
 costs are `dropped_frames`), and (c) when the recording ends, which is
 what `capture.record_stop` pays for whatever (a) did not reach. A busy
@@ -1738,10 +1740,17 @@ many frames were taken, `dropped_frames` how many were due and not,
 `duration_ms` how long the recording ran, `bytes` what the frames and
 the manifest take on disk, `width`, `height` and `fps` as `record_start`
 reported them — and `stopped` says why it ended: `"client"` (this
-command), `"max_frames"`, `"disk_budget"` or `"shutdown"`. A recording that could
-not be written, or that the renderer could not draw, ends with `stopped:
-"error"` in its manifest and this command answers `internal`, naming
-the directory whose frames are usable. It does the encode, so it is
+command), `"max_frames"` or `"disk_budget"`. (The manifest's `stopped`
+has two more values this command cannot return: `"shutdown"`, written
+when the app exits mid-recording, after which no command can ask, and
+`"error"`.) A recording that could not be written, or that the renderer
+could not draw for 100 frames in a row, ends with `stopped: "error"` in
+its manifest and this command answers `internal`, naming the directory
+whose frames are usable. A frame that cannot be *framed* this time — a
+`fit` whose document has since lost what it framed, a `surface` region
+that now needs a zoom below the minimum — is a gap with reason
+`invalid`, counted toward those 100, so a framing that works again
+resumes the recording and one that never does ends it. It does the encode, so it is
 long main-thread work for a long recording, ticking the watchdog the
 way a large screenshot does.
 
@@ -1765,18 +1774,22 @@ paces by it replays what happened, stalls included) and, once the
 virtual clock lands, the frame's `1000/fps` boundary, exactly.
 `duration_ms` is how long the recording ran, and with the last frame's
 `t_ms` is the last frame's display time. `complete` is `false` in the
-copy written while recording (a recording the app never finished is
-still readable, and tells itself from one it did) and `true` once
+copy written while recording (a recording the app never finished — one
+that died after its first idle encode or flush — is still readable, and
+tells itself from one it did) and `true` once
 finished; `stopped` is absent until then. `document_revision` and
 `camera` are as in the geometry sidecar, so a frame ties to the model
 state and view it shows.
 
 `gaps` is every stretch with no frame, **never a silent drop**:
 `t_ms` is when the first missing frame was due, `frames` how many,
-`reason` why — `overrun` (the loop was late for the boundary), `busy`
-(a node drag is in flight and the frame would need another zoom than
-the live one, as for a screenshot), or the renderer's skip word
-(`font_system_contended`, `not_started`, `prepare_failed`).
+`reason` why — `overrun` (the loop was late for the boundary, or the
+recording ended with boundaries crossed since the last heartbeat),
+`busy` (a node drag is in flight and the frame would need another zoom
+than the live one, as for a screenshot; a drag ends by itself, so this
+never ends a recording), `invalid` (above), or the renderer's skip word
+(`font_system_contended`, `not_started`, `prepare_failed`). `t_ms` is
+the boundary's time, not the moment it was noticed.
 `dropped_frames` is their sum, and the manifest's `frames` names only
 files that exist.
 

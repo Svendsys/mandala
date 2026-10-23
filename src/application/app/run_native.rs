@@ -231,7 +231,10 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // which the frame's camera-geometry rebuild can change.
             init.record_tick();
             let still_continuing = init.needs_continuation();
-            if !still_continuing {
+            // Only when nothing else wants this iteration: no animation
+            // frame or redraw still owed, no IPC left in the queue. The
+            // loop is about to sleep, and the encode spends the sleep.
+            if !still_continuing && !was_continuing && !ipc_outcome.repaint && !ipc_outcome.backlog {
                 init.record_idle();
             }
             // Request a redraw if work happened this iteration
