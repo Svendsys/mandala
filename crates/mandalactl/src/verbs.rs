@@ -480,6 +480,35 @@ pub const VERBS: &[Verb] = &[
         render: Render::Flat,
         example: "mandalactl capture.screenshot /tmp/shot.png fit=true",
     },
+    Verb {
+        name: "events.subscribe",
+        summary:
+            "Subscribe to change events and stay connected, printing each as it happens; --count N stops after N.",
+        params: &[param("classes", ARRAY, true), param("verbose", BOOLEAN, false)],
+        positional: &["classes"],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl events.subscribe document_changed,selection_changed --count 1",
+    },
+    Verb {
+        name: "events.unsubscribe",
+        summary:
+            "Drop event classes (all when none named) on this connection; a one-shot invocation has none to drop.",
+        params: &[param("classes", ARRAY, false)],
+        positional: &["classes"],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl events.unsubscribe",
+    },
+    Verb {
+        name: "events.revision",
+        summary: "The revision counters: revision (any change) and document_revision (the model's), no subscription.",
+        params: &[],
+        positional: &[],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl events.revision",
+    },
 ];
 
 /// The verb named `name`, if the table has it.

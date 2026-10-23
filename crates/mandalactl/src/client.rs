@@ -57,6 +57,19 @@ pub enum Outcome {
     Unanswered(String),
 }
 
+/// What [`Connection::watch_next`] found while waiting for an event.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Watched {
+    /// An unsolicited frame, with the line it arrived as (what
+    /// `--json` prints).
+    Event { event: crate::wire::Event, line: String },
+    /// The connection ended: the app exited, or closed it.
+    Closed,
+    /// Nothing arrived within the wait. Not an end: a watch is quiet
+    /// for as long as the app is.
+    Quiet,
+}
+
 /// One reply, with the line it arrived as (what `--json` prints).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Exchange {
@@ -81,7 +94,7 @@ mod unix {
 
     use serde_json::Value;
 
-    use super::{Exchange, Outcome, BUSY_RETRY, LAUNCH_HINT};
+    use super::{Exchange, Outcome, Watched, BUSY_RETRY, LAUNCH_HINT};
     use crate::wire::{decode_frame, Event, Frame, Hello, Outgoing, FRAME_CAP};
 
     /// An open, greeted connection.
@@ -207,6 +220,24 @@ mod unix {
                         ));
                     }
                 }
+            }
+        }
+
+        /// Wait up to `wait` for the next unsolicited frame, once a
+        /// request has subscribed this connection to some. A reply
+        /// arriving here answers nothing (nothing is pending), which is
+        /// a fault of the server's, reported as one.
+        pub fn watch_next(&mut self, wait: Duration) -> Result<Watched, String> {
+            match self.read_line(Instant::now() + wait)? {
+                Line::TimedOut => Ok(Watched::Quiet),
+                Line::Eof => Ok(Watched::Closed),
+                Line::Text(line) => match decode_frame(&line)? {
+                    Frame::Event(event) => Ok(Watched::Event { event, line }),
+                    Frame::Reply(reply) => Err(format!(
+                        "the app sent a reply (id {}) while no request was pending",
+                        reply.id
+                    )),
+                },
             }
         }
 
@@ -534,7 +565,7 @@ mod unsupported {
 
     use serde_json::Value;
 
-    use super::Outcome;
+    use super::{Outcome, Watched};
     use crate::wire::Outgoing;
 
     /// Stand-in for the connection where the transport does not exist
@@ -562,6 +593,10 @@ mod unsupported {
         }
 
         pub fn exchange(&mut self, _request: &Outgoing, _timeout: Duration) -> Outcome {
+            match self.never {}
+        }
+
+        pub fn watch_next(&mut self, _wait: Duration) -> Result<Watched, String> {
             match self.never {}
         }
     }

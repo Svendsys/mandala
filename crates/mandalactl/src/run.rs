@@ -33,7 +33,7 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 
 use crate::cli::{self, Invocation, Options, Parsed};
-use crate::client::{Connection, Exchange, Outcome};
+use crate::client::{Connection, Exchange, Outcome, Watched};
 use crate::help;
 use crate::params::{build_params, tokenize, Signature, Token};
 use crate::render;
@@ -85,6 +85,11 @@ pub struct Io<'a> {
 /// deadline, so the app's structured `timeout` reply arrives before
 /// this client gives up on the connection.
 const WAIT_GRACE: Duration = Duration::from_secs(2);
+
+/// How long one wait for an event lasts before the watch looks again.
+/// A watch has no deadline of its own: it ends on `--count`, on the app
+/// going away, or when its reader does.
+const WATCH_POLL: Duration = Duration::from_secs(60);
 
 /// The server's bound on `clock.wait`'s `timeout_ms`.
 const WAIT_MAX_MS: u128 = 60_000;
@@ -185,6 +190,11 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
     if !report(io, &options, render, &exchange.reply, &exchange.line, None) {
         return Exit::CommandError;
     }
+    // A subscription lives as long as its connection, so a subscribe
+    // that returned here would drop what it just set up.
+    if command == WATCHING_COMMAND {
+        return watch(connection, io, &options);
+    }
     if !options.wait_settled {
         return Exit::Success;
     }
@@ -211,6 +221,54 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
     }
 }
 
+/// The command after which the invocation stays connected and prints
+/// what the app pushes.
+const WATCHING_COMMAND: &str = "events.subscribe";
+
+/// Print each event the app pushes until `--count` of them have, the
+/// app says it is shutting down, or whoever reads stdout goes away.
+///
+/// The subscribing reply is already printed. An event is one line:
+/// with `--json` the frame as received, otherwise its class and its
+/// data as JSON. `shutdown` is the app ending the watch and is not
+/// counted or printed as an event; a connection that closes without it
+/// is the app aborting, which is a transport fault (`2`), since a
+/// subscription is safe to repeat.
+fn watch(mut connection: Connection, io: &mut Io<'_>, options: &Options) -> Exit {
+    let mut printed = 0u64;
+    while options.count.is_none_or(|count| printed < count) {
+        match connection.watch_next(WATCH_POLL) {
+            Err(why) => return transport(io, &why),
+            Ok(Watched::Quiet) => {}
+            Ok(Watched::Closed) => {
+                return transport(
+                    io,
+                    "the app closed the connection without saying it was shutting down: it aborted",
+                )
+            }
+            Ok(Watched::Event { event, line }) => {
+                if event.name == "shutdown" {
+                    emit(
+                        io.err,
+                        "mandalactl: the app is shutting down; the watch is over\n",
+                    );
+                    return Exit::Success;
+                }
+                let text = if options.json {
+                    format!("{line}\n")
+                } else {
+                    format!("{} {}\n", event.name, event.data)
+                };
+                if io.out.write_all(text.as_bytes()).is_err() || io.out.flush().is_err() {
+                    return Exit::Success;
+                }
+                printed += 1;
+            }
+        }
+    }
+    Exit::Success
+}
+
 /// Whether the app serves `clock.wait`, asked *before* the command goes
 /// out: a wait found missing after the command ran would leave a
 /// command that succeeded reported as failed, and a caller branching on
@@ -228,6 +286,11 @@ fn prepare(
     cwd: Option<&Path>,
     stdin: &mut dyn Read,
 ) -> Result<Prepared, String> {
+    if options.count.is_some() && command != WATCHING_COMMAND {
+        return Err(format!(
+            "--count counts the events a watch prints, and only `{WATCHING_COMMAND}` watches"
+        ));
+    }
     if command == "raw" {
         return raw_frame(words, options, stdin);
     }

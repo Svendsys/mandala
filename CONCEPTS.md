@@ -4069,7 +4069,10 @@ A separate binary in `crates/mandalactl/` that
 drives a *running* app over its `--ipc` socket from the shell:
 `mandalactl <family.verb> [args...]`, one connection and one command per
 invocation, the reply printed as `path: value` lines (`--json` for the
-envelope as received).
+envelope as received). The one verb that keeps the connection is
+`events.subscribe`, since a subscription lives only as long as its
+connection: it prints each pushed event until `--count` of them, or the
+app exits.
 
 The shell is an agent's native tool, and hand-built JSON over `nc` is the
 fragile incantation it replaces. `name=value` arguments are typed from the

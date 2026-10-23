@@ -1868,6 +1868,14 @@ process's).
 - `events.revision` — no params. Result: `revision`,
   `document_revision`. Reads the counters; subscribes to nothing.
 
+`mandalactl events.subscribe <classes> [--count n]` is the shell's way
+in: a subscription lives as long as its connection, so that one verb
+stays connected after the subscribing reply and prints each event as it
+arrives (one line, the class and its `data`; `--json` prints the frame
+as received) until `--count` events have been printed, the app sends
+`shutdown`, or stdout closes. `shutdown` ends it with exit `0`; a
+connection that dies without it is exit `2`.
+
 ### The two counters
 
 | counter | where | advances on |
@@ -2019,6 +2027,13 @@ a client does:
   read and write, so a peer that trickles bytes cannot stretch it. A reply is matched by `id`, with the `null`-id `parse_error` taken
   as the answer to the one request in flight; events the client did not
   subscribe to are skipped, and `shutdown` ends the invocation.
+- **`events.subscribe` is the one verb that stays connected.** A
+  subscription lives as long as its connection, so after the subscribing
+  reply the invocation keeps reading and prints each event as it arrives
+  (see [`events`](#events--event-stream--revision-ipc-14)); `--count n`
+  ends it after `n` events, `shutdown` ends it with exit `0`, and a
+  connection that dies without `shutdown` is exit `2`. `--count` is
+  refused (exit 3) on any other command.
 - **`--wait-settled`** first asks `describe command=clock.wait`, so an
   app without the clock family is reported (exit 1) *before* the command
   is sent: a wait found missing afterwards would fail a command that had
