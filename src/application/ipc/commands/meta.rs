@@ -11,7 +11,7 @@
 use serde_json::{json, Value};
 
 use crate::application::ipc::envelope::{Reply, PROTOCOL_VERSION};
-use crate::application::ipc::events::Class;
+use crate::application::ipc::events::{Class, TRANSPORT_EVENTS};
 use crate::application::ipc::registry::{
     self, Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, BOOTSTRAP_FAMILY,
 };
@@ -66,23 +66,6 @@ pub(super) const FAMILY: Family = Family {
         },
     ],
 };
-
-/// The three transport-level classes: never subscription-gated, and
-/// not [`Class`]es.
-const TRANSPORT_EVENTS: &[(&str, &str)] = &[
-    (
-        "connection_rejected",
-        "Sent to a refused connection instead of `hello` while another controller is attached; then closed.",
-    ),
-    (
-        "hello",
-        "The greeting on accept: protocol, app, version, pid, and the loaded map's path (null before the first load).",
-    ),
-    (
-        "shutdown",
-        "Best-effort notice, before the socket closes, that the app is exiting.",
-    ),
-];
 
 /// Every event class this build can send, with what it means, in name
 /// order: the transport-level three and the subscribable

@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -502,6 +502,7 @@ fn test_controller_offer_pauses_on_a_full_queue_and_reports_a_closed_one() {
         generation: 1,
         outbound,
         waiting: Arc::new(AtomicBool::new(false)),
+        events_queued: Arc::new(AtomicUsize::new(0)),
         hangup,
         flushed,
     };
@@ -576,6 +577,17 @@ fn test_ipc_loopback_an_event_follows_the_reply_to_the_command_that_caused_it() 
     client.send(r#"{"id":3,"cmd":"ping"}"#);
     wake_and_drain(&mut harness, &mut app);
     assert_eq!(client.next()["id"], json!(3), "nothing else was waiting");
+    assert_eq!(
+        harness
+            .server()
+            .controller
+            .as_ref()
+            .expect("attached")
+            .events_queued
+            .load(Ordering::SeqCst),
+        0,
+        "the outbound thread gave the event's lane slot back"
+    );
 }
 
 #[test]
@@ -687,6 +699,7 @@ fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() 
         generation: 1,
         outbound: queue.clone(),
         waiting: Arc::clone(&waiting),
+        events_queued: Arc::new(AtomicUsize::new(0)),
         hangup,
         flushed,
     });
@@ -719,7 +732,7 @@ fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() 
     room.recv().expect("the filler frame");
     server.deliver_events();
     match room.try_recv().expect("the held event was delivered") {
-        Outbound::Frame(Frame::Event(event)) => {
+        Outbound::Event(event) => {
             let value = serde_json::to_value(&event).expect("serializes");
             assert_eq!(value["data"]["document_revision"], json!(3), "the newest, once");
         }
@@ -739,6 +752,7 @@ fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
         generation: 1,
         outbound: queue,
         waiting: Arc::new(AtomicBool::new(false)),
+        events_queued: Arc::new(AtomicUsize::new(0)),
         hangup,
         flushed,
     });
@@ -764,4 +778,59 @@ fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
         "an event never overtakes a reply the controller is still owed"
     );
     assert!(server.session.pop_pending().is_some(), "and it is kept, not lost");
+}
+
+#[test]
+fn test_events_have_a_lane_of_their_own_and_never_take_a_replys_slot() {
+    use crate::application::ipc::envelope::Reply;
+
+    let (outbound, frames) = mpsc::sync_channel::<Outbound>(OUTBOUND_QUEUE_CAP + EVENT_QUEUE_CAP);
+    let (hangup, _peer) = UnixStream::pair().expect("pair");
+    let (_flushed_tx, flushed) = mpsc::channel();
+    let controller = Controller {
+        generation: 1,
+        outbound,
+        waiting: Arc::new(AtomicBool::new(false)),
+        events_queued: Arc::new(AtomicUsize::new(0)),
+        hangup,
+        flushed,
+    };
+    let event = || Event::change("camera_changed", json!({ "revision": 1 }));
+
+    for _ in 0..EVENT_QUEUE_CAP {
+        assert!(matches!(controller.offer_event(event()), Offer::Queued));
+    }
+    assert!(
+        matches!(controller.offer_event(event()), Offer::Full(Outbound::Event(_))),
+        "the lane is full, though the queue is not"
+    );
+    assert!(
+        controller.waiting.load(Ordering::SeqCst),
+        "a refused event asks the outbound thread to wake the loop"
+    );
+    for _ in 0..OUTBOUND_QUEUE_CAP {
+        let reply = Outbound::Frame(Frame::Reply(Reply::ok(json!(1), json!({}))));
+        assert!(
+            matches!(controller.offer(reply), Offer::Queued),
+            "a full event lane leaves every reply slot free"
+        );
+    }
+
+    // The outbound thread takes an event and gives its slot back.
+    match frames.recv().expect("the first event") {
+        Outbound::Event(_) => {
+            controller.events_queued.fetch_sub(1, Ordering::SeqCst);
+        }
+        _ => panic!("events were queued first"),
+    }
+    drop(frames);
+    assert!(
+        matches!(controller.offer_event(event()), Offer::Closed),
+        "a closed connection is reported, and it does not leak a slot"
+    );
+    assert_eq!(
+        controller.events_queued.load(Ordering::SeqCst),
+        EVENT_QUEUE_CAP - 1,
+        "a failed offer gives its slot back"
+    );
 }

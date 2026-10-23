@@ -219,18 +219,29 @@ pub(in crate::application::app) fn dispatch_action(
     ctx: &mut InputHandlerContext<'_>,
     hit: Option<&DispatchHit>,
 ) -> DispatchOutcome {
-    // Declare the funnel for the document revision's change source
-    // (`document/revision.rs`). A document the arms swap out takes the
-    // restore too, which only hands its driver back to what it was.
-    let displaced = ctx
-        .document
-        .as_mut()
-        .map(|doc| doc.enter_source(ChangeSource::Action));
-    let outcome = dispatch_action_arms(action, ctx, hit);
+    // The funnel the document revision's change source names
+    // (`document/revision.rs`).
+    driven_by(ctx, ChangeSource::Action, |ctx| {
+        dispatch_action_arms(action, ctx, hit)
+    })
+}
+
+/// Run `body` with `source` declared on the document `ctx` holds, and
+/// hand driving back afterwards. The one place a handler-context
+/// funnel enters and leaves a source, so no early return in `body` can
+/// skip the exit. A document `body` swaps out takes the restore too,
+/// which only hands its driver back to what it was.
+fn driven_by<R>(
+    ctx: &mut InputHandlerContext<'_>,
+    source: ChangeSource,
+    body: impl FnOnce(&mut InputHandlerContext<'_>) -> R,
+) -> R {
+    let displaced = ctx.document.as_mut().map(|doc| doc.enter_source(source));
+    let result = body(ctx);
     if let (Some(displaced), Some(doc)) = (displaced, ctx.document.as_mut()) {
         doc.leave_source(displaced);
     }
-    outcome
+    result
 }
 
 /// The body of [`dispatch_action`], run with the document's change

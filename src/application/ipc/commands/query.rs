@@ -559,9 +559,6 @@ mod tests {
         fn run_macro_steps(&mut self, _: &[MacroStep], _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("a query must not run macro steps");
         }
-        fn observed(&self) -> Option<Observed<'_>> {
-            None
-        }
         fn changed_view(&self) -> bool {
             false
         }

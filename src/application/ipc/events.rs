@@ -47,6 +47,28 @@ use super::space::camera_json;
 /// most one event per class.
 const PENDING_CAP: usize = 4096;
 
+/// The three transport-level classes, with what `describe` says they
+/// mean: never subscription-gated, and not [`Class`]es.
+pub(crate) const TRANSPORT_EVENTS: &[(&str, &str)] = &[
+    (
+        "connection_rejected",
+        "Sent to a refused connection instead of `hello` while another controller is attached; then closed.",
+    ),
+    (
+        "hello",
+        "The greeting on accept: protocol, app, version, pid, and the loaded map's path (null before the first load).",
+    ),
+    (
+        "shutdown",
+        "Best-effort notice, before the socket closes, that the app is exiting.",
+    ),
+];
+
+/// Whether `word` names one of the [`TRANSPORT_EVENTS`].
+pub(crate) fn is_transport_event(word: &str) -> bool {
+    TRANSPORT_EVENTS.iter().any(|(name, _)| *name == word)
+}
+
 /// A subscribable event class. The three transport-level classes
 /// (`hello`, `shutdown`, `connection_rejected`) are not here: they
 /// are never subscription-gated.
@@ -99,13 +121,21 @@ impl Class {
             Class::CameraChanged => "The camera moved or the surface resized: data carries revision and the camera, as query.camera reports it.",
             Class::ModeChanged => "The interaction mode changed: data carries revision and the mode, as query.mode reports its kind.",
             Class::AnimationStarted => "Animations began: data carries revision and the animations (target_id, section_idx, mutation_id).",
-            Class::AnimationCompleted => "Animations committed or were cancelled: data carries revision and the animations (target_id, section_idx, mutation_id).",
+            Class::AnimationCompleted => "Animations committed or were canceled: data carries revision and the animations (target_id, section_idx, mutation_id).",
         }
     }
 
     /// The class named `word`, if any.
     pub(crate) fn parse(word: &str) -> Option<Class> {
         Class::ALL.into_iter().find(|class| class.name() == word)
+    }
+
+    /// Whether the class's payload is a *delta*: only what is new
+    /// since the last look, so an event cannot be replaced by a newer
+    /// one without losing what it said. The others carry the state
+    /// as of the observation, which a newer one supersedes.
+    const fn is_delta(self) -> bool {
+        matches!(self, Class::AnimationStarted | Class::AnimationCompleted)
     }
 
     const fn bit(self) -> u8 {
@@ -207,6 +237,10 @@ struct AnimationKey {
     target_id: String,
     section_idx: Option<usize>,
     mutation_id: String,
+    /// What tells a restart from the animation it replaced: one that
+    /// completed and was triggered again between two observations has
+    /// the same name and a later start.
+    start_ms: u64,
 }
 
 impl AnimationKey {
@@ -215,6 +249,7 @@ impl AnimationKey {
             target_id: animation.target_id.clone(),
             section_idx: animation.section_idx,
             mutation_id: animation.mutation_id().to_string(),
+            start_ms: animation.start_ms,
         }
     }
 
@@ -222,6 +257,7 @@ impl AnimationKey {
         self.target_id == animation.target_id
             && self.section_idx == animation.section_idx
             && self.mutation_id == animation.mutation_id()
+            && self.start_ms == animation.start_ms
     }
 
     fn to_json(&self) -> Value {
@@ -313,12 +349,12 @@ impl Tracker {
         let selected = seen.selection != *selection;
         let moved = seen.camera != camera;
         let moded = seen.mode != *now.mode;
+        // As sets, not by position: a tick removes with `swap_remove`,
+        // which reorders what survives.
         let animations_differ = seen.animations.len() != animations.len()
-            || seen
-                .animations
+            || !animations
                 .iter()
-                .zip(animations)
-                .any(|(key, anim)| !key.is(anim));
+                .all(|anim| seen.animations.iter().any(|key| key.is(anim)));
         let any = replaced || document || selected || moved || moded || animations_differ;
         if !any {
             return (self.revisions(now), Vec::new());
@@ -428,6 +464,18 @@ impl Tracker {
     }
 }
 
+/// Fold `older`'s animations ahead of `newer`'s: the two deltas as
+/// one, in the order the animations began or ended.
+fn fold_animations(older: &mut Event, newer: &mut Event) {
+    let Some(Value::Array(mut merged)) = older.data_mut().get_mut("animations").map(Value::take) else {
+        return;
+    };
+    if let Some(Value::Array(newer_animations)) = newer.data_mut().get_mut("animations").map(Value::take) {
+        merged.extend(newer_animations);
+    }
+    newer.data_mut()["animations"] = Value::Array(merged);
+}
+
 /// What a controller asked to hear.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Subscriptions {
@@ -521,7 +569,20 @@ impl Session {
     fn queue(&mut self, changes: Vec<Change>) {
         for Change { class, data } in changes {
             if !self.subscriptions.verbose {
-                self.pending.retain(|queued| queued.class != class);
+                if class.is_delta() {
+                    // A delta event is folded into the one waiting, in
+                    // its place, so what it says survives and the
+                    // order of started and completed does too.
+                    if let Some(waiting) = self.pending.iter_mut().rev().find(|queued| queued.class == class)
+                    {
+                        let mut newer = Event::change(class.name(), data);
+                        fold_animations(&mut waiting.event, &mut newer);
+                        waiting.event = newer;
+                        continue;
+                    }
+                } else {
+                    self.pending.retain(|queued| queued.class != class);
+                }
             }
             if self.pending.len() == PENDING_CAP {
                 self.pending.pop_front();
@@ -542,7 +603,12 @@ impl Session {
     /// of everything that waited behind it — unless a newer event of
     /// its class has queued meanwhile, which supersedes it.
     pub(crate) fn requeue(&mut self, queued: Queued) {
-        if !self.subscriptions.verbose && self.pending.iter().any(|waiting| waiting.class == queued.class) {
+        // A delta event is never superseded: it goes back in front of
+        // the newer one of its class, which the next queue folds into.
+        if !self.subscriptions.verbose
+            && !queued.class.is_delta()
+            && self.pending.iter().any(|waiting| waiting.class == queued.class)
+        {
             return;
         }
         self.pending.push_front(queued);

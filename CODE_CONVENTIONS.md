@@ -123,8 +123,9 @@ decision, not a drive-by edit.
     loop), with the same access as any input handler, and a command that changes pixels requests a
     redraw just as the winit input handlers do. The event stream adds
     no thread: events are produced by observing the app on the main
-    thread and offered to the outbound queue with a `try_send`, so a
-    slow reader loses stale events and never stalls the loop. The `std::sync::mpsc`
+    thread and offered to the outbound queue's own bounded lane with a
+    `try_send`, so a slow reader loses stale events and never stalls
+    the loop. The `std::sync::mpsc`
     queues at this boundary carry protocol values only — they are not
     a license for channels between app components — and blocking IPC
     I/O on the main thread stays forbidden: a stalled client must

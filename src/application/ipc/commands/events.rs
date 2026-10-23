@@ -12,7 +12,7 @@
 use serde_json::{json, Value};
 
 use crate::application::ipc::envelope::Reply;
-use crate::application::ipc::events::{Class, Classes, Driver};
+use crate::application::ipc::events::{is_transport_event, Class, Classes, Driver};
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
 
 const SUBSCRIBED: ResultSpec = ResultSpec::new(
@@ -94,7 +94,7 @@ fn parse_classes(names: &Value) -> Result<Classes, String> {
         };
         match Class::parse(word) {
             Some(class) => classes.insert(class),
-            None if matches!(word, "hello" | "shutdown" | "connection_rejected") => {
+            None if is_transport_event(word) => {
                 return Err(format!(
                     "`{word}` is always delivered and cannot be subscribed to or dropped"
                 ))

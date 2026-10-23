@@ -62,6 +62,14 @@ const REQUEST_QUEUE_CAP: usize = 1024;
 /// pauses executing that controller's requests until it drains.
 const OUTBOUND_QUEUE_CAP: usize = 256;
 
+/// Change events a controller's outbound queue holds at once. The
+/// queue is sized for [`OUTBOUND_QUEUE_CAP`] replies *plus* this lane,
+/// and events are offered only while fewer than this many are queued,
+/// so an event can never take the slot a reply needs: a burst of
+/// events leaves its surplus waiting on the main thread (coalesced)
+/// and execution is paused by replies alone.
+const EVENT_QUEUE_CAP: usize = 64;
+
 /// How long one write may make no progress before the client is
 /// declared dead and its connection dropped. A write blocks only once
 /// the kernel's socket buffer is full of output the client has not
@@ -111,6 +119,9 @@ enum Inbound {
 /// A frame bound for one controller's outbound thread.
 enum Outbound {
     Frame(Frame),
+    /// A subscribed change event, counted against [`EVENT_QUEUE_CAP`]
+    /// until the outbound thread takes it off the queue.
+    Event(Event),
     /// Write this frame, then close the connection.
     Final(Frame),
 }
@@ -123,6 +134,9 @@ struct Controller {
     /// outbound thread clears it and wakes the loop once it has taken
     /// a frame off the queue.
     waiting: Arc<AtomicBool>,
+    /// Change events in the queue and not yet taken by the outbound
+    /// thread: the main thread adds, the outbound thread subtracts.
+    events_queued: Arc<AtomicUsize>,
     /// A handle on the connection used only to shut it down — the
     /// reader and the outbound thread unblock with an error and exit.
     hangup: UnixStream,
@@ -162,6 +176,30 @@ impl Controller {
             Err(TrySendError::Disconnected(_)) => Offer::Closed,
             Err(TrySendError::Full(message)) => Offer::Full(message),
         }
+    }
+
+    /// Queue a change event without blocking, unless [`EVENT_QUEUE_CAP`]
+    /// of them already wait. A refused event is handed back as
+    /// [`Offer::Full`] with the pause flag raised, the same signal a
+    /// full queue gives: the outbound thread wakes the loop when it
+    /// takes the next frame, and the loop retries.
+    ///
+    /// The count goes up before the send and comes back down if the
+    /// send fails, so it never reads below what is really queued.
+    fn offer_event(&self, event: Event) -> Offer {
+        if self.events_queued.load(Ordering::SeqCst) >= EVENT_QUEUE_CAP {
+            self.waiting.store(true, Ordering::SeqCst);
+            fence(Ordering::SeqCst);
+            if self.events_queued.load(Ordering::SeqCst) >= EVENT_QUEUE_CAP {
+                return Offer::Full(Outbound::Event(event));
+            }
+        }
+        self.events_queued.fetch_add(1, Ordering::SeqCst);
+        let offered = self.offer(Outbound::Event(event));
+        if !matches!(offered, Offer::Queued) {
+            self.events_queued.fetch_sub(1, Ordering::SeqCst);
+        }
+        offered
     }
 }
 
@@ -378,9 +416,9 @@ impl IpcServer {
             return;
         };
         while let Some(Queued { class, event }) = self.session.pop_pending() {
-            match controller.offer(Outbound::Frame(Frame::Event(event))) {
+            match controller.offer_event(event) {
                 Offer::Queued => {}
-                Offer::Full(Outbound::Frame(Frame::Event(event))) => {
+                Offer::Full(Outbound::Event(event)) => {
                     self.session.requeue(Queued { class, event });
                     return;
                 }

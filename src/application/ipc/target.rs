@@ -129,7 +129,9 @@ pub(crate) trait CommandTarget {
     /// with nothing to observe. Observing changes nothing, so a
     /// command that only reads still costs no frame
     /// ([`Self::changed_view`] is untouched).
-    fn observed(&self) -> Option<Observed<'_>>;
+    fn observed(&self) -> Option<Observed<'_>> {
+        None
+    }
 
     /// The loaded document, **read-only**. `None` when the app has no
     /// document (the initial load failed). The read half of the

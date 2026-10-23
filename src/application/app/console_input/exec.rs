@@ -90,15 +90,21 @@ pub(in crate::application::app) fn execute_console_line(
     let cmd: &'static Command = cmd;
     // The verb runs as the console funnel for the document revision's
     // change source (`document/revision.rs`); the side effects below
-    // are not the verb, and a swap hands the counter on itself.
-    let displaced = doc.enter_source(ChangeSource::Console);
-    let mut effects = ConsoleEffects::new(doc);
-    let result = (cmd.execute)(&Args::new(&args), &mut effects);
-    let document_mutated = effects.document_mutated();
-    let side_effect = effects.side_effect.take();
-    let close_after = effects.close_console;
+    // are not the verb, and a swap stamps its own. The closure form
+    // is what keeps the funnel's entry and exit paired: nothing in
+    // the body can return past the exit.
+    let (result, document_mutated, side_effect, close_after) =
+        doc.with_source(ChangeSource::Console, |doc| {
+            let mut effects = ConsoleEffects::new(doc);
+            let result = (cmd.execute)(&Args::new(&args), &mut effects);
+            (
+                result,
+                effects.document_mutated(),
+                effects.side_effect.take(),
+                effects.close_console,
+            )
+        });
     let had_side_effect = side_effect.is_some();
-    doc.leave_source(displaced);
 
     // A screenshot's report is the line's output, so it is taken here,
     // before anything else could run, and replaces the verb's silent
@@ -334,7 +340,10 @@ fn handle_pre_rebuild_side_effect(
             // successor carries the counter on, so it never reads
             // lower than the document it replaced.
             let mut new_doc = *new_doc;
-            new_doc.succeed(doc);
+            // The swap happens after the verb's own funnel was left,
+            // and the successor is a fresh document that knows no
+            // funnel, so it is stamped as the console's here.
+            new_doc.with_source(ChangeSource::Console, |new_doc| new_doc.succeed(doc));
             *doc = new_doc;
             *mindmap_tree = None;
             *single_line_edit_state = SingleLineEditor::Closed;

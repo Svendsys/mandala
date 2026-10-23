@@ -573,8 +573,9 @@ The full architecture is CODE_CONVENTIONS §3 (amended by IPC-01) and
   crosses to the successor).
 - **Backpressure is asymmetric by frame kind.** *Replies* are
   contractual, and are never dropped while the connection lives:
-  when **256** replies wait in the outbound queue, the server
-  **pauses executing that controller's requests** until the writer
+  when **256** replies wait in the outbound queue (which holds them
+  plus a separate lane of 64 change events that never takes a reply's
+  slot), the server **pauses executing that controller's requests** until the writer
   has made room, then resumes where it stopped. A pipelining client
   that reads its replies therefore never loses one, however far
   ahead it sends (up to the request-queue cap below). A client that
@@ -1900,7 +1901,7 @@ observation that produced it.
 | `selection_changed` | `selection` (as `query.selection` reports it) | the selection differs |
 | `camera_changed` | `camera` (as `query.camera` reports it) | the camera's center, zoom or surface size differs |
 | `mode_changed` | `mode` (the interaction mode, as `query.mode` reports it under `interaction_mode`) | the interaction mode differs |
-| `animation_started` | `animations`: `[{target_id, section_idx, mutation_id}]` | animations began |
+| `animation_started` | `animations`: `[{target_id, section_idx, mutation_id}]` | animations began; an animation re-triggered after it ended is a new one |
 | `animation_completed` | `animations`, as above | animations committed or ended |
 
 `source` says which funnel was driving when the document's revision
@@ -1911,7 +1912,8 @@ custom mutation, or an animated one committing), `undo`, `input`
 a drag, a text-edit commit), or `ipc` — any change made while an
 agent's command was executing. The innermost declaration wins, so an
 undo reached through `Action::Undo` reports `undo`; an agent's
-`act.action` reports `ipc`.
+`act.action` reports `ipc`. An `open` or `new` typed at the console is
+`console`.
 
 `document_changed` and `document_replaced` both fire for a swap, and
 the swap's `document_revision` is the same in both.
@@ -1923,20 +1925,30 @@ the swap's `document_revision` is the same in both.
   changing the document.
 - **Coalesced per drain.** All an observation window's changes of one
   class are one event, with the final state. A 200-step macro is one
-  `document_changed` carrying the final `document_revision`. With
-  `verbose`, every observation is its own event and a macro is
-  observed **between its steps** as well, so the same macro yields an
-  event per step that changed something.
+  `document_changed` carrying the final `document_revision`. The two
+  `animation_*` classes carry *deltas* (what began or ended since the
+  last look), so coalescing them concatenates their `animations`
+  rather than keeping the newest: no start or completion is lost to
+  a later one. With `verbose`, every observation is its own event and
+  a macro **an agent runs** (`act.macro`) is observed **between its
+  steps** as well, so the same macro yields an event per step that
+  changed something. A macro a person triggers from the keyboard is
+  one observation like any other input: the stream's session is the
+  agent's, and the keyboard path has no way to reach it.
 - Events leave **after the replies** of the drain that caused them,
   never before: an agent reads `{"id": 7, "ok": true, "revision": 12}`
   and then `{"event": "document_changed", "data": {"revision": 12, …}}`.
-- Events never pause execution. When the controller's outbound queue
-  has no room, the event stays queued on the main thread and a newer
-  event of its class replaces it, so a client that is slow to read
-  loses *stale* events, never its session; the outbound thread wakes
-  the loop when there is room. (A `verbose` queue is capped at 4096
-  events and drops the oldest.) Events already in the queue are not
-  recalled.
+- Events never pause execution. They have a **lane of their own** in
+  the controller's outbound queue: at most **64** change events wait
+  there at once, and the queue is sized for 256 replies on top of
+  them, so an event can never take the slot a reply needs and only
+  replies can make the server pause. When the lane is full or the
+  queue has no room, the event stays queued on the main thread and a
+  newer event of its class replaces it (deltas fold instead, see
+  above), so a client that is slow to read loses *stale* events,
+  never its session; the outbound thread wakes the loop when there is
+  room. (A `verbose` queue is capped at 4096 events and drops the
+  oldest.) Events already in the queue are not recalled.
 - No subscription, no observation between commands: the event loop's
   tap is a branch on the empty subscription set.
 

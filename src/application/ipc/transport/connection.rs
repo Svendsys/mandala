@@ -13,13 +13,14 @@
 use std::io::{self, BufRead, BufReader, ErrorKind, Write};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{fence, AtomicBool, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::{
-    Controller, Inbound, Link, Outbound, OUTBOUND_QUEUE_CAP, REQUEST_QUEUE_CAP, STALLED_WRITE_TIMEOUT,
+    Controller, Inbound, Link, Outbound, EVENT_QUEUE_CAP, OUTBOUND_QUEUE_CAP, REQUEST_QUEUE_CAP,
+    STALLED_WRITE_TIMEOUT,
 };
 use crate::application::ipc::envelope::{
     decode_line, Decoded, Event, Frame, Reply, INBOUND_LINE_CAP, OUTBOUND_FRAME_CAP,
@@ -84,9 +85,10 @@ fn install_controller(stream: UnixStream, generation: u64, link: &Arc<Link>) -> 
     stream.set_write_timeout(Some(STALLED_WRITE_TIMEOUT))?;
     let read_half = stream.try_clone()?;
     let hangup = stream.try_clone()?;
-    let (outbound_tx, outbound_rx) = mpsc::sync_channel(OUTBOUND_QUEUE_CAP);
+    let (outbound_tx, outbound_rx) = mpsc::sync_channel(OUTBOUND_QUEUE_CAP + EVENT_QUEUE_CAP);
     let (flushed_tx, flushed_rx) = mpsc::channel();
     let waiting = Arc::new(AtomicBool::new(false));
+    let events_queued = Arc::new(AtomicUsize::new(0));
     // A fresh queue has room; a failure here would only mean a frame
     // the client never asked for went missing.
     let _ = outbound_tx.try_send(Outbound::Frame(Frame::Event(Event::hello(link.map().as_deref()))));
@@ -95,6 +97,7 @@ fn install_controller(stream: UnixStream, generation: u64, link: &Arc<Link>) -> 
         stream,
         frames: outbound_rx,
         waiting: Arc::clone(&waiting),
+        events_queued: Arc::clone(&events_queued),
         link: Arc::clone(link),
         _flushed: flushed_tx,
     };
@@ -107,6 +110,7 @@ fn install_controller(stream: UnixStream, generation: u64, link: &Arc<Link>) -> 
         generation,
         outbound: outbound_tx.clone(),
         waiting,
+        events_queued,
         hangup,
         flushed: flushed_rx,
     }));
@@ -132,6 +136,10 @@ struct Writer {
     /// The main thread's "paused on a full queue" flag, shared with
     /// its `Controller`.
     waiting: Arc<AtomicBool>,
+    /// The count of change events in the queue, shared with the
+    /// main thread's `Controller`; this thread subtracts as it takes
+    /// them.
+    events_queued: Arc<AtomicUsize>,
     link: Arc<Link>,
     /// Never sent on. Its drop as [`Writer::run`] returns is the
     /// signal: the main thread's receiver disconnects, which is how a
@@ -153,6 +161,7 @@ impl Writer {
             stream,
             frames,
             waiting,
+            events_queued,
             link,
             _flushed,
         } = self;
@@ -175,17 +184,22 @@ impl Writer {
             let mut last = false;
             let mut next = Some(first);
             while let Some(message) = next.take() {
-                // Taking the frame made room in the queue. The fence
-                // pairs with the one in `Controller::offer`.
-                fence(Ordering::SeqCst);
-                resume_main_thread();
                 let frame = match message {
                     Outbound::Frame(frame) => frame,
+                    Outbound::Event(event) => {
+                        events_queued.fetch_sub(1, Ordering::SeqCst);
+                        Frame::Event(event)
+                    }
                     Outbound::Final(frame) => {
                         last = true;
                         frame
                     }
                 };
+                // Taking the frame made room in the queue, and in the
+                // event lane if it was an event. The fence pairs with
+                // the ones in `Controller::offer` and `offer_event`.
+                fence(Ordering::SeqCst);
+                resume_main_thread();
                 if !frame.encode_into(&mut batch, OUTBOUND_FRAME_CAP) {
                     log::warn!("ipc: dropped an event that exceeded the outbound frame cap");
                 }
