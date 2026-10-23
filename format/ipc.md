@@ -1874,8 +1874,11 @@ a client does:
 - **Paths:** a relative path argument (`path=`, `to_file=`) is made
   absolute against the client's working directory before it is sent,
   because the server requires absolute paths and has no working directory
-  of the client's to resolve against. `name:=json` and `raw` send what
-  was written.
+  of the client's to resolve against. Which parameters are paths comes
+  from the verb table, and for a command typed from `describe` from the
+  registry's own convention that a path parameter's `doc` opens with
+  "Absolute path". An empty value is sent as it is, for the app to
+  refuse. `name:=json` and `raw` send what was written.
 - **The handshake is checked before anything is sent.** The first frame
   must be `hello` with `"app": "mandala"` and `"protocol"` equal to the
   client's own (currently 1); anything else is refused unless `--force`
@@ -1912,8 +1915,11 @@ a client does:
   (the deadline passed, the connection closed, `shutdown` arrived, or the
   reply was unreadable), so it may have run. The split exists for the
   caller's retry: `2` is safe to repeat, `4` calls for a read of the app's
-  state first. The server runs a request only once its line is complete,
-  which is why a request that did not finish being written is a `2`.
+  state first. The boundary is the end of the request's JSON body, not
+  its newline: a body cut short cannot decode, so nothing runs, but the
+  server also runs a final line its peer closes without terminating
+  (`read_capped_line`), so a send that fails on the one-byte terminator
+  after the whole body went out is a `4`.
   Errors go to stderr as `error: <code>: <message>`, warnings as
   `warning: <code>: <message>`. `--json` prints each reply line exactly as
   received, one per request.

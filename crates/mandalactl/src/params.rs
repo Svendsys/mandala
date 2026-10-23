@@ -151,11 +151,18 @@ impl Signature {
                     .map(Shape::from_word)
                     .collect();
                 let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
+                // The registry's own convention for "this is a file the
+                // app opens", which the app crate's tests hold the verb
+                // table to: its doc opens with "Absolute path".
+                let path = p
+                    .get("doc")
+                    .and_then(Value::as_str)
+                    .is_some_and(|doc| doc.starts_with("Absolute path"));
                 Ok(ParamDef {
                     name: name.to_string(),
                     shapes,
                     required,
-                    path: false,
+                    path,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -294,7 +301,9 @@ fn coerce_param(name: &str, def: Option<&ParamDef>, text: &str, cwd: Option<&Pat
 /// would.
 fn absolute(text: &str, cwd: Option<&Path>) -> Result<String, String> {
     let path = Path::new(text);
-    if path.is_absolute() {
+    // An empty value is sent as it is, so the app refuses it as a path
+    // that is not absolute; joined, it would name the directory itself.
+    if path.is_absolute() || text.is_empty() {
         return Ok(text.to_string());
     }
     let Some(cwd) = cwd else {
@@ -722,6 +731,32 @@ mod tests {
         assert_eq!(params["path"], json!("/tmp/x.png"));
         let params = built_in("/work", "capture.screenshot", &["path:=\"rel.png\""]);
         assert_eq!(params["path"], json!("rel.png"), "`:=` is JSON as written");
+    }
+
+    #[test]
+    fn test_an_empty_path_is_left_for_the_app_to_refuse() {
+        let params = built_in("/work", "capture.screenshot", &["path="]);
+        assert_eq!(params["path"], json!(""));
+    }
+
+    #[test]
+    fn test_a_described_command_gets_the_same_path_treatment_from_its_docs() {
+        let entry = json!({
+            "name": "future.export", "family": "future", "summary": "s", "result": [],
+            "params": [
+                {"name": "out", "type": "string", "required": true, "doc": "Absolute path. Where to write."},
+                {"name": "label", "type": "string", "required": false, "doc": "A name; not a path to open."}
+            ]
+        });
+        let signature = Signature::from_describe(&entry).expect("a signature");
+        let params = build_params(
+            &signature,
+            &tokenize(&words(&["out=out.json", "label=out.json"])),
+            Some(Path::new("/work")),
+        )
+        .expect("builds");
+        assert_eq!(params["out"], json!("/work/out.json"));
+        assert_eq!(params["label"], json!("out.json"));
     }
 
     #[test]
