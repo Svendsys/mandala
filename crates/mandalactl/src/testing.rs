@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 use crate::run::{run, Io};
 use crate::Exit;
 
+/// The working directory every [`invoke`] pretends to run in.
+pub const WORKING_DIRECTORY: &str = "/work/maps";
+
 /// What a shell would have shown for one invocation.
 #[derive(Debug)]
 pub struct Outcome {
@@ -41,6 +44,7 @@ pub fn invoke(line: &str, env_ipc: Option<&str>, stdin: &str) -> Outcome {
         &mut Io {
             out: &mut out,
             err: &mut err,
+            cwd: Some(Path::new(WORKING_DIRECTORY)),
             stdin: &mut input,
         },
     );

@@ -67,15 +67,21 @@ cargo build --release -p mandalactl          # target/release/mandalactl
 export MANDALA_IPC="$XDG_RUNTIME_DIR/mandala.sock"
 mandalactl ping                                  # now_ms: 4100.5
 mandalactl scene.find_text Introduction          # where is it, on screen or not?
-mandalactl input.click_node 1.2 --wait-settled   # act, then wait for the render
+mandalactl input.click_node 1.2                  # act on the node
 mandalactl capture.screenshot /tmp/after.png fit=true
 mandalactl query.selection --json                # the reply envelope, as received
 ```
 
 Output is `path: value` lines, one per field (`--json` prints the reply as the
 app wrote it). Exit codes: `0` the app answered, `1` it said no (code and
-message on stderr), `2` it could not be reached (not running, busy, silent,
-wrong protocol), `3` a bad command line. `mandalactl --help` lists every
+message on stderr), `2` it could not be reached or the request did not go
+out whole (not running, busy, wrong protocol: nothing ran), `3` a bad command
+line, `4` the request was sent and the invocation did not complete (no reply,
+or the wait failed): it may have run, so read the app's state before repeating
+it. With an app that serves `clock.wait`, `--wait-settled` on a command that
+changes the app returns only once the result is rendered. Relative `path=` /
+`to_file=` arguments are made absolute against the current directory.
+`mandalactl --help` lists every
 command with a copy-pasteable example, `mandalactl describe` lists what the
 connected app serves, and `mandalactl raw -` takes a request frame on stdin for
 anything the argument spelling cannot say.

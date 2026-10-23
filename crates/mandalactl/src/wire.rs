@@ -60,6 +60,30 @@ pub fn frame_line(frame: &Value) -> Result<String, String> {
     Ok(line)
 }
 
+/// A request ready to send: its line serialized once, with the `id`
+/// and command it will be matched and described by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outgoing {
+    pub id: Value,
+    pub command: String,
+    /// The frame as one wire line, no terminator.
+    pub line: String,
+}
+
+/// Serialize `frame` (a whole request with an `id`) for sending,
+/// checking the server's line cap on the way.
+pub fn outgoing(frame: &Value) -> Result<Outgoing, String> {
+    Ok(Outgoing {
+        id: frame.get("id").cloned().unwrap_or(Value::Null),
+        command: frame
+            .get("cmd")
+            .and_then(Value::as_str)
+            .unwrap_or("the request")
+            .to_string(),
+        line: frame_line(frame)?,
+    })
+}
+
 /// One server → client frame.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Frame {

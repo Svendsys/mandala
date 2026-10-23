@@ -23,6 +23,9 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 /// The longest `--timeout` accepted: an hour is already a hung shell.
 const MAX_TIMEOUT_SECS: f64 = 3600.0;
 
+/// The shortest: a socket deadline of zero is an error, not "now".
+const MIN_TIMEOUT: Duration = Duration::from_millis(1);
+
 /// The global flags.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
@@ -162,13 +165,25 @@ fn flag_only(flag: &str, inline: Option<String>) -> Result<bool, String> {
 }
 
 fn parse_timeout(text: &str) -> Result<Duration, String> {
+    let refusal = || {
+        format!(
+            "`--timeout` takes seconds from {} to {MAX_TIMEOUT_SECS}, got `{text}`",
+            MIN_TIMEOUT.as_secs_f64()
+        )
+    };
     match text.parse::<f64>() {
         Ok(secs) if secs.is_finite() && secs > 0.0 && secs <= MAX_TIMEOUT_SECS => {
-            Ok(Duration::from_secs_f64(secs))
+            // Checked on the `Duration`, not the float: `1e-12` is above
+            // zero and still rounds to a zero `Duration`, which no socket
+            // call accepts as a deadline.
+            let timeout = Duration::from_secs_f64(secs);
+            if timeout >= MIN_TIMEOUT {
+                Ok(timeout)
+            } else {
+                Err(refusal())
+            }
         }
-        _ => Err(format!(
-            "`--timeout` takes seconds above 0 and at most {MAX_TIMEOUT_SECS}, got `{text}`"
-        )),
+        _ => Err(refusal()),
     }
 }
 
@@ -249,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_timeout_must_be_a_positive_bounded_number() {
-        for bad in ["0", "-1", "abc", "nan", "inf", "3601"] {
+        for bad in ["0", "-1", "abc", "nan", "inf", "3601", "1e-12", "0.0005"] {
             let err = parse(&args(&["ping", "--timeout", bad])).expect_err("out of range");
             assert!(err.contains("--timeout"), "{bad}: {err}");
         }

@@ -89,10 +89,30 @@ pub struct Param {
     pub name: &'static str,
     pub ty: Ty,
     pub required: bool,
+    /// A filesystem path the app opens. The app requires it absolute
+    /// and resolves nothing against a working directory of its own, so
+    /// the client, which is the one that knows the shell's, makes a
+    /// relative `name=value` absolute before sending. The app crate's
+    /// tests hold this flag to the registry's own "Absolute path" docs.
+    pub path: bool,
 }
 
 const fn param(name: &'static str, ty: Ty, required: bool) -> Param {
-    Param { name, ty, required }
+    Param {
+        name,
+        ty,
+        required,
+        path: false,
+    }
+}
+
+const fn path_param(name: &'static str, required: bool) -> Param {
+    Param {
+        name,
+        ty: STRING,
+        required,
+        path: true,
+    }
 }
 
 /// Whether a command changes what the app shows or holds.
@@ -172,7 +192,7 @@ pub const VERBS: &[Verb] = &[
         positional: &["action"],
         effect: Effect::Mutates,
         render: Render::Flat,
-        example: "mandalactl act.action ZoomIn --wait-settled",
+        example: "mandalactl act.action ZoomIn",
     },
     Verb {
         name: "act.console",
@@ -200,7 +220,7 @@ pub const VERBS: &[Verb] = &[
         params: &[
             param("fields", ARRAY, false),
             param("pointer", STRING, false),
-            param("to_file", STRING, false),
+            path_param("to_file", false),
             param("overwrite", BOOLEAN, false),
         ],
         positional: &["pointer"],
@@ -280,7 +300,7 @@ pub const VERBS: &[Verb] = &[
         params: &[
             param("include", STRING, false),
             param("kinds", ARRAY, false),
-            param("to_file", STRING, false),
+            path_param("to_file", false),
             param("overwrite", BOOLEAN, false),
         ],
         positional: &[],
@@ -413,7 +433,7 @@ pub const VERBS: &[Verb] = &[
         positional: &["from_x", "from_y", "to_x", "to_y"],
         effect: Effect::Mutates,
         render: Render::Flat,
-        example: "mandalactl input.drag 400 300 640 300 --wait-settled",
+        example: "mandalactl input.drag 400 300 640 300",
     },
     Verb {
         name: "input.click_node",
@@ -444,7 +464,7 @@ pub const VERBS: &[Verb] = &[
         summary:
             "Render the current state offscreen to a PNG plus a geometry sidecar mapping pixels to node ids.",
         params: &[
-            param("path", STRING, false),
+            path_param("path", false),
             param("overwrite", BOOLEAN, false),
             param("width", INTEGER, false),
             param("height", INTEGER, false),

@@ -25,6 +25,8 @@
 //! and with `data.param` — a second copy of those rules here could
 //! only drift.
 
+use std::path::{Component, Path};
+
 use serde_json::{Map, Number, Value};
 
 use crate::verbs::{Shape, Verb};
@@ -83,6 +85,8 @@ pub struct ParamDef {
     pub name: String,
     pub shapes: Vec<Shape>,
     pub required: bool,
+    /// A path the app opens; see `verbs::Param::path`.
+    pub path: bool,
 }
 
 /// What argument-building needs to know about one command.
@@ -111,6 +115,7 @@ impl Signature {
                     name: p.name.to_string(),
                     shapes: p.ty.to_vec(),
                     required: p.required,
+                    path: p.path,
                 })
                 .collect(),
             positional: verb.positional.iter().map(|name| name.to_string()).collect(),
@@ -150,6 +155,7 @@ impl Signature {
                     name: name.to_string(),
                     shapes,
                     required,
+                    path: false,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -188,7 +194,16 @@ impl Signature {
 /// Build the parameter object for a request from classified words.
 /// `Err` is a usage error: it names the word at fault and what would
 /// have been accepted.
-pub fn build_params(signature: &Signature, tokens: &[Token]) -> Result<Map<String, Value>, String> {
+///
+/// A path parameter given as a relative `name=value` or bare word is
+/// made absolute against `cwd` (the shell's working directory), because
+/// the app requires absolute paths and has no working directory of its
+/// own to resolve against. `name:=json` is sent as written.
+pub fn build_params(
+    signature: &Signature,
+    tokens: &[Token],
+    cwd: Option<&Path>,
+) -> Result<Map<String, Value>, String> {
     let mut params = Map::new();
     let command = &signature.command;
     // A parameter given by name is not also a bare word's to fill, so
@@ -211,11 +226,11 @@ pub fn build_params(signature: &Signature, tokens: &[Token]) -> Result<Map<Strin
                     return Err(positional_overflow(signature, text));
                 };
                 let def = signature.param(name);
-                (name.as_str(), coerce_param(name, def, text)?)
+                (name.as_str(), coerce_param(name, def, text, cwd)?)
             }
             Token::Named { name, value } => {
                 let def = known_param(signature, name)?;
-                (name.as_str(), coerce_param(name, def, value)?)
+                (name.as_str(), coerce_param(name, def, value, cwd)?)
             }
             Token::Json { name, json } => {
                 known_param(signature, name)?;
@@ -262,9 +277,37 @@ fn positional_overflow(signature: &Signature, word: &str) -> String {
     format!("unexpected argument `{word}`: {takes}. To send a value that looks like name=value, put it after `--`")
 }
 
-fn coerce_param(name: &str, def: Option<&ParamDef>, text: &str) -> Result<Value, String> {
+fn coerce_param(name: &str, def: Option<&ParamDef>, text: &str, cwd: Option<&Path>) -> Result<Value, String> {
     let shapes = def.map_or(&[][..], |d| d.shapes.as_slice());
+    if def.is_some_and(|d| d.path) {
+        return absolute(text, cwd)
+            .map(Value::String)
+            .map_err(|why| format!("`{name}`: {why}"));
+    }
     coerce(text, shapes).map_err(|why| format!("`{name}`: {why}"))
+}
+
+/// `text` as an absolute path: itself if it already is, else joined
+/// onto `cwd` with `.` components dropped (so `./a.png` is `<cwd>/a.png`,
+/// not `<cwd>/./a.png`). `..` is kept: resolving it would need the
+/// filesystem, and the app's own checks see the same path the shell
+/// would.
+fn absolute(text: &str, cwd: Option<&Path>) -> Result<String, String> {
+    let path = Path::new(text);
+    if path.is_absolute() {
+        return Ok(text.to_string());
+    }
+    let Some(cwd) = cwd else {
+        return Err(format!(
+            "`{text}` is relative and the working directory is unknown; give an absolute path"
+        ));
+    };
+    let mut joined = cwd.to_path_buf();
+    joined.extend(path.components().filter(|c| !matches!(c, Component::CurDir)));
+    joined
+        .into_os_string()
+        .into_string()
+        .map_err(|_| format!("the working directory joined with `{text}` is not valid UTF-8"))
 }
 
 /// Turn argument text into a JSON value of one of `shapes`.
@@ -359,12 +402,12 @@ mod tests {
 
     fn built(verb: &str, line: &[&str]) -> Map<String, Value> {
         let signature = Signature::of(lookup(verb).expect("a known verb"));
-        build_params(&signature, &tokenize(&words(line))).expect("builds")
+        build_params(&signature, &tokenize(&words(line)), None).expect("builds")
     }
 
     fn refused(verb: &str, line: &[&str]) -> String {
         let signature = Signature::of(lookup(verb).expect("a known verb"));
-        build_params(&signature, &tokenize(&words(line))).expect_err("a usage error")
+        build_params(&signature, &tokenize(&words(line)), None).expect_err("a usage error")
     }
 
     #[test]
@@ -581,7 +624,7 @@ mod tests {
     fn test_envelope_keys_are_never_parameters() {
         let lenient = Signature::unknown("future.thing");
         for word in ["id=1", "cmd=x", "id:=1"] {
-            let err = build_params(&lenient, &tokenize(&words(&[word]))).expect_err("reserved");
+            let err = build_params(&lenient, &tokenize(&words(&[word])), None).expect_err("reserved");
             assert!(err.contains("envelope"), "{word}: {err}");
         }
     }
@@ -609,14 +652,17 @@ mod tests {
         let params = build_params(
             &signature,
             &tokenize(&words(&["ms=100", "mode=virtual", "wat=3"])),
+            None,
         )
         .expect("builds");
         assert_eq!(params["ms"], json!(100));
         assert_eq!(params["mode"], json!("virtual"));
         assert_eq!(params["wat"], json!(3), "a type word from the future is inferred");
-        let err = build_params(&signature, &tokenize(&words(&["100"]))).expect_err("nothing is positional");
+        let err =
+            build_params(&signature, &tokenize(&words(&["100"])), None).expect_err("nothing is positional");
         assert!(err.contains("name=value"), "{err}");
-        let err = build_params(&signature, &tokenize(&words(&["frames=1"]))).expect_err("not a parameter");
+        let err =
+            build_params(&signature, &tokenize(&words(&["frames=1"])), None).expect_err("not a parameter");
         assert!(err.contains("ms, mode, wat"), "{err}");
     }
 
@@ -633,14 +679,66 @@ mod tests {
         let params = build_params(
             &signature,
             &tokenize(&words(&["n=3", "flag=true", "s=hello", "o:={\"a\":1}"])),
+            None,
         )
         .expect("builds");
         assert_eq!(params["n"], json!(3));
         assert_eq!(params["flag"], json!(true));
         assert_eq!(params["s"], json!("hello"));
         assert_eq!(params["o"], json!({"a": 1}));
-        let err = build_params(&signature, &tokenize(&words(&["bare"]))).expect_err("nothing is positional");
+        let err =
+            build_params(&signature, &tokenize(&words(&["bare"])), None).expect_err("nothing is positional");
         assert!(err.contains("no bare arguments"), "{err}");
+    }
+
+    fn built_in(cwd: &str, verb: &str, line: &[&str]) -> Map<String, Value> {
+        let signature = Signature::of(lookup(verb).expect("a known verb"));
+        build_params(&signature, &tokenize(&words(line)), Some(Path::new(cwd))).expect("builds")
+    }
+
+    #[test]
+    fn test_a_relative_path_parameter_is_made_absolute_against_the_shells_directory() {
+        let by_word = built_in("/work/maps", "capture.screenshot", &["after.png"]);
+        assert_eq!(by_word["path"], json!("/work/maps/after.png"));
+        let by_name = built_in("/work", "query.document", &["to_file=out/model.json"]);
+        assert_eq!(by_name["to_file"], json!("/work/out/model.json"));
+        let dotted = built_in("/work", "scene.dump", &["to_file=./dump.json"]);
+        assert_eq!(
+            dotted["to_file"],
+            json!("/work/dump.json"),
+            "a leading ./ is dropped"
+        );
+        let parent = built_in("/work/a", "capture.screenshot", &["path=../shot.png"]);
+        assert_eq!(
+            parent["path"],
+            json!("/work/a/../shot.png"),
+            ".. is the filesystem's to resolve"
+        );
+    }
+
+    #[test]
+    fn test_an_absolute_path_parameter_and_a_json_one_are_sent_as_written() {
+        let params = built_in("/work", "capture.screenshot", &["/tmp/x.png"]);
+        assert_eq!(params["path"], json!("/tmp/x.png"));
+        let params = built_in("/work", "capture.screenshot", &["path:=\"rel.png\""]);
+        assert_eq!(params["path"], json!("rel.png"), "`:=` is JSON as written");
+    }
+
+    #[test]
+    fn test_only_path_parameters_are_joined_to_the_directory() {
+        let params = built_in("/work", "scene.find_text", &["notes.txt"]);
+        assert_eq!(params["text"], json!("notes.txt"));
+    }
+
+    #[test]
+    fn test_a_relative_path_with_no_known_directory_is_refused_not_guessed() {
+        let signature = Signature::of(lookup("capture.screenshot").expect("a known verb"));
+        let err = build_params(&signature, &tokenize(&words(&["rel.png"])), None).expect_err("no directory");
+        assert!(
+            err.contains("`path`") && err.contains("working directory"),
+            "{err}"
+        );
+        assert!(build_params(&signature, &tokenize(&words(&["/abs.png"])), None).is_ok());
     }
 
     #[test]

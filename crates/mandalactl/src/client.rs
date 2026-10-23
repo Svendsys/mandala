@@ -14,8 +14,14 @@
 //! controller at a time and notices a departed one "a moment after the
 //! socket closes", so two `mandalactl` calls in a row — the commonest
 //! thing an agent's shell does — can find the slot still held and be
-//! refused `busy`. [`Connection::open`] retries for [`BUSY_RETRY`], then
-//! reports the refusal as what it is: another client is attached.
+//! refused `busy`. [`Connection::open`] retries a `busy` refusal for
+//! [`BUSY_RETRY`], then reports it as what it is: another client is
+//! attached. A refusal for any other reason is reported as given.
+//!
+//! **How far a request got is part of the answer.** [`Connection::exchange`]
+//! says whether a failed request was `NotSent` (nothing can have run) or
+//! `Unanswered` (it went out whole, so it may have), because that is what
+//! decides whether the caller may repeat it.
 //!
 //! Blocking `std` I/O and no runtime, the way the server's boundary
 //! threads are. Unix sockets only; elsewhere [`Connection::open`]
@@ -32,6 +38,23 @@ pub const BUSY_RETRY: Duration = Duration::from_secs(2);
 /// errors that mean "the app is not there".
 pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <socket-path>";
 
+/// How far a request got — the fact that decides whether repeating it
+/// is safe. Not an error type (CODE_CONVENTIONS §9): the two failures
+/// carry the same plain `String` message every stage's failures do, and
+/// differ in what they let the caller conclude.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Outcome {
+    /// The app answered.
+    Answered(Exchange),
+    /// The request did not go out whole, so it cannot have run. The
+    /// server executes a request only once its line is complete.
+    NotSent(String),
+    /// The request went out whole and no answer was read — the deadline
+    /// passed, the connection closed, the app announced it was
+    /// shutting down, or what came back was unreadable. It may have run.
+    Unanswered(String),
+}
+
 /// One reply, with the line it arrived as (what `--json` prints).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Exchange {
@@ -47,7 +70,7 @@ pub use self::unsupported::Connection;
 
 #[cfg(unix)]
 mod unix {
-    use std::io::{BufRead, BufReader, Read, Write};
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     use std::path::Path;
     use std::sync::mpsc;
@@ -56,8 +79,8 @@ mod unix {
 
     use serde_json::Value;
 
-    use super::{Exchange, BUSY_RETRY, LAUNCH_HINT};
-    use crate::wire::{decode_frame, frame_line, Event, Frame, Hello, FRAME_CAP};
+    use super::{Exchange, Outcome, BUSY_RETRY, LAUNCH_HINT};
+    use crate::wire::{decode_frame, Event, Frame, Hello, Outgoing, FRAME_CAP};
 
     /// An open, greeted connection.
     #[derive(Debug)]
@@ -104,6 +127,11 @@ mod unix {
                         let note = hello.accept(force)?;
                         return Ok((connection, note));
                     }
+                    Greeting::Rejected(reason) if reason != "busy" => {
+                        return Err(format!(
+                            "the app refused the connection (reason: {reason}); retrying will not change that"
+                        ));
+                    }
                     Greeting::Rejected(reason) => {
                         if started.elapsed() + pause > BUSY_RETRY.min(timeout) {
                             return Err(format!(
@@ -125,49 +153,57 @@ mod unix {
             Value::from(id)
         }
 
-        /// Send `request` (a whole frame with an `id`) and return the
-        /// reply that answers it, waiting at most `timeout`.
+        /// Send `request` and return the reply that answers it, waiting
+        /// at most `timeout` for it.
+        ///
+        /// The [`Outcome`] says how far the request got, which is the
+        /// fact a caller needs before deciding whether to repeat it:
+        /// `NotSent` (nothing can have run) or `Unanswered` (it went out
+        /// whole and no reply was read, so it may have).
         ///
         /// A reply answers the request when its `id` equals the
         /// request's, or is `null` — the server's way of answering a
         /// line it could not read, and with one request in flight that
         /// line can only have been this one. Events other than
         /// `shutdown` are skipped: nothing here subscribes to any.
-        pub fn exchange(&mut self, request: &Value, timeout: Duration) -> Result<Exchange, String> {
-            let command = request
-                .get("cmd")
-                .and_then(Value::as_str)
-                .unwrap_or("the request")
-                .to_string();
-            let id = request.get("id").cloned().unwrap_or(Value::Null);
-            let line = frame_line(request)?;
+        pub fn exchange(&mut self, request: &Outgoing, timeout: Duration) -> Outcome {
+            let command = &request.command;
             let deadline = Instant::now() + timeout;
-            self.send(&line, &command, timeout)?;
+            if let Err(why) = self.send(request, deadline, timeout) {
+                return Outcome::NotSent(why);
+            }
             loop {
-                match self.read_line(deadline)? {
-                    Line::TimedOut => return Err(silence(&format!("reply to `{command}`"), timeout)),
-                    Line::Eof => {
-                        return Err(format!(
+                let line = match self.read_line(deadline) {
+                    Ok(Line::Text(text)) => text,
+                    Ok(Line::TimedOut) => {
+                        return Outcome::Unanswered(silence(&format!("reply to `{command}`"), timeout))
+                    }
+                    Ok(Line::Eof) => {
+                        return Outcome::Unanswered(format!(
                             "the app closed the connection before replying to `{command}`: it exited, or aborted \
                              (the freeze watchdog aborts a wedged app after 10 s)"
                         ))
                     }
-                    Line::Text(text) => match decode_frame(&text)? {
-                        Frame::Event(event) => {
-                            if event.name == "shutdown" {
-                                return Err(format!("the app is shutting down; `{command}` was not answered"));
-                            }
-                        }
-                        Frame::Reply(reply) => {
-                            if reply.id == id || reply.id.is_null() {
-                                return Ok(Exchange { reply, line: text });
-                            }
-                            return Err(format!(
-                                "the app answered request id {} while `{command}` (id {id}) was pending",
-                                reply.id
+                    Err(why) => return Outcome::Unanswered(why),
+                };
+                match decode_frame(&line) {
+                    Err(why) => return Outcome::Unanswered(why),
+                    Ok(Frame::Event(event)) => {
+                        if event.name == "shutdown" {
+                            return Outcome::Unanswered(format!(
+                                "the app is shutting down; `{command}` was not answered"
                             ));
                         }
-                    },
+                    }
+                    Ok(Frame::Reply(reply)) => {
+                        if reply.id == request.id || reply.id.is_null() {
+                            return Outcome::Answered(Exchange { reply, line });
+                        }
+                        return Outcome::Unanswered(format!(
+                            "the app answered request id {} while `{command}` (id {}) was pending",
+                            reply.id, request.id
+                        ));
+                    }
                 }
             }
         }
@@ -189,28 +225,60 @@ mod unix {
             }
         }
 
-        fn send(&mut self, line: &str, command: &str, timeout: Duration) -> Result<(), String> {
+        /// Write the request line and its terminator, every chunk under
+        /// whatever is left of `deadline`: a peer that accepts a few bytes
+        /// at a time must not stretch one send past the timeout.
+        fn send(&mut self, request: &Outgoing, deadline: Instant, timeout: Duration) -> Result<(), String> {
+            let command = &request.command;
             let stream = self.reader.get_mut();
-            stream
-                .set_write_timeout(Some(timeout))
-                .map_err(|e| format!("could not set the write deadline: {e}"))?;
-            let mut frame = Vec::with_capacity(line.len() + 1);
-            frame.extend_from_slice(line.as_bytes());
-            frame.push(b'\n');
-            stream.write_all(&frame).map_err(|e| match e.kind() {
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
-                    silence(&format!("room to send `{command}`"), timeout)
+            for part in [request.line.as_bytes(), b"\n"] {
+                let mut written = 0;
+                while written < part.len() {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(silence(&format!("room to send `{command}`"), timeout));
+                    }
+                    stream
+                        .set_write_timeout(Some(remaining))
+                        .map_err(|e| format!("could not set the write deadline: {e}"))?;
+                    match stream.write(&part[written..]) {
+                        Ok(0) => return Err(format!("the app stopped reading while `{command}` was being sent")),
+                        Ok(n) => written += n,
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            return Err(silence(&format!("room to send `{command}`"), timeout))
+                        }
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                            ) =>
+                        {
+                            return Err(format!(
+                                "the app closed the connection while `{command}` was being sent: it exited, or aborted"
+                            ))
+                        }
+                        Err(e) => return Err(format!("could not send `{command}`: {e}")),
+                    }
                 }
-                std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset => format!(
-                    "the app closed the connection while `{command}` was being sent: it exited, or aborted"
-                ),
-                _ => format!("could not send `{command}`: {e}"),
-            })
+            }
+            Ok(())
         }
 
         /// The next non-empty line, at most [`FRAME_CAP`] bytes, before
         /// `deadline`.
+        ///
+        /// The deadline is re-armed before every fill of the buffer, not
+        /// once per line: a socket timeout bounds one `read`, so a reply
+        /// that trickles in a chunk at a time would otherwise restart
+        /// the clock with each chunk and outlast any `--timeout`.
         fn read_line(&mut self, deadline: Instant) -> Result<Line, String> {
+            let mut bytes: Vec<u8> = Vec::new();
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
@@ -220,15 +288,9 @@ mod unix {
                     .get_ref()
                     .set_read_timeout(Some(remaining))
                     .map_err(|e| format!("could not set the read deadline: {e}"))?;
-                let mut bytes = Vec::new();
-                // Room for the cap, a `\r` and the terminator: the
-                // server's cap counts the frame, not its line ending.
-                let read = (&mut self.reader)
-                    .take(FRAME_CAP as u64 + 2)
-                    .read_until(b'\n', &mut bytes);
-                match read {
-                    Ok(0) => return Ok(Line::Eof),
-                    Ok(_) => {}
+                let available = match self.reader.fill_buf() {
+                    Ok(available) => available,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e)
                         if matches!(
                             e.kind(),
@@ -239,24 +301,46 @@ mod unix {
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => return Ok(Line::Eof),
                     Err(e) => return Err(format!("reading from the app failed: {e}")),
+                };
+                let at_eof = available.is_empty();
+                let (take, terminated) = match available.iter().position(|b| *b == b'\n') {
+                    Some(newline) => (newline + 1, true),
+                    None => (available.len(), false),
+                };
+                bytes.extend_from_slice(&available[..take]);
+                self.reader.consume(take);
+                // The cap counts the frame, not its line ending (a `\r`
+                // and a `\n` at most), and bounds what is buffered.
+                if bytes.len() > FRAME_CAP + 2 {
+                    return Err(cap_error());
+                }
+                if !(terminated || at_eof) {
+                    continue;
                 }
                 let frame_len = bytes
                     .iter()
                     .rposition(|b| *b != b'\n' && *b != b'\r')
                     .map_or(0, |last| last + 1);
                 if frame_len > FRAME_CAP {
-                    return Err(format!(
-                        "the app sent a frame over {FRAME_CAP} bytes, which its own cap forbids; refusing to buffer it"
-                    ));
+                    return Err(cap_error());
                 }
-                let text = String::from_utf8(bytes)
+                let text = String::from_utf8(std::mem::take(&mut bytes))
                     .map_err(|_| "the app sent a line that is not UTF-8".to_string())?;
                 let text = text.trim();
                 if !text.is_empty() {
                     return Ok(Line::Text(text.to_string()));
                 }
+                if at_eof {
+                    return Ok(Line::Eof);
+                }
             }
         }
+    }
+
+    fn cap_error() -> String {
+        format!(
+            "the app sent a frame over {FRAME_CAP} bytes, which its own cap forbids; refusing to buffer it"
+        )
     }
 
     /// The error for a deadline that passed with nothing received.
@@ -320,7 +404,8 @@ mod unsupported {
 
     use serde_json::Value;
 
-    use super::Exchange;
+    use super::Outcome;
+    use crate::wire::Outgoing;
 
     /// Stand-in for the connection where the transport does not exist
     /// yet. [`Connection::open`] is the only way to obtain one and
@@ -346,7 +431,7 @@ mod unsupported {
             match self.never {}
         }
 
-        pub fn exchange(&mut self, _request: &Value, _timeout: Duration) -> Result<Exchange, String> {
+        pub fn exchange(&mut self, _request: &Outgoing, _timeout: Duration) -> Outcome {
             match self.never {}
         }
     }

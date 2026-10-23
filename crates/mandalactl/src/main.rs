@@ -13,9 +13,11 @@ fn main() -> ExitCode {
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
     let mut stdin = std::io::stdin().lock();
+    let cwd = std::env::current_dir().ok();
     let mut io = Io {
         out: &mut stdout,
         err: &mut stderr,
+        cwd: cwd.as_deref(),
         stdin: &mut stdin,
     };
     let Some(args) = std::env::args_os()

@@ -204,10 +204,7 @@ fn test_every_verb_example_reaches_the_wire_as_its_own_command() {
         );
         assert_eq!(outcome.exit, Exit::Success, "`{}`: {}", verb.example, outcome.err);
         let requests = server.requests();
-        // With --wait-settled the app is first asked whether it serves
-        // `clock.wait`, and the wait follows the command.
-        let waited = verb.example.contains("--wait-settled");
-        let first = &requests[usize::from(waited)];
+        let first = &requests[0];
         assert_eq!(first["cmd"], json!(verb.name), "`{}`", verb.example);
         let sent = first.as_object().expect("a request is an object");
         for key in sent.keys().filter(|k| *k != "id" && *k != "cmd") {
@@ -218,7 +215,7 @@ fn test_every_verb_example_reaches_the_wire_as_its_own_command() {
                 verb.name
             );
         }
-        assert_eq!(requests.len(), if waited { 3 } else { 1 }, "`{}`", verb.example);
+        assert_eq!(requests.len(), 1, "`{}` sends one request", verb.example);
     }
 }
 
@@ -476,7 +473,7 @@ fn test_wait_settled_does_not_wait_for_a_command_that_failed() {
 }
 
 #[test]
-fn test_a_wait_that_times_out_exits_one_with_its_elapsed_time() {
+fn test_a_wait_that_times_out_after_a_command_that_succeeded_is_not_a_failed_command() {
     let server = FakeServer::answering(|r| {
         if r["cmd"] == "clock.wait" {
             vec![json!({"id": r["id"], "ok": false,
@@ -486,13 +483,38 @@ fn test_a_wait_that_times_out_exits_one_with_its_elapsed_time() {
         }
     });
     let outcome = against(&server, "input.drag 1 2 3 4 --wait-settled");
-    assert_eq!(outcome.exit, Exit::CommandError);
+    // The drag ran and its result was printed; only the wait failed. An
+    // exit of 1 ("the app said no") would invite a caller to drag again.
+    assert_eq!(outcome.exit, Exit::Unconfirmed);
+    assert_eq!(outcome.out, "ok\n", "the command's own result is still printed");
     assert!(
         outcome.err.contains("error: timeout: never settled"),
         "{}",
         outcome.err
     );
     assert!(outcome.err.contains("10000"), "{}", outcome.err);
+    assert!(
+        outcome.err.contains("The command itself succeeded") && outcome.err.contains("do not repeat it"),
+        "{}",
+        outcome.err
+    );
+}
+
+#[test]
+fn test_a_wait_the_client_gives_up_on_also_says_the_command_succeeded() {
+    let server = FakeServer::start(|_, peer, seen| {
+        peer.send(&hello());
+        while let Some(request) = peer.read_request() {
+            seen.lock().expect("log").push(request.clone());
+            if request["cmd"] != "clock.wait" {
+                peer.send(&ok(&request["id"], json!({})));
+            }
+        }
+    });
+    let outcome = against(&server, "act.action ZoomIn --timeout 0.3 --wait-settled");
+    assert_eq!(outcome.exit, Exit::Unconfirmed);
+    assert_eq!(outcome.out, "ok\n");
+    assert!(outcome.err.contains("do not repeat it"), "{}", outcome.err);
 }
 
 #[test]
@@ -634,6 +656,19 @@ fn transport_failure(outcome: &Outcome) -> &str {
     &outcome.err
 }
 
+/// The request went out whole and no answer was read: exit 4, with the
+/// advice not to assume it did not run.
+fn unconfirmed_failure(outcome: &Outcome) -> &str {
+    assert_eq!(outcome.exit, Exit::Unconfirmed, "stderr: {}", outcome.err);
+    assert_eq!(outcome.out, "");
+    assert!(
+        outcome.err.contains("The request was sent, so it may have run"),
+        "{}",
+        outcome.err
+    );
+    &outcome.err
+}
+
 #[test]
 fn test_no_socket_says_the_app_is_not_running_and_how_to_start_it() {
     let dir = tempfile::tempdir().expect("a directory");
@@ -743,7 +778,7 @@ fn test_a_silent_app_times_out_with_a_hint_and_does_not_hang() {
     });
     let started = Instant::now();
     let outcome = against(&server, "--timeout 0.3 ping");
-    let err = transport_failure(&outcome);
+    let err = unconfirmed_failure(&outcome);
     assert!(err.contains("no reply to `ping` within 0.3 s"), "{err}");
     assert!(err.contains("busy or frozen") && err.contains("10 s"), "{err}");
     assert!(started.elapsed() < Duration::from_secs(5));
@@ -764,7 +799,7 @@ fn test_an_app_that_closes_mid_request_is_reported_as_gone() {
         let _ = peer.read_request();
     });
     let outcome = against(&server, "ping");
-    let err = transport_failure(&outcome);
+    let err = unconfirmed_failure(&outcome);
     assert!(
         err.contains("closed the connection before replying to `ping`"),
         "{err}"
@@ -792,27 +827,27 @@ fn test_a_server_that_greets_with_something_else_is_refused() {
 fn test_a_shutdown_notice_is_reported_as_the_app_exiting() {
     let server = FakeServer::answering(|_| vec![json!({"event": "shutdown", "data": {}})]);
     let outcome = against(&server, "ping");
-    let err = transport_failure(&outcome);
+    let err = unconfirmed_failure(&outcome);
     assert!(err.contains("shutting down"), "{err}");
 }
 
 #[test]
-fn test_a_line_that_is_not_json_is_a_transport_fault() {
+fn test_a_line_that_is_not_json_leaves_the_request_unconfirmed() {
     let server = FakeServer::start(|_, peer, _| {
         peer.send(&hello());
         let _ = peer.read_request();
         peer.send_raw("this is not json\n");
     });
     let outcome = against(&server, "ping");
-    let err = transport_failure(&outcome);
+    let err = unconfirmed_failure(&outcome);
     assert!(err.contains("not JSON"), "{err}");
 }
 
 #[test]
-fn test_a_reply_to_some_other_request_is_a_transport_fault() {
+fn test_a_reply_to_some_other_request_leaves_the_request_unconfirmed() {
     let server = FakeServer::answering(|_| vec![ok(&json!(99), json!({}))]);
     let outcome = against(&server, "ping");
-    let err = transport_failure(&outcome);
+    let err = unconfirmed_failure(&outcome);
     assert!(err.contains("request id 99"), "{err}");
 }
 
@@ -837,7 +872,7 @@ fn test_a_frame_of_exactly_the_servers_cap_is_read_and_one_byte_more_is_not() {
             );
             assert_eq!(outcome.out.trim().len(), FRAME_CAP);
         } else {
-            assert_eq!(outcome.exit, Exit::TransportError);
+            assert_eq!(outcome.exit, Exit::Unconfirmed);
             assert!(outcome.err.contains("over 8388608 bytes"), "{}", outcome.err);
         }
     }
@@ -851,7 +886,7 @@ fn test_a_frame_beyond_the_servers_own_cap_is_refused_not_buffered() {
         peer.send_raw(&"x".repeat(FRAME_CAP + 64));
     });
     let outcome = against(&server, "ping");
-    let err = transport_failure(&outcome);
+    let err = unconfirmed_failure(&outcome);
     assert!(err.contains("over 8388608 bytes"), "{err}");
 }
 
@@ -923,6 +958,7 @@ fn test_a_reader_that_went_away_does_not_change_the_outcome() {
         &mut crate::Io {
             out: &mut Gone,
             err: &mut Gone,
+            cwd: None,
             stdin: &mut input,
         },
     );
@@ -936,11 +972,144 @@ fn test_exit_codes_are_the_documented_numbers() {
             Exit::Success,
             Exit::CommandError,
             Exit::TransportError,
-            Exit::UsageError
+            Exit::UsageError,
+            Exit::Unconfirmed
         ]
         .map(Exit::code),
-        [0, 1, 2, 3]
+        [0, 1, 2, 3, 4]
     );
+}
+
+// ---- deadlines inside a line, rejection reasons, paths, raw --------------
+
+#[test]
+fn test_a_reply_that_trickles_in_cannot_outlast_the_timeout() {
+    // A byte every 100 ms and never a newline: each read returns well
+    // inside its own timeout, so only a deadline re-armed per read stops
+    // the client at --timeout rather than whenever the line ends.
+    let server = FakeServer::start(|_, peer, _| {
+        peer.send(&hello());
+        let _ = peer.read_request();
+        for _ in 0..60 {
+            peer.send_raw("x");
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
+    let started = Instant::now();
+    let outcome = against(&server, "--timeout 0.5 ping");
+    let err = unconfirmed_failure(&outcome);
+    assert!(err.contains("no reply to `ping` within 0.5 s"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn test_a_send_the_app_never_drains_is_bounded_and_means_nothing_ran() {
+    // The app greets and never reads: the socket buffer fills part way
+    // through a request near the 1 MiB cap, and the write must give up
+    // at the deadline. The request line is incomplete, so the server
+    // could not have executed it — exit 2, not 4.
+    let server = FakeServer::start(|_, peer, _| {
+        peer.send(&hello());
+        thread::sleep(Duration::from_secs(5));
+    });
+    let frame = format!("{{\"cmd\":\"input.text\",\"text\":\"{}\"}}", "x".repeat(900_000));
+    let started = Instant::now();
+    let outcome = invoke(
+        &format!("--ipc {} --timeout 0.5 raw -", server.path().display()),
+        None,
+        &frame,
+    );
+    let err = transport_failure(&outcome);
+    assert!(err.contains("room to send `input.text`"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn test_a_rejection_for_any_reason_but_busy_is_reported_as_is_and_not_retried() {
+    let server = FakeServer::start(|_, peer, _| {
+        peer.send(&json!({"event": "connection_rejected", "data": {"reason": "unauthorized"}}));
+    });
+    let started = Instant::now();
+    let outcome = against(&server, "ping");
+    let err = transport_failure(&outcome);
+    assert!(err.contains("reason: unauthorized"), "{err}");
+    assert!(
+        !err.contains("another client"),
+        "it does not claim a second client: {err}"
+    );
+    assert_eq!(
+        server.connections(),
+        1,
+        "a refusal that will not change is not retried"
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn test_a_relative_path_argument_reaches_the_app_absolute() {
+    let server = lenient();
+    let outcome = against(&server, "capture.screenshot after.png fit=true");
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert_eq!(server.requests()[0]["path"], json!("/work/maps/after.png"));
+    let outcome = against(&server, "query.document to_file=./out/model.json");
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert_eq!(
+        server.requests()[1]["to_file"],
+        json!("/work/maps/out/model.json")
+    );
+}
+
+#[test]
+fn test_a_relative_path_with_no_working_directory_is_a_usage_error() {
+    let server = lenient();
+    let words = split(&format!(
+        "--ipc {} capture.screenshot rel.png",
+        server.path().display()
+    ));
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut input: &[u8] = b"";
+    let exit = crate::run(
+        &words,
+        None,
+        &mut crate::Io {
+            out: &mut out,
+            err: &mut err,
+            cwd: None,
+            stdin: &mut input,
+        },
+    );
+    assert_eq!(exit, Exit::UsageError);
+    assert!(String::from_utf8_lossy(&err).contains("working directory"));
+    assert_eq!(server.connections(), 0);
+}
+
+#[test]
+fn test_raw_accepts_a_double_dash_before_its_request() {
+    let server = lenient();
+    let outcome = against(&server, r#"raw -- '{"cmd":"ping"}'"#);
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert_eq!(server.requests(), vec![json!({"id": 1, "cmd": "ping"})]);
+    let line = format!("--ipc {} raw -- -", server.path().display());
+    let outcome = invoke(&line, None, r#"{"cmd":"ping"}"#);
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+}
+
+#[test]
+fn test_a_timeout_too_small_to_be_a_deadline_is_a_usage_error_not_an_outage() {
+    let server = lenient();
+    for tiny in ["1e-12", "0.0005"] {
+        let outcome = against(&server, &format!("--timeout {tiny} ping"));
+        assert_eq!(outcome.exit, Exit::UsageError, "{tiny}: {}", outcome.err);
+    }
+    assert_eq!(server.connections(), 0);
 }
 
 #[test]

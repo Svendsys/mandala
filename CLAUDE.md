@@ -65,7 +65,8 @@ borders, connection paths — is laid out as positioned font glyphs.
 - **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
   socket: one invocation, one command, JSON or `path: value` lines on
   stdout, exit code `0` / `1` (the app said no) / `2` (could not reach
-  it) / `3` (bad command line). The sibling of `maptool`, not a mode of
+  it, nothing ran) / `3` (bad command line) / `4` (sent, not confirmed:
+  it may have run). The sibling of `maptool`, not a mode of
   it: `maptool` reads files and never talks to a process, `mandalactl`
   talks to a process and never reads a map. `mandalactl --help` is the
   agent-facing reference; `verbs::VERBS` is its command table, and the
@@ -319,9 +320,13 @@ the parity trajectory (or why none is owed):
   `format/ipc.md` is the full protocol.
   **From a shell, use `mandalactl` instead of `nc`**: `export
   MANDALA_IPC=$XDG_RUNTIME_DIR/mandala.sock`, then `mandalactl ping`,
-  `mandalactl act.action ZoomIn --wait-settled`,
+  `mandalactl act.action ZoomIn`,
   `mandalactl scene.find_text Introduction` — no JSON to hand-quote,
   typed arguments, a timeout on every wait, and an exit code that says
   whether the app answered. `mandalactl --help` lists every command
   with an example; `mandalactl raw -` takes a request frame on stdin
-  for anything its argument spelling cannot say.
+  for anything its argument spelling cannot say. Exit `4` means the
+  request went out and no answer was read: check the app's state
+  before repeating a command that changes it. (`--wait-settled` needs
+  an app that serves `clock.wait`; it is detected first, and nothing is
+  sent when it is missing.)

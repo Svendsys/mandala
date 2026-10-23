@@ -1871,18 +1871,25 @@ a client does:
   frame as written, supplying an `id` when it has none.
 - **Socket discovery:** `--ipc <path>`, else `$MANDALA_IPC`, else a usage
   error that says how to launch the app.
+- **Paths:** a relative path argument (`path=`, `to_file=`) is made
+  absolute against the client's working directory before it is sent,
+  because the server requires absolute paths and has no working directory
+  of the client's to resolve against. `name:=json` and `raw` send what
+  was written.
 - **The handshake is checked before anything is sent.** The first frame
   must be `hello` with `"app": "mandala"` and `"protocol"` equal to the
   client's own (currently 1); anything else is refused unless `--force`
   ([Handshake and versioning](#handshake-and-versioning)). A
-  `connection_rejected` first frame is retried for two seconds, because
-  the departure of the previous controller is noticed "a moment after the
-  socket closes" ([Single controller](#single-controller)) and two
-  invocations in a row would otherwise race it; a slot still held after
-  that is reported as another client holding it.
+  `connection_rejected` first frame with `"reason": "busy"` is retried for
+  two seconds, because the departure of the previous controller is noticed
+  "a moment after the socket closes" ([Single controller](#single-controller))
+  and two invocations in a row would otherwise race it; a slot still held
+  after that is reported as another client holding it. Any other `reason`
+  is reported as it is and not retried: nothing says it will pass.
 - **Every wait has a deadline** (`--timeout`, default 15 s, longer than the
-  10 s `FreezeWatchdog` threshold): the connect, the greeting and each
-  reply. A reply is matched by `id`, with the `null`-id `parse_error` taken
+  10 s `FreezeWatchdog` threshold): the connect, the greeting, each write
+  and each reply. The deadline is the whole line's, re-armed before every
+  read and write, so a peer that trickles bytes cannot stretch it. A reply is matched by `id`, with the `null`-id `parse_error` taken
   as the answer to the one request in flight; events the client did not
   subscribe to are skipped, and `shutdown` ends the invocation.
 - **`--wait-settled`** first asks `describe command=clock.wait`, so an
@@ -1892,12 +1899,21 @@ a client does:
   After a command that succeeds it sends `clock.wait` with `until:
   "settled"` and `timeout_ms` equal to the client's timeout (clamped to
   the server's `1..=60000`), on the same connection, and reports its
-  result too. It is refused up front (exit 3), through `raw` as well, for
-  a command the client knows only reads.
+  result too. If that wait fails once the command has succeeded (a
+  `timeout` reply, the connection lost), the invocation exits `4` with the
+  command's result already printed and a message that the command ran and
+  must not be repeated. The flag is refused up front (exit 3), through `raw`
+  as well, for a command the client knows only reads.
 - **Exit codes:** `0` the reply was `ok:true` (warnings do not change it);
-  `1` it was `ok:false`; `2` the app could not be talked to (not running,
-  stale socket, busy, silent, closed, wrong protocol, a frame the client
-  cannot read); `3` the command line was wrong and nothing was sent.
+  `1` it was `ok:false`; `2` the app could not be reached or the request
+  did not go out whole (not running, stale socket, busy or refused,
+  wrong protocol), so nothing ran; `3` the command line was wrong and
+  nothing was sent; `4` the request went out whole and no reply was read
+  (the deadline passed, the connection closed, `shutdown` arrived, or the
+  reply was unreadable), so it may have run. The split exists for the
+  caller's retry: `2` is safe to repeat, `4` calls for a read of the app's
+  state first. The server runs a request only once its line is complete,
+  which is why a request that did not finish being written is a `2`.
   Errors go to stderr as `error: <code>: <message>`, warnings as
   `warning: <code>: <message>`. `--json` prints each reply line exactly as
   received, one per request.

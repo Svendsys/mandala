@@ -19,8 +19,8 @@ pub const WORKFLOW: &[&str] = &[
     "mandalactl describe input.drag",
     "mandalactl query.selection --json",
     "mandalactl scene.find_text Introduction",
-    "mandalactl input.click_node 1.2 --wait-settled",
-    "mandalactl input.drag 400 300 640 300 --wait-settled",
+    "mandalactl input.click_node 1.2",
+    "mandalactl input.pending",
     "mandalactl capture.screenshot /tmp/after.png fit=true",
 ];
 
@@ -104,7 +104,9 @@ pub fn command_help(name: &str) -> Result<String, String> {
     }
     text.push_str(&format!("\n  example: {}\n", verb.example));
     if verb.effect == Effect::Mutates {
-        text.push_str("  changes the app: add --wait-settled to return only once the result is rendered\n");
+        text.push_str(
+            "  changes the app: --wait-settled returns only once the result is rendered (needs an app that serves clock.wait)\n",
+        );
     }
     text.push_str(&format!(
         "  every parameter and result field is documented by the app itself: mandalactl describe {name}\n"
@@ -155,6 +157,8 @@ ARGUMENTS
   name=value     a parameter, typed as the command declares it: x=412 is a number, text=412 a string,
                  fit=true a boolean, mods=ctrl,shift a list (mods= is the empty list, \"hold none\")
   name:=<json>   a parameter sent as the JSON written, for anything else
+  paths          path=, to_file= and the like may be relative: they are made absolute against the
+                 current directory, since the app requires absolute paths and has no directory of its own
   --             ends flags: every word after it is a bare word, even one that looks like name=value
   Quote words with spaces or JSON; single quotes keep JSON intact.";
 
@@ -178,8 +182,12 @@ OUTPUT
 EXIT CODES
   0  success: the app answered ok:true (warnings do not change this)
   1  the app said no: ok:false, code and message on stderr
-  2  the app could not be talked to: not running, busy, timed out, closed, wrong protocol
-  3  bad command line: nothing was sent";
+  2  the app could not be reached, or the request did not go out whole: not running, busy,
+     refused, wrong protocol. Nothing ran, so repeating the command is safe
+  3  bad command line: nothing was sent
+  4  the request was sent and the invocation did not complete: no reply (timeout, the app
+     closed or is shutting down), or --wait-settled's wait failed after the command succeeded.
+     The command may have run: read the app's state before repeating one that changes it";
 
 const RAW_HELP: &str = "\
 mandalactl raw '<json request>'
@@ -218,7 +226,7 @@ mod tests {
             panic!("`{line}` is not an invocation");
         };
         let verb = verbs::lookup(&call.command).unwrap_or_else(|| panic!("`{line}`: no such verb"));
-        build_params(&Signature::of(verb), &tokenize(&call.words))
+        build_params(&Signature::of(verb), &tokenize(&call.words), None)
             .unwrap_or_else(|e| panic!("`{line}`: {e}"));
         if call.options.wait_settled {
             assert_eq!(
@@ -281,6 +289,7 @@ mod tests {
             "  1  ",
             "  2  ",
             "  3  ",
+            "  4  ",
         ] {
             assert!(text.contains(needle), "the overview never mentions {needle:?}");
         }

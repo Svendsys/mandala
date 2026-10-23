@@ -5,35 +5,40 @@
 //!
 //! **The exit code is the contract.** `0` — the app answered
 //! `ok:true`. `1` — it answered `ok:false` ("the server said no").
-//! `2` — it could not be talked to: not running, busy, silent, gone,
-//! or speaking another protocol. `3` — the command line was wrong and
-//! nothing was sent. An agent branches on these before it reads a word
-//! of output, and `2` in particular never means "you typed something
-//! wrong" — which is why a usage error is not `2`, where conventional
-//! parsers put it.
+//! `2` — it could not be reached, or the request did not go out whole:
+//! not running, busy, refused, or speaking another protocol — nothing
+//! can have run, so repeating is safe. `3` — the command line was wrong
+//! and nothing was sent. `4` — the request *did* go out and the
+//! invocation did not complete: no reply came, or the `--wait-settled`
+//! wait failed after a command that succeeded — it may have run (or,
+//! for the wait, it did), so a caller reads the app's state before
+//! repeating anything that changes it. An agent branches on these
+//! before it reads a word of output, which is why `2` never means "you
+//! typed something wrong" (that is `3`, where conventional parsers put
+//! `2`) and never means "this may have happened" (that is `4`).
 //!
 //! **Errors are `String`s, classified by the stage that made them**
 //! (CODE_CONVENTIONS §9 allows no error types): a failure while
-//! reading the command line is a `3`, one while reaching the app a `2`,
-//! and a reply with `ok:false` a `1` — no enum of causes is needed
-//! because the stage already says which.
+//! reading the command line is a `3`, one before the request left a
+//! `2`, one after it left a `4`, and a reply with `ok:false` a `1` — no
+//! enum of causes is needed because the stage already says which.
 //!
 //! All output goes through the writers in [`Io`], so a test reads
 //! exactly what a shell would have shown.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
 use crate::cli::{self, Invocation, Options, Parsed};
-use crate::client::Connection;
+use crate::client::{Connection, Exchange, Outcome};
 use crate::help;
 use crate::params::{build_params, tokenize, Signature, Token};
 use crate::render;
 use crate::verbs::{self, Effect, Render};
-use crate::wire::{self, ErrorBody, Reply, PROTOCOL, REQUEST_CAP};
+use crate::wire::{self, ErrorBody, Outgoing, Reply, PROTOCOL, REQUEST_CAP};
 
 /// How an invocation ended; [`Exit::code`] is the process exit status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,10 +47,14 @@ pub enum Exit {
     Success,
     /// The app answered `ok:false`.
     CommandError,
-    /// The app could not be reached or understood.
+    /// The app could not be reached or understood, and the request did
+    /// not go out whole: nothing ran.
     TransportError,
     /// The command line was wrong; nothing was sent.
     UsageError,
+    /// The request went out and the invocation did not complete: no
+    /// reply, or the settle wait failed after the command succeeded.
+    Unconfirmed,
 }
 
 impl Exit {
@@ -56,6 +65,7 @@ impl Exit {
             Exit::CommandError => 1,
             Exit::TransportError => 2,
             Exit::UsageError => 3,
+            Exit::Unconfirmed => 4,
         }
     }
 }
@@ -64,6 +74,9 @@ impl Exit {
 pub struct Io<'a> {
     pub out: &'a mut dyn Write,
     pub err: &'a mut dyn Write,
+    /// The shell's working directory, against which a relative path
+    /// argument is made absolute; `None` when it could not be read.
+    pub cwd: Option<&'a Path>,
     /// Read only by `raw -`.
     pub stdin: &'a mut dyn Read,
 }
@@ -130,7 +143,7 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
         command,
         words,
     } = invocation;
-    let prepared = match prepare(&command, &words, &options, io.stdin) {
+    let prepared = match prepare(&command, &words, &options, io.cwd, io.stdin) {
         Ok(prepared) => prepared,
         Err(why) => return usage(io, &why),
     };
@@ -159,14 +172,15 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
             Err(why) => return transport(io, &why),
         }
     }
-    let (frame, render) = match finish(prepared, &mut connection, &options) {
+    let (request, render) = match finish(prepared, &mut connection, io.cwd, &options) {
         Ok(Ok(done)) => done,
         Ok(Err(why)) => return usage(io, &why),
         Err(why) => return transport(io, &why),
     };
-    let exchange = match connection.exchange(&frame, options.timeout) {
-        Ok(exchange) => exchange,
-        Err(why) => return transport(io, &why),
+    let exchange = match connection.exchange(&request, options.timeout) {
+        Outcome::Answered(exchange) => exchange,
+        Outcome::NotSent(why) => return transport(io, &why),
+        Outcome::Unanswered(why) => return unconfirmed(io, &why),
     };
     if !report(io, &options, render, &exchange.reply, &exchange.line, None) {
         return Exit::CommandError;
@@ -174,10 +188,13 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
     if !options.wait_settled {
         return Exit::Success;
     }
-    let wait = settle_frame(connection.next_id(), options.timeout);
+    let wait = match settle_request(connection.next_id(), options.timeout) {
+        Ok(wait) => wait,
+        Err(why) => return unsettled(io, &why),
+    };
     let exchange = match connection.exchange(&wait, options.timeout + WAIT_GRACE) {
-        Ok(exchange) => exchange,
-        Err(why) => return transport(io, &why),
+        Outcome::Answered(exchange) => exchange,
+        Outcome::NotSent(why) | Outcome::Unanswered(why) => return unsettled(io, &why),
     };
     let settled = report(
         io,
@@ -190,20 +207,16 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
     if settled {
         Exit::Success
     } else {
-        Exit::CommandError
+        unsettled(io, "the wait for the app to settle failed (above)")
     }
 }
 
 /// Whether the app serves `clock.wait`, asked *before* the command goes
-/// out: a wait found missing after the command ran would exit `1` over a
-/// command that succeeded, and an agent branching on that code would
-/// retry a mutation that had already happened.
+/// out: a wait found missing after the command ran would leave a
+/// command that succeeded reported as failed, and a caller branching on
+/// that would repeat a mutation that had already happened.
 fn can_settle(connection: &mut Connection, timeout: Duration) -> Result<bool, String> {
-    let id = connection.next_id();
-    let mut params = Map::new();
-    params.insert("command".to_string(), Value::String("clock.wait".to_string()));
-    let request = wire::request_frame(&id, "describe", &params)?;
-    Ok(connection.exchange(&request, timeout)?.reply.ok)
+    Ok(describe_one(connection, "clock.wait", timeout)?.reply.ok)
 }
 
 /// Everything that needs no connection: the verb's arguments typed
@@ -212,6 +225,7 @@ fn prepare(
     command: &str,
     words: &[String],
     options: &Options,
+    cwd: Option<&Path>,
     stdin: &mut dyn Read,
 ) -> Result<Prepared, String> {
     if command == "raw" {
@@ -229,7 +243,7 @@ fn prepare(
     };
     Ok(Prepared::Typed {
         command: command.to_string(),
-        params: build_params(&Signature::of(verb), &tokens)?,
+        params: build_params(&Signature::of(verb), &tokens, cwd)?,
         render: verb.render,
     })
 }
@@ -249,6 +263,9 @@ fn refuse_wait_on_read_only(command: &str) -> Result<(), String> {
 }
 
 fn raw_frame(words: &[String], options: &Options, stdin: &mut dyn Read) -> Result<Prepared, String> {
+    // `--` ends flags for every command, `raw` included; the parser
+    // keeps it for the typed path's tokenizer, which raw never runs.
+    let words = words.strip_prefix(&["--".to_string()]).unwrap_or(words);
     let [source] = words else {
         return Err(
             "`raw` takes exactly one argument, the JSON request (quote it as one word), or `-` to read stdin"
@@ -288,15 +305,16 @@ fn raw_frame(words: &[String], options: &Options, stdin: &mut dyn Read) -> Resul
     Ok(Prepared::Raw { frame, render })
 }
 
-/// The request frame, once the connection can supply an id — and, for
-/// a command the table lacks, the app's `describe` of it to type the
-/// arguments with. The outer `Err` is a transport failure, the inner
-/// a usage error.
+/// The request, once the connection can supply an id — and, for a
+/// command the table lacks, the app's `describe` of it to type the
+/// arguments with. The outer `Err` is a transport failure, the inner a
+/// usage error.
 fn finish(
     prepared: Prepared,
     connection: &mut Connection,
+    cwd: Option<&Path>,
     options: &Options,
-) -> Result<Result<(Value, Render), String>, String> {
+) -> Result<Result<(Outgoing, Render), String>, String> {
     let (frame, render) = match prepared {
         Prepared::Typed {
             command,
@@ -315,25 +333,23 @@ fn finish(
         Prepared::Undescribed { command, tokens } => {
             let signature = described(connection, &command, options.timeout)?;
             let id = connection.next_id();
-            let frame = build_params(&signature, &tokens)
+            let frame = build_params(&signature, &tokens, cwd)
                 .and_then(|params| wire::request_frame(&id, &command, &params));
             (frame, Render::Flat)
         }
     };
-    // The cap is checked here, on the frame that will be sent, so a
-    // request the server would refuse is a usage error and never goes.
-    Ok(frame.and_then(|frame| wire::frame_line(&frame).map(|_| (frame, render))))
+    // Serialized once, here, with the server's line cap checked on the
+    // way: a request it would refuse is a usage error and never goes.
+    Ok(frame
+        .and_then(|frame| wire::outgoing(&frame))
+        .map(|request| (request, render)))
 }
 
 /// What the app says `command` takes, or [`Signature::unknown`] when
 /// it says nothing — so a misspelled command reaches the server and is
 /// answered with the server's own `unknown_cmd` and its suggestion.
 fn described(connection: &mut Connection, command: &str, timeout: Duration) -> Result<Signature, String> {
-    let id = connection.next_id();
-    let mut params = Map::new();
-    params.insert("command".to_string(), Value::String(command.to_string()));
-    let request = wire::request_frame(&id, "describe", &params)?;
-    let exchange = connection.exchange(&request, timeout)?;
+    let exchange = describe_one(connection, command, timeout)?;
     let entry = exchange
         .reply
         .result
@@ -347,10 +363,25 @@ fn described(connection: &mut Connection, command: &str, timeout: Duration) -> R
     }
 }
 
+/// `describe command=<name>`: the one place that request is built, so
+/// the capability check and the argument typing cannot disagree about
+/// how the app is asked. A read-only exchange, so a failure at either
+/// stage is the same transport fault.
+fn describe_one(connection: &mut Connection, name: &str, timeout: Duration) -> Result<Exchange, String> {
+    let id = connection.next_id();
+    let mut params = Map::new();
+    params.insert("command".to_string(), Value::String(name.to_string()));
+    let request = wire::outgoing(&wire::request_frame(&id, "describe", &params)?)?;
+    match connection.exchange(&request, timeout) {
+        Outcome::Answered(exchange) => Ok(exchange),
+        Outcome::NotSent(why) | Outcome::Unanswered(why) => Err(why),
+    }
+}
+
 /// `clock.wait until=settled`, patient for as long as the client is.
-fn settle_frame(id: Value, timeout: Duration) -> Value {
+fn settle_request(id: Value, timeout: Duration) -> Result<Outgoing, String> {
     let wait_ms = timeout.as_millis().clamp(1, WAIT_MAX_MS);
-    json!({"id": id, "cmd": "clock.wait", "until": "settled", "timeout_ms": wait_ms as u64})
+    wire::outgoing(&json!({"id": id, "cmd": "clock.wait", "until": "settled", "timeout_ms": wait_ms as u64}))
 }
 
 fn socket_path(options: &Options, env_ipc: Option<&str>) -> Result<PathBuf, String> {
@@ -411,6 +442,34 @@ fn usage(io: &mut Io<'_>, why: &str) -> Exit {
 fn transport(io: &mut Io<'_>, why: &str) -> Exit {
     emit(io.err, &format!("mandalactl: {why}\n"));
     Exit::TransportError
+}
+
+/// The request went out whole and was not answered. Said in so many
+/// words, because the one thing the caller must not do is assume it did
+/// not run.
+fn unconfirmed(io: &mut Io<'_>, why: &str) -> Exit {
+    emit(
+        io.err,
+        &format!(
+            "mandalactl: {why}\nThe request was sent, so it may have run. Read the app's state (a query) before \
+             repeating a command that changes it.\n"
+        ),
+    );
+    Exit::Unconfirmed
+}
+
+/// The command itself succeeded and the wait for the app to settle
+/// did not. The opposite fact from [`unconfirmed`], and said the
+/// opposite way: the command is done, and must not be repeated.
+fn unsettled(io: &mut Io<'_>, why: &str) -> Exit {
+    emit(
+        io.err,
+        &format!(
+            "mandalactl: {why}\nThe command itself succeeded (its result is above); do not repeat it. \
+             Poll a read-only command (query.animations, say) until the app looks settled.\n"
+        ),
+    );
+    Exit::Unconfirmed
 }
 
 /// Write, ignoring failure: a reader that went away (`| head`) is not

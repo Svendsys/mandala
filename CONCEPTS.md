@@ -4036,9 +4036,15 @@ string; a command newer than the build is typed from the app's own
 issues the command and then `clock.wait until=settled`. Every wait has a
 deadline and a message naming what to suspect, and the exit code is the
 contract: `0` answered, `1` the app said no, `2` the app could not be
-reached, `3` a bad command line. A refusal for `busy` (the single-controller
+reached or the request did not go out whole (nothing ran), `3` a bad command
+line, `4` the request was sent and no answer was read (it may have run: read
+the app's state before repeating it). `--wait-settled` first checks that the
+app serves `clock.wait`, so a missing wait is reported before the command
+runs rather than after it succeeded; a wait that fails once the command
+succeeded is a `4` that says so. A refusal for `busy` (the single-controller
 slot) is retried briefly, because two invocations in a row can find the
-previous controller not yet noticed as gone.
+previous controller not yet noticed as gone; a refusal for any other reason
+is reported as it is.
 
 `verbs::VERBS` is the table of commands the build knows, for `--help` and for
 bare (positional) arguments. The app crate's tests hold it against the IPC

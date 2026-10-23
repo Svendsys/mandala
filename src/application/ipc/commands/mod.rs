@@ -191,6 +191,28 @@ mod tests {
         assert_eq!(mandalactl::FRAME_CAP, OUTBOUND_FRAME_CAP);
     }
 
+    /// `mandalactl` makes a relative path argument absolute, so exactly
+    /// the parameters the registry documents as an absolute path are
+    /// flagged as paths in its table — no more (a text argument that
+    /// happens to look like a path must stay itself) and no fewer (the
+    /// shell user's `capture.screenshot after.png` must not be refused).
+    #[test]
+    fn test_mandalactl_flags_exactly_the_parameters_the_registry_documents_as_absolute_paths() {
+        for verb in mandalactl::verbs::VERBS {
+            let (_, command) = crate::application::ipc::registry::lookup(verb.name).expect("registered");
+            for param in command.params {
+                let documented = param.doc.starts_with("Absolute path");
+                let flagged = verb.params.iter().any(|p| p.name == param.name && p.path);
+                assert_eq!(
+                    flagged, documented,
+                    "`{}` parameter `{}`: documented as an absolute path = {documented}, flagged in \
+                     crates/mandalactl/src/verbs.rs = {flagged}",
+                    verb.name, param.name
+                );
+            }
+        }
+    }
+
     /// A verb that prints a result field as bare lines names a field its
     /// command really returns; `Describe` rendering belongs to
     /// `describe` alone.
