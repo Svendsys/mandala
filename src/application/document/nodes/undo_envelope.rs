@@ -311,7 +311,7 @@ impl MindMapDocument {
                 before_selection,
             },
         });
-        self.dirty = true;
+        self.mark_dirty();
         self.run_node_edit_tail(node_id, tail, canvas_default.as_ref());
         Some(committed)
     }
@@ -379,7 +379,7 @@ impl MindMapDocument {
             before_position,
             before_size,
         });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 

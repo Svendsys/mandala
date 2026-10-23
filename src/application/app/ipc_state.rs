@@ -75,7 +75,7 @@ impl ResizeTarget {
 impl InteractionMode {
     /// The mode as `query.mode` reports it: `kind` is the variant's
     /// name, with the variant's ids beside it. Lossless.
-    pub(super) fn to_ipc_json(&self) -> Value {
+    pub(in crate::application) fn to_ipc_json(&self) -> Value {
         match self {
             InteractionMode::Default => json!({ "kind": "Default" }),
             InteractionMode::Reparent { sources } => json!({ "kind": "Reparent", "sources": sources }),

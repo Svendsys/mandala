@@ -22,6 +22,8 @@ use baumhard::mindmap::tree_builder::{
 
 use crate::application::source_tier::SourceTier;
 
+use revision::Revision;
+
 pub mod animations;
 mod custom;
 pub(in crate::application) mod defaults;
@@ -38,6 +40,7 @@ mod ipc_state;
 pub mod mutations;
 pub mod mutations_loader;
 mod nodes;
+mod revision;
 mod topology;
 mod types;
 mod undo;
@@ -62,6 +65,8 @@ mod tests_nodes;
 mod tests_reparent;
 #[cfg(test)]
 mod tests_resize;
+#[cfg(test)]
+mod tests_revision;
 #[cfg(test)]
 mod tests_selection;
 
@@ -113,6 +118,10 @@ pub use baumhard::mindmap::tree_builder::InteractionModeOverrides;
 pub(crate) use ipc_state::{f32_json, DocumentField, PointerMiss};
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
+// Named outside `document/` only by the native funnels and the IPC
+// event layer.
+#[cfg(not(target_arch = "wasm32"))]
+pub use revision::ChangeSource;
 pub use undo_action::UndoAction;
 
 /// Owns the MindMap data model and provides scene-building for the Renderer.
@@ -120,6 +129,12 @@ pub struct MindMapDocument {
     pub mindmap: MindMap,
     pub file_path: Option<String>,
     pub dirty: bool,
+    /// Committed model changes, the generation and the funnel that
+    /// drove the latest one (`revision.rs`). Written only through
+    /// [`Self::mark_dirty`], [`Self::advance_revision`] and
+    /// [`Self::succeed`], so no setter can change the model without
+    /// the revision knowing.
+    revision: Revision,
     pub selection: SelectionState,
     pub undo_stack: Vec<UndoAction>,
     /// Registry of all available custom mutations (app + user + map +
@@ -686,6 +701,7 @@ impl MindMapDocument {
             mindmap,
             file_path,
             dirty: false,
+            revision: Revision::default(),
             selection: SelectionState::None,
             undo_stack: Vec::new(),
             mutation_registry: HashMap::new(),

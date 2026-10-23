@@ -22,6 +22,7 @@ pub const WORKFLOW: &[&str] = &[
     "mandalactl input.click_node 1.2",
     "mandalactl input.pending",
     "mandalactl capture.screenshot /tmp/after.png fit=true",
+    "mandalactl events.subscribe document_changed --count 1",
 ];
 
 /// Argument spellings the overview teaches, one per line. Also parsed
@@ -139,7 +140,7 @@ const HEAD: &str = "\
 mandalactl - drive a running Mandala from the shell, over its --ipc socket
 
 USAGE
-  mandalactl [--ipc <socket>] [--json] [--wait-settled] [--timeout <secs>] <command> [args...]
+  mandalactl [--ipc <socket>] [--json] [--wait-settled] [--timeout <secs>] [--count <n>] <command> [args...]
   mandalactl raw '<json request>'     send one request frame as written ('raw -' reads stdin)
   mandalactl help [<command>]         this text, or one command's parameters
 
@@ -171,6 +172,8 @@ FLAGS (anywhere before a bare --)
                     read-only commands. An app without clock.wait is detected first: exit 1, and the
                     command is not sent.
   --timeout <secs>  patience for the connection and for each reply (default 15; the wait gets the same)
+  --count <n>       events.subscribe only: stop after printing n events (else it runs until the app exits
+                    or stdout closes; one line per event, the frame as received with --json)
   --force           drive an app whose protocol differs from this build's
   --help, --version
 
@@ -206,7 +209,7 @@ const RAW_EXAMPLE: &str = "  mandalactl raw - <<'JSON'
   JSON";
 
 const TAIL: &str = "
-A command the app serves but this list lacks (the clock, events and recording families, for one) is
+A command the app serves but this list lacks (the clock and recording families, for one) is
 called by name with name=value arguments: mandalactl clock.step ms=100. `mandalactl describe` shows
 what the connected app has.";
 

@@ -270,16 +270,16 @@ fn run_macro(call: &mut Call<'_>) -> Reply {
                 }
                 Some(_) => {}
             }
-            let Some(app) = call.drive() else {
+            let Some((app, session)) = call.drive_with_session() else {
                 return call.no_document();
             };
-            app.run_macro(&id)
+            app.run_macro(&id, &mut |now| session.observe_step(&now))
         }
         Run::Steps(steps) => {
-            let Some(app) = call.drive() else {
+            let Some((app, session)) = call.drive_with_session() else {
                 return call.no_document();
             };
-            app.run_macro_steps(&steps)
+            app.run_macro_steps(&steps, &mut |now| session.observe_step(&now))
         }
     };
     call.ok(json!({ "ran": ran }))

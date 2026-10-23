@@ -341,6 +341,7 @@ mod tests {
 
     use crate::application::console::LineOutcome;
     use crate::application::document::MindMapDocument;
+    use crate::application::ipc::events::Observed;
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
     use crate::application::ipc::space::Point;
     use crate::application::ipc::{CommandTarget, SceneView, ShellState};
@@ -399,10 +400,10 @@ mod tests {
         fn has_macro(&self, _: &str) -> bool {
             panic!("a capture must not look up a macro");
         }
-        fn run_macro(&mut self, _: &str) -> bool {
+        fn run_macro(&mut self, _: &str, _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("a capture must not run a macro");
         }
-        fn run_macro_steps(&mut self, _: &[MacroStep]) -> bool {
+        fn run_macro_steps(&mut self, _: &[MacroStep], _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("a capture must not run macro steps");
         }
         fn changed_view(&self) -> bool {

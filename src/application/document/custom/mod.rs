@@ -25,6 +25,7 @@ use baumhard::mindmap::custom_mutation::{
 use baumhard::mindmap::model::MindNode;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
+use super::revision::ChangeSource;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
 use crate::application::source_tier::SourceTier;
@@ -171,6 +172,19 @@ impl MindMapDocument {
         node_id: &str,
         tree: Option<&mut MindMapTree>,
     ) {
+        self.with_source(ChangeSource::Mutation, |doc| {
+            doc.apply_custom_mutation_body(custom, node_id, tree);
+        });
+    }
+
+    /// The body of [`Self::apply_custom_mutation`], run with the
+    /// document's change source declared.
+    fn apply_custom_mutation_body(
+        &mut self,
+        custom: &CustomMutation,
+        node_id: &str,
+        tree: Option<&mut MindMapTree>,
+    ) {
         // For toggle behavior, check if already active and reverse if so.
         if custom.behavior == MutationBehavior::Toggle {
             let key = (node_id.to_string(), custom.id.clone());
@@ -187,7 +201,7 @@ impl MindMapDocument {
                 // a persistent tree across events must explicitly
                 // call `build_tree()` after a toggle-off.
                 self.active_toggles.retain(|k| k != &key);
-                self.dirty = true;
+                self.mark_dirty();
                 return;
             }
             // Not yet active (the `contains` above returned false), so
@@ -315,7 +329,7 @@ impl MindMapDocument {
             self.undo_stack.push(UndoAction::CustomMutation {
                 node_snapshots: snapshots,
             });
-            self.dirty = true;
+            self.mark_dirty();
         }
     }
 
@@ -430,6 +444,14 @@ impl MindMapDocument {
     /// pushed capturing the pre-action canvas, and the document is marked
     /// dirty. Returns true if the canvas was modified.
     pub fn apply_document_actions(&mut self, custom: &CustomMutation) -> bool {
+        self.with_source(ChangeSource::Mutation, |doc| {
+            doc.apply_document_actions_body(custom)
+        })
+    }
+
+    /// The body of [`Self::apply_document_actions`], run with the
+    /// document's change source declared.
+    fn apply_document_actions_body(&mut self, custom: &CustomMutation) -> bool {
         if custom.document_actions.is_empty() {
             return false;
         }
@@ -473,7 +495,7 @@ impl MindMapDocument {
             self.undo_stack.push(UndoAction::CanvasSnapshot {
                 canvas: Box::new(snapshot),
             });
-            self.dirty = true;
+            self.mark_dirty();
         }
         changed
     }

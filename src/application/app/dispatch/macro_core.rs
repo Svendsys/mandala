@@ -78,6 +78,13 @@ pub(in crate::application::app) trait MacroDispatchTarget {
     /// Used to short-circuit `MacroTarget::NodeId` against typo'd
     /// ids before hitting `apply_custom_mutation`'s own warn.
     fn has_node(&self, node_id: &str) -> bool;
+
+    /// A step has run to completion (a skipped or gate-rejected one
+    /// has not). The seam an observer hangs between steps on: the IPC
+    /// `verbose` event level reports one change per step instead of
+    /// one per macro. Nothing else needs it, so the default does
+    /// nothing, and the WASM target keeps it.
+    fn step_finished(&mut self) {}
 }
 
 /// Run a macro by id against a [`MacroDispatchTarget`]. Returns
@@ -222,6 +229,7 @@ pub(in crate::application::app) fn run_macro_steps<T: MacroDispatchTarget>(
                 }
             }
         }
+        target.step_finished();
     }
     any_ran
 }

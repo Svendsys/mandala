@@ -11,6 +11,7 @@
 use serde_json::{json, Value};
 
 use crate::application::ipc::envelope::{Reply, PROTOCOL_VERSION};
+use crate::application::ipc::events::{Class, TRANSPORT_EVENTS};
 use crate::application::ipc::registry::{
     self, Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, BOOTSTRAP_FAMILY,
 };
@@ -66,21 +67,18 @@ pub(super) const FAMILY: Family = Family {
     ],
 };
 
-/// Every event class this build can send, with what it means.
-const EVENTS: &[(&str, &str)] = &[
-    (
-        "connection_rejected",
-        "Sent to a refused connection instead of `hello` while another controller is attached; then closed.",
-    ),
-    (
-        "hello",
-        "The greeting on accept: protocol, app, version, pid, and the loaded map's path (null before the first load).",
-    ),
-    (
-        "shutdown",
-        "Best-effort notice, before the socket closes, that the app is exiting.",
-    ),
-];
+/// Every event class this build can send, with what it means, in name
+/// order: the transport-level three and the subscribable
+/// [`Class`]es.
+fn events() -> Vec<(&'static str, &'static str)> {
+    let mut events: Vec<(&'static str, &'static str)> = TRANSPORT_EVENTS
+        .iter()
+        .copied()
+        .chain(Class::ALL.iter().map(|class| (class.name(), class.doc())))
+        .collect();
+    events.sort_unstable_by_key(|(name, _)| *name);
+    events
+}
 
 fn ping(call: &mut Call<'_>) -> Reply {
     call.ok(json!({ "now_ms": crate::application::common::now_ms() }))
@@ -104,8 +102,8 @@ fn describe(call: &mut Call<'_>) -> Reply {
         .into_iter()
         .map(|(family, command)| command.describe(family))
         .collect();
-    let events: Vec<Value> = EVENTS
-        .iter()
+    let events: Vec<Value> = events()
+        .into_iter()
         .map(|(name, doc)| json!({ "name": name, "doc": doc }))
         .collect();
     call.ok(json!({
@@ -165,7 +163,7 @@ mod tests {
                 command.result.len()
             );
         }
-        assert_eq!(result["events"].as_array().expect("events").len(), EVENTS.len());
+        assert_eq!(result["events"].as_array().expect("events").len(), events().len());
     }
 
     #[test]
@@ -192,7 +190,7 @@ mod tests {
         assert_eq!(commands[0]["family"], json!("act"));
         assert_eq!(
             reply["result"]["events"].as_array().expect("events").len(),
-            EVENTS.len()
+            events().len()
         );
     }
 
@@ -219,7 +217,7 @@ mod tests {
             "## `events` — event stream + revision (IPC-14)",
             "Reserved event classes",
         );
-        for (event, _) in EVENTS {
+        for (event, _) in events() {
             assert!(
                 names_token(&reserved, event),
                 "event `{event}` is not a reserved class"

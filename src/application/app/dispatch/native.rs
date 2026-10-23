@@ -10,7 +10,7 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use crate::application::document::{EdgeRef, SelectionState, UndoAction};
+use crate::application::document::{ChangeSource, EdgeRef, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
 use super::super::click::rebuild_all_with_mode;
@@ -215,6 +215,38 @@ fn take_rubber_band_for_target_picker(
 /// `WASM_CONVERGENCE.md` Track C records the architecture; calling
 /// `dispatch_compatible` from this fn is the seam.
 pub(in crate::application::app) fn dispatch_action(
+    action: Action,
+    ctx: &mut InputHandlerContext<'_>,
+    hit: Option<&DispatchHit>,
+) -> DispatchOutcome {
+    // The funnel the document revision's change source names
+    // (`document/revision.rs`).
+    driven_by(ctx, ChangeSource::Action, |ctx| {
+        dispatch_action_arms(action, ctx, hit)
+    })
+}
+
+/// Run `body` with `source` declared on the document `ctx` holds, and
+/// hand driving back afterwards. The one place a handler-context
+/// funnel enters and leaves a source, so no early return in `body` can
+/// skip the exit. A document `body` swaps out takes the restore too,
+/// which only hands its driver back to what it was.
+fn driven_by<R>(
+    ctx: &mut InputHandlerContext<'_>,
+    source: ChangeSource,
+    body: impl FnOnce(&mut InputHandlerContext<'_>) -> R,
+) -> R {
+    let displaced = ctx.document.as_mut().map(|doc| doc.enter_source(source));
+    let result = body(ctx);
+    if let (Some(displaced), Some(doc)) = (displaced, ctx.document.as_mut()) {
+        doc.leave_source(displaced);
+    }
+    result
+}
+
+/// The body of [`dispatch_action`], run with the document's change
+/// source already declared.
+fn dispatch_action_arms(
     action: Action,
     ctx: &mut InputHandlerContext<'_>,
     hit: Option<&DispatchHit>,
@@ -470,7 +502,7 @@ pub(in crate::application::app) fn dispatch_action(
                         entries: undo_data.entries,
                         old_edges: undo_data.old_edges,
                     });
-                    doc.dirty = true;
+                    doc.mark_dirty();
                 }
                 // Full rebuild regardless: tree structure changed
                 // (or even if no-op, mode-exit must clear orange/
@@ -512,7 +544,7 @@ pub(in crate::application::app) fn dispatch_action(
                             target_id.to_string(),
                             "cross_link",
                         ));
-                        doc.dirty = true;
+                        doc.mark_dirty();
                     }
                 }
                 rebuild_all(
@@ -996,37 +1028,52 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
 /// it into two macros.
 ///
 /// Returns `true` if any step ran successfully.
-pub(in crate::application::app) fn dispatch_macro(macro_id: &str, ctx: &mut InputHandlerContext<'_>) -> bool {
+///
+/// `after_step`, when given, is called with the app as it stands
+/// after each step that ran (see [`MacroStepObserver`]).
+pub(in crate::application::app) fn dispatch_macro(
+    macro_id: &str,
+    ctx: &mut InputHandlerContext<'_>,
+    after_step: Option<MacroStepObserver<'_>>,
+) -> bool {
     // Body lifted to `dispatch_macro_core` (cross-platform); this
     // shim wraps `ctx` in a `NativeMacroDispatchTarget` so the
     // native dispatch funnel calls the same step loop the WASM
     // dispatcher uses. The privilege gate is single-sourced there.
-    let mut target = NativeMacroDispatchTarget { ctx };
+    let mut target = NativeMacroDispatchTarget { ctx, after_step };
     super::macro_core::dispatch_macro(macro_id, &mut target)
 }
 
 /// Run an anonymous step sequence through the same gated step loop
 /// [`dispatch_macro`] runs a registered macro through, as a macro
 /// from tier `source`. `label` names the sequence in diagnostics.
+/// `after_step` is as for [`dispatch_macro`].
 pub(in crate::application::app) fn run_macro_steps(
     label: &str,
     steps: &[crate::application::macros::MacroStep],
     source: crate::application::source_tier::SourceTier,
     ctx: &mut InputHandlerContext<'_>,
+    after_step: Option<MacroStepObserver<'_>>,
 ) -> bool {
-    let mut target = NativeMacroDispatchTarget { ctx };
+    let mut target = NativeMacroDispatchTarget { ctx, after_step };
     super::macro_core::run_macro_steps(label, steps, source, &mut target)
 }
+
+/// An observer called between macro steps, handed the handler
+/// context as it stands after the step. It reads the context and
+/// changes nothing.
+pub(in crate::application::app) type MacroStepObserver<'o> = &'o mut dyn FnMut(&InputHandlerContext<'_>);
 
 /// Native impl of [`super::macro_core::MacroDispatchTarget`].
 /// Wraps `&mut InputHandlerContext` and forwards each operation to
 /// the existing native helpers (`dispatch_action`,
 /// `apply_keybind_custom_mutation`, `execute_console_line`).
-struct NativeMacroDispatchTarget<'a, 'b> {
+struct NativeMacroDispatchTarget<'a, 'b, 'o> {
     ctx: &'a mut InputHandlerContext<'b>,
+    after_step: Option<MacroStepObserver<'o>>,
 }
 
-impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'a, 'b> {
+impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'a, 'b, 'o> {
     fn registry(&self) -> &crate::application::macros::MacroRegistry {
         self.ctx.macros
     }
@@ -1112,6 +1159,12 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
             .as_ref()
             .map(|d| d.mindmap.nodes.contains_key(node_id))
             .unwrap_or(false)
+    }
+
+    fn step_finished(&mut self) {
+        if let Some(observe) = self.after_step.as_mut() {
+            observe(self.ctx);
+        }
     }
 }
 

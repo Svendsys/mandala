@@ -39,6 +39,9 @@ pub struct Options {
     pub timeout: Duration,
     /// Drive a server whose protocol this build does not speak.
     pub force: bool,
+    /// `--count`: stop watching after this many events. Only
+    /// `events.subscribe` watches; anywhere else it is refused.
+    pub count: Option<u64>,
 }
 
 impl Default for Options {
@@ -49,6 +52,7 @@ impl Default for Options {
             wait_settled: false,
             timeout: DEFAULT_TIMEOUT,
             force: false,
+            count: None,
         }
     }
 }
@@ -109,12 +113,13 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
                 "json" => options.json = flag_only("--json", inline)?,
                 "wait-settled" => options.wait_settled = flag_only("--wait-settled", inline)?,
                 "force" => options.force = flag_only("--force", inline)?,
+                "count" => options.count = Some(parse_count(&value_of("--count", inline, &mut args)?)?),
                 "help" => help = flag_only("--help", inline)?,
                 "version" => version = flag_only("--version", inline)?,
                 _ => {
                     return Err(format!(
-                        "unknown flag `--{name}`. Flags: --ipc, --json, --wait-settled, --timeout, --force, --help, \
-                         --version. To send a value that starts with `--`, put it after a bare `--`"
+                        "unknown flag `--{name}`. Flags: --ipc, --json, --wait-settled, --timeout, --count, --force, \
+                         --help, --version. To send a value that starts with `--`, put it after a bare `--`"
                     ))
                 }
             }
@@ -161,6 +166,15 @@ fn flag_only(flag: &str, inline: Option<String>) -> Result<bool, String> {
     match inline {
         None => Ok(true),
         Some(_) => Err(format!("`{flag}` takes no value")),
+    }
+}
+
+fn parse_count(text: &str) -> Result<u64, String> {
+    match text.parse::<u64>() {
+        Ok(count) if count >= 1 => Ok(count),
+        _ => Err(format!(
+            "`--count` takes a whole number of events, 1 or more, got `{text}`"
+        )),
     }
 }
 
@@ -247,6 +261,22 @@ mod tests {
             err.contains("--wait-settle") && err.contains("--wait-settled"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn test_count_is_a_positive_whole_number() {
+        assert_eq!(
+            invocation(&["events.subscribe", "x", "--count", "3"])
+                .options
+                .count,
+            Some(3)
+        );
+        assert_eq!(invocation(&["ping"]).options.count, None);
+        for bad in ["0", "-1", "1.5", "many", ""] {
+            let err = parse(&args(&["events.subscribe", "--count", bad])).expect_err("not a count");
+            assert!(err.contains("--count"), "{bad}: {err}");
+        }
+        assert!(parse(&args(&["events.subscribe", "--count"])).is_err());
     }
 
     #[test]

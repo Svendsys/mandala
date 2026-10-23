@@ -25,6 +25,7 @@ use crate::application::capture::plan::CaptureRequest;
 use crate::application::capture::{CaptureError, Destination};
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
+use crate::application::ipc::events::Observed;
 use crate::application::ipc::injected::{
     resolve_command, Delivery, InputEvent, Overloaded, Pacing, Sample, Surface,
 };
@@ -121,6 +122,17 @@ pub(super) fn surface_of(renderer: &Renderer, point: Point) -> Surface {
 }
 
 impl InitState {
+    /// The app as the IPC event stream reads it
+    /// ([`Observed`]): the document, the camera and the interaction
+    /// mode.
+    pub(super) fn observed(&self) -> Observed<'_> {
+        Observed {
+            document: self.document.as_ref(),
+            camera: self.renderer.camera(),
+            mode: &self.interaction_mode,
+        }
+    }
+
     /// Deliver one injected-input sample to the `on_*` entry point
     /// its winit event reaches, with the sample's modifiers held for
     /// that one event (`ipc::injected::Sample`). Returns whether the
@@ -175,18 +187,32 @@ impl CommandTarget for IpcCommandTarget<'_> {
         self.init.macros.get_with_source(macro_id).is_some()
     }
 
-    fn run_macro(&mut self, macro_id: &str) -> bool {
-        let ran = dispatch::dispatch_macro(macro_id, &mut self.ctx());
+    fn run_macro(&mut self, macro_id: &str, after_step: &mut dyn FnMut(Observed<'_>)) -> bool {
+        let ran = dispatch::dispatch_macro(
+            macro_id,
+            &mut self.ctx(),
+            Some(&mut |ctx: &InputHandlerContext<'_>| after_step(ctx.observed())),
+        );
         self.changed_view |= ran;
         ran
     }
 
-    fn run_macro_steps(&mut self, steps: &[MacroStep]) -> bool {
+    fn run_macro_steps(&mut self, steps: &[MacroStep], after_step: &mut dyn FnMut(Observed<'_>)) -> bool {
         // `User`: the steps were authored by the IPC client, and IPC
         // executes at the User tier (format/ipc.md §Trust model).
-        let ran = dispatch::run_macro_steps(IPC_STEPS_LABEL, steps, SourceTier::User, &mut self.ctx());
+        let ran = dispatch::run_macro_steps(
+            IPC_STEPS_LABEL,
+            steps,
+            SourceTier::User,
+            &mut self.ctx(),
+            Some(&mut |ctx: &InputHandlerContext<'_>| after_step(ctx.observed())),
+        );
         self.changed_view |= ran;
         ran
+    }
+
+    fn observed(&self) -> Option<Observed<'_>> {
+        Some(self.init.observed())
     }
 
     fn changed_view(&self) -> bool {

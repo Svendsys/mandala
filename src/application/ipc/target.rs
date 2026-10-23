@@ -32,6 +32,7 @@ use crate::application::scene_host::AppScene;
 use crate::application::capture::plan::CaptureRequest;
 use crate::application::capture::{CaptureError, CaptureOutcome, Destination};
 
+use super::events::Observed;
 use super::injected::{Overloaded, Pacing, Sample};
 use super::space::Point;
 
@@ -103,14 +104,16 @@ pub(crate) trait CommandTarget {
 
     /// Run a registered macro through `dispatch_macro`, under the
     /// tier its loader pinned. Returns the dispatcher's
-    /// any-step-executed flag.
-    fn run_macro(&mut self, macro_id: &str) -> bool;
+    /// any-step-executed flag. `after_step` is handed the app as it
+    /// stands after each step that ran, which is what a `verbose`
+    /// event subscription reports per step.
+    fn run_macro(&mut self, macro_id: &str, after_step: &mut dyn FnMut(Observed<'_>)) -> bool;
 
     /// Run an anonymous step sequence through the same gated step
     /// loop, at the `User` tier: the steps were authored by the IPC
     /// client, and IPC executes as `User` (`format/ipc.md` §Trust
     /// model). Returns the any-step-executed flag.
-    fn run_macro_steps(&mut self, steps: &[MacroStep]) -> bool;
+    fn run_macro_steps(&mut self, steps: &[MacroStep], after_step: &mut dyn FnMut(Observed<'_>)) -> bool;
 
     /// Whether anything run through this target so far may have
     /// changed what the window draws. The executor reads it after the
@@ -120,6 +123,15 @@ pub(crate) trait CommandTarget {
     /// implementation answers from each funnel's own outcome, the only
     /// place that knows.
     fn changed_view(&self) -> bool;
+
+    /// The app as the event stream reads it: the document, the camera
+    /// and the interaction mode, read-only. `None` only for a target
+    /// with nothing to observe. Observing changes nothing, so a
+    /// command that only reads still costs no frame
+    /// ([`Self::changed_view`] is untouched).
+    fn observed(&self) -> Option<Observed<'_>> {
+        None
+    }
 
     /// The loaded document, **read-only**. `None` when the app has no
     /// document (the initial load failed). The read half of the

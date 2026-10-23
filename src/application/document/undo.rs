@@ -5,6 +5,7 @@
 //! that pushed it. Each variant of `UndoAction` has a matching
 //! branch here and nowhere else.
 
+use super::revision::ChangeSource;
 use super::types::SelectionState;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
@@ -175,6 +176,9 @@ impl MindMapDocument {
                     }
                 }
             }
+            // Undo mutates the model without dirtying it, so it
+            // advances the revision itself (`revision.rs`).
+            self.with_source(ChangeSource::Undo, Self::advance_revision);
             true
         } else {
             false

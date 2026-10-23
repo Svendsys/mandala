@@ -104,7 +104,7 @@ impl MindMapDocument {
             .edges
             .retain(|e| e.from_id != node_id && e.to_id != node_id);
 
-        self.dirty = true;
+        self.mark_dirty();
         Some(UndoAction::DeleteNode {
             node,
             removed_edges,
@@ -229,7 +229,7 @@ impl MindMapDocument {
             node_id: new_id.clone(),
         });
         self.selection = SelectionState::Single(new_id.clone());
-        self.dirty = true;
+        self.mark_dirty();
         new_id
     }
 
@@ -252,7 +252,7 @@ impl MindMapDocument {
             entries: undo_data.entries,
             old_edges: undo_data.old_edges,
         });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 
@@ -301,7 +301,7 @@ impl MindMapDocument {
                 if let Some((index, edge)) = self.remove_edge(&edge_ref) {
                     self.undo_stack.push(UndoAction::DeleteEdge { index, edge });
                     self.selection = SelectionState::None;
-                    self.dirty = true;
+                    self.mark_dirty();
                     return true;
                 }
             }

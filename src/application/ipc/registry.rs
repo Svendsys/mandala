@@ -33,6 +33,7 @@ use baumhard::util::log::capture::{capture, Captured, CAPTURE_LIMIT};
 
 use super::commands::FAMILIES;
 use super::envelope::{code, warning, IpcRequest, Reply, Warning};
+use super::events::{Driver, Revisions, Session};
 use super::target::CommandTarget;
 use super::Executed;
 
@@ -249,6 +250,9 @@ pub(crate) struct Call<'a> {
     request: &'a IpcRequest,
     /// `None` before the window, and with it the document, exists.
     target: Option<&'a mut dyn CommandTarget>,
+    /// The connection's event state: the revision counters, the
+    /// subscriptions and the events not yet delivered.
+    session: &'a mut Session,
 }
 
 impl<'a> Call<'a> {
@@ -277,6 +281,32 @@ impl<'a> Call<'a> {
     /// The app, read-only.
     pub(crate) fn observe(&self) -> Option<&dyn CommandTarget> {
         self.target.as_deref()
+    }
+
+    /// The app and the event session together, for a command that
+    /// drives the app and reports into the session as it goes (a
+    /// macro's per-step events). Split here because the two are
+    /// borrowed through different fields.
+    pub(crate) fn drive_with_session(&mut self) -> Option<(&mut dyn CommandTarget, &mut Session)> {
+        let target = self
+            .target
+            .as_deref_mut()
+            .map(|target| target as &mut dyn CommandTarget)?;
+        Some((target, &mut *self.session))
+    }
+
+    /// The connection's event session.
+    pub(crate) fn session(&mut self) -> &mut Session {
+        self.session
+    }
+
+    /// Look at the app now, queue the events the subscribed classes
+    /// report, and return the counters. `driver` says whose changes
+    /// the observation is allowed to attribute to an agent's command.
+    /// `None` when there is no app to look at.
+    pub(crate) fn observe_events(&mut self, driver: Driver) -> Option<Revisions> {
+        let now = self.target.as_deref()?.observed()?;
+        Some(self.session.observe(&now, driver))
     }
 
     pub(crate) fn ok(&self, result: Value) -> Reply {
@@ -309,7 +339,11 @@ impl<'a> Call<'a> {
 /// Never panics: an unknown command, a stray, missing or mistyped
 /// parameter, and a command that fails are all error replies, and
 /// the app keeps running (§9).
-pub(crate) fn execute(request: &IpcRequest, target: Option<&mut dyn CommandTarget>) -> Executed {
+pub(crate) fn execute(
+    request: &IpcRequest,
+    target: Option<&mut dyn CommandTarget>,
+    session: &mut Session,
+) -> Executed {
     let Some((_, spec)) = lookup(&request.cmd) else {
         return Executed {
             reply: Reply::error(
@@ -336,10 +370,26 @@ pub(crate) fn execute(request: &IpcRequest, target: Option<&mut dyn CommandTarge
         // is all a handler needs. `&mut` is invariant, so the field
         // cannot take the caller's lifetime as is.
         target: target.map(|target| target as &mut dyn CommandTarget),
+        session,
     };
+    // The first command a process executes has nothing to be compared
+    // with, and the comparison after it would take its own effect as
+    // the baseline. So the app is looked at once before it, whoever
+    // the change was.
+    if let Some(now) = call.target.as_deref().and_then(|target| target.observed()) {
+        call.session.baseline(&now);
+    }
     let (reply, captured) = capture(|| (spec.run)(&mut call));
+    // After the handler and inside the same drain, so the counters a
+    // reply carries include the command's own effect, and the events
+    // it caused are queued behind the reply that announces them.
+    let revisions = call.observe_events(Driver::Ipc);
+    let reply = reply.with_warnings(warnings_from(captured));
     Executed {
-        reply: reply.with_warnings(warnings_from(captured)),
+        reply: match revisions {
+            Some(revisions) => reply.with_revisions(revisions),
+            None => reply,
+        },
         repaint: call.observe().is_some_and(|target| target.changed_view()),
     }
 }
@@ -473,10 +523,20 @@ pub(crate) mod tests {
     }
 
     fn run_with(frame: &str, target: Option<&mut dyn CommandTarget>) -> (Value, bool) {
+        run_in(frame, target, &mut Session::default())
+    }
+
+    /// [`run_attached`] in a session the caller keeps, so a test can
+    /// run several commands against one connection's event state.
+    pub(crate) fn run_in(
+        frame: &str,
+        target: Option<&mut dyn CommandTarget>,
+        session: &mut Session,
+    ) -> (Value, bool) {
         let Decoded::Request(request) = decode_line(frame.as_bytes(), 0, 1) else {
             panic!("{frame} must decode to a request");
         };
-        let executed = execute(&request, target);
+        let executed = execute(&request, target, session);
         let bytes = Frame::Reply(executed.reply)
             .encode(OUTBOUND_FRAME_CAP)
             .expect("encodes");

@@ -12,6 +12,7 @@ use baumhard::mindmap::custom_mutation::{CustomMutation, PlatformContext, Trigge
 use baumhard::mindmap::model::MindNode;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
+use super::revision::ChangeSource;
 use super::types::AnimationInstance;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
@@ -328,7 +329,9 @@ impl MindMapDocument {
         // same datum.
         let mut cm_for_completion = cm.clone();
         cm_for_completion.timing = None;
+        let seq = self.next_animation_seq();
         self.active_animations.push(AnimationInstance {
+            seq,
             target_id: target_id.to_string(),
             section_idx,
             from_node,
@@ -472,6 +475,14 @@ impl MindMapDocument {
     /// single-node `AnimationInstance` doesn't carry — tracked as a
     /// known limitation rather than papered over.
     fn commit_animation_completion(&mut self, anim: AnimationInstance, tree: Option<&mut MindMapTree>) {
+        self.with_source(ChangeSource::Mutation, |doc| {
+            doc.commit_animation_completion_body(anim, tree);
+        });
+    }
+
+    /// The body of [`Self::commit_animation_completion`], run with the
+    /// document's change source declared.
+    fn commit_animation_completion_body(&mut self, anim: AnimationInstance, tree: Option<&mut MindMapTree>) {
         // Bail if the target was deleted while the animation was still
         // in flight: nothing purges `active_animations` on a node
         // delete (the tick loop merely skips a missing target), so a
@@ -517,7 +528,7 @@ impl MindMapDocument {
                 self.undo_stack.push(UndoAction::CustomMutation {
                     node_snapshots: vec![(anim.target_id.clone(), anim.from_node.clone())],
                 });
-                self.dirty = true;
+                self.mark_dirty();
             }
         }
     }

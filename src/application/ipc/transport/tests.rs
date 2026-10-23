@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -28,8 +28,11 @@ use crate::application::ipc::{execute, Executed};
 /// before the window exists. The loopback tests exercise the
 /// transport, so the bootstrap commands, which need no app, are what
 /// they send.
-fn execute_detached(request: &crate::application::ipc::envelope::IpcRequest) -> Executed {
-    execute(request, None)
+fn execute_detached(
+    request: &crate::application::ipc::envelope::IpcRequest,
+    session: &mut Session,
+) -> Executed {
+    execute(request, None, session)
 }
 
 const MAP: &str = "maps/fixture.mindmap.json";
@@ -499,6 +502,7 @@ fn test_controller_offer_pauses_on_a_full_queue_and_reports_a_closed_one() {
         generation: 1,
         outbound,
         waiting: Arc::new(AtomicBool::new(false)),
+        events_queued: Arc::new(AtomicUsize::new(0)),
         hangup,
         flushed,
     };
@@ -515,4 +519,322 @@ fn test_controller_offer_pauses_on_a_full_queue_and_reports_a_closed_one() {
     );
     drop(frames);
     assert!(matches!(controller.offer(frame()), Offer::Closed));
+}
+
+// ── events (IPC-14) ──────────────────────────────────────────────────
+
+use crate::application::ipc::events::fixture::EventsApp;
+
+/// Run one drain the way the event loop does with an app attached:
+/// every request through the registry against `app`.
+fn drain_with(harness: &mut Harness, app: &mut EventsApp) -> DrainOutcome {
+    harness
+        .server()
+        .drain(|request, session| execute(request, Some(app), session))
+}
+
+/// Block until the boundary threads have woken the loop, then drain.
+fn wake_and_drain(harness: &mut Harness, app: &mut EventsApp) {
+    harness
+        .wakes()
+        .recv_timeout(FRAME_TIMEOUT)
+        .expect("the boundary threads wake the loop");
+    drain_with(harness, app);
+}
+
+/// A connected controller of a server whose main thread is driven by
+/// hand, past its `hello`.
+fn attached(label: &str) -> (Harness, Client, EventsApp) {
+    let mut harness = Harness::paused(label);
+    let mut app = EventsApp::new();
+    let mut client = Client::connect(&harness.path);
+    assert_eq!(client.next()["event"], json!("hello"));
+    wake_and_drain(&mut harness, &mut app);
+    (harness, client, app)
+}
+
+#[test]
+fn test_ipc_loopback_an_event_follows_the_reply_to_the_command_that_caused_it() {
+    let (mut harness, mut client, mut app) = attached("ipc-event-order");
+    client.send(r#"{"id":1,"cmd":"events.subscribe","classes":["document_changed"]}"#);
+    wake_and_drain(&mut harness, &mut app);
+    assert_eq!(client.next()["result"]["subscribed"], json!(["document_changed"]));
+
+    client.send(r#"{"id":2,"cmd":"act.console","line":"any"}"#);
+    wake_and_drain(&mut harness, &mut app);
+    let reply = client.next();
+    assert_eq!(reply["id"], json!(2));
+    assert_eq!(reply["revision"], json!(1));
+    assert_eq!(
+        client.next(),
+        json!({
+            "event": "document_changed",
+            "data": { "revision": 1, "document_revision": 1, "source": "ipc" }
+        }),
+        "the event is behind the reply that announces it"
+    );
+
+    client.send(r#"{"id":3,"cmd":"ping"}"#);
+    wake_and_drain(&mut harness, &mut app);
+    assert_eq!(client.next()["id"], json!(3), "nothing else was waiting");
+    assert_eq!(
+        harness
+            .server()
+            .controller
+            .as_ref()
+            .expect("attached")
+            .events_queued
+            .load(Ordering::SeqCst),
+        0,
+        "the outbound thread gave the event's lane slot back"
+    );
+}
+
+#[test]
+fn test_ipc_loopback_a_polling_client_is_never_sent_an_event() {
+    let (mut harness, mut client, mut app) = attached("ipc-event-silent");
+    // One request per drain: two sent back to back can arrive on
+    // either side of the drain, and the second would then wait for a
+    // wake nothing is going to follow with.
+    client.send(r#"{"id":1,"cmd":"act.console","line":"any"}"#);
+    wake_and_drain(&mut harness, &mut app);
+    let first = client.next();
+    client.send(r#"{"id":2,"cmd":"ping"}"#);
+    wake_and_drain(&mut harness, &mut app);
+    let second = client.next();
+    assert_eq!((&first["id"], &second["id"]), (&json!(1), &json!(2)));
+    assert_eq!(
+        second["document_revision"],
+        json!(1),
+        "the poller sees the revision instead"
+    );
+}
+
+#[test]
+fn test_ipc_loopback_a_change_the_user_made_is_reported_as_theirs() {
+    let (mut harness, mut client, mut app) = attached("ipc-event-user");
+    client.send(r#"{"id":1,"cmd":"events.subscribe","classes":["document_changed","camera_changed"]}"#);
+    wake_and_drain(&mut harness, &mut app);
+    client.next();
+
+    // What `about_to_wait` does between the input drain and the IPC
+    // drain while something is subscribed.
+    assert!(harness.server().is_subscribed());
+    app.doc
+        .with_source(crate::application::document::ChangeSource::Action, |doc| {
+            doc.mark_dirty()
+        });
+    app.camera.zoom = 2.0;
+    let now = crate::application::ipc::CommandTarget::observed(&app).expect("observable");
+    harness.server().observe(&now);
+    drain_with(&mut harness, &mut app);
+
+    let first = client.next();
+    let second = client.next();
+    assert_eq!(first["event"], json!("document_changed"));
+    assert_eq!(first["data"]["source"], json!("action"));
+    assert_eq!(second["event"], json!("camera_changed"));
+    assert_eq!(
+        second["data"]["revision"], first["data"]["revision"],
+        "one observation"
+    );
+}
+
+#[test]
+fn test_ipc_loopback_a_new_controller_starts_unsubscribed_and_the_revision_carries_on() {
+    let (mut harness, mut first, mut app) = attached("ipc-event-reconnect");
+    first.send(r#"{"id":1,"cmd":"events.subscribe","classes":["document_changed"]}"#);
+    wake_and_drain(&mut harness, &mut app);
+    first.next();
+    first.send(r#"{"id":2,"cmd":"act.console","line":"any"}"#);
+    wake_and_drain(&mut harness, &mut app);
+    let before = first.next()["revision"].as_u64().expect("revision");
+    drop(first);
+    // The reader notices the close and wakes the loop with the
+    // disconnect.
+    wake_and_drain(&mut harness, &mut app);
+
+    let deadline = Instant::now() + FRAME_TIMEOUT;
+    let mut second = loop {
+        let mut client = Client::connect(&harness.path);
+        if client.next()["event"] == json!("hello") {
+            break client;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the first controller was never retired"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    wake_and_drain(&mut harness, &mut app);
+    assert!(
+        !harness.server().is_subscribed(),
+        "subscriptions do not outlive their connection"
+    );
+
+    second.send(r#"{"id":3,"cmd":"act.console","line":"any"}"#);
+    wake_and_drain(&mut harness, &mut app);
+    let reply = second.next();
+    assert_eq!(
+        reply["revision"],
+        json!(before + 1),
+        "the counter is the process's"
+    );
+    second.send(r#"{"id":4,"cmd":"ping"}"#);
+    wake_and_drain(&mut harness, &mut app);
+    assert_eq!(
+        second.next()["id"],
+        json!(4),
+        "no event reached the unsubscribed successor"
+    );
+}
+
+#[test]
+fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() {
+    use std::os::unix::net::UnixStream;
+
+    let mut harness = Harness::paused("ipc-event-full");
+    let (queue, room) = mpsc::sync_channel(1);
+    let (hangup, _peer) = UnixStream::pair().expect("a socket pair");
+    let (_flushed_tx, flushed) = mpsc::channel();
+    let waiting = Arc::new(AtomicBool::new(false));
+    let server = harness.server();
+    server.controller = Some(Controller {
+        generation: 1,
+        outbound: queue.clone(),
+        waiting: Arc::clone(&waiting),
+        events_queued: Arc::new(AtomicUsize::new(0)),
+        hangup,
+        flushed,
+    });
+    // The controller's queue is full of something it has not read.
+    queue
+        .try_send(Outbound::Frame(Frame::Event(Event::shutdown())))
+        .expect("room for one");
+
+    let mut app = EventsApp::new();
+    server.session.subscribe(
+        [crate::application::ipc::events::Class::DocumentChanged]
+            .into_iter()
+            .collect(),
+        false,
+    );
+    server
+        .session
+        .baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
+    for _ in 0..3 {
+        app.doc.mark_dirty();
+        server.observe(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
+        server.deliver_events();
+    }
+    assert!(
+        waiting.load(Ordering::SeqCst),
+        "a held-back event asks the outbound thread to wake the loop"
+    );
+
+    // The reader catches up; the next delivery gets the newest only.
+    room.recv().expect("the filler frame");
+    server.deliver_events();
+    match room.try_recv().expect("the held event was delivered") {
+        Outbound::Event(event) => {
+            let value = serde_json::to_value(&event).expect("serializes");
+            assert_eq!(value["data"]["document_revision"], json!(3), "the newest, once");
+        }
+        _ => panic!("expected an event frame"),
+    }
+    assert!(room.try_recv().is_err(), "the two older ones were coalesced away");
+}
+
+#[test]
+fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
+    let mut harness = Harness::paused("ipc-event-behind-reply");
+    let (queue, room) = mpsc::sync_channel(8);
+    let (hangup, _peer) = UnixStream::pair().expect("a socket pair");
+    let (_flushed_tx, flushed) = mpsc::channel();
+    let server = harness.server();
+    server.controller = Some(Controller {
+        generation: 1,
+        outbound: queue,
+        waiting: Arc::new(AtomicBool::new(false)),
+        events_queued: Arc::new(AtomicUsize::new(0)),
+        hangup,
+        flushed,
+    });
+    let mut app = EventsApp::new();
+    server.session.subscribe(
+        [crate::application::ipc::events::Class::DocumentChanged]
+            .into_iter()
+            .collect(),
+        false,
+    );
+    server
+        .session
+        .baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
+    app.doc.mark_dirty();
+    server.observe(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
+    server.stalled = Some(Outbound::Frame(Frame::Reply(
+        crate::application::ipc::envelope::Reply::ok(json!(9), json!({})),
+    )));
+
+    server.deliver_events();
+    assert!(
+        room.try_recv().is_err(),
+        "an event never overtakes a reply the controller is still owed"
+    );
+    assert!(server.session.pop_pending().is_some(), "and it is kept, not lost");
+}
+
+#[test]
+fn test_events_have_a_lane_of_their_own_and_never_take_a_replys_slot() {
+    use crate::application::ipc::envelope::Reply;
+
+    let (outbound, frames) = mpsc::sync_channel::<Outbound>(OUTBOUND_QUEUE_CAP + EVENT_QUEUE_CAP);
+    let (hangup, _peer) = UnixStream::pair().expect("pair");
+    let (_flushed_tx, flushed) = mpsc::channel();
+    let controller = Controller {
+        generation: 1,
+        outbound,
+        waiting: Arc::new(AtomicBool::new(false)),
+        events_queued: Arc::new(AtomicUsize::new(0)),
+        hangup,
+        flushed,
+    };
+    let event = || Event::change("camera_changed", json!({ "revision": 1 }));
+
+    for _ in 0..EVENT_QUEUE_CAP {
+        assert!(matches!(controller.offer_event(event()), Offer::Queued));
+    }
+    assert!(
+        matches!(controller.offer_event(event()), Offer::Full(Outbound::Event(_))),
+        "the lane is full, though the queue is not"
+    );
+    assert!(
+        controller.waiting.load(Ordering::SeqCst),
+        "a refused event asks the outbound thread to wake the loop"
+    );
+    for _ in 0..OUTBOUND_QUEUE_CAP {
+        let reply = Outbound::Frame(Frame::Reply(Reply::ok(json!(1), json!({}))));
+        assert!(
+            matches!(controller.offer(reply), Offer::Queued),
+            "a full event lane leaves every reply slot free"
+        );
+    }
+
+    // The outbound thread takes an event and gives its slot back.
+    match frames.recv().expect("the first event") {
+        Outbound::Event(_) => {
+            controller.events_queued.fetch_sub(1, Ordering::SeqCst);
+        }
+        _ => panic!("events were queued first"),
+    }
+    drop(frames);
+    assert!(
+        matches!(controller.offer_event(event()), Offer::Closed),
+        "a closed connection is reported, and it does not leak a slot"
+    );
+    assert_eq!(
+        controller.events_queued.load(Ordering::SeqCst),
+        EVENT_QUEUE_CAP - 1,
+        "a failed offer gives its slot back"
+    );
 }

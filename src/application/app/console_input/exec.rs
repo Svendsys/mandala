@@ -8,7 +8,7 @@ use crate::application::color_picker::ColorPickerState;
 use crate::application::console::commands::Command;
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ConsoleState, ExecResult, LineOutcome};
-use crate::application::document::MindMapDocument;
+use crate::application::document::{ChangeSource, MindMapDocument};
 use crate::application::renderer::Renderer;
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
 use baumhard::mindmap::tree_builder::MindMapTree;
@@ -88,11 +88,22 @@ pub(in crate::application::app) fn execute_console_line(
         }
     };
     let cmd: &'static Command = cmd;
-    let mut effects = ConsoleEffects::new(doc);
-    let result = (cmd.execute)(&Args::new(&args), &mut effects);
-    let document_mutated = effects.document_mutated();
-    let side_effect = effects.side_effect.take();
-    let close_after = effects.close_console;
+    // The verb runs as the console funnel for the document revision's
+    // change source (`document/revision.rs`); the side effects below
+    // are not the verb, and a swap stamps its own. The closure form
+    // is what keeps the funnel's entry and exit paired: nothing in
+    // the body can return past the exit.
+    let (result, document_mutated, side_effect, close_after) =
+        doc.with_source(ChangeSource::Console, |doc| {
+            let mut effects = ConsoleEffects::new(doc);
+            let result = (cmd.execute)(&Args::new(&args), &mut effects);
+            (
+                result,
+                effects.document_mutated(),
+                effects.side_effect.take(),
+                effects.close_console,
+            )
+        });
     let had_side_effect = side_effect.is_some();
 
     // A screenshot's report is the line's output, so it is taken here,
@@ -325,7 +336,15 @@ fn handle_pre_rebuild_side_effect(
     } = session;
     match side_effect? {
         ConsoleSideEffect::ReplaceDocument(new_doc) => {
-            *doc = *new_doc;
+            // The swap is a change the revision must not lose: the
+            // successor carries the counter on, so it never reads
+            // lower than the document it replaced.
+            let mut new_doc = *new_doc;
+            // The swap happens after the verb's own funnel was left,
+            // and the successor is a fresh document that knows no
+            // funnel, so it is stamped as the console's here.
+            new_doc.with_source(ChangeSource::Console, |new_doc| new_doc.succeed(doc));
+            *doc = new_doc;
             *mindmap_tree = None;
             *single_line_edit_state = SingleLineEditor::Closed;
             *color_picker_state = ColorPickerState::Closed;

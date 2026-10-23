@@ -63,6 +63,15 @@ pub struct AnimationInstance {
     /// Post-mutation snapshot of the target node, computed once
     /// at start by applying the mutation to a scratch copy.
     pub to_node: MindNode,
+    /// Which animation this is, for as long as it runs: taken from a
+    /// per-process counter when it starts and never changed, where
+    /// `start_ms` is shifted forward when a tree-mutating drag pauses
+    /// the tick. A re-trigger after the animation ended is a new `seq`
+    /// under the same `(target_id, section_idx, mutation_id)`, which
+    /// is what lets an observer tell a restart from a continuation.
+    // Read by the native-only IPC event layer.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub seq: u64,
     /// Wall-clock timestamp (ms) when the animation started.
     // Native-driver-only: `tick_animations` is the reader and the
     // browser has no per-frame drain wired to it (CLAUDE.md

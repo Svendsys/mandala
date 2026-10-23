@@ -190,7 +190,7 @@ impl MindMapDocument {
             return false;
         }
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 
@@ -212,7 +212,7 @@ impl MindMapDocument {
         let before = self.mindmap.edges[idx].clone();
         self.mindmap.edges[idx].control_points.clear();
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 
@@ -304,7 +304,7 @@ impl MindMapDocument {
             y: baumhard::mindmap::model::validate::clamp_canvas_coord(offset.y as f64),
         });
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 
@@ -397,7 +397,7 @@ impl MindMapDocument {
             return false;
         }
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 
@@ -433,7 +433,7 @@ impl MindMapDocument {
                 index: idx,
                 before: original,
             });
-            self.dirty = true;
+            self.mark_dirty();
         }
     }
 }

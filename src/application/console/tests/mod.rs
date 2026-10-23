@@ -19,6 +19,8 @@
 //!   driven by `mode resize` / `mode default`. Plan §7.2.4.
 //! - [`oracle`] — the differential oracle: signatures, the three
 //!   comparisons, and what the signatures deliberately do not see.
+//! - [`revision`] — the document revision held against the oracle's
+//!   corpus: no console line changes the model without advancing it.
 //! - [`oracle_corpus`] — the input lines the oracle runs.
 //! - [`oracle_expected`] — the answers those lines are pinned to.
 
@@ -34,5 +36,6 @@ mod oracle;
 mod oracle_corpus;
 mod oracle_expected;
 mod resize_mode_lifecycle;
+mod revision;
 mod state;
 mod wheel_dispatch;

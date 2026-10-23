@@ -219,6 +219,7 @@ mod tests {
     fn sidecar() -> Sidecar {
         Sidecar {
             protocol: 1,
+            document_revision: 0,
             surface: SurfaceInfo {
                 width: 2,
                 height: 1,

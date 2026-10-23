@@ -25,6 +25,11 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub(crate) struct Sidecar {
     pub(crate) protocol: u32,
+    /// The document's revision when the image was drawn
+    /// (`MindMapDocument::revision`): what ties these rects to the
+    /// model state they were derived from, and to a `document_changed`
+    /// event's `document_revision`.
+    pub(crate) document_revision: u64,
     pub(crate) surface: SurfaceInfo,
     pub(crate) camera: CameraInfo,
     pub(crate) nodes: Vec<NodeGeometry>,
@@ -110,6 +115,7 @@ pub(crate) fn sidecar(
     map: &MindMap,
     camera: &Camera2D,
     protocol: u32,
+    document_revision: u64,
 ) -> Sidecar {
     let (width, height) = camera.viewport_size;
     let nodes = tree
@@ -132,6 +138,7 @@ pub(crate) fn sidecar(
         .collect();
     Sidecar {
         protocol,
+        document_revision,
         surface: SurfaceInfo::of(camera),
         camera: CameraInfo::of(camera),
         nodes,
@@ -174,7 +181,7 @@ mod tests {
         let first = map.nodes.keys().min().expect("a node").clone();
 
         let plain = camera_on(&tree, map, &first, (1600, 1200), 1.0);
-        let one = sidecar(Some(&tree), map, &plain, 1);
+        let one = sidecar(Some(&tree), map, &plain, 1, 0);
         assert_eq!(
             (one.protocol, one.surface),
             (
@@ -202,7 +209,7 @@ mod tests {
             pixel_ratio: 2.0,
             ..plain
         };
-        let two = sidecar(Some(&tree), map, &doubled, 1);
+        let two = sidecar(Some(&tree), map, &doubled, 1, 0);
         let ids = |s: &Sidecar| s.nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&one), ids(&two), "a pixel ratio changes no membership");
         let twice = two.nodes.iter().find(|n| n.id == first).expect("shown");
@@ -225,11 +232,11 @@ mod tests {
             ..plain
         };
         assert!(
-            sidecar(Some(&tree), map, &far, 1).nodes.is_empty(),
+            sidecar(Some(&tree), map, &far, 1, 0).nodes.is_empty(),
             "nothing out there"
         );
         assert!(
-            sidecar(None, map, &plain, 1).nodes.is_empty(),
+            sidecar(None, map, &plain, 1, 0).nodes.is_empty(),
             "no tree, nothing drawn"
         );
     }
@@ -256,6 +263,7 @@ mod tests {
     fn test_the_sidecar_serializes_as_the_documented_shape() {
         let value = serde_json::to_value(Sidecar {
             protocol: 1,
+            document_revision: 42,
             surface: SurfaceInfo {
                 width: 1920,
                 height: 1080,
@@ -291,6 +299,7 @@ mod tests {
             value,
             serde_json::json!({
                 "protocol": 1,
+                "document_revision": 42,
                 "surface": {"width": 1920, "height": 1080, "scale": 1.0},
                 "camera": {"center_x": 12.0, "center_y": -340.5, "zoom": 0.75},
                 "nodes": [

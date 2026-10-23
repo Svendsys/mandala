@@ -30,8 +30,20 @@ fn lenient() -> FakeServer {
         } else {
             json!({})
         };
-        vec![ok(&request["id"], result)]
+        let mut frames = vec![ok(&request["id"], result)];
+        // A subscription is only worth a connection that stays up, so
+        // the one command that holds it open is given something to
+        // print.
+        if request["cmd"] == "events.subscribe" {
+            frames.push(change("document_changed", 1));
+        }
+        frames
     })
+}
+
+/// A change event the way the server shapes one.
+fn change(class: &str, revision: u64) -> Value {
+    json!({"event": class, "data": {"revision": revision, "document_revision": revision, "source": "ipc"}})
 }
 
 // ---- success, failure, and what is printed -------------------------------
@@ -1130,4 +1142,135 @@ fn test_consecutive_invocations_each_get_the_controller_slot() {
         let outcome = against(&server, "ping");
         assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
     }
+}
+
+// ---- events.subscribe holds the connection and prints what is pushed ------
+
+/// A server that acknowledges the subscription, then pushes `events`.
+fn pushing(events: Vec<Value>) -> FakeServer {
+    FakeServer::answering(move |request| {
+        let mut frames = vec![ok(
+            &request["id"],
+            json!({"subscribed": ["document_changed"], "verbose": false, "revision": 0, "document_revision": 0}),
+        )];
+        frames.extend(events.clone());
+        frames
+    })
+}
+
+#[test]
+fn test_subscribe_prints_the_reply_then_each_event_and_stops_at_count() {
+    let server = pushing(vec![
+        change("document_changed", 1),
+        change("document_changed", 2),
+        change("document_changed", 3),
+    ]);
+    let outcome = against(&server, "events.subscribe document_changed --count 2");
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert_eq!(
+        lines(&outcome.out),
+        [
+            "document_revision: 0",
+            "revision: 0",
+            "subscribed[0]: \"document_changed\"",
+            "verbose: false",
+            "document_changed {\"document_revision\":1,\"revision\":1,\"source\":\"ipc\"}",
+            "document_changed {\"document_revision\":2,\"revision\":2,\"source\":\"ipc\"}",
+        ],
+        "two events, not the third the server also sent"
+    );
+    assert_eq!(
+        server.requests(),
+        vec![json!({"id": 1, "cmd": "events.subscribe", "classes": ["document_changed"]})]
+    );
+}
+
+#[test]
+fn test_subscribe_with_json_prints_every_frame_as_received() {
+    let line = r#"{"event":"document_changed", "data":{"revision":7}}"#;
+    let server = FakeServer::start(move |_, peer, seen| {
+        peer.send(&hello());
+        while let Some(request) = peer.read_request() {
+            seen.lock().expect("log").push(request.clone());
+            peer.send(&ok(&request["id"], json!({"subscribed": ["document_changed"]})));
+            peer.send_raw(&format!("{line}\n"));
+        }
+    });
+    let outcome = against(&server, "events.subscribe document_changed --json --count 1");
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    let printed = lines(&outcome.out);
+    assert_eq!(printed.len(), 2, "the reply and one event: {printed:?}");
+    assert_eq!(printed[1], line, "the event is not re-serialized");
+}
+
+#[test]
+fn test_subscribe_ends_quietly_when_the_app_says_it_is_shutting_down() {
+    let server = pushing(vec![
+        change("document_changed", 1),
+        json!({"event": "shutdown", "data": {}}),
+    ]);
+    let outcome = against(&server, "events.subscribe document_changed");
+    assert_eq!(
+        outcome.exit,
+        Exit::Success,
+        "an app that exits ends the watch: {}",
+        outcome.err
+    );
+    assert_eq!(
+        outcome
+            .out
+            .lines()
+            .filter(|l| l.starts_with("document_changed "))
+            .count(),
+        1,
+        "{}",
+        outcome.out
+    );
+    assert!(outcome.err.contains("shutting down"), "{}", outcome.err);
+}
+
+#[test]
+fn test_subscribe_is_a_transport_fault_when_the_connection_dies_unannounced() {
+    let server = FakeServer::start(|_, peer, seen| {
+        peer.send(&hello());
+        if let Some(request) = peer.read_request() {
+            seen.lock().expect("log").push(request.clone());
+            peer.send(&ok(&request["id"], json!({"subscribed": ["document_changed"]})));
+        }
+        // Dropping the peer closes the socket with no `shutdown`.
+    });
+    let outcome = against(&server, "events.subscribe document_changed");
+    assert_eq!(outcome.exit, Exit::TransportError, "{}", outcome.err);
+    assert!(outcome.err.contains("aborted"), "{}", outcome.err);
+}
+
+#[test]
+fn test_a_refused_subscription_exits_one_and_does_not_wait() {
+    let server = FakeServer::answering(|r| vec![no(&r["id"], "invalid_params", "no event class 'nope'")]);
+    let outcome = against(&server, "events.subscribe nope");
+    assert_eq!(outcome.exit, Exit::CommandError);
+    assert!(outcome.err.contains("no event class"), "{}", outcome.err);
+}
+
+#[test]
+fn test_count_belongs_to_the_watch_and_nothing_is_sent_without_it() {
+    let server = lenient();
+    let outcome = against(&server, "ping --count 2");
+    assert_eq!(outcome.exit, Exit::UsageError);
+    assert!(outcome.err.contains("events.subscribe"), "{}", outcome.err);
+    assert!(server.requests().is_empty(), "a usage error sends nothing");
+}
+
+#[test]
+fn test_the_other_events_commands_are_plain_exchanges() {
+    let server = FakeServer::always(json!({"revision": 4, "document_revision": 2}));
+    let outcome = against(&server, "events.revision");
+    assert_eq!(outcome.exit, Exit::Success);
+    assert_eq!(outcome.out, "document_revision: 2\nrevision: 4\n");
+    let outcome = against(&server, "events.unsubscribe");
+    assert_eq!(outcome.exit, Exit::Success);
+    assert_eq!(
+        server.requests()[1],
+        json!({"id": 1, "cmd": "events.unsubscribe"})
+    );
 }

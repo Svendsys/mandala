@@ -151,6 +151,7 @@ impl AnimationInstance {
             ("running", (elapsed - delay) as f64 / duration as f64)
         };
         json!({
+            "id": self.seq,
             "target_id": self.target_id,
             "section_idx": self.section_idx,
             "mutation_id": self.mutation_id(),

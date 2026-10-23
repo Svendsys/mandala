@@ -85,13 +85,16 @@ sanctioned native-only carve-outs; each entry names the reason and
 the parity trajectory (or why none is owed):
 
 - **IPC** (`--ipc`, `src/application/ipc/`; transport since
-  IPC-02/#62, command registry and `act` bridge since IPC-03/#63)
-  — native-only by transport nature: browsers cannot
+  IPC-02/#62, command registry and `act` bridge since IPC-03/#63,
+  event stream since IPC-14/#74) — native-only by transport nature: browsers cannot
   serve local sockets, and the consumer is an agent driving a
-  desktop/Xvfb instance. The client, `crates/mandalactl`, compiles on
-  every target (the workspace is type-checked for wasm32) but connects
-  over Unix sockets only: off Unix its connect fails naming the same
-  gap (#169) the server's `--ipc` does. Protocol: `format/ipc.md`; design:
+  desktop/Xvfb instance. The document revision the event stream
+  observes (`document/revision.rs`) is not gated: it is a counter on
+  the model, and compiles for both targets. The client,
+  `crates/mandalactl`, compiles on every target (the workspace is
+  type-checked for wasm32) but connects over Unix sockets only: off
+  Unix its connect fails naming the same gap (#169) the server's
+  `--ipc` does. Protocol: `format/ipc.md`; design:
   `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
   transport + browser-side capture, same envelope and commands) is
   parked in IPC-15 (#75). Within native the transport is Unix-only

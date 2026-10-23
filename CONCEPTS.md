@@ -3128,7 +3128,33 @@ Despite the name it is **not** a render or rebuild signal —
 scene rebuilds are call-site-driven (`rebuild_all` after
 mutations), and the per-frame drain consults the renderer's
 separate `connection_geometry_dirty` flag instead
-(`app/drain_frame.rs`).
+(`app/drain_frame.rs`). Nor is it a change counter: it is one bit,
+reset by a save. "Did anything change" is the
+[document revision](#document-revision), and the flag is turned on
+through the same call that advances it (`mark_dirty`).
+
+### Document revision
+
+A monotonic `u64` on `MindMapDocument` counting committed model
+changes, plus the funnel that made the latest one.
+
+The flag above cannot answer "did anything change since I last
+looked", and nothing else could cheaply either (the undo stack pops,
+a re-serialization is O(document)). An IPC agent polling for change,
+and the event stream that spares it the polling
+([IPC server](#ipc-server-ipcserver)), need a number.
+
+`src/application/document/revision.rs`. Advanced by exactly two
+calls: `mark_dirty()`, which every setter ends in (a source scan
+holds that nothing else writes `dirty = true`), and
+`advance_revision()`, which undo calls because it mutates without
+dirtying. A preview, a selection and the camera advance nothing.
+`open` / `new` carry the counter across the swap (`succeed`) and
+bump a `generation`, so it is monotonic per process. Funnels
+declare themselves (`enter_source` / `leave_source` / `with_source`:
+`dispatch_action`, the console line executor, undo, custom
+mutations, animation commits) and the innermost wins, which is the
+`source` a `document_changed` event reports.
 
 ### FPS overlay
 
@@ -3250,7 +3276,24 @@ a thin wire over the screenshot engine (see
 [Screenshot capture](#screenshot-capture)), which the `screenshot`
 console verb calls too.
 
-**Vision:** the families after `capture` (clock, events) each add one
+The `events` family is the push half: `events.subscribe` opts in
+per class, and a connection starts with none, so a polling agent is
+never sent a frame it did not ask for. Nothing in the app emits an
+event. An `ipc::events::Tracker` is handed a read-only `Observed`
+view (document, camera, interaction mode) after every command and,
+while anything is subscribed, once per loop iteration, and reports
+what differs from the last look; the document's revision is what
+makes "the model changed" an integer comparison. So a keystroke, a
+drag, an animation commit and an agent's command are seen alike, and
+a 200-step macro is one `document_changed` (`verbose` observes
+between its steps through `MacroDispatchTarget::step_finished`).
+Events queue on the main thread, leave behind the replies of their
+drain, never pause execution, and under a slow reader coalesce to
+the newest per class. Every reply carries `revision` (advances once
+per observation with something to report, view changes included)
+and `document_revision`.
+
+**Vision:** the families after `capture` (clock) each add one
 module and one line to the registry's family table; recording
 (IPC-08) and headless mode (IPC-10) draw through the same
 parameterized frame the screenshot engine does.
@@ -4026,7 +4069,10 @@ A separate binary in `crates/mandalactl/` that
 drives a *running* app over its `--ipc` socket from the shell:
 `mandalactl <family.verb> [args...]`, one connection and one command per
 invocation, the reply printed as `path: value` lines (`--json` for the
-envelope as received).
+envelope as received). The one verb that keeps the connection is
+`events.subscribe`, since a subscription lives only as long as its
+connection: it prints each pushed event until `--count` of them, or the
+app exits.
 
 The shell is an agent's native tool, and hand-built JSON over `nc` is the
 fragile incantation it replaces. `name=value` arguments are typed from the
