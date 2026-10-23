@@ -11,7 +11,8 @@ fn test_shortest_f64_prints_and_round_trips_like_the_f32() {
 
 /// The widened value prints the `f32`'s own shortest decimal and parses
 /// back to the same `f32`, across ordinary, tiny, huge and negative
-/// values; a non-finite value has none.
+/// values — including the longest `Display` an `f32` has, the smallest
+/// negative subnormal at 48 bytes; a non-finite value has none.
 pub fn do_shortest_f64_prints_and_round_trips_like_the_f32() {
     for value in [
         0.1_f32,
@@ -22,6 +23,8 @@ pub fn do_shortest_f64_prints_and_round_trips_like_the_f32() {
         f32::MIN_POSITIVE,
         -f32::MAX,
         0.0,
+        f32::from_bits(1),
+        f32::from_bits(0x8000_0001),
     ] {
         let shortest = shortest_f64(value).expect("finite");
         assert_eq!(shortest.to_string(), value.to_string(), "{value}");

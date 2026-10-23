@@ -28,9 +28,10 @@ pub fn shortest_f64(value: f32) -> Option<f64> {
         return None;
     }
     let mut digits = StackText::default();
-    // An `f32`'s shortest `Display` is at most 46 bytes (the subnormal
-    // `-0.000…0001` form), which the buffer holds; a write that would
-    // not fit fails, and the widened value is the honest fallback.
+    // An `f32`'s shortest `Display` is at most 48 bytes — the smallest
+    // negative subnormal, `-0.` then 44 zeros then `1` — which the
+    // buffer holds; a write that would not fit fails, and the widened
+    // value is the honest fallback.
     if write!(digits, "{value}").is_err() {
         return Some(f64::from(value));
     }
