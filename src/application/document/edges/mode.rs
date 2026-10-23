@@ -36,7 +36,7 @@ impl MindMapDocument {
         let before = self.mindmap.edges[idx].clone();
         self.mindmap.edges[idx].edge_type = new_type.to_string();
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
+        self.mark_dirty();
         // Refresh the selection EdgeRef so the app keeps the edge selected
         // under its new identity.
         if let SelectionState::Edge(ref cur) = self.selection {
@@ -61,7 +61,7 @@ impl MindMapDocument {
         let before = self.mindmap.edges[idx].clone();
         self.mindmap.edges[idx].glyph_connection = None;
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 
@@ -91,7 +91,7 @@ impl MindMapDocument {
             None
         };
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 }

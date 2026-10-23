@@ -161,7 +161,7 @@ pub(super) fn handle_keyboard_input(
             // chance to do something — better UX than swallowing
             // silently.
             let macro_handled = if let Some(id) = macro_id {
-                super::dispatch::dispatch_macro(&id, ctx)
+                super::dispatch::dispatch_macro(&id, ctx, None)
             } else {
                 false
             };

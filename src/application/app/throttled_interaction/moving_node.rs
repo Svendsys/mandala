@@ -208,7 +208,7 @@ impl ThrottledDragInteraction for MovingNodeInteraction {
         doc.undo_stack.push(UndoAction::MoveNodes {
             original_positions: undo_data,
         });
-        doc.dirty = true;
+        doc.mark_dirty();
 
         // Under rapid drag the throttle can skip the last drain or
         // two, leaving `pending_delta` stranded in the accumulator.

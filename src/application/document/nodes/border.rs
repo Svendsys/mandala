@@ -477,7 +477,7 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::CanvasSnapshot {
             canvas: Box::new(canvas_snapshot),
         });
-        self.dirty = true;
+        self.mark_dirty();
         outcome.changed = true;
         outcome
     }
@@ -571,7 +571,7 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::CanvasSnapshot {
             canvas: Box::new(canvas_snapshot),
         });
-        self.dirty = true;
+        self.mark_dirty();
         outcome.changed = true;
         outcome
     }

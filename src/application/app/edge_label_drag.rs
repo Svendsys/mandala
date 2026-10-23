@@ -87,6 +87,6 @@ pub(in crate::application::app) fn apply_edge_label_drag(
     }
     cfg.position_t = Some(t);
     cfg.perpendicular_offset = Some(perp);
-    doc.dirty = true;
+    doc.mark_dirty();
     true
 }

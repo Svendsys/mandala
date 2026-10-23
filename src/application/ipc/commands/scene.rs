@@ -702,6 +702,7 @@ mod tests {
     use baumhard::mindmap::tree_builder::MindMapTree;
 
     use crate::application::console::LineOutcome;
+    use crate::application::ipc::events::Observed;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::MindMapDocument;
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
@@ -768,11 +769,14 @@ mod tests {
         fn has_macro(&self, _: &str) -> bool {
             panic!("a scene read must not look up a macro");
         }
-        fn run_macro(&mut self, _: &str) -> bool {
+        fn run_macro(&mut self, _: &str, _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("a scene read must not run a macro");
         }
-        fn run_macro_steps(&mut self, _: &[MacroStep]) -> bool {
+        fn run_macro_steps(&mut self, _: &[MacroStep], _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("a scene read must not run macro steps");
+        }
+        fn observed(&self) -> Option<Observed<'_>> {
+            None
         }
         fn changed_view(&self) -> bool {
             false

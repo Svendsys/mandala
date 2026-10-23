@@ -96,7 +96,7 @@ pub(in crate::application::app) fn apply_portal_label_drag(
     let state = slot.get_or_insert_with(baumhard::mindmap::model::PortalEndpointState::default);
     state.border_t = Some(t);
     state.perpendicular_offset = perp;
-    doc.dirty = true;
+    doc.mark_dirty();
     true
 }
 

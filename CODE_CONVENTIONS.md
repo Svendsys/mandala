@@ -121,7 +121,10 @@ decision, not a drive-by edit.
     IPC command executes on the main thread, in `about_to_wait` right
     after `drain_inputs` (the `user_event` wake only unparks the
     loop), with the same access as any input handler, and a command that changes pixels requests a
-    redraw just as the winit input handlers do. The `std::sync::mpsc`
+    redraw just as the winit input handlers do. The event stream adds
+    no thread: events are produced by observing the app on the main
+    thread and offered to the outbound queue with a `try_send`, so a
+    slow reader loses stale events and never stalls the loop. The `std::sync::mpsc`
     queues at this boundary carry protocol values only — they are not
     a license for channels between app components — and blocking IPC
     I/O on the main thread stays forbidden: a stalled client must

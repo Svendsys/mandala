@@ -7,6 +7,7 @@
 
 mod act;
 mod capture;
+mod events;
 mod input;
 mod meta;
 mod query;
@@ -25,6 +26,7 @@ pub(super) const FAMILIES: &[Family] = &[
     scene::FAMILY,
     input::FAMILY,
     capture::FAMILY,
+    events::FAMILY,
 ];
 
 #[cfg(test)]

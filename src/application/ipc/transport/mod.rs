@@ -51,6 +51,7 @@ use std::time::{Duration, Instant};
 use std::os::unix::net::UnixStream;
 
 use super::envelope::{Event, Frame, IpcRequest};
+use super::events::{Observed, Queued, Session};
 use super::{DrainOutcome, Executed};
 
 /// Unexecuted requests the main thread may have queued before a reader
@@ -234,6 +235,11 @@ pub(crate) struct IpcServer {
     /// The path last published into [`Link::map`], so publishing an
     /// unchanged path costs a comparison and no lock.
     published_map: Option<Arc<str>>,
+    /// The event half of the connection: the revision counters, the
+    /// subscriptions and the events not yet delivered. Reset when the
+    /// controller changes, except for the counters, which are the
+    /// process's.
+    session: Session,
     socket: socket::BoundSocket,
 }
 
@@ -269,6 +275,7 @@ impl IpcServer {
             controller: None,
             stalled: None,
             published_map: None,
+            session: Session::default(),
             socket,
         })
     }
@@ -283,7 +290,24 @@ impl IpcServer {
     /// its queue is still full the drain stops there and reports no
     /// backlog — the outbound thread's wake is what brings the loop
     /// back, so a paused controller costs no polling.
-    pub(crate) fn drain(&mut self, mut execute: impl FnMut(&IpcRequest) -> Executed) -> DrainOutcome {
+    ///
+    /// `execute` is lent the connection's [`Session`] beside the
+    /// request. When the drain is over, the events its commands
+    /// queued are offered to the controller, behind the replies that
+    /// announced them (see [`Self::deliver_events`]).
+    pub(crate) fn drain(
+        &mut self,
+        mut execute: impl FnMut(&IpcRequest, &mut Session) -> Executed,
+    ) -> DrainOutcome {
+        let outcome = self.drain_requests(&mut execute);
+        self.deliver_events();
+        outcome
+    }
+
+    fn drain_requests(
+        &mut self,
+        execute: &mut impl FnMut(&IpcRequest, &mut Session) -> Executed,
+    ) -> DrainOutcome {
         // Cleared *before* draining: a message enqueued after this
         // point re-arms the wake, and one enqueued before it is picked
         // up by the loop below.
@@ -296,7 +320,10 @@ impl IpcServer {
         }
         for _ in 0..DRAIN_BUDGET {
             match self.inbound.try_recv() {
-                Ok(Inbound::Connected(controller)) => self.controller = Some(controller),
+                Ok(Inbound::Connected(controller)) => {
+                    self.session.reset_controller();
+                    self.controller = Some(controller);
+                }
                 Ok(Inbound::Request(request)) => {
                     self.link.pending_requests.fetch_sub(1, Ordering::AcqRel);
                     if !self
@@ -306,7 +333,7 @@ impl IpcServer {
                     {
                         continue;
                     }
-                    let executed = execute(&request);
+                    let executed = execute(&request, &mut self.session);
                     outcome.repaint |= executed.repaint;
                     if !self.offer_to_controller(Outbound::Frame(Frame::Reply(executed.reply))) {
                         return outcome;
@@ -318,6 +345,54 @@ impl IpcServer {
         }
         outcome.backlog = true;
         outcome
+    }
+
+    /// Whether the controller subscribed to anything. The event loop
+    /// looks at the app between commands only when it did: with no
+    /// subscription an input handler's changes cost no observation.
+    pub(crate) fn is_subscribed(&self) -> bool {
+        self.session.is_subscribed()
+    }
+
+    /// Look at the app between commands and queue what the subscribed
+    /// classes report, attributing it to the app's own handlers. Run
+    /// after the input drain and before the IPC drain, so a change a
+    /// human made is not reported as an agent's command. Delivery is
+    /// the next drain's.
+    pub(crate) fn observe(&mut self, now: &Observed<'_>) {
+        self.session.observe(now, super::events::Driver::App);
+    }
+
+    /// Offer the queued events to the controller. Events never pause
+    /// execution: one the controller's queue has no room for stays
+    /// queued, to be coalesced behind newer ones of its class, and the
+    /// outbound thread wakes the loop when there is room. They also
+    /// never overtake a reply, so nothing is offered while one is held.
+    fn deliver_events(&mut self) {
+        if self.stalled.is_some() {
+            return;
+        }
+        let Some(controller) = self.controller.as_ref() else {
+            // Nobody to hear them. The next controller starts clean.
+            self.session.reset_controller();
+            return;
+        };
+        while let Some(Queued { class, event }) = self.session.pop_pending() {
+            match controller.offer(Outbound::Frame(Frame::Event(event))) {
+                Offer::Queued => {}
+                Offer::Full(Outbound::Frame(Frame::Event(event))) => {
+                    self.session.requeue(Queued { class, event });
+                    return;
+                }
+                // `offer` hands back the very frame it was given.
+                Offer::Full(_) => return,
+                Offer::Closed => {
+                    self.controller = None;
+                    self.session.reset_controller();
+                    return;
+                }
+            }
+        }
     }
 
     /// Offer `message` to the live controller. `false` means the
@@ -349,6 +424,7 @@ impl IpcServer {
         {
             self.controller = None;
             self.stalled = None;
+            self.session.reset_controller();
         }
     }
 

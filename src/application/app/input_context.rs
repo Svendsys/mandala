@@ -108,6 +108,18 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
 }
 
 impl<'a> InputHandlerContext<'a> {
+    /// The app as an IPC change event reads it
+    /// ([`crate::application::ipc::events::Observed`]). A read-only
+    /// view: it is what lets an observer run between the steps of a
+    /// macro, from inside the funnel that is executing them.
+    pub(in crate::application::app) fn observed(&self) -> crate::application::ipc::events::Observed<'_> {
+        crate::application::ipc::events::Observed {
+            document: self.document.as_ref(),
+            camera: self.renderer.camera(),
+            mode: &*self.interaction_mode,
+        }
+    }
+
     /// Renderer-free slice for a throttled drag's release commit —
     /// see
     /// [`super::throttled_interaction::release`]. The commit body

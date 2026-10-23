@@ -819,7 +819,8 @@ sees. The reply envelope is the one channel that provably reaches the
 agent in every build profile and every launch arrangement. Streaming
 out-of-band degrades (a `log_line` event class), meaning those
 outside any command's window, became possible with #45. Whether to
-ship it is IPC-14's call, and this design takes no dependency on it.
+ship it was IPC-14's call, and IPC-14 did not (see its ledger entry
+below); this design takes no dependency on it.
 
 ---
 
@@ -887,6 +888,30 @@ Moved later, by the issue that found the need:
   outcome. §D4 places `act.macro`'s anonymous `steps` at `User`.
   §D5's module layout and boundary trait are recorded as built.
 
+- **IPC-14 (#74)** — D3's reserved `revision` and the "render
+  revision" of D2 and D7, built as **two counters** because the issue
+  and this design asked for different things and both are needed. The
+  document's (`document_revision`, `MindMapDocument::revision`) is
+  what the issue's acceptance criteria describe: committed model
+  changes, untouched by previews, selection and camera, monotonic
+  across `open` / `new`. The envelope's `revision` is D2/D7's: it
+  advances once per *observation* in which any event class had
+  something to report, so a view-only change moves it, and every
+  reply carries both. What `settled` still needs and `revision` does
+  not record is *rendered*: that the renderer has drawn a given
+  `revision` stays IPC-09's, which now has the number to key on.
+  Emission is by **observation, not instrumentation** (D2's "tap at
+  the app funnels"): after each command, and once per loop iteration
+  while subscribed, a read-only view of the app is compared with the
+  last look, so no setter and no walker reports anything and human
+  input is seen the same as an agent's. The funnels declare
+  themselves on the document only to name a `document_changed`'s
+  `source`. `animation_*`, `camera_changed`, `mode_changed` and
+  `document_replaced` join the reserved classes; D3's "app is
+  closing" is the existing `shutdown`. `log_line` is not shipped —
+  its own design (what a flood of per-frame degrades does to a
+  coalescing queue) is the follow-up. `format/ipc.md` §`events` is
+  the contract; the geometry sidecar gains `document_revision`.
 - **IPC-07 (#67)** — §D7's `capture.screenshot` shape, refined where
   building it found the pinned text ambiguous or silent, each in
   `format/ipc.md` §`capture.screenshot` in the same PR. (1) `scale` is

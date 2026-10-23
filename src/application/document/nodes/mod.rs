@@ -780,7 +780,7 @@ impl MindMapDocument {
             before_min,
             before_max,
         });
-        self.dirty = true;
+        self.mark_dirty();
         true
     }
 }

@@ -160,6 +160,7 @@ pub(super) fn capture(
             &doc.mindmap,
             &camera,
             crate::application::ipc::PROTOCOL_VERSION,
+            doc.revision(),
         )
     });
     write(&target, &pixels, map.as_ref(), artifacts, &mut progress)?;

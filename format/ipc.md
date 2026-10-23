@@ -276,7 +276,8 @@ exist to save; the rule is the cheaper trade.)
 | `result` | object | Command-specific payload. Present iff `ok:true`; `{}` when a command has nothing to say. |
 | `error` | object | `{"code", "message", "data"?}`. Present iff `ok:false`. See [Errors](#errors). |
 | `warnings` | array | Optional; omitted when empty. See [Warnings](#warnings--per-command-diagnostics). |
-| `revision` | integer | Reserved. Once IPC-14 lands, every reply carries the render revision observed after the command executed (the pixels-affecting counter — see [`events`](#events--event-stream--revision-ipc-14)), so agents can order replies against change events without an extra round-trip. Absent until then. |
+| `revision` | integer | The event revision observed after the command executed (see [`events`](#events--event-stream--revision-ipc-14)), so an agent can order a reply against change events without an extra round-trip. Present on every reply from a command that ran with the app up; absent on `parse_error`, `overloaded`, `reply_too_large` and the like, which the reader answers itself, and on a command that ran before the window existed. |
+| `document_revision` | integer | The document's revision after the command executed: committed model changes, monotonic for the process. Present exactly when `revision` is. A polling agent compares it between replies to learn whether the document changed, without diffing it. |
 
 Replies are **not guaranteed to arrive in request order**. Most
 commands reply immediately and in order, but deferred-reply commands
@@ -294,7 +295,7 @@ race the wait exists to prevent.
 ### Event
 
 ```jsonc
-{"event": "document_changed", "data": {"revision": 42}}
+{"event": "document_changed", "data": {"revision": 42, "document_revision": 17, "source": "console"}}
 ```
 
 | key | type | notes |
@@ -302,7 +303,7 @@ race the wait exists to prevent.
 | `event` | string | Event class name, snake_case. |
 | `data` | object | Class-specific payload; always present, `{}` allowed. |
 
-Events are opt-in via `events.subscribe` (IPC-14). Three classes
+Events are opt-in via `events.subscribe`. Three classes
 are transport-level and never subscription-gated: `hello` and
 `shutdown` always go to the controller; `connection_rejected` goes
 to a refused connection instead of any reply. Reserved classes are
@@ -456,8 +457,9 @@ convention for the whole surface:
   during an ordinary interactive frame) are not retroactively
   attached to replies. Streaming those would be a `log_line` event
   class. #45 settled on `release_max_level_warn`, so such a class is
-  now possible; whether to ship it is IPC-14's call, and it is
-  deliberately not designed here.
+  possible. IPC-14 does not ship one (see
+  [`events`](#events--event-stream--revision-ipc-14)); it stays
+  undesigned here.
 
 Warning code registry (additions are non-breaking, like error codes):
 
@@ -535,8 +537,9 @@ rules:
   where instructions were authored, and the IPC client authored
   those steps, exactly as it authors an `act.console` line.
 - Provenance is a logging concern, not a privilege concern: IPC
-  dispatch sites attribute their origin in diagnostics (and, once
-  IPC-14 lands, in events), which covers auditability without a
+  dispatch sites attribute their origin in diagnostics (and in
+  events: a `document_changed` an agent's command caused has
+  `source: "ipc"`), which covers auditability without a
   `SourceTier::Ipc` variant that would either duplicate `User` or
   cripple the feature.
 - The threat model of opening a hostile `.mindmap.json` is
@@ -589,9 +592,11 @@ The full architecture is CODE_CONVENTIONS §3 (amended by IPC-01) and
   seconds while an animation emits a flood of events must not have
   its session stalled or torn down. So a slow-reading client loses
   *stale events*, not its session; only a client that stops reading
-  *replies* altogether is dropped. (IPC-14 owns the coalescing rule;
-  the event carries a `revision`, so "keep the newest per class" is
-  well-defined.)
+  *replies* altogether is dropped. The rule is `events`' delivery
+  discipline: an event the controller's queue has no room for stays
+  queued, a newer event of its class replaces it, and so at most one
+  per class waits (see
+  [`events`](#events--event-stream--revision-ipc-14)).
 - More than **1024 queued unexecuted requests** answers further
   requests with `overloaded` until the queue drains.
 - A wedged main loop (the `FreezeWatchdog` scenario) also wedges
@@ -673,8 +678,8 @@ entry per registered command, in name order: `name`, `family`,
 `name` and `doc` per class).
 
 The two unnamespaced bootstrap commands report `"family":
-"bootstrap"`. Until IPC-14 lands, the `events` array lists the three
-transport-level classes, the only ones this build can send.
+"bootstrap"`. The `events` array lists the three transport-level
+classes and every subscribable class, in name order.
 
 ```jsonc
 {"id": 1, "cmd": "describe", "command": "clock.step"}
@@ -701,14 +706,14 @@ transport-level classes, the only ones this build can send.
      ]}
   ],
   "events": [
-    {"name": "document_changed", "doc": "Fires after any committed document mutation; data carries the revision."}
-    // … the full reserved-event catalog; abbreviated here
+    {"name": "document_changed", "doc": "A committed document change: data carries revision, document_revision and the source (action, console, mutation, undo, input or ipc)."}
+    // … the full event catalog; abbreviated here
   ]
 }}
 ```
 
 The `events` array is always the complete registered event catalog
-(IPC-14 finalizes it) — it is not narrowed by the `command` filter,
+— it is not narrowed by the `command` filter,
 which scopes only the `commands` array. Above it is abbreviated to
 one entry for space.
 
@@ -1529,7 +1534,7 @@ state rather than the last frame's.
 | `format` | string | `"png"` | `"png"` is the only value at pin time; the param exists so adding one is non-breaking. |
 | `sidecar` | boolean | `true` | Write the geometry sidecar next to the PNG (`<path>.geometry.json`). |
 
-**Result** (plus `revision` at the envelope level once IPC-14 lands):
+**Result** (plus `revision` and `document_revision` at the envelope level, as on every reply):
 
 | field | type | meaning |
 |---|---|---|
@@ -1607,7 +1612,7 @@ at what it sees:
 ```jsonc
 {
   "protocol": 1,
-  "revision": 42,                          // once IPC-14 lands
+  "document_revision": 17,                 // the model state these rects were derived from
   "surface": {"width": 1920, "height": 1080, "scale": 1.0},
   "camera": {"center_x": 12.0, "center_y": -340.5, "zoom": 0.75},
   "nodes": [
@@ -1619,7 +1624,10 @@ at what it sees:
 }
 ```
 
-`surface` is the image (its pixel size and the `scale` it was drawn
+`document_revision` is the document's revision when the image was
+drawn, the same number `document_changed` events and replies carry, so
+a pixel map can be tied to the model state it shows. `surface` is the
+image (its pixel size and the `scale` it was drawn
 at) and `camera` the same object the reply carries; every `rect` is in
 the image's pixels, through the formula above. Elements suppressed by
 `ZoomVisibility` or folding at capture zoom, and nodes the framing
@@ -1681,7 +1689,7 @@ Frames are `frame_%05d.png` plus `manifest.json`:
 
 ```jsonc
 {"protocol": 1, "fps": 30, "width": 1280, "height": 720,
- "frames": [{"index": 0, "t_ms": 0.0, "file": "frame_00000.png", "revision": 42}],
+ "frames": [{"index": 0, "t_ms": 0.0, "file": "frame_00000.png", "document_revision": 17}],
  "dropped_frames": 0}
 ```
 
@@ -1785,9 +1793,12 @@ heartbeat (CONCEPTS §5 "Event loop and `drain_frame`"):
   (see [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D2 — the
   IPC drain mirrors the existing winit handlers' `request_redraw`
   exactly). `settled` holds only once the rendered frame carries that
-  render revision. IPC-14 introduces the counter as a
-  render-affecting revision for this reason; if wave order runs
-  IPC-09 first, IPC-09 carries the field forward itself.
+  render revision. IPC-14 introduced the counter this rests on, as
+  `revision` ([`events`](#events--event-stream--revision-ipc-14)):
+  it advances on view and selection changes as well as document
+  ones, and every reply carries it. What it does not record is
+  *rendered*: that the renderer has drawn a given `revision` is the
+  other half of `settled`, and `clock.wait` (IPC-09) owns it.
 
   **Scope: `settled` fences the agent, not the human.** The
   "race-free" guarantee is only against the agent's own prior
@@ -1828,29 +1839,124 @@ that observes behavior and must not become observable behavior.
 
 ## `events` — event stream + revision (IPC-14)
 
-Push notifications, opt-in per class: `events.subscribe`
-(`classes`: array of class names), `events.unsubscribe` (`classes`
-optional — omit for all), `events.revision` (result:
-`{"revision"}` — the monotonic revision counter IPC-14 introduces;
-also surfaces as the reply-envelope `revision` key). The counter
-advances on every **pixels-affecting** change — document mutations
-and view/selection changes alike — so it doubles as the `settled`
-arbiter (see `clock.wait`); a change that repaints without touching
-the document still bumps it.
+Push notifications, opt-in per class, and the two counters that order
+them against replies. A connection starts with **no subscriptions**:
+an agent that polls never receives a frame it did not ask for, and a
+new controller starts clean (subscriptions and queued events reset
+with the connection; the counters do not, because they are the
+process's).
 
-Reserved event classes at pin time: `hello`, `shutdown`,
-`connection_rejected` (the three transport-level classes, never
-subscription-gated; `connection_rejected` is delivered to the
-refused connection, not the controller), `document_changed`,
-`selection_changed`,
-`camera_changed`, `mode_changed`, `animation_started`,
-`animation_completed`. IPC-14 owns the class list and payloads and
-appends them here. A `log_line` class streaming degrades from
-outside any command's window is possible now that #45 kept `warn!`
-and `error!` in release builds. Whether to ship one is IPC-14's call
-(see [Warnings](#warnings--per-command-diagnostics)). Tree-level
-(Baumhard `EventSubscriber`) events are out of scope until the #43
-reshape lands; app-funnel events above do not depend on it.
+- `events.subscribe` — params: `classes` (array of class names,
+  required, at least one), `verbose` (boolean, default `false`).
+  Adds the classes. Result: `subscribed` (every class now
+  subscribed, name order), `verbose`, `revision`,
+  `document_revision`. **Changes made before the command are not
+  reported**: a class added now speaks from here on, never the
+  history. `verbose` applies to the whole connection and is cleared
+  by an `events.unsubscribe` that leaves nothing subscribed. An
+  unknown class is `invalid_params` naming `classes` and listing the
+  valid ones; so is `hello`, `shutdown` or `connection_rejected`,
+  which are always delivered. Needs the app up, like `act.*`:
+  `no_document` before the window exists.
+- `events.unsubscribe` — params: `classes` (array, optional; omit for
+  all). Drops the classes and any event of theirs still waiting to
+  be delivered. Result: `subscribed`, the classes that remain.
+- `events.revision` — no params. Result: `revision`,
+  `document_revision`. Reads the counters; subscribes to nothing.
+
+### The two counters
+
+| counter | where | advances on |
+|---|---|---|
+| `document_revision` | `MindMapDocument::revision()`; every reply, every `document_*` event, the geometry sidecar | every committed model change: each document setter (the one place that sets the unsaved flag also advances it), each undo, each custom mutation, each animation that commits, each `open` / `new`. Never on a query, a screenshot, a preview, a selection or the camera. |
+| `revision` | the event layer; every reply, every event | once per *observation* in which any event class had something to report — so a zoom or a selection moves it while `document_revision` stays put. |
+
+Both are **monotonic per process**, not per document: `open` and
+`new` carry the document counter on (the replacement is itself one
+more change) and bump a `generation`, so neither number ever reads
+lower than before. Both start at zero, and the first observation of
+a process only records a baseline.
+
+An *observation* is the unit: the app is looked at after each
+command (so a reply's counters include that command's own effect)
+and, while anything is subscribed, once per event-loop iteration
+between the user's input and the first command of the drain (so a
+change the user made is not reported as the agent's). Two changes
+between two observations advance `revision` once. With
+nothing subscribed, a change the user makes is not observed until the
+next command looks, so `revision` is a lower bound on how many
+things happened, never a count — `document_revision` is the exact
+one.
+
+### Classes
+
+Every event's `data` carries `revision`: the counter as of the
+observation that produced it.
+
+| class | `data` besides `revision` | fires when |
+|---|---|---|
+| `document_changed` | `document_revision`, `source` | the document's revision advanced |
+| `document_replaced` | `document_revision`, `generation`, `path` | an `open` or `new` replaced the document; `path` is the new file path, `null` when unbound |
+| `selection_changed` | `selection` (as `query.selection` reports it) | the selection differs |
+| `camera_changed` | `camera` (as `query.camera` reports it) | the camera's center, zoom or surface size differs |
+| `mode_changed` | `mode` (the interaction mode, as `query.mode` reports it under `interaction_mode`) | the interaction mode differs |
+| `animation_started` | `animations`: `[{target_id, section_idx, mutation_id}]` | animations began |
+| `animation_completed` | `animations`, as above | animations committed or ended |
+
+`source` says which funnel was driving when the document's revision
+last advanced: `action` (`dispatch_action`: a key binding, a gesture,
+a macro `Action` step), `console` (a console verb), `mutation` (a
+custom mutation, or an animated one committing), `undo`, `input`
+(direct manipulation that reaches the model with no funnel to name:
+a drag, a text-edit commit), or `ipc` — any change made while an
+agent's command was executing. The innermost declaration wins, so an
+undo reached through `Action::Undo` reports `undo`; an agent's
+`act.action` reports `ipc`.
+
+`document_changed` and `document_replaced` both fire for a swap, and
+the swap's `document_revision` is the same in both.
+
+### Delivery discipline
+
+- Events are produced on the main thread, at observation points, and
+  never during a mutation: nothing re-enters the code that is
+  changing the document.
+- **Coalesced per drain.** All an observation window's changes of one
+  class are one event, with the final state. A 200-step macro is one
+  `document_changed` carrying the final `document_revision`. With
+  `verbose`, every observation is its own event and a macro is
+  observed **between its steps** as well, so the same macro yields an
+  event per step that changed something.
+- Events leave **after the replies** of the drain that caused them,
+  never before: an agent reads `{"id": 7, "ok": true, "revision": 12}`
+  and then `{"event": "document_changed", "data": {"revision": 12, …}}`.
+- Events never pause execution. When the controller's outbound queue
+  has no room, the event stays queued on the main thread and a newer
+  event of its class replaces it, so a client that is slow to read
+  loses *stale* events, never its session; the outbound thread wakes
+  the loop when there is room. (A `verbose` queue is capped at 4096
+  events and drops the oldest.) Events already in the queue are not
+  recalled.
+- No subscription, no observation between commands: the event loop's
+  tap is a branch on the empty subscription set.
+
+Reserved event classes: `hello`, `shutdown`, `connection_rejected`
+(the three transport-level classes, never subscription-gated;
+`connection_rejected` is delivered to the refused connection, not the
+controller), `document_changed`, `document_replaced`,
+`selection_changed`, `camera_changed`, `mode_changed`,
+`animation_started`, `animation_completed`. `shutdown` is the
+"app is closing" notice. Widening this list is breaking, like any
+enum-valued field (see
+[Handshake and versioning](#handshake-and-versioning)).
+
+**Not here.** Tree-level (Baumhard `EventSubscriber`) events wait for
+the #43 reshape; nothing above depends on it, because the tap points
+are the app's funnels and the observation, not the walkers. A
+`log_line` class for degrades outside any command's window is
+possible now that #45 kept `warn!` and `error!` in release builds,
+and is not shipped: it is a follow-up with its own design (what a
+flood of per-frame degrades does to the queue is the first question).
 
 ## Change discipline
 

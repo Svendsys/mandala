@@ -32,6 +32,7 @@
 mod commands;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod envelope;
+pub(crate) mod events;
 pub(crate) mod injected;
 mod registry;
 pub(crate) mod space;
@@ -95,7 +96,10 @@ impl IpcServer {
         )
     }
 
-    pub(crate) fn drain(&mut self, _execute: impl FnMut(&envelope::IpcRequest) -> Executed) -> DrainOutcome {
+    pub(crate) fn drain(
+        &mut self,
+        _execute: impl FnMut(&envelope::IpcRequest, &mut events::Session) -> Executed,
+    ) -> DrainOutcome {
         match self.never {}
     }
 

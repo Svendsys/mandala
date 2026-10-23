@@ -127,11 +127,21 @@ fn drain_ipc(
         return DrainOutcome::default();
     };
     match init {
-        Some(init) => server.drain(|request| {
-            let mut target = IpcCommandTarget::new(init, event_loop);
-            ipc::execute(request, Some(&mut target))
-        }),
-        None => server.drain(|request| ipc::execute(request, None)),
+        Some(init) => {
+            // Look at what the user just did before any command runs,
+            // so a change of theirs is reported as theirs and not
+            // folded into the first command's. Only when subscribed:
+            // with nothing to report, an input handler's changes cost
+            // no observation at all.
+            if server.is_subscribed() {
+                server.observe(&init.observed());
+            }
+            server.drain(|request, session| {
+                let mut target = IpcCommandTarget::new(init, event_loop);
+                ipc::execute(request, Some(&mut target), session)
+            })
+        }
+        None => server.drain(|request, session| ipc::execute(request, None, session)),
     }
 }
 

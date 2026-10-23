@@ -103,6 +103,13 @@ pub(crate) struct Reply {
     /// when empty, on success and failure alike.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     warnings: Vec<Warning>,
+    /// The counters as of the end of the command
+    /// (`format/ipc.md` §`events`). Absent when the command ran with
+    /// no app to observe, and on a reply the reader answers itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    document_revision: Option<u64>,
 }
 
 /// One entry of a reply's `warnings` array.
@@ -171,6 +178,8 @@ impl Reply {
             result: Some(result),
             error: None,
             warnings: Vec::new(),
+            revision: None,
+            document_revision: None,
         }
     }
 
@@ -190,12 +199,21 @@ impl Reply {
                 data,
             })),
             warnings: Vec::new(),
+            revision: None,
+            document_revision: None,
         }
     }
 
     /// The same reply, carrying `warnings`.
     pub(crate) fn with_warnings(mut self, warnings: Vec<Warning>) -> Self {
         self.warnings = warnings;
+        self
+    }
+
+    /// The same reply, carrying the counters the command left behind.
+    pub(crate) fn with_revisions(mut self, revisions: super::events::Revisions) -> Self {
+        self.revision = Some(revisions.revision);
+        self.document_revision = Some(revisions.document_revision);
         self
     }
 
@@ -270,6 +288,12 @@ impl Event {
                 "map": map,
             }),
         }
+    }
+
+    /// A subscribed change event: `class` is one of
+    /// [`super::events::Class`]'s names and `data` its payload.
+    pub(crate) fn change(class: &'static str, data: Value) -> Self {
+        Event { event: class, data }
     }
 
     /// Best-effort notice that the app is exiting, so a client can
@@ -632,6 +656,38 @@ mod tests {
                 None
             ))),
             json!({ "id": "x", "ok": false, "error": { "code": "unknown_cmd", "message": "nope" } })
+        );
+    }
+
+    #[test]
+    fn test_a_reply_carries_the_counters_only_when_given_them() {
+        use crate::application::ipc::events::Revisions;
+
+        let bare = wire(Frame::Reply(Reply::ok(json!(1), json!({}))));
+        assert!(bare.get("revision").is_none() && bare.get("document_revision").is_none());
+
+        let stamped = wire(Frame::Reply(Reply::error(json!(2), code::NOT_FOUND, "no", None).with_revisions(
+            Revisions {
+                revision: 12,
+                document_revision: 7,
+            },
+        )));
+        assert_eq!(stamped["revision"], json!(12));
+        assert_eq!(stamped["document_revision"], json!(7), "failures are stamped too");
+    }
+
+    #[test]
+    fn test_a_change_event_is_an_event_frame_with_its_class_and_payload() {
+        let frame = wire(Frame::Event(Event::change(
+            "document_changed",
+            json!({ "revision": 3, "document_revision": 2, "source": "ipc" }),
+        )));
+        assert_eq!(
+            frame,
+            json!({
+                "event": "document_changed",
+                "data": { "revision": 3, "document_revision": 2, "source": "ipc" }
+            })
         );
     }
 
