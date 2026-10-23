@@ -30,6 +30,7 @@ use crate::application::macros::MacroStep;
 use crate::application::scene_host::AppScene;
 
 use crate::application::capture::plan::CaptureRequest;
+use crate::application::capture::record::{RecordDestination, Started, Summary};
 use crate::application::capture::{CaptureError, CaptureOutcome, Destination};
 
 use super::events::Observed;
@@ -206,6 +207,30 @@ pub(crate) trait CommandTarget {
         destination: Destination,
         sidecar: bool,
     ) -> Option<Result<Screenshot, CaptureError>>;
+
+    /// Begin recording a frame sequence of `request` at `fps` into
+    /// `destination` (`app::record_flow`). The first frame is taken
+    /// before this returns, so it shows the state the next command
+    /// acts on. `None` when the app has no document;
+    /// `CaptureError::Invalid` when a recording is already running.
+    ///
+    /// The recording is app state: it keeps taking frames, one per
+    /// heartbeat that finds one due, until [`Self::record_stop`], its
+    /// `max_frames`, its disk budget or the app's exit.
+    fn record_start(
+        &mut self,
+        request: &CaptureRequest,
+        fps: u32,
+        max_frames: u32,
+        destination: RecordDestination,
+    ) -> Option<Result<Started, CaptureError>>;
+
+    /// End the recording, writing its remaining frames and manifest, and
+    /// report it; or, for one that ended on its own since, report that.
+    /// `CaptureError::Invalid` when nothing has recorded since the last
+    /// stop. Needs no document: a recording outlives the one it began
+    /// on.
+    fn record_stop(&mut self) -> Result<Summary, CaptureError>;
 }
 
 /// What [`CommandTarget::capture`] did.

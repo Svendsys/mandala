@@ -437,6 +437,20 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "screenshot overwrite=yes"),
     (Sel::None, "screenshot a.png b.png"),
     (Sel::None, "screenshot region=0,0,1,1"),
+    // record — the verb only reads the line, so a well-formed one is a
+    // silent OK and a malformed one is refused with the reason.
+    (Sel::None, "record"),
+    (Sel::None, "record start"),
+    (
+        Sel::None,
+        "record start dir=frames fps=12 max_frames=240 width=640 height=360 frame=fit",
+    ),
+    (Sel::None, "record stop"),
+    (Sel::None, "record pause"),
+    (Sel::None, "record start fps=fast"),
+    (Sel::None, "record start width=640"),
+    (Sel::None, "record start space=surface"),
+    (Sel::None, "record stop fps=30"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for
@@ -634,6 +648,11 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "screenshot "),
     (Sel::None, "screenshot frame="),
     (Sel::None, "screenshot sidecar="),
+    // record
+    (Sel::None, "re"),
+    (Sel::None, "record "),
+    (Sel::None, "record start "),
+    (Sel::None, "record start frame="),
 ];
 
 /// The one outcome whose tail this machine chose rather than the

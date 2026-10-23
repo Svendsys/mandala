@@ -17,7 +17,9 @@
 //!
 //! **Kept apart from `maptool` on purpose.** That tool reads
 //! `.mindmap.json` files and never talks to a process; this talks to a
-//! process and never reads a map.
+//! process and never reads a map. Its one client-side command,
+//! `record assemble <dir>` (the `assemble` module) reads a *recording's* frames
+//! and manifest — never a map, and never the socket.
 //!
 //! Native Unix only in effect: the transport is a Unix socket, and the
 //! crate compiles elsewhere (the workspace is type-checked for
@@ -29,6 +31,7 @@
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+mod assemble;
 mod cli;
 // The frame reader, the greeting check and the connection's constants
 // are read only by the Unix client. Off Unix the modules compile with

@@ -27,6 +27,7 @@ use super::{
     InteractionMode, LastClick, Options,
 };
 use crate::application::capture::artifacts::Artifacts;
+use crate::application::capture::record::Recorder;
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
@@ -225,7 +226,14 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // the user sent before it — throttled drag moves and zoom
             // steps included — and its effects are ordered after them.
             ipc_outcome = drain_ipc(&mut self.ipc, Some(init), event_loop);
+            // After the IPC drain, so a frame shows what the commands of
+            // this iteration did, and before the continuation check,
+            // which the frame's camera-geometry rebuild can change.
+            init.record_tick();
             let still_continuing = init.needs_continuation();
+            if !still_continuing {
+                init.record_idle();
+            }
             // Request a redraw if work happened this iteration
             // (`was_continuing`) OR if more work is pending
             // (`still_continuing`). The OR catches the last
@@ -270,9 +278,17 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // choice is strictly post-drain — pre-drain state may
             // have been continuing while post-drain state is fully
             // idle.
+            //
+            // An active recording is a timer source: an idle canvas
+            // would otherwise park with no heartbeat to take its next
+            // frame (`format/ipc.md` §`capture.record_start`).
+            let wake_by = [fps_defer_deadline, super::record_flow::deadline(&init.recorder)]
+                .into_iter()
+                .flatten()
+                .min();
             event_loop.set_control_flow(if still_continuing {
                 ControlFlow::Poll
-            } else if let Some(deadline) = fps_defer_deadline {
+            } else if let Some(deadline) = wake_by {
                 ControlFlow::WaitUntil(deadline)
             } else {
                 ControlFlow::Wait
@@ -307,6 +323,10 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             server.shutdown();
         }
         if let Some(init) = self.init.as_mut() {
+            // A recording in progress is finished first: its frames and
+            // manifest are on disk, or — in the artifacts dir — go
+            // with the dir just below.
+            super::record_flow::shutdown(&mut init.recorder, &mut init.artifacts, &init.watchdog);
             init.artifacts.remove();
         }
     }
@@ -382,6 +402,10 @@ pub(super) struct InitState {
     /// first use, bounded, and removed in `NativeApp::exiting`
     /// (`format/ipc.md` §`capture`, "Artifact lifecycle").
     pub(super) artifacts: Artifacts,
+    /// The frame-sequence recording in progress, or how the last one
+    /// ended (`app::record_flow`). App state, not session state: it
+    /// outlives the client that started it.
+    pub(super) recorder: Recorder,
     /// A handle on the event loop's freeze watchdog, for main-thread
     /// work that runs long while making progress — a screenshot ticks
     /// it per band and per encoded chunk (`app::capture_flow`).
@@ -417,6 +441,7 @@ impl InitState {
             keybinds: &self.keybinds,
             macros: &mut self.macros,
             artifacts: &mut self.artifacts,
+            recorder: &mut self.recorder,
             watchdog: &self.watchdog,
         }
     }
@@ -869,6 +894,31 @@ impl InitState {
                 &mut self.scene_cache,
             );
         }
+    }
+
+    /// Take the active recording's next frame if one is due; a no-op
+    /// when nothing is recording (`app::record_flow`).
+    pub(super) fn record_tick(&mut self) {
+        if self.recorder.active.is_none() {
+            return;
+        }
+        let scene = super::capture_flow::CaptureScene {
+            moving_node: self.drag_state.is_moving_node(),
+            document: &self.document,
+            mindmap_tree: &self.mindmap_tree,
+            app_scene: &mut self.app_scene,
+            renderer: &mut self.renderer,
+            scene_cache: &mut self.scene_cache,
+            interaction_mode: &self.interaction_mode,
+            watchdog: &self.watchdog,
+        };
+        super::record_flow::tick(scene, &mut self.recorder, &mut self.artifacts);
+    }
+
+    /// The loop is about to park with a recording running: encode what
+    /// waits in the time before its next frame (`app::record_flow::idle`).
+    pub(super) fn record_idle(&mut self) {
+        super::record_flow::idle(&mut self.recorder, &mut self.artifacts, &self.watchdog);
     }
 
     /// True iff the event loop should keep iterating without

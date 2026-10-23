@@ -87,6 +87,8 @@ mod ipc_scene;
 mod ipc_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod ipc_target;
+#[cfg(not(target_arch = "wasm32"))]
+mod record_flow;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;

@@ -90,6 +90,7 @@ pub mod new;
 pub mod node;
 pub mod open;
 pub mod range_kv;
+pub mod record;
 pub mod save;
 pub mod screenshot;
 pub mod section;
@@ -168,6 +169,7 @@ pub const COMMANDS: &[Command] = &[
     mutation::COMMAND,
     save::COMMAND,
     screenshot::COMMAND,
+    record::COMMAND,
     open::COMMAND,
     new::COMMAND,
     node::COMMAND,

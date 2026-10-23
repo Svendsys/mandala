@@ -64,7 +64,7 @@ fn console_path(typed: Option<&str>, cwd: &Path, now_ms: u128) -> PathBuf {
 /// Milliseconds since the Unix epoch, for the default file name. A
 /// clock before 1970 names the file `mandala-0.png`, which the write
 /// guard then keeps from replacing an earlier one.
-fn unix_ms() -> u128 {
+pub(super) fn unix_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_millis())

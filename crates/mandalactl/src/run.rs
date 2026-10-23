@@ -32,6 +32,7 @@ use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
+use crate::assemble;
 use crate::cli::{self, Invocation, Options, Parsed};
 use crate::client::{Connection, Exchange, Outcome, Watched};
 use crate::help;
@@ -143,6 +144,12 @@ enum Prepared {
 }
 
 fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exit {
+    // The one command that is the client's own: it reads a recording's
+    // files and never opens the socket, so it needs no app to be
+    // running and no `--ipc`.
+    if invocation.command == assemble::COMMAND {
+        return assemble::run(&invocation, io);
+    }
     let Invocation {
         options,
         command,
@@ -497,7 +504,7 @@ fn error_line(error: &ErrorBody) -> String {
     }
 }
 
-fn usage(io: &mut Io<'_>, why: &str) -> Exit {
+pub(crate) fn usage(io: &mut Io<'_>, why: &str) -> Exit {
     emit(io.err, &format!("mandalactl: {why}\nTry `mandalactl --help`.\n"));
     Exit::UsageError
 }
@@ -537,6 +544,6 @@ fn unsettled(io: &mut Io<'_>, why: &str) -> Exit {
 
 /// Write, ignoring failure: a reader that went away (`| head`) is not
 /// an error worth a panic or a different exit code.
-fn emit(writer: &mut dyn Write, text: &str) {
+pub(crate) fn emit(writer: &mut dyn Write, text: &str) {
     let _ = writer.write_all(text.as_bytes());
 }

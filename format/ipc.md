@@ -754,7 +754,7 @@ PR that implements them.
 | `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.animations`, `query.editors`, `query.undo` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
-| `capture` | `capture.rs` | IPC-07; IPC-08 adds `capture.record_start`, `capture.record_stop` | `capture.screenshot` |
+| `capture` | `capture.rs` | IPC-07, IPC-08 | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
 | `clock` | `clock.rs` | IPC-09 | `clock.status`, `clock.set_mode`, `clock.step`, `clock.wait` |
 | `events` | `events.rs` | IPC-14 | `events.subscribe`, `events.unsubscribe`, `events.revision` |
 
@@ -1497,7 +1497,7 @@ Poll it to 0 before reading what a paced gesture did.
 
 Shapes pinned here in full; `mandalactl` and the `mandala-drive` /
 `mandala-record` skills build against them. `capture.screenshot` is
-implemented (IPC-07); the recording pair below is IPC-08's.
+implemented (IPC-07), and so is the recording pair below (IPC-08).
 
 **Artifact lifecycle.** The per-item caps (64 Mpx per image, 3600
 frames per recording) bound each artifact but not their number. The
@@ -1651,56 +1651,141 @@ capture shows what the window shows.
 
 ### `capture.record_start` / `capture.record_stop` (IPC-08)
 
-Frame-sequence recording; assembly into GIF/video is deliberately
-**outside the app** (the `mandala-record` skill, IPC-13, drives
-`ffmpeg`/`gifski` over the manifest). One recording at a time;
-starting while recording is `invalid_params`, stopping while idle is
-`invalid_params`.
+Frame-sequence recording: PNG frames and a `manifest.json` that says
+when each was taken. A screenshot proves a state; a recording proves a
+*behavior* — an animation's timing, a drag, a hover transition — and the
+manifest is what lets a tool replay it at the speed it happened.
+**Assembly is not the app's.** The app writes frames; `mandalactl record
+assemble <dir>` (a client-side command, no socket) turns a recording
+into an animated GIF — the format GitHub shows inline in a PR — or, with
+`format=mp4`, into a video through the host's `ffmpeg`. Any other tool
+that reads JSON and PNGs can do the same from the manifest. One
+recording at a time: `capture.record_start` while one is running is
+`invalid_params`, and so is `capture.record_stop` when nothing has
+recorded since the last stop.
 
-`capture.record_start` params: `dir` (string, default server-chosen),
-`fps` (integer, default `30`, clamped `1..=60`), `max_frames`
-(integer, default `600`, hard cap `3600` — the recorder stops itself
-and warns rather than filling a disk), plus `width`/`height`/
-`region`/`space`/`scale` exactly as `capture.screenshot`. Result:
-`{"dir"}`.
+`capture.record_start` params: `dir` (string, absolute path), `fps`
+(integer `1..=60`, default `30`), `max_frames` (integer `1..=3600`,
+default `600`), plus `width`/`height`/`region`/`space`/`fit`/`scale`
+exactly as `capture.screenshot` (the same bounds, the same refusals;
+`scale` multiplies the frame's pixels, not what it shows). Every frame
+of a recording is the same size: `width`/`height` unset means the
+window's size *when the recording starts*, and a window resized
+afterwards does not change it. The bounds are refusals, as for a
+screenshot: `fps` or `max_frames` outside its range is `invalid_params`
+naming it, never a clamp.
 
-An in-flight recording is **app state, not session state**: it
-keeps capturing across a client disconnect, and a reconnecting
-controller stops it with `capture.record_stop`.
+`dir` is where the frames go. It must be an absolute path, not a
+symlink, and either not there yet (its parent must exist; one level is
+made, never a tree, so a typo in the middle of a path is a refusal) or
+an **empty** directory: a recording never writes among files it did not
+make, so it needs no `overwrite`. Unset, it is a fresh `recording-<n>`
+directory in the per-session artifacts dir, counted into that dir's
+budget when the recording ends.
 
-An active recording is a **continuation/timer source**: on an
-otherwise static scene the loop would park in `ControlFlow::Wait`
+Result: `{"dir", "manifest_path", "width", "height", "fps",
+"max_frames"}`. `manifest_path` is where `manifest.json` will be — the
+file is written whenever frames are, and complete when the recording
+ends. **The first frame is taken before the reply**, so it shows the
+state the next command acts on; a first frame the renderer cannot draw
+is a gap, like any other, and the recording begins regardless.
+
+An in-flight recording is **app state, not session state**: it keeps
+capturing across a client disconnect, and a reconnecting controller
+stops it with `capture.record_stop`. It ends by itself at `max_frames`,
+when its PNGs pass the artifacts dir's budget (256 MiB, a recording in
+that dir only), when the renderer has drawn nothing for 100 frames in
+a row, or when the app exits — and a recording that ended on its own is
+kept until `capture.record_stop` collects its report, so an agent that
+looked away still finds where its frames went. A recording started
+after that discards the report; the files stay.
+
+**Cadence.** An active recording is a **continuation/timer source**:
+on an otherwise static scene the loop would park in `ControlFlow::Wait`
 and no heartbeat would fire, so nothing would be captured until an
 unrelated event woke it. While a recording runs, the loop instead
-parks in `WaitUntil(next frame deadline)` (`now + 1000/fps` ms) —
-the same idle-timer shape the FPS grace already uses — so frames
-land at the requested cadence with the canvas idle. Under
-`clock.set_mode virtual` the recording is instead driven by
-`clock.step`, and the **frame-emission rule** is pinned so the
-manifest is deterministic: a frame is captured each time virtual
-`now_ms()` crosses a `1000/fps` boundary, **not** once per internal
-heartbeat. So `clock.step ms=1000` at `fps=30` emits exactly 30
-frames regardless of how many heartbeats the step ran, and each
-frame's `t_ms` is its `1000/fps` boundary. (Real mode uses the same
-boundary rule against the wall clock; a frame that would land late
-because a heartbeat overran is dropped and counted in
-`dropped_frames`.)
+parks in `WaitUntil(next frame deadline)` — the same idle-timer shape
+the FPS grace already uses — so frames land at the requested cadence
+with the canvas idle. The **frame-emission rule** is pinned so the
+manifest is deterministic: a frame is due each time the capture clock
+crosses a `1000/fps` boundary (the boundaries are the multiples of
+`1000/fps` ms from the start, counted as whole numbers), **not** once
+per heartbeat. A heartbeat that finds several boundaries crossed — it
+overran — takes **one** frame, for the latest, and counts the others as
+missed. So a second at `fps=30` is exactly 30 boundaries however many
+heartbeats ran. Under `clock.set_mode virtual` (IPC-09) the same rule
+runs against virtual time and `clock.step` drives the frames, so
+`clock.step ms=1000` at `fps=30` emits exactly 30; the manifest's
+`pacing` key is `"realtime"` today and is where that mode will say so.
 
-`capture.record_stop` params: none. Result: `{"dir", "frames",
-"manifest_path", "dropped_frames"}`.
+**Costs, and what is never done in the loop.** Taking a frame is one
+render and one readback, ticking the `FreezeWatchdog` as a screenshot
+does. The PNG encode is *not* in the frame: raw frames wait in memory
+and are encoded (a) in time the loop would otherwise sleep through —
+only when nothing else needs a frame, and only as far as the time
+before the next boundary reaches, judged from the measured cost of an
+encode — (b) when 256 MiB of them have piled up (a stall the loop pays
+rarely, ticking the watchdog per 4 MiB chunk, and the boundaries it
+costs are `dropped_frames`), and (c) when the recording ends, which is
+what `capture.record_stop` pays for whatever (a) did not reach. A busy
+drag therefore records at whatever rate the machine sustains, reports
+the frames it could not take, and never wedges the loop.
 
-Frames are `frame_%05d.png` plus `manifest.json`:
+`capture.record_stop` params: none. Result: `{"dir", "manifest_path",
+"frames", "dropped_frames", "duration_ms", "stopped", "bytes", "width",
+"height", "fps"}` — `dir` and `manifest_path` as above, `frames` how
+many frames were taken, `dropped_frames` how many were due and not,
+`duration_ms` how long the recording ran, `bytes` what the frames and
+the manifest take on disk, `width`, `height` and `fps` as `record_start`
+reported them — and `stopped` says why it ended: `"client"` (this
+command), `"max_frames"`, `"disk_budget"` or `"shutdown"`. A recording that could
+not be written, or that the renderer could not draw, ends with `stopped:
+"error"` in its manifest and this command answers `internal`, naming
+the directory whose frames are usable. It does the encode, so it is
+long main-thread work for a long recording, ticking the watchdog the
+way a large screenshot does.
+
+Frames are `frame_%05d.png`, numbered by frame *taken* (a gap leaves no
+hole in the numbering), plus `manifest.json`:
 
 ```jsonc
-{"protocol": 1, "fps": 30, "width": 1280, "height": 720,
- "frames": [{"index": 0, "t_ms": 0.0, "file": "frame_00000.png", "document_revision": 17}],
- "dropped_frames": 0}
+{"protocol": 1, "fps": 30, "pacing": "realtime",
+ "width": 1280, "height": 720, "scale": 1.0,
+ "complete": true, "stopped": "client", "duration_ms": 3012.5,
+ "frames": [{"index": 0, "t_ms": 0.0, "file": "frame_00000.png",
+             "document_revision": 17,
+             "camera": {"center_x": 12.0, "center_y": -340.5, "zoom": 0.75}}],
+ "dropped_frames": 2,
+ "gaps": [{"t_ms": 1033.333, "frames": 1, "reason": "overrun"}]}
 ```
 
-`t_ms` is capture-clock time (virtual when the virtual clock is
-active — recording under `clock.step` yields perfectly paced
-sequences; that interplay is IPC-08/09's implementation seam, and
-`manifest.json` is its contract).
+`t_ms` is capture-clock time, measured from the start, **when the frame
+was taken**: the wall clock's reading in real mode (so a consumer that
+paces by it replays what happened, stalls included) and, once the
+virtual clock lands, the frame's `1000/fps` boundary, exactly.
+`duration_ms` is how long the recording ran, and with the last frame's
+`t_ms` is the last frame's display time. `complete` is `false` in the
+copy written while recording (a recording the app never finished is
+still readable, and tells itself from one it did) and `true` once
+finished; `stopped` is absent until then. `document_revision` and
+`camera` are as in the geometry sidecar, so a frame ties to the model
+state and view it shows.
+
+`gaps` is every stretch with no frame, **never a silent drop**:
+`t_ms` is when the first missing frame was due, `frames` how many,
+`reason` why — `overrun` (the loop was late for the boundary), `busy`
+(a node drag is in flight and the frame would need another zoom than
+the live one, as for a screenshot), or the renderer's skip word
+(`font_system_contended`, `not_started`, `prepare_failed`).
+`dropped_frames` is their sum, and the manifest's `frames` names only
+files that exist.
+
+**Also a console verb.** `record start [dir=] [fps=] [max_frames=]
+[width= height=] [scale=] [frame=view|fit|x,y,w,h] [space=]` and `record stop`
+call the same engine with the same bounds and differ where a person is
+typing: a relative `dir` is read against the working directory, no
+`dir` means `mandala-recording-<unix ms>/` there rather than the
+artifacts dir, and an open console is left out of the frames.
 
 ## `clock` — determinism (IPC-09)
 

@@ -3349,6 +3349,44 @@ a browser cannot do (`CLAUDE.md` "Dual-target status"; browser
 canvas capture is IPC-15's). **Vision:** IPC-08's recorder and
 IPC-10's headless pump draw through the same prepare / encode pair.
 
+
+### Frame-sequence recording
+
+A screenshot proves a state; a recording proves a *behavior* — an
+animation's timing, a drag, a hover transition. `capture.record_start`
+and `capture.record_stop` (and the `record start` / `record stop`
+console verb) take a sequence of the very frames `screenshot` takes
+and a `manifest.json` that says when each was taken; `mandalactl
+record assemble <dir>` turns them into an animated GIF — the format
+GitHub shows inline in a PR — or an MP4 through the host's `ffmpeg`.
+The app links no encoder: the frames and the manifest are the whole
+contract, and the assembler is a client that reads a directory.
+
+`src/application/capture/record.rs` is the engine's pure half.
+`Timeline` decides from the elapsed time alone when a frame is due and
+how many boundaries a late heartbeat stepped over, never reading a
+clock itself, so the realtime pacing tested there is the pacing a
+virtual clock will reuse by passing virtual time; `Recording` holds the
+frames, the gaps and the manifest. `app/record_flow.rs` is the app
+half: it starts a recording, takes a frame each time `about_to_wait`
+finds one due (an active recording is a loop timer source, so an idle
+canvas still wakes for its frames), and ends it. Each frame is drawn
+by `capture_flow::draw`, the screenshot's own path, and held as raw
+pixels until 256 MiB of them wait or the recording ends, so a frame
+costs the loop a render and a readback and never an encode. A frame
+that was due and not taken — the loop was late, the renderer skipped
+it, a node drag made it undrawable — is a *gap* with its reason, never
+a silent drop.
+
+A recording is app state, not session state: it outlives the client
+that started it, and one that ended on its own (its `max_frames`, the
+artifacts dir's budget, the app exiting) is kept until
+`capture.record_stop` collects it. In `mandalactl`, `assemble.rs`
+plans the GIF from the manifest's times — rounding start times rather
+than delays, so the error does not accumulate, and dropping frames
+closer than the 20 ms a browser honors — and writes one decoded frame
+at a time.
+
 ### `now_ms()`
 
 A cross-platform monotonic clock returning `f64`
@@ -4096,7 +4134,10 @@ is reported as it is.
 bare (positional) arguments. The app crate's tests hold it against the IPC
 registry in both directions, so a server command without its verb fails the
 PR that adds it. The sibling of `maptool`, not a mode of it: `maptool` reads
-`.mindmap.json` files and never talks to a process.
+`.mindmap.json` files and never talks to a process. Its one client-side
+command, `record assemble <dir>`, turns a recording's frames and manifest
+(see [Frame-sequence recording](#frame-sequence-recording)) into a GIF, or an
+MP4 through the host's `ffmpeg`, and never opens the socket.
 
 `crates/mandalactl/`. Protocol: [`format/ipc.md`](./format/ipc.md); the full
 agent-facing reference is `mandalactl --help`.

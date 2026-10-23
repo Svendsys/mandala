@@ -103,6 +103,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// Where a server-chosen screenshot lands, and the dir a
     /// caller-chosen path may overwrite into.
     pub artifacts: &'a mut crate::application::capture::artifacts::Artifacts,
+    /// The frame-sequence recording in progress, for the console's
+    /// `record` verb to start and stop.
+    pub recorder: &'a mut crate::application::capture::record::Recorder,
     /// The freeze watchdog, for a screenshot to tick as it progresses.
     pub watchdog: &'a super::freeze_watchdog::FreezeWatchdog,
 }

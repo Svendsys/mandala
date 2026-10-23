@@ -23,7 +23,7 @@ use std::ops::RangeInclusive;
 use baumhard::gfx_structs::camera::Camera2D;
 use glam::Vec2;
 
-use crate::application::console::commands::screenshot::{ScreenshotFrame, ScreenshotLine};
+use crate::application::console::commands::screenshot::{ConsoleView, ScreenshotFrame, ScreenshotLine};
 use crate::application::ipc::space::Space;
 use crate::application::renderer::{ModalLayer, FIT_PADDING_FRACTION};
 
@@ -99,9 +99,19 @@ impl CaptureRequest {
     /// (The IPC request is built by the `capture` family, from its
     /// parameters; both arrive here as the same value.)
     pub(crate) fn from_console_line(line: &ScreenshotLine) -> Self {
-        CaptureRequest {
+        Self::from_console_view(&ConsoleView {
             size: line.size,
-            framing: match line.frame {
+            scale: line.scale,
+            frame: line.frame,
+        })
+    }
+
+    /// The same for any console verb that frames a view: `screenshot`'s
+    /// line, `record start`'s.
+    pub(crate) fn from_console_view(view: &ConsoleView) -> Self {
+        CaptureRequest {
+            size: view.size,
+            framing: match view.frame {
                 ScreenshotFrame::View => Framing::View,
                 ScreenshotFrame::Fit => Framing::Fit,
                 ScreenshotFrame::Region { x, y, w, h, surface } => Framing::Region(Region {
@@ -112,7 +122,7 @@ impl CaptureRequest {
                     space: if surface { Space::Surface } else { Space::Canvas },
                 }),
             },
-            scale: line.scale.unwrap_or(CaptureRequest::default().scale),
+            scale: view.scale.unwrap_or(CaptureRequest::default().scale),
             modal: ModalLayer::Omitted,
         }
     }

@@ -77,7 +77,8 @@ const SPACES: &[Word] = &[
     Word::new("surface", "region in window pixels"),
 ];
 
-const KEYS: &[Key] = &[
+/// The keys that frame the view, shared with `record start`.
+pub const VIEW_KEYS: &[Key] = &[
     Key::new("width", "image width in window pixels (with height)", free("px")),
     Key::new("height", "image height in window pixels (with width)", free("px")),
     Key::new("scale", "image pixels per window pixel, 0.1 to 4", free("factor")),
@@ -91,6 +92,9 @@ const KEYS: &[Key] = &[
         "the space frame=x,y,w,h is in",
         Vocabulary::Words(SPACES),
     ),
+];
+
+const FILE_KEYS: &[Key] = &[
     Key::new(
         "overwrite",
         "replace an existing file (default off)",
@@ -106,7 +110,7 @@ const KEYS: &[Key] = &[
 pub static GRAMMAR: Grammar = Grammar {
     label: "screenshot",
     subverb_sets: &[],
-    key_sets: &[KEYS],
+    key_sets: &[VIEW_KEYS, FILE_KEYS],
     bare: Some(Bare::new(
         "file",
         &[Form::slots(&[Slot::opt(free("path"))]).reading(&[
@@ -148,45 +152,62 @@ fn execute_screenshot(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 }
 
-/// The line's words, checked for syntax.
-fn read_line<'a>(
-    path: Option<&str>,
-    value: impl Fn(&str) -> Option<&'a str>,
-) -> Result<ScreenshotLine, String> {
+/// The view a capture or a recording frames, as typed: its size, its
+/// scale and where it looks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConsoleView {
+    pub size: Option<(u32, u32)>,
+    pub scale: Option<f32>,
+    pub frame: ScreenshotFrame,
+}
+
+/// A line's `on` / `off` key, `default` when absent. `verb` leads the
+/// refusal.
+pub fn read_switch<'a>(
+    verb: &str,
+    value: &impl Fn(&str) -> Option<&'a str>,
+    name: &str,
+    default: bool,
+) -> Result<bool, String> {
+    match value(name) {
+        None => Ok(default),
+        Some(v) if v.eq_ignore_ascii_case("on") => Ok(true),
+        Some(v) if v.eq_ignore_ascii_case("off") => Ok(false),
+        Some(v) => Err(format!("{verb}: {name}='{v}' must be on or off")),
+    }
+}
+
+/// The keys that frame a capture or a recording — `width=` `height=`
+/// `scale=` `frame=` `space=` — read for syntax. Whether the size fits
+/// the GPU, or the region can be framed, is the engine's to say, in the
+/// words IPC hears too. `verb` leads every refusal.
+pub fn read_view<'a>(verb: &str, value: impl Fn(&str) -> Option<&'a str>) -> Result<ConsoleView, String> {
     let side = |name: &str| -> Result<Option<u32>, String> {
         value(name)
             .map(|v| {
                 v.parse::<u32>()
-                    .map_err(|_| format!("screenshot: {name}='{v}' is not a whole number of pixels"))
+                    .map_err(|_| format!("{verb}: {name}='{v}' is not a whole number of pixels"))
             })
             .transpose()
     };
     let size = match (side("width")?, side("height")?) {
         (Some(w), Some(h)) => Some((w, h)),
         (None, None) => None,
-        _ => return Err("screenshot: width= and height= are given together".into()),
+        _ => return Err(format!("{verb}: width= and height= are given together")),
     };
     let scale = value("scale")
         .map(|v| {
             v.parse::<f32>()
                 .ok()
                 .filter(|s| s.is_finite())
-                .ok_or_else(|| format!("screenshot: scale='{v}' is not a number"))
+                .ok_or_else(|| format!("{verb}: scale='{v}' is not a number"))
         })
         .transpose()?;
-    let switch = |name: &str, default: bool| -> Result<bool, String> {
-        match value(name) {
-            None => Ok(default),
-            Some(v) if v.eq_ignore_ascii_case("on") => Ok(true),
-            Some(v) if v.eq_ignore_ascii_case("off") => Ok(false),
-            Some(v) => Err(format!("screenshot: {name}='{v}' must be on or off")),
-        }
-    };
     let surface = match value("space") {
         None => None,
         Some(v) if v.eq_ignore_ascii_case("canvas") => Some(false),
         Some(v) if v.eq_ignore_ascii_case("surface") => Some(true),
-        Some(v) => return Err(format!("screenshot: space='{v}' must be canvas or surface")),
+        Some(v) => return Err(format!("{verb}: space='{v}' must be canvas or surface")),
     };
     let frame = match value("frame") {
         None => ScreenshotFrame::View,
@@ -197,7 +218,7 @@ fn read_line<'a>(
             // as the four numbers before the junk.
             let numbers: Option<Vec<f32>> = v.split(',').map(|n| n.trim().parse::<f32>().ok()).collect();
             let Some([x, y, w, h]) = numbers.as_deref().and_then(|n| <[f32; 4]>::try_from(n).ok()) else {
-                return Err(format!("screenshot: frame='{v}' must be view, fit, or x,y,w,h"));
+                return Err(format!("{verb}: frame='{v}' must be view, fit, or x,y,w,h"));
             };
             ScreenshotFrame::Region {
                 x,
@@ -209,15 +230,26 @@ fn read_line<'a>(
         }
     };
     if surface.is_some() && !matches!(frame, ScreenshotFrame::Region { .. }) {
-        return Err("screenshot: space= says which space frame=x,y,w,h is in; give it with one".into());
+        return Err(format!(
+            "{verb}: space= says which space frame=x,y,w,h is in; give it with one"
+        ));
     }
+    Ok(ConsoleView { size, scale, frame })
+}
+
+/// The line's words, checked for syntax.
+fn read_line<'a>(
+    path: Option<&str>,
+    value: impl Fn(&str) -> Option<&'a str>,
+) -> Result<ScreenshotLine, String> {
+    let view = read_view("screenshot", &value)?;
     Ok(ScreenshotLine {
         path: path.map(str::to_string),
-        size,
-        scale,
-        frame,
-        overwrite: switch("overwrite", false)?,
-        sidecar: switch("sidecar", true)?,
+        size: view.size,
+        scale: view.scale,
+        frame: view.frame,
+        overwrite: read_switch("screenshot", &value, "overwrite", false)?,
+        sidecar: read_switch("screenshot", &value, "sidecar", true)?,
     })
 }
 
