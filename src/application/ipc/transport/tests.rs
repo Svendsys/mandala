@@ -593,10 +593,14 @@ fn test_ipc_loopback_an_event_follows_the_reply_to_the_command_that_caused_it() 
 #[test]
 fn test_ipc_loopback_a_polling_client_is_never_sent_an_event() {
     let (mut harness, mut client, mut app) = attached("ipc-event-silent");
+    // One request per drain: two sent back to back can arrive on
+    // either side of the drain, and the second would then wait for a
+    // wake nothing is going to follow with.
     client.send(r#"{"id":1,"cmd":"act.console","line":"any"}"#);
-    client.send(r#"{"id":2,"cmd":"ping"}"#);
     wake_and_drain(&mut harness, &mut app);
     let first = client.next();
+    client.send(r#"{"id":2,"cmd":"ping"}"#);
+    wake_and_drain(&mut harness, &mut app);
     let second = client.next();
     assert_eq!((&first["id"], &second["id"]), (&json!(1), &json!(2)));
     assert_eq!(
