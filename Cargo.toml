@@ -147,9 +147,10 @@ glyphon = "0.12.0"
 # Alternative: https://crates.io/crates/ab_glyph
 glam.workspace = true
 # `serde`: the IPC `input.key` command spells a named key the way
-# winit's own `NamedKey` deserializes ("Enter", "ArrowLeft"), which is
-# also the spelling `keybinds::key_to_name` reads off a live event, so
-# the wire vocabulary and the keybind vocabulary are one list.
+# winit's own `NamedKey` deserializes ("Enter", "ArrowLeft"). Those are
+# the names `keybinds::key_to_name` reads off a live event; a keybind
+# compares them lowercased, while the wire takes winit's casing, so a
+# binding's key is pressed by its name with winit's capitals.
 winit = { version = "0.30.13", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true

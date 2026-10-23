@@ -392,7 +392,7 @@ additions are non-breaking):
 | `unknown_cmd` | `cmd` names nothing in the registry. |
 | `invalid_params` | Missing/mistyped/unknown parameter. `data.param` names the offender. |
 | `unsupported` | Command exists but not on this platform/build (e.g. future Windows gaps). |
-| `busy` | A single-instance command was already pending when another was issued — today, a second `clock.wait` while one is in flight (waits are exclusive per controller). Distinct from the connection-level `connection_rejected` event. |
+| `busy` | A single-instance command was already pending when another was issued — a second `clock.wait` while one is in flight (waits are exclusive per controller) — or `input.click_node` while injected samples are still queued (`data.pending`). Distinct from the connection-level `connection_rejected` event. |
 | `overloaded` | Request queue full (1024 pending); resend after draining replies. Also an `input` command whose samples would overflow the injected-input queue (cap 1024, `data`: `{"pending", "cap"}`); nothing was queued, resend once `input.pending` has dropped. |
 | `reply_too_large` | Serialized reply exceeded 8 MiB; `data.bytes` is its size, and `data.hint` names the file-sidecar parameter when the command has one. |
 | `no_document` | Command needs a loaded document and none is. |
@@ -1267,10 +1267,13 @@ input. The finger identifier is `pointer_id`, not `id`, per the
 
 **Positions** default to `surface` pixels, the space of a real
 pointer ([Coordinate spaces](#coordinate-spaces)). A `canvas`
-position is converted once, when the command executes, through the
-camera as it stands then: a hand points at the screen, not at the
-world behind it, and a pan-drag given in canvas space would otherwise
-chase its own camera. The pointer stays where an `input` command put
+position is converted once per command, through the camera as it
+stands when the command's first event is applied: a hand points at
+the screen, not at the world behind it, so a drag keeps one camera
+for all its frames and a pan-drag given in canvas space does not
+chase its own camera. A command that waited in the queue behind a
+camera-moving gesture therefore aims through the camera that gesture
+left, not the one in force when it was sent. The pointer stays where an `input` command put
 it — unlike `act.action`'s pointer, which is put back — because
 moving the pointer is what these commands are for: it is the hover
 an agent wants to observe.
@@ -1374,7 +1377,7 @@ scrollback.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `dy` | number | yes | Lines; positive scrolls up. |
+| `dy` | number | yes | Lines; positive scrolls up, negative down. `0` has no direction and is `invalid_params` (the wheel arm would read it as down). |
 | `x`, `y` | number | no, together | Move the pointer here first, so a zoom focuses there. |
 | `space` | string | no | `"surface"` (default) or `"canvas"`; only with `x`/`y`. |
 | `mods` | array | no | Modifiers held for the events. |
@@ -1389,7 +1392,7 @@ selected label, and the macro and custom-mutation fall-through.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `key` | string | yes | One typed character (`"a"`, `"/"`, `"é"`, `"👋"`), or a named key spelled as winit's `NamedKey` spells it, case-exact: `"Enter"`, `"Tab"`, `"Escape"`, `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"F2"`. That is the spelling a keybind matches after lowercasing, so any key a binding names can be pressed. A space is the `Space` key, as winit delivers the space bar. A control character is `invalid_params`. |
+| `key` | string | yes | One typed character (`"a"`, `"/"`, `"é"`, `"👋"`), or a named key spelled as winit's `NamedKey` spells it, case-exact: `"Enter"`, `"Tab"`, `"Escape"`, `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"F2"`. These are the names a keybind matches, but a keybind compares them lowercased and the wire does not: `"enter"` is `invalid_params`, `"Enter"` presses the key a `"enter"` binding names. A space is the `Space` key, as winit delivers the space bar. A control character, and a modifier key (`"Shift"`, `"Control"`, `"Alt"`, `"AltGraph"`, `"Super"`, `"Meta"`, `"Hyper"`), are `invalid_params`: winit reports a modifier through a separate modifier-state event rather than as this key, so a modifier press would change nothing a later event reads. Hold modifiers with `mods`. |
 | `state` | string | no | `"tap"` (default: a press, then a release), `"press"` or `"release"`. The app acts on presses; a release reaches the same arm a real one does, which does nothing. |
 | `mods` | array | no | Modifiers held for the events: `"key": "z", "mods": ["ctrl"]` is Ctrl+Z. |
 
@@ -1418,7 +1421,7 @@ wait, and the finger's next event.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `phase` | string | yes | `"started"`, `"moved"`, `"ended"` or `"cancelled"`. |
+| `phase` | string | yes | `"started"`, `"moved"`, `"ended"` or `"canceled"` (winit's `TouchPhase::Cancelled`). |
 | `pointer_id` | integer | yes | The finger, ≥ 0; one value for one finger's whole stroke. |
 | `x`, `y` | number | yes | The position. |
 | `space` | string | no | `"surface"` (default) or `"canvas"`. |
@@ -1465,10 +1468,16 @@ second one within the double-click window is a double-click).
 | `mods` | array | no | Modifiers held for the click: `["shift"]` adds the node to the selection, as a Shift+click does. |
 
 Result: `applied`, `pending`, and `x`, `y` (number), the surface point
-clicked. A node the document does not have, one hidden by a folded
-ancestor (nothing of it is drawn), and one whose center is off the
-surface (a hand cannot click there; bring it into view first) are
-`not_found`.
+clicked. A node the document does not have, one the scene does not
+draw — hidden by a folded ancestor, or outside its
+`min/max_zoom_to_render` window at the current zoom — and one whose
+center is off the surface (a hand cannot click there; bring it into
+view first) are `not_found`. The aim is checked against what is drawn
+when the command executes, so while injected samples are still
+queued, `input.click_node` is refused `busy` (`data.pending`) rather
+than clicking later through a camera they may have moved: poll
+`input.pending` to 0 and resend. It is never queued, and its
+`applied` is always `true`.
 
 ### `input.pending`
 

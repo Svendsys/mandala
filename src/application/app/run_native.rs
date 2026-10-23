@@ -198,7 +198,11 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // nothing; `needs_continuation` keeps the loop iterating
             // until the queue is empty, and `was_continuing` above
             // already holds the redraw this sample owes.
-            if let Some(sample) = init.injected.pop() {
+            let renderer = &init.renderer;
+            if let Some(sample) = init
+                .injected
+                .pop(|point| super::ipc_target::surface_of(renderer, point))
+            {
                 init.apply_injected(event_loop, sample);
             }
             init.drain_inputs();

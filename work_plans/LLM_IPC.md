@@ -603,13 +603,28 @@ holds. The family is nine commands: the six in the family map plus
 `input.drag` and `input.click_node`, the sugar the issue named, and
 `input.pending`, the queue-depth read an agent polls until
 IPC-09's `settled` exists. `input.key` spells named keys the way
-winit's `NamedKey` deserializes (winit's `serde` feature), which is
-the spelling `key_to_name` already reads off a live event, so the
-wire vocabulary is the keybind vocabulary. Driving the real app
-through it surfaced one app defect, fixed in the same change: winit
-delivers the space bar as `Key::Named(Space)`, and the node text
-editor and the single-line label editor inserted only
-`Key::Character` payloads, so a space typed by hand was dropped.
+winit's `NamedKey` deserializes (winit's `serde` feature): the names
+`key_to_name` reads off a live event, case-exact on the wire where a
+keybind compares them lowercased. Modifier keys are refused there and
+held with `mods` instead, because winit reports them through
+`ModifiersChanged`, not as the key. The queue is kept per command and
+resolves a command's canvas positions when its first sample lands,
+so a command queued behind a pan-drag aims through the camera the
+drag left; `input.click_node`, whose reply reports where it clicked,
+is refused `busy` instead of queueing.
+
+Driving the real app through it surfaced two app defects, both fixed
+in the same change. winit delivers the space bar as
+`Key::Named(Space)`, and the node text editor and the single-line
+label editor inserted only `Key::Character` payloads, so a space
+typed by hand was dropped; the fix is the console's own shape, a
+rebindable Action per editor (`TextEditInsertSpace`,
+`LabelEditInsertSpace`, both bound to `Space`), not a hardcoded key.
+And a promoted drag began at the move that crossed the drag
+threshold rather than at the press, so the node, resized box or
+panned canvas lagged the pointer by the sub-threshold travel for the
+whole gesture; the promoting move now seeds the gesture with the
+travel from the press (`start_promoted_gesture`).
 
 ## D6 — Cross-platform stance (§4): explicit native carve-out
 

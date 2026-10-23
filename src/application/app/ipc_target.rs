@@ -21,12 +21,15 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
-use crate::application::ipc::injected::{Delivery, InputEvent, Overloaded, Pacing, Sample};
+use crate::application::ipc::injected::{
+    resolve_command, Delivery, InputEvent, Overloaded, Pacing, Sample, Surface,
+};
 use crate::application::ipc::space::{camera_json, Point, Space};
 use crate::application::ipc::{CommandTarget, Injected, SceneView, ShellState};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
 use crate::application::platform::window::PhysicalPosition;
+use crate::application::renderer::Renderer;
 use crate::application::source_tier::SourceTier;
 
 use super::console_input::exec::execute_console_line;
@@ -70,16 +73,7 @@ impl<'a> IpcCommandTarget<'a> {
     /// `point` in both spaces, `(surface, canvas)`, through the
     /// renderer's camera.
     fn resolve(&self, point: Point) -> (Vec2, Vec2) {
-        match point.space {
-            Space::Surface => (
-                Vec2::new(point.x, point.y),
-                self.init.renderer.screen_to_canvas(point.x, point.y),
-            ),
-            Space::Canvas => {
-                let canvas = Vec2::new(point.x, point.y);
-                (self.init.renderer.canvas_to_screen(canvas), canvas)
-            }
-        }
+        resolve_point(&self.init.renderer, point)
     }
 
     /// Stand a synthetic pointer at `point`, as a real one would have
@@ -99,27 +93,48 @@ impl<'a> IpcCommandTarget<'a> {
     }
 }
 
+/// `point` in both spaces, `(surface, canvas)`, through `renderer`'s
+/// camera as it stands now.
+fn resolve_point(renderer: &Renderer, point: Point) -> (Vec2, Vec2) {
+    match point.space {
+        Space::Surface => (
+            Vec2::new(point.x, point.y),
+            renderer.screen_to_canvas(point.x, point.y),
+        ),
+        Space::Canvas => {
+            let canvas = Vec2::new(point.x, point.y);
+            (renderer.canvas_to_screen(canvas), canvas)
+        }
+    }
+}
+
+/// Where `point` lands on the surface, through `renderer`'s camera as
+/// it stands now: how an injected event's position is resolved.
+pub(super) fn surface_of(renderer: &Renderer, point: Point) -> Surface {
+    let (surface, _) = resolve_point(renderer, point);
+    (f64::from(surface.x), f64::from(surface.y))
+}
+
 impl InitState {
     /// Deliver one injected-input sample to the `on_*` entry point
     /// its winit event reaches, with the sample's modifiers held for
     /// that one event (`ipc::injected::Sample`). Returns whether the
     /// arm asked for a redraw. Called by the heartbeat for a queued
     /// sample and by [`IpcCommandTarget::inject`] for a burst.
-    pub(super) fn apply_injected(&mut self, event_loop: &ActiveEventLoop, sample: Sample) -> bool {
+    pub(super) fn apply_injected(&mut self, event_loop: &ActiveEventLoop, sample: Sample<Surface>) -> bool {
         let reported = self.modifiers;
         if let Some(held) = sample.modifiers {
             self.modifiers = held;
         }
         let redraw = match sample.event {
-            InputEvent::CursorMoved { x, y } => self.on_cursor_moved(PhysicalPosition::new(x, y)),
+            InputEvent::CursorMoved((x, y)) => self.on_cursor_moved(PhysicalPosition::new(x, y)),
             InputEvent::MouseButton { button, state } => self.on_mouse_input(state, button),
             InputEvent::Wheel(delta) => self.on_mouse_wheel(delta),
             InputEvent::Key { key, state } => self.on_keyboard_input(event_loop, key, state),
             InputEvent::Touch {
                 phase,
                 pointer_id,
-                x,
-                y,
+                at: (x, y),
             } => self.dispatch_touch_event(phase, pointer_id, PhysicalPosition::new(x, y)),
         };
         self.modifiers = reported;
@@ -229,14 +244,19 @@ impl CommandTarget for IpcCommandTarget<'_> {
     }
 
     fn surface_point(&self, point: Point) -> (f64, f64) {
-        let (surface, _) = self.resolve(point);
-        (f64::from(surface.x), f64::from(surface.y))
+        surface_of(&self.init.renderer, point)
     }
 
     fn inject(&mut self, samples: Vec<Sample>, pacing: Pacing) -> Result<Injected, Overloaded> {
         let applied = match self.init.injected.admit(samples, pacing)? {
             Delivery::Now(samples) => {
-                for sample in samples {
+                // One camera for the whole burst, the one in force
+                // now: a move the burst makes cannot re-aim its own
+                // later events.
+                let renderer = &self.init.renderer;
+                let resolved: Vec<Sample<Surface>> =
+                    resolve_command(samples, |point| surface_of(renderer, point)).collect();
+                for sample in resolved {
                     self.changed_view |= self.init.apply_injected(self.event_loop, sample);
                 }
                 true

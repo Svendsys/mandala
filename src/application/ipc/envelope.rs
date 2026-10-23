@@ -42,6 +42,7 @@ pub(crate) mod code {
     pub(crate) const PARSE_ERROR: &str = "parse_error";
     pub(crate) const UNKNOWN_CMD: &str = "unknown_cmd";
     pub(crate) const INVALID_PARAMS: &str = "invalid_params";
+    pub(crate) const BUSY: &str = "busy";
     pub(crate) const OVERLOADED: &str = "overloaded";
     pub(crate) const REPLY_TOO_LARGE: &str = "reply_too_large";
     pub(crate) const NO_DOCUMENT: &str = "no_document";
@@ -55,6 +56,7 @@ pub(crate) mod code {
         PARSE_ERROR,
         UNKNOWN_CMD,
         INVALID_PARAMS,
+        BUSY,
         OVERLOADED,
         REPLY_TOO_LARGE,
         NO_DOCUMENT,

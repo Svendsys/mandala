@@ -628,6 +628,12 @@ pub enum Action {
     /// Delete from cursor forward through the current word.
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditDeleteWordForward,
+    /// Insert a space at the cursor. winit delivers the space bar as
+    /// `Key::Named(NamedKey::Space)`, not as a `" "` character, so it
+    /// is a binding like the console's `ConsoleInsertSpace` rather
+    /// than a literal-character keystroke.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditInsertSpace,
     /// Commit the editor's buffer to the model and close. Default unbound
     /// (Enter is literal in the multi-line node editor).
     #[action(context = TextEdit, wasm = Compatible)]
@@ -652,6 +658,10 @@ pub enum Action {
     /// Delete the grapheme at / after the cursor.
     #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditDeleteForward,
+    /// Insert a space at the cursor; the label editor's peer of
+    /// `TextEditInsertSpace`.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
+    LabelEditInsertSpace,
 
     // ── Console-verb Actions (Document context) ─────────────────
     /// Open the glyph-wheel color picker as a standalone palette.

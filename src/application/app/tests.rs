@@ -872,4 +872,42 @@ mod abandonment_guard {
             );
         }
     }
+
+    /// A gesture a cursor move promotes starts at its press, so the
+    /// two pending states — and only they — report where the press
+    /// began. Every other state is a gesture already under way, or
+    /// none, and a move promotes nothing from it.
+    #[test]
+    fn test_only_a_pending_press_reports_its_origin() {
+        let left = DragState::Pending(Box::new(PendingPress {
+            start_pos: (12.5, -3.0),
+            hit_node: Some("1".into()),
+            hit_section_idx: None,
+            hit_edge_handle: None,
+            hit_portal_label: None,
+            hit_edge_label: None,
+            hit_section_resize_handle: None,
+            hit_node_resize_handle: None,
+        }));
+        assert_eq!(left.press_origin(), Some((12.5, -3.0)));
+        let right = DragState::PendingRight {
+            start_pos: (7.0, 8.0),
+            start_canvas: glam::Vec2::ZERO,
+            hit_node: None,
+            hit_section_idx: None,
+        };
+        assert_eq!(right.press_origin(), Some((7.0, 8.0)));
+        for state in [
+            DragState::None,
+            DragState::Panning,
+            DragState::SelectingRect {
+                start_canvas: glam::Vec2::ZERO,
+                current_canvas: glam::Vec2::ONE,
+            },
+            moving_node_drag(),
+            fast_resize_drag(),
+        ] {
+            assert_eq!(state.press_origin(), None, "{:?}", std::mem::discriminant(&state));
+        }
+    }
 }

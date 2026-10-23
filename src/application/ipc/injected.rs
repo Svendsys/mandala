@@ -7,11 +7,17 @@
 //! native handlers already take as plain arguments through the
 //! `platform::input` aliases — so the app delivers it to **the same
 //! entry point** the winit event reaches, and nothing below that
-//! point can tell the two apart. Positions are surface pixels: a
-//! canvas position is converted once, when the command executes,
-//! through the camera as it stands then. That is where a hand on a
-//! mouse points too — at the screen, not at the world behind it —
-//! and it keeps a pan-drag from chasing its own camera.
+//! point can tell the two apart.
+//!
+//! **Positions** reach the handlers as surface pixels. A command
+//! builds its events with [`Point`]s in either space, and they are
+//! resolved once per command, through the camera as it stands when
+//! the command's first event is applied. That is where a hand on a
+//! mouse points — at the screen, not at the world behind it — so a
+//! drag keeps one camera for all its frames and a pan-drag does not
+//! chase its own camera. And a command that waited behind a
+//! camera-moving gesture aims through the camera that gesture left,
+//! not the one it found when it was sent.
 //!
 //! **Pacing.** A drag's fidelity depends on its moves landing in
 //! different frames: `drain_inputs` drives the throttled drag between
@@ -32,17 +38,24 @@ use crate::application::platform::input::{
     ElementState, Key, Modifiers, MouseButton, MouseScrollDelta, TouchPhase,
 };
 
+use super::space::Point;
+
 /// The queue's capacity, in samples (`format/ipc.md` §`input`, the
 /// pacing model). A command whose samples would not fit is refused
 /// whole, `overloaded`, and enqueues nothing.
 pub(crate) const INJECTED_QUEUE_CAP: usize = 1024;
 
+/// A resolved position: surface pixels, physical, as winit reports a
+/// pointer.
+pub(crate) type Surface = (f64, f64);
+
 /// One raw input event, as winit delivers it to the native handlers.
+/// `P` is where it happens: a [`Point`] as a command builds it, a
+/// [`Surface`] position once resolved for the handler.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum InputEvent {
-    /// `WindowEvent::CursorMoved`: the pointer is now at this surface
-    /// position, in physical pixels.
-    CursorMoved { x: f64, y: f64 },
+pub(crate) enum InputEvent<P = Surface> {
+    /// `WindowEvent::CursorMoved`: the pointer is now here.
+    CursorMoved(P),
     /// `WindowEvent::MouseInput`.
     MouseButton {
         button: MouseButton,
@@ -52,13 +65,33 @@ pub(crate) enum InputEvent {
     Wheel(MouseScrollDelta),
     /// `WindowEvent::KeyboardInput`'s logical key and state.
     Key { key: Key, state: ElementState },
-    /// `WindowEvent::Touch`, at a surface position in physical pixels.
+    /// `WindowEvent::Touch`: one finger, here.
     Touch {
         phase: TouchPhase,
         pointer_id: u64,
-        x: f64,
-        y: f64,
+        at: P,
     },
+}
+
+impl<P> InputEvent<P> {
+    /// The same event with its position, if it has one, mapped.
+    fn resolve<Q>(self, resolve: &mut impl FnMut(P) -> Q) -> InputEvent<Q> {
+        match self {
+            InputEvent::CursorMoved(at) => InputEvent::CursorMoved(resolve(at)),
+            InputEvent::MouseButton { button, state } => InputEvent::MouseButton { button, state },
+            InputEvent::Wheel(delta) => InputEvent::Wheel(delta),
+            InputEvent::Key { key, state } => InputEvent::Key { key, state },
+            InputEvent::Touch {
+                phase,
+                pointer_id,
+                at,
+            } => InputEvent::Touch {
+                phase,
+                pointer_id,
+                at: resolve(at),
+            },
+        }
+    }
 }
 
 /// One event and the modifiers held while it lands.
@@ -70,15 +103,27 @@ pub(crate) enum InputEvent {
 /// the rubber band reads it, while the user's own keystrokes between
 /// two frames still see their own modifiers.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Sample {
-    pub(crate) event: InputEvent,
+pub(crate) struct Sample<P = Point> {
+    pub(crate) event: InputEvent<P>,
     pub(crate) modifiers: Option<Modifiers>,
 }
 
-impl Sample {
-    pub(crate) fn new(event: InputEvent, modifiers: Option<Modifiers>) -> Self {
+impl<P> Sample<P> {
+    pub(crate) fn new(event: InputEvent<P>, modifiers: Option<Modifiers>) -> Self {
         Sample { event, modifiers }
     }
+}
+
+/// Resolve one command's samples through `resolve`, called with the
+/// camera of the moment the command starts applying.
+pub(crate) fn resolve_command(
+    samples: impl IntoIterator<Item = Sample>,
+    mut resolve: impl FnMut(Point) -> Surface,
+) -> impl Iterator<Item = Sample<Surface>> {
+    samples.into_iter().map(move |sample| Sample {
+        event: sample.event.resolve(&mut resolve),
+        modifiers: sample.modifiers,
+    })
 }
 
 /// How a command's samples reach the app.
@@ -94,7 +139,7 @@ pub(crate) enum Pacing {
 /// What [`InjectedQueue::admit`] decided.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Delivery {
-    /// The caller applies these now, in order.
+    /// The caller resolves these and applies them now, in order.
     Now(Vec<Sample>),
     /// The samples are queued; the heartbeat applies them.
     Queued,
@@ -110,19 +155,27 @@ pub(crate) struct Overloaded {
 /// The injected-input queue: samples waiting for their heartbeat.
 /// Lives on the app's state beside the drag state it feeds, so the
 /// heartbeat and a command see the one queue.
+///
+/// Kept per command, so each command's positions resolve together
+/// when its first sample is applied (the module doc's rule).
 #[derive(Debug, Default)]
 pub(crate) struct InjectedQueue {
-    samples: VecDeque<Sample>,
+    /// The rest of the command now landing, already resolved.
+    landing: VecDeque<Sample<Surface>>,
+    /// Commands not started yet, positions unresolved, oldest first.
+    waiting: VecDeque<Vec<Sample>>,
+    /// Samples across both.
+    len: usize,
 }
 
 impl InjectedQueue {
     /// Samples still waiting.
     pub(crate) fn len(&self) -> usize {
-        self.samples.len()
+        self.len
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.samples.is_empty()
+        self.len == 0
     }
 
     /// Route one command's samples: hand them back to apply now, or
@@ -130,21 +183,30 @@ impl InjectedQueue {
     /// nothing, so a client that backs off and resends loses no
     /// sample and doubles none.
     pub(crate) fn admit(&mut self, samples: Vec<Sample>, pacing: Pacing) -> Result<Delivery, Overloaded> {
-        if pacing == Pacing::Burst && self.samples.is_empty() {
+        if pacing == Pacing::Burst && self.is_empty() {
             return Ok(Delivery::Now(samples));
         }
-        if self.samples.len() + samples.len() > INJECTED_QUEUE_CAP {
-            return Err(Overloaded {
-                pending: self.samples.len(),
-            });
+        if self.len + samples.len() > INJECTED_QUEUE_CAP {
+            return Err(Overloaded { pending: self.len });
         }
-        self.samples.extend(samples);
+        self.len += samples.len();
+        if !samples.is_empty() {
+            self.waiting.push_back(samples);
+        }
         Ok(Delivery::Queued)
     }
 
-    /// The next sample for this heartbeat.
-    pub(crate) fn pop(&mut self) -> Option<Sample> {
-        self.samples.pop_front()
+    /// The next sample for this heartbeat. When it opens a command,
+    /// `resolve` places that whole command, through the camera as it
+    /// stands now.
+    pub(crate) fn pop(&mut self, resolve: impl FnMut(Point) -> Surface) -> Option<Sample<Surface>> {
+        if self.landing.is_empty() {
+            let next = self.waiting.pop_front()?;
+            self.landing = resolve_command(next, resolve).collect();
+        }
+        let sample = self.landing.pop_front()?;
+        self.len -= 1;
+        Some(sample)
     }
 }
 
@@ -152,8 +214,26 @@ impl InjectedQueue {
 mod tests {
     use super::*;
 
-    fn moved(x: f64) -> Sample {
-        Sample::new(InputEvent::CursorMoved { x, y: 0.0 }, None)
+    use crate::application::ipc::space::Space;
+
+    fn moved(x: f32) -> Sample {
+        Sample::new(
+            InputEvent::CursorMoved(Point {
+                x,
+                y: 0.0,
+                space: Space::Canvas,
+            }),
+            None,
+        )
+    }
+
+    fn landed(x: f64) -> Sample<Surface> {
+        Sample::new(InputEvent::CursorMoved((x, 0.0)), None)
+    }
+
+    /// A stand-in camera: canvas x lands at `x + shift` on the surface.
+    fn through(shift: f64) -> impl FnMut(Point) -> Surface {
+        move |p| (f64::from(p.x) + shift, f64::from(p.y))
     }
 
     #[test]
@@ -175,9 +255,11 @@ mod tests {
             Ok(Delivery::Queued)
         );
         assert_eq!(queue.len(), 2);
-        assert_eq!(queue.pop(), Some(moved(1.0)));
-        assert_eq!(queue.pop(), Some(moved(2.0)));
-        assert_eq!(queue.pop(), None);
+        assert_eq!(queue.pop(through(0.0)), Some(landed(1.0)));
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.pop(through(0.0)), Some(landed(2.0)));
+        assert_eq!(queue.pop(through(0.0)), None);
+        assert!(queue.is_empty());
     }
 
     /// Order is kept across commands: a burst sent while a gesture is
@@ -187,8 +269,33 @@ mod tests {
         let mut queue = InjectedQueue::default();
         queue.admit(vec![moved(1.0)], Pacing::PerFrame).expect("fits");
         assert_eq!(queue.admit(vec![moved(2.0)], Pacing::Burst), Ok(Delivery::Queued));
-        assert_eq!(queue.pop(), Some(moved(1.0)));
-        assert_eq!(queue.pop(), Some(moved(2.0)));
+        assert_eq!(queue.pop(through(0.0)), Some(landed(1.0)));
+        assert_eq!(queue.pop(through(0.0)), Some(landed(2.0)));
+    }
+
+    /// A command's positions resolve when its first sample lands, all
+    /// through the one camera of that moment: a drag that pans keeps
+    /// its own camera for its later frames, and a command queued
+    /// behind it aims through the camera the drag left behind, not
+    /// the one in force when it was sent.
+    #[test]
+    fn test_each_command_resolves_through_the_camera_at_its_first_sample() {
+        let mut queue = InjectedQueue::default();
+        queue
+            .admit(vec![moved(1.0), moved(2.0)], Pacing::PerFrame)
+            .expect("fits");
+        queue.admit(vec![moved(3.0)], Pacing::Burst).expect("fits");
+        assert_eq!(queue.pop(through(100.0)), Some(landed(101.0)));
+        assert_eq!(
+            queue.pop(through(500.0)),
+            Some(landed(102.0)),
+            "the drag's second frame keeps the camera its first one resolved through"
+        );
+        assert_eq!(
+            queue.pop(through(500.0)),
+            Some(landed(503.0)),
+            "the queued burst aims through the camera of its own moment"
+        );
     }
 
     /// Overflow refuses the whole command and enqueues none of it, so
@@ -196,7 +303,7 @@ mod tests {
     #[test]
     fn test_overflow_refuses_the_whole_command_and_keeps_the_queue() {
         let mut queue = InjectedQueue::default();
-        let fill: Vec<Sample> = (0..INJECTED_QUEUE_CAP - 1).map(|i| moved(i as f64)).collect();
+        let fill: Vec<Sample> = (0..INJECTED_QUEUE_CAP - 1).map(|i| moved(i as f32)).collect();
         queue
             .admit(fill, Pacing::PerFrame)
             .expect("one under the cap fits");
@@ -271,14 +378,20 @@ mod tests {
             .collect();
         let run_native =
             std::fs::read_to_string(repo_path("src/application/app/run_native.rs")).expect("readable");
+        // From the touch entry point through `handle_event` to the
+        // last `on_*` method: every method an injected sample reaches.
         let start = run_native
-            .find("    pub(super) fn on_mouse_input(")
-            .expect("run_native.rs has the on_* entry points");
+            .find("    pub(super) fn dispatch_touch_event(")
+            .expect("run_native.rs has the touch entry point");
+        assert!(
+            run_native[start..].contains("    pub(super) fn on_keyboard_input("),
+            "the on_* entry points follow the touch entry point"
+        );
         let end = run_native[start..]
             .find("    /// Per-frame drain")
             .expect("the entry points end where drain_inputs' doc starts");
         sources.push((
-            "run_native.rs `InitState::on_*`".into(),
+            "run_native.rs `InitState` input entry points".into(),
             run_native[start..start + end].to_string(),
         ));
         for (name, text) in sources {

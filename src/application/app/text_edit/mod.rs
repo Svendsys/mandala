@@ -363,6 +363,10 @@ pub(in crate::application::app) fn apply_text_edit_action(
                 *cursor = delete_at_cursor(buffer, *cursor);
             }
         }
+        Action::TextEditInsertSpace => {
+            buffer_regions.insert_regions_at(*cursor, 1);
+            *cursor = insert_at_cursor(buffer, *cursor, ' ');
+        }
         Action::TextEditWordLeft => {
             *cursor = grapheme_chad::word_left(buffer, *cursor);
         }

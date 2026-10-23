@@ -135,6 +135,48 @@ pub(super) fn handle_cursor_moved(
         }
     }
 
+    // The press position, when this move may promote a pending press
+    // to a drag: read before `advance_drag_state` replaces the state.
+    let press_origin = ctx.drag_state.press_origin();
+    advance_drag_state(ctx, prev_pos, cursor_pos_val);
+    if let Some(origin) = press_origin {
+        start_promoted_gesture(ctx, origin, cursor_pos_val);
+    }
+}
+
+/// Give a gesture that this move promoted from a pending press the
+/// travel it was promoted on. The drag threshold decides *whether* a
+/// press is a drag, not where the drag starts: the gesture starts at
+/// the press, so its first sample runs from the press position to
+/// the cursor. Without this, the travel below the threshold never
+/// reached the gesture, and a dragged node, a resized box or a
+/// panned canvas lagged the pointer by it for the whole drag.
+///
+/// A move that promoted nothing (the press is still pending, or it
+/// resolved to a click-time state) owes nothing.
+fn start_promoted_gesture(ctx: &mut InputHandlerContext<'_>, origin: (f64, f64), cursor: (f64, f64)) {
+    match ctx.drag_state {
+        DragState::Throttled(drag) => {
+            let input = drag_input(ctx.renderer, origin, cursor);
+            drag.as_dyn_mut().accumulate(input);
+        }
+        // Per-frame continuous-gesture state stays inline
+        // (CODE_CONVENTIONS §3): the funnel owns the discrete entry
+        // (`Action::PanCanvas` → `DragState::Panning`) and this emits
+        // the promoting move's delta so the pan doesn't lag.
+        ref state if emits_first_pan_delta(state) => {
+            let dx = cursor.0 - origin.0;
+            let dy = cursor.1 - origin.1;
+            ctx.renderer
+                .process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
+        }
+        _ => {}
+    }
+}
+
+/// Move the drag state machine one cursor move forward: drive the
+/// live gesture, or promote a pending press past the threshold.
+fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), cursor_pos_val: (f64, f64)) {
     match ctx.drag_state {
         DragState::Panning => {
             let dx = cursor_pos_val.0 - prev_pos.0;
@@ -575,19 +617,9 @@ pub(super) fn handle_cursor_moved(
                             *ctx.drag_state = DragState::None;
                         }
                     }
-                    // Per-frame continuous-gesture state stays inline
-                    // (CODE_CONVENTIONS §3): the funnel owns the
-                    // discrete entry (`Action::PanCanvas` →
-                    // `DragState::Panning`) and this emits the
-                    // threshold-crossing frame's delta so the pan
-                    // doesn't visibly lag one cursor-move behind the
-                    // gesture.
-                    if emits_first_pan_delta(ctx.drag_state) {
-                        let dx = cursor_pos_val.0 - prev_pos.0;
-                        let dy = cursor_pos_val.1 - prev_pos.1;
-                        ctx.renderer
-                            .process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
-                    }
+                    // The promoting move's pan delta is
+                    // `start_promoted_gesture`'s, measured from the
+                    // press like every promoted gesture's first sample.
                 }
             }
         }
@@ -970,8 +1002,8 @@ mod tests {
     /// A source-level pin, because no runtime assertion in this crate
     /// can tell this file reading the shared constant from this file
     /// carrying its own `25.0`: the arms live inside
-    /// `handle_cursor_moved`, which takes a `&Window` and an
-    /// `InputHandlerContext` and so is not callable from a test
+    /// `advance_drag_state`, which takes an `InputHandlerContext`
+    /// (a live renderer) and so is not callable from a test
     /// (`TEST_CONVENTIONS.md` §T9 — the same reason the startup pins
     /// read source). The constant's *value* is checked at runtime; what
     /// only the source shows is which number this file compares against.
@@ -1010,7 +1042,7 @@ mod tests {
     /// Scoped through [`production_code`] and [`braced_block_after`],
     /// so neither the comment naming the constant at the `PendingRight`
     /// arm nor this test's own body can satisfy it — only a comparison
-    /// inside `handle_cursor_moved` can.
+    /// inside `advance_drag_state` can.
     ///
     /// **Conservative in one direction, by design.** The needle is the
     /// constant's *name*, so aliasing it first — `let budget_sq =
@@ -1027,8 +1059,8 @@ mod tests {
     #[test]
     fn test_the_mouse_drag_arms_name_the_shared_pointer_threshold() {
         let code = production_code(THIS_FILE);
-        let body = braced_block_after(&code, "fn handle_cursor_moved(")
-            .unwrap_or_else(|| panic!("{THIS_FILE} must still declare `handle_cursor_moved`"));
+        let body = braced_block_after(&code, "fn advance_drag_state(")
+            .unwrap_or_else(|| panic!("{THIS_FILE} must still declare `advance_drag_state`"));
 
         // Whitespace-flattened, so a rustfmt reflow across lines does
         // not read as a missing comparison.
@@ -1045,7 +1077,7 @@ mod tests {
         );
         // Assembled from two fragments so the constant's full path is
         // nowhere spelled contiguously in this file outside
-        // `handle_cursor_moved` itself. Written out in one piece, the
+        // `advance_drag_state` itself. Written out in one piece, the
         // published `sed` below — which is whole-file — would rewrite
         // this needle to `"25.0"` in the same pass that re-inlines the
         // arms, and the test would then assert that the arms contain

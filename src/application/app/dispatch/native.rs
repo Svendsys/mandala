@@ -713,7 +713,8 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::LabelEditCursorHome
         | Action::LabelEditCursorEnd
         | Action::LabelEditDeleteBack
-        | Action::LabelEditDeleteForward => {
+        | Action::LabelEditDeleteForward
+        | Action::LabelEditInsertSpace => {
             if let Some(doc) = ctx.document.as_mut() {
                 super::super::single_line_edit::apply_single_line_edit_action(
                     action,
@@ -968,6 +969,9 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
         // The guard above is clippy's `collapsible_match` form (the
         // nested `if` the siblings use trips it on the last arm only).
         Action::LabelEditDeleteForward => {}
+        Action::LabelEditInsertSpace => {
+            *cursor += grapheme_chad::insert_str_at_grapheme_counted(buffer, *cursor, " ");
+        }
         _ => {}
     }
     *cursor != before || buffer.len() != len_before

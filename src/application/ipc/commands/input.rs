@@ -28,7 +28,7 @@ use crate::application::ipc::envelope::{code, Reply};
 use crate::application::ipc::injected::{InputEvent, Pacing, Sample, INJECTED_QUEUE_CAP};
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
 use crate::application::ipc::space::{Point, Space};
-use crate::application::ipc::{CommandTarget, Injected};
+use crate::application::ipc::Injected;
 use crate::application::platform::input::{
     ElementState, Key, Modifiers, MouseButton, MouseScrollDelta, NamedKey, SmolStr, TouchPhase,
 };
@@ -62,7 +62,7 @@ const SPACE: ParamSpec = ParamSpec::new(
     ParamType::String,
     false,
     "Coordinate space of the position: \"surface\" (default) or \"canvas\". A canvas position is \
-     converted through the camera as it stands when the command executes.",
+     converted through the camera as it stands when the command starts applying.",
 );
 const MODS: ParamSpec = ParamSpec::new(
     "mods",
@@ -134,7 +134,7 @@ pub(super) const FAMILY: Family = Family {
                     "dy",
                     ParamType::Number,
                     true,
-                    "Lines; positive scrolls up (WheelUp), negative down (WheelDown).",
+                    "Lines, not 0; positive scrolls up (WheelUp), negative down (WheelDown).",
                 ),
                 AT_X,
                 AT_Y,
@@ -154,8 +154,8 @@ pub(super) const FAMILY: Family = Family {
                     ParamType::String,
                     true,
                     "The logical key: one typed character (\"a\", \"/\", \"é\"), or a named key as \
-                     winit names it (\"Enter\", \"Tab\", \"Escape\", \"ArrowLeft\", \"Backspace\", \
-                     \"F2\").",
+                     winit names it, case-exact (\"Enter\", \"Tab\", \"Escape\", \"ArrowLeft\", \
+                     \"Backspace\", \"F2\"). Not a modifier key: hold those with `mods`.",
                 ),
                 ParamSpec::new(
                     "state",
@@ -190,7 +190,7 @@ pub(super) const FAMILY: Family = Family {
                     "phase",
                     ParamType::String,
                     true,
-                    "\"started\", \"moved\", \"ended\" or \"cancelled\".",
+                    "\"started\", \"moved\", \"ended\" or \"canceled\".",
                 ),
                 ParamSpec::new(
                     "pointer_id",
@@ -270,10 +270,11 @@ fn mouse_move(call: &mut Call<'_>) -> Reply {
         Ok(mods) => mods,
         Err(reply) => return reply,
     };
-    inject(call, Pacing::Burst, |app| {
-        let (x, y) = app.surface_point(point);
-        vec![Sample::new(InputEvent::CursorMoved { x, y }, mods)]
-    })
+    inject(
+        call,
+        Pacing::Burst,
+        vec![Sample::new(InputEvent::CursorMoved(point), mods)],
+    )
 }
 
 fn mouse_button(call: &mut Call<'_>) -> Reply {
@@ -296,15 +297,13 @@ fn mouse_button(call: &mut Call<'_>) -> Reply {
         (Ok(at), Ok(mods)) => (at, mods),
         (Err(reply), _) | (_, Err(reply)) => return reply,
     };
-    inject(call, Pacing::Burst, |app| {
-        let mut samples = move_to(app, at, mods);
-        samples.extend(
-            states
-                .iter()
-                .map(|&state| Sample::new(InputEvent::MouseButton { button, state }, mods)),
-        );
-        samples
-    })
+    let mut samples = move_to(at, mods);
+    samples.extend(
+        states
+            .iter()
+            .map(|&state| Sample::new(InputEvent::MouseButton { button, state }, mods)),
+    );
+    inject(call, Pacing::Burst, samples)
 }
 
 fn wheel(call: &mut Call<'_>) -> Reply {
@@ -315,18 +314,24 @@ fn wheel(call: &mut Call<'_>) -> Reply {
     if !dy.is_finite() {
         return call.invalid_params("dy", "`dy` is out of range");
     }
+    // A zero delta has no direction, and the wheel arm reads one
+    // into it: `wheel_gesture` maps `lines <= 0` to WheelDown.
+    if dy == 0.0 {
+        return call.invalid_params(
+            "dy",
+            "`dy` is 0: a wheel turn has a direction, positive up or negative down",
+        );
+    }
     let (at, mods) = match (parse_point(call, ("x", "y"), Space::Surface), parse_mods(call)) {
         (Ok(at), Ok(mods)) => (at, mods),
         (Err(reply), _) | (_, Err(reply)) => return reply,
     };
-    inject(call, Pacing::Burst, |app| {
-        let mut samples = move_to(app, at, mods);
-        samples.push(Sample::new(
-            InputEvent::Wheel(MouseScrollDelta::LineDelta(0.0, dy)),
-            mods,
-        ));
-        samples
-    })
+    let mut samples = move_to(at, mods);
+    samples.push(Sample::new(
+        InputEvent::Wheel(MouseScrollDelta::LineDelta(0.0, dy)),
+        mods,
+    ));
+    inject(call, Pacing::Burst, samples)
 }
 
 fn key(call: &mut Call<'_>) -> Reply {
@@ -364,7 +369,7 @@ fn key(call: &mut Call<'_>) -> Reply {
             )
         })
         .collect();
-    inject(call, Pacing::Burst, |_| samples)
+    inject(call, Pacing::Burst, samples)
 }
 
 fn text(call: &mut Call<'_>) -> Reply {
@@ -389,7 +394,7 @@ fn text(call: &mut Call<'_>) -> Reply {
             })
         })
         .collect();
-    inject(call, Pacing::Burst, |_| samples)
+    inject(call, Pacing::Burst, samples)
 }
 
 fn touch(call: &mut Call<'_>) -> Reply {
@@ -397,11 +402,11 @@ fn touch(call: &mut Call<'_>) -> Reply {
         Some("started") => TouchPhase::Started,
         Some("moved") => TouchPhase::Moved,
         Some("ended") => TouchPhase::Ended,
-        Some("cancelled") => TouchPhase::Cancelled,
+        Some("canceled") => TouchPhase::Cancelled,
         other => {
             return call.invalid_params(
                 "phase",
-                format!("`phase` must be \"started\", \"moved\", \"ended\" or \"cancelled\", got {other:?}"),
+                format!("`phase` must be \"started\", \"moved\", \"ended\" or \"canceled\", got {other:?}"),
             )
         }
     };
@@ -412,18 +417,18 @@ fn touch(call: &mut Call<'_>) -> Reply {
         Ok(point) => point,
         Err(reply) => return reply,
     };
-    inject(call, Pacing::Burst, |app| {
-        let (x, y) = app.surface_point(point);
+    inject(
+        call,
+        Pacing::Burst,
         vec![Sample::new(
             InputEvent::Touch {
                 phase,
                 pointer_id,
-                x,
-                y,
+                at: point,
             },
             None,
-        )]
-    })
+        )],
+    )
 }
 
 fn drag(call: &mut Call<'_>) -> Reply {
@@ -459,15 +464,11 @@ fn drag(call: &mut Call<'_>) -> Reply {
         Ok(mods) => mods,
         Err(reply) => return reply,
     };
-    inject(call, Pacing::PerFrame, |app| {
-        drag_samples(
-            app.surface_point(from),
-            app.surface_point(to),
-            steps,
-            button,
-            mods,
-        )
-    })
+    inject(
+        call,
+        Pacing::PerFrame,
+        drag_samples(from, to, steps, button, mods),
+    )
 }
 
 fn click_node(call: &mut Call<'_>) -> Reply {
@@ -491,10 +492,24 @@ fn click_node(call: &mut Call<'_>) -> Reply {
         let Some(app) = call.observe() else {
             return call.no_document();
         };
+        // The aim is checked against what is drawn now. Behind queued
+        // samples the click would land later, after they may have
+        // moved the camera, and the reply could not say where.
+        let pending = app.injected_pending();
+        if pending > 0 {
+            return call.error(
+                code::BUSY,
+                format!(
+                    "{pending} injected samples are still queued, and `input.click_node` aims at what is \
+                     drawn now; poll `input.pending` to 0 and resend"
+                ),
+                Some(json!({ "pending": pending })),
+            );
+        }
         let Some(view) = app.scene() else {
             return no_loaded_document(call);
         };
-        match node_target(view.document, node_id, section) {
+        match node_target(view.document, node_id, section, view.camera.zoom) {
             Ok(canvas) => {
                 let (x, y) = app.surface_point(Point {
                     x: canvas.x,
@@ -531,6 +546,17 @@ fn click_node(call: &mut Call<'_>) -> Reply {
                     None,
                 )
             }
+            Err(Aim::OutsideZoomWindow) => {
+                return call.error(
+                    code::NOT_FOUND,
+                    format!(
+                        "node '{node_id}' is not drawn at zoom {}: it is outside its \
+                         min/max_zoom_to_render window; zoom into the window first",
+                        view.camera.zoom
+                    ),
+                    None,
+                )
+            }
             Err(Aim::NoSection(count)) => {
                 return call.invalid_params(
                     "section",
@@ -540,15 +566,18 @@ fn click_node(call: &mut Call<'_>) -> Reply {
         }
     };
     let (x, y) = aim;
-    let injected = deliver(call, Pacing::Burst, |_| {
-        let mut samples = vec![Sample::new(InputEvent::CursorMoved { x, y }, mods)];
-        samples.extend(
-            [ElementState::Pressed, ElementState::Released]
-                .map(|state| Sample::new(InputEvent::MouseButton { button, state }, mods)),
-        );
-        samples
-    });
-    match injected {
+    // Surface positions, exactly the ones the reply reports.
+    let at = Point {
+        x: x as f32,
+        y: y as f32,
+        space: Space::Surface,
+    };
+    let mut samples = vec![Sample::new(InputEvent::CursorMoved(at), mods)];
+    samples.extend(
+        [ElementState::Pressed, ElementState::Released]
+            .map(|state| Sample::new(InputEvent::MouseButton { button, state }, mods)),
+    );
+    match deliver(call, Pacing::Burst, samples) {
         Ok(injected) => call.ok(json!({
             "applied": injected.applied,
             "pending": injected.pending,
@@ -568,29 +597,20 @@ fn pending(call: &mut Call<'_>) -> Reply {
 }
 
 /// Hand `samples` to the app and reply with what it did with them.
-fn inject(
-    call: &mut Call<'_>,
-    pacing: Pacing,
-    build: impl FnOnce(&dyn CommandTarget) -> Vec<Sample>,
-) -> Reply {
-    match deliver(call, pacing, build) {
+fn inject(call: &mut Call<'_>, pacing: Pacing, samples: Vec<Sample>) -> Reply {
+    match deliver(call, pacing, samples) {
         Ok(injected) => call.ok(json!({ "applied": injected.applied, "pending": injected.pending })),
         Err(reply) => reply,
     }
 }
 
 /// Hand `samples` to the app: the one path every injecting command
-/// shares. `build` runs only once the app is known to exist, because
-/// a canvas position needs its camera.
-fn deliver(
-    call: &mut Call<'_>,
-    pacing: Pacing,
-    build: impl FnOnce(&dyn CommandTarget) -> Vec<Sample>,
-) -> Result<Injected, Reply> {
+/// shares. Their positions are resolved app-side, when the command
+/// starts applying (`ipc::injected`'s module doc).
+fn deliver(call: &mut Call<'_>, pacing: Pacing, samples: Vec<Sample>) -> Result<Injected, Reply> {
     let Some(app) = call.drive() else {
         return Err(call.no_document());
     };
-    let samples = build(&*app);
     let count = samples.len();
     app.inject(samples, pacing).map_err(|full| {
         call.error(
@@ -617,13 +637,10 @@ fn required_point(call: &Call<'_>) -> Result<Point, Reply> {
 
 /// The move that stands the pointer at `at` before the event that
 /// follows it, or nothing when no position was sent.
-fn move_to(app: &dyn CommandTarget, at: Option<Point>, mods: Option<Modifiers>) -> Vec<Sample> {
-    at.map(|point| {
-        let (x, y) = app.surface_point(point);
-        Sample::new(InputEvent::CursorMoved { x, y }, mods)
-    })
-    .into_iter()
-    .collect()
+fn move_to(at: Option<Point>, mods: Option<Modifiers>) -> Vec<Sample> {
+    at.map(|point| Sample::new(InputEvent::CursorMoved(point), mods))
+        .into_iter()
+        .collect()
 }
 
 /// The `button` parameter; `left` when omitted.
@@ -674,14 +691,36 @@ fn parse_key(name: &str) -> Result<Key, String> {
             )
         });
     }
-    serde_json::from_value::<NamedKey>(Value::String(name.to_owned()))
-        .map(Key::Named)
-        .map_err(|_| {
-            format!(
-                "{name:?} is neither one character nor a key name; named keys are spelled as winit names \
-                 them: \"Enter\", \"Tab\", \"Escape\", \"Backspace\", \"ArrowUp\", \"F2\""
-            )
-        })
+    let named = serde_json::from_value::<NamedKey>(Value::String(name.to_owned())).map_err(|_| {
+        format!(
+            "{name:?} is neither one character nor a key name; named keys are spelled as winit names \
+             them, case-exact: \"Enter\", \"Tab\", \"Escape\", \"Backspace\", \"ArrowUp\", \"F2\""
+        )
+    })?;
+    if is_modifier_key(named) {
+        return Err(format!(
+            "{name:?} is a modifier key: winit reports a modifier through a separate modifier-state \
+             event, not this key, so pressing it alone would change nothing a later event reads. \
+             Hold it with `mods` on the event it modifies instead (`\"mods\": [\"shift\"]`)"
+        ));
+    }
+    Ok(Key::Named(named))
+}
+
+/// Whether `key` is one of the keys winit folds into its modifier
+/// state (`ModifiersChanged`) rather than delivering as a keystroke
+/// the app acts on.
+fn is_modifier_key(key: NamedKey) -> bool {
+    matches!(
+        key,
+        NamedKey::Shift
+            | NamedKey::Control
+            | NamedKey::Alt
+            | NamedKey::AltGraph
+            | NamedKey::Super
+            | NamedKey::Meta
+            | NamedKey::Hyper
+    )
 }
 
 /// The keys typing `text` presses, one per grapheme cluster.
@@ -727,16 +766,29 @@ fn typed_key(grapheme: &str) -> Option<Key> {
 /// Every one carries `mods`, so a modifier read at any point of the
 /// gesture — the rubber band's Shift at the threshold cross — sees
 /// them.
+///
+/// Interpolated in the space the drag was sent in: the transform to
+/// the surface is affine for the one camera a command resolves
+/// through, so the steps stay evenly spaced on screen either way.
 fn drag_samples(
-    from: (f64, f64),
-    to: (f64, f64),
+    from: Point,
+    to: Point,
     steps: u64,
     button: MouseButton,
     mods: Option<Modifiers>,
 ) -> Vec<Sample> {
-    let at = |(x, y): (f64, f64)| Sample::new(InputEvent::CursorMoved { x, y }, mods);
+    let at = |(x, y): (f32, f32)| {
+        Sample::new(
+            InputEvent::CursorMoved(Point {
+                x,
+                y,
+                space: from.space,
+            }),
+            mods,
+        )
+    };
     let mut samples = vec![
-        at(from),
+        at((from.x, from.y)),
         Sample::new(
             InputEvent::MouseButton {
                 button,
@@ -745,10 +797,12 @@ fn drag_samples(
             mods,
         ),
     ];
-    for step in 1..=steps {
-        let t = step as f64 / steps as f64;
-        samples.push(at((from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)));
+    for step in 1..steps {
+        let t = step as f32 / steps as f32;
+        samples.push(at((from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)));
     }
+    // The last move is `to` itself, not `from` plus a rounded fraction.
+    samples.push(at((to.x, to.y)));
     samples.push(Sample::new(
         InputEvent::MouseButton {
             button,
@@ -764,22 +818,30 @@ fn drag_samples(
 enum Aim {
     Missing,
     Folded,
+    /// The camera's zoom is outside the node's `min/max_zoom_to_render`
+    /// window, so the scene does not draw it.
+    OutsideZoomWindow,
     /// The node has this many sections, and `section` is not below it.
     NoSection(usize),
 }
 
 /// The canvas point `input.click_node` aims at: the center of the
 /// node's model AABB, or of one section's, by the tree builder's own
-/// section rule.
+/// section rule. A node the scene does not draw at `zoom` — hidden
+/// by a fold, or outside its zoom window — has nothing to click.
 fn node_target(
     document: &crate::application::document::MindMapDocument,
     node_id: &str,
     section: Option<usize>,
+    zoom: f32,
 ) -> Result<glam::Vec2, Aim> {
     let map = &document.mindmap;
     let node = map.nodes.get(node_id).ok_or(Aim::Missing)?;
     if map.is_hidden_by_fold(node) {
         return Err(Aim::Folded);
+    }
+    if !node.zoom_window().contains(zoom) {
+        return Err(Aim::OutsideZoomWindow);
     }
     let Some(index) = section else {
         return Ok(node.center_vec2());
@@ -808,9 +870,10 @@ mod tests {
     use crate::application::console::LineOutcome;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::MindMapDocument;
+    use crate::application::ipc::injected::{resolve_command, Surface};
     use crate::application::ipc::injected::{Delivery, InjectedQueue, Overloaded};
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
-    use crate::application::ipc::{SceneView, ShellState};
+    use crate::application::ipc::{CommandTarget, SceneView, ShellState};
     use crate::application::keybinds::Action;
     use crate::application::macros::MacroStep;
     use crate::application::scene_host::AppScene;
@@ -828,7 +891,7 @@ mod tests {
         scene: AppScene,
         camera: Camera2D,
         queue: InjectedQueue,
-        applied: Vec<Sample>,
+        applied: Vec<Sample<Surface>>,
     }
 
     impl InputApp {
@@ -895,16 +958,14 @@ mod tests {
             panic!("raw input must not probe the hit test");
         }
         fn surface_point(&self, point: Point) -> (f64, f64) {
-            let surface = match point.space {
-                Space::Surface => Vec2::new(point.x, point.y),
-                Space::Canvas => self.camera.canvas_to_screen(Vec2::new(point.x, point.y)),
-            };
-            (f64::from(surface.x), f64::from(surface.y))
+            through(&self.camera, point)
         }
         fn inject(&mut self, samples: Vec<Sample>, pacing: Pacing) -> Result<Injected, Overloaded> {
             let applied = match self.queue.admit(samples, pacing)? {
                 Delivery::Now(samples) => {
-                    self.applied.extend(samples);
+                    let camera = &self.camera;
+                    self.applied
+                        .extend(resolve_command(samples, |point| through(camera, point)));
                     true
                 }
                 Delivery::Queued => false,
@@ -919,15 +980,25 @@ mod tests {
         }
     }
 
-    fn moved(x: f64, y: f64, mods: Option<Modifiers>) -> Sample {
-        Sample::new(InputEvent::CursorMoved { x, y }, mods)
+    /// Where `point` lands on the surface through `camera`: the
+    /// app-side resolution, with the stand-in's camera.
+    fn through(camera: &Camera2D, point: Point) -> Surface {
+        let surface = match point.space {
+            Space::Surface => Vec2::new(point.x, point.y),
+            Space::Canvas => camera.canvas_to_screen(Vec2::new(point.x, point.y)),
+        };
+        (f64::from(surface.x), f64::from(surface.y))
     }
 
-    fn button(button: MouseButton, state: ElementState, mods: Option<Modifiers>) -> Sample {
+    fn moved(x: f64, y: f64, mods: Option<Modifiers>) -> Sample<Surface> {
+        Sample::new(InputEvent::CursorMoved((x, y)), mods)
+    }
+
+    fn button(button: MouseButton, state: ElementState, mods: Option<Modifiers>) -> Sample<Surface> {
         Sample::new(InputEvent::MouseButton { button, state }, mods)
     }
 
-    fn key_sample(key: Key, state: ElementState, mods: Option<Modifiers>) -> Sample {
+    fn key_sample(key: Key, state: ElementState, mods: Option<Modifiers>) -> Sample<Surface> {
         Sample::new(InputEvent::Key { key, state }, mods)
     }
 
@@ -995,6 +1066,17 @@ mod tests {
                 "space",
             ),
             (r#"{"id":1,"cmd":"input.wheel","dy":1e300}"#, "dy"),
+            (r#"{"id":1,"cmd":"input.wheel","dy":0}"#, "dy"),
+            (r#"{"id":1,"cmd":"input.wheel","dy":-0.0}"#, "dy"),
+            (r#"{"id":1,"cmd":"input.key","key":"Shift"}"#, "key"),
+            (
+                r#"{"id":1,"cmd":"input.key","key":"Control","state":"press"}"#,
+                "key",
+            ),
+            (
+                r#"{"id":1,"cmd":"input.touch","phase":"cancelled","pointer_id":0,"x":1,"y":2}"#,
+                "phase",
+            ),
             (r#"{"id":1,"cmd":"input.key","key":"enter"}"#, "key"),
             (r#"{"id":1,"cmd":"input.key","key":"\u0008"}"#, "key"),
             (r#"{"id":1,"cmd":"input.key","key":""}"#, "key"),
@@ -1265,7 +1347,7 @@ mod tests {
     fn test_touch_is_one_finger_event_at_a_surface_position() {
         let mut app = InputApp::with_fixture();
         run_attached(
-            r#"{"id":1,"cmd":"input.touch","phase":"cancelled","pointer_id":7,"x":3,"y":4}"#,
+            r#"{"id":1,"cmd":"input.touch","phase":"canceled","pointer_id":7,"x":3,"y":4}"#,
             &mut app,
         );
         assert_eq!(
@@ -1274,8 +1356,7 @@ mod tests {
                 InputEvent::Touch {
                     phase: TouchPhase::Cancelled,
                     pointer_id: 7,
-                    x: 3.0,
-                    y: 4.0
+                    at: (3.0, 4.0)
                 },
                 None
             )]
@@ -1287,8 +1368,21 @@ mod tests {
     /// drag's modifiers.
     #[test]
     fn test_drag_samples_end_exactly_on_the_target_with_the_modifiers_held() {
+        let surface = |x: f32, y: f32| Point {
+            x,
+            y,
+            space: Space::Surface,
+        };
         let shift = Some(Modifiers::SHIFT);
-        let samples = drag_samples((0.0, 10.0), (30.0, -20.0), 3, MouseButton::Left, shift);
+        let unresolved = drag_samples(
+            surface(0.0, 10.0),
+            surface(30.0, -20.0),
+            3,
+            MouseButton::Left,
+            shift,
+        );
+        let samples: Vec<Sample<Surface>> =
+            resolve_command(unresolved, |p| (f64::from(p.x), f64::from(p.y))).collect();
         assert_eq!(
             samples,
             vec![
@@ -1300,13 +1394,24 @@ mod tests {
                 button(MouseButton::Left, ElementState::Released, shift),
             ]
         );
-        let long = drag_samples((0.0, 0.0), (1.0, 3.0), MAX_DRAG_STEPS, MouseButton::Left, None);
+        // Steps that do not divide evenly still end on the target
+        // itself, not on the start plus a rounded fraction.
+        let long = drag_samples(
+            surface(0.1, 0.0),
+            surface(1.0, 3.3),
+            MAX_DRAG_STEPS,
+            MouseButton::Left,
+            None,
+        );
         assert_eq!(
             long.len(),
             INJECTED_QUEUE_CAP,
             "the longest drag fills the queue exactly"
         );
-        assert_eq!(long[long.len() - 2], moved(1.0, 3.0, None));
+        assert_eq!(
+            long[long.len() - 2],
+            Sample::new(InputEvent::CursorMoved(surface(1.0, 3.3)), None)
+        );
     }
 
     /// The drag goes through the queue — nothing reaches a handler
@@ -1333,7 +1438,9 @@ mod tests {
         );
         let (reply, _) = run_attached(r#"{"id":3,"cmd":"input.pending"}"#, &mut app);
         assert_eq!(reply["result"], json!({"pending": 9}));
-        let order: Vec<Sample> = std::iter::from_fn(|| app.queue.pop()).collect();
+        let camera = &app.camera;
+        let order: Vec<Sample<Surface>> =
+            std::iter::from_fn(|| app.queue.pop(|point| through(camera, point))).collect();
         assert_eq!(
             order[6],
             button(MouseButton::Left, ElementState::Released, Some(Modifiers::SHIFT))
@@ -1406,7 +1513,7 @@ mod tests {
         }
         let node = &doc.mindmap.nodes[&id];
         assert_eq!(
-            node_target(&doc, &id, Some(1)),
+            node_target(&doc, &id, Some(1), 1.0),
             Ok(Vec2::new(
                 (node.position.x + 25.0) as f32,
                 (node.position.y + 40.0) as f32
@@ -1414,12 +1521,29 @@ mod tests {
             "an explicit section size: the offset plus half the size"
         );
         assert_eq!(
-            node_target(&doc, &id, Some(0)),
+            node_target(&doc, &id, Some(0), 1.0),
             Ok(node.center_vec2()),
             "a section that fills its node aims at the node's center"
         );
-        assert_eq!(node_target(&doc, &id, Some(2)), Err(Aim::NoSection(2)));
-        assert_eq!(node_target(&doc, "no.such.node", None), Err(Aim::Missing));
+        assert_eq!(node_target(&doc, &id, Some(2), 1.0), Err(Aim::NoSection(2)));
+        assert_eq!(node_target(&doc, "no.such.node", None, 1.0), Err(Aim::Missing));
+        let node = doc.mindmap.nodes.get_mut(&id).expect("node");
+        node.min_zoom_to_render = Some(1.5);
+        node.max_zoom_to_render = Some(3.0);
+        assert_eq!(
+            node_target(&doc, &id, None, 1.0),
+            Err(Aim::OutsideZoomWindow),
+            "below the window the scene does not draw it"
+        );
+        assert_eq!(
+            node_target(&doc, &id, None, 4.0),
+            Err(Aim::OutsideZoomWindow),
+            "nor above it"
+        );
+        assert!(
+            node_target(&doc, &id, None, 2.0).is_ok(),
+            "inside it, it is drawn"
+        );
     }
 
     #[test]
@@ -1487,6 +1611,73 @@ mod tests {
             "{reply}"
         );
         assert!(app.applied.is_empty(), "nothing was clicked");
+    }
+
+    /// A node outside its zoom window is not drawn, so a click at
+    /// its center would land on empty canvas: refused, nothing sent.
+    #[test]
+    fn test_click_node_refuses_a_node_outside_its_zoom_window() {
+        let mut app = InputApp::with_fixture();
+        let id = first_node(app.doc.as_ref().expect("doc"));
+        let node = app
+            .doc
+            .as_mut()
+            .expect("doc")
+            .mindmap
+            .nodes
+            .get_mut(&id)
+            .expect("node");
+        node.min_zoom_to_render = Some(3.0);
+        let (reply, repaint) = run_attached(
+            &json!({"id":1,"cmd":"input.click_node","node_id":id}).to_string(),
+            &mut app,
+        );
+        assert_eq!(reply["error"]["code"], json!("not_found"), "{reply}");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("zoom")),
+            "{reply}"
+        );
+        assert!(!repaint);
+        assert!(app.applied.is_empty());
+    }
+
+    /// Behind queued samples a click would land after they may have
+    /// moved the camera, and the reply could not say where: it is
+    /// refused `busy` with the queue depth, and queues nothing.
+    #[test]
+    fn test_click_node_is_busy_while_samples_are_queued() {
+        let mut app = InputApp::with_fixture();
+        let id = first_node(app.doc.as_ref().expect("doc"));
+        run_attached(
+            r#"{"id":1,"cmd":"input.drag","from_x":0,"from_y":0,"to_x":40,"to_y":0,"steps":2}"#,
+            &mut app,
+        );
+        let (reply, repaint) = run_attached(
+            &json!({"id":2,"cmd":"input.click_node","node_id":id}).to_string(),
+            &mut app,
+        );
+        assert_eq!(reply["error"]["code"], json!("busy"), "{reply}");
+        assert_eq!(reply["error"]["data"], json!({"pending": 5}));
+        assert!(!repaint);
+        assert_eq!(app.queue.len(), 5, "nothing joined the queue");
+    }
+
+    /// A modifier key alone would change nothing a later event reads —
+    /// winit reports modifiers through a separate state event — so it
+    /// is refused, pointing at `mods`.
+    #[test]
+    fn test_a_modifier_key_is_refused_toward_mods() {
+        for name in ["Shift", "Control", "Alt", "AltGraph", "Super", "Meta", "Hyper"] {
+            let refusal = parse_key(name).expect_err(name);
+            assert!(refusal.contains("`mods`"), "{name}: {refusal}");
+        }
+        assert_eq!(
+            parse_key("CapsLock"),
+            Ok(Key::Named(NamedKey::CapsLock)),
+            "a lock key is a keystroke"
+        );
     }
 
     #[test]

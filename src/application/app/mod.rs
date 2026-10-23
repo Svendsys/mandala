@@ -910,6 +910,20 @@ impl DragState {
     fn would_abandon_gesture(&self) -> bool {
         matches!(self, Self::PendingRight { .. } | Self::Throttled(_))
     }
+
+    /// Where the pending press began, in surface pixels: the state a
+    /// cursor move can promote to a drag. A promoted gesture starts
+    /// here, not at the move that crossed the threshold
+    /// (`event_cursor_moved::start_promoted_gesture`). `None` for
+    /// every state no move promotes.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn press_origin(&self) -> Option<(f64, f64)> {
+        match self {
+            Self::Pending(press) => Some(press.start_pos),
+            Self::PendingRight { start_pos, .. } => Some(*start_pos),
+            _ => None,
+        }
+    }
 }
 
 /// Application root — owns the launch options and (on WASM only)

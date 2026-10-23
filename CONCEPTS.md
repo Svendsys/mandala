@@ -2557,6 +2557,12 @@ and it was wrong in both clauses. What is true:
   and the node populated. What it does decide is **all three
   handle families versus the node**: each is ranked ahead of
   `hit_node`, and each was captured without asking about it.
+- **The gesture starts at the press.** The threshold decides
+  *whether* a press is a drag, not where the drag begins: the move
+  that promotes it seeds the new gesture with the travel from the
+  press position (`start_promoted_gesture`), so a dragged node, a
+  resized box or a panned canvas tracks the pointer exactly rather
+  than lagging it by the sub-threshold travel.
 
 **Where a click and a drag on the same press name different
 things** follows from that: the click ladder has no rung for
@@ -3337,9 +3343,10 @@ it finds owes a commit (see the guard under
 is why the guard is on the arm). The per-frame
 pan delta stays inline in `event_cursor_moved.rs` because
 per-cursor-move state is legitimately not a discrete-action
-concern; the threshold frame's first delta is gated on the
-dispatch having actually entered `Panning`, so an Action rebound
-onto `LeftDrag` doesn't get a free camera nudge.
+concern; the threshold frame's first delta — measured from the
+press, like every promoted gesture's — is gated on the dispatch
+having actually entered `Panning`, so an Action rebound onto
+`LeftDrag` doesn't get a free camera nudge.
 
 **Modifier-fallback for mouse gestures.** Mouse handlers resolve
 through `ResolvedKeybinds::action_for_gesture`, which tries the

@@ -21,7 +21,7 @@
 
 use baumhard::util::grapheme_chad;
 
-use crate::application::platform::input::{Key, NamedKey};
+use crate::application::platform::input::Key;
 
 mod editor;
 mod target;
@@ -37,9 +37,9 @@ pub(in crate::application::app) use target::{resolve_single_line_target, SingleL
 
 /// Pure router for the *character-input* path. Inserts printable
 /// chars from a `Key::Character` payload into the buffer at the
-/// grapheme cursor, and a space for the space bar, which winit
-/// delivers as `Key::Named(NamedKey::Space)` rather than as a `" "`
-/// character — the one named key that types a printable.
+/// grapheme cursor. The space bar arrives as
+/// `Key::Named(NamedKey::Space)` and types through the
+/// `LabelEditInsertSpace` binding, like the structural keys below.
 ///
 /// Structural keys (Backspace, Delete, arrows, Home, End) are
 /// deliberately not handled here: they route through
@@ -50,10 +50,6 @@ pub(in crate::application::app) use target::{resolve_single_line_target, SingleL
 ///
 /// Returns `true` iff a printable character was inserted.
 pub(super) fn route_single_line_key(logical_key: &Key, buffer: &mut String, cursor: &mut usize) -> bool {
-    if let Key::Named(NamedKey::Space) = logical_key {
-        *cursor += grapheme_chad::insert_str_at_grapheme_counted(buffer, *cursor, " ");
-        return true;
-    }
     if let Key::Character(c) = logical_key {
         // Control chars (and any non-printing payload winit attaches
         // to a structural key) are filtered, which mirrors the
