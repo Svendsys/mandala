@@ -151,31 +151,50 @@ fn parse_action(call: &Call<'_>) -> Result<Action, Reply> {
     })
 }
 
-/// The optional synthetic pointer: `x` and `y` together, in `space`.
+/// The optional synthetic pointer: `x` and `y` together, in `space`
+/// (default `canvas`).
 pub(super) fn parse_pointer(call: &Call<'_>) -> Result<Option<Point>, Reply> {
+    parse_point(call, ("x", "y"), Space::Canvas)
+}
+
+/// A position sent as the parameter pair `names`, qualified by the
+/// `space` parameter, or `default` without one. `None` when neither
+/// half was sent; half a pair, a `space` with no pair, an unknown
+/// space word and a coordinate past `f32`'s range are each
+/// `invalid_params`, naming the offender.
+pub(super) fn parse_point(
+    call: &Call<'_>,
+    names: (&str, &str),
+    default: Space,
+) -> Result<Option<Point>, Reply> {
+    let (x_name, y_name) = names;
     let coordinate = |name: &str| call.param(name).and_then(Value::as_f64);
     let space = call.str_param("space");
-    let (x, y) = match (coordinate("x"), coordinate("y")) {
+    let (x, y) = match (coordinate(x_name), coordinate(y_name)) {
         (Some(x), Some(y)) => (x, y),
         (None, None) if space.is_some() => {
             return Err(call.invalid_params(
                 "space",
-                "`space` qualifies a pointer position; send it with `x` and `y`",
+                format!("`space` qualifies a pointer position; send it with `{x_name}` and `{y_name}`"),
             ))
         }
         (None, None) => return Ok(None),
-        (Some(_), None) => return Err(call.invalid_params("y", "`x` and `y` are sent together")),
-        (None, Some(_)) => return Err(call.invalid_params("x", "`x` and `y` are sent together")),
+        (Some(_), None) => {
+            return Err(call.invalid_params(y_name, format!("`{x_name}` and `{y_name}` are sent together")))
+        }
+        (None, Some(_)) => {
+            return Err(call.invalid_params(x_name, format!("`{x_name}` and `{y_name}` are sent together")))
+        }
     };
     let space = match space {
-        None => Space::Canvas,
+        None => default,
         Some(word) => Space::parse(word)
             .ok_or_else(|| call.invalid_params("space", format!("`space` must be {}", Space::WORDS)))?,
     };
     // Positions are f32 everywhere downstream; a coordinate past
     // f32's range would arrive as infinity and poison the camera math.
     let (x, y) = (x as f32, y as f32);
-    for (name, value) in [("x", x), ("y", y)] {
+    for (name, value) in [(x_name, x), (y_name, y)] {
         if !value.is_finite() {
             return Err(call.invalid_params(name, format!("`{name}` is out of range for a position")));
         }

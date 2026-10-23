@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Event, KeyEvent, StartCause, WindowEvent};
+use winit::event::{Event, KeyEvent, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{CursorIcon, Window, WindowId};
@@ -29,8 +29,11 @@ use super::{
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
+use crate::application::ipc::injected::InjectedQueue;
 use crate::application::ipc::{self, DrainOutcome, IpcServer, IpcWake};
 use crate::application::keybinds::ResolvedKeybinds;
+use crate::application::platform::input::{ElementState, Key, MouseButton, MouseScrollDelta, TouchPhase};
+use crate::application::platform::window::PhysicalPosition;
 use crate::application::renderer::Renderer;
 
 /// Wall-clock interval the event loop holds the FPS overlay's
@@ -108,18 +111,23 @@ struct NativeApp {
 
 /// Execute queued IPC requests on the main thread, with the same access
 /// an input handler has: each command gets an [`IpcCommandTarget`]
-/// over the same `InputHandlerContext` a winit handler is given.
+/// over the same state a winit handler is given, and the event loop
+/// the keyboard handler takes.
 /// `init` is `None` before the window exists, and a command that
 /// needs the app then answers `no_document`. A free function over the
 /// one field, so `about_to_wait` can call it while it holds
 /// `InitState`.
-fn drain_ipc(server: &mut Option<IpcServer>, init: Option<&mut InitState>) -> DrainOutcome {
+fn drain_ipc(
+    server: &mut Option<IpcServer>,
+    init: Option<&mut InitState>,
+    event_loop: &ActiveEventLoop,
+) -> DrainOutcome {
     let Some(server) = server else {
         return DrainOutcome::default();
     };
     match init {
         Some(init) => server.drain(|request| {
-            let mut target = IpcCommandTarget::new(init.input_context());
+            let mut target = IpcCommandTarget::new(init, event_loop);
             ipc::execute(request, Some(&mut target))
         }),
         None => server.drain(|request| ipc::execute(request, None)),
@@ -182,11 +190,26 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // (animations, throttled-drag pending, mid-zoom), the
             // drain will do work that needs to land on screen.
             let was_continuing = init.needs_continuation();
+            // One injected-input sample per heartbeat, ahead of the
+            // input drain — where a winit event lands — so a paced
+            // IPC drag's moves are driven through the throttled drag
+            // between frames, as a hand's are (format/ipc.md
+            // §`input`). An empty queue is the common case and costs
+            // nothing; `needs_continuation` keeps the loop iterating
+            // until the queue is empty, and `was_continuing` above
+            // already holds the redraw this sample owes.
+            let renderer = &init.renderer;
+            if let Some(sample) = init
+                .injected
+                .pop(|point| super::ipc_target::surface_of(renderer, point))
+            {
+                init.apply_injected(event_loop, sample);
+            }
             init.drain_inputs();
             // After the input drain, so a command observes every input
             // the user sent before it — throttled drag moves and zoom
             // steps included — and its effects are ordered after them.
-            ipc_outcome = drain_ipc(&mut self.ipc, Some(init));
+            ipc_outcome = drain_ipc(&mut self.ipc, Some(init), event_loop);
             let still_continuing = init.needs_continuation();
             // Request a redraw if work happened this iteration
             // (`was_continuing`) OR if more work is pending
@@ -247,7 +270,7 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         } else {
             // Before the window exists there is no input to order
             // against; requests that need no app state still answer.
-            ipc_outcome = drain_ipc(&mut self.ipc, None);
+            ipc_outcome = drain_ipc(&mut self.ipc, None, event_loop);
         }
         // A drain that ran out of budget keeps the loop iterating until
         // the queue is empty.
@@ -332,6 +355,10 @@ pub(super) struct InitState {
     /// - start_ms`, and without the shift the wall-clock-elapsed
     /// during the drag would land past `total`).
     pub(super) anim_pause_start_ms: Option<u64>,
+    /// Raw input the IPC `input` family queued for the heartbeat,
+    /// applied one sample per frame ahead of `drain_inputs`
+    /// (`format/ipc.md` §`input`). Always empty without `--ipc`.
+    pub(super) injected: InjectedQueue,
 }
 
 impl InitState {
@@ -362,12 +389,14 @@ impl InitState {
             picker_hover: &mut self.picker_hover,
             keybinds: &self.keybinds,
             macros: &mut self.macros,
-            anim_pause_start_ms: &self.anim_pause_start_ms,
         }
     }
 
-    /// Translate a winit `Touch` event into a recognizer step and
-    /// run it. Returns true when the event drove any state
+    /// Translate a winit `Touch` event's phase, finger id and
+    /// location into a recognizer step and run it. Takes the payload
+    /// rather than the `Touch` struct so the IPC `input.touch`
+    /// command reaches this same entry point (its `DeviceId` cannot
+    /// be built outside winit). Returns true when the event drove any state
     /// transition or ran a gesture (the caller should request a
     /// redraw on true). Modifier state is fixed at all-false —
     /// touch devices have no modifier keys, and the keybind table's
@@ -384,7 +413,12 @@ impl InitState {
     /// rather than on the emission having happened. A future
     /// improvement would set `ControlFlow::WaitUntil(started_at +
     /// LONG_PRESS_MS)` from the recognizer's `OneFinger` state.
-    pub(super) fn dispatch_touch_event(&mut self, touch: winit::event::Touch) -> bool {
+    pub(super) fn dispatch_touch_event(
+        &mut self,
+        phase: TouchPhase,
+        id: u64,
+        location: PhysicalPosition<f64>,
+    ) -> bool {
         use super::touch_gesture::Phase;
         use web_time::Instant;
         // Phase translation, recognizer ingest + tick, and the
@@ -394,8 +428,8 @@ impl InitState {
         // `Dispatch` arm — it goes through `dispatch_action` so a
         // `NativeOnly` Action bound to a gesture (`EnterResizeMode`)
         // reaches its arm.
-        let phase = super::dispatch::touch_phase(touch.phase);
-        let pos = (touch.location.x, touch.location.y);
+        let phase = super::dispatch::touch_phase(phase);
+        let pos = (location.x, location.y);
         // No gesture recognized — but the recognizer may have moved
         // its internal state (e.g. Started → OneFinger). The caller
         // still wants a redraw on Started/Moved so any
@@ -405,7 +439,7 @@ impl InitState {
             &mut self.touch_recognizer,
             &self.keybinds,
             phase,
-            touch.id,
+            id,
             pos,
             Instant::now(),
         ) else {
@@ -497,99 +531,26 @@ impl InitState {
                 event: WindowEvent::MouseInput { state, button, .. },
                 ..
             } => {
-                let mut ctx = self.input_context();
-                event_mouse_click::handle_mouse_input(state, button, &mut ctx);
-                redraw_after = true;
+                redraw_after = self.on_mouse_input(state, button);
             }
             Event::WindowEvent {
                 event: WindowEvent::MouseWheel { delta, .. },
                 ..
             } => {
-                let scroll_y = crate::application::app::wheel_lines(delta);
-                // While the console is open, the wheel scrolls the
-                // scrollback rather than zooming the canvas — mouse
-                // events should follow keyboard focus. Fractional
-                // deltas accumulate via `accumulate_wheel_lines` so
-                // sub-line-per-tick scrolls don't round to zero.
-                if self.console_state.is_open() {
-                    let lines =
-                        if let crate::application::console::ConsoleState::Open { wheel_accum, .. } =
-                            &mut self.console_state
-                        {
-                            crate::application::app::console_input::accumulate_wheel_lines(
-                                wheel_accum,
-                                scroll_y as f32,
-                            )
-                        } else {
-                            0
-                        };
-                    if lines != 0 {
-                        crate::application::app::console_input::scroll_console_by_lines(
-                            &mut self.console_state,
-                            lines,
-                        );
-                        if let Some(doc) = self.document.as_ref() {
-                            crate::application::app::console_input::rebuild_console_overlay(
-                                &self.console_state,
-                                doc,
-                                &mut self.app_scene,
-                                &mut self.renderer,
-                                &self.keybinds,
-                            );
-                        }
-                        redraw_after = true;
-                    }
-                } else {
-                    // Wheel zoom is routed through `dispatch_action` so
-                    // users can rebind `WheelUp` / `WheelDown` to any
-                    // Action (or unbind them entirely). Defaults bind
-                    // both to `ZoomIn` / `ZoomOut`. If the user
-                    // explicitly clears the bindings, wheel events are
-                    // silently ignored.
-                    let gesture_name = crate::application::app::wheel_gesture(scroll_y).key_name();
-                    // `action_for_gesture` falls back to the unmodified
-                    // binding when no exact-modifier match exists, so
-                    // `Ctrl+Wheel` keeps zooming even though only
-                    // `WheelUp` / `WheelDown` are bound in defaults —
-                    // pre-branch behavior was modifier-agnostic and
-                    // we preserve it here without forcing every user
-                    // to enumerate modifier permutations.
-                    let action = self.keybinds.action_for_gesture(
-                        gesture_name,
-                        self.modifiers.control_key(),
-                        self.modifiers.shift_key(),
-                        self.modifiers.alt_key(),
-                    );
-                    if let Some(a) = action {
-                        let mut bundle = self.input_context();
-                        let _ = crate::application::app::dispatch::dispatch_action(a, &mut bundle, None);
-                        redraw_after = true;
-                    }
-                }
+                redraw_after = self.on_mouse_wheel(delta);
             }
             Event::WindowEvent {
                 event: WindowEvent::CursorMoved { position, .. },
                 ..
             } => {
-                let window = self.window.clone();
-                let mut ctx = self.input_context();
-                event_cursor_moved::handle_cursor_moved(position, window.as_ref(), &mut ctx);
-                // Hover that doesn't drag and doesn't open the
-                // picker doesn't change visuals — no redraw needed.
-                // Any active drag (Pending → Throttled etc.) or an
-                // open picker requires a fresh frame so the drag
-                // preview / hover marker tracks the cursor.
-                redraw_after =
-                    !matches!(self.drag_state, DragState::None) || self.color_picker_state.is_open();
+                redraw_after = self.on_cursor_moved(position);
             }
             //// TOUCH ////
             Event::WindowEvent {
                 event: WindowEvent::Touch(touch),
                 ..
             } => {
-                if self.dispatch_touch_event(touch) {
-                    redraw_after = true;
-                }
+                redraw_after = self.dispatch_touch_event(touch.phase, touch.id, touch.location);
             }
             //// KEYBOARD ////
             Event::WindowEvent {
@@ -605,23 +566,121 @@ impl InitState {
                     WindowEvent::KeyboardInput {
                         event:
                             KeyEvent {
-                                logical_key,
-                                state: ElementState::Pressed,
-                                ..
+                                logical_key, state, ..
                             },
                         ..
                     },
                 ..
             } => {
-                let mut ctx = self.input_context();
-                event_keyboard::handle_keyboard_input(logical_key, event_loop, &mut ctx);
-                redraw_after = true;
+                redraw_after = self.on_keyboard_input(event_loop, logical_key, state);
             }
             _ => {}
         }
         if redraw_after {
             self.window.request_redraw();
         }
+    }
+
+    /// `WindowEvent::MouseInput`. Returns whether to request a redraw.
+    ///
+    /// This and the four `on_*` methods below are `handle_event`'s
+    /// input arms, lifted out so the IPC `input` family reaches the
+    /// handlers through the same bodies a winit event does
+    /// (`format/ipc.md` §`input`): from here down, nothing can tell
+    /// the two apart.
+    pub(super) fn on_mouse_input(&mut self, state: ElementState, button: MouseButton) -> bool {
+        let mut ctx = self.input_context();
+        event_mouse_click::handle_mouse_input(state, button, &mut ctx);
+        true
+    }
+
+    /// `WindowEvent::MouseWheel`. Returns whether to request a redraw.
+    pub(super) fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) -> bool {
+        let scroll_y = crate::application::app::wheel_lines(delta);
+        // While the console is open, the wheel scrolls the
+        // scrollback rather than zooming the canvas — mouse
+        // events should follow keyboard focus. Fractional
+        // deltas accumulate via `accumulate_wheel_lines` so
+        // sub-line-per-tick scrolls don't round to zero.
+        if self.console_state.is_open() {
+            let lines = if let crate::application::console::ConsoleState::Open { wheel_accum, .. } =
+                &mut self.console_state
+            {
+                crate::application::app::console_input::accumulate_wheel_lines(wheel_accum, scroll_y as f32)
+            } else {
+                0
+            };
+            if lines == 0 {
+                return false;
+            }
+            crate::application::app::console_input::scroll_console_by_lines(&mut self.console_state, lines);
+            if let Some(doc) = self.document.as_ref() {
+                crate::application::app::console_input::rebuild_console_overlay(
+                    &self.console_state,
+                    doc,
+                    &mut self.app_scene,
+                    &mut self.renderer,
+                    &self.keybinds,
+                );
+            }
+            return true;
+        }
+        // Wheel zoom is routed through `dispatch_action` so
+        // users can rebind `WheelUp` / `WheelDown` to any
+        // Action (or unbind them entirely). Defaults bind
+        // both to `ZoomIn` / `ZoomOut`. If the user
+        // explicitly clears the bindings, wheel events are
+        // silently ignored.
+        let gesture_name = crate::application::app::wheel_gesture(scroll_y).key_name();
+        // `action_for_gesture` falls back to the unmodified
+        // binding when no exact-modifier match exists, so
+        // `Ctrl+Wheel` keeps zooming even though only
+        // `WheelUp` / `WheelDown` are bound in defaults —
+        // pre-branch behavior was modifier-agnostic and
+        // we preserve it here without forcing every user
+        // to enumerate modifier permutations.
+        let action = self.keybinds.action_for_gesture(
+            gesture_name,
+            self.modifiers.control_key(),
+            self.modifiers.shift_key(),
+            self.modifiers.alt_key(),
+        );
+        let Some(a) = action else {
+            return false;
+        };
+        let mut bundle = self.input_context();
+        let _ = crate::application::app::dispatch::dispatch_action(a, &mut bundle, None);
+        true
+    }
+
+    /// `WindowEvent::CursorMoved`. Returns whether to request a redraw.
+    pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
+        let window = self.window.clone();
+        let mut ctx = self.input_context();
+        event_cursor_moved::handle_cursor_moved(position, window.as_ref(), &mut ctx);
+        // Hover that doesn't drag and doesn't open the
+        // picker doesn't change visuals — no redraw needed.
+        // Any active drag (Pending → Throttled etc.) or an
+        // open picker requires a fresh frame so the drag
+        // preview / hover marker tracks the cursor.
+        !matches!(self.drag_state, DragState::None) || self.color_picker_state.is_open()
+    }
+
+    /// `WindowEvent::KeyboardInput`. Only a press reaches the
+    /// handler; a release changes nothing. Returns whether to request
+    /// a redraw.
+    pub(super) fn on_keyboard_input(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        logical_key: Key,
+        state: ElementState,
+    ) -> bool {
+        if state != ElementState::Pressed {
+            return false;
+        }
+        let mut ctx = self.input_context();
+        event_keyboard::handle_keyboard_input(logical_key, event_loop, &mut ctx);
+        true
     }
 
     /// Per-frame drain: drive the active throttled drag (if any)
@@ -800,6 +859,9 @@ impl InitState {
     ///   hover interaction owns its own pending buffer.
     /// - **Active animation.** The animation tick must keep
     ///   advancing until each animation completes.
+    /// - **Injected input queued.** The heartbeat applies one IPC
+    ///   `input` sample per iteration; parking with samples queued
+    ///   would strand a paced drag mid-gesture.
     /// - **Connection-geometry dirty flag set.** A camera change
     ///   landed during a `MovingNode` drag that suppressed the
     ///   rebuild; the flag will be picked up by the next drain
@@ -823,7 +885,8 @@ impl InitState {
         let picker_pending = self.picker_hover.has_pending();
         let animations = self.document.as_ref().is_some_and(|d| d.has_active_animations());
         let geometry_dirty = self.renderer.connection_geometry_dirty();
+        let injected = !self.injected.is_empty();
 
-        drag_pending || picker_pending || animations || geometry_dirty
+        drag_pending || picker_pending || animations || geometry_dirty || injected
     }
 }

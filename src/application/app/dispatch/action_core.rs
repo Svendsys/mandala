@@ -665,7 +665,8 @@ pub(in crate::application::app) fn dispatch_compatible(
         | Action::TextEditWordLeft
         | Action::TextEditWordRight
         | Action::TextEditDeleteWordBack
-        | Action::TextEditDeleteWordForward => {
+        | Action::TextEditDeleteWordForward
+        | Action::TextEditInsertSpace => {
             super::super::text_edit::apply_text_edit_action(action.clone(), core.text_edit_state);
         }
         // Catch-all for variants `dispatch_compatible` doesn't

@@ -799,6 +799,20 @@ mod tests {
             self.probed = Some(point);
             Some(json!({ "stand_in": true }))
         }
+        fn surface_point(&self, _: Point) -> (f64, f64) {
+            panic!("a scene read must not place a pointer");
+        }
+        fn inject(
+            &mut self,
+            _: Vec<crate::application::ipc::injected::Sample>,
+            _: crate::application::ipc::injected::Pacing,
+        ) -> Result<crate::application::ipc::Injected, crate::application::ipc::injected::Overloaded>
+        {
+            panic!("a scene read must not inject input");
+        }
+        fn injected_pending(&self) -> usize {
+            panic!("a scene read must not read the injected-input queue");
+        }
     }
 
     const ALL_SCENE_COMMANDS: [&str; 5] = [

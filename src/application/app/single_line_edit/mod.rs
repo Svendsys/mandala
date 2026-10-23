@@ -37,7 +37,9 @@ pub(in crate::application::app) use target::{resolve_single_line_target, SingleL
 
 /// Pure router for the *character-input* path. Inserts printable
 /// chars from a `Key::Character` payload into the buffer at the
-/// grapheme cursor.
+/// grapheme cursor. The space bar arrives as
+/// `Key::Named(NamedKey::Space)` and types through the
+/// `LabelEditInsertSpace` binding, like the structural keys below.
 ///
 /// Structural keys (Backspace, Delete, arrows, Home, End) are
 /// deliberately not handled here: they route through

@@ -527,7 +527,9 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
 
 /// Apply a literal-character keystroke (Enter, Tab, or printable
 /// chars from a `Key::Character` payload) to the open editor
-/// state. Returns `true` if the buffer / cursor / regions changed.
+/// state. The space bar is not one of them: winit delivers it as
+/// `Key::Named(NamedKey::Space)`, and it types through the
+/// `TextEditInsertSpace` binding. Returns `true` if the buffer / cursor / regions changed.
 /// Mirrors the no-Action fall-through path of
 /// `handle_text_edit_key`: every successful insertion clears the
 /// shift-select anchor so a subsequent close lifts only what the
@@ -720,6 +722,52 @@ mod tests {
             } => (buffer, *cursor_grapheme_pos),
             TextEditState::Closed => panic!("expected open text edit state"),
         }
+    }
+
+    /// The space bar types a space. winit delivers it as
+    /// `Key::Named(NamedKey::Space)`, which the literal path does not
+    /// insert, so it reaches the buffer through the default TextEdit
+    /// binding: the key's name resolves to `TextEditInsertSpace`, and
+    /// that inserts at the cursor, growing the run under it and
+    /// dropping a shift-select anchor like any other edit. A space
+    /// typed into node text used to vanish.
+    #[test]
+    fn the_space_bar_types_a_space_through_its_text_edit_binding() {
+        use crate::application::keybinds::{key_to_name, Action, InputContext, KeybindConfig};
+        use crate::application::platform::input::NamedKey;
+
+        let space = Key::Named(NamedKey::Space);
+        let name = key_to_name(&space).expect("named");
+        assert_eq!(
+            KeybindConfig::default().resolve().action_for_context(
+                InputContext::TextEdit,
+                &name,
+                false,
+                false,
+                false
+            ),
+            Some(Action::TextEditInsertSpace)
+        );
+        let mut state = open_state("a👋b", 2);
+        if let TextEditState::Open { selection_anchor, .. } = &mut state {
+            *selection_anchor = Some(0);
+        }
+        assert!(super::super::apply_text_edit_action(
+            Action::TextEditInsertSpace,
+            &mut state
+        ));
+        assert_eq!(text_state_buffer_and_cursor(&state), ("a👋 b", 3));
+        assert!(matches!(
+            state,
+            TextEditState::Open {
+                selection_anchor: None,
+                ..
+            }
+        ));
+        assert!(
+            !apply_literal_char_insert(Some(&name), &space, &mut open_state("ab", 1)),
+            "the literal path leaves the space bar to its binding"
+        );
     }
 
     #[test]

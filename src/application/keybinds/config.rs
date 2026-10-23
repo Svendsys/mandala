@@ -117,7 +117,10 @@ keybind_surface! {
         /// Delete the grapheme after the console cursor.
         ConsoleDeleteForward => console_delete_forward = ["Delete"],
         /// Insert a literal space (winit delivers Space as Named).
-        ConsoleInsertSpace => console_insert_space = ["Space"],
+        /// `Shift+Space` too: bindings match modifiers exactly, and a
+        /// space typed while Shift is still held from a capital
+        /// ("New York" typed quickly) would otherwise match nothing.
+        ConsoleInsertSpace => console_insert_space = ["Space", "Shift+Space"],
         /// Clear the console input line (shell Ctrl+C).
         ConsoleClearLine => console_clear_line = ["Ctrl+C"],
         /// Jump to the start of the console line (shell Ctrl+A).
@@ -307,6 +310,11 @@ keybind_surface! {
         TextEditDeleteWordBack => text_edit_delete_word_back = ["Ctrl+Backspace"],
         /// Delete forward through the current word.
         TextEditDeleteWordForward => text_edit_delete_word_forward = ["Ctrl+Delete"],
+        /// Insert a space at the editor cursor. The space bar arrives
+        /// as a named key, not a character, so it types through this
+        /// binding — the console's `ConsoleInsertSpace` shape.
+        /// `Shift+Space` for the reason `console_insert_space` gives.
+        TextEditInsertSpace => text_edit_insert_space = ["Space", "Shift+Space"],
         /// Commit the editor buffer and close.
         ///
         /// Default unbound — Enter is a literal `\n` in the
@@ -334,6 +342,9 @@ keybind_surface! {
         LabelEditDeleteBack => label_edit_delete_back = ["Backspace"],
         /// Delete the grapheme after the label cursor.
         LabelEditDeleteForward => label_edit_delete_forward = ["Delete"],
+        /// Insert a space at the label cursor (see
+        /// `text_edit_insert_space`).
+        LabelEditInsertSpace => label_edit_insert_space = ["Space", "Shift+Space"],
 
         // ── Console-verb Actions ─────────────────────────────────
         // These mirror typed console verbs; the user opts in by

@@ -336,7 +336,9 @@ fn test_route_single_line_typed_control_chars_are_skipped() {
 /// arrows / Home / End) flow through
 /// `dispatch::apply_label_edit_action_to_buffer`, not the
 /// router. The router now ignores all `Key::Named` events; only
-/// `Key::Character` printable payloads are inserted. This pins
+/// `Key::Character` printable payloads are inserted. The space bar
+/// is a `Key::Named` too, and types through `LabelEditInsertSpace`
+/// (pinned below). This pins
 /// the new contract — a future regression that re-introduces
 /// `Key::Named(Backspace) → delete` would leak the structural
 /// behavior past the action layer and let users no longer
@@ -354,6 +356,39 @@ fn test_route_named_key_is_noop_post_phase_5() {
     let changed = route_single_line_key(&Key::Named(NamedKey::Delete), &mut buf, &mut cursor);
     assert!(!changed);
     assert_eq!(buf, "abc");
+    assert_eq!(cursor, 3);
+}
+
+/// The space bar types a space. winit delivers it as
+/// `Key::Named(NamedKey::Space)`, which the router ignores, so it
+/// reaches the buffer through the default `LabelEdit` binding: the
+/// key's name resolves to `LabelEditInsertSpace`, and that inserts
+/// at the grapheme cursor. A label with a space in it was untypeable
+/// before the binding existed.
+#[test]
+fn test_the_space_bar_types_a_space_through_its_label_edit_binding() {
+    use crate::application::keybinds::{key_to_name, InputContext, KeybindConfig};
+    use crate::application::platform::input::NamedKey;
+    let space = Key::Named(NamedKey::Space);
+    let name = key_to_name(&space).expect("named");
+    assert_eq!(
+        KeybindConfig::default().resolve().action_for_context(
+            InputContext::LabelEdit,
+            &name,
+            false,
+            false,
+            false
+        ),
+        Some(Action::LabelEditInsertSpace)
+    );
+    let mut buf = String::from("a👋b");
+    let mut cursor = 2;
+    assert!(apply_label_edit_action_to_buffer(
+        Action::LabelEditInsertSpace,
+        &mut buf,
+        &mut cursor
+    ));
+    assert_eq!(buf, "a👋 b");
     assert_eq!(cursor, 3);
 }
 
