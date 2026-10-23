@@ -29,7 +29,9 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > `query.animations`, `query.editors`, `query.undo` (IPC-04, #64); the
 > `scene` family — `scene.dump`, `scene.visible_set`,
 > `scene.node_geometry`, `scene.hit_test`, `scene.find_text` (IPC-05,
-> #65).
+> #65); the `input` family (IPC-06, #66); `capture.screenshot` (IPC-07,
+> #67); and the client, `mandalactl` ([Client](#client-mandalactl),
+> IPC-11, #71).
 
 ## Transport
 
@@ -1975,6 +1977,80 @@ are the app's funnels and the observation, not the walkers. A
 possible now that #45 kept `warn!` and `error!` in release builds,
 and is not shipped: it is a follow-up with its own design (what a
 flood of per-frame degrades does to the queue is the first question).
+
+## Client: `mandalactl`
+
+`mandalactl` (`crates/mandalactl`) is the command-line client for this
+protocol: one invocation is one connection, one command and its reply.
+It adds no wire vocabulary, so what it does is what this document says
+a client does:
+
+- **Command names and parameters are the wire's.** `mandalactl
+  scene.hit_test 412 96 space=surface` sends `{"id":1,"cmd":"scene.hit_test",
+  "x":412,"y":96,"space":"surface"}`. A parameter is typed from the type
+  word `describe` publishes for it (`x=412` the number, `text=412` the
+  string); a command the client has no verb for is typed from the
+  connected app's own `describe`, so a new command is callable before a
+  client release. `mandalactl raw '<json>'` (or `raw -` on stdin) sends one
+  frame as written, supplying an `id` when it has none.
+- **Socket discovery:** `--ipc <path>`, else `$MANDALA_IPC`, else a usage
+  error that says how to launch the app.
+- **Paths:** a relative path argument (`path=`, `to_file=`) is made
+  absolute against the client's working directory before it is sent,
+  because the server requires absolute paths and has no working directory
+  of the client's to resolve against. Which parameters are paths comes
+  from the verb table, and for a command typed from `describe` from the
+  registry's own convention that a path parameter's `doc` opens with
+  "Absolute path". An empty value is sent as it is, for the app to
+  refuse. `name:=json` and `raw` send what was written.
+- **The handshake is checked before anything is sent.** The first frame
+  must be `hello` with `"app": "mandala"` and `"protocol"` equal to the
+  client's own (currently 1); anything else is refused unless `--force`
+  ([Handshake and versioning](#handshake-and-versioning)). A
+  `connection_rejected` first frame with `"reason": "busy"` is retried for
+  two seconds, because the departure of the previous controller is noticed
+  "a moment after the socket closes" ([Single controller](#single-controller))
+  and two invocations in a row would otherwise race it; a slot still held
+  after that is reported as another client holding it. Any other `reason`
+  is reported as it is and not retried: nothing says it will pass.
+- **Every wait has a deadline** (`--timeout`, default 15 s, longer than the
+  10 s `FreezeWatchdog` threshold): the connect, the greeting, each write
+  and each reply. The deadline is the whole line's, re-armed before every
+  read and write, so a peer that trickles bytes cannot stretch it. A reply is matched by `id`, with the `null`-id `parse_error` taken
+  as the answer to the one request in flight; events the client did not
+  subscribe to are skipped, and `shutdown` ends the invocation.
+- **`--wait-settled`** first asks `describe command=clock.wait`, so an
+  app without the clock family is reported (exit 1) *before* the command
+  is sent: a wait found missing afterwards would fail a command that had
+  succeeded, and a caller branching on the code would repeat a mutation.
+  After a command that succeeds it sends `clock.wait` with `until:
+  "settled"` and `timeout_ms` equal to the client's timeout (clamped to
+  the server's `1..=60000`), on the same connection, and reports its
+  result too. If that wait fails once the command has succeeded (a
+  `timeout` reply, the connection lost), the invocation exits `4` with the
+  command's result already printed and a message that the command ran and
+  must not be repeated. The flag is refused up front (exit 3), through `raw`
+  as well, for a command the client knows only reads.
+- **Exit codes:** `0` the reply was `ok:true` (warnings do not change it);
+  `1` it was `ok:false`; `2` the app could not be reached or the request
+  did not go out whole (not running, stale socket, busy or refused,
+  wrong protocol), so nothing ran; `3` the command line was wrong and
+  nothing was sent; `4` the request went out whole and no reply was read
+  (the deadline passed, the connection closed, `shutdown` arrived, or the
+  reply was unreadable), so it may have run. The split exists for the
+  caller's retry: `2` is safe to repeat, `4` calls for a read of the app's
+  state first. The boundary is the end of the request's JSON body, not
+  its newline: a body cut short cannot decode, so nothing runs, but the
+  server also runs a final line its peer closes without terminating
+  (`read_capped_line`), so a send that fails on the one-byte terminator
+  after the whole body went out is a `4`.
+  Errors go to stderr as `error: <code>: <message>`, warnings as
+  `warning: <code>: <message>`. `--json` prints each reply line exactly as
+  received, one per request.
+
+The client's table of commands (`verbs::VERBS`) is held to the registry in
+both directions by tests in the app crate, so it is as honest as `describe`
+is against this document.
 
 ## Change discipline
 

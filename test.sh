@@ -17,7 +17,7 @@ usage() {
 Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
 
   (no flags)   Run the full test suite across every workspace member
-               (mandala, baumhard, mandala_derive, maptool), then
+               (mandala, baumhard, mandala_derive, maptool, mandalactl), then
                type-check the benchmark targets and the WASM target so
                neither can rot silently between merges.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
@@ -133,7 +133,7 @@ if [ "$LINT" -eq 1 ]; then
     # `-p mandala`, not `--workspace`: baumhard cannot be documented
     # standalone for wasm32 — its `rand` -> `getrandom` edge needs
     # the `wasm_js` feature that only the root manifest declares (see
-    # the getrandom note in Cargo.toml) — and maptool and
+    # the getrandom note in Cargo.toml) — and maptool, mandalactl and
     # mandala_derive are native-only tools with no wasm32 half to
     # document. mandala is the crate that carries the
     # #[cfg(target_arch = "wasm32")] modules. Stated honestly: if

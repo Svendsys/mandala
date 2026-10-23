@@ -1,5 +1,5 @@
 [workspace]
-members = ["lib/baumhard", "lib/mandala_derive", "crates/maptool"]
+members = ["lib/baumhard", "lib/mandala_derive", "crates/maptool", "crates/mandalactl"]
 
 [workspace.package]
 license = "MPL-2.0"
@@ -89,6 +89,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 strum = "0.28.0"
 strum_macros = "0.28.0"
+# Two members name it, both as a dev-dependency: `maptool`'s file tests
+# and `mandalactl`'s loopback tests need a scratch directory that
+# deletes itself.
+tempfile = "3.27.0"
 # Deliberately featureless here; see the `features` note above. `syn`
 # is one of the heaviest compile dependencies in the graph, so the
 # default-feature set is the one to inherit and `["full"]` the one to
@@ -221,11 +225,22 @@ web-sys = { version = "0.3.106", features = ["Window", "Document", "Element", "H
 # is what makes the browser build resolve.
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 
-# No `[dev-dependencies]`, and in particular no `criterion`: this
-# crate has no benchmark harness (TEST_CONVENTIONS §T2.3) and every
-# mandala-side test lives inline. `benches/` used to hold a
+# No `criterion` here, and no `[dev-dependencies]` for a benchmark
+# harness: this crate has no benchmark harness (TEST_CONVENTIONS §T2.3)
+# and every mandala-side test lives inline. `benches/` used to hold a
 # `_template.rs` that cargo auto-discovered under the *default*
 # libtest harness — which ignores `criterion_main!` — so it linked
 # criterion into the build and then ran zero benchmarks. The
 # benchmark harness is baumhard's; see
 # `lib/baumhard/benches/test_bench.rs`.
+#
+# The one dev-dependency is `mandalactl`, the `--ipc` client, and it is
+# here to be *read*, not run: `ipc/commands/mod.rs`'s tests hold its
+# `verbs::VERBS` table against the registry `describe` renders, in both
+# directions, so a command that lands without its client verb — or a
+# verb whose command changed shape — fails the server's own PR. The
+# edge points one way (app tests read the client's table); the client
+# depends on nothing here, and a release build of the app compiles none
+# of it.
+[dev-dependencies]
+mandalactl = { path = "crates/mandalactl" }

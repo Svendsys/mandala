@@ -63,9 +63,10 @@ use std::path::PathBuf;
 /// Baumhard's tests live in `pub mod tests;` trees (§T2.2) precisely
 /// so `benches/test_bench.rs` can import their bodies; both they and
 /// the bench file compile into ordinary builds, so no attribute
-/// excludes them and nothing but the path can. `crates/maptool/tests`
-/// is cargo's own integration-test directory, which is not part of
-/// any shipped target either.
+/// excludes them and nothing but the path can. A `crates/<package>/tests`
+/// directory (`maptool`'s fixtures, `mandalactl`'s binary tests) is
+/// cargo's own integration-test directory, which is not part of any
+/// shipped target either.
 const UNGATED_TEST_PATHS: &[&str] = &["/tests/", "/benches/"];
 
 /// Every `.rs` file in the workspace that a shipped build compiles,
@@ -199,6 +200,7 @@ mod tests {
         "lib/mandala_derive/src/",
         "src/application/",
         "crates/maptool/src/",
+        "crates/mandalactl/src/",
     ];
 
     /// A file that is dense with `unwrap()` and is **not** shipped,
