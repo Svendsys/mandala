@@ -1005,6 +1005,21 @@ mod tests {
         {
             panic!("an input command must not stop a recording");
         }
+        fn clock(&self) -> &crate::application::clock::AppClock {
+            panic!("an input command must not read the clock");
+        }
+        fn set_clock_mode(
+            &mut self,
+            _: crate::application::clock::ClockMode,
+        ) -> Result<bool, crate::application::clock::ClockRefusal> {
+            panic!("an input command must not switch the clock");
+        }
+        fn step_clock(
+            &mut self,
+            _: crate::application::clock::StepRequest,
+        ) -> Result<crate::application::clock::Stepped, crate::application::clock::ClockRefusal> {
+            panic!("an input command must not step the clock");
+        }
     }
 
     /// Where `point` lands on the surface through `camera`: the

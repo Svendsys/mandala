@@ -373,7 +373,9 @@ impl IpcServer {
                     }
                     let executed = execute(&request, &mut self.session);
                     outcome.repaint |= executed.repaint;
-                    if !self.offer_to_controller(Outbound::Frame(Frame::Reply(executed.reply))) {
+                    // A held-back reply is sent by `evaluate_wait`.
+                    let Some(reply) = executed.reply else { continue };
+                    if !self.offer_to_controller(Outbound::Frame(Frame::Reply(reply))) {
                         return outcome;
                     }
                 }
@@ -399,6 +401,35 @@ impl IpcServer {
     /// the next drain's.
     pub(crate) fn observe(&mut self, now: &Observed<'_>) {
         self.session.observe(now, super::events::Driver::App);
+    }
+
+    /// When the loop must wake to time the pending `clock.wait` out, if
+    /// one is pending: the loop parks in `WaitUntil` this instant
+    /// rather than in `Wait`, so a deadline fires on an idle app
+    /// without polling.
+    pub(crate) fn wait_deadline(&self) -> Option<Instant> {
+        self.session.wait().map(super::wait::PendingWait::deadline)
+    }
+
+    /// Send the pending `clock.wait`'s reply if it is due: its condition
+    /// holds for `app`, or its deadline has passed. The reply carries
+    /// the counters as they stand now, which is when it is answered.
+    ///
+    /// A controller paused on a full queue is not evaluated: the reply
+    /// held for it goes first, and the wait is looked at again on the
+    /// iteration the writer's wake brings, once there is room — so a
+    /// wait's reply never overtakes or displaces another.
+    pub(crate) fn evaluate_wait(&mut self, app: super::wait::Settling, now: &Observed<'_>) {
+        if self.stalled.is_some() {
+            return;
+        }
+        let Some(reply) = self.session.resolve_wait(Instant::now(), app) else {
+            return;
+        };
+        let revisions = self.session.observe(now, super::events::Driver::App);
+        if self.offer_to_controller(Outbound::Frame(Frame::Reply(reply.with_revisions(revisions)))) {
+            self.deliver_events();
+        }
     }
 
     /// Offer the queued events to the controller. Events never pause

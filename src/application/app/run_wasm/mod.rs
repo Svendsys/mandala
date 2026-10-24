@@ -148,6 +148,11 @@ pub(super) struct WasmInputState {
     /// alone — winit dispatches them as
     /// `WindowEvent::Touch` instead).
     pub touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
+    /// The app clock (`crate::application::clock`), the peer of native's
+    /// `InitState.clock`. Always real here: what moves a virtual clock is
+    /// the per-frame drain, which the browser does not have yet
+    /// (`CLAUDE.md` "Per-frame animation drain").
+    pub clock: crate::application::clock::AppClock,
 }
 
 impl WasmInputState {
@@ -176,6 +181,7 @@ impl WasmInputState {
             keybinds,
             macros: &mut self.macros,
             interaction_mode: &mut self.interaction_mode,
+            clock: &self.clock,
         }
     }
 
@@ -286,7 +292,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
             log::warn!("macros: CustomMutation step: unknown custom-mutation id '{}'", id);
             return false;
         };
-        let now = super::now_ms() as u64;
+        let now = self.input.clock.now_whole_ms();
         let applied = super::dispatch::apply_keybind_custom_mutation(
             &mut self.input.document,
             &mut self.input.mindmap_tree,
@@ -449,8 +455,12 @@ impl WasmApp {
                 // Sole entry to the render path on web. Coalesced
                 // by winit-web from any number of `request_redraw`
                 // calls in the prior event chain.
+                // A transient skip asks again, as native's does: no
+                // input may follow to ask for it.
                 if let Some(r) = self.renderer.borrow_mut().as_mut() {
-                    r.process();
+                    if r.process().is_err_and(|skip| skip.is_transient()) {
+                        r.request_redraw();
+                    }
                 }
             }
             WindowEvent::Resized(s) => {
@@ -826,6 +836,7 @@ pub(super) fn run(mut app: Application) {
             scene_cache: init_scene_cache,
             macros,
             touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
+            clock: crate::application::clock::AppClock::default(),
         });
 
         // Event-driven redraw model: instead of an unconditional

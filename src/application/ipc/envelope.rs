@@ -48,6 +48,7 @@ pub(crate) mod code {
     pub(crate) const NO_DOCUMENT: &str = "no_document";
     pub(crate) const NOT_FOUND: &str = "not_found";
     pub(crate) const CONSOLE_ERROR: &str = "console_error";
+    pub(crate) const TIMEOUT: &str = "timeout";
     pub(crate) const INTERNAL: &str = "internal";
 
     /// Every code above, for the registry test.
@@ -62,6 +63,7 @@ pub(crate) mod code {
         NO_DOCUMENT,
         NOT_FOUND,
         CONSOLE_ERROR,
+        TIMEOUT,
         INTERNAL,
     ];
 }

@@ -17,7 +17,6 @@
 
 use glam::Vec2;
 
-use super::now_ms;
 use super::scene_rebuild::{rebuild_all, rebuild_camera_geometry, rebuild_selection_highlight};
 use crate::application::document::{rect_select, MindMapDocument};
 use crate::application::renderer::Renderer;
@@ -266,7 +265,9 @@ pub(super) fn drain_camera_geometry_rebuild(
     }
 }
 
-/// Tick any active animations. Each tick lerps the from / to
+/// Tick any active animations at the app clock's whole-millisecond
+/// reading `now_ms` — the heartbeat passes it, so under a virtual
+/// clock the tick lands on the step's instants. Each tick lerps the from / to
 /// snapshots into the model and (on completion) routes the final
 /// state through `apply_custom_mutation` so the standard
 /// model-sync + undo-push runs once. Drives `rebuild_all` only
@@ -277,6 +278,7 @@ pub(super) fn drain_camera_geometry_rebuild(
 /// are active and no other source needs continuation, the loop
 /// parks until the next OS event.
 pub(super) fn drain_animation_tick(
+    now_ms: u64,
     document: &mut Option<MindMapDocument>,
     interaction_mode: &super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
@@ -285,9 +287,7 @@ pub(super) fn drain_animation_tick(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let animation_advanced = match document.as_mut() {
-        Some(doc) if doc.has_active_animations() => {
-            doc.tick_animations(now_ms() as u64, mindmap_tree.as_mut())
-        }
+        Some(doc) if doc.has_active_animations() => doc.tick_animations(now_ms, mindmap_tree.as_mut()),
         _ => false,
     };
     if animation_advanced {

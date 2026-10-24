@@ -74,7 +74,10 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// Last-known cursor position in screen space.
     pub cursor_pos: &'a mut (f64, f64),
     /// Modifier snapshot maintained by `ModifiersChanged` events.
-    pub modifiers: &'a ModifiersState,
+    /// `&mut` only so an injected sample can hold its own modifiers
+    /// for the one event it is (`Self::apply_injected`); no handler
+    /// writes it.
+    pub modifiers: &'a mut ModifiersState,
     /// Per-frame cursor-icon flag — flipped to "hand" over a button
     /// node by the cursor-move handler.
     pub cursor_is_hand: &'a mut bool,
@@ -106,8 +109,24 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// The frame-sequence recording in progress, for the console's
     /// `record` verb to start and stop.
     pub recorder: &'a mut crate::application::capture::record::Recorder,
-    /// The freeze watchdog, for a screenshot to tick as it progresses.
+    /// The freeze watchdog, for a screenshot to tick as it progresses
+    /// and for a clock step to tick once per heartbeat.
     pub watchdog: &'a super::freeze_watchdog::FreezeWatchdog,
+    /// The window, which the cursor-move handler sets the cursor icon
+    /// on.
+    pub window: &'a winit::window::Window,
+    /// Touch gesture state machine (`super::touch_gesture`).
+    pub touch_recognizer: &'a mut super::touch_gesture::TouchGestureRecognizer,
+    /// The app-clock ms at which a tree-mutating drag suspended the
+    /// animation tick, or `None` while ticks run. Read and written by
+    /// the frame drain ([`Self::drain_frame`]).
+    pub anim_pause_start_ms: &'a mut Option<u64>,
+    /// Raw input the IPC `input` family queued for the heartbeat
+    /// (`format/ipc.md` §`input`). Always empty without `--ipc`.
+    pub injected: &'a mut crate::application::ipc::injected::InjectedQueue,
+    /// The app clock every behavior reads (`crate::application::clock`).
+    /// `&mut` because a `clock` console line can switch or step it.
+    pub clock: &'a mut crate::application::clock::AppClock,
 }
 
 impl<'a> InputHandlerContext<'a> {
@@ -151,6 +170,7 @@ impl<'a> InputHandlerContext<'a> {
             scene_cache: &mut *self.scene_cache,
             color_picker_state: &mut *self.color_picker_state,
             interaction_mode: &*self.interaction_mode,
+            throttled: !self.clock.is_virtual(),
         }
     }
 
@@ -183,10 +203,11 @@ impl<'a> InputHandlerContext<'a> {
                 text_edit_state: &mut *self.text_edit_state,
                 last_click: &mut *self.last_click,
                 cursor_pos: &mut *self.cursor_pos,
-                modifiers: self.modifiers,
+                modifiers: &*self.modifiers,
                 keybinds: self.keybinds,
                 macros: &mut *self.macros,
                 interaction_mode: &mut *self.interaction_mode,
+                clock: &*self.clock,
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,

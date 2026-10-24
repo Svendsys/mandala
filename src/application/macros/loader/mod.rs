@@ -158,20 +158,23 @@ pub fn parse_inline_macros(doc: &crate::application::document::MindMapDocument) 
         for (idx, v) in node.inline_macros.iter().enumerate() {
             match baumhard::format::json::parse_value::<super::Macro>(v.clone()) {
                 Ok(m) => {
-                    if let Some(prev_node) = seen.insert(m.id.clone(), node_id.clone()) {
-                        if prev_node != *node_id {
-                            log::warn!(
-                                "macros: Inline-tier id '{}' duplicated across nodes \
-                                 '{}' and '{}'; the lower-id node ('{}') wins. \
-                                 Namespace your ids (e.g. '<node-id>.{}').",
-                                m.id,
-                                prev_node,
-                                node_id,
-                                prev_node,
-                                m.id
-                            );
-                        }
+                    if let Some(prev_node) = seen.get(&m.id).filter(|prev| *prev != node_id) {
+                        log::warn!(
+                            "macros: Inline-tier id '{}' duplicated across nodes \
+                             '{}' and '{}'; the lower-id node ('{}') wins. \
+                             Namespace your ids (e.g. '<node-id>.{}').",
+                            m.id,
+                            prev_node,
+                            node_id,
+                            prev_node,
+                            m.id
+                        );
+                        // The registry's insert is last-writer-wins, so
+                        // the winner the warning names is the one kept
+                        // only if a later node's entry never reaches it.
+                        continue;
                     }
+                    seen.insert(m.id.clone(), node_id.clone());
                     out.push(m);
                 }
                 Err(e) => {
@@ -301,7 +304,7 @@ mod tests {
     /// Catches malformed-asset regressions at test time rather than
     /// startup `expect()` panics.
     #[test]
-    fn app_bundle_parses() {
+    fn test_app_bundle_parses() {
         let _ = load_app_macros();
     }
 
@@ -381,7 +384,7 @@ mod tests {
     /// `warn!` and skip without breaking the rest of the parse.
     /// Locks the resilience contract documented in the rustdoc.
     #[test]
-    fn parse_map_macros_skips_malformed_entries() {
+    fn test_parse_map_macros_skips_malformed_entries() {
         let values = vec![
             json!({
                 "id": "valid",
@@ -403,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_map_macros_empty_input_returns_empty() {
+    fn test_parse_map_macros_empty_input_returns_empty() {
         let parsed = parse_map_macros(&[]);
         assert!(parsed.is_empty());
     }
@@ -413,7 +416,7 @@ mod tests {
     /// `warn!` and skip without breaking the rest of the parse —
     /// same resilience contract as `parse_map_macros`.
     #[test]
-    fn parse_inline_macros_walks_all_nodes_and_skips_malformed() {
+    fn test_parse_inline_macros_walks_all_nodes_and_skips_malformed() {
         use crate::application::document::tests_common::load_test_doc;
         let mut doc = load_test_doc();
 
@@ -453,8 +456,41 @@ mod tests {
         assert!(!ids.contains("node0-malformed"));
     }
 
+    /// **A cross-node Inline collision has the winner its warning
+    /// names**, the lowest node id, in every process. The walk was
+    /// already sorted, but every entry was handed on and the registry's
+    /// insert is last-writer-wins, so the *highest* id won while the
+    /// warning named the lowest — one more determinism the virtual
+    /// clock's contract (`format/ipc.md` §`clock`) leans on.
     #[test]
-    fn parse_inline_macros_empty_when_no_node_has_macros() {
+    fn test_parse_inline_macros_keeps_the_lowest_node_ids_entry_on_a_collision() {
+        use crate::application::document::tests_common::load_test_doc;
+        let mut doc = load_test_doc();
+        let mut node_ids: Vec<String> = doc.mindmap.nodes.keys().cloned().collect();
+        node_ids.sort();
+        for (node_id, action) in [(&node_ids[1], "ZoomReset"), (&node_ids[0], "Undo")] {
+            doc.mindmap
+                .nodes
+                .get_mut(node_id)
+                .expect("fixture node")
+                .inline_macros = vec![json!({
+                "id": "shared",
+                "steps": [{"kind": "Action", "action": action}]
+            })];
+        }
+        let mut registry = super::super::MacroRegistry::new();
+        rebuild_inline_macros(&mut registry, &doc);
+        let (winner, _) = registry.get_with_source("shared").expect("registered");
+        assert_eq!(
+            serde_json::to_value(&winner.steps).expect("serializes"),
+            json!([{"kind": "Action", "action": "Undo"}]),
+            "the lowest node id, {}, wins",
+            node_ids[0]
+        );
+    }
+
+    #[test]
+    fn test_parse_inline_macros_empty_when_no_node_has_macros() {
         use crate::application::document::tests_common::load_test_doc;
         let doc = load_test_doc();
         let parsed = parse_inline_macros(&doc);
@@ -468,13 +504,13 @@ mod tests {
     /// harness — see `TEST_CONVENTIONS.md §T9`) is at least
     /// indirectly covered.
     #[test]
-    fn parse_user_macros_json_empty_input_returns_empty() {
+    fn test_parse_user_macros_json_empty_input_returns_empty() {
         assert!(parse_user_macros_json("").unwrap().is_empty());
         assert!(parse_user_macros_json("   ").unwrap().is_empty());
     }
 
     #[test]
-    fn parse_user_macros_json_array_round_trips() {
+    fn test_parse_user_macros_json_array_round_trips() {
         let source = r#"[
             {"id": "u1", "steps": [{"kind": "Action", "action": "Undo"}]},
             {"id": "u2", "steps": [{"kind": "ConsoleLine", "line": "save"}]}
@@ -486,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_user_macros_json_malformed_returns_err_not_panic() {
+    fn test_parse_user_macros_json_malformed_returns_err_not_panic() {
         // User-tier loader on both targets logs the err and falls
         // back to empty rather than panicking; pin the err-not-panic
         // contract here.

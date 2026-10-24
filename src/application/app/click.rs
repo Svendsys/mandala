@@ -14,7 +14,7 @@ use super::dispatch::compute_node_click_selection;
 #[cfg(not(target_arch = "wasm32"))]
 use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{build_overlaid_tree, rebuild_scene_only, RebuildTier};
-use super::{now_ms, InteractionMode};
+use super::InteractionMode;
 use crate::application::document::{
     MindMapDocument, SelectionState, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
@@ -36,6 +36,9 @@ pub(super) struct ClickCore<'a> {
     pub app_scene: &'a mut crate::application::scene_host::AppScene,
     pub scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     pub interaction_mode: &'a InteractionMode,
+    /// The app clock's whole-millisecond reading when the click
+    /// landed: what an animated `OnClick` trigger starts at.
+    pub now_ms: u64,
 }
 
 /// Fire the click's `OnClick` triggers, resolve the new selection,
@@ -76,6 +79,7 @@ pub(super) fn handle_click_core(
         app_scene,
         scene_cache,
         interaction_mode,
+        now_ms,
     } = ctx;
 
     // OnClick triggers fire before the selection update so that
@@ -89,7 +93,7 @@ pub(super) fn handle_click_core(
             id,
             hit_section,
             super::PLATFORM_CONTEXT,
-            now_ms() as u64,
+            now_ms,
         ),
         None => false,
     };
@@ -185,6 +189,7 @@ pub(super) fn handle_click(
             app_scene: ctx.app_scene,
             scene_cache: ctx.scene_cache,
             interaction_mode: ctx.interaction_mode,
+            now_ms: ctx.clock.now_whole_ms(),
         },
     );
     tier.execute(&mut super::dispatch::cross_dispatch::rebuild_ctx!(ctx, doc));
@@ -293,6 +298,7 @@ mod tests {
                 app_scene: &mut self.app_scene,
                 scene_cache: &mut self.scene_cache,
                 interaction_mode: &self.interaction_mode,
+                now_ms: 0,
             }
         }
     }

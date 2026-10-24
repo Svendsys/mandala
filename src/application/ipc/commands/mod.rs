@@ -7,6 +7,7 @@
 
 mod act;
 mod capture;
+mod clock;
 mod events;
 mod input;
 mod meta;
@@ -26,6 +27,7 @@ pub(super) const FAMILIES: &[Family] = &[
     scene::FAMILY,
     input::FAMILY,
     capture::FAMILY,
+    clock::FAMILY,
     events::FAMILY,
 ];
 

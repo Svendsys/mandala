@@ -468,15 +468,14 @@ fn status(call: &mut Call<'_>) -> Reply {
 }
 
 fn animations(call: &mut Call<'_>) -> Reply {
-    // The app's wall clock (`common::now_ms()`, ms since process
-    // start): the one the per-frame drain ticks animations against,
-    // so `elapsed_ms` and `phase` agree with what the next tick will
-    // do. It is not virtual; the `clock` family that would make it so
-    // (IPC-09) does not exist yet. A drag-suspended tick is reported
-    // as a pause rather than as a clock that keeps running.
-    let now_ms = crate::application::common::now_ms() as u64;
+    // The app clock: the one the per-frame drain ticks animations
+    // against, so `elapsed_ms` and `phase` agree with what the next
+    // tick will do — virtual milliseconds under a virtual clock, which
+    // makes them a pure function of the step sequence. A
+    // drag-suspended tick is reported as a pause rather than as a
+    // clock that keeps running.
     with_document(call, |doc, app| {
-        doc.ipc_animations_json(now_ms, app.animation_pause())
+        doc.ipc_animations_json(app.clock().now_whole_ms(), app.animation_pause())
     })
 }
 
@@ -532,6 +531,7 @@ mod tests {
     struct LoadedApp {
         doc: Option<MindMapDocument>,
         pause: Option<u64>,
+        clock: crate::application::clock::AppClock,
     }
 
     impl LoadedApp {
@@ -539,6 +539,7 @@ mod tests {
             LoadedApp {
                 doc: Some(load_test_doc()),
                 pause: None,
+                clock: crate::application::clock::AppClock::default(),
             }
         }
     }
@@ -617,6 +618,21 @@ mod tests {
         {
             panic!("a query must not stop a recording");
         }
+        fn clock(&self) -> &crate::application::clock::AppClock {
+            &self.clock
+        }
+        fn set_clock_mode(
+            &mut self,
+            _: crate::application::clock::ClockMode,
+        ) -> Result<bool, crate::application::clock::ClockRefusal> {
+            panic!("a query must not switch the clock");
+        }
+        fn step_clock(
+            &mut self,
+            _: crate::application::clock::StepRequest,
+        ) -> Result<crate::application::clock::Stepped, crate::application::clock::ClockRefusal> {
+            panic!("a query must not step the clock");
+        }
     }
 
     const ALL_QUERIES: [&str; 8] = [
@@ -649,6 +665,7 @@ mod tests {
         let mut app = LoadedApp {
             doc: None,
             pause: None,
+            clock: crate::application::clock::AppClock::default(),
         };
         for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[5], ALL_QUERIES[7]] {
             let (reply, repaint) = run_attached(frame, &mut app);

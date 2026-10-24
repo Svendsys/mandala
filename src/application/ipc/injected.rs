@@ -330,7 +330,7 @@ mod tests {
 
     /// **No handler knows injected input** (issue #66's acceptance
     /// criterion: no special-casing, grep-clean). Every file the input
-    /// handlers live in, and the `InitState::on_*` entry points the
+    /// handlers live in, and the `on_*` entry points the
     /// injected samples are delivered to, is read whole, and none of
     /// them names the injection vocabulary. A branch on "was this
     /// injected" would have to name it, so an injected event and a
@@ -378,8 +378,8 @@ mod tests {
             .collect();
         let run_native =
             std::fs::read_to_string(repo_path("src/application/app/run_native.rs")).expect("readable");
-        // From the touch entry point through `handle_event` to the
-        // last `on_*` method: every method an injected sample reaches.
+        // From the touch entry point to the end of the file, which the
+        // `on_*` methods close: every method an injected sample reaches.
         let start = run_native
             .find("    pub(super) fn dispatch_touch_event(")
             .expect("run_native.rs has the touch entry point");
@@ -387,12 +387,9 @@ mod tests {
             run_native[start..].contains("    pub(super) fn on_keyboard_input("),
             "the on_* entry points follow the touch entry point"
         );
-        let end = run_native[start..]
-            .find("    /// Per-frame drain")
-            .expect("the entry points end where drain_inputs' doc starts");
         sources.push((
-            "run_native.rs `InitState` input entry points".into(),
-            run_native[start..start + end].to_string(),
+            "run_native.rs input entry points".into(),
+            run_native[start..].to_string(),
         ));
         for (name, text) in sources {
             for word in VOCABULARY {

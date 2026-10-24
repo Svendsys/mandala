@@ -117,6 +117,17 @@ pub(in crate::application::app) fn execute_console_line(
         });
     }
 
+    // So is the clock's. A step runs frames, so it owes the window one
+    // showing where it left the app; a read or a switch shows nothing
+    // new.
+    if let Some(ConsoleSideEffect::Clock(line)) = &side_effect {
+        let (result, changed_view) = super::clock::take(ctx, *line);
+        return Some(LineRun {
+            outcome: LineOutcome::Ran(result),
+            changed_view,
+        });
+    }
+
     // A screenshot's report is the line's output, so it is taken here,
     // before anything else could run, and replaces the verb's silent
     // `Ok`. It draws through a camera of its own and mutates nothing:
@@ -294,7 +305,9 @@ fn side_effect_changes_the_canvas(side_effect: Option<&ConsoleSideEffect>) -> bo
         // Taken before this question is asked (`execute_console_line`
         // returns with its report); were it ever asked, the answer is
         // that a capture draws nothing on the canvas.
-        Some(ConsoleSideEffect::Screenshot(_) | ConsoleSideEffect::Record(_)) => false,
+        Some(
+            ConsoleSideEffect::Screenshot(_) | ConsoleSideEffect::Record(_) | ConsoleSideEffect::Clock(_),
+        ) => false,
         Some(
             ConsoleSideEffect::ReplaceDocument(_)
             | ConsoleSideEffect::SetInteractionMode(_)
@@ -550,7 +563,8 @@ fn handle_post_rebuild_side_effect(
         | ConsoleSideEffect::SetFpsDisplay(_)
         | ConsoleSideEffect::SetInteractionMode(_)
         | ConsoleSideEffect::Screenshot(_)
-        | ConsoleSideEffect::Record(_) => {
+        | ConsoleSideEffect::Record(_)
+        | ConsoleSideEffect::Clock(_) => {
             log::error!(
                 "console: {:?} reached post-rebuild handler; should have been consumed before the \
                  rebuild — ignoring to avoid crash",

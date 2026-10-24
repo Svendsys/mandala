@@ -840,6 +840,21 @@ mod tests {
         {
             panic!("a scene read must not stop a recording");
         }
+        fn clock(&self) -> &crate::application::clock::AppClock {
+            panic!("a scene read must not read the clock");
+        }
+        fn set_clock_mode(
+            &mut self,
+            _: crate::application::clock::ClockMode,
+        ) -> Result<bool, crate::application::clock::ClockRefusal> {
+            panic!("a scene read must not switch the clock");
+        }
+        fn step_clock(
+            &mut self,
+            _: crate::application::clock::StepRequest,
+        ) -> Result<crate::application::clock::Stepped, crate::application::clock::ClockRefusal> {
+            panic!("a scene read must not step the clock");
+        }
     }
 
     const ALL_SCENE_COMMANDS: [&str; 5] = [
@@ -892,6 +907,64 @@ mod tests {
             .as_ref()
             .map(|d| (d.dirty, d.undo_stack.len(), d.selection.to_ipc_json()));
         assert_eq!(before, after);
+    }
+
+    /// **Same script twice → identical scene dumps**, the determinism
+    /// contract of a virtual clock (`format/ipc.md` §`clock`). Two
+    /// independent documents — every `HashMap` in each, the node map
+    /// among them, seeded apart, so an order that leaked from one would
+    /// differ in the other — run the same stepped script: virtual time
+    /// engaged at different readings, a three-second animation started,
+    /// stepped to its middle, then past its end. The whole `scene.dump`
+    /// of each projected scene, culled elements included, is
+    /// byte-identical between the two runs at both points.
+    #[test]
+    fn test_the_same_stepped_script_twice_dumps_byte_identical_scenes() {
+        use crate::application::app::{step_document, SteppedDocument};
+        use crate::application::clock::{AppClock, ClockMode, StepRequest};
+        use crate::application::document::tests_common::TestNudgeMutation;
+        use baumhard::mindmap::animation::{AnimationTiming, Easing};
+        use baumhard::mindmap::custom_mutation::TargetScope;
+
+        let run = |head_start_ms: f64| -> Vec<String> {
+            let mut doc = load_test_doc();
+            let node = first_node(&doc);
+            let mut clock = AppClock::default();
+            clock.set_mode(ClockMode::Virtual);
+            clock.advance_to(clock.now_ms() + head_start_ms);
+            let slide = TestNudgeMutation::new("slide", TargetScope::SelfOnly)
+                .magnitude(240.0)
+                .timing(AnimationTiming {
+                    duration_ms: 3000,
+                    delay_ms: 0,
+                    easing: Easing::Linear,
+                    then: None,
+                })
+                .build();
+            doc.start_animation(&slide, &node, clock.now_whole_ms());
+            let mut dumps = Vec::new();
+            for step in [StepRequest::Ms(1500), StepRequest::Ms(1600)] {
+                let mut tree = doc.build_tree();
+                step_document(
+                    &mut SteppedDocument {
+                        clock: &mut clock,
+                        doc: &mut doc,
+                        tree: &mut tree,
+                    },
+                    step,
+                );
+                let mut app = SceneApp::with_doc(doc);
+                let dump = result(r#"{"id":1,"cmd":"scene.dump","include":"all"}"#, &mut app);
+                dumps.push(serde_json::to_string(&dump).expect("serializes"));
+                doc = app.doc.take().expect("the document");
+            }
+            assert!(!doc.has_active_animations(), "the script runs past the end");
+            dumps
+        };
+        let first = run(0.0);
+        let second = run(7_777.0);
+        assert_ne!(first[0], first[1], "the middle of the animation is not its end");
+        assert_eq!(first, second, "a stepped run is a pure function of its script");
     }
 
     /// The default dump is what the camera shows: every element in it

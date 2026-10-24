@@ -39,12 +39,14 @@ pub(crate) mod space;
 mod target;
 #[cfg(unix)]
 mod transport;
+mod wait;
 
 pub(crate) use envelope::PROTOCOL_VERSION;
 pub(crate) use registry::execute;
 pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
+pub(crate) use wait::Settling;
 
 /// The winit user event the boundary threads send to wake the event
 /// loop. It carries nothing: the work is on the server's ordered
@@ -56,7 +58,9 @@ pub(crate) struct IpcWake;
 /// What executing one request produced.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct Executed {
-    pub(crate) reply: envelope::Reply,
+    /// The reply, or `None` for one held back: a `clock.wait` whose
+    /// reply the transport sends when it resolves (`wait`).
+    pub(crate) reply: Option<envelope::Reply>,
     /// The command changed something on screen. The event loop then
     /// requests a redraw, exactly as a winit input handler does after
     /// a mutating event — `about_to_wait`'s continuation check alone
@@ -104,6 +108,14 @@ impl IpcServer {
     }
 
     pub(crate) fn publish_map(&mut self, _path: Option<&str>) {
+        match self.never {}
+    }
+
+    pub(crate) fn wait_deadline(&self) -> Option<std::time::Instant> {
+        match self.never {}
+    }
+
+    pub(crate) fn evaluate_wait(&mut self, _app: Settling, _now: &events::Observed<'_>) {
         match self.never {}
     }
 

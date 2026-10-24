@@ -99,8 +99,10 @@ pub(crate) use capture::{CaptureFailure, CapturedPixels};
 // For the watchdog's test that holds the two bounds together.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use capture::GPU_WAIT as CAPTURE_GPU_WAIT;
+// Both shells read a skipped frame's reason (`Renderer::process`).
+pub(crate) use render::FrameSkip;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use render::{FrameSkip, ModalLayer};
+pub(crate) use render::ModalLayer;
 // The console overlay's geometry vocabulary, re-exported for the
 // app-side console shell (`app::console_input`) that fills it in.
 // That shell is native-gated, so on wasm32 nothing consumes these —
@@ -449,7 +451,6 @@ pub struct Renderer {
     /// frame. A failed prepare skips `present()` too, so the frame
     /// takes no vsync backpressure and the loop can spin at CPU rate.
     prepare_fault_logged: bool,
-    run: bool,
     should_render: bool,
     fps: Option<usize>,
     /// Which FPS readout to display, if any. `Snapshot` samples one
@@ -847,7 +848,6 @@ impl Renderer {
             prepare_fault_logged: false,
             should_render: false,
             fps: None,
-            run: true,
             fps_display_mode: FpsDisplayMode::Off,
             fps_overlay_buffers: Vec::new(),
             last_fps_shaped: None,
@@ -986,8 +986,14 @@ impl Renderer {
         self.window.request_redraw();
     }
 
-    /// Draw one frame and report whether the event loop should keep
-    /// going. The loop paces itself — `ControlFlow::Poll` plus the
+    /// Draw one frame, and report whether it was drawn: `Ok` when the
+    /// frame's CPU half ran (every buffer current, every glyph
+    /// prepared), whether or not the surface then had a texture to
+    /// present into; `Err` naming why for a frame the renderer skipped.
+    /// The native shell's redraw ledger reads it (`app::settle`), so an
+    /// occluded window that never presents still counts as drawn, and
+    /// both shells ask again after a transient skip. The
+    /// loop paces itself — `ControlFlow::Poll` plus the
     /// surface's own vsync backpressure — so there is no rate gate
     /// here.
     ///
@@ -1001,14 +1007,13 @@ impl Renderer {
     /// would have crashed the frame. Reinstating a frame cap means
     /// writing the arithmetic, not reviving this.
     #[inline]
-    pub fn process(&mut self) -> bool {
+    pub(crate) fn process(&mut self) -> Result<(), FrameSkip> {
         if self.fps_display_mode != FpsDisplayMode::Off {
             self.tick_fps();
             self.rebuild_fps_overlay_if_needed();
         }
         self.rebuild_mode_status_overlay_if_needed();
-        self.render();
-        self.run
+        self.render()
     }
 
     /// Set the mode-status overlay text. `None` clears the overlay

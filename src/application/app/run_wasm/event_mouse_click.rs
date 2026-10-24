@@ -28,9 +28,7 @@ use crate::application::app::click_triggers::fire_onclick_triggers;
 use crate::application::app::dispatch::cross_dispatch::RebuildContext;
 use crate::application::app::dispatch::DispatchOutcome;
 use crate::application::app::scene_rebuild::RebuildTier;
-use crate::application::app::{
-    compute_click_hit, dispatch, is_double_click, now_ms, ClickHitParts, LastClick,
-};
+use crate::application::app::{compute_click_hit, dispatch, is_double_click, ClickHitParts, LastClick};
 use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState};
 use crate::application::keybinds::Action;
 use std::sync::atomic::AtomicBool;
@@ -99,7 +97,7 @@ impl super::WasmApp {
         // is byte-identical to native (`compute_click_hit`
         // in `app/mod.rs`), so the previously-duplicated
         // hit-routing block now lives in one place.
-        let now = now_ms();
+        let now = input.clock.now_ms();
         let parts = compute_click_hit(canvas_pos, input.mindmap_tree.as_mut(), &mut input.app_scene);
         let ClickHitParts {
             click_hit,
@@ -331,7 +329,7 @@ impl super::WasmApp {
                 id,
                 trigger_section_idx,
                 crate::application::app::PLATFORM_CONTEXT,
-                now_ms() as u64,
+                input.clock.now_whole_ms(),
             ),
             None => false,
         };

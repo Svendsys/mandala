@@ -589,7 +589,10 @@ arms became `InitState::on_*` methods, and the `input` family's
 samples are delivered to exactly those — so the target now holds
 `&mut InitState` (and the `ActiveEventLoop` the keyboard handler
 takes) and builds the `InputHandlerContext` per call, where IPC-03's
-cut wrapped one. `dispatch_touch_event` takes the touch payload
+cut wrapped one. *(IPC-09 since moved the `on_*` methods onto
+`InputHandlerContext`, where the heartbeat can reach them, and dropped
+the event-loop handle the keyboard handler never read: D9.)*
+`dispatch_touch_event` takes the touch payload
 rather than winit's `Touch`, whose `DeviceId` cannot be built outside
 winit. The injected-input queue (`ipc/injected.rs`) lives on
 `InitState`, is drained one sample per `about_to_wait` ahead of
@@ -783,7 +786,7 @@ shapes without waiting.
   heartbeat is IPC-09's design problem (EPIC #60 rates it Fable
   for a reason); the *surface* above is what it must satisfy, and
   the single-call-site clock parameterization of `tick_animations`
-  is the seam it starts from.
+  is the seam it starts from. *Resolved by IPC-09 (#69): D9.*
 
 ## D8 — Observability: replies carry their own diagnostics
 
@@ -832,6 +835,184 @@ outside any command's window, became possible with #45. Whether to
 ship it was IPC-14's call, and IPC-14 did not (see its ledger entry
 below); this design takes no dependency on it.
 
+## D9 — Virtual time: one app clock, a frame split in two halves (IPC-09)
+
+**Decision.** Time virtualization lives in one cross-platform type,
+`AppClock` (`src/application/clock.rs`), owned by the app shell
+(`InitState.clock` on native, `WasmInputState.clock` in the browser)
+and threaded to every reader of app-observed time through the context
+it already receives (`InputHandlerContext::clock`, and
+`InputContextCore::clock` for the cross-platform dispatch bodies). The
+old free function `now_ms()` is gone: its two meanings — "the time the
+app behaves by" and "the time a measurement is taken on" — are two
+names now, `AppClock::now_ms` and `clock::wall_ms`, and every reader
+was dispositioned to one of them (table below). The step engine is the
+heartbeat (`app/heartbeat.rs`), and it is native for the reason the
+per-frame drain is.
+
+**Why a value threaded through the context, not a global.** A global
+virtual offset under the old `now_ms()` would have virtualized every
+caller at once, the cost meters included — the FPS overlay would have
+read a stepped clock and the freeze watchdog a frozen one — and the
+per-reader decision this issue asked for would have been made by
+default rather than by reading. Threading the clock makes each reader
+name the clock it means, and makes a test's clock an ordinary value.
+
+**One continuous axis.** Switching modes never moves the reading:
+entering virtual time freezes it where it stood (rounded up to the
+next whole millisecond, so integer steps keep the `u64` stamps
+animations and triggers are kept in exact), and leaving resumes from
+where virtual time was left, at the wall clock's rate (`offset =
+virtual − wall`). This replaces the issue's suggestion — rebase the
+in-flight animations' `start_ms` through the drag-pause shift primitive
+— because the shift covers animations alone: the last click's time, a
+touch's start, the drag pause's own stamp and a recording's start are
+readings too, and a switch that rebased only some of them would leave
+the rest on another axis. With no jump there is nothing to rebase.
+
+**The frame has an input-driven half and a time-driven half.** The
+input-driven half (throttled drag and picker-hover drains, rubber
+band, camera-geometry rebuild) flushes what input already did and needs
+no clock. The time-driven half (one injected-input sample, the
+animation tick, a recording's frame) is a function of *when* the frame
+runs. In real time every event-loop iteration runs both, as before. In
+virtual time the loop's own iterations run the input-driven half only
+(`Beat::Loop`), and the time-driven half runs inside `clock.step`.
+Three consequences, each the only consistent one:
+
+- **The loop does not spin.** An animation or queued injected input is
+  a continuation source in real time only: in virtual time the
+  heartbeat that advances it is a step's, and a loop that polled for it
+  would run at 100 % CPU doing nothing.
+- **`settled` means "nothing owed at this instant"** under a virtual
+  clock, so an animation frozen between steps and samples waiting for
+  a step do not hold it back. That is what makes `clock.step ms=500` →
+  `clock.wait until=settled` → `capture.screenshot` capture an animation
+  exactly 500 ms in — the issue's first acceptance criterion. This
+  amends D7's settled conditions (a) and (b), which were written
+  before there was a virtual clock to read them against.
+- **The throttle does not throttle a virtual heartbeat.** It trades
+  drain frequency for staying inside a real frame budget; a virtual
+  heartbeat has no real deadline, so skipping a drain buys nothing and
+  makes what a stepped frame shows depend on how long the machine took
+  to draw the last one. Its measurements stay wall-clock and its state
+  is untouched by an unthrottled frame, so real time resumes with the
+  tuning real time left it.
+
+**The step schedule.** A heartbeat every 16 virtual ms from the step's
+start, the last on its end exactly (`clock::heartbeat_times`) — so
+`ms` advances exactly `ms` and `frames` exactly `16 × frames`, and
+neither overshoots. A running recording's frame boundaries are stopped
+at too (`Beat::Boundary`): the realtime recorder is a timer source the
+loop wakes for, and a virtual step honors the same timer on its own
+axis. A boundary tick runs the drains, the tick and the recorder but
+lands no injected sample, so recording a gesture never changes when the
+gesture's samples land; the frame it takes is *at* its boundary, which
+is what makes a stepped recording's frames fixed-interval and its GIF
+smooth. A stepped boundary is rounded up to a whole millisecond
+(`capture::record::Timeline`), each from its own index: the virtual
+clock and every animation stamp are whole milliseconds, and a
+fractional boundary would stop the clock where the tick reads a
+truncated instant while `t_ms` names the exact one. The loop over these instants (`heartbeat::run_step`) is generic
+over a `Steps` implementor — the handler context in the app, a real
+recording or document on a real clock in the tests — so the schedule
+the tests pin is the one the app runs. Every heartbeat and boundary
+tick ticks the watchdog (D7's watchdog-per-heartbeat pin).
+
+**Where a step can run from.** The heartbeat is a method set on
+`InputHandlerContext`, not on `InitState`: the `on_*` input arms moved
+there with it (`InitState` builds the context and calls them, exactly
+as before), so `clock step` typed into the console — whose executor
+holds a context, not `InitState` — runs the very frame `clock.step`
+does, and a macro's `ConsoleLine` step that steps the clock does so in
+order with the steps around it. A step or a mode switch asked for from
+inside a running step (a `clock step` or `clock real` line typed by an
+injected key the step itself landed) is refused rather than nested: a
+switch to real time partway would leave the step running its remaining
+heartbeats on a clock the wall now moves.
+
+**`clock.wait` is the protocol's first deferred reply.** The handler
+records a `PendingWait` in the controller's `Session` (which therefore
+cancels it on disconnect, for free) and its `Executed` carries no reply;
+the transport answers it when `IpcServer::evaluate_wait` finds it due.
+The evaluation points are the end of every loop iteration — after its
+redraw has been asked for, which is what makes a pixels-affecting
+command of the same iteration count as owed — and after every window
+event, the render among them. "Rendered" is a ledger (`app/settle.rs`)
+of redraws asked for and redraws drawn, counted where every redraw is
+asked for (`InitState::request_redraw`); a render whose CPU half ran
+has drawn whether or not the surface could present (D7's
+"rendered, not presented"). That is the render revision D2 and D7 call
+for, kept at the asks rather than inferred from the document, so a
+view-only change is fenced exactly like a document one.
+
+**Determinism, verified rather than believed.** With virtual time
+engaged before a script, the laid-out scene is a pure function of the
+document and the command sequence:
+`test_the_same_stepped_script_twice_dumps_byte_identical_scenes` holds
+two independently built documents — every `HashMap` in each seeded
+apart — to byte-identical `scene.dump`s mid-animation and after it,
+with virtual time engaged at different readings. The hunt for the
+`HashMap`-order class found one live instance, the inline-macro
+collision: the walk had been sorted, but every duplicate was still
+handed to the registry's last-writer-wins insert, so the *highest*
+node id won while the warning named the lowest. It now keeps the
+lowest, as the warning and `format/macros.md` say.
+
+**Real time unchanged.** With the clock never switched, the reading is
+the wall clock (zero offset), every iteration runs the whole frame in
+the order it ran before (injected sample, drains, IPC drain, recorder),
+the throttle gates as before, and the continuation sources are the
+same set. What moved is where the code lives and which name a reader
+calls, not what a real-time run does.
+
+Two things do change, and neither is a real-time behavior of the
+frame: a cross-node inline-macro collision now has the winner its
+warning always named (above), and the browser's wall clock counts from
+its first read through `web_time` — as native's always did — rather
+than from page load, which moves its origin and nothing else (no reader
+compares a reading with the page's own clock).
+
+**Every reader, dispositioned.** The issue asked for each `now_ms()`
+call site to be decided explicitly; this is the decision, and the
+readers of `Instant` that measure are listed beside them, since they
+are the other half of the same question.
+
+| reader | site | clock | why |
+|---|---|---|---|
+| animation tick | `drain_frame::drain_animation_tick` (from `heartbeat::drain_inputs`) | app | the behavior virtual time exists for |
+| drag pause on the tick | `heartbeat::drain_inputs` (`anim_pause_start_ms`) | app | its stamp is subtracted from the tick's clock; two clocks would not cancel |
+| double-click window | `event_mouse_click.rs` (native), `run_wasm/event_mouse_click.rs` | app | an IPC-06 click pair must be schedulable on the axis a step advances |
+| `OnClick` trigger start | `click.rs` (via `ClickCore::now_ms`), `cross_dispatch/pointer.rs` (tap), `run_wasm/event_mouse_click.rs` | app | starts an animation, which the tick then measures |
+| keybound / macro custom mutation start | `cross_dispatch/lifecycle.rs`, `dispatch/native.rs` (macro target), `run_wasm/mod.rs` (macro target) | app | as above |
+| long-press and tap timing | `InputHandlerContext::dispatch_touch_event` (native), `run_wasm/event_touch.rs` | app (`AppClock::instant`) | input timing, the double-click's peer |
+| recording frame times, pacing, deadline, end | `record_flow` (all of it) | app | a recording is paced on the clock its frames show; the wake it asks the loop for is a wall-clock instant only in real time, where the two run at one rate |
+| `query.animations` `elapsed_ms` / `phase` | `ipc/commands/query.rs` | app | must agree with what the next tick does |
+| `ping`, `clock.status` | `ipc/commands/meta.rs`, `ipc/commands/clock.rs` | app | they report the app clock |
+| FPS overlay and its idle grace | `renderer::tick_fps`, `fps_idle_defer_deadline` | wall (`Instant`) | measures real frame cost; a diagnostic must not become observable behavior |
+| freeze watchdog | `freeze_watchdog.rs` | wall (`Instant`) | guards real liveness; a frozen clock would disable it |
+| drag throttle's budget | `ThrottledInteraction::drive` | wall (`Instant`) | measures real work; the *decision* is suspended under virtual time (above) |
+| encode cost, idle-encode budget, manifest rewrite interval | `capture/record.rs` | wall (`Instant`) | cost measurements; under virtual time the idle budget is one heartbeat of wall time |
+| GPU readback wait | `renderer/capture.rs` | wall (`Instant`) | a liveness bound on the GPU |
+| `clock.wait` deadline and `elapsed_ms` | `ipc/wait.rs` | wall (`Instant`) | client liveness (D7) |
+| transport timers | `ipc/transport` | wall (`Instant`) | I/O liveness |
+| console default file names | `console_input::screenshot` / `record` | wall (`SystemTime`) | a name, not a time the app behaves by |
+
+**Rejected: a virtual mode that resets on disconnect.** Session state
+dies with its controller (D1), and the pending wait does. The mode does
+not: `mandalactl` is one connection per command, so a mode that reset
+on disconnect could never be stepped from a shell. The cost is named in
+`format/ipc.md` §`clock` — an app left virtual stays frozen until
+someone says `real`.
+
+**Rejected: stepping at the recording's cadence instead of 16 ms.**
+Running heartbeats only at frame boundaries while a recording runs
+would have made the recording smooth with no extra ticks, but it would
+have made *what the animation, the drag and the injected queue saw*
+depend on whether a recording was running — an observer effect, and
+`frames` would no longer have meant one count. Boundary ticks beside a
+fixed cadence keep both.
+
 ---
 
 ## What each downstream issue consumes from this design
@@ -845,7 +1026,7 @@ below); this design takes no dependency on it.
 | IPC-06 | `input` family | D5, D3; fidelity contract (same handler entry points as winit events); the injected-input queue + one-sample-per-frame pacing (shared with `settled`) |
 | IPC-07 | screenshot engine | D7 shapes (params/sidecar/`space` grid/write-guards), offscreen mandate, #7 coordination |
 | IPC-08 | recorder + `mandalactl record assemble` | D7 shapes (manifest), the frames-in-the-app / encoding-outside split, capture-clock `t_ms`, the virtual-clock frame-emission rule |
-| IPC-09 | virtual clock + wait | D7 (`clock.*` shapes; `settled` keys on *rendered* not presented; wait exclusivity; watchdog-per-heartbeat; injected-input queue), D2 (deferred replies) |
+| IPC-09 | virtual clock + wait | D7 (`clock.*` shapes; `settled` keys on *rendered* not presented; wait exclusivity; watchdog-per-heartbeat; injected-input queue), D2 (deferred replies); builds D9 |
 | IPC-10 | headless | D7 (offscreen capture path; `settled`-on-rendered makes headless capture terminate), `Options.should_exit` seam; app-shell freeze per EPIC #60 |
 | IPC-11 | `mandalactl` | D3 (protocol pinning/refusal; enum-widening is breaking), `format/ipc.md` as its command source |
 | IPC-12/13 | skills | pinned capture/wait shapes; artifacts + manifest layout |
@@ -975,6 +1156,35 @@ Moved later, by the issue that found the need:
   "stopping while idle is `invalid_params`" does not strand an agent
   that looked away. The manifest gains `complete`, `stopped`,
   `duration_ms`, `gaps`, and per-frame `camera`.
+
+- **IPC-09 (#69)** — the design is D9, added by this issue as §D7's
+  last bullet asked. Refined where building it found the pinned text
+  silent or short, each in `format/ipc.md` §`clock` in the same PR.
+  (1) **`ms` advances exactly `ms`**: the pinned `frames = ceil(ms /
+  16)` is kept, and the last heartbeat lands on the step's end instead
+  of overshooting it. (2) **A step needs a virtual clock** — on a real
+  one it is `invalid_params` naming `cmd` — and a nested step, or a
+  mode switch from inside a step, is `busy`. (3) **`clock.set_mode` is refused while a recording runs**,
+  so a manifest's `pacing` (`"stepped"`, the value IPC-08 reserved the
+  key for; the assembler paces by `t_ms` and never branched on it, so
+  the new value is additive) means one thing for its whole length.
+  (4) **A step stops at a recording's boundaries**, so stepped frames
+  are their `1000/fps` instants, as §D7's frame-emission rule and
+  IPC-08's manifest text already promised — each rounded up to a whole
+  millisecond, which keeps the virtual clock on the whole milliseconds
+  the animation tick reads, so a frame shows exactly the instant its
+  `t_ms` names. The count per second is §D7's unchanged. (5) **`timeout_ms`
+  outside `1..=60_000` is a refusal**, not a clamp, as IPC-07 and
+  IPC-08 made theirs; `mandalactl --wait-settled` already sent no more
+  than 60 000. (6) **`settled` (a) and (b) are clock-aware**: under a
+  virtual clock an animation and the injected queue are owed to future
+  instants, not now (D9). (7) **The render revision is a ledger** of
+  redraws asked for and drawn, not the envelope's `revision`, which
+  IPC-14 built to order replies against events; `settled` needed
+  *drawn*, which only the asks can count. (8) **The mode is app
+  state**, kept across controllers like a recording, because
+  `mandalactl` is one command per connection. `clock.status` and `ping`
+  answer before the window exists, with the real clock a new one is.
 
 ## Change governance
 

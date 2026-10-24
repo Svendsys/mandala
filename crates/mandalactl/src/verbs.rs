@@ -511,6 +511,45 @@ pub const VERBS: &[Verb] = &[
         example: "mandalactl capture.record_stop",
     },
     Verb {
+        name: "clock.status",
+        summary: "The app clock: its mode (real or virtual) and its reading in ms.",
+        params: &[],
+        positional: &[],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl clock.status",
+    },
+    Verb {
+        name: "clock.set_mode",
+        summary:
+            "Run the app clock in real time, or in virtual time that advances only by clock.step (refused while recording).",
+        params: &[param("mode", STRING, true)],
+        positional: &["mode"],
+        effect: Effect::Mutates,
+        render: Render::Flat,
+        example: "mandalactl clock.set_mode virtual",
+    },
+    Verb {
+        name: "clock.step",
+        summary:
+            "Advance the virtual clock by ms= (or frames= heartbeats, 16 ms apart), running every frame on the way.",
+        params: &[param("ms", INTEGER, false), param("frames", INTEGER, false)],
+        positional: &["ms"],
+        effect: Effect::Mutates,
+        render: Render::Flat,
+        example: "mandalactl clock.step 500",
+    },
+    Verb {
+        name: "clock.wait",
+        summary:
+            "Wait until the app is settled (or animations_complete); timeout_ms= is wall-clock, default 10000.",
+        params: &[param("until", STRING, true), param("timeout_ms", INTEGER, false)],
+        positional: &["until"],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl clock.wait settled",
+    },
+    Verb {
         name: "events.subscribe",
         summary:
             "Subscribe to change events and stay connected, printing each as it happens; --count N stops after N.",
@@ -633,6 +672,6 @@ mod tests {
     #[test]
     fn test_lookup_finds_a_verb_and_refuses_a_stranger() {
         assert_eq!(lookup("ping").map(|v| v.name), Some("ping"));
-        assert!(lookup("clock.step").is_none());
+        assert!(lookup("future.verb").is_none());
     }
 }

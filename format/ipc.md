@@ -395,7 +395,7 @@ additions are non-breaking):
 | `unknown_cmd` | `cmd` names nothing in the registry. |
 | `invalid_params` | Missing/mistyped/unknown parameter. `data.param` names the offender. |
 | `unsupported` | Command exists but not on this platform/build (e.g. future Windows gaps). |
-| `busy` | A single-instance command was already pending when another was issued — a second `clock.wait` while one is in flight (waits are exclusive per controller) — or `input.click_node` while injected samples are still queued (`data.pending`). Distinct from the connection-level `connection_rejected` event. |
+| `busy` | A single-instance command was already pending when another was issued — a second `clock.wait` while one is in flight (waits are exclusive per controller), a `clock.step` or `clock.set_mode` asked for from inside a running step — or `input.click_node` while injected samples are still queued (`data.pending`). Distinct from the connection-level `connection_rejected` event. |
 | `overloaded` | Request queue full (1024 pending); resend after draining replies. Also an `input` command whose samples would overflow the injected-input queue (cap 1024, `data`: `{"pending", "cap"}`); nothing was queued, resend once `input.pending` has dropped. |
 | `reply_too_large` | Serialized reply exceeded 8 MiB; `data.bytes` is its size, and `data.hint` names the file-sidecar parameter when the command has one. |
 | `no_document` | Command needs a loaded document and none is. |
@@ -630,7 +630,7 @@ context**: the `CommandTarget` trait (`ipc/target.rs`). Its native
 implementation, `IpcCommandTarget` (`app/ipc_target.rs`), holds the
 event loop's own state and builds the same `InputHandlerContext` a
 winit input handler receives, per call. Each method is one funnel and
-nothing else; the `input` family's is the `InitState::on_*` entry
+nothing else; the `input` family's is the `on_*` entry
 points `handle_event`'s winit arms call. This is the indirection
 `dispatch_macro` already uses through `MacroDispatchTarget`
 (`app/dispatch/macro_core.rs`). It keeps the funnels private and the
@@ -699,13 +699,13 @@ classes and every subscribable class, in name order.
      "summary": "Advance the virtual clock and run frames until caught up.",
      "params": [
        {"name": "ms", "type": "integer", "required": false,
-        "doc": "Virtual milliseconds to advance. Exactly one of ms / frames."},
+        "doc": "Virtual milliseconds to advance, 1..=1600000. Exactly one of ms / frames."},
        {"name": "frames", "type": "integer", "required": false,
-        "doc": "Exact heartbeat count to run. Exactly one of ms / frames."}
+        "doc": "Exact heartbeat count to run, 16 virtual ms apart, 1..=100000. Exactly one of ms / frames."}
      ],
      "result": [
        {"name": "now_ms", "type": "number", "doc": "Virtual clock after the step."},
-       {"name": "frames_run", "type": "integer", "doc": "Heartbeats executed."}
+       {"name": "frames_run", "type": "integer", "doc": "Heartbeats executed: frames, or ceil(ms / 16)."}
      ]}
   ],
   "events": [
@@ -733,9 +733,11 @@ and the two are kept byte-honest by tests as described under
 
 ### `ping`
 
-Params: none. Result: `now_ms` (number), the app's `now_ms()` clock.
-That is virtual time when `clock.set_mode virtual` is active. `ping`
-is the liveness probe, and also the cheapest way to read the clock.
+Params: none. Result: `now_ms` (number), the app clock
+([`clock`](#clock--determinism-ipc-09)) — virtual time when
+`clock.set_mode virtual` is active, and before the window exists the
+wall clock a new clock reads. `ping` is the liveness probe, and also
+the cheapest way to read the clock.
 
 ## Command families
 
@@ -1020,7 +1022,7 @@ first). Each entry:
 | `id` | The running animation's identity: the `id` the `animation_started` and `animation_completed` events carry for it. It never changes while the animation runs (a drag release shifts `start_ms`, not this), and a re-trigger after the animation ended is a new `id` under the same `(target_id, section_idx, mutation_id)`. An agent that subscribed late, or that recovers from missed events, matches a later `animation_completed` to the entry it holds by this. |
 | `target_id`, `section_idx` | The node animated, and the section when the trigger resolved to one (`null` otherwise). |
 | `mutation_id` | The `CustomMutation` id being animated. |
-| `start_ms`, `elapsed_ms` | The app-clock start and the time since. The app clock is the app's wall clock, milliseconds since process start (the one `ping` reports and the per-frame drain ticks against). It is **not** virtual today: the `clock` family that would make it so (IPC-09) has not landed, so `elapsed_ms` is not deterministic until it does. |
+| `start_ms`, `elapsed_ms` | The app-clock start and the time since, in whole milliseconds: the clock `ping` and `clock.status` report and the per-frame drain ticks against. In real mode it runs at the wall clock's rate; under `clock.set_mode virtual` it advances only by `clock.step`, so `elapsed_ms`, `phase` and `progress` are a pure function of the step sequence ([`clock`](#clock--determinism-ipc-09)). |
 | `phase` | `delay` before the delay elapses, `running` while it interpolates, `due` once the full envelope has elapsed and the next tick commits it, and `paused` while a tree-mutating drag (a node or section move or resize) has suspended the tick. While paused, `elapsed_ms` and `progress` are frozen at the value the animation resumes from (on release the drain shifts each `start_ms` forward by the pause), and nothing commits until the drag ends. Poll `paused` to tell a stalled animation from a finished one. |
 | `progress` | The linear position through the duration, `0` to `1`, before easing. |
 | `timing` | The mutation's `AnimationTiming` through its own serializer (`duration_ms`, `delay_ms` when set, `easing`). |
@@ -1263,7 +1265,7 @@ are not discrete Actions: drags, hovers, modal typing, touch. Where
 `act.action` applies an Action, these are the hand on the mouse and
 the keyboard. The fidelity contract: each command becomes the
 payload a winit event carries, and the app delivers it to **the same
-entry point** that winit event reaches — the `InitState::on_*`
+entry point** that winit event reaches — the `on_*`
 methods `handle_event`'s arms call, and below them
 `handle_mouse_input`, `handle_cursor_moved`, `handle_keyboard_input`
 and the touch recognizer. From there down nothing can tell the two
@@ -1306,8 +1308,8 @@ and test a path no human hits. So `input.drag` enqueues its samples
 into a bounded **injected-input queue** (cap **1024**; a command that
 would overflow it is refused whole with `overloaded`, and enqueues
 nothing) that the heartbeat drains **one sample per frame**, applied
-ahead of `drain_inputs` — where a winit event lands — at the current
-`now_ms()`. A non-empty queue is a continuation source, so the loop
+ahead of `drain_inputs` — where a winit event lands — at the app
+clock's current reading. A non-empty queue is a continuation source, so the loop
 keeps iterating and redrawing until it is empty. Every other command
 is one ordered burst, applied before its reply as winit delivers
 several events in one iteration: a move, a click, a tap, a typed
@@ -1316,12 +1318,15 @@ clock and the hit, and two clicks sent as two `input.mouse_button`
 commands are as far apart as the agent sent them. **A burst sent while
 samples are queued waits behind them**, so injected input always
 lands in the order it was sent; its reply then says `applied: false`.
-Under `clock.set_mode virtual` (IPC-09), `clock.step` is to advance
-this queue one sample per virtual heartbeat, so injected drags are
-deterministic too. `clock.wait until=settled` requires this queue
-empty (condition (b) below), so "wait until my synthesized drag
-finished" is expressible; until IPC-09 lands, poll `input.pending`
-to 0.
+Under `clock.set_mode virtual`, the loop's own iterations land no
+sample: `clock.step` advances this queue one sample per virtual
+heartbeat, so injected drags are deterministic too (a step's
+`frames=n` lands `n` samples). In real time `clock.wait
+until=settled` requires this queue empty (condition (b) under
+[`clock`](#clock--determinism-ipc-09)), so "wait until my synthesized
+drag finished" is expressible; under a virtual clock the samples are
+owed to future virtual instants, so step until `input.pending` reads
+0, then wait.
 
 Every command needs the app: before its window exists each answers
 `no_document`. Raw input needs no document — a hand can click an
@@ -1567,7 +1572,9 @@ why:
 was taken: no animation running, no throttled drag or picker hover
 pending, no injected input queued, no camera geometry waiting to
 rebuild — `needs_continuation()` false, the first two conditions of
-`clock.wait until=settled`. A capture taken unsettled may hold a
+`clock.wait until=settled`, read as that command reads them: under a
+virtual clock an animation standing still between steps and samples
+waiting for one are owed to later instants, not to this capture. A capture taken unsettled may hold a
 frame the next one moves on from. Waiting for the app to settle is
 `clock.wait`'s job (IPC-09), not this command's: `capture.screenshot`
 never defers its reply.
@@ -1719,10 +1726,20 @@ crosses a `1000/fps` boundary (the boundaries are the multiples of
 per heartbeat. A heartbeat that finds several boundaries crossed — it
 overran — takes **one** frame, for the latest, and counts the others as
 missed. So a second at `fps=30` is exactly 30 boundaries however many
-heartbeats ran. Under `clock.set_mode virtual` (IPC-09) the same rule
-runs against virtual time and `clock.step` drives the frames, so
-`clock.step ms=1000` at `fps=30` emits exactly 30; the manifest's
-`pacing` key is `"realtime"` today and is where that mode will say so.
+heartbeats ran. A recording started under `clock.set_mode virtual`
+runs the same rule against virtual time: the loop sets no wake for it,
+and `clock.step` drives the frames, stopping the clock on every
+boundary, so `clock.step ms=1000` at `fps=30` emits exactly 30 and none
+is ever late. A stepped boundary is rounded **up to a whole
+millisecond** (at `fps=30`: 0, 34, 67, 100, … ms), each from its own
+index so nothing accumulates: the virtual clock reads whole
+milliseconds, as every animation stamp does, so a frame taken there
+shows exactly the instant its `t_ms` names. The manifest's `pacing` says which: `"realtime"` or
+`"stepped"`, fixed when the recording starts — the clock's mode cannot
+change while one runs. While the loop idles under a virtual clock there
+is no next-frame deadline to fit an idle encode before, so it spends at
+most one heartbeat's worth of wall time (16 ms) per idle iteration on
+it.
 
 **Costs, and what is never done in the loop.** Taking a frame is one
 render and one readback, ticking the `FreezeWatchdog` as a screenshot
@@ -1776,9 +1793,11 @@ hole in the numbering), plus `manifest.json`:
 ```
 
 `t_ms` is capture-clock time, measured from the start, **when the frame
-was taken**: the wall clock's reading in real mode (so a consumer that
-paces by it replays what happened, stalls included) and, once the
-virtual clock lands, the frame's `1000/fps` boundary, exactly.
+was taken**: the app clock's reading in `realtime` pacing (so a
+consumer that paces by it replays what happened, stalls included) and,
+in `stepped` pacing, the frame's `1000/fps` boundary rounded up to a
+whole millisecond, exactly — the step stopped the clock there to take
+it.
 `duration_ms` is how long the recording ran, and with the last frame's
 `t_ms` is the last frame's display time. `complete` is `false` in the
 copy written while recording (a recording the app never finished — one
@@ -1809,74 +1828,157 @@ artifacts dir, and an open console is left out of the frames.
 
 ## `clock` — determinism (IPC-09)
 
-Time virtualization over the one clock bridge (`now_ms()`), plus the
-settling primitive every capture workflow needs.
+Time virtualization over the one app clock, plus the settling
+primitive every capture workflow needs. Design and the per-reader
+disposition: [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D9.
 
-- **`clock.status`** — result: `{"mode": "real" | "virtual",
-  "now_ms": <number>}`.
-- **`clock.set_mode`** — params: `mode` (`"real"` / `"virtual"`).
-  In virtual mode the app-observed clock advances **only** via
-  `clock.step`; animation and timing behavior becomes a pure
-  function of the step sequence. Virtual time reshapes **every**
-  `now_ms()` consumer, not just animations — throttled-interaction
-  pacing, the drag anim-pause, double-click detection, and FPS
-  timing all read the same bridge — so under virtual mode the whole
-  interactive clock is stepped, which is what makes captures
-  deterministic (IPC-09 owns how the bridge is virtualized). Result:
-  `{"mode", "now_ms"}`.
-- **`clock.step`** — params: exactly one of `ms` (integer) or
-  `frames` (integer) — neither, or both, is `invalid_params`.
-  Virtual time advances at a pinned cadence of **one heartbeat per
-  16 ms** (≈60 fps — the rate the app targets), so `ms` and `frames`
-  are two spellings of the same work: `frames = ceil(ms / 16)`, and
-  each is clamped to the *same* budget, **`frames ≤ 100_000`**
-  (⇒ `ms ≤ 1_600_000`, ~27 virtual minutes); a value over the bound
-  is `invalid_params` and the client chunks. The heartbeats run
-  synchronously — deterministic catch-up is the point — and the loop
-  **ticks the `FreezeWatchdog` (`unparked`) once per heartbeat inside
-  the step**, so the run is watchdog-safe *by construction* (a
-  genuinely stuck single heartbeat still trips the 10 s threshold;
-  the bound is a responsiveness/DoS limit, not the safety mechanism).
-  Result: `{"now_ms", "frames_run"}`.
+**One clock for what behaves, the wall clock for what measures.**
+Everything the app *does* by time reads the app clock: the animation
+tick, the drag pause on it, double-click and long-press timing, the
+start of an animated `OnClick` trigger or keybound mutation, a
+recording's frame times, `query.animations`, `ping`. Everything that
+*measures* — the FPS overlay, the `FreezeWatchdog`, the drag
+throttle's frame budget, an encode's cost, a `clock.wait` deadline —
+reads the wall clock in both modes, because a stepped or frozen clock
+would hide a stall rather than time it.
+
+**One continuous axis.** Switching modes never moves the reading:
+virtual time starts where real time stood, rounded up to the next
+whole millisecond (so whole-millisecond steps keep every reading
+whole), and real time resumes from where virtual time was left, at the
+wall clock's rate. Nothing is rebased on a switch — an animation's
+start, the last click, a touch, a recording all stay on the one axis
+— so engaging virtual time mid-animation freezes the animation where
+it stands, and the next step resumes it.
+
+**The mode is app state.** It outlives the controller that set it,
+like a recording, so `mandalactl`'s one command per connection can
+drive it. An app left in virtual mode stays there: its animations stand
+still and, with time frozen, two clicks any distance apart in wall time
+are a double-click. `clock.set_mode real`, or the console's `clock
+real`, gives it back.
+
+**What a frame does in each mode.** A frame has an input-driven half —
+the throttled drag and picker hover drains, the rubber band, the
+camera-geometry rebuild — and a time-driven half: one sample of the
+injected-input queue (§`input`), the animation tick, a recording's
+frame. In real mode every event-loop iteration runs both, exactly as
+before this family existed. In virtual mode the loop's own iterations
+run the input-driven half alone (a human's drag still lands; the
+animations stand still), and the time-driven half runs inside
+`clock.step`, at the virtual instants the step names. Under a virtual
+clock a throttled drag drains on every frame it has something pending:
+the throttle trades drain frequency for a real frame budget, and a
+virtual heartbeat has none to protect.
+
+- **`clock.status`** — no params. Result: `mode` (`"real"` /
+  `"virtual"`) and `now_ms` (number), the app clock. Needs no app:
+  before the window exists the clock is real and reads the wall clock,
+  as a new clock does.
+- **`clock.set_mode`** — params: `mode` (`"real"` / `"virtual"`,
+  case-exact; anything else is `invalid_params` naming `mode`).
+  Result: `mode`, `now_ms` — the reading, which the switch did not
+  move. Setting the mode the clock is already in is a success that
+  changes nothing. **Refused while a recording runs** (`invalid_params`
+  naming `mode`): a recording's `pacing` is fixed for its whole length,
+  so a switch would make its frame times mean two things. **Refused
+  inside a running step** (`busy`, as a nested step is): a `clock real`
+  console line typed by an injected key the step itself landed would
+  otherwise leave the step's remaining heartbeats on a clock the wall
+  moves. Changes no pixels.
+- **`clock.step`** — params: exactly one of `ms` (integer,
+  `1..=1_600_000`) or `frames` (integer, `1..=100_000`) — neither, or
+  both, is `invalid_params` (naming `ms` for neither, `frames` for
+  both), and so is a value outside its range: the client chunks.
+  **Needs a virtual clock**: on a real one the step is `invalid_params`
+  naming `cmd`, the recorder's state-refusal precedent. Virtual time
+  advances at a pinned cadence of **one heartbeat per 16 ms** (≈60 fps,
+  the rate the app targets), so the two spellings are the same work:
+  `frames = n` runs `n` heartbeats 16 ms apart and advances `16 × n`
+  ms; `ms = m` runs `ceil(m / 16)` heartbeats, 16 ms apart with the last
+  landing on `m` **exactly**, so a step never overshoots. Each
+  heartbeat is the whole frame — one injected sample, the drains, the
+  animation tick, a recording's frame — run synchronously (deterministic
+  catch-up is the point), and the loop **ticks the `FreezeWatchdog`
+  once per heartbeat inside the step**, so the run is watchdog-safe
+  *by construction* (a genuinely stuck single heartbeat still trips the
+  10 s threshold; the bound is a responsiveness limit, not the safety
+  mechanism). Each heartbeat costs the wall time of the frame it runs —
+  an animation's tick rebuilds the scene, as it does in real time — so a
+  long step over a large animated scene is long main-thread work, and
+  the client's patience must match it (`mandalactl --timeout`); other
+  commands queue behind it. **A running recording's frame boundaries are stopped at
+  too**: one that falls between two heartbeats gets a tick of its own,
+  on the boundary exactly — the drains, the tick and the frame, but no
+  injected sample, so recording a gesture never changes when its
+  samples land — and one that falls on a heartbeat is that heartbeat's.
+  Result: `now_ms` (the virtual clock after the step) and `frames_run`
+  (the cadence heartbeats: `frames`, or `ceil(ms / 16)`; a boundary
+  tick is the recorder's to count, in its frames). A step that ran
+  requests a redraw, so the window shows where it left the app. A step
+  asked for from inside a running one — a `clock step` console line
+  typed by an injected key the step itself landed — is `busy`.
+
 - **`clock.wait`** — params: `until` (`"settled"` /
-  `"animations_complete"`), `timeout_ms` (integer, default
-  `10_000`, clamped `1..=60_000`; always **wall-clock**
-  milliseconds — the deadline is a client-liveness guard, so a
-  frozen virtual clock must not disable it). **Exclusive per
-  controller**: only one `clock.wait` may be pending at a time; a
-  second while one is in flight is rejected `busy` (there is no named
-  use for concurrent waits, and unbounded pending waits would be a
-  memory/scan-cost vector). Its `id` stays in flight until the wait
-  resolves or is canceled — a client must not reuse that `id` before
-  then. **Deferred reply**: the condition is evaluated at the end of
-  every heartbeat and at the deadline; other commands keep executing
-  while a wait is pending; a disconnect cancels it; a pending wait is
-  **not a barrier** (see [Reply](#reply)). While a wait is pending
-  and the loop would otherwise park in `ControlFlow::Wait`, it parks
-  in `WaitUntil(nearest deadline)` instead — the FPS idle-grace
-  precedent already in `run_native.rs` — so a deadline fires even
-  when no heartbeat would otherwise run, without polling. On
-  success: `{"elapsed_ms"}`. On deadline: `ok:false`, code
-  `timeout`, `data.elapsed_ms`.
+  `"animations_complete"`), `timeout_ms` (integer, default `10_000`,
+  `1..=60_000`; a value outside it is `invalid_params`, as IPC-07 and
+  IPC-08 made their bounds; always **wall-clock** milliseconds — the
+  deadline is a client-liveness guard, so a frozen virtual clock must
+  not disable it). **Exclusive per controller**: only one `clock.wait`
+  may be pending at a time; a second while one is in flight is
+  rejected `busy` (there is no named use for concurrent waits, and
+  unbounded pending waits would be a memory/scan-cost vector). Its `id`
+  stays in flight until the wait resolves or is canceled — a client
+  must not reuse that `id` before then. **Deferred reply**: the wait is
+  held in the controller's session and evaluated at the end of every
+  event-loop iteration — after the redraw that iteration owes has been
+  asked for, so a pixels-affecting command of the same iteration counts
+  as a frame still owed — and after every window event, the frame's
+  render among them; other commands keep executing while it is pending;
+  a disconnect cancels it; a pending wait is **not a barrier** (see
+  [Reply](#reply)). A `clock.step` runs as one command: the wait sees
+  the state it left, not its intermediate heartbeats. While a wait is
+  pending and the loop would otherwise park in `ControlFlow::Wait`, it
+  parks in `WaitUntil(deadline)` instead — the FPS idle-grace precedent
+  in `run_native.rs` — so a deadline fires even when no heartbeat would
+  otherwise run, without polling. A controller paused on a full reply
+  queue ([Threading contract](#threading-contract-wire-visible-consequences))
+  is evaluated once it resumes, so a wait's reply never overtakes the
+  one held for it. On success: `elapsed_ms` (integer), the wall-clock milliseconds the
+  wait took.
+  On deadline: `ok:false`, code `timeout`, `data.elapsed_ms`, and a
+  message naming what was still owed. Like every reply from a command
+  that ran with the app up, it carries `revision` and
+  `document_revision`, as they stand when it is answered. Needs the
+  app: `no_document` before the window exists.
 
-Wait conditions, defined against the per-frame `drain_frame`
-heartbeat (CONCEPTS §5 "Event loop and `drain_frame`"):
+Wait conditions, defined against the frame (above) and CONCEPTS §5
+"Event loop and `drain_frame`":
 
 - **`animations_complete`** — `MindMapDocument` reports no active
-  animations.
+  animations. Under a virtual clock animations advance only by
+  `clock.step`, so a wait for this with no step to come times out.
 - **`settled`** — at an evaluation point, all of: (a)
   `needs_continuation()` is false (no throttled drag pending, no
-  picker-hover pending, no active animations, no dirty connection
-  geometry); (b) no IPC-injected input remains queued; (c) **no
-  redraw is pending** — every pixels-affecting command has requested
-  its redraw and none is outstanding; and (d) the renderer has
-  **rendered** the frame reflecting the most recent pixels-affecting
-  command — i.e. the render pass ran and the GPU buffers are current
-  for that revision. In plain terms: **the rendered scene is the
-  final consequence of every command the agent has sent so far**, and
-  capturing now is race-free *with respect to the agent's own
-  commands*. (It is not fenced against a concurrent human — see the
-  scope note below.)
+  picker-hover pending, no dirty connection geometry — and, **in real
+  time**, no active animation); (b) **in real time**, no IPC-injected
+  input remains queued; (c) **no redraw is owed**: every redraw the
+  app has asked for — every pixels-affecting command's, and every
+  input handler's — has been drawn by a render that ran after it; and
+  so (d) the renderer has **rendered** the frame reflecting the most
+  recent pixels-affecting command. In plain terms: **the rendered scene
+  is the final consequence of every command the agent has sent so
+  far**, and capturing now is race-free *with respect to the agent's
+  own commands*. (It is not fenced against a concurrent human — see
+  the scope note below.)
+
+  **Under a virtual clock, "final" means "at this instant".** An
+  animation standing still between steps, and injected samples waiting
+  for the heartbeats that land them, are owed to *future* virtual
+  instants only `clock.step` reaches; with time frozen nothing more
+  will happen until it does, so neither keeps the app from settling.
+  That is what makes `clock.step ms=500` → `clock.wait until=settled` →
+  `capture.screenshot` capture an animation exactly 500 ms in.
 
   **Rendered, not on-screen-presented.** Condition (d) is
   deliberately about the *render* completing, not a swapchain
@@ -1884,41 +1986,43 @@ heartbeat (CONCEPTS §5 "Event loop and `drain_frame`"):
   occluded/minimized window and (post IPC-10) with no display at all
   — where the compositor never presents. Gating `settled` on an
   on-screen present would make every capture workflow time out in
-  exactly the containerized/Xvfb environment the epic targets. So
-  `settled` observes that the render for the current revision has
-  executed (buffers current), which the offscreen capture path can
-  satisfy without a surface. This also settles the IPC-10 headless
-  interaction here rather than deferring it downstream.
+  exactly the containerized/Xvfb environment the epic targets. So a
+  render counts as drawn once its CPU half has run — every buffer
+  current, every glyph prepared — whether or not the surface then had a
+  texture to present into. A frame the renderer *skipped* (the font
+  system contended, a failed prepare) has not drawn, and the redraw
+  stays owed. One limit no protocol can lift: the render runs when
+  winit delivers the `RedrawRequested` the app asked for, and a
+  platform that withholds it from a hidden window withholds the render
+  too; the wait then times out saying the latest frame was not drawn.
+  IPC-10's headless heartbeat is where that dependency ends.
 
-  **The arbiter is a render revision, not the document revision.**
-  The naive "rendered at the current *document* revision" is
-  insufficient: view-only commands — a wheel zoom, an `act.action`
-  pan, a selection-highlight change — repaint without mutating the
-  document, so a stale pre-command frame would already match the
-  document revision and `settled` would resolve before the repaint
-  renders. The counter that gates `settled` therefore advances on
-  **every pixels-affecting command** (document mutation *or*
-  view/selection change), and each such command **requests a redraw**
-  (see [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D2 — the
-  IPC drain mirrors the existing winit handlers' `request_redraw`
-  exactly). `settled` holds only once the rendered frame carries that
-  render revision. IPC-14 introduced the counter this rests on, as
-  `revision` ([`events`](#events--event-stream--revision-ipc-14)):
-  it advances on view and selection changes as well as document
-  ones, and every reply carries it. What it does not record is
-  *rendered*: that the renderer has drawn a given `revision` is the
-  other half of `settled`, and `clock.wait` (IPC-09) owns it.
+  **The arbiter is a redraw ledger, not the document revision.** The
+  naive "rendered at the current *document* revision" is insufficient:
+  view-only commands — a wheel zoom, an `act.action` pan, a
+  selection-highlight change — repaint without mutating the document,
+  so a stale pre-command frame would already match the document
+  revision and `settled` would resolve before the repaint renders. The
+  app therefore counts the redraws it **asks for** — every
+  pixels-affecting command requests one (see
+  [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D2 — the IPC
+  drain mirrors the existing winit handlers' `request_redraw`
+  exactly), and so does every input handler — and the renders that
+  **drew** them; `settled` holds only once the two agree. The
+  envelope's `revision`
+  ([`events`](#events--event-stream--revision-ipc-14)) orders replies
+  against events; what `settled` needs beyond it is *drawn*, which
+  the ledger records where the asks are made.
 
   **Scope: `settled` fences the agent, not the human.** The
   "race-free" guarantee is only against the agent's own prior
   commands. In the "human watches while agent drives" workflow a
   human can move the mouse, type, or pan the canvas between the
   `clock.wait` reply and the following `capture.screenshot`, and that
-  input is *not* fenced (nor could it be). Worse, a human's
-  continuous camera-pan drag is an inline per-frame gesture
-  (CODE_CONVENTIONS §3 carve-out) that changes pixels **without**
-  going through a command or bumping the render revision, so
-  `needs_continuation()` can read false mid-drag-pause and `settled`
+  input is *not* fenced (nor could it be). A human's continuous
+  camera-pan drag is an inline per-frame gesture (CODE_CONVENTIONS §3
+  carve-out) that can sit between two of its cursor events with
+  `needs_continuation()` false and every redraw drawn, so `settled`
   can resolve while the human is mid-gesture. For byte-reproducible
   captures the agent should drive an instance with no concurrent
   human (the container/Xvfb case); the guarantee is exact there.
@@ -1934,17 +2038,35 @@ heartbeat (CONCEPTS §5 "Event loop and `drain_frame`"):
 
   One residual non-determinism to know about: with the FPS overlay
   on (a native `fps` diagnostic, off by default), its idle-grace flip
-  repaints the overlay region *after* `settled` resolves without
-  bumping the render revision, so two "settled" screenshots can
-  differ in that corner. A diagnostic must not become observable
-  behavior (the reason it isn't a continuation source), so `settled`
-  ignores it — capture with the overlay off for byte-identical
-  frames.
+  repaints the overlay region *after* `settled` resolves, so two
+  "settled" screenshots can differ in that corner. A diagnostic must
+  not become observable behavior (the reason it isn't a continuation
+  source), so `settled` does not wait for it — capture with the
+  overlay off for byte-identical frames.
 
 There is deliberately **no** third `"idle"` condition: once settled,
 the loop parks by construction (`ControlFlow::Wait`), and the only
 residual timer is the FPS overlay's idle-grace flip — a diagnostic
 that observes behavior and must not become observable behavior.
+
+**The determinism contract.** With a virtual clock engaged before the
+script starts, the same document and the same command sequence leave
+the same laid-out scene: `scene.dump` is byte-identical across runs,
+whatever the wall clock did meanwhile and whenever virtual time began
+(`test_the_same_stepped_script_twice_dumps_byte_identical_scenes`
+holds two independently built documents — every `HashMap` in each
+seeded apart — to it). The one `HashMap`-order dependence the hunt for
+this contract found was the inline-macro collision winner, which is
+now the lowest node id in every process (`format/macros.md`). What the
+contract does not cover: `now_ms` itself, whose virtual origin is the
+real reading at engagement, and anything a concurrent human does.
+
+**Also a console verb.** `clock status`, `clock real`, `clock
+virtual`, and `clock step ms=<n>` / `clock step frames=<n>` reach the
+same switch and the same step, with the same bounds and refusals in
+the console's words. The console shell is native, and so is the
+heartbeat a step runs (`CLAUDE.md` "Dual-target status"); the clock
+type and its modes are shared, and the browser holds a real one.
 
 ## `events` — event stream + revision (IPC-14)
 
@@ -2129,7 +2251,14 @@ a client does:
 - **Every wait has a deadline** (`--timeout`, default 15 s, longer than the
   10 s `FreezeWatchdog` threshold): the connect, the greeting, each write
   and each reply. The deadline is the whole line's, re-armed before every
-  read and write, so a peer that trickles bytes cannot stretch it. A reply is matched by `id`, with the `null`-id `parse_error` taken
+  read and write, so a peer that trickles bytes cannot stretch it. The
+  one exception is a `clock.wait` reply — named on the command line,
+  sent through `raw`, or `--wait-settled`'s — which is waited on at
+  least to the wait's own `timeout_ms` (the server's default `10000`
+  when it names none, its bound `60000` at most) plus 2 s: the app
+  answers a wait that runs out with a structured `timeout`, and a client
+  that gave up first would report exit `4` instead of the app's answer.
+  A reply is matched by `id`, with the `null`-id `parse_error` taken
   as the answer to the one request in flight; events the client did not
   subscribe to are skipped, and `shutdown` ends the invocation.
 - **`events.subscribe` is the one verb that stays connected.** A

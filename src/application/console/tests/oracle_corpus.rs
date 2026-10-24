@@ -451,6 +451,21 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "record start width=640"),
     (Sel::None, "record start space=surface"),
     (Sel::None, "record stop fps=30"),
+    // clock — the verb only reads the line, so a well-formed one is a
+    // silent OK (the switch and the step run in the executor) and a
+    // malformed one is refused with the reason, at IPC's bounds.
+    (Sel::None, "clock"),
+    (Sel::None, "clock status"),
+    (Sel::None, "clock virtual"),
+    (Sel::None, "clock real"),
+    (Sel::None, "clock step ms=500"),
+    (Sel::None, "clock step frames=30"),
+    (Sel::None, "clock step"),
+    (Sel::None, "clock step ms=16 frames=1"),
+    (Sel::None, "clock step ms=0"),
+    (Sel::None, "clock step frames=fast"),
+    (Sel::None, "clock pause"),
+    (Sel::None, "clock real ms=5"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for
@@ -653,6 +668,8 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "record "),
     (Sel::None, "record start "),
     (Sel::None, "record start frame="),
+    (Sel::None, "clock "),
+    (Sel::None, "clock step "),
 ];
 
 /// The one outcome whose tail this machine chose rather than the

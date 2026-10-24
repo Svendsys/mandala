@@ -17,7 +17,7 @@ use super::modal_editor::commit_modal_editors_on_release;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::release::commit_if_resolved;
 use super::throttled_interaction::ThrottledDrag;
-use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
+use super::{is_double_click, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{rect_select, SelectionState};
 use crate::application::keybinds::Action;
@@ -265,7 +265,7 @@ pub(super) fn handle_mouse_input(
                 // silently discard the in-progress buffer. Let the
                 // press fall through; the corresponding release
                 // will be swallowed as click-inside.
-                let now = now_ms();
+                let now = ctx.clock.now_ms();
                 let parts = super::compute_click_hit(canvas_pos, ctx.mindmap_tree.as_mut(), ctx.app_scene);
                 let super::ClickHitParts {
                     click_hit,

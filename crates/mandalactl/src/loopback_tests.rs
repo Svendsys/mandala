@@ -529,6 +529,40 @@ fn test_a_wait_the_client_gives_up_on_also_says_the_command_succeeded() {
     assert!(outcome.err.contains("do not repeat it"), "{}", outcome.err);
 }
 
+/// A `clock.wait` asked for by name, whose own `timeout_ms` outlasts
+/// `--timeout`, is waited on for its deadline: the app's structured
+/// `timeout` is what gets printed (exit 1, the app said no), not an
+/// exchange the client gave up on (exit 4).
+#[test]
+fn test_a_named_wait_is_waited_on_past_the_client_timeout_until_its_own_deadline() {
+    let server = FakeServer::answering(|r| {
+        if r["cmd"] == "clock.wait" {
+            thread::sleep(Duration::from_millis(300));
+            vec![json!({"id": r["id"], "ok": false,
+                        "error": {"code": "timeout", "message": "never settled", "data": {"elapsed_ms": 300}}})]
+        } else {
+            vec![ok(&r["id"], json!({}))]
+        }
+    });
+    let outcome = against(&server, "clock.wait settled timeout_ms=300 --timeout 0.1");
+    assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
+    assert!(outcome.err.contains("timeout: never settled"), "{}", outcome.err);
+    // Any other command keeps `--timeout` as it is.
+    let silent = FakeServer::start(|_, peer, seen| {
+        peer.send(&hello());
+        while let Some(request) = peer.read_request() {
+            seen.lock().expect("log").push(request);
+        }
+    });
+    let started = Instant::now();
+    assert_eq!(against(&silent, "ping --timeout 0.1").exit, Exit::Unconfirmed);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
 #[test]
 fn test_an_app_without_clock_wait_is_told_so_before_the_command_runs() {
     let server = FakeServer::answering(|r| {

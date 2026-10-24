@@ -51,9 +51,10 @@ pub struct FreezeWatchdog {
     /// threshold.
     parked: Arc<AtomicBool>,
     /// Monotonic clock shared with the background thread so both
-    /// sides measure elapsed time against the same origin. Avoids
-    /// reaching into [`crate::application::app::now_ms`], which is
-    /// private to its module and returns `f64`.
+    /// sides measure elapsed time against the same origin. The wall
+    /// clock by construction, never the app clock
+    /// ([`crate::application::clock::AppClock`]): a frozen virtual
+    /// clock must not disable the watchdog.
     epoch: Instant,
 }
 

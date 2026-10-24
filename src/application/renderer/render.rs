@@ -49,16 +49,16 @@ pub(crate) enum ModalLayer {
     Omitted,
 }
 
-/// Why a frame was not drawn. The window's frame shrugs and the next one
-/// retries; a capture reports it, because "nothing was drawn" and "black
-/// was drawn" look alike in a PNG and must not to an agent.
+/// Why a frame was not drawn. The window asks again for a transient one
+/// ([`FrameSkip::is_transient`]) — nothing else would, with no input to
+/// follow — and otherwise leaves the redraw owed; a capture reports it,
+/// because "nothing was drawn" and "black was drawn" look alike in a PNG
+/// and must not to an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrameSkip {
     /// The renderer has not been told to start (`RenderDecree::StartRender`
-    /// has not arrived), so there is no scene to draw yet.
-    // Native-only producer: the capture asks before it prepares; the
-    // window's `render` returns before there is a skip to report.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// has not arrived), or has been told to stop, so there is no scene
+    /// to draw.
     NotStarted,
     /// The font system was held elsewhere when the text prepare asked
     /// for it. Transient: the next frame retries.
@@ -72,7 +72,8 @@ impl FrameSkip {
     /// The wire word a capture reports it by (`format/ipc.md`
     /// §`capture.screenshot`, `skipped`).
     // Native-only consumer: the capture engine; the browser renders
-    // through `render` alone, which only ever drops the skip.
+    // through `render` alone, which asks only whether a skip is
+    // transient.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn word(self) -> &'static str {
         match self {
@@ -80,6 +81,14 @@ impl FrameSkip {
             FrameSkip::FontSystemContended => "font_system_contended",
             FrameSkip::PrepareFailed => "prepare_failed",
         }
+    }
+
+    /// Whether the same frame asked for again would likely draw: only a
+    /// contended font system, which its holder releases. Retrying a
+    /// renderer that has not started, or a prepare that can fail for
+    /// good, would spin the loop.
+    pub(crate) fn is_transient(self) -> bool {
+        matches!(self, FrameSkip::FontSystemContended)
     }
 }
 
@@ -154,24 +163,26 @@ impl Renderer {
     /// camera, then [`Self::encode_frame`] into the swapchain texture,
     /// then present. The window is one caller of the pair; an offscreen
     /// capture (`renderer::capture`) is the other, with its own camera
-    /// and target.
+    /// and target. `Err` names why the frame was not drawn
+    /// ([`Renderer::process`]).
     #[inline]
-    pub(super) fn render(&mut self) {
+    pub(super) fn render(&mut self) -> Result<(), FrameSkip> {
         if !self.should_render {
-            return;
+            return Err(FrameSkip::NotStarted);
         }
         let camera = self.camera;
         // On lock contention or prepare failure, skip the rest of this
         // frame — before acquiring a surface texture, so a skipped
         // frame takes no vsync backpressure.
-        let Ok(prepared) = self.prepare_frame(&camera, ModalLayer::Drawn) else {
-            return;
-        };
+        let prepared = self.prepare_frame(&camera, ModalLayer::Drawn)?;
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             other => {
+                // Drawn all the same: the buffers are current, and what
+                // is missing is somewhere to present them, which an
+                // occluded window does not have.
                 debug!("Failed to get the surface texture ({other:?}), can't render.");
-                return;
+                return Ok(());
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -179,6 +190,7 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         self.atlas.trim();
+        Ok(())
     }
 
     /// The CPU half of a frame, for a target `camera.viewport_size`

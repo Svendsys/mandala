@@ -82,9 +82,10 @@ pub struct Io<'a> {
     pub stdin: &'a mut dyn Read,
 }
 
-/// The extra patience `--wait-settled`'s wait gets beyond its own
-/// deadline, so the app's structured `timeout` reply arrives before
-/// this client gives up on the connection.
+/// The extra patience a `clock.wait` — `--wait-settled`'s or one asked
+/// for by name — gets beyond its own deadline, so the app's structured
+/// `timeout` reply arrives before this client gives up on the
+/// connection.
 const WAIT_GRACE: Duration = Duration::from_secs(2);
 
 /// How long one wait for an event lasts before the watch looks again.
@@ -94,6 +95,9 @@ const WATCH_POLL: Duration = Duration::from_secs(60);
 
 /// The server's bound on `clock.wait`'s `timeout_ms`.
 const WAIT_MAX_MS: u128 = 60_000;
+
+/// The `timeout_ms` the server gives a `clock.wait` that names none.
+const WAIT_DEFAULT_MS: u64 = 10_000;
 
 const NO_SOCKET: &str = "no socket path. Pass --ipc <path> or set MANDALA_IPC. Start the app with: \
                          mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"";
@@ -189,7 +193,7 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
         Ok(Err(why)) => return usage(io, &why),
         Err(why) => return transport(io, &why),
     };
-    let exchange = match connection.exchange(&request, options.timeout) {
+    let exchange = match connection.exchange(&request, patience(&request, options.timeout)) {
         Outcome::Answered(exchange) => exchange,
         Outcome::NotSent(why) => return transport(io, &why),
         Outcome::Unanswered(why) => return unconfirmed(io, &why),
@@ -209,7 +213,7 @@ fn invoke(invocation: Invocation, env_ipc: Option<&str>, io: &mut Io<'_>) -> Exi
         Ok(wait) => wait,
         Err(why) => return unsettled(io, &why),
     };
-    let exchange = match connection.exchange(&wait, options.timeout + WAIT_GRACE) {
+    let exchange = match connection.exchange(&wait, patience(&wait, options.timeout)) {
         Outcome::Answered(exchange) => exchange,
         Outcome::NotSent(why) | Outcome::Unanswered(why) => return unsettled(io, &why),
     };
@@ -446,6 +450,23 @@ fn describe_one(connection: &mut Connection, name: &str, timeout: Duration) -> R
         Outcome::Answered(exchange) => Ok(exchange),
         Outcome::NotSent(why) | Outcome::Unanswered(why) => Err(why),
     }
+}
+
+/// How long to wait for `request`'s reply: `timeout` (`--timeout`),
+/// unless it is a `clock.wait` whose own deadline, plus [`WAIT_GRACE`],
+/// is later. The app holds a wait's reply until its condition holds or
+/// its `timeout_ms` passes, and answers the latter with a structured
+/// `timeout`; a client that gave up first would report an exchange it
+/// cannot confirm instead of the app's answer. A `timeout_ms` the app
+/// will refuse is refused at once, so the server's bound caps it.
+fn patience(request: &Outgoing, timeout: Duration) -> Duration {
+    let frame: Value = serde_json::from_str(&request.line).unwrap_or(Value::Null);
+    if frame["cmd"] != "clock.wait" {
+        return timeout;
+    }
+    let wait_ms = frame["timeout_ms"].as_u64().unwrap_or(WAIT_DEFAULT_MS);
+    let wait = Duration::from_millis(wait_ms.min(WAIT_MAX_MS as u64));
+    timeout.max(wait + WAIT_GRACE)
 }
 
 /// `clock.wait until=settled`, patient for as long as the client is.

@@ -35,6 +35,7 @@ use super::commands::FAMILIES;
 use super::envelope::{code, warning, IpcRequest, Reply, Warning};
 use super::events::{Driver, Revisions, Session};
 use super::target::CommandTarget;
+use super::wait::PendingWait;
 use super::Executed;
 
 /// The JSON shape a parameter or result field takes. `describe`
@@ -253,6 +254,8 @@ pub(crate) struct Call<'a> {
     /// The connection's event state: the revision counters, the
     /// subscriptions and the events not yet delivered.
     session: &'a mut Session,
+    /// The handler held its reply back ([`Call::defer`]).
+    deferred: bool,
 }
 
 impl<'a> Call<'a> {
@@ -309,6 +312,23 @@ impl<'a> Call<'a> {
         Some(self.session.observe(&now, driver))
     }
 
+    /// Hold this command's reply back until `wait` resolves
+    /// (`format/ipc.md` §Reply, "deferred-reply commands"): the wait
+    /// joins the session, and the transport sends its reply when the
+    /// event loop finds it due. What this returns is a receipt for the
+    /// handler to return, not an answer — [`execute`] sends nothing for
+    /// a deferred command, so it never reaches the wire.
+    pub(crate) fn defer(&mut self, wait: PendingWait) -> Reply {
+        self.session.hold_wait(wait);
+        self.deferred = true;
+        Reply::ok(self.request.id.clone(), json!({}))
+    }
+
+    /// The request's `id`, for a reply built away from this call.
+    pub(crate) fn id(&self) -> &Value {
+        &self.request.id
+    }
+
     pub(crate) fn ok(&self, result: Value) -> Reply {
         Reply::ok(self.request.id.clone(), result)
     }
@@ -346,18 +366,18 @@ pub(crate) fn execute(
 ) -> Executed {
     let Some((_, spec)) = lookup(&request.cmd) else {
         return Executed {
-            reply: Reply::error(
+            reply: Some(Reply::error(
                 request.id.clone(),
                 code::UNKNOWN_CMD,
                 unknown_command_message(&request.cmd),
                 None,
-            ),
+            )),
             repaint: false,
         };
     };
     if let Some(reply) = check_params(request, spec) {
         return Executed {
-            reply,
+            reply: Some(reply),
             repaint: false,
         };
     }
@@ -371,6 +391,7 @@ pub(crate) fn execute(
         // cannot take the caller's lifetime as is.
         target: target.map(|target| target as &mut dyn CommandTarget),
         session,
+        deferred: false,
     };
     // The first command a process executes has nothing to be compared
     // with, and the comparison after it would take its own effect as
@@ -384,13 +405,21 @@ pub(crate) fn execute(
     // reply carries include the command's own effect, and the events
     // it caused are queued behind the reply that announces them.
     let revisions = call.observe_events(Driver::Ipc);
+    let repaint = call.observe().is_some_and(|target| target.changed_view());
+    // A deferred reply is built later, from the wait alone, when it
+    // resolves: warnings captured here and the revisions above have no
+    // envelope to ride on and are dropped. `clock.wait`, the one
+    // deferring command, logs none and changes nothing to count.
+    if call.deferred {
+        return Executed { reply: None, repaint };
+    }
     let reply = reply.with_warnings(warnings_from(captured));
     Executed {
-        reply: match revisions {
+        reply: Some(match revisions {
             Some(revisions) => reply.with_revisions(revisions),
             None => reply,
-        },
-        repaint: call.observe().is_some_and(|target| target.changed_view()),
+        }),
+        repaint,
     }
 }
 
@@ -537,7 +566,7 @@ pub(crate) mod tests {
             panic!("{frame} must decode to a request");
         };
         let executed = execute(&request, target, session);
-        let bytes = Frame::Reply(executed.reply)
+        let bytes = Frame::Reply(executed.reply.expect("a reply that is not held back"))
             .encode(OUTBOUND_FRAME_CAP)
             .expect("encodes");
         (serde_json::from_slice(&bytes).expect("JSON"), executed.repaint)
@@ -681,7 +710,14 @@ pub(crate) mod tests {
         let (reply, _) = run_detached(r#"{"id":3,"cmd":"clock.stepp"}"#);
         let message = reply["error"]["message"].as_str().expect("message");
         assert!(
-            message.contains("act.*") && message.contains("ping"),
+            message.contains("clock.step") && message.contains("clock.wait"),
+            "a registered family lists its commands: {message}"
+        );
+
+        let (reply, _) = run_detached(r#"{"id":3,"cmd":"export.svg"}"#);
+        let message = reply["error"]["message"].as_str().expect("message");
+        assert!(
+            message.contains("act.*") && message.contains("clock.*") && message.contains("ping"),
             "an unregistered family lists the families: {message}"
         );
 

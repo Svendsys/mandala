@@ -1099,7 +1099,7 @@ impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchT
         let Some(doc) = self.ctx.document.as_mut() else {
             return false;
         };
-        let now = super::super::now_ms() as u64;
+        let now = self.ctx.clock.now_whole_ms();
         if apply_keybind_custom_mutation(
             doc,
             self.ctx.mindmap_tree,

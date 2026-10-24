@@ -39,8 +39,9 @@ use baumhard::gfx_structs::camera::Camera2D;
 use crate::application::app::InteractionMode;
 use crate::application::document::{MindMapDocument, SelectionState};
 
-use super::envelope::Event;
+use super::envelope::{Event, Reply};
 use super::space::camera_json;
+use super::wait::{PendingWait, Settling};
 
 /// Events a session holds back before the oldest is dropped. Only a
 /// `verbose` subscription can reach it: otherwise the queue holds at
@@ -492,23 +493,46 @@ pub(crate) struct Queued {
     pub(crate) event: Event,
 }
 
-/// The event half of one IPC connection's state, owned by the
-/// transport and lent to each command: the process-lifetime
-/// [`Tracker`], the controller's subscriptions, and the events not yet
-/// delivered.
+/// One IPC connection's state, owned by the transport and lent to each
+/// command: the process-lifetime [`Tracker`], the controller's
+/// subscriptions and the events not yet delivered — and the
+/// controller's pending `clock.wait` (`super::wait`), which lives here
+/// because it lives exactly as long as the controller does.
 #[derive(Default)]
 pub(crate) struct Session {
     tracker: Tracker,
     subscriptions: Subscriptions,
     pending: VecDeque<Queued>,
+    wait: Option<PendingWait>,
 }
 
 impl Session {
-    /// A new controller: no subscriptions, nothing queued. The
+    /// A new controller: no subscriptions, nothing queued, no wait
+    /// pending — a disconnect cancels the departed controller's. The
     /// tracker, and with it the revision, carries on.
     pub(crate) fn reset_controller(&mut self) {
         self.subscriptions = Subscriptions::default();
         self.pending.clear();
+        self.wait = None;
+    }
+
+    /// The controller's pending `clock.wait`.
+    pub(crate) fn wait(&self) -> Option<&PendingWait> {
+        self.wait.as_ref()
+    }
+
+    /// Hold `wait`'s reply back until it resolves. The caller has
+    /// checked that none is pending: waits are exclusive.
+    pub(crate) fn hold_wait(&mut self, wait: PendingWait) {
+        self.wait = Some(wait);
+    }
+
+    /// The pending wait's reply, when it is due at `now` given `app`,
+    /// which also ends the wait.
+    pub(crate) fn resolve_wait(&mut self, now: std::time::Instant, app: Settling) -> Option<Reply> {
+        let reply = self.wait.as_ref()?.resolve(now, app)?;
+        self.wait = None;
+        Some(reply)
     }
 
     pub(crate) fn subscriptions(&self) -> Subscriptions {
@@ -658,6 +682,7 @@ pub(crate) mod fixture {
         pub(crate) mode: InteractionMode,
         /// Whether the funnels reported a pixel change.
         pub(crate) changed: bool,
+        pub(crate) clock: crate::application::clock::AppClock,
     }
 
     impl EventsApp {
@@ -667,6 +692,7 @@ pub(crate) mod fixture {
                 camera: Camera2D::new(800, 600),
                 mode: InteractionMode::Default,
                 changed: false,
+                clock: crate::application::clock::AppClock::default(),
             }
         }
     }
@@ -760,6 +786,21 @@ pub(crate) mod fixture {
         ) -> Result<crate::application::capture::record::Summary, crate::application::capture::CaptureError>
         {
             panic!("an event test must not stop a recording");
+        }
+        fn clock(&self) -> &crate::application::clock::AppClock {
+            &self.clock
+        }
+        fn set_clock_mode(
+            &mut self,
+            _: crate::application::clock::ClockMode,
+        ) -> Result<bool, crate::application::clock::ClockRefusal> {
+            panic!("an event test must not switch the clock");
+        }
+        fn step_clock(
+            &mut self,
+            _: crate::application::clock::StepRequest,
+        ) -> Result<crate::application::clock::Stepped, crate::application::clock::ClockRefusal> {
+            panic!("an event test must not step the clock");
         }
     }
 }

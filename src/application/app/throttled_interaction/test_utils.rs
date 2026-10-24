@@ -86,7 +86,7 @@ pub fn fixture_edge() -> MindEdge {
     default_parent_child_edge("a", "b")
 }
 
-/// Emit the four trait-default `should_perform_drain` tests for a
+/// Emit the five trait-default drain-predicate tests for a
 /// [`super::ThrottledInteraction`] implementor.
 ///
 /// The default method's contract is identical for every implementor:
@@ -96,6 +96,9 @@ pub fn fixture_edge() -> MindEdge {
 /// - **Pending + skipping throttle (n > 1)** → returns `false` on the
 ///   skipped frames in the cadence.
 /// - **Idle calls don't advance the throttle's skip counter.**
+/// - **An unthrottled frame (a virtual heartbeat) drains whenever
+///   something is pending**, however far the throttle has backed off,
+///   and leaves the throttle's cadence exactly as it found it.
 ///
 /// A new implementor invokes this macro once inside its
 /// `#[cfg(test)] mod tests { ... }` block:
@@ -188,6 +191,45 @@ macro_rules! trait_default_tests_for_throttled_interaction {
                 i.should_perform_drain(),
                 "first pending tick after idles must drain"
             );
+        }
+
+        #[test]
+        fn test_an_unthrottled_frame_drains_whenever_pending_and_leaves_the_cadence() {
+            // Two instances driven over budget alike; one also sees a run
+            // of unthrottled (virtual-heartbeat) frames. Those drain every
+            // pending frame however far the throttle backed off, and the
+            // throttled cadence that follows is the twin's, decision for
+            // decision: a virtual heartbeat neither skips nor counts.
+            use $crate::application::app::throttled_interaction::ThrottledInteraction;
+            let mut stepped = ($build)();
+            let mut twin = ($build)();
+            for i in [&mut stepped, &mut twin] {
+                $crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget(
+                    i.throttle(),
+                );
+            }
+            assert!(stepped.throttle().current_n() > 1);
+            assert!(
+                !stepped.drain_due(false),
+                "nothing pending, nothing to drain"
+            );
+            for _ in 0..7 {
+                ($set_pending)(&mut stepped);
+                assert!(
+                    stepped.drain_due(false),
+                    "a pending unthrottled frame must drain"
+                );
+            }
+            let n = twin.throttle().current_n() as usize;
+            for frame in 0..(n * 3) {
+                ($set_pending)(&mut stepped);
+                ($set_pending)(&mut twin);
+                assert_eq!(
+                    stepped.drain_due(true),
+                    twin.drain_due(true),
+                    "throttled frame {frame} after the unthrottled run"
+                );
+            }
         }
     };
 }

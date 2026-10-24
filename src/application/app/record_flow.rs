@@ -19,7 +19,13 @@
 //! loop parks and no heartbeat would come; [`deadline`] is the instant
 //! `about_to_wait` parks until instead, the same idle-timer shape the
 //! FPS grace uses, so frames land at the requested cadence with the
-//! canvas idle.
+//! canvas idle. Under a virtual clock there is no instant to wake for:
+//! the frames are `clock.step`'s, which stops the clock on each
+//! boundary (`app::heartbeat`).
+//!
+//! **Every time here is the app clock's**, passed in by the caller, so
+//! a recording is paced on the clock its frames show — real or
+//! virtual — and the pacing is fixed when it starts.
 //!
 //! **Nothing here can wedge the loop.** A frame is one render and one
 //! readback, ticked into the watchdog as a screenshot's are; the encode
@@ -40,11 +46,11 @@ use crate::application::capture::artifacts::{Artifacts, BUDGET_BYTES};
 use crate::application::capture::geometry::CameraInfo;
 use crate::application::capture::plan::CaptureRequest;
 use crate::application::capture::record::{
-    dir_bytes, make_dir, MadeDir, RecordConfig, RecordDestination, Recorder, Recording, Started, Step,
-    Stopped, Summary,
+    dir_bytes, make_dir, MadeDir, Pacing, RecordConfig, RecordDestination, Recorder, Recording, Started,
+    Step, Stopped, Summary,
 };
 use crate::application::capture::CaptureError;
-use crate::application::common::now_ms;
+use crate::application::clock::{AppClock, HEARTBEAT_MS};
 
 use super::capture_flow::{self, CaptureScene, Drawn};
 use super::freeze_watchdog::FreezeWatchdog;
@@ -68,7 +74,9 @@ fn state_refusal(message: String) -> CaptureError {
 ///
 /// `request.size` of `None` is the window's size now: the frames of one
 /// recording are all the same size, which a video needs and a window
-/// that is resized mid-recording must not change.
+/// that is resized mid-recording must not change. `clock` names the
+/// recording's pacing and its start.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn start(
     scene: CaptureScene<'_>,
     recorder: &mut Recorder,
@@ -77,6 +85,7 @@ pub(super) fn start(
     fps: u32,
     max_frames: u32,
     destination: RecordDestination,
+    clock: &AppClock,
 ) -> Result<Started, CaptureError> {
     if let Some(active) = recorder.active.as_ref() {
         return Err(state_refusal(format!(
@@ -89,7 +98,7 @@ pub(super) fn start(
     request.size.get_or_insert(live_size);
     let watchdog = scene.watchdog;
     let revision = scene.document.as_ref().map_or(0, |doc| doc.revision());
-    let now = now_ms();
+    let now = clock.now_ms();
 
     let mut made: Option<MadeDir> = None;
     let drawn = capture_flow::draw(scene, &request, |_| {
@@ -120,6 +129,7 @@ pub(super) fn start(
         height,
         scale: camera.pixel_ratio,
         request,
+        pacing: Pacing::of(clock.mode()),
     };
     let disk_limit = dir.in_artifacts.then_some(BUDGET_BYTES);
     let mut recording = Recording::begin(config, dir.path, now, disk_limit);
@@ -158,15 +168,15 @@ fn file(recording: &mut Recording, t_ms: f64, due_ms: f64, revision: u64, drawn:
     }
 }
 
-/// The heartbeat: if a frame is due, take it. Called once per loop
-/// iteration while a recording runs; a no-op otherwise.
-pub(super) fn tick(scene: CaptureScene<'_>, recorder: &mut Recorder, artifacts: &mut Artifacts) {
+/// The heartbeat: if a frame is due at the app clock's reading `now`,
+/// take it. Called once per frame that moves time while a recording
+/// runs (`app::heartbeat`); a no-op otherwise.
+pub(super) fn tick(scene: CaptureScene<'_>, recorder: &mut Recorder, artifacts: &mut Artifacts, now: f64) {
     let Some(active) = recorder.active.as_mut() else {
         return;
     };
     let watchdog = scene.watchdog;
     let revision = scene.document.as_ref().map_or(0, |doc| doc.revision());
-    let now = now_ms();
     let request = active.config().request;
     match active.step(now) {
         Step::Wait { .. } => return,
@@ -187,7 +197,7 @@ pub(super) fn tick(scene: CaptureScene<'_>, recorder: &mut Recorder, artifacts: 
             }
             Err(CaptureError::Internal(message)) => {
                 log::warn!("record: a frame could not be taken: {message}");
-                end(recorder, artifacts, watchdog, Stopped::Error, Some(message));
+                end(recorder, artifacts, watchdog, Stopped::Error, Some(message), now);
                 return;
             }
         },
@@ -200,15 +210,29 @@ pub(super) fn tick(scene: CaptureScene<'_>, recorder: &mut Recorder, artifacts: 
 /// (`Recording::encode_in_idle`), so `capture.record_stop` has less left
 /// to do. Called only when the loop has nothing else to do — an
 /// animating window needs every millisecond of its heartbeat — and
-/// never encodes past the next boundary.
-pub(super) fn idle(recorder: &mut Recorder, artifacts: &mut Artifacts, watchdog: &FreezeWatchdog) {
+/// never encodes past the next boundary. Under a virtual clock the next
+/// boundary is whenever the next step reaches it, so there is no
+/// deadline to fit the encode before; it spends one heartbeat's worth
+/// of wall time ([`HEARTBEAT_MS`]) instead, so a command arriving
+/// meanwhile waits at most about that long.
+pub(super) fn idle(
+    recorder: &mut Recorder,
+    artifacts: &mut Artifacts,
+    watchdog: &FreezeWatchdog,
+    clock: &AppClock,
+) {
     let Some(active) = recorder.active.as_mut() else {
         return;
     };
-    let now = now_ms();
-    if let Err(message) = active.encode_in_idle(active.wait_ms(now), now, &mut || watchdog.tick()) {
+    let now = clock.now_ms();
+    let budget = if clock.is_virtual() {
+        HEARTBEAT_MS as f64
+    } else {
+        active.wait_ms(now)
+    };
+    if let Err(message) = active.encode_in_idle(budget, now, &mut || watchdog.tick()) {
         log::warn!("record: the frames could not be written: {message}");
-        end(recorder, artifacts, watchdog, Stopped::Error, Some(message));
+        end(recorder, artifacts, watchdog, Stopped::Error, Some(message), now);
         return;
     }
     settle(recorder, artifacts, watchdog, now);
@@ -224,7 +248,7 @@ fn settle(recorder: &mut Recorder, artifacts: &mut Artifacts, watchdog: &FreezeW
     if active.wants_flush() {
         if let Err(message) = active.flush(now, &mut || watchdog.tick()) {
             log::warn!("record: the frames could not be written: {message}");
-            end(recorder, artifacts, watchdog, Stopped::Error, Some(message));
+            end(recorder, artifacts, watchdog, Stopped::Error, Some(message), now);
             return;
         }
     }
@@ -249,27 +273,29 @@ fn settle(recorder: &mut Recorder, artifacts: &mut Artifacts, watchdog: &FreezeW
     if let Some((stopped, why)) = ending {
         log::warn!("record: {why}; stopping");
         let message = (stopped == Stopped::Error).then(|| why.to_string());
-        end(recorder, artifacts, watchdog, stopped, message);
+        end(recorder, artifacts, watchdog, stopped, message, now);
     }
 }
 
-/// End the active recording as `stopped`: flush, write the manifest,
-/// count a recording in the artifacts dir into its budget, and keep the
-/// outcome for the stop that collects it. `failure` is the message a
-/// `Stopped::Error` ends with, when the cause is not a failed write.
+/// End the active recording as `stopped` at the app clock's reading
+/// `now`: flush, write the manifest, count a recording in the artifacts
+/// dir into its budget, and keep the outcome for the stop that collects
+/// it. `failure` is the message a `Stopped::Error` ends with, when the
+/// cause is not a failed write.
 fn end(
     recorder: &mut Recorder,
     artifacts: &mut Artifacts,
     watchdog: &FreezeWatchdog,
     stopped: Stopped,
     failure: Option<String>,
+    now: f64,
 ) {
     let Some(active) = recorder.active.take() else {
         return;
     };
     let in_artifacts = active.in_artifacts();
     let dir = active.dir().to_path_buf();
-    let finished = active.finish(stopped, now_ms(), &mut || watchdog.tick());
+    let finished = active.finish(stopped, now, &mut || watchdog.tick());
     // However it ended, what it wrote counts against the budget.
     if in_artifacts {
         artifacts.record_tree(dir.clone(), dir_bytes(&dir));
@@ -295,8 +321,16 @@ pub(super) fn stop(
     recorder: &mut Recorder,
     artifacts: &mut Artifacts,
     watchdog: &FreezeWatchdog,
+    clock: &AppClock,
 ) -> Result<Summary, CaptureError> {
-    end(recorder, artifacts, watchdog, Stopped::Client, None);
+    end(
+        recorder,
+        artifacts,
+        watchdog,
+        Stopped::Client,
+        None,
+        clock.now_ms(),
+    );
     match recorder.finished.take() {
         Some(Ok(summary)) => Ok(summary),
         Some(Err(message)) => Err(CaptureError::Internal(message)),
@@ -307,7 +341,12 @@ pub(super) fn stop(
 /// The app is closing: finish the recording in progress so its frames
 /// and manifest are on disk. A recording in the artifacts dir is
 /// dropped unfinished, since the dir goes with the exit.
-pub(super) fn shutdown(recorder: &mut Recorder, artifacts: &mut Artifacts, watchdog: &FreezeWatchdog) {
+pub(super) fn shutdown(
+    recorder: &mut Recorder,
+    artifacts: &mut Artifacts,
+    watchdog: &FreezeWatchdog,
+    clock: &AppClock,
+) {
     let Some(active) = recorder.active.as_ref() else {
         return;
     };
@@ -320,7 +359,14 @@ pub(super) fn shutdown(recorder: &mut Recorder, artifacts: &mut Artifacts, watch
         recorder.active = None;
         return;
     }
-    end(recorder, artifacts, watchdog, Stopped::Shutdown, None);
+    end(
+        recorder,
+        artifacts,
+        watchdog,
+        Stopped::Shutdown,
+        None,
+        clock.now_ms(),
+    );
     match recorder.finished.take() {
         Some(Ok(summary)) => log::info!(
             "record: finished {} frames into `{}` on exit",
@@ -333,10 +379,16 @@ pub(super) fn shutdown(recorder: &mut Recorder, artifacts: &mut Artifacts, watch
 }
 
 /// When the loop must wake to take the next frame, or `None` when
-/// nothing is recording.
-pub(super) fn deadline(recorder: &Recorder) -> Option<Instant> {
+/// nothing is recording — and under a virtual clock, whose frames are
+/// `clock.step`'s and which no wall-clock instant brings closer. In
+/// real time the app clock runs at the wall clock's rate, so the wait
+/// it names is a wall-clock wait.
+pub(super) fn deadline(recorder: &Recorder, clock: &AppClock) -> Option<Instant> {
     let active = recorder.active.as_ref()?;
-    let wait = Duration::from_secs_f64(active.wait_ms(now_ms()) / 1000.0);
+    if clock.is_virtual() {
+        return None;
+    }
+    let wait = Duration::from_secs_f64(active.wait_ms(clock.now_ms()) / 1000.0);
     Some(Instant::now() + wait)
 }
 
@@ -346,6 +398,7 @@ mod tests {
     use crate::application::capture::artifacts::BUDGET_BYTES;
     use crate::application::capture::geometry::CameraInfo;
     use crate::application::capture::record::MANIFEST_FILE;
+    use crate::application::clock::wall_ms;
     use crate::application::guarded_file::tests::scratch_dir;
     use crate::application::renderer::CapturedPixels;
 
@@ -365,6 +418,7 @@ mod tests {
             height: 1,
             scale: 1.0,
             request: CaptureRequest::default(),
+            pacing: Pacing::Realtime,
         }
     }
 
@@ -376,7 +430,7 @@ mod tests {
         max_frames: u32,
         disk_limit: Option<u64>,
     ) -> Recording {
-        let mut recording = Recording::begin(config(max_frames), dir, now_ms(), disk_limit);
+        let mut recording = Recording::begin(config(max_frames), dir, wall_ms(), disk_limit);
         for n in 0..frames {
             recording.push_frame(
                 f64::from(n) * 100.0,
@@ -417,7 +471,7 @@ mod tests {
         let mut artifacts = Artifacts::under(dir.join("unused"), BUDGET_BYTES);
         let watchdog = watchdog();
         let mut recorder = Recorder::default();
-        let idle = stop(&mut recorder, &mut artifacts, &watchdog);
+        let idle = stop(&mut recorder, &mut artifacts, &watchdog, &AppClock::default());
         assert!(
             matches!(&idle, Err(CaptureError::Invalid { param: "cmd", message }) if message.contains("nothing is recording")),
             "{idle:?}"
@@ -425,11 +479,11 @@ mod tests {
 
         recorder.active = Some(recording(dir.join("rec"), 2, 10, None));
         std::fs::create_dir(dir.join("rec")).expect("dir");
-        let summary = stop(&mut recorder, &mut artifacts, &watchdog).expect("stopped");
+        let summary = stop(&mut recorder, &mut artifacts, &watchdog, &AppClock::default()).expect("stopped");
         assert_eq!((summary.frames, summary.stopped), (2, Stopped::Client));
         assert!(recorder.active.is_none() && recorder.finished.is_none());
         assert_eq!(manifest(&dir.join("rec"))["stopped"], "client");
-        assert!(stop(&mut recorder, &mut artifacts, &watchdog).is_err());
+        assert!(stop(&mut recorder, &mut artifacts, &watchdog, &AppClock::default()).is_err());
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
@@ -442,10 +496,11 @@ mod tests {
         let mut artifacts = Artifacts::under(dir.join("unused"), BUDGET_BYTES);
         let watchdog = watchdog();
         let mut recorder = recorder_with(recording(dir.join("rec"), 2, 2, None));
-        settle(&mut recorder, &mut artifacts, &watchdog, now_ms());
+        settle(&mut recorder, &mut artifacts, &watchdog, wall_ms());
         assert!(recorder.active.is_none(), "it had its frames");
         assert!(matches!(&recorder.finished, Some(Ok(s)) if s.stopped == Stopped::MaxFrames));
-        let summary = stop(&mut recorder, &mut artifacts, &watchdog).expect("collected");
+        let summary =
+            stop(&mut recorder, &mut artifacts, &watchdog, &AppClock::default()).expect("collected");
         assert_eq!((summary.frames, summary.stopped), (2, Stopped::MaxFrames));
         assert_eq!(manifest(&dir.join("rec"))["stopped"], "max_frames");
         assert!(recorder.finished.is_none(), "collected once");
@@ -464,7 +519,7 @@ mod tests {
         let mut artifacts = Artifacts::under(dir.join("unused"), BUDGET_BYTES);
         let watchdog = watchdog();
         let mut recorder = recorder_with(recording(dir.join("rec"), 3, 10, None));
-        let failed = stop(&mut recorder, &mut artifacts, &watchdog);
+        let failed = stop(&mut recorder, &mut artifacts, &watchdog, &AppClock::default());
         assert!(
             matches!(&failed, Err(CaptureError::Internal(m)) if m.contains("could not be finished") && m.contains("rec")),
             "{failed:?}"
@@ -483,9 +538,9 @@ mod tests {
         let mut artifacts = Artifacts::under(dir.join("unused"), BUDGET_BYTES);
         let watchdog = watchdog();
         let mut recorder = Recorder::default();
-        shutdown(&mut recorder, &mut artifacts, &watchdog);
+        shutdown(&mut recorder, &mut artifacts, &watchdog, &AppClock::default());
         recorder.active = Some(recording(dir.join("rec"), 2, 10, None));
-        shutdown(&mut recorder, &mut artifacts, &watchdog);
+        shutdown(&mut recorder, &mut artifacts, &watchdog, &AppClock::default());
         let manifest = manifest(&dir.join("rec"));
         assert_eq!(
             (manifest["stopped"].as_str(), manifest["complete"].as_bool()),
@@ -507,7 +562,7 @@ mod tests {
         let mut recorder = Recorder::default();
         let rec = artifacts.next_dir("recording").expect("dir");
         recorder.active = Some(recording(rec.clone(), 2, 10, Some(BUDGET_BYTES)));
-        stop(&mut recorder, &mut artifacts, &watchdog).expect("stopped");
+        stop(&mut recorder, &mut artifacts, &watchdog, &AppClock::default()).expect("stopped");
         assert_eq!(
             artifacts.total(),
             crate::application::capture::record::dir_bytes(&rec)
@@ -519,16 +574,16 @@ mod tests {
         std::fs::write(bad.join("frame_00001.png"), "in the way").expect("seed");
         let before = artifacts.total();
         recorder.active = Some(recording(bad.clone(), 3, 10, Some(BUDGET_BYTES)));
-        assert!(stop(&mut recorder, &mut artifacts, &watchdog).is_err());
+        assert!(stop(&mut recorder, &mut artifacts, &watchdog, &AppClock::default()).is_err());
         assert!(artifacts.total() > before);
 
         // Past the budget: a recording whose PNGs exceed the limit ends
         // by itself on the next look.
         let big = artifacts.next_dir("recording").expect("dir");
         let mut over = recording(big, 1, 10, Some(1));
-        over.flush(now_ms(), &mut || {}).expect("flushed");
+        over.flush(wall_ms(), &mut || {}).expect("flushed");
         recorder.active = Some(over);
-        settle(&mut recorder, &mut artifacts, &watchdog, now_ms());
+        settle(&mut recorder, &mut artifacts, &watchdog, wall_ms());
         assert!(matches!(&recorder.finished, Some(Ok(s)) if s.stopped == Stopped::DiskBudget));
         artifacts.remove();
         std::fs::remove_dir_all(&root).expect("cleanup");
@@ -544,7 +599,7 @@ mod tests {
         let watchdog = watchdog();
         let rec = artifacts.next_dir("recording").expect("dir");
         let mut recorder = recorder_with(recording(rec.clone(), 3, 10, Some(BUDGET_BYTES)));
-        shutdown(&mut recorder, &mut artifacts, &watchdog);
+        shutdown(&mut recorder, &mut artifacts, &watchdog, &AppClock::default());
         assert!(recorder.active.is_none() && recorder.finished.is_none());
         assert_eq!(
             crate::application::guarded_file::tests::names_in(&rec),

@@ -189,7 +189,8 @@ FLAGS (anywhere before a bare --)
                     (clock.wait until=settled), so the next read or screenshot sees them; refused on
                     read-only commands. An app without clock.wait is detected first: exit 1, and the
                     command is not sent.
-  --timeout <secs>  patience for the connection and for each reply (default 15; the wait gets the same)
+  --timeout <secs>  patience for the connection and for each reply (default 15; the wait gets the same).
+                    A clock.wait reply is waited on at least to its own timeout_ms, plus 2 s
   --count <n>       events.subscribe only: stop after printing n events (else it runs until the app exits
                     or stdout closes; one line per event, the frame as received with --json)
   --force           drive an app whose protocol differs from this build's
@@ -264,9 +265,9 @@ const RAW_EXAMPLE: &str = "  mandalactl raw - <<'JSON'
   JSON";
 
 const TAIL: &str = "
-A command the app serves but this list lacks (the clock family, for one) is
-called by name with name=value arguments: mandalactl clock.step ms=100. `mandalactl describe` shows
-what the connected app has.";
+A command the app serves but this list lacks (one newer than this build) is
+called by name with name=value arguments: mandalactl family.verb name=value. `mandalactl describe`
+shows what the connected app has.";
 
 #[cfg(test)]
 mod tests {
@@ -410,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_command_help_for_a_stranger_points_at_describe() {
-        let err = command_help("clock.step").expect_err("not in the table");
-        assert!(err.contains("mandalactl describe clock.step"), "{err}");
+        let err = command_help("future.verb").expect_err("not in the table");
+        assert!(err.contains("mandalactl describe future.verb"), "{err}");
     }
 }

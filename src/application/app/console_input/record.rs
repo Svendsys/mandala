@@ -31,7 +31,12 @@ use super::screenshot::unix_ms;
 /// Do what `line` asks of the recorder, and say what happened.
 pub(super) fn take(ctx: &mut InputHandlerContext<'_>, line: &RecordLine) -> ExecResult {
     match line {
-        RecordLine::Stop => report_stop(record_flow::stop(ctx.recorder, ctx.artifacts, ctx.watchdog)),
+        RecordLine::Stop => report_stop(record_flow::stop(
+            ctx.recorder,
+            ctx.artifacts,
+            ctx.watchdog,
+            ctx.clock,
+        )),
         RecordLine::Start(start) => start_recording(ctx, start),
     }
 }
@@ -59,6 +64,7 @@ fn start_recording(ctx: &mut InputHandlerContext<'_>, start: &RecordStartLine) -
         Ok(max_frames) => max_frames,
         Err(range) => return ExecResult::err(refusal("max_frames", start.max_frames, range)),
     };
+    let clock = ctx.clock.clone();
     let (scene, artifacts, recorder) = CaptureScene::of_context(ctx);
     report_start(
         record_flow::start(
@@ -69,6 +75,7 @@ fn start_recording(ctx: &mut InputHandlerContext<'_>, start: &RecordStartLine) -
             fps,
             max_frames,
             RecordDestination::Path(dir),
+            &clock,
         ),
         max_frames,
     )

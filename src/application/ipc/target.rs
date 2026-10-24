@@ -23,6 +23,7 @@ use serde_json::Value;
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
+use crate::application::clock::{AppClock, ClockMode, ClockRefusal, StepRequest, Stepped};
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
@@ -231,6 +232,27 @@ pub(crate) trait CommandTarget {
     /// stop. Needs no document: a recording outlives the one it began
     /// on.
     fn record_stop(&mut self) -> Result<Summary, CaptureError>;
+
+    /// The app clock, read-only (`clock.status`, `ping`): its mode and
+    /// its reading.
+    fn clock(&self) -> &AppClock;
+
+    /// Switch the app clock to `mode`, through the one switch the
+    /// `clock` console verb uses too. Never moves the reading
+    /// (`crate::application::clock`). `Ok(false)` when the clock was
+    /// already in `mode`; [`ClockRefusal::Recording`] while a recording
+    /// runs. Changes nothing a frame shows, so [`Self::changed_view`]
+    /// is untouched.
+    fn set_clock_mode(&mut self, mode: ClockMode) -> Result<bool, ClockRefusal>;
+
+    /// Advance a virtual clock by `request`, running every heartbeat
+    /// of the step before this returns — the injected-input queue, the
+    /// drains, the animation tick and a recording's frames, at the
+    /// virtual instants the step names (`app::heartbeat`).
+    /// [`ClockRefusal::Real`] on a real clock. A step that ran marks the
+    /// view changed: time moved, and the window owes a frame showing
+    /// where it left the app.
+    fn step_clock(&mut self, request: StepRequest) -> Result<Stepped, ClockRefusal>;
 }
 
 /// What [`CommandTarget::capture`] did.
