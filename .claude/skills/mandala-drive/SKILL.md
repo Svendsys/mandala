@@ -66,16 +66,17 @@ export PATH="$PWD/target/release:$PATH"
 mandalactl scene.node_geometry 3.2 | grep -E '^(in_scene|canvas)'
 #   canvas.h: 115.399994   canvas.w: 378.0   canvas.x: -25.4   canvas.y: 11697.3   in_scene: true
 
-# 5. Frame a region around it — the rect grown by about one node on each
-#    side — and capture at a matching aspect so nothing extra is added.
+# 5. Frame a region around it — the rect grown by one node on each side:
+#    {x: x−w, y: y−h, w: 3w, h: 3h}, rounded — and capture at
+#    a matching aspect (width/height ∝ w/h) so nothing extra is added.
 mandalactl capture.screenshot /tmp/around-3.2.png \
-  region:='{"x":-400,"y":11500,"w":1130,"h":510}' width=1130 height=510
+  region:='{"x":-404,"y":11581,"w":1134,"h":347}' width=1134 height=347
 #   rendered: true   path: "/tmp/around-3.2.png"   sidecar_path: "/tmp/around-3.2.png.geometry.json"
 ```
 
 6. Look at `/tmp/around-3.2.png` (your file-reading tool shows images). The
    sidecar says where 3.2 landed in that image:
-   `{"id":"3.2","rect":{"x":374.6,"y":197.3,"w":378.0,"h":115.4},"clipped":false,…}`.
+   `{"id":"3.2","rect":{"x":378.6,"y":116.3,"w":378.0,"h":115.4},"clipped":false,…}`.
 
 The live camera is untouched by a capture: `query.camera` reads the same
 before and after.
@@ -269,7 +270,7 @@ prepare/encode path — not a window grab — and writes a PNG plus
 ```sh
 mandalactl capture.screenshot /tmp/now.png                     # what the window shows, window size
 mandalactl capture.screenshot /tmp/big.png width=1920 height=1080 fit=true   # whole map
-mandalactl capture.screenshot /tmp/r.png region:='{"x":-400,"y":11500,"w":1130,"h":510}' width=1130 height=510
+mandalactl capture.screenshot /tmp/r.png region:='{"x":-404,"y":11581,"w":1134,"h":347}' width=1134 height=347
 mandalactl capture.screenshot /tmp/hi.png scale=2               # same view, 2× the pixels
 mandalactl capture.screenshot                                   # no path: a file in the app's artifacts dir
 ```
