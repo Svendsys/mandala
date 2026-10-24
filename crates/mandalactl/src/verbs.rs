@@ -478,7 +478,7 @@ pub const VERBS: &[Verb] = &[
         positional: &["path"],
         effect: Effect::Reads,
         render: Render::Flat,
-        example: "mandalactl capture.screenshot /tmp/shot.png fit=true",
+        example: "mandalactl capture.screenshot /tmp/shot.png fit=true width=1920 height=1080",
     },
     Verb {
         name: "capture.record_start",

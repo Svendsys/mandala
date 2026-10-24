@@ -68,7 +68,7 @@ export MANDALA_IPC="$XDG_RUNTIME_DIR/mandala.sock"
 mandalactl ping                                  # now_ms: 4100.5
 mandalactl scene.find_text Introduction          # where is it, on screen or not?
 mandalactl input.click_node 1.2                  # act on the node
-mandalactl capture.screenshot /tmp/after.png fit=true
+mandalactl capture.screenshot /tmp/after.png fit=true width=1920 height=1080
 mandalactl query.selection --json                # the reply envelope, as received
 ```
 
@@ -85,6 +85,13 @@ changes the app returns only once the result is rendered. Relative `path=` /
 command with a copy-pasteable example, `mandalactl describe` lists what the
 connected app serves, and `mandalactl raw -` takes a request frame on stdin for
 anything the argument spelling cannot say.
+
+The whole loop for an agent — launching (including on a headless Linux box
+under Xvfb), inspecting, acting, screenshotting with the geometry sidecar,
+tearing down, and what each failure means — is the `mandala-drive` skill,
+[`.claude/skills/mandala-drive/SKILL.md`](.claude/skills/mandala-drive/SKILL.md).
+[`scripts/ipc_smoke.sh`](scripts/ipc_smoke.sh) runs it end to end: launch,
+ping, screenshot, check the PNGs and sidecars, tear down.
 
 ## Where to read next
 

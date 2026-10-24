@@ -350,3 +350,11 @@ the parity trajectory (or why none is owed):
   before repeating a command that changes it. (`--wait-settled` needs
   an app that serves `clock.wait`; it is detected first, and nothing is
   sent when it is missing.)
+  **The whole loop is the `mandala-drive` skill**
+  (`.claude/skills/mandala-drive/SKILL.md`): the launch recipe for a
+  desktop and for a headless container (Xvfb + Mesa lavapipe, and the
+  packages it needs), text-first inspection, acting with
+  `--wait-settled`, screenshots read through their geometry sidecar,
+  teardown, and a troubleshooting table. `scripts/ipc_smoke.sh` is its
+  end-to-end check — deliberately outside `./test.sh`, which holds no
+  live GPU (TEST_CONVENTIONS §T8).
