@@ -68,7 +68,11 @@ borders, connection paths — is laid out as positioned font glyphs.
   it, nothing ran) / `3` (bad command line) / `4` (sent, not confirmed:
   it may have run). The sibling of `maptool`, not a mode of
   it: `maptool` reads files and never talks to a process, `mandalactl`
-  talks to a process and never reads a map. `mandalactl --help` is the
+  talks to a process and never reads a map. (Its one client-side
+  command, `record assemble <dir>`, reads a *recording's* frames and
+  manifest, never a map and never the socket: it turns the frames of
+  `capture.record_start` / `capture.record_stop` into a GIF, or an MP4
+  through the host's `ffmpeg`.) `mandalactl --help` is the
   agent-facing reference; `verbs::VERBS` is its command table, and the
   app crate's tests hold it to the IPC registry in both directions, so
   **a new IPC command ships its `mandalactl` verb in the same PR**.
@@ -103,7 +107,10 @@ the parity trajectory (or why none is owed):
 - **Screenshot capture** (`src/application/capture/`,
   `src/application/renderer/capture.rs`,
   `src/application/app/capture_flow.rs`; IPC-07/#67) — the engine
-  behind `capture.screenshot` and the `screenshot` console verb is
+  behind `capture.screenshot` and the `screenshot` console verb, and
+  with it frame-sequence recording (`capture/record.rs`,
+  `app/record_flow.rs`; IPC-08/#68: `capture.record_start` /
+  `capture.record_stop` and the `record` console verb), is
   native-only: the readback blocks the main thread on a GPU buffer
   map, which a browser cannot do (wgpu's `poll` is a no-op on WebGPU,
   and the map resolves only when the event loop yields). The frame it

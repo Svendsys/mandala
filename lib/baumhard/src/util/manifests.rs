@@ -1231,7 +1231,7 @@ name = "test_bench"
     /// exactly what these tests exist to look at.
     const DECLARATIONS_PER_MANIFEST: [(&str, usize); 5] = [
         ("Cargo.toml", 25),
-        ("crates/mandalactl/Cargo.toml", 2),
+        ("crates/mandalactl/Cargo.toml", 4),
         ("crates/maptool/Cargo.toml", 4),
         ("lib/baumhard/Cargo.toml", 27),
         ("lib/mandala_derive/Cargo.toml", 3),

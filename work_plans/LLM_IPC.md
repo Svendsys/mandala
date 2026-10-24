@@ -694,12 +694,22 @@ shapes without waiting.
   artifacts dir (ring-buffer, removed on exit) — client-supplied
   paths are the client's to reclaim. Over-bound/guarded requests are
   `invalid_params`. Exact numbers: `format/ipc.md` §capture / §clock.
-- **Recording emits frames + manifest; assembly is external.**
+- **Recording emits frames + manifest; assembly is not the app's.**
   GIF/video encoding in-app would drag an encoder dependency into
-  the render path for a job `ffmpeg`/`gifski` do better; the
+  the render path for a job a client does better; the
   `manifest.json` (with per-frame `t_ms` on the capture clock) is
-  the contract between IPC-08's recorder and IPC-13's assembly
-  skill. An **active recording is a continuation/timer source** —
+  the contract between IPC-08's recorder and whatever assembles it.
+  *Amended by IPC-08 (#68):* the assembler is `mandalactl record
+  assemble <dir>` — a client-side command that reads the directory
+  and never opens the socket, so the app still links no encoder and
+  the interactive path stays lean — writing an animated GIF (the
+  format GitHub shows inline in a PR, which is the review vehicle
+  the epic names) with the pure-Rust `gif` crate, or an MP4 through
+  the host's `ffmpeg`, shelled out to and never a dependency. The
+  split this decision made — frames in the app, encoding outside it
+  — is unchanged; what moved is that the encoder is not left to a
+  skill's choice of tool. An **active recording is a
+  continuation/timer source** —
   on a static scene the loop would park and capture nothing, so
   while recording it parks in `WaitUntil(next frame deadline)` at
   the requested `fps` (under the virtual clock, `clock.step` drives
@@ -834,7 +844,7 @@ below); this design takes no dependency on it.
 | IPC-05 | `scene` family | D5, D3 (`to_file` discipline), coordinate spaces; canonical hit-test rule (never fork) |
 | IPC-06 | `input` family | D5, D3; fidelity contract (same handler entry points as winit events); the injected-input queue + one-sample-per-frame pacing (shared with `settled`) |
 | IPC-07 | screenshot engine | D7 shapes (params/sidecar/`space` grid/write-guards), offscreen mandate, #7 coordination |
-| IPC-08 | recorder | D7 shapes (manifest), external-assembly split, capture-clock `t_ms`, the virtual-clock frame-emission rule |
+| IPC-08 | recorder + `mandalactl record assemble` | D7 shapes (manifest), the frames-in-the-app / encoding-outside split, capture-clock `t_ms`, the virtual-clock frame-emission rule |
 | IPC-09 | virtual clock + wait | D7 (`clock.*` shapes; `settled` keys on *rendered* not presented; wait exclusivity; watchdog-per-heartbeat; injected-input queue), D2 (deferred replies) |
 | IPC-10 | headless | D7 (offscreen capture path; `settled`-on-rendered makes headless capture terminate), `Options.should_exit` seam; app-shell freeze per EPIC #60 |
 | IPC-11 | `mandalactl` | D3 (protocol pinning/refusal; enum-widening is breaking), `format/ipc.md` as its command source |
@@ -935,6 +945,36 @@ Moved later, by the issue that found the need:
   model the drag has not written. (6) The offscreen target is the
   surface's own format — #7's single source, `config.format` — not a
   constant beside it.
+
+- **IPC-08 (#68)** — §D7's recording pair, built and refined where
+  building it found the pinned text silent or short, each in
+  `format/ipc.md` §`capture.record_start` / `capture.record_stop` in
+  the same PR. (1) **Assembly lives in `mandalactl`** (see the D7
+  bullet above): `record assemble` makes the GIF or, through the
+  host's `ffmpeg`, an MP4. (2) **The bounds are refusals**, as IPC-07
+  made them for a screenshot: `fps` outside `1..=60` and `max_frames`
+  outside `1..=3600` are `invalid_params`, not clamps; `width`,
+  `height`, `region`, `space`, `fit` and `scale` are a screenshot's, by
+  the same parser. (3) **The first frame is taken before the reply**,
+  so it is the state the next command acts on; and every frame of a
+  recording is the size the first one fixed, which a video needs.
+  (4) **Pacing.** `t_ms` is the capture clock's reading when the frame
+  was taken — the wall clock's in `realtime`, the one pacing today,
+  named by the manifest's `pacing` key so `stepped` is a new value and
+  not a rework — and a heartbeat that overran takes one frame for the
+  latest boundary and counts the rest in `dropped_frames` and `gaps`.
+  The assembler paces a GIF by those times, rounded so the error does
+  not accumulate, and drops frames closer than the 20 ms browsers
+  honor. (5) **Encoding is deferred** past the frame — raw frames wait
+  in memory until 256 MiB of them have, and for `record_stop` — so a
+  frame costs the loop a render and a readback; a gap is a stretch
+  with no frame, never a silent drop, with its reason. (6) **A
+  recording that ends on its own** (its `max_frames`, the artifacts
+  dir's budget, a renderer that draws nothing for 100 frames, the app
+  exiting) is kept until `capture.record_stop` collects it, so
+  "stopping while idle is `invalid_params`" does not strand an agent
+  that looked away. The manifest gains `complete`, `stopped`,
+  `duration_ms`, `gaps`, and per-frame `camera`.
 
 ## Change governance
 

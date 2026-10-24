@@ -87,6 +87,11 @@ proc-macro2 = "1.0.107"
 rustc-hash = "2.1.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Two members name it: the app's screenshot encoder
+# (`src/application/capture/png.rs`) and `mandalactl`'s `record
+# assemble`, which decodes a recording's frames. Native on the app side,
+# every target on this one's (the workspace is type-checked for wasm32).
+png = "0.18.1"
 strum = "0.28.0"
 strum_macros = "0.28.0"
 # Two members name it, both as a dev-dependency: `maptool`'s file tests
@@ -188,7 +193,9 @@ arboard = "3.7.0"
 # Native-only with the engine: the readback blocks on a buffer map,
 # which a browser cannot. `arboard` already brings this exact version
 # into the native graph through `image`, so naming it adds no crate.
-png = "0.18.1"
+# Declared once, in `[workspace.dependencies]`, since `mandalactl` reads
+# the same format.
+png.workspace = true
 
 # The `--ipc` socket's lifecycle needs one POSIX call std does not
 # expose — `geteuid`, so the directories on the socket's path are only

@@ -19,6 +19,14 @@ license.workspace = true
 
 [dependencies]
 serde_json.workspace = true
+# `record assemble` (`src/assemble.rs`): a recording's PNG frames are
+# decoded with `png` and written back as an animated GIF with `gif` —
+# both pure Rust, neither needing anything on the host. Video is the
+# host's `ffmpeg`, shelled out to and never linked. The app never links
+# either encoder; assembly is the client's so the interactive path stays
+# lean (`format/ipc.md` §`capture.record_start`).
+png.workspace = true
+gif = "0.14.2"
 
 [dev-dependencies]
 tempfile.workspace = true

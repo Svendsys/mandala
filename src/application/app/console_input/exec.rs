@@ -106,6 +106,17 @@ pub(in crate::application::app) fn execute_console_line(
         });
     let had_side_effect = side_effect.is_some();
 
+    // A recording's report is too, and is taken here for the same
+    // reason: it starts or ends a recording and mutates nothing, so
+    // there is no rebuild to run and no console state to move.
+    if let Some(ConsoleSideEffect::Record(line)) = &side_effect {
+        let outcome = LineOutcome::Ran(super::record::take(ctx, line));
+        return Some(LineRun {
+            outcome,
+            changed_view: false,
+        });
+    }
+
     // A screenshot's report is the line's output, so it is taken here,
     // before anything else could run, and replaces the verb's silent
     // `Ok`. It draws through a camera of its own and mutates nothing:
@@ -283,7 +294,7 @@ fn side_effect_changes_the_canvas(side_effect: Option<&ConsoleSideEffect>) -> bo
         // Taken before this question is asked (`execute_console_line`
         // returns with its report); were it ever asked, the answer is
         // that a capture draws nothing on the canvas.
-        Some(ConsoleSideEffect::Screenshot(_)) => false,
+        Some(ConsoleSideEffect::Screenshot(_) | ConsoleSideEffect::Record(_)) => false,
         Some(
             ConsoleSideEffect::ReplaceDocument(_)
             | ConsoleSideEffect::SetInteractionMode(_)
@@ -538,7 +549,8 @@ fn handle_post_rebuild_side_effect(
         ConsoleSideEffect::ReplaceDocument(_)
         | ConsoleSideEffect::SetFpsDisplay(_)
         | ConsoleSideEffect::SetInteractionMode(_)
-        | ConsoleSideEffect::Screenshot(_) => {
+        | ConsoleSideEffect::Screenshot(_)
+        | ConsoleSideEffect::Record(_) => {
             log::error!(
                 "console: {:?} reached post-rebuild handler; should have been consumed before the \
                  rebuild — ignoring to avoid crash",

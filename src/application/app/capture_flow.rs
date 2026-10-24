@@ -25,17 +25,23 @@
 //!
 //! Native-only with the engine (`CLAUDE.md` "Dual-target status").
 
+use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 use crate::application::capture::artifacts::Artifacts;
 use crate::application::capture::plan::{plan, CaptureRequest, Framing, PlanContext};
+use crate::application::capture::record::Recorder;
 use crate::application::capture::{geometry, resolve, write, CaptureError, CaptureOutcome, Destination};
 use crate::application::document::MindMapDocument;
-use crate::application::renderer::{content_bounds, CaptureFailure, ModalLayer, Renderer};
+use crate::application::renderer::{
+    content_bounds, CaptureFailure, CapturedPixels, FrameSkip, ModalLayer, Renderer,
+};
 use crate::application::scene_host::AppScene;
 
 use super::freeze_watchdog::FreezeWatchdog;
+use super::input_context::InputHandlerContext;
+use super::run_native::InitState;
 use super::scene_rebuild::rebuild_camera_geometry_at;
 use super::InteractionMode;
 
@@ -57,6 +63,58 @@ pub(super) struct CaptureScene<'a> {
     pub(super) watchdog: &'a FreezeWatchdog,
 }
 
+impl<'a> CaptureScene<'a> {
+    /// The scene a capture reads out of the event loop's state, with the
+    /// two other things a capture or a recording needs from it — the
+    /// artifacts dir and the recorder — split off beside it: they are
+    /// different fields, so all three are borrowed at once. The one
+    /// place the loop's scene is assembled, so a field added to
+    /// [`CaptureScene`] (as `moving_node` was) is added once.
+    pub(super) fn of_init(init: &'a mut InitState) -> (Self, &'a mut Artifacts, &'a mut Recorder) {
+        let scene = CaptureScene {
+            moving_node: init.drag_state.is_moving_node(),
+            document: &init.document,
+            mindmap_tree: &init.mindmap_tree,
+            app_scene: &mut init.app_scene,
+            renderer: &mut init.renderer,
+            scene_cache: &mut init.scene_cache,
+            interaction_mode: &init.interaction_mode,
+            watchdog: &init.watchdog,
+        };
+        (scene, &mut init.artifacts, &mut init.recorder)
+    }
+
+    /// The same out of an input handler's context, which the console's
+    /// `screenshot` and `record` verbs run in.
+    pub(super) fn of_context(
+        ctx: &'a mut InputHandlerContext<'_>,
+    ) -> (Self, &'a mut Artifacts, &'a mut Recorder) {
+        let scene = CaptureScene {
+            moving_node: ctx.drag_state.is_moving_node(),
+            document: &*ctx.document,
+            mindmap_tree: &*ctx.mindmap_tree,
+            app_scene: &mut *ctx.app_scene,
+            renderer: &mut *ctx.renderer,
+            scene_cache: &mut *ctx.scene_cache,
+            interaction_mode: &*ctx.interaction_mode,
+            watchdog: ctx.watchdog,
+        };
+        (scene, &mut *ctx.artifacts, &mut *ctx.recorder)
+    }
+}
+
+/// What drawing a frame produced.
+pub(super) enum Drawn {
+    /// The frame was drawn: the camera it was drawn through, and its
+    /// pixels.
+    Frame {
+        camera: Camera2D,
+        pixels: CapturedPixels,
+    },
+    /// The renderer did not draw the frame (`rendered: false`).
+    Skipped { camera: Camera2D, skip: FrameSkip },
+}
+
 /// Take one screenshot: plan `request` and resolve `destination` —
 /// both before anything is drawn, so a refused request costs no frame —
 /// then draw it and write it, with its geometry sidecar when `sidecar`
@@ -71,6 +129,48 @@ pub(super) fn capture(
     sidecar: bool,
     artifacts: &mut Artifacts,
 ) -> Result<CaptureOutcome, CaptureError> {
+    let (mindmap_tree, document) = (scene.mindmap_tree, scene.document);
+    let mut progress = || scene.watchdog.tick();
+    let (target, drawn) = draw(scene, request, |_| resolve(destination, sidecar, artifacts))?;
+    let (camera, pixels) = match drawn {
+        Drawn::Frame { camera, pixels } => (camera, pixels),
+        Drawn::Skipped { camera, skip } => return Ok(CaptureOutcome::Skipped { camera, skip }),
+    };
+    let doc = document
+        .as_ref()
+        .ok_or_else(|| CaptureError::Internal("no document is loaded".into()))?;
+    let map = target.sidecar.is_some().then(|| {
+        geometry::sidecar(
+            mindmap_tree.as_ref(),
+            &doc.mindmap,
+            &camera,
+            crate::application::ipc::PROTOCOL_VERSION,
+            doc.revision(),
+        )
+    });
+    write(&target, &pixels, map.as_ref(), artifacts, &mut progress)?;
+    Ok(CaptureOutcome::Written {
+        camera,
+        path: target.path,
+        sidecar_path: target.sidecar,
+    })
+}
+
+/// Draw one frame of `request` and hand back its pixels: the half of a
+/// capture that screenshots and recordings share. `before_draw` runs
+/// once the request is planned and before anything is drawn, with the
+/// camera the frame will be drawn through, and its `Err` ends the
+/// capture there — a screenshot resolves its destination in it, so a
+/// refused path costs no frame, and a recording makes its directory in
+/// it, so a refused request leaves none behind.
+///
+/// `Err(CaptureError::Internal)` when there is no document is the
+/// callers' to pre-empt; both answer it in their own words first.
+pub(super) fn draw<T>(
+    scene: CaptureScene<'_>,
+    request: &CaptureRequest,
+    before_draw: impl FnOnce(&Camera2D) -> Result<T, CaptureError>,
+) -> Result<(T, Drawn), CaptureError> {
     let CaptureScene {
         document,
         mindmap_tree,
@@ -111,7 +211,7 @@ pub(super) fn capture(
         },
     )?;
 
-    let target = resolve(destination, sidecar, artifacts)?;
+    let prepared = before_draw(&camera)?;
 
     // Exact comparison on purpose: any difference in zoom is a
     // difference in the connection samples the scene holds.
@@ -144,9 +244,9 @@ pub(super) fn capture(
         rebuild_camera_geometry_at(live.zoom, doc, interaction_mode, app_scene, renderer, scene_cache);
     }
 
-    let pixels = match drawn {
-        Ok(pixels) => pixels,
-        Err(CaptureFailure::Skipped(skip)) => return Ok(CaptureOutcome::Skipped { camera, skip }),
+    let drawn = match drawn {
+        Ok(pixels) => Drawn::Frame { camera, pixels },
+        Err(CaptureFailure::Skipped(skip)) => Drawn::Skipped { camera, skip },
         Err(CaptureFailure::UnsupportedFormat(format)) => {
             return Err(CaptureError::Internal(format!(
                 "the window's surface format, {format:?}, is not one a capture can read back"
@@ -154,19 +254,5 @@ pub(super) fn capture(
         }
         Err(CaptureFailure::Gpu(message)) => return Err(CaptureError::Internal(message)),
     };
-    let map = target.sidecar.is_some().then(|| {
-        geometry::sidecar(
-            mindmap_tree.as_ref(),
-            &doc.mindmap,
-            &camera,
-            crate::application::ipc::PROTOCOL_VERSION,
-            doc.revision(),
-        )
-    });
-    write(&target, &pixels, map.as_ref(), artifacts, &mut progress)?;
-    Ok(CaptureOutcome::Written {
-        camera,
-        path: target.path,
-        sidecar_path: target.sidecar,
-    })
+    Ok((prepared, drawn))
 }

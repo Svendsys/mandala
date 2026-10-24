@@ -23,7 +23,7 @@ use std::ops::RangeInclusive;
 use baumhard::gfx_structs::camera::Camera2D;
 use glam::Vec2;
 
-use crate::application::console::commands::screenshot::{ScreenshotFrame, ScreenshotLine};
+use crate::application::console::commands::screenshot::{ConsoleView, ScreenshotFrame};
 use crate::application::ipc::space::Space;
 use crate::application::renderer::{ModalLayer, FIT_PADDING_FRACTION};
 
@@ -94,14 +94,15 @@ impl Default for CaptureRequest {
 }
 
 impl CaptureRequest {
-    /// The `screenshot` console verb's line, as the engine takes it.
-    /// The console is always left out of the picture it was asked from.
-    /// (The IPC request is built by the `capture` family, from its
-    /// parameters; both arrive here as the same value.)
-    pub(crate) fn from_console_line(line: &ScreenshotLine) -> Self {
+    /// A console verb's view — `screenshot`'s line, `record start`'s —
+    /// as the engine takes it. The console is always left out of the
+    /// picture it was asked from. (The IPC request is built by the
+    /// `capture` family, from its parameters; both arrive here as the
+    /// same value.)
+    pub(crate) fn from_console_view(view: &ConsoleView) -> Self {
         CaptureRequest {
-            size: line.size,
-            framing: match line.frame {
+            size: view.size,
+            framing: match view.frame {
                 ScreenshotFrame::View => Framing::View,
                 ScreenshotFrame::Fit => Framing::Fit,
                 ScreenshotFrame::Region { x, y, w, h, surface } => Framing::Region(Region {
@@ -112,7 +113,7 @@ impl CaptureRequest {
                     space: if surface { Space::Surface } else { Space::Canvas },
                 }),
             },
-            scale: line.scale.unwrap_or(CaptureRequest::default().scale),
+            scale: view.scale.unwrap_or(CaptureRequest::default().scale),
             modal: ModalLayer::Omitted,
         }
     }
@@ -537,9 +538,8 @@ mod tests {
     /// Every word of a console line becomes its part of the request,
     /// and the console is always left out of the picture.
     #[test]
-    fn test_a_console_line_becomes_the_same_request() {
-        let line = ScreenshotLine {
-            path: None,
+    fn test_a_console_view_becomes_the_same_request() {
+        let view = ConsoleView {
             size: Some((800, 600)),
             scale: Some(2.0),
             frame: ScreenshotFrame::Region {
@@ -549,11 +549,9 @@ mod tests {
                 h: 4.0,
                 surface: true,
             },
-            overwrite: false,
-            sidecar: true,
         };
         assert_eq!(
-            CaptureRequest::from_console_line(&line),
+            CaptureRequest::from_console_view(&view),
             CaptureRequest {
                 size: Some((800, 600)),
                 framing: Framing::Region(Region {
@@ -567,21 +565,20 @@ mod tests {
                 modal: ModalLayer::Omitted,
             }
         );
-        let bare = ScreenshotLine {
+        let bare = ConsoleView {
             size: None,
             scale: None,
             frame: ScreenshotFrame::Fit,
-            ..line.clone()
         };
         assert_eq!(
-            CaptureRequest::from_console_line(&bare),
+            CaptureRequest::from_console_view(&bare),
             CaptureRequest {
                 framing: Framing::Fit,
                 modal: ModalLayer::Omitted,
                 ..CaptureRequest::default()
             }
         );
-        let canvas = ScreenshotLine {
+        let canvas = ConsoleView {
             frame: ScreenshotFrame::Region {
                 x: 0.0,
                 y: 0.0,
@@ -589,10 +586,10 @@ mod tests {
                 h: 1.0,
                 surface: false,
             },
-            ..line
+            ..view
         };
         assert!(matches!(
-            CaptureRequest::from_console_line(&canvas).framing,
+            CaptureRequest::from_console_view(&canvas).framing,
             Framing::Region(Region {
                 space: Space::Canvas,
                 ..

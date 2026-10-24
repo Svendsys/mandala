@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 use winit::event_loop::ActiveEventLoop;
 
 use crate::application::capture::plan::CaptureRequest;
+use crate::application::capture::record::{RecordDestination, Started, Summary};
 use crate::application::capture::{CaptureError, Destination};
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
@@ -41,6 +42,7 @@ use super::capture_flow::{self, CaptureScene};
 use super::console_input::exec::execute_console_line;
 use super::dispatch::{self, DispatchHit, DispatchOutcome};
 use super::input_context::InputHandlerContext;
+use super::record_flow;
 use super::run_native::InitState;
 use super::{ipc_scene, ipc_state};
 
@@ -315,21 +317,38 @@ impl CommandTarget for IpcCommandTarget<'_> {
     ) -> Option<Result<Screenshot, CaptureError>> {
         let init = &mut *self.init;
         init.document.as_ref()?;
-        let scene = CaptureScene {
-            moving_node: init.drag_state.is_moving_node(),
-            document: &init.document,
-            mindmap_tree: &init.mindmap_tree,
-            app_scene: &mut init.app_scene,
-            renderer: &mut init.renderer,
-            scene_cache: &mut init.scene_cache,
-            interaction_mode: &init.interaction_mode,
-            watchdog: &init.watchdog,
-        };
-        let taken = capture_flow::capture(scene, request, destination, sidecar, &mut init.artifacts);
+        let (scene, artifacts, _) = CaptureScene::of_init(init);
+        let taken = capture_flow::capture(scene, request, destination, sidecar, artifacts);
         // After the capture, which ran the camera-geometry rebuild the
         // next frame owed: what is left is what a frame would still
         // move on from.
         let settled = !init.needs_continuation();
         Some(taken.map(|outcome| Screenshot { outcome, settled }))
+    }
+
+    fn record_start(
+        &mut self,
+        request: &CaptureRequest,
+        fps: u32,
+        max_frames: u32,
+        destination: RecordDestination,
+    ) -> Option<Result<Started, CaptureError>> {
+        let init = &mut *self.init;
+        init.document.as_ref()?;
+        let (scene, artifacts, recorder) = CaptureScene::of_init(init);
+        Some(record_flow::start(
+            scene,
+            recorder,
+            artifacts,
+            request,
+            fps,
+            max_frames,
+            destination,
+        ))
+    }
+
+    fn record_stop(&mut self) -> Result<Summary, CaptureError> {
+        let init = &mut *self.init;
+        record_flow::stop(&mut init.recorder, &mut init.artifacts, &init.watchdog)
     }
 }

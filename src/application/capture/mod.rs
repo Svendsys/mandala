@@ -28,6 +28,7 @@ pub(crate) mod artifacts;
 pub(crate) mod geometry;
 pub(crate) mod plan;
 pub(crate) mod png;
+pub(crate) mod record;
 
 use std::path::{Path, PathBuf};
 

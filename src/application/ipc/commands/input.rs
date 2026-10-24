@@ -988,6 +988,23 @@ mod tests {
         {
             panic!("an input command must not take a screenshot");
         }
+        fn record_start(
+            &mut self,
+            _: &crate::application::capture::plan::CaptureRequest,
+            _: u32,
+            _: u32,
+            _: crate::application::capture::record::RecordDestination,
+        ) -> Option<
+            Result<crate::application::capture::record::Started, crate::application::capture::CaptureError>,
+        > {
+            panic!("an input command must not start a recording");
+        }
+        fn record_stop(
+            &mut self,
+        ) -> Result<crate::application::capture::record::Summary, crate::application::capture::CaptureError>
+        {
+            panic!("an input command must not stop a recording");
+        }
     }
 
     /// Where `point` lands on the surface through `camera`: the

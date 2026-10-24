@@ -11,7 +11,7 @@
 //! IPC artifacts dir, which is removed when the app exits; and the
 //! console is left out of the picture it was asked from (the request
 //! itself is the engine's reading of the line,
-//! `CaptureRequest::from_console_line`).
+//! `CaptureRequest::from_console_view`).
 
 use std::path::{Path, PathBuf};
 
@@ -29,26 +29,17 @@ pub(super) fn take(ctx: &mut InputHandlerContext<'_>, line: &ScreenshotLine) -> 
         Ok(cwd) => console_path(line.path.as_deref(), &cwd, unix_ms()),
         Err(e) => return ExecResult::err(format!("screenshot: the working directory cannot be read: {e}")),
     };
-    let scene = CaptureScene {
-        moving_node: ctx.drag_state.is_moving_node(),
-        document: ctx.document,
-        mindmap_tree: ctx.mindmap_tree,
-        app_scene: ctx.app_scene,
-        renderer: ctx.renderer,
-        scene_cache: ctx.scene_cache,
-        interaction_mode: ctx.interaction_mode,
-        watchdog: ctx.watchdog,
-    };
+    let (scene, artifacts, _) = CaptureScene::of_context(ctx);
     let destination = Destination::Path {
         path,
         overwrite: line.overwrite,
     };
     report(capture_flow::capture(
         scene,
-        &CaptureRequest::from_console_line(line),
+        &CaptureRequest::from_console_view(&line.view),
         destination,
         line.sidecar,
-        ctx.artifacts,
+        artifacts,
     ))
 }
 
@@ -64,7 +55,7 @@ fn console_path(typed: Option<&str>, cwd: &Path, now_ms: u128) -> PathBuf {
 /// Milliseconds since the Unix epoch, for the default file name. A
 /// clock before 1970 names the file `mandala-0.png`, which the write
 /// guard then keeps from replacing an earlier one.
-fn unix_ms() -> u128 {
+pub(super) fn unix_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_millis())

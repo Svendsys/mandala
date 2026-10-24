@@ -22,7 +22,18 @@ pub const WORKFLOW: &[&str] = &[
     "mandalactl input.click_node 1.2",
     "mandalactl input.pending",
     "mandalactl capture.screenshot /tmp/after.png fit=true",
+    "mandalactl capture.record_start /tmp/zoom fps=20",
+    "mandalactl act.action ZoomIn",
+    "mandalactl capture.record_stop",
     "mandalactl events.subscribe document_changed --count 1",
+];
+
+/// The client's own commands, which never touch the socket. Each is
+/// parsed in the tests, as [`WORKFLOW`] is.
+pub const LOCAL: &[&str] = &[
+    "mandalactl record assemble /tmp/zoom",
+    "mandalactl record assemble /tmp/zoom out=zoom.gif width=640 fps=15",
+    "mandalactl record assemble /tmp/zoom format=mp4 overwrite=true",
 ];
 
 /// Argument spellings the overview teaches, one per line. Also parsed
@@ -49,6 +60,10 @@ pub fn overview() -> String {
         text.push_str(&format!("  {line}\n"));
     }
     text.push_str(RAW_EXAMPLE);
+    text.push_str(LOCAL_HEAD);
+    for line in LOCAL {
+        text.push_str(&format!("  {line}\n"));
+    }
     text.push_str("\nCOMMANDS  ([mutates] = changes the app, so --wait-settled applies)\n");
     let mut current = "";
     for verb in VERBS {
@@ -77,6 +92,9 @@ pub fn overview() -> String {
 pub fn command_help(name: &str) -> Result<String, String> {
     if name == "raw" {
         return Ok(RAW_HELP.to_string());
+    }
+    if name == crate::assemble::COMMAND {
+        return Ok(RECORD_HELP.to_string());
     }
     let Some(verb) = verbs::lookup(name) else {
         return Err(format!(
@@ -204,12 +222,49 @@ mandalactl raw -
   example: mandalactl raw '{\"cmd\":\"ping\"}'
 ";
 
+const LOCAL_HEAD: &str = "
+
+CLIENT-SIDE (read files, never the socket: no app needs to be running, no --ipc)
+  mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps=<n>] [max_frames=<n>] [overwrite=true]
+      Turn a recording's frames and manifest.json (made by capture.record_start / capture.record_stop)
+      into an animated GIF, which GitHub shows inline in a PR. `mandalactl help record` says how.
+";
+
+const RECORD_HELP: &str = "\
+mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps=<n>] [max_frames=<n>] [overwrite=true]
+    Assemble a recording into one file. <dir> is the directory capture.record_stop reported: frames
+    (frame_00000.png ...) and manifest.json. The command is the client's own — it reads files and never
+    opens the socket, so no app need be running and no --ipc is needed. A relative <dir> or out= is read
+    against the current directory.
+
+    gif (default)  an animated GIF that loops, written by this tool with nothing else installed. Each
+                   frame is shown for as long as the manifest says (a stretch the recording missed holds
+                   the frame before it), so it plays at the speed it was recorded. A GIF cannot show a
+                   frame for under 20 ms (browsers play it as 100 ms), so frames closer than that are left
+                   out, and the result says how many.
+    mp4            H.264 through the host's ffmpeg, which must be on PATH (never required for the GIF).
+
+    out=           the file to write; default <dir>/recording.gif (or .mp4). An existing file is kept
+                   unless overwrite=true.
+    width=         scale the frames down to this many pixels wide, keeping their shape. The way to bring a
+                   GIF under GitHub's 10 MiB inline limit, which the result warns about.
+    fps=           show at most this many frames a second (1-60): fewer frames, same speed.
+    max_frames=    GIF only: keep at most this many frames (default 600, up to 3600), thinned evenly, same
+                   speed. (An mp4 keeps every frame; fps= sets its frame rate.)
+
+    stdout: one `path: value` line per field (--json: one JSON object): out, format, frames_in,
+    frames_out, width, height, duration_ms, bytes. stderr: warnings. Exit 0 made, 1 could not (no
+    manifest, a bad frame, no ffmpeg, a file in the way), 3 bad command line.
+
+  example: mandalactl record assemble /tmp/zoom out=zoom.gif width=640
+";
+
 const RAW_EXAMPLE: &str = "  mandalactl raw - <<'JSON'
   {\"cmd\":\"act.macro\",\"steps\":[{\"kind\":\"Action\",\"action\":\"ZoomFit\"}]}
   JSON";
 
 const TAIL: &str = "
-A command the app serves but this list lacks (the clock and recording families, for one) is
+A command the app serves but this list lacks (the clock family, for one) is
 called by name with name=value arguments: mandalactl clock.step ms=100. `mandalactl describe` shows
 what the connected app has.";
 
@@ -258,6 +313,29 @@ mod tests {
         for line in WORKFLOW.iter().chain(SPELLINGS) {
             accepted(line);
         }
+    }
+
+    /// The client's own commands are read by the real parser and the
+    /// real argument reader, so the overview cannot teach one that is
+    /// refused.
+    #[test]
+    fn test_every_client_side_example_is_read_by_the_command_it_teaches() {
+        for line in LOCAL.iter().chain(&["mandalactl record assemble /d"]) {
+            let words = split(line);
+            let Parsed::Invoke(call) = parse(&words[1..]).unwrap_or_else(|e| panic!("`{line}`: {e}")) else {
+                panic!("`{line}` is not an invocation");
+            };
+            assert_eq!(call.command, crate::assemble::COMMAND, "{line}");
+            crate::assemble::parse_args(&call.words, Some(std::path::Path::new("/w")))
+                .unwrap_or_else(|e| panic!("`{line}`: {e}"));
+        }
+        let overview = overview();
+        for line in LOCAL {
+            assert!(overview.contains(line), "the overview never teaches {line}");
+        }
+        assert!(command_help("record")
+            .expect("known")
+            .contains("never\n    opens the socket"));
     }
 
     #[test]

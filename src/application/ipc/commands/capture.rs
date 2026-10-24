@@ -27,6 +27,7 @@ use serde_json::{json, Map, Value};
 
 use crate::application::capture::geometry::CameraInfo;
 use crate::application::capture::plan::{CaptureRequest, Framing, Region};
+use crate::application::capture::record::{fps_of, max_frames_of, RecordDestination, Summary};
 use crate::application::capture::{CaptureError, CaptureOutcome, Destination};
 use crate::application::ipc::envelope::Reply;
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
@@ -154,6 +155,122 @@ pub(super) const FAMILY: Family = Family {
             ),
         ],
         run: screenshot,
+    },
+    CommandSpec {
+        name: "capture.record_start",
+        summary: "Start recording a frame sequence: PNG frames plus a manifest.json with each frame's time, \
+                  for `mandalactl record assemble` (a GIF) or any tool that reads JSON.",
+        params: &[
+            ParamSpec::new(
+                "dir",
+                ParamType::String,
+                false,
+                "Absolute path of the directory for the frames: not there yet (its parent must exist) or \
+                 empty, and never a symlink. Default: a fresh directory in the per-session artifacts dir.",
+            ),
+            ParamSpec::new(
+                "fps",
+                ParamType::Integer,
+                false,
+                "Frames per second, 1..=60 (default 30).",
+            ),
+            ParamSpec::new(
+                "max_frames",
+                ParamType::Integer,
+                false,
+                "The recording stops itself after this many frames, 1..=3600 (default 600).",
+            ),
+            ParamSpec::new(
+                "width",
+                ParamType::Integer,
+                false,
+                "Frame width in view pixels, 1..=16384; sent with `height`. Default: the window's.",
+            ),
+            ParamSpec::new(
+                "height",
+                ParamType::Integer,
+                false,
+                "Frame height in view pixels, 1..=16384; sent with `width`. Default: the window's.",
+            ),
+            ParamSpec::new(
+                "region",
+                ParamType::Object,
+                false,
+                "{x, y, w, h} in `space`: frame the smallest aspect-matching view that contains this \
+                 rect instead of the current camera's.",
+            ),
+            ParamSpec::new(
+                "space",
+                ParamType::String,
+                false,
+                "Coordinate space of `region`: \"canvas\" (default) or \"surface\" (the live window). \
+                 Only valid with `region`.",
+            ),
+            ParamSpec::new(
+                "fit",
+                ParamType::Boolean,
+                false,
+                "Frame the whole drawn document, as the load-time fit does. Not with `region`.",
+            ),
+            ParamSpec::new(
+                "scale",
+                ParamType::Number,
+                false,
+                "Image pixels per view pixel, 0.1..=4.0 (default 1.0). width × height × scale² must not \
+                 exceed 67,108,864.",
+            ),
+        ],
+        result: &[
+            ResultSpec::new("dir", ParamType::String, "The absolute path of the directory the frames go in."),
+            ResultSpec::new(
+                "manifest_path",
+                ParamType::String,
+                "Where manifest.json will be: written as frames are, complete when the recording ends.",
+            ),
+            ResultSpec::new("width", ParamType::Integer, "Every frame's width in pixels."),
+            ResultSpec::new("height", ParamType::Integer, "Every frame's height in pixels."),
+            ResultSpec::new("fps", ParamType::Integer, "Frames per second, as asked."),
+            ResultSpec::new(
+                "max_frames",
+                ParamType::Integer,
+                "The frame count at which the recording stops itself.",
+            ),
+            ResultSpec::new(
+                "previous",
+                ParamType::Object,
+                "Present when an earlier recording ended on its own and no `capture.record_stop` had \
+                 collected it: that report (what `capture.record_stop` returns), or {error} for one that \
+                 failed. Starting a recording discards it, so it is handed back here.",
+            ),
+        ],
+        run: record_start,
+    },
+    CommandSpec {
+        name: "capture.record_stop",
+        summary: "Stop the recording and finish its manifest; or collect the report of one that stopped itself.",
+        params: &[],
+        result: &[
+            ResultSpec::new("dir", ParamType::String, "The absolute path of the directory with the frames."),
+            ResultSpec::new("manifest_path", ParamType::String, "The absolute path of manifest.json."),
+            ResultSpec::new("frames", ParamType::Integer, "How many frames were taken."),
+            ResultSpec::new(
+                "dropped_frames",
+                ParamType::Integer,
+                "How many frames were due and not taken (late, undrawn, undrawable); the manifest's \
+                 `gaps` says where and why.",
+            ),
+            ResultSpec::new("duration_ms", ParamType::Number, "How long the recording ran, in ms."),
+            ResultSpec::new(
+                "stopped",
+                ParamType::String,
+                "Why it ended: \"client\", \"max_frames\" or \"disk_budget\".",
+            ),
+            ResultSpec::new("bytes", ParamType::Integer, "The size of the frames and manifest on disk."),
+            ResultSpec::new("width", ParamType::Integer, "Every frame's width in pixels."),
+            ResultSpec::new("height", ParamType::Integer, "Every frame's height in pixels."),
+            ResultSpec::new("fps", ParamType::Integer, "Frames per second, as asked."),
+        ],
+        run: record_stop,
     }],
 };
 
@@ -176,15 +293,121 @@ fn screenshot(call: &mut Call<'_>) -> Reply {
     match app.capture(&parsed.request, parsed.destination, parsed.sidecar) {
         None => no_loaded_document(call),
         Some(Ok(screenshot)) => call.ok(result_of(&screenshot)),
-        Some(Err(error)) => refuse(
-            call,
-            match error {
-                CaptureError::Invalid { param, message } => Refusal::Invalid(param, message),
-                CaptureError::Busy(message) => Refusal::Busy(message),
-                CaptureError::Internal(message) => Refusal::Internal(message),
-            },
-        ),
+        Some(Err(error)) => refuse(call, refusal_of(error)),
     }
+}
+
+/// How the engine's refusal is worded on the wire.
+fn refusal_of(error: CaptureError) -> Refusal {
+    match error {
+        CaptureError::Invalid { param, message } => Refusal::Invalid(param, message),
+        CaptureError::Busy(message) => Refusal::Busy(message),
+        CaptureError::Internal(message) => Refusal::Internal(message),
+    }
+}
+
+/// `capture.record_start`.
+fn record_start(call: &mut Call<'_>) -> Reply {
+    let parsed = match parse_recording(call) {
+        Ok(parsed) => parsed,
+        Err(refusal) => return refuse(call, refusal),
+    };
+    let Some(app) = call.drive() else {
+        return call.no_document();
+    };
+    match app.record_start(&parsed.request, parsed.fps, parsed.max_frames, parsed.destination) {
+        None => no_loaded_document(call),
+        Some(Ok(started)) => {
+            let mut result = json!({
+                "dir": started.dir.to_string_lossy(),
+                "manifest_path": started.manifest_path.to_string_lossy(),
+                "width": started.width,
+                "height": started.height,
+                "fps": started.fps,
+                "max_frames": started.max_frames,
+            });
+            if let (Some(previous), Some(object)) = (&started.previous, result.as_object_mut()) {
+                object.insert(
+                    "previous".into(),
+                    match previous {
+                        Ok(summary) => summary_json(summary),
+                        Err(error) => json!({ "error": error }),
+                    },
+                );
+            }
+            call.ok(result)
+        }
+        Some(Err(error)) => refuse(call, refusal_of(error)),
+    }
+}
+
+/// `capture.record_stop`.
+fn record_stop(call: &mut Call<'_>) -> Reply {
+    let Some(app) = call.drive() else {
+        return call.no_document();
+    };
+    match app.record_stop() {
+        Ok(summary) => call.ok(summary_json(&summary)),
+        Err(error) => refuse(call, refusal_of(error)),
+    }
+}
+
+/// A finished recording, as `capture.record_stop` reports it.
+fn summary_json(summary: &Summary) -> Value {
+    json!({
+        "dir": summary.dir.to_string_lossy(),
+        "manifest_path": summary.manifest_path.to_string_lossy(),
+        "frames": summary.frames,
+        "dropped_frames": summary.dropped_frames,
+        "duration_ms": summary.duration_ms,
+        "stopped": summary.stopped.word(),
+        "bytes": summary.bytes,
+        "width": summary.width,
+        "height": summary.height,
+        "fps": summary.fps,
+    })
+}
+
+/// A recording's request, as the engine takes it.
+#[derive(Debug, PartialEq)]
+struct ParsedRecording {
+    request: CaptureRequest,
+    destination: RecordDestination,
+    fps: u32,
+    max_frames: u32,
+}
+
+/// Check a recording's shape: the view it frames is a screenshot's, its
+/// cadence and length are bounded here, and its directory is vetted by
+/// the engine, which has the disk.
+fn parse_recording(call: &Call<'_>) -> Result<ParsedRecording, Refusal> {
+    // The bounds are `record`'s own (`record::{fps_of, max_frames_of}`),
+    // the same two checks the console runs; only the wording is this
+    // surface's. A value that is no whole number reads as one out of
+    // every range.
+    let bounded = |name: &'static str,
+                   check: fn(Option<u64>) -> Result<u32, std::ops::RangeInclusive<u32>>| {
+        let typed = call.param(name);
+        check(typed.map(|value| value.as_u64().unwrap_or(u64::MAX))).map_err(|range| {
+            Refusal::Invalid(
+                name,
+                format!(
+                    "`{name}` must be a whole number in {}..={}, got {}",
+                    range.start(),
+                    range.end(),
+                    typed.map_or(String::new(), |value| value.to_string())
+                ),
+            )
+        })
+    };
+    Ok(ParsedRecording {
+        request: request_of(call)?,
+        destination: call.str_param("dir").map_or(RecordDestination::Artifacts, |dir| {
+            RecordDestination::Path(PathBuf::from(dir))
+        }),
+        fps: bounded("fps", fps_of)?,
+        max_frames: bounded("max_frames", max_frames_of)?,
+    })
 }
 
 /// The reply's `result` for what the engine did.
@@ -251,6 +474,19 @@ fn parse(call: &Call<'_>) -> Result<Parsed, Refusal> {
         },
     };
 
+    Ok(Parsed {
+        request: request_of(call)?,
+        destination,
+        sidecar: call.param("sidecar").and_then(Value::as_bool).unwrap_or(true),
+    })
+}
+
+/// The view a capture or a recording frames: its size, its framing and
+/// its scale. The same parameters, bounds and refusals for both, so a
+/// recording's frames are the screenshots the same words would take.
+fn request_of(call: &Call<'_>) -> Result<CaptureRequest, Refusal> {
+    let invalid = |param: &'static str, message: String| Refusal::Invalid(param, message);
+
     let side = |name: &'static str| -> Result<Option<u32>, Refusal> {
         call.param(name)
             .map(|value| {
@@ -294,17 +530,13 @@ fn parse(call: &Call<'_>) -> Result<Parsed, Refusal> {
     };
 
     let scale = call.param("scale").and_then(Value::as_f64).unwrap_or(1.0) as f32;
-    Ok(Parsed {
-        request: CaptureRequest {
-            size,
-            framing,
-            scale,
-            // Over IPC the capture shows what the window shows, an
-            // open modal included (at the window's size).
-            modal: ModalLayer::Drawn,
-        },
-        destination,
-        sidecar: call.param("sidecar").and_then(Value::as_bool).unwrap_or(true),
+    Ok(CaptureRequest {
+        size,
+        framing,
+        scale,
+        // Over IPC the capture shows what the window shows, an
+        // open modal included (at the window's size).
+        modal: ModalLayer::Drawn,
     })
 }
 
@@ -339,6 +571,7 @@ mod tests {
     use baumhard::gfx_structs::camera::Camera2D;
     use glam::Vec2;
 
+    use crate::application::capture::record::{Started, Stopped, Summary};
     use crate::application::console::LineOutcome;
     use crate::application::document::MindMapDocument;
     use crate::application::ipc::events::Observed;
@@ -359,6 +592,12 @@ mod tests {
         loaded: bool,
         answer: Result<Screenshot, CaptureError>,
         asked: Vec<Parsed>,
+        /// What `record_start` answers, and what it was asked.
+        started: Result<Started, CaptureError>,
+        recordings: Vec<ParsedRecording>,
+        /// What `record_stop` answers, and how often it was asked.
+        stopped: Result<Summary, CaptureError>,
+        stops: u32,
     }
 
     fn camera() -> Camera2D {
@@ -375,6 +614,29 @@ mod tests {
                 loaded: true,
                 answer,
                 asked: Vec::new(),
+                started: Ok(Started {
+                    dir: PathBuf::from("/tmp/rec"),
+                    manifest_path: PathBuf::from("/tmp/rec/manifest.json"),
+                    width: 1280,
+                    height: 720,
+                    fps: 30,
+                    max_frames: 600,
+                    previous: None,
+                }),
+                recordings: Vec::new(),
+                stopped: Ok(Summary {
+                    dir: PathBuf::from("/tmp/rec"),
+                    manifest_path: PathBuf::from("/tmp/rec/manifest.json"),
+                    frames: 88,
+                    dropped_frames: 2,
+                    duration_ms: 3012.5,
+                    stopped: Stopped::Client,
+                    bytes: 123_456,
+                    width: 1280,
+                    height: 720,
+                    fps: 30,
+                }),
+                stops: 0,
             }
         }
 
@@ -450,6 +712,25 @@ mod tests {
                 sidecar,
             });
             self.loaded.then(|| self.answer.clone())
+        }
+        fn record_start(
+            &mut self,
+            request: &CaptureRequest,
+            fps: u32,
+            max_frames: u32,
+            destination: RecordDestination,
+        ) -> Option<Result<Started, CaptureError>> {
+            self.recordings.push(ParsedRecording {
+                request: *request,
+                destination,
+                fps,
+                max_frames,
+            });
+            self.loaded.then(|| self.started.clone())
+        }
+        fn record_stop(&mut self) -> Result<Summary, CaptureError> {
+            self.stops += 1;
+            self.stopped.clone()
         }
     }
 
@@ -672,5 +953,229 @@ mod tests {
             .as_str()
             .expect("message")
             .contains("open <path>"));
+    }
+
+    fn recorded(frame: &str) -> ParsedRecording {
+        let mut app = CaptureApp::written();
+        let (reply, repaint) = run_attached(frame, &mut app);
+        assert_eq!(reply["ok"], json!(true), "{frame}: {reply}");
+        assert!(
+            !repaint,
+            "{frame}: a recording starts without touching what the window draws"
+        );
+        app.recordings.pop().expect("the engine was asked")
+    }
+
+    /// No parameters is thirty frames a second of the window as it
+    /// stands, 600 at most, into a fresh dir in the artifacts dir.
+    #[test]
+    fn test_a_bare_record_start_is_the_documented_default() {
+        assert_eq!(
+            recorded(r#"{"id":1,"cmd":"capture.record_start"}"#),
+            ParsedRecording {
+                request: CaptureRequest::default(),
+                destination: RecordDestination::Artifacts,
+                fps: 30,
+                max_frames: 600,
+            }
+        );
+    }
+
+    /// Every parameter reaches the engine as what it says — the view
+    /// ones as a screenshot's do.
+    #[test]
+    fn test_every_record_start_parameter_reaches_the_engine() {
+        let parsed = recorded(
+            r#"{"id":1,"cmd":"capture.record_start","dir":"/tmp/rec","fps":12,"max_frames":3600,
+                "width":640,"height":360,"fit":true,"scale":0.5}"#,
+        );
+        assert_eq!(
+            parsed,
+            ParsedRecording {
+                request: CaptureRequest {
+                    size: Some((640, 360)),
+                    framing: Framing::Fit,
+                    scale: 0.5,
+                    modal: ModalLayer::Drawn,
+                },
+                destination: RecordDestination::Path(PathBuf::from("/tmp/rec")),
+                fps: 12,
+                max_frames: 3600,
+            }
+        );
+        let region = recorded(
+            r#"{"id":1,"cmd":"capture.record_start","region":{"x":0,"y":0,"w":10,"h":5},"space":"surface"}"#,
+        );
+        assert!(matches!(
+            region.request.framing,
+            Framing::Region(Region {
+                space: Space::Surface,
+                ..
+            })
+        ));
+    }
+
+    /// The bounds are refusals naming the parameter, never clamps, and
+    /// the engine is not asked.
+    #[test]
+    fn test_record_start_bounds_are_refusals() {
+        for (frame, param) in [
+            (r#"{"id":1,"cmd":"capture.record_start","fps":0}"#, "fps"),
+            (r#"{"id":1,"cmd":"capture.record_start","fps":61}"#, "fps"),
+            (r#"{"id":1,"cmd":"capture.record_start","fps":-3}"#, "fps"),
+            (
+                r#"{"id":1,"cmd":"capture.record_start","max_frames":0}"#,
+                "max_frames",
+            ),
+            (
+                r#"{"id":1,"cmd":"capture.record_start","max_frames":3601}"#,
+                "max_frames",
+            ),
+            (r#"{"id":1,"cmd":"capture.record_start","width":10}"#, "height"),
+            (
+                r#"{"id":1,"cmd":"capture.record_start","fit":true,"region":{"x":0,"y":0,"w":1,"h":1}}"#,
+                "fit",
+            ),
+            (
+                r#"{"id":1,"cmd":"capture.record_start","space":"surface"}"#,
+                "space",
+            ),
+            // A screenshot's parameters are not a recording's.
+            (
+                r#"{"id":1,"cmd":"capture.record_start","path":"/tmp/x.png"}"#,
+                "path",
+            ),
+            (
+                r#"{"id":1,"cmd":"capture.record_start","sidecar":false}"#,
+                "sidecar",
+            ),
+        ] {
+            let mut app = CaptureApp::written();
+            let (reply, _) = run_attached(frame, &mut app);
+            assert_eq!(reply["ok"], json!(false), "{frame}: {reply}");
+            assert_eq!(
+                reply["error"]["code"],
+                json!("invalid_params"),
+                "{frame}: {reply}"
+            );
+            assert_eq!(reply["error"]["data"]["param"], json!(param), "{frame}: {reply}");
+            assert!(app.recordings.is_empty(), "{frame}: refused before the engine");
+        }
+    }
+
+    /// The start reply names the directory, the manifest and the frame
+    /// size, which the first frame fixed.
+    #[test]
+    fn test_record_start_replies_with_where_and_what() {
+        let mut app = CaptureApp::written();
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"capture.record_start"}"#, &mut app);
+        assert_eq!(
+            reply["result"],
+            json!({"dir": "/tmp/rec", "manifest_path": "/tmp/rec/manifest.json",
+                   "width": 1280, "height": 720, "fps": 30, "max_frames": 600})
+        );
+    }
+
+    /// The engine's refusals keep their codes: a recording already
+    /// running is the caller's mistake, a drag in the way is `busy`, a
+    /// failed disk is `internal`; no document is its own error.
+    #[test]
+    fn test_record_refusals_keep_the_engines_codes() {
+        for (error, code) in [
+            (
+                CaptureError::Invalid {
+                    param: "cmd",
+                    message: "a recording is already running".into(),
+                },
+                "invalid_params",
+            ),
+            (CaptureError::Busy("a drag".into()), "busy"),
+            (CaptureError::Internal("disk".into()), "internal"),
+        ] {
+            let mut app = CaptureApp::written();
+            app.started = Err(error.clone());
+            app.stopped = Err(error);
+            for frame in [
+                r#"{"id":1,"cmd":"capture.record_start"}"#,
+                r#"{"id":1,"cmd":"capture.record_stop"}"#,
+            ] {
+                let (reply, _) = run_attached(frame, &mut app);
+                assert_eq!(reply["ok"], json!(false), "{frame}: {reply}");
+                assert_eq!(reply["error"]["code"], json!(code), "{frame}: {reply}");
+            }
+        }
+        let mut unloaded = CaptureApp::written();
+        unloaded.loaded = false;
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"capture.record_start"}"#, &mut unloaded);
+        assert_eq!(reply["error"]["code"], json!("no_document"), "{reply}");
+        let (reply, _) = run_detached(r#"{"id":1,"cmd":"capture.record_start"}"#);
+        assert_eq!(reply["error"]["code"], json!("no_document"), "{reply}");
+        let (reply, _) = run_detached(r#"{"id":1,"cmd":"capture.record_stop"}"#);
+        assert_eq!(reply["error"]["code"], json!("no_document"), "{reply}");
+    }
+
+    /// The stop reply is the summary: where the frames are, how many
+    /// were taken and how many were not, and why it ended.
+    #[test]
+    fn test_record_stop_replies_with_the_summary() {
+        let mut app = CaptureApp::written();
+        let (reply, repaint) = run_attached(r#"{"id":1,"cmd":"capture.record_stop"}"#, &mut app);
+        assert!(!repaint);
+        assert_eq!(app.stops, 1);
+        assert_eq!(
+            reply["result"],
+            json!({"dir": "/tmp/rec", "manifest_path": "/tmp/rec/manifest.json", "frames": 88,
+                   "dropped_frames": 2, "duration_ms": 3012.5, "stopped": "client", "bytes": 123456,
+                   "width": 1280, "height": 720, "fps": 30})
+        );
+        let (reply, _) = run_attached(r#"{"id":2,"cmd":"capture.record_stop","extra":1}"#, &mut app);
+        assert_eq!(reply["error"]["code"], json!("invalid_params"), "{reply}");
+        assert_eq!(app.stops, 1, "an unknown parameter never reaches the engine");
+    }
+
+    /// A recording that ended on its own and was never collected is
+    /// handed back when the next one starts, instead of being dropped
+    /// without a word: its report, or its failure.
+    #[test]
+    fn test_starting_a_recording_hands_back_the_report_it_discards() {
+        let summary = Summary {
+            dir: PathBuf::from("/tmp/old"),
+            manifest_path: PathBuf::from("/tmp/old/manifest.json"),
+            frames: 600,
+            dropped_frames: 0,
+            duration_ms: 20_000.0,
+            stopped: Stopped::MaxFrames,
+            bytes: 9,
+            width: 800,
+            height: 600,
+            fps: 30,
+        };
+        let mut app = CaptureApp::written();
+        if let Ok(started) = &mut app.started {
+            started.previous = Some(Ok(summary));
+        }
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"capture.record_start"}"#, &mut app);
+        assert_eq!(reply["result"]["previous"]["dir"], "/tmp/old");
+        assert_eq!(reply["result"]["previous"]["stopped"], "max_frames");
+        assert_eq!(reply["result"]["previous"]["frames"], 600);
+
+        let mut failed = CaptureApp::written();
+        if let Ok(started) = &mut failed.started {
+            started.previous = Some(Err("the recording ended early: disk full".into()));
+        }
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"capture.record_start"}"#, &mut failed);
+        assert_eq!(
+            reply["result"]["previous"],
+            json!({"error": "the recording ended early: disk full"})
+        );
+
+        let (reply, _) = run_attached(
+            r#"{"id":1,"cmd":"capture.record_start"}"#,
+            &mut CaptureApp::written(),
+        );
+        assert!(
+            reply["result"].get("previous").is_none(),
+            "absent when there was nothing"
+        );
     }
 }

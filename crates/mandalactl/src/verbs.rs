@@ -481,6 +481,36 @@ pub const VERBS: &[Verb] = &[
         example: "mandalactl capture.screenshot /tmp/shot.png fit=true",
     },
     Verb {
+        name: "capture.record_start",
+        summary:
+            "Start recording frames (PNGs + manifest.json) at fps= into dir=; `record assemble <dir>` makes the GIF.",
+        params: &[
+            path_param("dir", false),
+            param("fps", INTEGER, false),
+            param("max_frames", INTEGER, false),
+            param("width", INTEGER, false),
+            param("height", INTEGER, false),
+            param("region", OBJECT, false),
+            SPACE,
+            param("fit", BOOLEAN, false),
+            param("scale", NUMBER, false),
+        ],
+        positional: &["dir"],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl capture.record_start /tmp/zoom fps=20 max_frames=120",
+    },
+    Verb {
+        name: "capture.record_stop",
+        summary:
+            "Stop the recording and finish its manifest (or collect the report of one that stopped itself).",
+        params: &[],
+        positional: &[],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl capture.record_stop",
+    },
+    Verb {
         name: "events.subscribe",
         summary:
             "Subscribe to change events and stay connected, printing each as it happens; --count N stops after N.",

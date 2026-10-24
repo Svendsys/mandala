@@ -32,10 +32,14 @@ pub(crate) const BUDGET_BYTES: u64 = 256 << 20;
 /// up. Only a parent full of planted names reaches it.
 const NAME_ATTEMPTS: u32 = 64;
 
-/// The files one capture wrote, `(path, bytes)`, evicted together.
+/// What one capture wrote, evicted together: the files of a
+/// screenshot, `(path, bytes)`, or the directory of a recording.
 #[derive(Debug)]
 struct Capture {
     files: Vec<(PathBuf, u64)>,
+    /// A recording's directory, removed whole, with `bytes` counted for
+    /// it. `None` for a screenshot.
+    tree: Option<(PathBuf, u64)>,
 }
 
 /// The per-process artifacts dir and the captures in it, oldest first.
@@ -118,6 +122,19 @@ impl Artifacts {
         Ok(path)
     }
 
+    /// A fresh subdirectory of the dir for a recording's frames:
+    /// `<stem>-<n>`, numbered like [`Self::next_path`]'s files and made
+    /// private to this user the way the dir is. Its bytes count against
+    /// the budget once the recording is over ([`Self::record_tree`]).
+    pub(crate) fn next_dir(&mut self, stem: &str) -> Result<PathBuf, String> {
+        let number = self.next;
+        let path = self.dir()?.join(format!("{stem}-{number:05}"));
+        self.next += 1;
+        create_private_dir(&path)
+            .map_err(|e| format!("could not make the recording dir `{}`: {e}", path.display()))?;
+        Ok(path)
+    }
+
     /// Whether `path` is in the artifacts dir — where overwriting is
     /// always allowed, because everything there is the app's own. A
     /// path through `..` is not taken to be in it.
@@ -146,7 +163,29 @@ impl Artifacts {
             self.forget(path);
         }
         self.total += ours.iter().map(|(_, bytes)| bytes).sum::<u64>();
-        self.captures.push_back(Capture { files: ours });
+        self.captures.push_back(Capture {
+            files: ours,
+            tree: None,
+        });
+        self.evict_to_budget();
+    }
+
+    /// Record a finished recording's directory, `bytes` in all, as one
+    /// capture: the oldest captures are evicted to make room for it,
+    /// and it is the one that goes, whole, when it is the oldest. `dir`
+    /// must be one [`Self::next_dir`] made.
+    pub(crate) fn record_tree(&mut self, dir: PathBuf, bytes: u64) {
+        self.total += bytes;
+        self.captures.push_back(Capture {
+            files: Vec::new(),
+            tree: Some((dir, bytes)),
+        });
+        self.evict_to_budget();
+    }
+
+    /// Evict the oldest captures until the dir is back within its
+    /// budget, never the newest.
+    fn evict_to_budget(&mut self) {
         while self.total > self.budget && self.captures.len() > 1 {
             let Some(oldest) = self.captures.pop_front() else {
                 break;
@@ -156,6 +195,15 @@ impl Artifacts {
                 if let Err(e) = std::fs::remove_file(file) {
                     if e.kind() != std::io::ErrorKind::NotFound {
                         log::warn!("capture: could not evict `{}`: {e}", file.display());
+                    }
+                }
+            }
+            if let Some((dir, bytes)) = &oldest.tree {
+                self.total -= bytes;
+                // `remove_dir_all` does not follow a symlink inside it.
+                if let Err(e) = std::fs::remove_dir_all(dir) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("capture: could not evict `{}`: {e}", dir.display());
                     }
                 }
             }
@@ -171,12 +219,13 @@ impl Artifacts {
                 self.total -= bytes;
             }
         }
-        self.captures.retain(|capture| !capture.files.is_empty());
+        self.captures
+            .retain(|capture| !capture.files.is_empty() || capture.tree.is_some());
     }
 
     /// Bytes the recorded captures hold.
     #[cfg(test)]
-    fn total(&self) -> u64 {
+    pub(crate) fn total(&self) -> u64 {
         self.total
     }
 
@@ -348,6 +397,57 @@ mod tests {
         assert!(!artifacts.holds(&dir.join("nested").join("x.png")));
         artifacts.remove();
         assert!(outside.0.exists(), "removing the dir leaves the client's file");
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    /// A recording's directory is numbered with the files, private like
+    /// the dir, and evicted whole — with everything in it — when it is
+    /// the oldest capture over the budget; the newest never is.
+    #[test]
+    fn test_a_recording_dir_is_one_capture_evicted_whole() {
+        let root = scratch_dir("artifacts-tree");
+        let mut artifacts = Artifacts::under(root.clone(), 100);
+        let shot = artifacts.next_path("screenshot", "png").expect("a path");
+        artifacts.record(&[write(&shot, 30)]);
+        let recording = |artifacts: &mut Artifacts, frames: usize| {
+            let dir = artifacts.next_dir("recording").expect("a dir");
+            for n in 0..frames {
+                write(&dir.join(format!("frame_{n:05}.png")), 10);
+            }
+            artifacts.record_tree(dir.clone(), frames as u64 * 10);
+            dir
+        };
+        let first = recording(&mut artifacts, 3);
+        assert_eq!(
+            first.file_name().expect("named"),
+            "recording-00002",
+            "numbered with the files"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&first).expect("made").permissions().mode();
+            assert_eq!(mode & 0o777, 0o700, "owner only");
+        }
+        assert!(shot.exists() && first.exists());
+        assert_eq!(artifacts.total(), 60);
+
+        let second = recording(&mut artifacts, 5);
+        assert!(!shot.exists(), "the oldest capture went first");
+        assert!(first.exists() && second.exists());
+        assert_eq!(artifacts.total(), 80);
+
+        let third = recording(&mut artifacts, 4);
+        assert!(!first.exists(), "a recording goes whole, its frames with it");
+        assert!(second.exists() && third.exists());
+        assert_eq!(artifacts.total(), 90);
+
+        let huge = recording(&mut artifacts, 30);
+        assert!(huge.exists(), "the newest is never evicted");
+        assert!(!second.exists() && !third.exists());
+        assert_eq!(artifacts.total(), 300);
+        artifacts.remove();
+        assert!(!huge.exists(), "removed with the dir");
         std::fs::remove_dir_all(&root).expect("cleanup");
     }
 }

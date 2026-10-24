@@ -119,6 +119,12 @@ pub enum ConsoleSideEffect {
     /// and the engine's report becomes the line's output. Draws
     /// nothing and mutates nothing, so it costs no rebuild.
     Screenshot(commands::screenshot::ScreenshotLine),
+    /// Start or stop a frame-sequence recording. Set by the `record`
+    /// verb, which only reads the line; the executor hands it to the
+    /// recorder and the recorder's report becomes the line's output.
+    /// Draws nothing the window shows and mutates nothing, so it costs
+    /// no rebuild.
+    Record(commands::record::RecordLine),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -139,6 +145,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::ReplaceDocument(_) => write!(f, "ReplaceDocument(<doc>)"),
             Self::SetInteractionMode(m) => f.debug_tuple("SetInteractionMode").field(m).finish(),
             Self::Screenshot(line) => f.debug_tuple("Screenshot").field(line).finish(),
+            Self::Record(line) => f.debug_tuple("Record").field(line).finish(),
             Self::OpenSectionEdit { node_id, section_idx } => f
                 .debug_struct("OpenSectionEdit")
                 .field("node_id", node_id)
