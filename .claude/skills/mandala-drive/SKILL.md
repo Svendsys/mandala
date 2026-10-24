@@ -40,7 +40,10 @@ the full protocol.
 ## Quick start: "open testament and screenshot the area around node 3.2"
 
 Run from the repo root. Shell state may not survive between your tool calls,
-so each block below sets `MANDALA_IPC` and `PATH` again.
+so each block below sets `MANDALA_IPC` and `PATH` again. `BIN` asks cargo
+where the binaries are: `CARGO_TARGET_DIR` (or `build.target-dir`) moves them
+out of `target/`, and a stale `target/release/mandala` would otherwise be
+run in their place.
 
 ```sh
 # 1. Build (cargo skips what is up to date).
@@ -48,20 +51,22 @@ cargo build --release -p mandala -p mandalactl
 
 # 2. Launch, detached, under Xvfb (headless container; on a desktop with a
 #    display drop `xvfb-run -a -s "-screen 0 1280x800x24"`).
+BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
 export MANDALA_IPC="${XDG_RUNTIME_DIR:-/tmp/mandala-$(id -u)}/mandala.sock"
 setsid nohup xvfb-run -a -s "-screen 0 1280x800x24" \
-  target/release/mandala maps/testament.mindmap.json --ipc "$MANDALA_IPC" \
+  "$BIN/mandala" maps/testament.mindmap.json --ipc "$MANDALA_IPC" \
   > /tmp/mandala-app.log 2>&1 < /dev/null &
 
 # 3. Wait until it answers.
-export PATH="$PWD/target/release:$PATH"
+export PATH="$BIN:$PATH"
 for i in $(seq 1 30); do mandalactl --timeout 2 ping >/dev/null 2>&1 && break; sleep 0.5; done
 mandalactl ping                      # now_ms: 171.69…   (exit 0)
 ```
 
 ```sh
 export MANDALA_IPC="${XDG_RUNTIME_DIR:-/tmp/mandala-$(id -u)}/mandala.sock"
-export PATH="$PWD/target/release:$PATH"
+BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
+export PATH="$BIN:$PATH"
 # 4. Where is 3.2? (canvas units; the scene's own laid-out rect)
 mandalactl scene.node_geometry 3.2 | grep -E '^(in_scene|canvas)'
 #   canvas.h: 115.399994   canvas.w: 378.0   canvas.x: -25.4   canvas.y: 11697.3   in_scene: true
@@ -84,7 +89,7 @@ before and after.
 ## Launch
 
 ```sh
-target/release/mandala <map.mindmap.json> --ipc <socket-path>
+"$BIN/mandala" <map.mindmap.json> --ipc <socket-path>          # BIN as in the quick start: usually target/release
 cargo run --release -- maps/testament.mindmap.json --ipc "$MANDALA_IPC"   # same, building first
 ```
 
@@ -325,9 +330,12 @@ There is no quit command over IPC, and SIGTERM is not a graceful exit, so
 clean up after it:
 
 ```sh
-pkill -TERM -x mandala          # every `mandala` you own; with several, `pgrep -a -x mandala` and kill by pid
+# The app serving $MANDALA_IPC, and nothing else: not a desktop instance the
+# user is running, nor its artifacts.
+pid="$(pgrep -a -x mandala | awk -v s="$MANDALA_IPC" '{ for (i = 2; i < NF; i++) if ($i == "--ipc" && $(i + 1) == s) print $1 }')"
+kill -TERM "$pid"
 rm -f "$MANDALA_IPC"            # optional: the next launch on this path self-heals a stale socket anyway
-rm -rf "${XDG_RUNTIME_DIR:-/tmp}"/mandala-*-artifacts   # path-less captures, left behind by SIGTERM
+rm -rf "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$pid-artifacts"*   # path-less captures; `*` takes the -N fallback names
 ```
 
 `xvfb-run` stops its Xvfb when the app exits.
