@@ -1895,7 +1895,11 @@ virtual heartbeat has none to protect.
   once per heartbeat inside the step**, so the run is watchdog-safe
   *by construction* (a genuinely stuck single heartbeat still trips the
   10 s threshold; the bound is a responsiveness limit, not the safety
-  mechanism). **A running recording's frame boundaries are stopped at
+  mechanism). Each heartbeat costs the wall time of the frame it runs —
+  an animation's tick rebuilds the scene, as it does in real time — so a
+  long step over a large animated scene is long main-thread work, and
+  the client's patience must match it (`mandalactl --timeout`); other
+  commands queue behind it. **A running recording's frame boundaries are stopped at
   too**: one that falls between two heartbeats gets a tick of its own,
   on the boundary exactly — the drains, the tick and the frame, but no
   injected sample, so recording a gesture never changes when its
