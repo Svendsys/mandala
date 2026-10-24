@@ -21,7 +21,7 @@ pub const WORKFLOW: &[&str] = &[
     "mandalactl scene.find_text Introduction",
     "mandalactl input.click_node 1.2",
     "mandalactl input.pending",
-    "mandalactl capture.screenshot /tmp/after.png fit=true",
+    "mandalactl capture.screenshot /tmp/after.png fit=true width=1920 height=1080",
     "mandalactl capture.record_start /tmp/zoom fps=20",
     "mandalactl act.action ZoomIn",
     "mandalactl capture.record_stop",
