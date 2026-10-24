@@ -395,7 +395,7 @@ additions are non-breaking):
 | `unknown_cmd` | `cmd` names nothing in the registry. |
 | `invalid_params` | Missing/mistyped/unknown parameter. `data.param` names the offender. |
 | `unsupported` | Command exists but not on this platform/build (e.g. future Windows gaps). |
-| `busy` | A single-instance command was already pending when another was issued — a second `clock.wait` while one is in flight (waits are exclusive per controller), a `clock.step` asked for from inside a running one — or `input.click_node` while injected samples are still queued (`data.pending`). Distinct from the connection-level `connection_rejected` event. |
+| `busy` | A single-instance command was already pending when another was issued — a second `clock.wait` while one is in flight (waits are exclusive per controller), a `clock.step` or `clock.set_mode` asked for from inside a running step — or `input.click_node` while injected samples are still queued (`data.pending`). Distinct from the connection-level `connection_rejected` event. |
 | `overloaded` | Request queue full (1024 pending); resend after draining replies. Also an `input` command whose samples would overflow the injected-input queue (cap 1024, `data`: `{"pending", "cap"}`); nothing was queued, resend once `input.pending` has dropped. |
 | `reply_too_large` | Serialized reply exceeded 8 MiB; `data.bytes` is its size, and `data.hint` names the file-sidecar parameter when the command has one. |
 | `no_document` | Command needs a loaded document and none is. |
@@ -1730,7 +1730,11 @@ heartbeats ran. A recording started under `clock.set_mode virtual`
 runs the same rule against virtual time: the loop sets no wake for it,
 and `clock.step` drives the frames, stopping the clock on every
 boundary, so `clock.step ms=1000` at `fps=30` emits exactly 30 and none
-is ever late. The manifest's `pacing` says which: `"realtime"` or
+is ever late. A stepped boundary is rounded **up to a whole
+millisecond** (at `fps=30`: 0, 34, 67, 100, … ms), each from its own
+index so nothing accumulates: the virtual clock reads whole
+milliseconds, as every animation stamp does, so a frame taken there
+shows exactly the instant its `t_ms` names. The manifest's `pacing` says which: `"realtime"` or
 `"stepped"`, fixed when the recording starts — the clock's mode cannot
 change while one runs. While the loop idles under a virtual clock there
 is no next-frame deadline to fit an idle encode before, so it spends at
@@ -1791,8 +1795,9 @@ hole in the numbering), plus `manifest.json`:
 `t_ms` is capture-clock time, measured from the start, **when the frame
 was taken**: the app clock's reading in `realtime` pacing (so a
 consumer that paces by it replays what happened, stalls included) and,
-in `stepped` pacing, the frame's `1000/fps` boundary, exactly — the
-step stopped the clock there to take it.
+in `stepped` pacing, the frame's `1000/fps` boundary rounded up to a
+whole millisecond, exactly — the step stopped the clock there to take
+it.
 `duration_ms` is how long the recording ran, and with the last frame's
 `t_ms` is the last frame's display time. `complete` is `false` in the
 copy written while recording (a recording the app never finished — one
@@ -1876,8 +1881,11 @@ virtual heartbeat has none to protect.
   move. Setting the mode the clock is already in is a success that
   changes nothing. **Refused while a recording runs** (`invalid_params`
   naming `mode`): a recording's `pacing` is fixed for its whole length,
-  so a switch would make its frame times mean two things. Changes no
-  pixels.
+  so a switch would make its frame times mean two things. **Refused
+  inside a running step** (`busy`, as a nested step is): a `clock real`
+  console line typed by an injected key the step itself landed would
+  otherwise leave the step's remaining heartbeats on a clock the wall
+  moves. Changes no pixels.
 - **`clock.step`** — params: exactly one of `ms` (integer,
   `1..=1_600_000`) or `frames` (integer, `1..=100_000`) — neither, or
   both, is `invalid_params` (naming `ms` for neither, `frames` for
@@ -2243,7 +2251,14 @@ a client does:
 - **Every wait has a deadline** (`--timeout`, default 15 s, longer than the
   10 s `FreezeWatchdog` threshold): the connect, the greeting, each write
   and each reply. The deadline is the whole line's, re-armed before every
-  read and write, so a peer that trickles bytes cannot stretch it. A reply is matched by `id`, with the `null`-id `parse_error` taken
+  read and write, so a peer that trickles bytes cannot stretch it. The
+  one exception is a `clock.wait` reply — named on the command line,
+  sent through `raw`, or `--wait-settled`'s — which is waited on at
+  least to the wait's own `timeout_ms` (the server's default `10000`
+  when it names none, its bound `60000` at most) plus 2 s: the app
+  answers a wait that runs out with a structured `timeout`, and a client
+  that gave up first would report exit `4` instead of the app's answer.
+  A reply is matched by `id`, with the `null`-id `parse_error` taken
   as the answer to the one request in flight; events the client did not
   subscribe to are skipped, and `shutdown` ends the invocation.
 - **`events.subscribe` is the one verb that stays connected.** A

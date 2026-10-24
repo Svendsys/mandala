@@ -82,10 +82,20 @@ the entry of the **lowest node id** for an id duplicated across
 nodes — in every process, although `MindMap.nodes` is a
 `HashMap` (the walk is sorted, and a later node's duplicate is
 dropped rather than handed to the registry's last-writer-wins
-insert). It emits a `warn!` naming both nodes and the winner. A
-deterministic winner is still an accident of numbering, so the
-robust fix is namespacing: prefix each inline-macro id with the
-owning node's id (e.g. `"3.2.1.save-and-quit"`).
+insert). "Lowest" is string order, the order the ids sort in as
+text: `"10"` sorts before `"2"`. It emits a `warn!` naming both
+nodes and the winner. A deterministic winner is still an
+accident of numbering, so the robust fix is namespacing: prefix
+each inline-macro id with the owning node's id (e.g.
+`"3.2.1.save-and-quit"`).
+
+> **Changed in IPC-09 (#69).** Before it, the walk was already
+> sorted and the warning already named the lowest node id as the
+> winner, but every duplicate still reached the registry, whose
+> insert is last-writer-wins — so the entry that actually ran
+> was the **highest** node id's. A document with a cross-node
+> Inline collision now runs the other entry. The `warn!` names
+> both nodes; namespacing the ids makes the order moot.
 
 Cross-tier: a higher-tier entry **shadows** a lower-tier entry
 with the same id — both coexist in their own tier slots, with

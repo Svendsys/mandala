@@ -455,8 +455,12 @@ impl WasmApp {
                 // Sole entry to the render path on web. Coalesced
                 // by winit-web from any number of `request_redraw`
                 // calls in the prior event chain.
+                // A transient skip asks again, as native's does: no
+                // input may follow to ask for it.
                 if let Some(r) = self.renderer.borrow_mut().as_mut() {
-                    r.process();
+                    if r.process().is_err_and(|skip| skip.is_transient()) {
+                        r.request_redraw();
+                    }
                 }
             }
             WindowEvent::Resized(s) => {

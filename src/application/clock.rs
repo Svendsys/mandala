@@ -114,9 +114,9 @@ pub(crate) struct AppClock {
     offset_ms: f64,
     /// The reading, while virtual.
     virtual_ms: Option<f64>,
-    /// A step is running. A step asked for from inside one (a `clock
-    /// step` console line typed by a sample the step itself landed) is
-    /// refused rather than nested.
+    /// A step is running. A step or a mode switch asked for from inside
+    /// one (a `clock step` or `clock real` console line typed by a
+    /// sample the step itself landed) is refused rather than nested.
     stepping: bool,
 }
 
@@ -128,7 +128,12 @@ impl AppClock {
 
     /// [`Self::now_ms`] as the whole milliseconds animation and
     /// trigger stamps are kept in. Exact under virtual time, whose
-    /// readings are integral (see [`Self::set_mode`]).
+    /// readings are integral: it starts on a whole millisecond
+    /// ([`Self::set_mode`]), and a step stops it only on whole
+    /// milliseconds — its heartbeats are whole-millisecond offsets of
+    /// a whole-millisecond start, and a stepped recording's frame
+    /// boundaries are rounded up to whole milliseconds
+    /// (`capture::record::Timeline`).
     pub(crate) fn now_whole_ms(&self) -> u64 {
         self.now_ms() as u64
     }
@@ -186,6 +191,26 @@ impl AppClock {
         self.stepping = false;
     }
 
+    /// Switch to `mode` on a client's behalf — what `clock.set_mode`
+    /// and `clock real` / `clock virtual` do: [`Self::set_mode`],
+    /// refused while a step runs (the step would carry on with the
+    /// heartbeats of a mode it was not asked under, and a real clock
+    /// under a stepping loop would race ahead at the wall rate) and
+    /// while `recording`, whose pacing the mode fixed. Asking for the
+    /// mode the clock is in is never refused: it changes nothing.
+    pub(crate) fn switch_mode(&mut self, mode: ClockMode, recording: bool) -> Result<bool, ClockRefusal> {
+        if self.mode() == mode {
+            return Ok(false);
+        }
+        if self.stepping {
+            return Err(ClockRefusal::Stepping);
+        }
+        if recording {
+            return Err(ClockRefusal::Recording);
+        }
+        Ok(self.set_mode(mode))
+    }
+
     /// The reading when the wall clock reads `wall`.
     fn reading_at(&self, wall: f64) -> f64 {
         self.virtual_ms.unwrap_or(wall + self.offset_ms)
@@ -213,8 +238,9 @@ impl AppClock {
 pub(crate) enum ClockRefusal {
     /// A step needs virtual time, and the clock is real.
     Real,
-    /// A step was asked for from inside a running one (a `clock step`
-    /// console line typed by an injected key mid-step).
+    /// A step or a mode switch was asked for from inside a running
+    /// step (a `clock step` or `clock real` console line typed by an
+    /// injected key mid-step).
     Stepping,
     /// The mode cannot change while a recording runs: its pacing, and
     /// so what its frame times mean, is fixed for its whole length.
@@ -231,8 +257,8 @@ impl ClockRefusal {
                  (clock.set_mode virtual, or `clock virtual` in the console)"
             }
             ClockRefusal::Stepping => {
-                "a step is already running, and this one was asked for from inside it; \
-                 steps do not nest"
+                "a step is running, and this was asked for from inside it; a step neither \
+                 nests nor changes the clock's mode partway"
             }
             ClockRefusal::Recording => {
                 "a recording is running, and its pacing is fixed for its whole length; stop it \
@@ -386,6 +412,30 @@ mod tests {
         let mut real = AppClock::default();
         assert!(!real.set_mode_at(ClockMode::Real, 5.0));
         assert_eq!(real.reading_at(5.0), 5.0);
+    }
+
+    /// A client's switch is refused mid-step and mid-recording, and
+    /// only when it would change the mode: the reading and the mode
+    /// stand, and once the step ends the same switch goes through.
+    #[test]
+    fn test_a_switch_is_refused_mid_step_and_mid_recording_but_never_a_no_op() {
+        let mut clock = clock_in(ClockMode::Virtual, 100.0);
+        assert!(clock.begin_step());
+        assert_eq!(
+            clock.switch_mode(ClockMode::Real, false),
+            Err(ClockRefusal::Stepping)
+        );
+        assert_eq!(clock.mode(), ClockMode::Virtual);
+        assert_eq!(clock.now_ms(), 100.0);
+        assert_eq!(clock.switch_mode(ClockMode::Virtual, false), Ok(false));
+        clock.end_step();
+        assert_eq!(
+            clock.switch_mode(ClockMode::Real, true),
+            Err(ClockRefusal::Recording)
+        );
+        assert_eq!(clock.switch_mode(ClockMode::Virtual, true), Ok(false));
+        assert_eq!(clock.switch_mode(ClockMode::Real, false), Ok(true));
+        assert_eq!(clock.mode(), ClockMode::Real);
     }
 
     /// A virtual clock moves only forward, and a real one is moved by

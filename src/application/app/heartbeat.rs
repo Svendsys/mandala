@@ -25,8 +25,11 @@
 //! recorder. Between two of them, a running recording's frame boundary
 //! gets a tick of its own ([`Beat::Boundary`]): the clock stops on the
 //! boundary exactly, the frame drains and the recorder takes its frame,
-//! so a stepped recording's frames are its `1000/fps` instants and
-//! nothing else. No injected sample lands on a boundary tick, so
+//! so a stepped recording's frames are its `1000/fps` instants, each
+//! rounded up to a whole millisecond, and nothing else. The rounding
+//! keeps the virtual clock on whole milliseconds, which is what the
+//! animation tick reads: a frame shows exactly the instant its `t_ms`
+//! names. No injected sample lands on a boundary tick, so
 //! recording a gesture never changes when the gesture's samples land.
 //! Every heartbeat and every boundary tick ticks the freeze watchdog,
 //! which is what makes a long step safe by construction: a step makes
@@ -37,7 +40,6 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use crate::application::capture::record::ON_BOUNDARY_MS;
 use crate::application::clock::{heartbeat_times, AppClock, ClockMode, ClockRefusal, StepRequest, Stepped};
 use crate::application::document::MindMapDocument;
 use crate::application::ipc::injected::{InjectedQueue, InputEvent, Sample};
@@ -350,16 +352,11 @@ impl InputHandlerContext<'_> {
         })
     }
 
-    /// Switch the clock to `mode`. Refused while a recording runs.
-    /// Returns whether the mode changed.
+    /// Switch the clock to `mode`. Refused mid-step and while a
+    /// recording runs ([`AppClock::switch_mode`]). Returns whether the
+    /// mode changed.
     pub(super) fn set_clock_mode(&mut self, mode: ClockMode) -> Result<bool, ClockRefusal> {
-        if self.clock.mode() == mode {
-            return Ok(false);
-        }
-        if self.recorder.active.is_some() {
-            return Err(ClockRefusal::Recording);
-        }
-        Ok(self.clock.set_mode(mode))
+        self.clock.switch_mode(mode, self.recorder.active.is_some())
     }
 }
 
@@ -388,9 +385,11 @@ pub(super) fn run_step(app: &mut impl Steps, request: StepRequest) -> u64 {
     let start = app.now_ms();
     let mut frames_run = 0;
     for at in heartbeat_times(start, request) {
+        // Ends: each tick stops the clock on `due`, so a boundary the
+        // recorder did not move past fails `due > now` next time round.
         while let Some(due) = app
             .next_frame_due()
-            .filter(|due| *due > app.now_ms() && due + ON_BOUNDARY_MS < at)
+            .filter(|due| *due > app.now_ms() && *due < at)
         {
             app.beat(Beat::Boundary, due);
         }
@@ -518,7 +517,12 @@ mod tests {
         }
 
         fn take_due_frame(&mut self) {
-            if let Step::Capture { t_ms, .. } = self.recording.step(self.clock.now_ms()) {
+            let now = self.clock.now_ms();
+            if let Step::Capture { t_ms, .. } = self.recording.step(now) {
+                // What the frame shows is what the animation tick read:
+                // the whole-millisecond reading, which `t_ms` names.
+                assert_eq!(now, self.clock.now_whole_ms() as f64, "a whole-ms reading");
+                assert_eq!(t_ms, now - self.start, "stamped with the reading it shows");
                 let pixels = CapturedPixels {
                     width: 2,
                     height: 1,
@@ -554,9 +558,10 @@ mod tests {
 
     /// **`clock.step ms=1000` at `fps=30` yields exactly 30 frames**
     /// (`format/ipc.md` §`capture.record_start`, the IPC-08 ↔ IPC-09
-    /// interlock), each stamped with its `1000/fps` boundary exactly,
-    /// with no gap — and the step still runs exactly `ceil(1000 / 16)`
-    /// cadence heartbeats, the boundary ticks beside them.
+    /// interlock), each stamped with its `1000/fps` boundary rounded up
+    /// to the whole millisecond the clock stopped on, with no gap — and
+    /// the step still runs exactly `ceil(1000 / 16)` cadence heartbeats,
+    /// the boundary ticks beside them.
     #[test]
     fn test_a_stepped_second_at_thirty_fps_is_thirty_frames_on_their_boundaries() {
         let mut stepped = SteppedRecording::at_fps(30);
@@ -565,7 +570,7 @@ mod tests {
         let times = stepped.frame_times();
         assert_eq!(times.len(), 31, "the start frame and thirty stepped ones");
         for (index, t_ms) in times.iter().enumerate() {
-            let boundary = ((index as f64 * 1000.0 / 30.0) * 1000.0).round() / 1000.0;
+            let boundary = (index as u64 * 1000).div_ceil(30) as f64;
             assert_eq!(*t_ms, boundary, "frame {index}");
         }
         assert_eq!(

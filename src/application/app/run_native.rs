@@ -505,6 +505,7 @@ impl InitState {
                 .is_some_and(MindMapDocument::has_active_animations),
             continuing: self.needs_continuation(),
             redraw_owed: !self.redraws.is_current(),
+            virtual_clock: self.clock.is_virtual(),
         }
     }
 
@@ -560,8 +561,14 @@ impl InitState {
                 // learns whether this frame drew what was asked for,
                 // which is what `clock.wait until=settled` reads.
                 let asked = self.redraws.asked();
-                if self.renderer.process() {
-                    self.redraws.drew(asked);
+                match self.renderer.process() {
+                    Ok(()) => self.redraws.drew(asked),
+                    // Nothing else would ask again with no input to
+                    // follow, leaving the window — and a `settled` wait
+                    // — on the last frame drawn.
+                    Err(skip) if skip.is_transient() => self.request_redraw(),
+                    // Retrying would spin; the redraw stays owed.
+                    Err(_) => {}
                 }
             }
             Event::WindowEvent {

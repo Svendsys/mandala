@@ -909,7 +909,11 @@ axis. A boundary tick runs the drains, the tick and the recorder but
 lands no injected sample, so recording a gesture never changes when the
 gesture's samples land; the frame it takes is *at* its boundary, which
 is what makes a stepped recording's frames fixed-interval and its GIF
-smooth. The loop over these instants (`heartbeat::run_step`) is generic
+smooth. A stepped boundary is rounded up to a whole millisecond
+(`capture::record::Timeline`), each from its own index: the virtual
+clock and every animation stamp are whole milliseconds, and a
+fractional boundary would stop the clock where the tick reads a
+truncated instant while `t_ms` names the exact one. The loop over these instants (`heartbeat::run_step`) is generic
 over a `Steps` implementor — the handler context in the app, a real
 recording or document on a real clock in the tests — so the schedule
 the tests pin is the one the app runs. Every heartbeat and boundary
@@ -921,9 +925,11 @@ there with it (`InitState` builds the context and calls them, exactly
 as before), so `clock step` typed into the console — whose executor
 holds a context, not `InitState` — runs the very frame `clock.step`
 does, and a macro's `ConsoleLine` step that steps the clock does so in
-order with the steps around it. A step asked for from inside a running
-step (a `clock step` line typed by an injected key the step itself
-landed) is refused rather than nested.
+order with the steps around it. A step or a mode switch asked for from
+inside a running step (a `clock step` or `clock real` line typed by an
+injected key the step itself landed) is refused rather than nested: a
+switch to real time partway would leave the step running its remaining
+heartbeats on a clock the wall now moves.
 
 **`clock.wait` is the protocol's first deferred reply.** The handler
 records a `PendingWait` in the controller's `Session` (which therefore
@@ -1157,14 +1163,17 @@ Moved later, by the issue that found the need:
   (1) **`ms` advances exactly `ms`**: the pinned `frames = ceil(ms /
   16)` is kept, and the last heartbeat lands on the step's end instead
   of overshooting it. (2) **A step needs a virtual clock** — on a real
-  one it is `invalid_params` naming `cmd` — and a nested step is
-  `busy`. (3) **`clock.set_mode` is refused while a recording runs**,
+  one it is `invalid_params` naming `cmd` — and a nested step, or a
+  mode switch from inside a step, is `busy`. (3) **`clock.set_mode` is refused while a recording runs**,
   so a manifest's `pacing` (`"stepped"`, the value IPC-08 reserved the
   key for; the assembler paces by `t_ms` and never branched on it, so
   the new value is additive) means one thing for its whole length.
   (4) **A step stops at a recording's boundaries**, so stepped frames
-  are their `1000/fps` instants exactly, as §D7's frame-emission rule
-  and IPC-08's manifest text already promised. (5) **`timeout_ms`
+  are their `1000/fps` instants, as §D7's frame-emission rule and
+  IPC-08's manifest text already promised — each rounded up to a whole
+  millisecond, which keeps the virtual clock on the whole milliseconds
+  the animation tick reads, so a frame shows exactly the instant its
+  `t_ms` names. The count per second is §D7's unchanged. (5) **`timeout_ms`
   outside `1..=60_000` is a refusal**, not a clamp, as IPC-07 and
   IPC-08 made theirs; `mandalactl --wait-settled` already sent no more
   than 60 000. (6) **`settled` (a) and (b) are clock-aware**: under a

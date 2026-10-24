@@ -3382,7 +3382,9 @@ contract, and the assembler is a client that reads a directory.
 how many boundaries a late heartbeat stepped over, never reading a
 clock itself, so one timeline paces both a realtime recording and a
 stepped one, which `clock.step` drives by stopping the
-[app clock](#app-clock) on each boundary; `Recording` holds the
+[app clock](#app-clock) on each boundary (a stepped boundary rounded
+up to a whole millisecond, the unit the clock and the animation tick
+read); `Recording` holds the
 frames, the gaps and the manifest. `app/record_flow.rs` is the app
 half: it starts a recording, takes a frame each time `about_to_wait`
 finds one due (an active recording is a loop timer source, so an idle

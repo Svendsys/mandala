@@ -528,6 +528,7 @@ mod tests {
             animations_active: false,
             continuing: false,
             redraw_owed: false,
+            virtual_clock: false,
         };
         let owed = Settling {
             redraw_owed: true,

@@ -26,7 +26,12 @@
 //! when it was taken, which is a little after its boundary; under a
 //! virtual clock `clock.step` stops the clock on each boundary
 //! (`app::heartbeat`), so a frame is taken *at* its boundary and
-//! stamped with it, exactly.
+//! stamped with it, exactly. A stepped boundary is a whole millisecond
+//! — the first one at or after `index × 1000 / fps` — because the
+//! virtual clock reads whole milliseconds and so does every animation
+//! stamp: a fractional boundary would stop the clock somewhere the
+//! animation tick cannot read, and the frame would show an instant
+//! its `t_ms` does not name.
 //!
 //! **Honest about what it missed.** A boundary the loop was too late
 //! for, a frame the renderer did not draw and a frame a node drag made
@@ -101,14 +106,6 @@ const IDLE_MANIFEST_EVERY: Duration = Duration::from_secs(2);
 /// The manifest's file name, in the recording's directory.
 pub(crate) const MANIFEST_FILE: &str = "manifest.json";
 
-/// How far before a boundary a reading still counts as on it, in
-/// milliseconds. A stepped clock is stopped on a boundary computed as
-/// `start + index × 1000 / fps`, and taking `start` back off can land a
-/// rounding error short of the boundary itself; this absorbs that and
-/// nothing a real clock could read differently — it is a millionth of
-/// a millisecond.
-pub(crate) const ON_BOUNDARY_MS: f64 = 1e-6;
-
 /// What a recording's frame times are measured on (the manifest's
 /// `pacing`), fixed when it starts: the clock's mode cannot change
 /// while one runs (`format/ipc.md` §`clock.set_mode`).
@@ -119,7 +116,8 @@ pub(crate) enum Pacing {
     /// stamped with the reading when it was taken.
     Realtime,
     /// A virtual clock: `clock.step` drives the frames, stopping the
-    /// clock on each boundary, and a frame is stamped with its boundary.
+    /// clock on each boundary — a whole millisecond, [`Timeline`] — and
+    /// a frame is stamped with its boundary.
     Stepped,
 }
 
@@ -198,12 +196,18 @@ impl Stopped {
 /// Boundaries are the multiples of `1000 / fps` ms from the start,
 /// counted as whole numbers so that sixty seconds of thirty-frames-a-
 /// second is exactly 1800 of them whatever the float rounding does.
+/// [`Pacing::Stepped`] rounds each up to the next whole millisecond
+/// (at 30 fps: 0, 34, 67, 100, …), so the virtual clock a step stops
+/// on them stays on the whole milliseconds animations are stamped in;
+/// the count per second is the same, and no rounding accumulates,
+/// because each boundary is rounded from its own index.
 /// One frame is taken per poll that finds a boundary crossed, stamped
 /// by the caller with the time it was taken; boundaries a poll finds
 /// stepped over entirely are `missed`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Timeline {
     fps: u32,
+    pacing: Pacing,
     /// The index of the next boundary a frame is owed for.
     next: u64,
 }
@@ -225,16 +229,34 @@ pub(crate) enum Tick {
 
 impl Timeline {
     /// A timeline whose first boundary, at 0, is already due.
-    pub(crate) fn new(fps: u32) -> Self {
+    pub(crate) fn new(fps: u32, pacing: Pacing) -> Self {
         Timeline {
             fps: fps.max(1),
+            pacing,
             next: 0,
         }
     }
 
     /// The time of boundary `index`, in ms from the start.
     fn boundary_ms(&self, index: u64) -> f64 {
-        index as f64 * 1000.0 / f64::from(self.fps)
+        match self.pacing {
+            Pacing::Realtime => index as f64 * 1000.0 / f64::from(self.fps),
+            Pacing::Stepped => (index * 1000).div_ceil(u64::from(self.fps)) as f64,
+        }
+    }
+
+    /// The index of the latest boundary at or before `elapsed_ms`
+    /// (which is not before the start).
+    fn latest_at(&self, elapsed_ms: f64) -> u64 {
+        match self.pacing {
+            // The product is exact for the integer `fps` and the times a
+            // recording lives for, so a reading that is exactly a
+            // boundary lands on it.
+            Pacing::Realtime => (elapsed_ms * f64::from(self.fps) / 1000.0).floor() as u64,
+            // `ceil(i × 1000 / fps) ≤ t` exactly when `i × 1000 / fps ≤
+            // ⌊t⌋`, so integers answer it with no float in the way.
+            Pacing::Stepped => elapsed_ms.floor() as u64 * u64::from(self.fps) / 1000,
+        }
     }
 
     /// The time the next frame is due, in ms from the start.
@@ -242,19 +264,14 @@ impl Timeline {
         self.boundary_ms(self.next)
     }
 
-    /// `elapsed_ms` from the start: is a frame owed? A reading within
-    /// [`ON_BOUNDARY_MS`] short of a boundary is on it.
+    /// `elapsed_ms` from the start: is a frame owed?
     pub(crate) fn poll(&mut self, elapsed_ms: f64) -> Tick {
         let due = self.due_ms();
         // A clock that reads before the start (or NaN) owes nothing.
-        if elapsed_ms.is_nan() || elapsed_ms + ON_BOUNDARY_MS < due {
+        if elapsed_ms.is_nan() || elapsed_ms < due {
             return Tick::Wait { until_ms: due };
         }
-        // The latest boundary at or before now. The product is exact for
-        // the integer `fps` and the times a recording lives for, so a
-        // reading that is exactly a boundary lands on it.
-        let reached = (elapsed_ms + ON_BOUNDARY_MS) * f64::from(self.fps) / 1000.0;
-        let latest = (reached.floor() as u64).max(self.next);
+        let latest = self.latest_at(elapsed_ms).max(self.next);
         let first_missed_ms = self.boundary_ms(self.next);
         let missed = u32::try_from(latest - self.next).unwrap_or(u32::MAX);
         self.next = latest + 1;
@@ -415,7 +432,7 @@ impl Recording {
     /// recording in the artifacts dir.
     pub(crate) fn begin(config: RecordConfig, dir: PathBuf, now_ms: f64, disk_limit: Option<u64>) -> Self {
         Recording {
-            timeline: Timeline::new(config.fps),
+            timeline: Timeline::new(config.fps, config.pacing),
             config,
             dir,
             started_ms: now_ms,
@@ -906,13 +923,13 @@ mod tests {
     /// the thirty-first is the next second's.
     #[test]
     fn test_a_second_at_thirty_fps_is_thirty_frames() {
-        assert_eq!(frames_owed(&mut Timeline::new(30), 999), 30);
-        assert_eq!(frames_owed(&mut Timeline::new(30), 1000), 31);
-        assert_eq!(frames_owed(&mut Timeline::new(60), 999), 60);
-        assert_eq!(frames_owed(&mut Timeline::new(1), 999), 1);
+        assert_eq!(frames_owed(&mut Timeline::new(30, Pacing::Realtime), 999), 30);
+        assert_eq!(frames_owed(&mut Timeline::new(30, Pacing::Realtime), 1000), 31);
+        assert_eq!(frames_owed(&mut Timeline::new(60, Pacing::Realtime), 999), 60);
+        assert_eq!(frames_owed(&mut Timeline::new(1, Pacing::Realtime), 999), 1);
         // Counted as whole boundaries: a minute of 30 fps is 1800, not
         // whatever a float sum drifts to.
-        let mut timeline = Timeline::new(30);
+        let mut timeline = Timeline::new(30, Pacing::Realtime);
         let mut frames = 0;
         for tick in 0..(60 * 30) {
             let at = f64::from(tick) * 1000.0 / 30.0;
@@ -926,7 +943,7 @@ mod tests {
     /// is when it is.
     #[test]
     fn test_nothing_is_owed_before_the_next_boundary() {
-        let mut timeline = Timeline::new(10);
+        let mut timeline = Timeline::new(10, Pacing::Realtime);
         assert_eq!(
             timeline.poll(0.0),
             Tick::Due {
@@ -940,7 +957,7 @@ mod tests {
         assert!(matches!(timeline.poll(100.0), Tick::Due { missed: 0, .. }));
         // A clock reading before the start, or no reading at all, owes
         // nothing.
-        let mut fresh = Timeline::new(10);
+        let mut fresh = Timeline::new(10, Pacing::Realtime);
         fresh.poll(0.0);
         assert!(matches!(fresh.poll(-5.0), Tick::Wait { .. }));
         assert!(matches!(fresh.poll(f64::NAN), Tick::Wait { .. }));
@@ -951,7 +968,7 @@ mod tests {
     /// owed afterwards.
     #[test]
     fn test_a_late_heartbeat_takes_one_frame_and_counts_the_boundaries_it_missed() {
-        let mut timeline = Timeline::new(30);
+        let mut timeline = Timeline::new(30, Pacing::Realtime);
         timeline.poll(0.0);
         // Boundaries 1, 2 and 3 are at 33.3, 66.7 and 100 ms.
         match timeline.poll(101.0) {
@@ -973,6 +990,47 @@ mod tests {
             timeline.poll(120.0),
             Tick::Wait {
                 until_ms: 4.0 * 1000.0 / 30.0
+            }
+        );
+    }
+
+    /// A stepped timeline's boundaries are whole milliseconds, each the
+    /// first at or after its `1000/fps` instant and rounded from its own
+    /// index, so a second at 30 fps is still 30 frames and a minute
+    /// still 1800 — and a whole-millisecond reading on a boundary, or
+    /// between two, is answered exactly.
+    #[test]
+    fn test_a_stepped_timeline_puts_its_boundaries_on_whole_milliseconds() {
+        let mut timeline = Timeline::new(30, Pacing::Stepped);
+        let mut boundaries = Vec::new();
+        for ms in 0..=60_000u32 {
+            if let Tick::Due {
+                missed, boundary_ms, ..
+            } = timeline.poll(f64::from(ms))
+            {
+                assert_eq!(missed, 0, "{ms}");
+                assert_eq!(boundary_ms, f64::from(ms), "taken on its boundary");
+                boundaries.push(ms);
+            }
+        }
+        assert_eq!(&boundaries[..5], [0, 34, 67, 100, 134]);
+        assert_eq!(
+            boundaries.len(),
+            1801,
+            "1800 a minute, and the next minute's first"
+        );
+        assert_eq!(boundaries.iter().filter(|ms| **ms < 1000).count(), 30);
+        // One short of a boundary owes nothing yet; a step over two takes
+        // the latest and counts the other.
+        let mut timeline = Timeline::new(30, Pacing::Stepped);
+        timeline.poll(0.0);
+        assert_eq!(timeline.poll(33.0), Tick::Wait { until_ms: 34.0 });
+        assert_eq!(
+            timeline.poll(99.0),
+            Tick::Due {
+                missed: 1,
+                first_missed_ms: 34.0,
+                boundary_ms: 67.0
             }
         );
     }

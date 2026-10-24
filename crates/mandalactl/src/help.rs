@@ -189,7 +189,8 @@ FLAGS (anywhere before a bare --)
                     (clock.wait until=settled), so the next read or screenshot sees them; refused on
                     read-only commands. An app without clock.wait is detected first: exit 1, and the
                     command is not sent.
-  --timeout <secs>  patience for the connection and for each reply (default 15; the wait gets the same)
+  --timeout <secs>  patience for the connection and for each reply (default 15; the wait gets the same).
+                    A clock.wait reply is waited on at least to its own timeout_ms, plus 2 s
   --count <n>       events.subscribe only: stop after printing n events (else it runs until the app exits
                     or stdout closes; one line per event, the frame as received with --json)
   --force           drive an app whose protocol differs from this build's

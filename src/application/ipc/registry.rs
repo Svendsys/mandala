@@ -406,6 +406,10 @@ pub(crate) fn execute(
     // it caused are queued behind the reply that announces them.
     let revisions = call.observe_events(Driver::Ipc);
     let repaint = call.observe().is_some_and(|target| target.changed_view());
+    // A deferred reply is built later, from the wait alone, when it
+    // resolves: warnings captured here and the revisions above have no
+    // envelope to ride on and are dropped. `clock.wait`, the one
+    // deferring command, logs none and changes nothing to count.
     if call.deferred {
         return Executed { reply: None, repaint };
     }
