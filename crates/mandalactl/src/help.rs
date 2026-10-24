@@ -264,9 +264,9 @@ const RAW_EXAMPLE: &str = "  mandalactl raw - <<'JSON'
   JSON";
 
 const TAIL: &str = "
-A command the app serves but this list lacks (the clock family, for one) is
-called by name with name=value arguments: mandalactl clock.step ms=100. `mandalactl describe` shows
-what the connected app has.";
+A command the app serves but this list lacks (one newer than this build) is
+called by name with name=value arguments: mandalactl family.verb name=value. `mandalactl describe`
+shows what the connected app has.";
 
 #[cfg(test)]
 mod tests {
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_command_help_for_a_stranger_points_at_describe() {
-        let err = command_help("clock.step").expect_err("not in the table");
-        assert!(err.contains("mandalactl describe clock.step"), "{err}");
+        let err = command_help("future.verb").expect_err("not in the table");
+        assert!(err.contains("mandalactl describe future.verb"), "{err}");
     }
 }

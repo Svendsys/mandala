@@ -148,6 +148,11 @@ pub(super) struct WasmInputState {
     /// alone — winit dispatches them as
     /// `WindowEvent::Touch` instead).
     pub touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
+    /// The app clock (`crate::application::clock`), the peer of native's
+    /// `InitState.clock`. Always real here: what moves a virtual clock is
+    /// the per-frame drain, which the browser does not have yet
+    /// (`CLAUDE.md` "Per-frame animation drain").
+    pub clock: crate::application::clock::AppClock,
 }
 
 impl WasmInputState {
@@ -176,6 +181,7 @@ impl WasmInputState {
             keybinds,
             macros: &mut self.macros,
             interaction_mode: &mut self.interaction_mode,
+            clock: &self.clock,
         }
     }
 
@@ -286,7 +292,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
             log::warn!("macros: CustomMutation step: unknown custom-mutation id '{}'", id);
             return false;
         };
-        let now = super::now_ms() as u64;
+        let now = self.input.clock.now_whole_ms();
         let applied = super::dispatch::apply_keybind_custom_mutation(
             &mut self.input.document,
             &mut self.input.mindmap_tree,
@@ -826,6 +832,7 @@ pub(super) fn run(mut app: Application) {
             scene_cache: init_scene_cache,
             macros,
             touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
+            clock: crate::application::clock::AppClock::default(),
         });
 
         // Event-driven redraw model: instead of an unconditional

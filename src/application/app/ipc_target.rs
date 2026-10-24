@@ -8,7 +8,7 @@
 //! IPC-driven action, console line or macro therefore takes the same
 //! arms, the same gates and the same undo entries as a keystroke
 //! would, and injected raw input enters through the very
-//! `InitState::on_*` methods `handle_event`'s winit arms call. A
+//! `on_*` methods `handle_event`'s winit arms call. A
 //! screenshot is the screenshot engine (`capture_flow::capture`), the
 //! function the `screenshot` console verb calls too.
 //!
@@ -19,22 +19,19 @@
 
 use glam::Vec2;
 use serde_json::{json, Value};
-use winit::event_loop::ActiveEventLoop;
 
 use crate::application::capture::plan::CaptureRequest;
 use crate::application::capture::record::{RecordDestination, Started, Summary};
 use crate::application::capture::{CaptureError, Destination};
+use crate::application::clock::{AppClock, ClockMode, ClockRefusal, StepRequest, Stepped};
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
 use crate::application::ipc::events::Observed;
-use crate::application::ipc::injected::{
-    resolve_command, Delivery, InputEvent, Overloaded, Pacing, Sample, Surface,
-};
+use crate::application::ipc::injected::{resolve_command, Delivery, Overloaded, Pacing, Sample, Surface};
 use crate::application::ipc::space::{camera_json, Point, Space};
 use crate::application::ipc::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
-use crate::application::platform::window::PhysicalPosition;
 use crate::application::renderer::Renderer;
 use crate::application::source_tier::SourceTier;
 
@@ -54,9 +51,6 @@ const IPC_STEPS_LABEL: &str = "(ipc steps)";
 /// [`InputHandlerContext`] is built per event.
 pub(super) struct IpcCommandTarget<'a> {
     init: &'a mut InitState,
-    /// The keyboard handler's event-loop handle, passed through to an
-    /// injected key exactly as `handle_event` passes it.
-    event_loop: &'a ActiveEventLoop,
     /// Set when a funnel reports it did something that may have
     /// changed pixels; read back through
     /// [`CommandTarget::changed_view`].
@@ -64,10 +58,9 @@ pub(super) struct IpcCommandTarget<'a> {
 }
 
 impl<'a> IpcCommandTarget<'a> {
-    pub(super) fn new(init: &'a mut InitState, event_loop: &'a ActiveEventLoop) -> Self {
+    pub(super) fn new(init: &'a mut InitState) -> Self {
         IpcCommandTarget {
             init,
-            event_loop,
             changed_view: false,
         }
     }
@@ -133,31 +126,6 @@ impl InitState {
             camera: self.renderer.camera(),
             mode: &self.interaction_mode,
         }
-    }
-
-    /// Deliver one injected-input sample to the `on_*` entry point
-    /// its winit event reaches, with the sample's modifiers held for
-    /// that one event (`ipc::injected::Sample`). Returns whether the
-    /// arm asked for a redraw. Called by the heartbeat for a queued
-    /// sample and by [`IpcCommandTarget::inject`] for a burst.
-    pub(super) fn apply_injected(&mut self, event_loop: &ActiveEventLoop, sample: Sample<Surface>) -> bool {
-        let reported = self.modifiers;
-        if let Some(held) = sample.modifiers {
-            self.modifiers = held;
-        }
-        let redraw = match sample.event {
-            InputEvent::CursorMoved((x, y)) => self.on_cursor_moved(PhysicalPosition::new(x, y)),
-            InputEvent::MouseButton { button, state } => self.on_mouse_input(state, button),
-            InputEvent::Wheel(delta) => self.on_mouse_wheel(delta),
-            InputEvent::Key { key, state } => self.on_keyboard_input(event_loop, key, state),
-            InputEvent::Touch {
-                phase,
-                pointer_id,
-                at: (x, y),
-            } => self.dispatch_touch_event(phase, pointer_id, PhysicalPosition::new(x, y)),
-        };
-        self.modifiers = reported;
-        redraw
     }
 }
 
@@ -289,8 +257,9 @@ impl CommandTarget for IpcCommandTarget<'_> {
                 let renderer = &self.init.renderer;
                 let resolved: Vec<Sample<Surface>> =
                     resolve_command(samples, |point| surface_of(renderer, point)).collect();
+                let mut ctx = self.init.input_context();
                 for sample in resolved {
-                    self.changed_view |= self.init.apply_injected(self.event_loop, sample);
+                    self.changed_view |= ctx.apply_injected(sample);
                 }
                 true
             }
@@ -335,6 +304,7 @@ impl CommandTarget for IpcCommandTarget<'_> {
     ) -> Option<Result<Started, CaptureError>> {
         let init = &mut *self.init;
         init.document.as_ref()?;
+        let clock = init.clock.clone();
         let (scene, artifacts, recorder) = CaptureScene::of_init(init);
         Some(record_flow::start(
             scene,
@@ -344,11 +314,35 @@ impl CommandTarget for IpcCommandTarget<'_> {
             fps,
             max_frames,
             destination,
+            &clock,
         ))
     }
 
     fn record_stop(&mut self) -> Result<Summary, CaptureError> {
         let init = &mut *self.init;
-        record_flow::stop(&mut init.recorder, &mut init.artifacts, &init.watchdog)
+        record_flow::stop(
+            &mut init.recorder,
+            &mut init.artifacts,
+            &init.watchdog,
+            &init.clock,
+        )
+    }
+
+    fn clock(&self) -> &AppClock {
+        &self.init.clock
+    }
+
+    fn set_clock_mode(&mut self, mode: ClockMode) -> Result<bool, ClockRefusal> {
+        // A switch moves no reading and changes nothing a frame shows:
+        // the next frame draws what this one would have.
+        self.init.input_context().set_clock_mode(mode)
+    }
+
+    fn step_clock(&mut self, request: StepRequest) -> Result<Stepped, ClockRefusal> {
+        let stepped = self.init.input_context().step(request)?;
+        // Time moved, and with it anything time drives: one frame to
+        // show where the step left the app.
+        self.changed_view = true;
+        Ok(stepped)
     }
 }

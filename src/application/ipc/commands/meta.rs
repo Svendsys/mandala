@@ -60,7 +60,7 @@ pub(super) const FAMILY: Family = Family {
             result: &[ResultSpec::new(
                 "now_ms",
                 ParamType::Number,
-                "The app's now_ms() clock, in milliseconds.",
+                "The app clock, in milliseconds: virtual time under clock.set_mode virtual.",
             )],
             run: ping,
         },
@@ -80,8 +80,14 @@ fn events() -> Vec<(&'static str, &'static str)> {
     events
 }
 
+/// `ping`. Before the window exists the app clock is the wall clock,
+/// as a new clock reads (`clock.status` answers the same).
 fn ping(call: &mut Call<'_>) -> Reply {
-    call.ok(json!({ "now_ms": crate::application::common::now_ms() }))
+    let now_ms = match call.observe() {
+        Some(app) => app.clock().now_ms(),
+        None => crate::application::clock::wall_ms(),
+    };
+    call.ok(json!({ "now_ms": now_ms }))
 }
 
 fn describe(call: &mut Call<'_>) -> Reply {
@@ -122,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_ping_reports_the_app_clock_and_changes_nothing() {
-        let before = crate::application::common::now_ms();
+        let before = crate::application::clock::wall_ms();
         let (reply, repaint) = run_detached(r#"{"id":1,"cmd":"ping"}"#);
         assert!(!repaint, "ping changes no pixels");
         assert_eq!(reply["id"], json!(1));

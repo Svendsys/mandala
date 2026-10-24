@@ -78,6 +78,7 @@ pub mod body;
 pub mod border;
 pub mod canvas;
 pub mod cap;
+pub mod clock;
 pub mod color;
 pub mod edge;
 pub mod font;
@@ -170,6 +171,7 @@ pub const COMMANDS: &[Command] = &[
     save::COMMAND,
     screenshot::COMMAND,
     record::COMMAND,
+    clock::COMMAND,
     open::COMMAND,
     new::COMMAND,
     node::COMMAND,

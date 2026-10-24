@@ -71,8 +71,8 @@ pub(in crate::application::app) use release::{ReleaseCommit, ReleaseRefresh};
 pub(in crate::application::app) use section_resize::SectionResizeInteraction;
 
 /// Mutable references into the persistent app state every drain
-/// body reaches for. Built once in
-/// [`super::run_native::InitState::drain_inputs`] and handed to the
+/// body reaches for. Built once per frame in the heartbeat's
+/// [`super::input_context::InputHandlerContext::drain_inputs`] and handed to the
 /// active interaction's [`ThrottledInteraction::drive`].
 ///
 /// The picker state is bundled here so
@@ -92,6 +92,10 @@ pub(in crate::application::app) struct DrainContext<'a> {
     /// because per-frame drains never mutate mode (mode transitions
     /// are discrete actions, not gestures).
     pub interaction_mode: &'a super::InteractionMode,
+    /// Whether the frame is on the wall clock's deadline, so the
+    /// throttle gates the drain. `false` under a virtual clock, where
+    /// every pending drain runs (`app::heartbeat`, `drain_inputs`).
+    pub throttled: bool,
 }
 
 /// The mutually-exclusive throttled drag variants. Only one can be
@@ -218,6 +222,21 @@ pub(in crate::application::app) trait ThrottledInteraction {
         self.throttle().should_drain()
     }
 
+    /// Pure predicate: true iff this frame performs the drain body. A
+    /// throttled frame asks [`Self::should_perform_drain`]; an
+    /// unthrottled one ([`DrainContext::throttled`] false, a virtual
+    /// heartbeat) drains whenever something is pending and never
+    /// consults the throttle, so its cadence is where real time left
+    /// it. Separated from [`drive`](Self::drive) for the reason
+    /// `should_perform_drain` is.
+    fn drain_due(&mut self, throttled: bool) -> bool {
+        if throttled {
+            self.should_perform_drain()
+        } else {
+            self.has_pending()
+        }
+    }
+
     /// True iff the loop must keep iterating to flush pending state
     /// even without further input. Consulted by the idle-CPU
     /// gating: under `ControlFlow::Wait` the loop would otherwise
@@ -231,8 +250,19 @@ pub(in crate::application::app) trait ThrottledInteraction {
 
     /// The unified six-step shell. Not meant to be overridden —
     /// overriding defeats the purpose of the trait.
+    ///
+    /// An unthrottled frame ([`DrainContext::throttled`] false, a
+    /// virtual heartbeat) drains whenever something is pending and
+    /// leaves the throttle as it was: neither its skip counter nor its
+    /// measured cost moves, so real time resumes with the tuning real
+    /// time left it.
     fn drive(&mut self, ctx: DrainContext<'_>) {
-        if !self.should_perform_drain() {
+        let throttled = ctx.throttled;
+        if !self.drain_due(throttled) {
+            return;
+        }
+        if !throttled {
+            self.drain(ctx);
             return;
         }
         let work_start = Instant::now();

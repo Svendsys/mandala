@@ -18,7 +18,6 @@
 use crate::application::app::dispatch::{self, DispatchOutcome, TouchStep};
 use crate::application::app::touch_gesture::Phase;
 use std::sync::atomic::AtomicBool;
-use web_time::Instant;
 use winit::event::Touch;
 
 /// One-shot warn-log latch: fires the first time a recognized
@@ -43,12 +42,13 @@ impl super::WasmApp {
     pub(super) fn handle_touch_event(&mut self, touch: Touch) -> bool {
         let phase = dispatch::touch_phase(touch.phase);
         let pos = (touch.location.x, touch.location.y);
-        let now = Instant::now();
         let mut input_borrow = self.input.borrow_mut();
         let mut renderer_borrow = self.renderer.borrow_mut();
         let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) else {
             return false;
         };
+        // The app clock's instant, as native's recognizer is fed.
+        let now = input.clock.instant();
         // Phase translation, recognizer ingest + tick, and the
         // routing of what it recognized are the shared body native
         // runs too, and so is `apply_touch_effect`. What is left

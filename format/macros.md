@@ -77,10 +77,13 @@ Authoring tip: keep ids unique within a single source.
 **Inline tier is special.** Inline macros are scoped per-node,
 but the registry is flat (id-keyed across all nodes). So
 "within-tier" for Inline means "across every node in the
-document." And because `MindMap.nodes` is a `HashMap`, the
-walk order is non-deterministic — the "winner" for an id
-duplicated across nodes varies per process start. The loader
-emits a `warn!` on cross-node Inline collisions, but the only
+document." The loader walks the nodes in id order and keeps
+the entry of the **lowest node id** for an id duplicated across
+nodes — in every process, although `MindMap.nodes` is a
+`HashMap` (the walk is sorted, and a later node's duplicate is
+dropped rather than handed to the registry's last-writer-wins
+insert). It emits a `warn!` naming both nodes and the winner. A
+deterministic winner is still an accident of numbering, so the
 robust fix is namespacing: prefix each inline-macro id with the
 owning node's id (e.g. `"3.2.1.save-and-quit"`).
 
@@ -99,9 +102,9 @@ entry is preserved underneath:
 Within-tier last-writer-wins still applies (two entries with
 the same id in the same tier — the second wins). Authors
 should still namespace ids defensively when targeting the
-Inline tier specifically, since cross-node Inline collisions
-have non-deterministic winners (HashMap iteration order); see
-the Inline-tier note above.
+Inline tier specifically, since a cross-node Inline collision is
+won by whichever node id sorts lowest; see the Inline-tier note
+above.
 
 ## Privilege model — read this before shipping a non-User loader
 

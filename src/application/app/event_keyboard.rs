@@ -7,8 +7,6 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use winit::event_loop::ActiveEventLoop;
-
 use crate::application::platform::input::Key;
 
 use super::color_picker_flow::{handle_color_picker_clipboard_key, picker_op_for};
@@ -19,11 +17,7 @@ use super::single_line_edit::{
     handle_single_line_edit_key, open_single_line_edit, resolve_single_line_target,
 };
 
-pub(super) fn handle_keyboard_input(
-    logical_key: Key,
-    _event_loop: &ActiveEventLoop,
-    ctx: &mut InputHandlerContext<'_>,
-) {
+pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerContext<'_>) {
     let key_name = crate::application::keybinds::key_to_name(&logical_key);
 
     // When the console is open, it steals all

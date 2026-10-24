@@ -449,7 +449,6 @@ pub struct Renderer {
     /// frame. A failed prepare skips `present()` too, so the frame
     /// takes no vsync backpressure and the loop can spin at CPU rate.
     prepare_fault_logged: bool,
-    run: bool,
     should_render: bool,
     fps: Option<usize>,
     /// Which FPS readout to display, if any. `Snapshot` samples one
@@ -847,7 +846,6 @@ impl Renderer {
             prepare_fault_logged: false,
             should_render: false,
             fps: None,
-            run: true,
             fps_display_mode: FpsDisplayMode::Off,
             fps_overlay_buffers: Vec::new(),
             last_fps_shaped: None,
@@ -986,8 +984,13 @@ impl Renderer {
         self.window.request_redraw();
     }
 
-    /// Draw one frame and report whether the event loop should keep
-    /// going. The loop paces itself — `ControlFlow::Poll` plus the
+    /// Draw one frame, and report whether it was drawn: `true` when the
+    /// frame's CPU half ran (every buffer current, every glyph
+    /// prepared), whether or not the surface then had a texture to
+    /// present into; `false` for a frame the renderer skipped. The
+    /// native shell's redraw ledger reads it (`app::settle`), so an
+    /// occluded window that never presents still counts as drawn. The
+    /// loop paces itself — `ControlFlow::Poll` plus the
     /// surface's own vsync backpressure — so there is no rate gate
     /// here.
     ///
@@ -1007,8 +1010,7 @@ impl Renderer {
             self.rebuild_fps_overlay_if_needed();
         }
         self.rebuild_mode_status_overlay_if_needed();
-        self.render();
-        self.run
+        self.render()
     }
 
     /// Set the mode-status overlay text. `None` clears the overlay

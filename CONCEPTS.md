@@ -2252,8 +2252,9 @@ This decouples mutation frequency (often per-input-sample) from
 rebuild frequency (at most once per frame), so a flurry of
 pointer events doesn't trigger a flurry of scene rebuilds.
 
-`src/application/app/drain_frame.rs`. Called
-on every winit `AboutToWait` event. Step order:
+`src/application/app/heartbeat.rs` (the frame) and
+`src/application/app/drain_frame.rs` (its non-throttled drains).
+Called on every winit `AboutToWait` event. Step order:
 
 1. Drive any active throttled interaction
    ([`ThrottledInteraction`](#throttledinteraction-and-throttleddrag)) —
@@ -2266,6 +2267,20 @@ on every winit `AboutToWait` event. Step order:
    unsaved-changes marker, not a rebuild trigger.
 5. Dispatch to `Renderer::process` to push GPU buffers.
 6. Update FPS rolling-average / snapshot counter.
+
+**Two halves.** Steps 1, 3 and 4 are *input-driven*: they flush what
+input already did and need no clock. The *time-driven* half — one
+sample of the IPC injected-input queue ahead of step 1, the animation
+tick of step 2, and an active recording's frame after the IPC drain —
+is a function of when the frame runs, read off the
+[app clock](#app-clock). In real time every iteration runs both. Under
+a virtual clock the loop's own iterations run the input-driven half
+only, and `clock.step` runs the whole frame at the virtual instants it
+names — a heartbeat every 16 ms and every frame boundary of a running
+recording — ticking the watchdog per heartbeat. The frame is a method
+set on `InputHandlerContext` rather than on `InitState`, with the input
+arms (`on_*`) beside it, so a `clock step` console line runs the very
+frame the IPC command does.
 
 ### `MindMapDocument`
 
@@ -3265,7 +3280,7 @@ runs the canonical click ladder on the app side
 family is the hand on the mouse and keyboard, below the Action
 funnel: `input.mouse_move`, `.mouse_button`, `.wheel`, `.key`,
 `.text` and `.touch` become the payloads winit events carry and are
-delivered to the same `InitState::on_*` entry points those events
+delivered to the same `on_*` entry points those events
 reach, so the drag state machines, double-click timing and modal
 steals cannot tell them apart. `input.drag` paces its samples one per
 frame through the injected-input queue (`ipc/injected.rs`), so the
@@ -3365,8 +3380,9 @@ contract, and the assembler is a client that reads a directory.
 `src/application/capture/record.rs` is the engine's pure half.
 `Timeline` decides from the elapsed time alone when a frame is due and
 how many boundaries a late heartbeat stepped over, never reading a
-clock itself, so the realtime pacing tested there is the pacing a
-virtual clock will reuse by passing virtual time; `Recording` holds the
+clock itself, so one timeline paces both a realtime recording and a
+stepped one, which `clock.step` drives by stopping the
+[app clock](#app-clock) on each boundary; `Recording` holds the
 frames, the gaps and the manifest. `app/record_flow.rs` is the app
 half: it starts a recording, takes a frame each time `about_to_wait`
 finds one due (an active recording is a loop timer source, so an idle
@@ -3387,20 +3403,33 @@ than delays, so the error does not accumulate, and dropping frames
 closer than the 20 ms a browser honors — and writes one decoded frame
 at a time.
 
-### `now_ms()`
+### App clock
 
-A cross-platform monotonic clock returning `f64`
-milliseconds since process start (native) or page load (WASM).
+The one time axis everything the app *does* by time reads —
+animations, the drag pause on them, double-click and long-press timing,
+an `OnClick` trigger's start, a recording's frames — with a virtual
+mode in which it advances only when stepped. `AppClock` in
+`src/application/clock.rs`; `wall_ms` beside it is the wall clock
+what *measures* reads.
 
-Animation timing, double-click detection,
-FPS tracking, throttled-interaction frame stamping all need a
-clock that works the same on both targets. `now_ms()` is the
-single bridge.
+A reproducible run, a screenshot of an animation's middle, a test of a
+double-click at exactly its window all need time to hold still and
+move on command, while the FPS overlay, the freeze watchdog and the
+drag throttle's budget must keep measuring real cost. So the old
+single `now_ms()` bridge became two names, and every reader was
+dispositioned to one of them (`work_plans/LLM_IPC.md` §D9 has the
+table). The clock is threaded through `InputHandlerContext` and
+`InputContextCore`, so a test's clock is an ordinary value. Switching
+modes never moves the reading — virtual time starts where real time
+stood and real time resumes where virtual time was left — so nothing
+stored on the axis is ever rebased. Driven by the IPC `clock` family
+and the `clock` console verb; `clock.wait` is its settling primitive
+(`format/ipc.md` §`clock`).
 
-`src/application/app/mod.rs:98-111`.
-Native: `Instant::now()` deltas from a static epoch. WASM:
-`window.performance.now()` (clamped to ≥1ms by Spectre
-mitigations).
+Native and the browser each hold one; the browser's stays real,
+because what advances a virtual clock is the per-frame drain, which is
+native today (`CLAUDE.md` "Dual-target status"). Both read the wall
+clock through `web_time`, which is `performance.now()` in the browser.
 
 ---
 

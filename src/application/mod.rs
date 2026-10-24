@@ -40,14 +40,16 @@
 //! - [`user_config`] — XDG / web-storage shared loader
 //!   plumbing for keybinds / mutations / macros.
 //! - [`frame_throttle`] — per-frame cap math.
-//! - [`common`] — small shared types: `RenderDecree`,
-//!   `FpsDisplayMode`, and the `now_ms` clock.
+//! - [`common`] — small shared types: `RenderDecree` and
+//!   `FpsDisplayMode`.
+//! - [`clock`] — the app clock every behavior reads, its virtual
+//!   mode, and the wall clock what measures cost reads.
 //!
 //! The crate's binary entry point (`src/main.rs`) constructs
 //! [`app::Application`] and calls [`app::Application::run`];
 //! everything else hangs off that.
 
-// Five subsystems below carry a wasm32-only `allow(dead_code)`.
+// Six subsystems below carry a wasm32-only `allow(dead_code)`.
 // Each is cross-platform *code* whose *driver* is native-gated (see
 // CLAUDE.md "Dual-target status"), so on `wasm32-unknown-unknown`
 // the module compiles with nothing calling into it and the
@@ -65,6 +67,11 @@ pub(crate) mod app;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod capture;
 pub(crate) mod clipboard;
+// The app clock. The browser reads it (double-click, touch, triggers);
+// what switches and steps it is the heartbeat, `app::heartbeat`,
+// native-gated with the per-frame drain it runs.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) mod clock;
 // Picker layout math + state. Driver: `app::color_picker_flow`,
 // native-gated pending the browser modal shell.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

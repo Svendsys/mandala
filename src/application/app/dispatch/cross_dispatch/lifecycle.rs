@@ -59,7 +59,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
     let Some(cm) = doc.mutation_registry.get(&id).cloned() else {
         return false;
     };
-    let now = crate::application::app::now_ms() as u64;
+    let now = core.clock.now_whole_ms();
     let applied =
         super::apply_keybind_custom_mutation(doc, core.mindmap_tree, core.scene_cache, &cm, &nid, now);
     if applied {

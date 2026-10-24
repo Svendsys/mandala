@@ -43,7 +43,7 @@ impl Renderer {
                 self.update_surface_size(x, y);
             }
             RenderDecree::Terminate => {
-                self.run = false;
+                self.should_render = false;
             }
             RenderDecree::Noop => {}
             RenderDecree::CameraPan(dx, dy) => {

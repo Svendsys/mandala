@@ -125,6 +125,13 @@ pub enum ConsoleSideEffect {
     /// Draws nothing the window shows and mutates nothing, so it costs
     /// no rebuild.
     Record(commands::record::RecordLine),
+    /// Read, switch or step the app clock. Set by the `clock` verb,
+    /// which only reads the line; the executor hands it to the clock's
+    /// switch or its step (`app::heartbeat`) and the report becomes the
+    /// line's output. A step runs frames — the animation tick among
+    /// them — and owes the window one; a read or a switch changes
+    /// nothing a frame shows.
+    Clock(commands::clock::ClockLine),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -146,6 +153,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::SetInteractionMode(m) => f.debug_tuple("SetInteractionMode").field(m).finish(),
             Self::Screenshot(line) => f.debug_tuple("Screenshot").field(line).finish(),
             Self::Record(line) => f.debug_tuple("Record").field(line).finish(),
+            Self::Clock(line) => f.debug_tuple("Clock").field(line).finish(),
             Self::OpenSectionEdit { node_id, section_idx } => f
                 .debug_struct("OpenSectionEdit")
                 .field("node_id", node_id)

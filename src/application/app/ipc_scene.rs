@@ -256,6 +256,7 @@ mod tests {
                             app_scene: &mut scene,
                             scene_cache: &mut cache,
                             interaction_mode: &InteractionMode::Default,
+                            now_ms: 0,
                         },
                     );
                     clicked.selection.to_ipc_json()

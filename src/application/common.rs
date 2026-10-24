@@ -5,11 +5,6 @@
 //! invariant; together they form the "configuration" surface the
 //! event loop reads on every frame.
 
-// `web_time` maps to `performance.now()` on wasm32; without this swap
-// `Instant::now()` panics with "time not implemented on this platform".
-#[cfg(not(target_arch = "wasm32"))]
-use web_time::Instant;
-
 /// Renderer-side command queue entry. Event loop pushes one
 /// for each per-frame intent the renderer should react to; the
 /// renderer drains them at frame start. Everything that
@@ -27,8 +22,9 @@ use web_time::Instant;
 ///   is built; the renderer draws nothing before it.
 /// - `SetSurfaceSize(w, h)` — propagate a winit `Resized` to
 ///   the wgpu surface configuration.
-/// - `Terminate` — release GPU resources before the event loop
-///   exits.
+/// - `Terminate` — stop drawing: the event loop is about to exit,
+///   and a frame after this would present into a surface on its way
+///   out.
 /// - `CameraPan(dx, dy)` — translate the camera origin by a
 ///   per-cursor-move delta in canvas pixels (the §3 carve-out
 ///   for per-frame continuous-gesture state).
@@ -67,28 +63,6 @@ pub enum FpsDisplayMode {
     Off,
     Snapshot,
     Debug,
-}
-
-/// Cross-platform monotonic clock in milliseconds since first call.
-/// Native uses `web_time::Instant` (which delegates to
-/// `std::time::Instant`); WASM uses `performance.now()` (≥1ms
-/// quantised, fine for the 400ms double-click window and the
-/// animation-tick rate). Single source for click-time, animation-
-/// tick-time, and trigger-binding "now" reads on both targets.
-pub fn now_ms() -> f64 {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::sync::OnceLock;
-        static EPOCH: OnceLock<Instant> = OnceLock::new();
-        EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        web_sys::window()
-            .and_then(|w| w.performance())
-            .map(|p| p.now())
-            .unwrap_or(0.0)
-    }
 }
 
 #[cfg(test)]

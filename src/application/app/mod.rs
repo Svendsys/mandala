@@ -79,6 +79,10 @@ mod event_mouse_click;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]
+mod heartbeat;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use heartbeat::{step_document, SteppedDocument};
+#[cfg(not(target_arch = "wasm32"))]
 mod input_context;
 mod interaction_mode;
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,6 +106,8 @@ mod run_native;
 mod run_native_init;
 #[cfg(target_arch = "wasm32")]
 mod run_wasm;
+#[cfg(not(target_arch = "wasm32"))]
+mod settle;
 #[cfg(not(target_arch = "wasm32"))]
 mod single_line_edit;
 // Cross-platform: both init paths resolve the initial map load
@@ -128,12 +134,6 @@ use throttled_interaction::ThrottledDrag;
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use winit::{event_loop::EventLoop, window::Window};
-
-// `now_ms()` lives in `application::common` — single source for
-// the cross-platform monotonic clock both targets use. Re-export
-// here so the existing `use super::now_ms` import shape inside
-// `app/*` stays put.
-pub(crate) use crate::application::common::now_ms;
 
 /// Screen-space click tolerance (in pixels) for edge hit testing. Converted
 /// to canvas units via `Renderer::canvas_per_pixel()` so the click target
@@ -276,7 +276,8 @@ pub(crate) enum ClickHit {
 /// target so a second click within a short time + distance window
 /// is recognized as a double-click. Double-click fires on the second
 /// `Pressed` event, not the second release. `time` is `f64`
-/// milliseconds from the cross-platform `now_ms()` helper.
+/// milliseconds on the app clock (`AppClock::now_ms`), so under a
+/// virtual clock the window is virtual milliseconds too.
 #[derive(Debug, Clone)]
 struct LastClick {
     time: f64,
@@ -760,7 +761,7 @@ impl PendingPress {
 /// the `Throttled` tag. Each carries its pending-state and
 /// adaptive throttle as an interaction struct implementing
 /// [`throttled_interaction::ThrottledInteraction`]; the per-frame
-/// drain in [`run_native::InitState::drain_inputs`] dispatches
+/// drain in [`input_context::InputHandlerContext::drain_inputs`] dispatches
 /// through [`ThrottledDrag::as_dyn_mut`] without naming the
 /// active kind. Adding a new throttled drag is a new variant on
 /// `ThrottledDrag` + a struct + a trait impl; nothing about this

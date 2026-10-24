@@ -17,22 +17,25 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 use super::color_picker_flow::rebuild_color_picker_overlay;
 use super::freeze_watchdog::FreezeWatchdog;
+use super::heartbeat::{self, Beat};
 use super::input_context::InputHandlerContext;
 use super::ipc_target::IpcCommandTarget;
 use super::run_native_init;
+use super::settle::RedrawLedger;
 use super::single_line_edit::SingleLineEditor;
 use super::text_edit::TextEditState;
 use super::{
-    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, Application, DragState,
-    InteractionMode, LastClick, Options,
+    event_cursor_moved, event_keyboard, event_mouse_click, Application, DragState, InteractionMode,
+    LastClick, Options,
 };
 use crate::application::capture::artifacts::Artifacts;
 use crate::application::capture::record::Recorder;
+use crate::application::clock::AppClock;
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
 use crate::application::ipc::injected::InjectedQueue;
-use crate::application::ipc::{self, DrainOutcome, IpcServer, IpcWake};
+use crate::application::ipc::{self, DrainOutcome, IpcServer, IpcWake, Settling};
 use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::platform::input::{ElementState, Key, MouseButton, MouseScrollDelta, TouchPhase};
 use crate::application::platform::window::PhysicalPosition;
@@ -113,17 +116,12 @@ struct NativeApp {
 
 /// Execute queued IPC requests on the main thread, with the same access
 /// an input handler has: each command gets an [`IpcCommandTarget`]
-/// over the same state a winit handler is given, and the event loop
-/// the keyboard handler takes.
+/// over the same state a winit handler is given.
 /// `init` is `None` before the window exists, and a command that
 /// needs the app then answers `no_document`. A free function over the
 /// one field, so `about_to_wait` can call it while it holds
 /// `InitState`.
-fn drain_ipc(
-    server: &mut Option<IpcServer>,
-    init: Option<&mut InitState>,
-    event_loop: &ActiveEventLoop,
-) -> DrainOutcome {
+fn drain_ipc(server: &mut Option<IpcServer>, init: Option<&mut InitState>) -> DrainOutcome {
     let Some(server) = server else {
         return DrainOutcome::default();
     };
@@ -138,11 +136,24 @@ fn drain_ipc(
                 server.observe(&init.observed());
             }
             server.drain(|request, session| {
-                let mut target = IpcCommandTarget::new(init, event_loop);
+                let mut target = IpcCommandTarget::new(init);
                 ipc::execute(request, Some(&mut target), session)
             })
         }
         None => server.drain(|request, session| ipc::execute(request, None, session)),
+    }
+}
+
+/// Evaluate the controller's pending `clock.wait`, if any, against the
+/// app as it stands (`format/ipc.md` §`clock.wait`). Called at the end
+/// of every loop iteration, after its redraw has been asked for — so a
+/// pixels-affecting command of that iteration counts as a frame still
+/// owed — and after every window event, the frame's render among them,
+/// which is when an owed frame stops being owed. A free function over
+/// the one field, for the reason [`drain_ipc`] is.
+fn evaluate_wait(server: &mut Option<IpcServer>, init: &InitState) {
+    if let Some(server) = server {
+        server.evaluate_wait(init.settling(), &init.observed());
     }
 }
 
@@ -185,6 +196,7 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         self.watchdog.unparked();
         if let Some(init) = self.init.as_mut() {
             init.handle_event(event_loop, Event::WindowEvent { window_id, event });
+            evaluate_wait(&mut self.ipc, init);
         }
     }
 
@@ -206,30 +218,26 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // (animations, throttled-drag pending, mid-zoom), the
             // drain will do work that needs to land on screen.
             let was_continuing = init.needs_continuation();
-            // One injected-input sample per heartbeat, ahead of the
-            // input drain — where a winit event lands — so a paced
-            // IPC drag's moves are driven through the throttled drag
-            // between frames, as a hand's are (format/ipc.md
-            // §`input`). An empty queue is the common case and costs
-            // nothing; `needs_continuation` keeps the loop iterating
-            // until the queue is empty, and `was_continuing` above
-            // already holds the redraw this sample owes.
-            let renderer = &init.renderer;
-            if let Some(sample) = init
-                .injected
-                .pop(|point| super::ipc_target::surface_of(renderer, point))
-            {
-                init.apply_injected(event_loop, sample);
-            }
-            init.drain_inputs();
+            // The frame up to the recorder (`app::heartbeat`). In real
+            // time: one injected-input sample, ahead of the input drain
+            // — where a winit event lands — so a paced IPC drag's moves
+            // are driven through the throttled drag between frames, as a
+            // hand's are (format/ipc.md §`input`); then the drains and
+            // the animation tick. An empty queue is the common case and
+            // costs nothing; `needs_continuation` keeps the loop
+            // iterating until the queue is empty, and `was_continuing`
+            // above already holds the redraw this sample owes. Under a
+            // virtual clock time has not moved, so only the input-driven
+            // drains run: the sample and the tick are `clock.step`'s.
+            init.input_context().drain_frame(Beat::Loop);
             // After the input drain, so a command observes every input
             // the user sent before it — throttled drag moves and zoom
             // steps included — and its effects are ordered after them.
-            ipc_outcome = drain_ipc(&mut self.ipc, Some(init), event_loop);
+            ipc_outcome = drain_ipc(&mut self.ipc, Some(init));
             // After the IPC drain, so a frame shows what the commands of
             // this iteration did, and before the continuation check,
             // which the frame's camera-geometry rebuild can change.
-            init.record_tick();
+            init.input_context().record_tick(Beat::Loop);
             let still_continuing = init.needs_continuation();
             // Only when nothing else wants this iteration: no animation
             // frame or redraw still owed, no IPC left in the queue. The
@@ -245,7 +253,7 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // changed pixels needs one too, as a mutating input
             // handler's `redraw_after` does.
             if was_continuing || still_continuing || ipc_outcome.repaint {
-                init.window.request_redraw();
+                init.request_redraw();
             }
             // Active → idle FPS transition: when the loop is about
             // to park and the overlay still shows a live numeric
@@ -271,7 +279,7 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             };
             if !still_continuing && fps_on && fps_defer_deadline.is_none() && init.renderer.has_live_fps() {
                 init.renderer.set_fps_idle();
-                init.window.request_redraw();
+                init.request_redraw();
             }
             // ControlFlow::Poll keeps the loop ticking so the next
             // about_to_wait drains again; ControlFlow::WaitUntil
@@ -284,11 +292,19 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             //
             // An active recording is a timer source: an idle canvas
             // would otherwise park with no heartbeat to take its next
-            // frame (`format/ipc.md` §`capture.record_start`).
-            let wake_by = [fps_defer_deadline, super::record_flow::deadline(&init.recorder)]
-                .into_iter()
-                .flatten()
-                .min();
+            // frame (`format/ipc.md` §`capture.record_start`). So is a
+            // pending `clock.wait`'s deadline, which is wall-clock under
+            // either mode: it guards the client's liveness, and a parked
+            // loop must still answer it.
+            let wait_deadline = self.ipc.as_ref().and_then(IpcServer::wait_deadline);
+            let wake_by = [
+                fps_defer_deadline,
+                super::record_flow::deadline(&init.recorder, &init.clock),
+                wait_deadline,
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             event_loop.set_control_flow(if still_continuing {
                 ControlFlow::Poll
             } else if let Some(deadline) = wake_by {
@@ -296,6 +312,8 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             } else {
                 ControlFlow::Wait
             });
+            // After the redraw this iteration owes has been asked for.
+            evaluate_wait(&mut self.ipc, init);
             // After every handler of the iteration has run, so a load,
             // a `new` or a save-as reaches the next client's `hello`.
             if let Some(server) = self.ipc.as_mut() {
@@ -304,7 +322,7 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         } else {
             // Before the window exists there is no input to order
             // against; requests that need no app state still answer.
-            ipc_outcome = drain_ipc(&mut self.ipc, None, event_loop);
+            ipc_outcome = drain_ipc(&mut self.ipc, None);
         }
         // A drain that ran out of budget keeps the loop iterating until
         // the queue is empty.
@@ -329,7 +347,12 @@ impl ApplicationHandler<IpcWake> for NativeApp {
             // A recording in progress is finished first: its frames and
             // manifest are on disk, or — in the artifacts dir — go
             // with the dir just below.
-            super::record_flow::shutdown(&mut init.recorder, &mut init.artifacts, &init.watchdog);
+            super::record_flow::shutdown(
+                &mut init.recorder,
+                &mut init.artifacts,
+                &init.watchdog,
+                &init.clock,
+            );
             init.artifacts.remove();
         }
     }
@@ -385,7 +408,7 @@ pub(super) struct InitState {
     /// `WasmInputState.touch_recognizer`. See `app/touch_gesture.rs`
     /// for the machine and CONCEPTS §5 for where each emission goes.
     pub(super) touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
-    /// Wall-clock at which the current tree-mutating drag began
+    /// App-clock ms at which the current tree-mutating drag began
     /// suppressing the animation tick — `Some(now_ms)` while a
     /// `MovingNode` / `MovingSection` / `SectionResize` /
     /// `NodeResize` drag is in flight, `None` otherwise. On
@@ -394,8 +417,8 @@ pub(super) struct InitState {
     /// resumes the animation where the drag froze it, instead
     /// of snapping to its `to` state on the first post-release
     /// frame (the `tick_animations` body computes `elapsed = now
-    /// - start_ms`, and without the shift the wall-clock-elapsed
-    /// during the drag would land past `total`).
+    /// - start_ms`, and without the shift the time elapsed during
+    /// the drag would land past `total`).
     pub(super) anim_pause_start_ms: Option<u64>,
     /// Raw input the IPC `input` family queued for the heartbeat,
     /// applied one sample per frame ahead of `drain_inputs`
@@ -411,8 +434,17 @@ pub(super) struct InitState {
     pub(super) recorder: Recorder,
     /// A handle on the event loop's freeze watchdog, for main-thread
     /// work that runs long while making progress — a screenshot ticks
-    /// it per band and per encoded chunk (`app::capture_flow`).
+    /// it per band and per encoded chunk (`app::capture_flow`), a
+    /// clock step per heartbeat (`app::heartbeat`).
     pub(super) watchdog: FreezeWatchdog,
+    /// The app clock every behavior reads (`crate::application::clock`).
+    /// App state, not session state: a virtual clock stays virtual
+    /// across the client that set it, so `mandalactl`'s one command per
+    /// connection can drive it.
+    pub(super) clock: AppClock,
+    /// Every redraw asked for and the last one drawn: the "rendered"
+    /// half of `clock.wait until=settled` (`app::settle`).
+    pub(super) redraws: RedrawLedger,
 }
 
 impl InitState {
@@ -437,7 +469,7 @@ impl InitState {
             last_click: &mut self.last_click,
             hovered_node: &mut self.hovered_node,
             cursor_pos: &mut self.cursor_pos,
-            modifiers: &self.modifiers,
+            modifiers: &mut self.modifiers,
             cursor_is_hand: &mut self.cursor_is_hand,
             cursor_icon_last: &mut self.cursor_icon_last,
             picker_hover: &mut self.picker_hover,
@@ -446,82 +478,33 @@ impl InitState {
             artifacts: &mut self.artifacts,
             recorder: &mut self.recorder,
             watchdog: &self.watchdog,
+            window: &self.window,
+            touch_recognizer: &mut self.touch_recognizer,
+            anim_pause_start_ms: &mut self.anim_pause_start_ms,
+            injected: &mut self.injected,
+            clock: &mut self.clock,
         }
     }
 
-    /// Translate a winit `Touch` event's phase, finger id and
-    /// location into a recognizer step and run it. Takes the payload
-    /// rather than the `Touch` struct so the IPC `input.touch`
-    /// command reaches this same entry point (its `DeviceId` cannot
-    /// be built outside winit). Returns true when the event drove any state
-    /// transition or ran a gesture (the caller should request a
-    /// redraw on true). Modifier state is fixed at all-false —
-    /// touch devices have no modifier keys, and the keybind table's
-    /// `LongPress` binding doesn't carry Ctrl/Shift/Alt either.
-    ///
-    /// **Long-press timing wake-up gap**: `tick` is called only
-    /// from the events themselves (not on a wall-clock timer),
-    /// so a finger held with literally zero `Moved` events
-    /// between Started and Ended would miss the long-press
-    /// emission. In practice touch hardware emits sub-pixel
-    /// jitter `Moved` events constantly while a finger is down,
-    /// so the gap is theoretical — and the recognizer refuses to
-    /// call such a hold a tap either way, on the elapsed time
-    /// rather than on the emission having happened. A future
-    /// improvement would set `ControlFlow::WaitUntil(started_at +
-    /// LONG_PRESS_MS)` from the recognizer's `OneFinger` state.
-    pub(super) fn dispatch_touch_event(
-        &mut self,
-        phase: TouchPhase,
-        id: u64,
-        location: PhysicalPosition<f64>,
-    ) -> bool {
-        use super::touch_gesture::Phase;
-        use web_time::Instant;
-        // Phase translation, recognizer ingest + tick, and the
-        // routing of what it recognized are `cross_dispatch::pointer`'s
-        // `drive_touch_event`; the browser runs the same body, and so
-        // does `apply_touch_effect` below. What is native's own is the
-        // `Dispatch` arm — it goes through `dispatch_action` so a
-        // `NativeOnly` Action bound to a gesture (`EnterResizeMode`)
-        // reaches its arm.
-        let phase = super::dispatch::touch_phase(phase);
-        let pos = (location.x, location.y);
-        // No gesture recognized — but the recognizer may have moved
-        // its internal state (e.g. Started → OneFinger). The caller
-        // still wants a redraw on Started/Moved so any
-        // cursor-following overlay updates.
-        let idle_redraw = matches!(phase, Phase::Started | Phase::Moved);
-        let Some(step) = super::dispatch::drive_touch_event(
-            &mut self.touch_recognizer,
-            &self.keybinds,
-            phase,
-            id,
-            pos,
-            Instant::now(),
-        ) else {
-            return idle_redraw;
-        };
-        match step {
-            super::dispatch::TouchStep::Dispatch(d) => {
-                self.cursor_pos = d.cursor_pos;
-                let Some(a) = d.action else {
-                    return idle_redraw;
-                };
-                let mut ctx = self.input_context();
-                let _ = super::dispatch::dispatch_action(a, &mut ctx, None);
-                true
-            }
-            super::dispatch::TouchStep::Effect(effect) => {
-                let mut ctx = self.input_context();
-                let (mut core, _native) = ctx.split_borrow();
-                super::dispatch::apply_touch_effect(effect, &mut core);
-                // The camera-geometry reprojection a pinch owes is
-                // picked up by `drain_camera_geometry_rebuild` in the
-                // frame this redraw requests, under the same
-                // renderer-side dirty flag the wheel path uses.
-                true
-            }
+    /// Ask winit for a frame, and write the ask into the
+    /// [`RedrawLedger`]. Every redraw the app requests goes through
+    /// here, so the ledger's "drawn" means "everything asked for so far
+    /// has been drawn".
+    pub(super) fn request_redraw(&mut self) {
+        self.redraws.ask();
+        self.window.request_redraw();
+    }
+
+    /// What `clock.wait` reads at an evaluation point
+    /// (`format/ipc.md` §`clock.wait`).
+    pub(super) fn settling(&self) -> Settling {
+        Settling {
+            animations_active: self
+                .document
+                .as_ref()
+                .is_some_and(MindMapDocument::has_active_animations),
+            continuing: self.needs_continuation(),
+            redraw_owed: !self.redraws.is_current(),
         }
     }
 
@@ -573,8 +556,13 @@ impl InitState {
                 // via `Window::request_redraw` from event handlers
                 // (mutations) and from `about_to_wait` (drain
                 // continuations); winit delivers exactly one
-                // `RedrawRequested` per coalesced batch.
-                self.renderer.process();
+                // `RedrawRequested` per coalesced batch. The ledger
+                // learns whether this frame drew what was asked for,
+                // which is what `clock.wait until=settled` reads.
+                let asked = self.redraws.asked();
+                if self.renderer.process() {
+                    self.redraws.drew(asked);
+                }
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -588,26 +576,28 @@ impl InitState {
                 event: WindowEvent::MouseInput { state, button, .. },
                 ..
             } => {
-                redraw_after = self.on_mouse_input(state, button);
+                redraw_after = self.input_context().on_mouse_input(state, button);
             }
             Event::WindowEvent {
                 event: WindowEvent::MouseWheel { delta, .. },
                 ..
             } => {
-                redraw_after = self.on_mouse_wheel(delta);
+                redraw_after = self.input_context().on_mouse_wheel(delta);
             }
             Event::WindowEvent {
                 event: WindowEvent::CursorMoved { position, .. },
                 ..
             } => {
-                redraw_after = self.on_cursor_moved(position);
+                redraw_after = self.input_context().on_cursor_moved(position);
             }
             //// TOUCH ////
             Event::WindowEvent {
                 event: WindowEvent::Touch(touch),
                 ..
             } => {
-                redraw_after = self.dispatch_touch_event(touch.phase, touch.id, touch.location);
+                redraw_after =
+                    self.input_context()
+                        .dispatch_touch_event(touch.phase, touch.id, touch.location);
             }
             //// KEYBOARD ////
             Event::WindowEvent {
@@ -629,25 +619,134 @@ impl InitState {
                     },
                 ..
             } => {
-                redraw_after = self.on_keyboard_input(event_loop, logical_key, state);
+                redraw_after = self.input_context().on_keyboard_input(logical_key, state);
             }
             _ => {}
         }
         if redraw_after {
-            self.window.request_redraw();
+            self.request_redraw();
+        }
+    }
+
+    /// The loop is about to park with a recording running: encode what
+    /// waits in the time before its next frame (`app::record_flow::idle`).
+    pub(super) fn record_idle(&mut self) {
+        super::record_flow::idle(
+            &mut self.recorder,
+            &mut self.artifacts,
+            &self.watchdog,
+            &self.clock,
+        );
+    }
+
+    /// True iff the event loop should keep iterating without
+    /// further input: [`heartbeat::needs_continuation`] over this
+    /// state. Drives the choice between `ControlFlow::Wait` (idle,
+    /// park until next OS event) and `ControlFlow::Poll` (continuous
+    /// frames).
+    pub(super) fn needs_continuation(&self) -> bool {
+        heartbeat::needs_continuation(
+            &self.drag_state,
+            &self.picker_hover,
+            self.document.as_ref(),
+            self.renderer.connection_geometry_dirty(),
+            &self.injected,
+            &self.clock,
+        )
+    }
+}
+
+impl InputHandlerContext<'_> {
+    /// Translate a winit `Touch` event's phase, finger id and
+    /// location into a recognizer step and run it. Takes the payload
+    /// rather than the `Touch` struct so the IPC `input.touch`
+    /// command reaches this same entry point (its `DeviceId` cannot
+    /// be built outside winit). Returns true when the event drove any state
+    /// transition or ran a gesture (the caller should request a
+    /// redraw on true). Modifier state is fixed at all-false —
+    /// touch devices have no modifier keys, and the keybind table's
+    /// `LongPress` binding doesn't carry Ctrl/Shift/Alt either.
+    ///
+    /// **Long-press timing wake-up gap**: `tick` is called only
+    /// from the events themselves (not on a wall-clock timer),
+    /// so a finger held with literally zero `Moved` events
+    /// between Started and Ended would miss the long-press
+    /// emission. In practice touch hardware emits sub-pixel
+    /// jitter `Moved` events constantly while a finger is down,
+    /// so the gap is theoretical — and the recognizer refuses to
+    /// call such a hold a tap either way, on the elapsed time
+    /// rather than on the emission having happened. A future
+    /// improvement would set `ControlFlow::WaitUntil(started_at +
+    /// LONG_PRESS_MS)` from the recognizer's `OneFinger` state.
+    ///
+    /// Timed on the app clock (`AppClock::instant`), so under a
+    /// virtual clock a long-press is virtual milliseconds held.
+    pub(super) fn dispatch_touch_event(
+        &mut self,
+        phase: TouchPhase,
+        id: u64,
+        location: PhysicalPosition<f64>,
+    ) -> bool {
+        use super::touch_gesture::Phase;
+        // Phase translation, recognizer ingest + tick, and the
+        // routing of what it recognized are `cross_dispatch::pointer`'s
+        // `drive_touch_event`; the browser runs the same body, and so
+        // does `apply_touch_effect` below. What is native's own is the
+        // `Dispatch` arm — it goes through `dispatch_action` so a
+        // `NativeOnly` Action bound to a gesture (`EnterResizeMode`)
+        // reaches its arm.
+        let phase = super::dispatch::touch_phase(phase);
+        let pos = (location.x, location.y);
+        // No gesture recognized — but the recognizer may have moved
+        // its internal state (e.g. Started → OneFinger). The caller
+        // still wants a redraw on Started/Moved so any
+        // cursor-following overlay updates.
+        let idle_redraw = matches!(phase, Phase::Started | Phase::Moved);
+        let Some(step) = super::dispatch::drive_touch_event(
+            &mut *self.touch_recognizer,
+            self.keybinds,
+            phase,
+            id,
+            pos,
+            // The app clock's instant: a long-press is a duration on
+            // the same axis as every other behavior's timing.
+            self.clock.instant(),
+        ) else {
+            return idle_redraw;
+        };
+        match step {
+            super::dispatch::TouchStep::Dispatch(d) => {
+                *self.cursor_pos = d.cursor_pos;
+                let Some(a) = d.action else {
+                    return idle_redraw;
+                };
+                let _ = super::dispatch::dispatch_action(a, self, None);
+                true
+            }
+            super::dispatch::TouchStep::Effect(effect) => {
+                let (mut core, _native) = self.split_borrow();
+                super::dispatch::apply_touch_effect(effect, &mut core);
+                // The camera-geometry reprojection a pinch owes is
+                // picked up by `drain_camera_geometry_rebuild` in the
+                // frame this redraw requests, under the same
+                // renderer-side dirty flag the wheel path uses.
+                true
+            }
         }
     }
 
     /// `WindowEvent::MouseInput`. Returns whether to request a redraw.
     ///
-    /// This and the four `on_*` methods below are `handle_event`'s
-    /// input arms, lifted out so the IPC `input` family reaches the
-    /// handlers through the same bodies a winit event does
-    /// (`format/ipc.md` §`input`): from here down, nothing can tell
-    /// the two apart.
+    /// This, the three `on_*` methods below and
+    /// [`Self::dispatch_touch_event`] are `handle_event`'s input arms,
+    /// lifted out so the IPC `input` family reaches the handlers through
+    /// the same bodies a winit event does (`format/ipc.md` §`input`):
+    /// from here down, nothing can tell the two apart. They live on the
+    /// context rather than on `InitState` so the heartbeat
+    /// (`app::heartbeat`) reaches them from wherever it runs — the event
+    /// loop, or a `clock step` inside a console line.
     pub(super) fn on_mouse_input(&mut self, state: ElementState, button: MouseButton) -> bool {
-        let mut ctx = self.input_context();
-        event_mouse_click::handle_mouse_input(state, button, &mut ctx);
+        event_mouse_click::handle_mouse_input(state, button, self);
         true
     }
 
@@ -661,7 +760,7 @@ impl InitState {
         // sub-line-per-tick scrolls don't round to zero.
         if self.console_state.is_open() {
             let lines = if let crate::application::console::ConsoleState::Open { wheel_accum, .. } =
-                &mut self.console_state
+                &mut *self.console_state
             {
                 crate::application::app::console_input::accumulate_wheel_lines(wheel_accum, scroll_y as f32)
             } else {
@@ -670,14 +769,14 @@ impl InitState {
             if lines == 0 {
                 return false;
             }
-            crate::application::app::console_input::scroll_console_by_lines(&mut self.console_state, lines);
+            crate::application::app::console_input::scroll_console_by_lines(self.console_state, lines);
             if let Some(doc) = self.document.as_ref() {
                 crate::application::app::console_input::rebuild_console_overlay(
-                    &self.console_state,
+                    self.console_state,
                     doc,
-                    &mut self.app_scene,
-                    &mut self.renderer,
-                    &self.keybinds,
+                    self.app_scene,
+                    self.renderer,
+                    self.keybinds,
                 );
             }
             return true;
@@ -705,257 +804,30 @@ impl InitState {
         let Some(a) = action else {
             return false;
         };
-        let mut bundle = self.input_context();
-        let _ = crate::application::app::dispatch::dispatch_action(a, &mut bundle, None);
+        let _ = crate::application::app::dispatch::dispatch_action(a, self, None);
         true
     }
 
     /// `WindowEvent::CursorMoved`. Returns whether to request a redraw.
     pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
-        let window = self.window.clone();
-        let mut ctx = self.input_context();
-        event_cursor_moved::handle_cursor_moved(position, window.as_ref(), &mut ctx);
+        let window = self.window;
+        event_cursor_moved::handle_cursor_moved(position, window, self);
         // Hover that doesn't drag and doesn't open the
         // picker doesn't change visuals — no redraw needed.
         // Any active drag (Pending → Throttled etc.) or an
         // open picker requires a fresh frame so the drag
         // preview / hover marker tracks the cursor.
-        !matches!(self.drag_state, DragState::None) || self.color_picker_state.is_open()
+        !matches!(*self.drag_state, DragState::None) || self.color_picker_state.is_open()
     }
 
     /// `WindowEvent::KeyboardInput`. Only a press reaches the
     /// handler; a release changes nothing. Returns whether to request
     /// a redraw.
-    pub(super) fn on_keyboard_input(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        logical_key: Key,
-        state: ElementState,
-    ) -> bool {
+    pub(super) fn on_keyboard_input(&mut self, logical_key: Key, state: ElementState) -> bool {
         if state != ElementState::Pressed {
             return false;
         }
-        let mut ctx = self.input_context();
-        event_keyboard::handle_keyboard_input(logical_key, event_loop, &mut ctx);
+        event_keyboard::handle_keyboard_input(logical_key, self);
         true
-    }
-
-    /// Per-frame drain: drive the active throttled drag (if any)
-    /// and the always-live picker-hover interaction through the
-    /// unified [`super::throttled_interaction::ThrottledInteraction::drive`]
-    /// shell, then the non-throttled drains (rect-select overlay,
-    /// camera rebuild, animation tick). Does **not** render — the
-    /// caller (`NativeApp::about_to_wait`) decides whether to
-    /// `request_redraw` based on the post-drain
-    /// [`Self::needs_continuation`] state, and the actual `render`
-    /// runs from the `WindowEvent::RedrawRequested` arm.
-    pub(super) fn drain_inputs(&mut self) {
-        use super::throttled_interaction::{DrainContext, ThrottledInteraction};
-
-        // Only the moving-node drag needs to suppress the camera
-        // rebuild (it handles offset geometry itself each drain).
-        // Snapshot this before the drive() borrow takes `&mut
-        // self.drag_state`. Suppresses the camera-driven
-        // geometry rebuild while a node is being moved (the
-        // drag's own per-frame mutator already keeps the scene
-        // current; the camera rebuild would interleave with
-        // stale model-side state). `MovingSection` /
-        // `SectionResize` / `NodeResize` deliberately don't
-        // qualify — sections don't move the parent, and node
-        // resize gestures' tree mutations are re-applied by
-        // the next drain after any competing rebuild.
-        let is_moving_node = self.drag_state.is_moving_node();
-
-        // Suppress the animation tick during drags that mutate
-        // the tree per-frame (`MovingNode`, `MovingSection`,
-        // `SectionResize`, `NodeResize`). An animation tick on
-        // the same frame routes through `sync_node_from_tree`,
-        // which would observe the in-progress mid-drag state
-        // and write it to the model + undo stack. Edge /
-        // portal-label drags don't qualify — they touch the
-        // document, not the tree.
-        let is_drag_with_tree_mutation = matches!(
-            self.drag_state,
-            DragState::Throttled(ref d)
-                if matches!(
-                    **d,
-                    super::throttled_interaction::ThrottledDrag::MovingNode(_)
-                        | super::throttled_interaction::ThrottledDrag::MovingSection(_)
-                        | super::throttled_interaction::ThrottledDrag::SectionResize(_)
-                        | super::throttled_interaction::ThrottledDrag::NodeResize(_)
-                )
-        );
-
-        // Destructure the fields the two throttled-drive call sites
-        // share so their `DrainContext` literals can reborrow via
-        // `&mut *x` instead of re-spelling `&mut self.X` six times
-        // twice. A named inherent helper (`&mut self -> DrainContext`)
-        // collides with the `&mut self.drag_state` the throttled-drag
-        // arm already holds; a closure over these bindings collides
-        // with the second call site's reborrows. Destructuring once,
-        // reborrowing per call, is what the borrow checker accepts.
-        let Self {
-            document,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-            color_picker_state,
-            drag_state,
-            picker_hover,
-            interaction_mode,
-            ..
-        } = self;
-
-        if let DragState::Throttled(ref mut kind) = *drag_state {
-            kind.as_dyn_mut().drive(DrainContext {
-                document: &mut *document,
-                mindmap_tree: &mut *mindmap_tree,
-                app_scene: &mut *app_scene,
-                renderer: &mut *renderer,
-                scene_cache: &mut *scene_cache,
-                color_picker_state: &mut *color_picker_state,
-                interaction_mode: &*interaction_mode,
-            });
-        }
-
-        if color_picker_state.is_open() {
-            picker_hover.drive(DrainContext {
-                document: &mut *document,
-                mindmap_tree: &mut *mindmap_tree,
-                app_scene: &mut *app_scene,
-                renderer: &mut *renderer,
-                scene_cache: &mut *scene_cache,
-                color_picker_state: &mut *color_picker_state,
-                interaction_mode: &*interaction_mode,
-            });
-        } else if picker_hover.has_pending() {
-            // Picker closed while a throttle-deferred hover drain
-            // was still queued. The drain body's closed-picker
-            // branch (`color_picker_hover.rs:88-92`) is a no-op
-            // rebuild that just clears both flags — going through
-            // the throttle would still strand them for the throttle
-            // window's worth of frames, during which
-            // `needs_continuation` reads `has_pending=true` and
-            // pins the loop in `ControlFlow::Poll`. Two boolean
-            // writes, no GPU work; bypass the throttle and clear
-            // immediately.
-            picker_hover.clear_pending();
-        }
-
-        // Unconditional, and takes the whole drag state: this drain
-        // holds the rubber band's on-screen state to the state that
-        // authorizes it, so the frames where no rubber band is live
-        // are exactly the frames it has to run on to notice that.
-        drain_frame::drain_rect_select(
-            &self.drag_state,
-            &mut self.document,
-            &self.interaction_mode,
-            &mut self.mindmap_tree,
-            &mut self.renderer,
-        );
-
-        drain_frame::drain_camera_geometry_rebuild(
-            is_moving_node,
-            &self.document,
-            &self.interaction_mode,
-            &mut self.app_scene,
-            &mut self.renderer,
-            &mut self.scene_cache,
-        );
-
-        // Animation pause/resume — when entering a tree-mutating
-        // drag, capture wall-clock; when exiting, shift each
-        // active animation's `start_ms` forward by the drag
-        // duration so the post-release tick resumes the
-        // animation where it froze instead of snapping to its
-        // `to` state. Without this, a multi-second drag would
-        // leave an in-flight animation observing
-        // `elapsed >= total` on the first post-release frame.
-        let now = super::now_ms() as u64;
-        match (is_drag_with_tree_mutation, self.anim_pause_start_ms) {
-            (true, None) => {
-                self.anim_pause_start_ms = Some(now);
-            }
-            (false, Some(pause_start)) => {
-                let pause_duration = now.saturating_sub(pause_start);
-                if let Some(doc) = self.document.as_mut() {
-                    doc.shift_active_animations_start_ms(pause_duration);
-                }
-                self.anim_pause_start_ms = None;
-            }
-            _ => {}
-        }
-
-        if !is_drag_with_tree_mutation {
-            drain_frame::drain_animation_tick(
-                &mut self.document,
-                &self.interaction_mode,
-                &mut self.mindmap_tree,
-                &mut self.app_scene,
-                &mut self.renderer,
-                &mut self.scene_cache,
-            );
-        }
-    }
-
-    /// Take the active recording's next frame if one is due; a no-op
-    /// when nothing is recording (`app::record_flow`).
-    pub(super) fn record_tick(&mut self) {
-        if self.recorder.active.is_none() {
-            return;
-        }
-        let (scene, artifacts, recorder) = super::capture_flow::CaptureScene::of_init(self);
-        super::record_flow::tick(scene, recorder, artifacts);
-    }
-
-    /// The loop is about to park with a recording running: encode what
-    /// waits in the time before its next frame (`app::record_flow::idle`).
-    pub(super) fn record_idle(&mut self) {
-        super::record_flow::idle(&mut self.recorder, &mut self.artifacts, &self.watchdog);
-    }
-
-    /// True iff the event loop should keep iterating without
-    /// further input. Drives the choice between `ControlFlow::Wait`
-    /// (idle, park until next OS event) and `ControlFlow::Poll`
-    /// (continuous frames). Sources of continuation:
-    ///
-    /// - **Throttled drag with pending state.** The throttle may
-    ///   have deferred a drain; without continuation the loop would
-    ///   park indefinitely after the last cursor event, leaving
-    ///   pending input unflushed.
-    /// - **Picker hover with pending state.** Same shape — the
-    ///   hover interaction owns its own pending buffer.
-    /// - **Active animation.** The animation tick must keep
-    ///   advancing until each animation completes.
-    /// - **Injected input queued.** The heartbeat applies one IPC
-    ///   `input` sample per iteration; parking with samples queued
-    ///   would strand a paced drag mid-gesture.
-    /// - **Connection-geometry dirty flag set.** A camera change
-    ///   landed during a `MovingNode` drag that suppressed the
-    ///   rebuild; the flag will be picked up by the next drain
-    ///   that doesn't suppress it.
-    ///
-    /// `None` / `Pending` / `Panning` / `SelectingRect` drag states
-    /// are intentionally event-driven only — they update on
-    /// `CursorMoved` and don't need self-driven continuation. The
-    /// FPS overlay is also intentionally NOT a continuation source:
-    /// a diagnostic should observe behavior, not change it. When
-    /// the app idles, the overlay flips to "-" (see
-    /// [`crate::application::renderer::Renderer::set_fps_idle`])
-    /// rather than forcing the loop to keep rendering.
-    pub(super) fn needs_continuation(&self) -> bool {
-        use crate::application::app::throttled_interaction::ThrottledInteraction;
-
-        let drag_pending = matches!(
-            self.drag_state,
-            DragState::Throttled(ref d) if d.as_dyn().needs_continuation()
-        );
-        let picker_pending = self.picker_hover.has_pending();
-        let animations = self.document.as_ref().is_some_and(|d| d.has_active_animations());
-        let geometry_dirty = self.renderer.connection_geometry_dirty();
-        let injected = !self.injected.is_empty();
-
-        drag_pending || picker_pending || animations || geometry_dirty || injected
     }
 }

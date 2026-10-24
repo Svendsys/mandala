@@ -31,8 +31,7 @@ use crate::application::app::input_context_core::InputContextCore;
 use crate::application::app::scene_rebuild::{rebuild_after_selection_change, rebuild_all, RebuildTier};
 use crate::application::app::touch_gesture::{Phase, RecognizedGesture, TouchGestureRecognizer};
 use crate::application::app::{
-    compute_click_hit, now_ms, ClickHit, ClickHitParts, InteractionMode, EDGE_HIT_TOLERANCE_PX,
-    PLATFORM_CONTEXT,
+    compute_click_hit, ClickHit, ClickHitParts, InteractionMode, EDGE_HIT_TOLERANCE_PX, PLATFORM_CONTEXT,
 };
 
 use super::apply_create_orphan_node_and_edit;
@@ -675,7 +674,7 @@ fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
             id,
             hit_section_idx,
             PLATFORM_CONTEXT,
-            now_ms() as u64,
+            core.clock.now_whole_ms(),
         ),
         None => false,
     };

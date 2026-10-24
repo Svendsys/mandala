@@ -117,11 +117,10 @@ impl SelectionState {
 
 impl AnimationInstance {
     /// One running animation as `query.animations` reports it, read
-    /// against `now_ms`, the app's wall clock (`common::now_ms()`,
-    /// milliseconds since process start) and the same clock the
-    /// per-frame drain ticks animations against. (A virtual clock,
-    /// which would make this deterministic, is IPC-09's `clock`
-    /// family and does not exist yet.)
+    /// against `now_ms`, the app clock's whole-millisecond reading
+    /// (`AppClock::now_whole_ms`) — the clock the per-frame drain
+    /// ticks animations against, virtual under a virtual clock, which
+    /// makes the report a pure function of the step sequence.
     ///
     /// Projection: the target, the mutation id, the clock fields and
     /// the timing envelope (the type's own serializer). **Omitted by

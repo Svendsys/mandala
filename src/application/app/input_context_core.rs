@@ -4,11 +4,11 @@
 //! funnel. Track C from `WASM_CONVERGENCE.md` (final WASM convergence
 //! step after Tracks A + B):
 //!
-//! - [`InputContextCore`] holds the 12 fields **both** native's
+//! - [`InputContextCore`] holds the 13 fields **both** native's
 //!   `InputHandlerContext` (`input_context.rs`) and WASM's
 //!   `WasmInputState` (`run_wasm/`) carry — document, mindmap_tree,
 //!   app_scene, renderer, scene_cache, text_edit_state, last_click,
-//!   cursor_pos, modifiers, keybinds, macros, interaction_mode. This
+//!   cursor_pos, modifiers, keybinds, macros, interaction_mode, clock. This
 //!   is the parameter `dispatch_action` takes post-Track-C; both
 //!   targets' keyboard handlers can construct one and call the same
 //!   dispatcher.
@@ -120,6 +120,11 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// take `&mut`; read paths (rebuild_all-callers, hit-test gates)
     /// take `&`. See `super::interaction_mode::InteractionMode`.
     pub interaction_mode: &'a mut super::InteractionMode,
+    /// The app clock (`crate::application::clock`): what a click's
+    /// double-click window, an `OnClick` trigger's animation start and
+    /// a keybound mutation's start read. Read-only — only the heartbeat
+    /// and the `clock` surfaces move it.
+    pub clock: &'a crate::application::clock::AppClock,
 }
 
 /// Native-only extension carrying the modal / console / picker /

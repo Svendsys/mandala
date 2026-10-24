@@ -223,6 +223,16 @@ the parity trajectory (or why none is owed):
   the no-tree case. Parity for the stall itself is a browser
   drain loop hung off the existing rAF render loop, pumping the
   same `drain_animation_tick` body; not yet scheduled.
+- **Virtual-clock stepping** (`src/application/app/heartbeat.rs`;
+  IPC-09/#69) — `clock.step` and the `clock step` console verb run
+  the per-frame drain at virtual instants, so they are native for the
+  reason the drain is (the entry above). **The clock is not gated**:
+  `AppClock` (`src/application/clock.rs`) and its two modes compile for
+  both targets, the browser holds one (`WasmInputState.clock`) and
+  every browser reader of app time — double-click, touch, an `OnClick`
+  trigger's start — reads it, so a virtual clock there needs only a
+  driver. Parity rides on the browser drain loop the entry above names,
+  plus the IPC-15 transport (#75) to command it.
 
 ## Common tasks
 

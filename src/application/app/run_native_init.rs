@@ -194,5 +194,9 @@ pub(super) fn build(options: &Options, window: Arc<Window>, watchdog: FreezeWatc
         artifacts: crate::application::capture::artifacts::Artifacts::for_this_process(),
         recorder: crate::application::capture::record::Recorder::default(),
         watchdog,
+        // Real, reading the wall clock: a launch starts in real time,
+        // and only `clock.set_mode` or the `clock` verb leaves it.
+        clock: crate::application::clock::AppClock::default(),
+        redraws: super::settle::RedrawLedger::default(),
     }
 }

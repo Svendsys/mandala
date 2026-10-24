@@ -21,11 +21,12 @@
 //! **Pacing is a pure function of the clock.** [`Timeline`] decides,
 //! from the elapsed time alone, when the next frame is due and how
 //! many boundaries a late heartbeat stepped over. It never reads a
-//! clock itself — the caller passes the time — so the realtime pacing
-//! tested here is the pacing a virtual clock (IPC-09) will reuse by
-//! passing virtual time instead, and a manifest written under it is
-//! the same shape ([`PACING_REALTIME`] is the one value its `pacing`
-//! key has today).
+//! clock itself — the caller passes the app clock's reading — so one
+//! timeline serves both [`Pacing`]s. In real time a frame is stamped
+//! when it was taken, which is a little after its boundary; under a
+//! virtual clock `clock.step` stops the clock on each boundary
+//! (`app::heartbeat`), so a frame is taken *at* its boundary and
+//! stamped with it, exactly.
 //!
 //! **Honest about what it missed.** A boundary the loop was too late
 //! for, a frame the renderer did not draw and a frame a node drag made
@@ -100,8 +101,37 @@ const IDLE_MANIFEST_EVERY: Duration = Duration::from_secs(2);
 /// The manifest's file name, in the recording's directory.
 pub(crate) const MANIFEST_FILE: &str = "manifest.json";
 
-/// The manifest's `pacing` when frame times are the wall clock's.
-pub(crate) const PACING_REALTIME: &str = "realtime";
+/// How far before a boundary a reading still counts as on it, in
+/// milliseconds. A stepped clock is stopped on a boundary computed as
+/// `start + index × 1000 / fps`, and taking `start` back off can land a
+/// rounding error short of the boundary itself; this absorbs that and
+/// nothing a real clock could read differently — it is a millionth of
+/// a millisecond.
+pub(crate) const ON_BOUNDARY_MS: f64 = 1e-6;
+
+/// What a recording's frame times are measured on (the manifest's
+/// `pacing`), fixed when it starts: the clock's mode cannot change
+/// while one runs (`format/ipc.md` §`clock.set_mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Pacing {
+    /// The real clock: the loop wakes for each boundary, and a frame is
+    /// stamped with the reading when it was taken.
+    Realtime,
+    /// A virtual clock: `clock.step` drives the frames, stopping the
+    /// clock on each boundary, and a frame is stamped with its boundary.
+    Stepped,
+}
+
+impl Pacing {
+    /// The pacing a recording started under `mode` has.
+    pub(crate) fn of(mode: crate::application::clock::ClockMode) -> Pacing {
+        match mode {
+            crate::application::clock::ClockMode::Real => Pacing::Realtime,
+            crate::application::clock::ClockMode::Virtual => Pacing::Stepped,
+        }
+    }
+}
 
 /// A count the caller may have typed: `typed` if it lies in `range`,
 /// `default` if there is none. `Err` carries the range so each surface
@@ -212,17 +242,19 @@ impl Timeline {
         self.boundary_ms(self.next)
     }
 
-    /// `elapsed_ms` from the start: is a frame owed?
+    /// `elapsed_ms` from the start: is a frame owed? A reading within
+    /// [`ON_BOUNDARY_MS`] short of a boundary is on it.
     pub(crate) fn poll(&mut self, elapsed_ms: f64) -> Tick {
         let due = self.due_ms();
         // A clock that reads before the start (or NaN) owes nothing.
-        if elapsed_ms.is_nan() || elapsed_ms < due {
+        if elapsed_ms.is_nan() || elapsed_ms + ON_BOUNDARY_MS < due {
             return Tick::Wait { until_ms: due };
         }
         // The latest boundary at or before now. The product is exact for
         // the integer `fps` and the times a recording lives for, so a
         // reading that is exactly a boundary lands on it.
-        let latest = ((elapsed_ms * f64::from(self.fps) / 1000.0).floor() as u64).max(self.next);
+        let reached = (elapsed_ms + ON_BOUNDARY_MS) * f64::from(self.fps) / 1000.0;
+        let latest = (reached.floor() as u64).max(self.next);
         let first_missed_ms = self.boundary_ms(self.next);
         let missed = u32::try_from(latest - self.next).unwrap_or(u32::MAX);
         self.next = latest + 1;
@@ -246,6 +278,8 @@ pub(crate) struct RecordConfig {
     pub(crate) scale: f32,
     /// What every frame frames, its size already pinned.
     pub(crate) request: CaptureRequest,
+    /// What the frame times are measured on.
+    pub(crate) pacing: Pacing,
 }
 
 /// One frame in the manifest.
@@ -276,7 +310,7 @@ pub(crate) struct Gap {
 struct Manifest<'a> {
     protocol: u32,
     fps: u32,
-    pacing: &'static str,
+    pacing: Pacing,
     width: u32,
     height: u32,
     #[serde(serialize_with = "baumhard::util::shortest_float::serialize_shortest")]
@@ -429,12 +463,24 @@ impl Recording {
                 if missed > 0 {
                     self.push_gap(first_missed_ms, missed, "overrun".into());
                 }
+                let t_ms = match self.config.pacing {
+                    Pacing::Realtime => elapsed,
+                    Pacing::Stepped => boundary_ms,
+                };
                 Step::Capture {
-                    t_ms: round_ms(elapsed),
+                    t_ms: round_ms(t_ms),
                     due_ms: boundary_ms,
                 }
             }
         }
+    }
+
+    /// When the next frame is due, as a reading of the clock the
+    /// recording runs on: the instant a stepped clock stops at for it
+    /// (`app::heartbeat`). `None` once the recording has its
+    /// `max_frames`.
+    pub(crate) fn next_due_ms(&self) -> Option<f64> {
+        (!self.is_full()).then(|| self.started_ms + self.timeline.due_ms())
     }
 
     /// How long until the next frame is due, from the clock's reading
@@ -442,6 +488,12 @@ impl Recording {
     pub(crate) fn wait_ms(&self, now_ms: f64) -> f64 {
         let elapsed = (now_ms - self.started_ms).max(0.0);
         (self.timeline.due_ms() - elapsed).max(0.0)
+    }
+
+    /// The frames taken so far, as the manifest lists them.
+    #[cfg(test)]
+    pub(crate) fn frames(&self) -> &[FrameEntry] {
+        &self.frames
     }
 
     /// Whether the recording has its `max_frames`.
@@ -670,7 +722,7 @@ impl Recording {
         let manifest = Manifest {
             protocol: crate::application::ipc::PROTOCOL_VERSION,
             fps: self.config.fps,
-            pacing: PACING_REALTIME,
+            pacing: self.config.pacing,
             width: self.config.width,
             height: self.config.height,
             scale: self.config.scale,
@@ -820,6 +872,7 @@ mod tests {
             height: 1,
             scale: 1.0,
             request: CaptureRequest::default(),
+            pacing: Pacing::Realtime,
         }
     }
 

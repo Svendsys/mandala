@@ -154,24 +154,28 @@ impl Renderer {
     /// camera, then [`Self::encode_frame`] into the swapchain texture,
     /// then present. The window is one caller of the pair; an offscreen
     /// capture (`renderer::capture`) is the other, with its own camera
-    /// and target.
+    /// and target. Returns whether the frame was drawn
+    /// ([`Renderer::process`]).
     #[inline]
-    pub(super) fn render(&mut self) {
+    pub(super) fn render(&mut self) -> bool {
         if !self.should_render {
-            return;
+            return false;
         }
         let camera = self.camera;
         // On lock contention or prepare failure, skip the rest of this
         // frame — before acquiring a surface texture, so a skipped
         // frame takes no vsync backpressure.
         let Ok(prepared) = self.prepare_frame(&camera, ModalLayer::Drawn) else {
-            return;
+            return false;
         };
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             other => {
+                // Drawn all the same: the buffers are current, and what
+                // is missing is somewhere to present them, which an
+                // occluded window does not have.
                 debug!("Failed to get the surface texture ({other:?}), can't render.");
-                return;
+                return true;
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -179,6 +183,7 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         self.atlas.trim();
+        true
     }
 
     /// The CPU half of a frame, for a target `camera.viewport_size`
