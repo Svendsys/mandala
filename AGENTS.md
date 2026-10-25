@@ -60,3 +60,12 @@ Claude Code skill, but it is plain Markdown and shell, and every step
 works from any harness. `scripts/ipc_smoke.sh` checks the loop end to
 end; it needs a GPU adapter — on a GPU-less box, Mesa's lavapipe
 (Vulkan) — so it is not part of `./test.sh`.
+
+## Recording a demo
+
+To show a behavior rather than a state — an animation, a zoom, what a
+click does — for a human to review, follow
+`.claude/skills/mandala-record/SKILL.md`: one-behavior GIF with a caption
+and the script that made it, made by `scripts/record_demo.sh`, watched by
+you before it is posted, and **never committed** (recordings are review
+artifacts, not repo content).

@@ -93,6 +93,12 @@ tearing down, and what each failure means — is the `mandala-drive` skill,
 [`scripts/ipc_smoke.sh`](scripts/ipc_smoke.sh) runs it end to end: launch,
 ping, screenshot, check the PNGs and sidecars, tear down.
 
+To show a *behavior* rather than a state — an animation, a zoom, what a click
+does — the `mandala-record` skill,
+[`.claude/skills/mandala-record/SKILL.md`](.claude/skills/mandala-record/SKILL.md),
+turns the same loop into a short captioned GIF for a human to review;
+[`scripts/record_demo.sh`](scripts/record_demo.sh) makes it in one command.
+
 ## Where to read next
 
 | Document                                        | What it covers                                                            |
