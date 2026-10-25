@@ -1,0 +1,45 @@
+# Demo: ZoomIn zooms toward the point under it, one 1.1x step at a time.
+# Map: maps/testament.mindmap.json, 800x600 (the default size).
+#
+# --- setup (never in the picture) ---------------------------------------
+# Frame the node "Arpachshad" (1.2.0.0.0.0.0.0.0.0.0.2) dead center at
+# zoom 1.0: ZoomFit puts it on screen, a click selects it, CenterOnSelection
+# centers the camera on it, ZoomReset zooms to 1.0 about the screen center
+# (where it now is), and DeselectAll takes the selection highlight out of
+# the picture.
+# The clock is virtual so the script means the same headless (which starts
+# virtual) and in a window (which starts real); setting it again is a no-op.
+clock.set_mode virtual
+act.action ZoomFit --wait-settled
+input.click_node 1.2.0.0.0.0.0.0.0.0.0.2 --wait-settled
+act.action CenterOnSelection --wait-settled
+act.action ZoomReset --wait-settled
+act.action DeselectAll --wait-settled
+clock.wait settled
+query.camera
+#
+# --- the recording ------------------------------------------------------
+# A single ZoomIn is instant (one 1.1x jump, no animation), so the
+# behavior is shown as a ramp: eight steps at the screen center, 100 ms
+# of virtual time apart (1.1^8 = 2.14x). Under the virtual clock a
+# headless app starts with, frames exist only while it steps.
+@record
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+act.action ZoomIn x=400 y=300 space=surface
+clock.step ms=100
+@stop
+# --- proof the state changed (not in the picture) -----------------------
+query.camera

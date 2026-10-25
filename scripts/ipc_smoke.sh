@@ -66,13 +66,8 @@ esac
 [ -f "$MAP" ] || { echo "error: map file not found: $MAP" >&2; exit 3; }
 
 cd "$(dirname "$0")/.."
-
-step() { printf '== %s\n' "$*"; }
-fail() {
-    printf 'FAIL: %s\n' "$*" >&2
-    FAILED=1
-    exit 1
-}
+# shellcheck source=lib/mandala_app.sh
+. scripts/lib/mandala_app.sh
 
 # ---- Environment preflight --------------------------------------------
 
@@ -81,7 +76,7 @@ fail() {
 # default is no window — the recipe for a container or CI. Elsewhere than
 # Linux (macOS) the desktop is not announced through $DISPLAY, so a missing
 # one says nothing there.
-MODE="window"
+MODE=""
 if [ "$FORCE_HEADLESS" -eq 1 ] && [ "$FORCE_XVFB" -eq 1 ]; then
     echo "error: --headless and --xvfb each name what the app runs in; pick one" >&2
     exit 3
@@ -89,8 +84,8 @@ elif [ "$FORCE_HEADLESS" -eq 1 ]; then
     MODE="headless"
 elif [ "$FORCE_XVFB" -eq 1 ]; then
     MODE="xvfb"
-elif [ "$(uname -s)" = "Linux" ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-    MODE="headless"
+else
+    MODE="$(mandala_default_mode)"
 fi
 if [ "$(uname -s)" != "Linux" ] && { [ "$MODE" = "xvfb" ] || [ "$COMPARE_XVFB" -eq 1 ]; }; then
     echo "error: Xvfb is the Linux recipe; this is $(uname -s)" >&2
@@ -98,152 +93,25 @@ if [ "$(uname -s)" != "Linux" ] && { [ "$MODE" = "xvfb" ] || [ "$COMPARE_XVFB" -
 fi
 USE_XVFB=0
 [ "$MODE" = "xvfb" ] && USE_XVFB=1
-# Packages are checked where the script stands up the graphics stack itself
-# — no window, or its own X server — on Linux, where it knows their names.
-CHECK_PACKAGES=0
-if [ "$(uname -s)" = "Linux" ] && { [ "$MODE" != "window" ] || [ "$COMPARE_XVFB" -eq 1 ]; }; then
-    CHECK_PACKAGES=1
-fi
 
-if [ "$CHECK_PACKAGES" -eq 1 ]; then
-    missing=()
-    WANT_XVFB=0
-    if [ "$USE_XVFB" -eq 1 ] || [ "$COMPARE_XVFB" -eq 1 ]; then
-        WANT_XVFB=1
-        command -v Xvfb >/dev/null 2>&1 || missing+=("xvfb")
-    fi
-    # ldconfig lives in /sbin, which a non-root PATH often lacks. Read the
-    # cache once: `ldconfig -p | grep -q` under pipefail fails whenever grep
-    # exits early and ldconfig takes the SIGPIPE.
-    ldcache=""
-    for ldc in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
-        if ldcache="$("$ldc" -p 2>/dev/null)" && [ -n "$ldcache" ]; then
-            break
-        fi
-        ldcache=""
-    done
-    if [ -n "$ldcache" ]; then
-        # winit's X11 backend dlopens libxkbcommon-x11 and panics without
-        # it; with no window no winit backend is loaded at all.
-        if [ "$WANT_XVFB" -eq 1 ]; then
-            grep -q 'libxkbcommon-x11\.so' <<<"$ldcache" || missing+=("libxkbcommon-x11-0")
-        fi
-        # The adapter: Vulkan through Mesa's lavapipe ICD, the one backend
-        # that serves both: wgpu's GL backend reports the Xvfb window
-        # surface incompatible, though it works with no window.
-        grep -q 'libvulkan\.so\.1' <<<"$ldcache" || missing+=("libvulkan1")
-    else
-        echo "note: ldconfig cannot be run here; the library check is skipped (a missing library shows in the app log)"
-    fi
-    # Where the Vulkan loader looks for ICD manifests, unless told otherwise.
-    icd_found=0
-    if [ -n "${VK_DRIVER_FILES:-}${VK_ICD_FILENAMES:-}" ]; then
-        icd_found=1
-    else
-        IFS=: read -r -a data_dirs <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-        for dir in /etc "${data_dirs[@]}" /usr/local/share /usr/share; do
-            if compgen -G "$dir/vulkan/icd.d/*.json" >/dev/null; then
-                icd_found=1
-                break
-            fi
-        done
-    fi
-    [ "$icd_found" -eq 1 ] || missing+=("mesa-vulkan-drivers")
-    if [ ${#missing[@]} -gt 0 ]; then
-        what="the $MODE recipe needs"
-        [ "$COMPARE_XVFB" -eq 1 ] && what="the $MODE recipe and --compare-xvfb need"
-        echo "error: $what packages that are missing:" >&2
-        sudo=""
-        [ "$(id -u)" -eq 0 ] || sudo="sudo "
-        echo "  ${sudo}apt-get update && ${sudo}apt-get install -y --no-install-recommends ${missing[*]}" >&2
-        echo "(package names are Debian/Ubuntu's; see .claude/skills/mandala-drive/SKILL.md)" >&2
-        exit 2
-    fi
-fi
+# Packages are checked where the script stands up the graphics stack itself
+# — no window, or its own X server.
+what="the $MODE recipe needs"
+[ "$COMPARE_XVFB" -eq 1 ] && what="the $MODE recipe and --compare-xvfb need"
+mandala_check_packages "$COMPARE_XVFB" "$what"
 
 # ---- Build -------------------------------------------------------------
 
-step "build ($PROFILE)"
-if [ "$PROFILE" = "release" ]; then
-    cargo build --release -p mandala -p mandalactl
-else
-    cargo build -p mandala -p mandalactl
-fi
-# CARGO_TARGET_DIR or build.target-dir may put the binaries anywhere; ask
-# cargo rather than assume target/, which could hold a stale build.
-TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
-[ -n "$TARGET_DIR" ] || fail "cargo metadata did not name a target directory"
-APP="$TARGET_DIR/$PROFILE/mandala"
-CTL="$TARGET_DIR/$PROFILE/mandalactl"
-if [ ! -x "$APP" ] || [ ! -x "$CTL" ]; then fail "the build did not leave $APP and $CTL"; fi
+mandala_build "$PROFILE"
 
 # ---- Work dir and teardown ---------------------------------------------
 
-# Short and private: the socket path must stay under the 107-byte limit
-# and every directory above it must be writable only by its owner.
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/mandala-smoke.XXXXXX")"
-chmod 700 "$WORK"
-SOCK="$WORK/m.sock"
-FAILED=0
-APP_PID=""
-XVFB_PID=""
-
-teardown() {
-    local code=$?
-    if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
-        # Still running: a check failed before the graceful quit below.
-        # SIGTERM is not a graceful exit — the socket and the artifacts
-        # dir are left behind — so both are removed below.
-        kill -TERM "$APP_PID" 2>/dev/null || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            kill -0 "$APP_PID" 2>/dev/null || break
-            sleep 0.2
-        done
-        kill -KILL "$APP_PID" 2>/dev/null || true
-        wait "$APP_PID" 2>/dev/null || true
-    fi
-    if [ -n "$XVFB_PID" ]; then
-        kill -TERM "$XVFB_PID" 2>/dev/null || true
-        wait "$XVFB_PID" 2>/dev/null || true
-    fi
-    if [ -n "$APP_PID" ]; then
-        rm -rf "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$APP_PID-artifacts"*
-    fi
-    rm -f "$SOCK"
-    if [ "$code" -ne 0 ] || [ "$FAILED" -ne 0 ]; then
-        echo "work dir kept for inspection: $WORK (app log: $WORK/app.log)" >&2
-        if [ -f "$WORK/app.log" ]; then
-            echo "---- last lines of the app log ----" >&2
-            tail -n 15 "$WORK/app.log" >&2
-        fi
-    elif [ "$KEEP" -eq 1 ]; then
-        echo "work dir kept: $WORK"
-    else
-        rm -rf "$WORK"
-    fi
-}
-trap teardown EXIT
+mandala_workdir mandala-smoke
+trap mandala_teardown EXIT
 
 # ---- Display -----------------------------------------------------------
 
-if [ "$USE_XVFB" -eq 1 ]; then
-    step "start Xvfb"
-    # -displayfd picks a free display number and writes it to fd 3 once
-    # the server is accepting connections, so there is no sleep-and-hope.
-    Xvfb -displayfd 3 -screen 0 1280x800x24 -nolisten tcp 3>"$WORK/display" 2>"$WORK/xvfb.log" &
-    XVFB_PID=$!
-    for _ in $(seq 1 50); do
-        [ -s "$WORK/display" ] && break
-        kill -0 "$XVFB_PID" 2>/dev/null || fail "Xvfb exited: $(cat "$WORK/xvfb.log")"
-        sleep 0.1
-    done
-    [ -s "$WORK/display" ] || fail "Xvfb did not report a display within 5 s"
-    DISPLAY=":$(tr -d '[:space:]' <"$WORK/display")"
-    export DISPLAY
-    # A Wayland session in the environment would win over our X server.
-    unset WAYLAND_DISPLAY
-    echo "DISPLAY=$DISPLAY"
-fi
+[ "$USE_XVFB" -eq 1 ] && mandala_start_xvfb
 
 # ---- Launch and liveness -----------------------------------------------
 
@@ -251,23 +119,7 @@ fi
 MODE_FLAGS=()
 [ "$MODE" = "headless" ] && MODE_FLAGS=(--headless)
 
-step "launch ($MODE) $APP ${MODE_FLAGS[*]} $MAP --ipc $SOCK"
-"$APP" ${MODE_FLAGS[@]+"${MODE_FLAGS[@]}"} "$MAP" --ipc "$SOCK" >"$WORK/app.log" 2>&1 &
-APP_PID=$!
-export MANDALA_IPC="$SOCK"
-
-step "wait for ping"
-alive=0
-deadline=$((SECONDS + 30))
-while [ "$SECONDS" -lt "$deadline" ]; do
-    kill -0 "$APP_PID" 2>/dev/null || fail "the app exited during startup"
-    if "$CTL" --timeout 2 ping >/dev/null 2>&1; then
-        alive=1
-        break
-    fi
-    sleep 0.5
-done
-[ "$alive" -eq 1 ] || fail "no ping answer within 30 s"
+mandala_launch "$MAP"
 "$CTL" ping
 
 # ---- The map loaded ----------------------------------------------------
@@ -279,10 +131,6 @@ nodes="$(awk -F': ' '$1 == "counts.nodes" { print $2 }' <<<"$doc")"
 if [ -z "$nodes" ] || [ "$nodes" -le 0 ]; then fail "the document reports no nodes"; fi
 
 # ---- Helpers -----------------------------------------------------------
-
-field() { # <mandalactl output> <field>: the value of `field: value`
-    awk -F': ' -v k="$2" '$1 == k { print substr($0, length(k) + 3); exit }' <<<"$1"
-}
 
 json_string() { # <text>: the text as a JSON string literal (backslash and quote escaped)
     printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"

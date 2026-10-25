@@ -1,0 +1,55 @@
+# Demo: a double-click on one section of a multi-section node opens the text
+# editor on *that section* -- not on the node as a whole, not on section 0.
+# Map: maps/testament.mindmap.json, 800x600 (the default size).
+#
+# Why node 3.7: it is the only node in testament with more than one section
+# (scene.dump include=all: 251 nodes have 1 section, 3.7 has 3). A
+# one-section node cannot tell a section editor from a node editor:
+# text_edit.section_idx is 0 either way. We double-click section 2 (the
+# last), so a wrong target -- section 0, or the whole node -- shows.
+#
+# --- setup (never in the picture) ---------------------------------------
+# ZoomFit does NOT put 3.7 on screen here: testament does not fit 800x600,
+# the fit clamps at zoom 0.05, and 3.7's center lands at surface y=656 (off
+# the bottom). Two PanCameraNorth steps (50 screen px each) bring it to
+# y=556, on screen; the query lines below confirm it. Then the usual
+# framing recipe.
+clock.set_mode virtual
+act.action ZoomFit --wait-settled
+act.action PanCameraNorth --wait-settled
+act.action PanCameraNorth --wait-settled
+input.click_node 3.7 --wait-settled
+act.action CenterOnSelection --wait-settled
+act.action ZoomReset --wait-settled
+act.action DeselectAll --wait-settled
+clock.wait settled
+# Setup checks (in the run log): zoom 1.0, all three sections visible,
+# nothing selected, no editor open.
+query.camera
+scene.node_geometry 3.7
+query.selection
+query.mode
+#
+# --- the recording ------------------------------------------------------
+# Frames are cropped to node 3.7 plus a 20-unit margin (canvas units, from
+# scene.node_geometry: x 355.2..816.0, y 11827.6..12102.4), at 640x400 --
+# the region's 1.6 aspect -- so the GIF is not downscaled and the text is
+# drawn at 1.25x instead of shrunk to 0.8x; neighbors are cropped away.
+# Two clicks on the center of section 2, 150 ms of virtual time apart:
+# inside the double-click window. Then 1000 ms with the editor open (it
+# appears in one frame: no draw-in animation, no caret blink on the
+# virtual clock).
+# The query.selection between them is read-only (no frame, no clock): it
+# logs what the first click alone did.
+@record region:='{"x":330,"y":11800,"w":512,"h":320}' width=640 height=400
+input.click_node 3.7 section=2 --wait-settled
+query.selection
+query.mode
+clock.step ms=150
+input.click_node 3.7 section=2 --wait-settled
+clock.step ms=1000
+@stop
+# --- proof the state changed (not in the picture) -----------------------
+query.mode
+query.editors
+query.selection

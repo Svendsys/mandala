@@ -381,3 +381,7 @@ the parity trajectory (or why none is owed):
   troubleshooting table. `scripts/ipc_smoke.sh` is its end-to-end
   check — deliberately outside `./test.sh`, which holds no live GPU
   (TEST_CONVENTIONS §T8).
+  **Showing a behavior, not a state, is the `mandala-record` skill**
+  (`.claude/skills/mandala-record/SKILL.md`): a captioned demo GIF
+  from `scripts/record_demo.sh`, watched by its maker before it is
+  posted, never committed — recordings are review artifacts.

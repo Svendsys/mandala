@@ -407,6 +407,13 @@ cleans up after itself: it exits on its own, through the graceful path.
 | `error: busy: 202 injected samples are still queued …` from `input.click_node` | an earlier `input.drag` still has samples queued | in real time, `mandalactl clock.wait settled` (or `--wait-settled` the drag), then resend; on a virtual clock — headless, by default — `mandalactl clock.step frames=<n>` lands them first |
 | `clock.wait animations_complete` times out headless | the clock is virtual: animations move only when stepped | `mandalactl clock.step ms=<n>` past the animation, or `clock.set_mode real` |
 
+## Recording a behavior
+
+A screenshot proves a state. To show an animation, a zoom, what a click
+does — something a human should *watch* — use the
+[`mandala-record`](../mandala-record/SKILL.md) skill: the same launch and
+inspection loop, ending in a short captioned GIF and `scripts/record_demo.sh`.
+
 ## Smoke test
 
 `scripts/ipc_smoke.sh` is this loop as a script: preflight the environment,
@@ -427,6 +434,9 @@ down.
 ./scripts/ipc_smoke.sh --debug         # dev-profile build
 ./scripts/ipc_smoke.sh --map <file> --keep
 ```
+
+Its launch, preflight and teardown live in `scripts/lib/mandala_app.sh`,
+which `scripts/record_demo.sh` sources too — change the recipe there.
 
 It is deliberately **not** part of `./test.sh` (TEST_CONVENTIONS §T8/§T10: no
 live GPU in the suite). Run it after changing anything on the
