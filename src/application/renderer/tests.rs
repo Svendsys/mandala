@@ -2618,7 +2618,9 @@ fn test_every_rect_vertex_attribute_lands_in_the_vs_in_field_at_its_location() {
     // literal in its place — and every assertion after this point
     // would then be about dead data.
     let renderer = production_code("src/application/renderer/mod.rs");
-    let new_body = braced_block_after(&renderer, "async fn new(")
+    // `Renderer::new` by its first parameter: the bare `fn new(` would
+    // also find `FrameIntervalRing::new`, which comes first in the file.
+    let new_body = braced_block_after(&renderer, "fn new(\n        device: Device,")
         .expect("`Renderer::new` must still be a braced item in renderer/mod.rs");
 
     for name in ["RECT_VERTEX_ATTRIBUTES", "RECT_VERTEX_SIZE", "RECT_SHADER_WGSL"] {

@@ -12,8 +12,9 @@
 //!
 //! The submodule split corresponds to wgpu pipeline boundaries:
 //!
-//! - [`pipeline`] — the small `RenderPipeline` factory shared
-//!   across every text + rect pass.
+//! - [`adapter`] — which GPU adapter a bootstrap runs on, and the
+//!   order it tries them in.
+//! - [`pipeline`] — the window's surface configuration.
 //! - [`render`] — one frame as a prepare / encode pair
 //!   parameterized over camera and target, and the window's
 //!   per-frame driver over it (`Renderer::process`); composes the
@@ -40,6 +41,9 @@
 //!   for the [`crate::application::scene_host::AppScene`]
 //!   tree handles.
 
+// Adapter choice — the attempt plan and the environment it honors —
+// shared by every bootstrap.
+mod adapter;
 // The overlay-render modules below carry a wasm32-only
 // `allow(dead_code)`: each renders a modal whose *shell* is
 // native-gated (CLAUDE.md "Dual-target status"), so on wasm32 the
@@ -89,6 +93,7 @@ mod selection_overlay;
 mod tree_buffers;
 mod tree_walker;
 
+pub use adapter::AdapterPolicy;
 pub use borders::measure_max_glyph_advance;
 // The screenshot engine's half of the renderer's surface, native-only
 // with the engine (`application::capture`).
@@ -137,7 +142,10 @@ use log::{error, info, warn};
 
 use rustc_hash::FxHashMap;
 
-use wgpu::{Color, Device, Instance, MultisampleState, Queue, RenderPipeline, Surface, SurfaceConfiguration};
+use wgpu::{
+    Color, Device, Instance, MultisampleState, Queue, RenderPipeline, Surface, SurfaceConfiguration,
+    TextureFormat,
+};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
@@ -409,19 +417,20 @@ pub(super) const RECT_VERTEX_FLOATS: usize = 9;
 pub(super) const RECT_VBUF_INITIAL_CAPACITY: u64 = 8192;
 
 pub struct Renderer {
-    surface: Surface<'static>,
-    /// The window the surface was created from. Held, not read: the
-    /// `Surface<'static>` lifetime is bought by handing wgpu an
-    /// `Arc<Window>` clone at `create_surface`, and this is the
-    /// renderer's own share of that ownership — dropping the field
-    /// would make the renderer's lifetime depend on whoever else
-    /// still holds the window. `should_render` gating and
-    /// `ControlFlow::Poll` mean nothing on native asks the window to
-    /// redraw itself; the browser's loop does, through
-    /// [`Self::request_redraw`].
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    window: Arc<Window>,
-    config: SurfaceConfiguration,
+    /// Where the window's frames land: a window's swapchain, or — with
+    /// no window at all — nowhere ([`Sink`]).
+    sink: Sink,
+    /// The color format of every frame: the window's surface format, or
+    /// the headless target's (`HEADLESS_FORMAT`). Both pipelines are
+    /// built for it, and a capture's offscreen texture is created in it,
+    /// so it has this one source.
+    // Native-only reader: the capture engine, which is native-gated.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    format: TextureFormat,
+    /// The size, in pixels, of what the window's frames are drawn for:
+    /// the window's surface, or the headless target. Every screen-space
+    /// layout and the live camera's viewport follow it.
+    surface_size: (u32, u32),
     device: Device,
     queue: Queue,
     viewport: Viewport,
@@ -642,6 +651,42 @@ pub struct Renderer {
     clear_color: Color,
 }
 
+/// Where the window's frames land.
+enum Sink {
+    /// A window's swapchain.
+    Window {
+        surface: Surface<'static>,
+        config: SurfaceConfiguration,
+        /// The window the surface was created from. The
+        /// `Surface<'static>` lifetime is bought by handing wgpu an
+        /// `Arc<Window>` clone at `create_surface`, and this is the
+        /// renderer's own share of that ownership — dropping it would
+        /// make the renderer's lifetime depend on whoever else still
+        /// holds the window. The browser's loop asks it to redraw,
+        /// through [`Renderer::request_redraw`]; native's shell owns
+        /// its redraw requests (`app::shell`).
+        #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+        window: Arc<Window>,
+    },
+    /// No window (`--headless`). A frame for it is the CPU half alone —
+    /// every buffer current, every glyph prepared — which is the frame
+    /// an occluded window draws: there is nowhere to present it. Pixels
+    /// are drawn when a capture asks for them, into a texture of its own
+    /// (`renderer::capture`), which is the only sink a headless app has.
+    #[cfg(not(target_arch = "wasm32"))]
+    Headless,
+}
+
+/// The color format of a headless renderer's frames. There is no
+/// surface to offer one, so it is chosen: sRGB, as the window's
+/// bootstrap prefers among what its surface offers, in the
+/// blue-green-red byte order the windowed path was observed to be
+/// offered under Xvfb on Mesa's lavapipe — so a headless capture and a
+/// windowed one on the same machine draw through pipelines of the same
+/// format. Every adapter wgpu exposes can render to it.
+#[cfg(not(target_arch = "wasm32"))]
+const HEADLESS_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
+
 /// Canvas-space record of a background fill drawn behind a node's
 /// text. The CPU always uploads an axis-aligned quad covering
 /// `(position, size)`; the fragment shader then discards pixels
@@ -731,12 +776,12 @@ impl Renderer {
     /// surface ctor re-queries the display handle and won't accept a
     /// captured raw struct.
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn bootstrap_native(window: Arc<Window>) -> Renderer {
-        let instance = wgpu::Instance::default();
+    pub async fn bootstrap_native(window: Arc<Window>, adapter: AdapterPolicy) -> Renderer {
+        let instance = Instance::new(adapter::instance_descriptor());
         let surface = instance
             .create_surface(window.clone())
             .expect("failed to create wgpu surface for window");
-        Self::new(instance, surface, window).await
+        Self::for_window(&instance, surface, window, adapter).await
     }
 
     /// WASM bootstrap: same as `bootstrap_native` but binds the
@@ -745,16 +790,39 @@ impl Renderer {
     /// like the native form.
     #[cfg(target_arch = "wasm32")]
     pub async fn bootstrap_wasm(window: Arc<Window>, canvas: web_sys::HtmlCanvasElement) -> Renderer {
-        let instance = wgpu::Instance::default();
+        let instance = Instance::new(adapter::instance_descriptor());
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
             .expect("failed to create wgpu surface for canvas");
-        Self::new(instance, surface, window).await
+        Self::for_window(&instance, surface, window, AdapterPolicy::Auto).await
     }
 
-    pub(crate) async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
-        let adapter = Self::get_adapter(&instance, &surface).await;
-        let (device, queue) = Self::get_device(&adapter).await;
+    /// Headless bootstrap (`--headless`): no window, no surface — an
+    /// adapter chosen with no surface to be compatible with, and frames
+    /// `size` pixels large for a [`Sink::Headless`] that presents
+    /// nothing. Everything else — device, pipelines, atlas — is what a
+    /// window gets.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn bootstrap_headless(size: PhysicalSize<u32>, adapter: AdapterPolicy) -> Renderer {
+        let instance = Instance::new(adapter::instance_descriptor());
+        let (_adapter, device, queue) = adapter::acquire(&instance, None, adapter)
+            .await
+            .unwrap_or_else(|why| panic!("renderer: no GPU adapter could be used without a window: {why}"));
+        Self::new(device, queue, Sink::Headless, HEADLESS_FORMAT, size)
+    }
+
+    /// The window half of both windowed bootstraps: an adapter that can
+    /// present to `surface`, and the surface configured in the sRGB
+    /// format it offers (its first format when it offers none).
+    async fn for_window(
+        instance: &Instance,
+        surface: Surface<'static>,
+        window: Arc<Window>,
+        adapter: AdapterPolicy,
+    ) -> Renderer {
+        let (adapter, device, queue) = adapter::acquire(instance, Some(&surface), adapter)
+            .await
+            .unwrap_or_else(|why| panic!("renderer: no GPU adapter could present to the window: {why}"));
         let surface_capabilities = surface.get_capabilities(&adapter);
         let surface_format = surface_capabilities
             .formats
@@ -768,6 +836,24 @@ impl Renderer {
             &surface_capabilities,
             PhysicalSize::new(size.width, size.height),
         );
+        let sink = Sink::Window {
+            surface,
+            config,
+            window,
+        };
+        Self::new(device, queue, sink, surface_format, size)
+    }
+
+    /// Everything a renderer holds beyond its sink: the glyphon atlas
+    /// and text renderers, the rect pipeline — both in `format` — and
+    /// a camera over `size`.
+    fn new(
+        device: Device,
+        queue: Queue,
+        sink: Sink,
+        surface_format: TextureFormat,
+        size: PhysicalSize<u32>,
+    ) -> Renderer {
         let glyphon_cache = Cache::new(&device);
 
         let mut atlas = TextAtlas::new(&device, &queue, &glyphon_cache, surface_format);
@@ -836,9 +922,9 @@ impl Renderer {
             mapped_at_creation: false,
         });
         Renderer {
-            surface,
-            window,
-            config,
+            sink,
+            format: surface_format,
+            surface_size: (size.width, size.height),
             device,
             queue,
             atlas,
@@ -912,14 +998,16 @@ impl Renderer {
         self.mode_status_text.as_deref()
     }
 
-    /// Swapchain surface width in pixels.
+    /// Width in pixels of what the window's frames are drawn for: the
+    /// swapchain surface, or the headless target.
     pub fn surface_width(&self) -> u32 {
-        self.config.width
+        self.surface_size.0
     }
 
-    /// Swapchain surface height in pixels.
+    /// Height in pixels of what the window's frames are drawn for: the
+    /// swapchain surface, or the headless target.
     pub fn surface_height(&self) -> u32 {
-        self.config.height
+        self.surface_size.1
     }
 
     /// Set the render-pass clear color from a hex string like
@@ -983,7 +1071,11 @@ impl Renderer {
     /// wasm32 says so.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn request_redraw(&self) {
-        self.window.request_redraw();
+        match &self.sink {
+            Sink::Window { window, .. } => window.request_redraw(),
+            #[cfg(not(target_arch = "wasm32"))]
+            Sink::Headless => {}
+        }
     }
 
     /// Draw one frame, and report whether it was drawn: `Ok` when the
@@ -1250,10 +1342,18 @@ impl Renderer {
         let max_dim = self.device.limits().max_texture_dimension_2d;
         let (width, height) = clamp_surface_size_to_gpu_limit(width, height, max_dim);
         info!("Updating surface size");
-        self.config.width = width;
-        self.config.height = height;
-
-        self.surface.configure(&self.device, &self.config);
+        self.surface_size = (width, height);
+        match &mut self.sink {
+            Sink::Window { surface, config, .. } => {
+                config.width = width;
+                config.height = height;
+                surface.configure(&self.device, config);
+            }
+            // No surface to configure: the next frame is drawn for the
+            // new size because every frame reads it from here.
+            #[cfg(not(target_arch = "wasm32"))]
+            Sink::Headless => {}
+        }
         // The glyphon viewport follows on the next frame: every frame's
         // `prepare_frame` sizes it to the target it draws.
         self.camera.set_viewport_size(width, height);

@@ -22,11 +22,16 @@
 //! resolve. A frame the renderer skipped (the font system contended, a
 //! failed prepare) has not drawn, and the ask stays outstanding.
 
-/// Redraws asked for, and the last ask a render satisfied.
+/// Redraws asked for, the last ask a render satisfied, and whether any
+/// render has drawn at all.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct RedrawLedger {
     asked: u64,
     drawn: u64,
+    /// A render has drawn — asked for or not: a window's first frame
+    /// is delivered unasked when it is exposed, and a headless shell
+    /// owes one from the start (`app::shell`).
+    any_drawn: bool,
 }
 
 impl RedrawLedger {
@@ -44,6 +49,14 @@ impl RedrawLedger {
     /// A render that began when [`Self::asked`] read `asked` drew.
     pub(super) fn drew(&mut self, asked: u64) {
         self.drawn = self.drawn.max(asked);
+        self.any_drawn = true;
+    }
+
+    /// Whether any render has drawn yet: the app has a first frame, and
+    /// with it a window of the size it was given. What a one-shot
+    /// capture waits for beyond settling (`capture_flow::one_shot`).
+    pub(super) fn has_drawn(&self) -> bool {
+        self.any_drawn
     }
 
     /// Nothing asked for is still undrawn.
@@ -59,6 +72,21 @@ mod tests {
     #[test]
     fn test_a_ledger_with_nothing_asked_is_current() {
         assert!(RedrawLedger::default().is_current());
+    }
+
+    /// A first frame counts whether or not it was asked for — a window
+    /// is drawn once on exposure, unasked — and a skipped render is no
+    /// frame at all.
+    #[test]
+    fn test_a_ledger_has_drawn_once_any_render_draws() {
+        let mut ledger = RedrawLedger::default();
+        assert!(!ledger.has_drawn());
+        ledger.ask();
+        assert!(!ledger.has_drawn(), "asked is not drawn");
+        let unasked = 0;
+        ledger.drew(unasked);
+        assert!(ledger.has_drawn());
+        assert!(!ledger.is_current(), "an unasked frame satisfies no ask after it");
     }
 
     /// An ask is owed until a render that started after it draws.

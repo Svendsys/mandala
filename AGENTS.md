@@ -53,10 +53,10 @@ maintainer rather than running one.
 
 ## Seeing the running app
 
-To launch the app and inspect, drive or screenshot it — on a desktop or
-on a headless Linux box under Xvfb — follow
-`.claude/skills/mandala-drive/SKILL.md`. It is written as a Claude Code
-skill, but it is plain Markdown and shell, and every step works from
-any harness. `scripts/ipc_smoke.sh` checks the loop end to end; it needs
-a GPU adapter — on a GPU-less box, Mesa's lavapipe (Vulkan); Mesa's GL
-alone does not work — so it is not part of `./test.sh`.
+To launch the app and inspect, drive or screenshot it — on a desktop,
+or on a Linux box with no display at all, through `mandala --headless`
+— follow `.claude/skills/mandala-drive/SKILL.md`. It is written as a
+Claude Code skill, but it is plain Markdown and shell, and every step
+works from any harness. `scripts/ipc_smoke.sh` checks the loop end to
+end; it needs a GPU adapter — on a GPU-less box, Mesa's lavapipe
+(Vulkan) — so it is not part of `./test.sh`.

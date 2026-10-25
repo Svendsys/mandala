@@ -18,8 +18,12 @@
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::application::app::OneShot;
 use crate::application::app::{Application, Options};
 use crate::application::keybinds::KeybindConfig;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::application::renderer::AdapterPolicy;
 use log::info;
 
 mod application;
@@ -33,74 +37,163 @@ struct CliArgs {
     mindmap_path: String,
     keybinds_path: Option<std::path::PathBuf>,
     ipc_socket: Option<std::path::PathBuf>,
+    headless: bool,
+    surface_size: Option<(u32, u32)>,
+    adapter: AdapterPolicy,
+    /// `--screenshot`, as typed: [`create_options`] reads it against the
+    /// working directory.
+    screenshot: Option<std::path::PathBuf>,
+    overwrite: bool,
 }
 
-/// Parse `args` (the command line without the program name): the
-/// first positional argument is the map, and `--keybinds` / `--ipc`
-/// take a path either as the next argument or after `=`.
-///
-/// `--ipc` with no path after it is kept as an *empty* path rather
-/// than dropped, so the listener refuses it by name and the launch
-/// fails: the user asked for IPC, and running without it would be the
-/// silent no-op `format/ipc.md` rules out. "No path" includes a next
-/// argument that is itself a flag — `--ipc --keybinds k.json` is a
-/// forgotten path, not a socket named `--keybinds` — and that flag is
-/// left to be parsed as itself.
+/// The largest side `--size` accepts, in pixels: the largest a capture
+/// accepts (`format/ipc.md` §`capture.screenshot`). A size the GPU
+/// cannot hold is clamped to what it can, as a window resized past it
+/// is.
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_cli(args: impl IntoIterator<Item = String>) -> CliArgs {
+const MAX_SURFACE_SIDE: u32 = 16_384;
+
+/// Parse `args` (the command line without the program name): the
+/// first positional argument is the map; `--keybinds`, `--ipc`,
+/// `--size`, `--adapter` and `--screenshot` take a value either as the
+/// next argument or after `=`; `--headless` and `--overwrite` take
+/// none. `Err` says what is wrong with the line, for a startup panic.
+///
+/// A value is never another flag: `--size --headless` is a forgotten
+/// size, not a size spelled `--headless`, and that flag is left to be
+/// parsed as itself. `--ipc` with no path after it is the one flag
+/// whose missing value is kept rather than refused — as an *empty*
+/// path, which the listener refuses by name — so its refusal reads the
+/// same however the path went missing; running without the IPC the user
+/// asked for would be the silent no-op `format/ipc.md` rules out.
+///
+/// Three combinations are refused whole: `--overwrite` without
+/// `--screenshot` (it qualifies nothing), and `--headless` with neither
+/// `--ipc` nor `--screenshot` — an app with no window, no socket and no
+/// capture can neither be driven nor seen, and would run until killed.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_cli(args: impl IntoIterator<Item = String>) -> Result<CliArgs, String> {
     use std::path::PathBuf;
 
+    let mut cli = CliArgs {
+        mindmap_path: String::new(),
+        keybinds_path: None,
+        ipc_socket: None,
+        headless: false,
+        surface_size: None,
+        adapter: AdapterPolicy::Auto,
+        screenshot: None,
+        overwrite: false,
+    };
     let mut mindmap_path: Option<String> = None;
-    let mut keybinds_path: Option<PathBuf> = None;
-    let mut ipc_socket: Option<PathBuf> = None;
     let mut args = args.into_iter().peekable();
-    while let Some(a) = args.next() {
-        if a == "--keybinds" {
-            if let Some(val) = args.next() {
-                keybinds_path = Some(PathBuf::from(val));
+    while let Some(arg) = args.next() {
+        let (flag, joined) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag.to_string(), Some(value.to_string())),
+            _ => (arg.clone(), None),
+        };
+        // The flag's value: after `=`, or the next argument unless that
+        // is a flag of its own.
+        let mut value = || {
+            joined
+                .clone()
+                .or_else(|| args.next_if(|next| !next.starts_with("--")))
+        };
+        match flag.as_str() {
+            "--keybinds" => {
+                cli.keybinds_path = Some(PathBuf::from(value().ok_or("--keybinds needs a path")?));
             }
-        } else if let Some(val) = a.strip_prefix("--keybinds=") {
-            keybinds_path = Some(PathBuf::from(val));
-        } else if a == "--ipc" {
-            let value = args.next_if(|next| !next.starts_with("--"));
-            ipc_socket = Some(value.map(PathBuf::from).unwrap_or_default());
-        } else if let Some(val) = a.strip_prefix("--ipc=") {
-            ipc_socket = Some(PathBuf::from(val));
-        } else if !a.starts_with("--") && mindmap_path.is_none() {
-            mindmap_path = Some(a);
+            "--ipc" => cli.ipc_socket = Some(value().map(PathBuf::from).unwrap_or_default()),
+            "--size" => {
+                cli.surface_size = Some(parse_size(&value().ok_or("--size needs <width>x<height>")?)?)
+            }
+            "--adapter" => {
+                cli.adapter = match value().as_deref() {
+                    Some("auto") => AdapterPolicy::Auto,
+                    Some("software") => AdapterPolicy::Software,
+                    Some(other) => {
+                        return Err(format!("--adapter is \"auto\" or \"software\", not {other:?}"))
+                    }
+                    None => return Err("--adapter needs \"auto\" or \"software\"".into()),
+                };
+            }
+            "--screenshot" => {
+                cli.screenshot = Some(PathBuf::from(value().ok_or("--screenshot needs a path")?));
+            }
+            "--headless" | "--overwrite" if joined.is_some() => return Err(format!("{flag} takes no value")),
+            "--headless" => cli.headless = true,
+            "--overwrite" => cli.overwrite = true,
+            _ if !arg.starts_with("--") && mindmap_path.is_none() => mindmap_path = Some(arg),
+            _ => {}
         }
     }
-    CliArgs {
-        mindmap_path: mindmap_path.unwrap_or_else(|| DEFAULT_MINDMAP.to_string()),
-        keybinds_path,
-        ipc_socket,
+    if cli.overwrite && cli.screenshot.is_none() {
+        return Err("--overwrite qualifies --screenshot, which is not on the command line".into());
     }
+    if cli.headless && cli.ipc_socket.is_none() && cli.screenshot.is_none() {
+        return Err(
+            "--headless needs --ipc <socket> or --screenshot <path>: with no window, a socket or a \
+             capture is the only way in or out"
+                .into(),
+        );
+    }
+    cli.mindmap_path = mindmap_path.unwrap_or_else(|| DEFAULT_MINDMAP.to_string());
+    Ok(cli)
+}
+
+/// `--size`'s `<width>x<height>`, each side in `1..=MAX_SURFACE_SIDE`.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_size(text: &str) -> Result<(u32, u32), String> {
+    let side = |part: &str| {
+        part.parse::<u32>()
+            .ok()
+            .filter(|side| (1..=MAX_SURFACE_SIDE).contains(side))
+    };
+    text.split_once('x')
+        .and_then(|(width, height)| Some((side(width)?, side(height)?)))
+        .ok_or_else(|| {
+            format!("--size is <width>x<height>, each side 1..={MAX_SURFACE_SIDE} pixels, not {text:?}")
+        })
+}
+
+/// The launch options the command line asks for, with `--screenshot`
+/// read against the working directory, as a shell reads it.
+#[cfg(not(target_arch = "wasm32"))]
+fn cli_options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
+    let cli = parse_cli(args)?;
+    let one_shot = match cli.screenshot {
+        Some(path) => Some(OneShot {
+            path: std::path::absolute(&path).map_err(|e| format!("--screenshot {}: {e}", path.display()))?,
+            overwrite: cli.overwrite,
+        }),
+        None => None,
+    };
+    Ok(Options {
+        mindmap_path: cli.mindmap_path,
+        keybind_config: KeybindConfig::load_for_desktop(cli.keybinds_path.as_deref()),
+        ipc_socket: cli.ipc_socket,
+        headless: cli.headless,
+        surface_size: cli.surface_size,
+        adapter: cli.adapter,
+        one_shot,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn create_options() -> Options {
-    let cli = parse_cli(std::env::args().skip(1));
-    let keybind_config = KeybindConfig::load_for_desktop(cli.keybinds_path.as_deref());
-
-    Options {
-        should_exit: false,
-        mindmap_path: cli.mindmap_path,
-        keybind_config,
-        ipc_socket: cli.ipc_socket,
-    }
+    cli_options(std::env::args().skip(1)).unwrap_or_else(|why| panic!("mandala: {why}"))
 }
 
 #[cfg(target_arch = "wasm32")]
 fn create_options() -> Options {
     // WASM: mindmap_path and keybind_config are replaced later by run_wasm.
     Options {
-        should_exit: false,
         mindmap_path: DEFAULT_MINDMAP.to_string(),
         keybind_config: KeybindConfig::default(),
     }
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     baumhard::util::log::init();
     #[cfg(not(target_arch = "wasm32"))]
     info!("Starting Mandala (native)");
@@ -108,7 +201,7 @@ fn main() {
     info!("Starting Mandala (WASM)");
 
     let app = Application::new(create_options());
-    app.run();
+    app.run()
 }
 
 #[cfg(test)]
@@ -118,6 +211,11 @@ mod tests {
 
     fn cli(args: &[&str]) -> super::CliArgs {
         super::parse_cli(args.iter().map(|a| a.to_string()))
+            .unwrap_or_else(|why| panic!("{args:?} should parse: {why}"))
+    }
+
+    fn refused(args: &[&str]) -> String {
+        super::parse_cli(args.iter().map(|a| a.to_string())).expect_err("the line should be refused")
     }
 
     #[test]
@@ -168,6 +266,134 @@ mod tests {
     fn test_parse_cli_takes_the_first_positional_as_the_map() {
         let parsed = cli(&["a.mindmap.json", "b.mindmap.json", "--unknown"]);
         assert_eq!(parsed.mindmap_path, "a.mindmap.json");
+    }
+
+    /// Without the headless flags a launch is what it always was: a
+    /// window, the size it opens at, the adapter wgpu prefers, no
+    /// capture.
+    #[test]
+    fn test_parse_cli_defaults_to_a_window_with_no_capture() {
+        let parsed = cli(&["m.mindmap.json"]);
+        assert!(!parsed.headless);
+        assert_eq!(parsed.surface_size, None);
+        assert_eq!(parsed.adapter, super::AdapterPolicy::Auto);
+        assert_eq!(parsed.screenshot, None);
+        assert!(!parsed.overwrite);
+    }
+
+    /// Each new flag in both spellings, alongside the map wherever it
+    /// stands.
+    #[test]
+    fn test_parse_cli_reads_the_headless_flags_in_both_spellings() {
+        let spaced = cli(&[
+            "--headless",
+            "--size",
+            "1920x1080",
+            "--adapter",
+            "software",
+            "m.mindmap.json",
+            "--screenshot",
+            "out.png",
+            "--overwrite",
+        ]);
+        let joined = cli(&[
+            "--screenshot=out.png",
+            "--adapter=software",
+            "m.mindmap.json",
+            "--size=1920x1080",
+            "--overwrite",
+            "--headless",
+        ]);
+        for parsed in [spaced, joined] {
+            assert!(parsed.headless);
+            assert_eq!(parsed.mindmap_path, "m.mindmap.json");
+            assert_eq!(parsed.surface_size, Some((1920, 1080)));
+            assert_eq!(parsed.adapter, super::AdapterPolicy::Software);
+            assert_eq!(parsed.screenshot, Some(PathBuf::from("out.png")));
+            assert!(parsed.overwrite);
+        }
+        assert_eq!(cli(&["--adapter", "auto"]).adapter, super::AdapterPolicy::Auto);
+    }
+
+    /// `--size` is two whole sides joined by `x`, each in range; anything
+    /// else is refused, naming what was typed.
+    #[test]
+    fn test_parse_cli_refuses_a_size_that_is_not_two_sides_in_range() {
+        assert_eq!(cli(&["--size", "1x1"]).surface_size, Some((1, 1)));
+        assert_eq!(cli(&["--size", "16384x2"]).surface_size, Some((16_384, 2)));
+        for bad in [
+            "800",
+            "800x",
+            "x600",
+            "0x600",
+            "800x0",
+            "16385x600",
+            "800X600",
+            "-1x600",
+            "8.5x600",
+            "800x600x2",
+        ] {
+            let why = refused(&["--size", bad]);
+            assert!(why.contains(&format!("{bad:?}")), "{bad}: {why}");
+        }
+    }
+
+    /// A value-taking flag with nothing after it — or another flag in
+    /// its place — is refused by name rather than dropped; `--keybinds`
+    /// among them, which used to be dropped silently.
+    #[test]
+    fn test_parse_cli_refuses_a_flag_whose_value_is_missing() {
+        for (line, flag) in [
+            (&["--size"][..], "--size"),
+            (&["--size", "--headless", "--ipc", "s"][..], "--size"),
+            (&["--adapter"][..], "--adapter"),
+            (&["--screenshot"][..], "--screenshot"),
+            (&["--keybinds"][..], "--keybinds"),
+            (&["--keybinds", "--ipc", "s"][..], "--keybinds"),
+        ] {
+            let why = refused(line);
+            assert!(why.starts_with(flag), "{line:?}: {why}");
+        }
+        assert!(refused(&["--adapter", "gpu"]).contains("\"gpu\""));
+        assert!(refused(&["--headless=yes", "--ipc", "s"]).contains("takes no value"));
+    }
+
+    /// The three combinations refused whole: an `--overwrite` with no
+    /// capture to qualify, and a headless app nothing could drive or see.
+    #[test]
+    fn test_parse_cli_refuses_a_headless_app_nothing_can_reach() {
+        assert!(refused(&["--overwrite"]).contains("--screenshot"));
+        assert!(refused(&["--headless"]).contains("--ipc"));
+        assert!(refused(&["--headless", "m.mindmap.json", "--size", "10x10"]).contains("--screenshot"));
+        assert!(cli(&["--headless", "--ipc", "s"]).headless);
+        assert!(cli(&["--headless", "--screenshot", "s.png"]).headless);
+        // A window needs neither: a person is there to drive it.
+        assert!(!cli(&["--size", "640x480"]).headless);
+    }
+
+    /// The one-shot's path is read against the working directory, and
+    /// the rest of the line reaches the options as parsed.
+    #[test]
+    fn test_cli_options_reads_the_screenshot_against_the_working_directory() {
+        let options = super::cli_options(
+            ["--headless", "--screenshot", "shots/a.png", "--size", "320x200"].map(String::from),
+        )
+        .expect("parses");
+        let shot = options.one_shot.expect("a one-shot");
+        assert_eq!(
+            shot.path,
+            std::env::current_dir()
+                .expect("a working directory")
+                .join("shots/a.png")
+        );
+        assert!(!shot.overwrite);
+        assert!(options.headless);
+        assert_eq!(options.surface_size, Some((320, 200)));
+        let absolute = super::cli_options(["--screenshot", "/tmp/b.png"].map(String::from)).expect("parses");
+        assert_eq!(
+            absolute.one_shot.expect("a one-shot").path,
+            PathBuf::from("/tmp/b.png")
+        );
     }
 
     fn repo_root() -> PathBuf {

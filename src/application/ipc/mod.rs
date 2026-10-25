@@ -46,7 +46,7 @@ pub(crate) use registry::execute;
 pub(crate) use target::{CommandTarget, Injected, SceneView, Screenshot, ShellState};
 #[cfg(unix)]
 pub(crate) use transport::IpcServer;
-pub(crate) use wait::Settling;
+pub(crate) use wait::{Settling, Until};
 
 /// The winit user event the boundary threads send to wake the event
 /// loop. It carries nothing: the work is on the server's ordered

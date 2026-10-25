@@ -6,10 +6,12 @@ description: >-
   what the app actually draws. Use when asked to open a map and look at it,
   screenshot a node or region, check a layout or rendering change before and
   after, reproduce a UI bug, or confirm a change works in the real app rather
-  than only in tests. Covers the launch recipe for a desktop with a display and
-  for a headless Linux container (Xvfb + Mesa lavapipe), the text-first
-  inspection commands, actions and synthetic input with --wait-settled,
-  screenshots with the geometry sidecar, teardown, and a troubleshooting table.
+  than only in tests. Covers the launch recipes — mandala --headless for a
+  container or CI with no display (Mesa lavapipe, no X server), a desktop with
+  a display, and Xvfb when it must be a real window — the one-shot
+  --screenshot, the text-first inspection commands, actions and synthetic input
+  with --wait-settled, screenshots with the geometry sidecar, teardown, and a
+  troubleshooting table.
 ---
 # mandala-drive
 
@@ -18,8 +20,16 @@ Mandala serves a local control socket when launched with `--ipc <path>`.
 one command, `path: value` lines (or `--json`) on stdout, and an exit code that
 says whether the app answered. This skill is the loop: **launch → inspect →
 act → see → tear down**. Every command below was run, and worked, in this
-repo's cloud container — through the Xvfb recipe, and against an X display
-that was already running.
+repo's cloud container — headless, through the Xvfb recipe, and against an X
+display that was already running.
+
+**Just need one picture?** No socket, no teardown:
+
+```sh
+target/release/mandala --headless --screenshot /tmp/map.png maps/testament.mindmap.json
+# exit 0: /tmp/map.png and /tmp/map.png.geometry.json, the map as loaded, 800×600
+# (--size 1920x1080 for more pixels; --overwrite to replace an existing file)
+```
 
 ## When to reach for this
 
@@ -49,12 +59,11 @@ run in their place.
 # 1. Build (cargo skips what is up to date).
 cargo build --release -p mandala -p mandalactl
 
-# 2. Launch, detached, under Xvfb (headless container; on a desktop with a
-#    display drop `xvfb-run -a -s "-screen 0 1280x800x24"`).
+# 2. Launch, detached, with no window (a container or CI; on a desktop
+#    where you want to watch, drop `--headless`).
 BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
 export MANDALA_IPC="${XDG_RUNTIME_DIR:-/tmp/mandala-$(id -u)}/mandala.sock"
-setsid nohup xvfb-run -a -s "-screen 0 1280x800x24" \
-  "$BIN/mandala" maps/testament.mindmap.json --ipc "$MANDALA_IPC" \
+setsid nohup "$BIN/mandala" --headless maps/testament.mindmap.json --ipc "$MANDALA_IPC" \
   > /tmp/mandala-app.log 2>&1 < /dev/null &
 
 # 3. Wait until it answers.
@@ -89,10 +98,18 @@ before and after.
 ## Launch
 
 ```sh
-"$BIN/mandala" <map.mindmap.json> --ipc <socket-path>          # BIN as in the quick start: usually target/release
-cargo run --release -- maps/testament.mindmap.json --ipc "$MANDALA_IPC"   # same, building first
+"$BIN/mandala" --headless <map.mindmap.json> --ipc <socket-path>   # no display; BIN as in the quick start
+"$BIN/mandala" <map.mindmap.json> --ipc <socket-path>              # a window, on a desktop
+cargo run --release -- maps/testament.mindmap.json --ipc "$MANDALA_IPC"   # a window, building first
 ```
 
+- **Headless or a window.** `--headless` opens no window and needs no X
+  server: use it in a container, in CI, in a cloud session — anywhere nobody
+  watches. Drop it on a desktop when you (or the user) want to see the app
+  move. An agent drives both the same way; what differs is below.
+- **Size.** `--size 1280x800` sets the frame size (headless: exactly; a
+  window: as asked of the window manager). Headless is 800×600 without it.
+  A capture can always ask for its own `width=`/`height=`.
 - **Socket path.** `$XDG_RUNTIME_DIR/mandala.sock` when that is set (it is
   `0700` on desktop distros). Containers often leave it unset; then use a
   fixed per-user path such as `/tmp/mandala-$(id -u)/mandala.sock` — the app
@@ -122,31 +139,47 @@ cargo run --release -- maps/testament.mindmap.json --ipc "$MANDALA_IPC"   # same
 
 | environment | recipe | status |
 |---|---|---|
-| (a) desktop with a display (X11, Wayland, macOS) | launch the binary directly; nothing else | the no-Xvfb path is validated against an already-running X server (`DISPLAY` set, `scripts/ipc_smoke.sh` passing); not yet run on a physical desktop — run the smoke script there and update this cell |
-| (b) headless Linux container, no GPU | `xvfb-run -a -s "-screen 0 1280x800x24" target/release/mandala <map> --ipc <sock>`, with the packages below | validated in this repo's cloud container (Ubuntu 24.04, Mesa 25.2), from a state with the packages removed |
-| (c) true headless (`--headless`, no X server) | does not exist yet: IPC-10 (#70) adds it and will update this row | — |
+| (a) desktop with a display (X11, Wayland, macOS) | launch the binary directly; nothing else | the windowed path is validated against an already-running X server (`DISPLAY` set, `scripts/ipc_smoke.sh` passing in its window mode); not yet run on a physical desktop — run the smoke script there and update this cell |
+| (b) container or CI, no display, no GPU | `target/release/mandala --headless <map> --ipc <sock>`, with the packages below | validated in this repo's cloud container (Ubuntu 24.04, Mesa 25.2): no X server, no `DISPLAY`; its captures are byte-identical to recipe (c)'s on the same machine, PNG and sidecar |
+| (c) a real window with no display (Xvfb) | `xvfb-run -a -s "-screen 0 1280x800x24" target/release/mandala <map> --ipc <sock>`, with recipe (b)'s packages plus `xvfb libxkbcommon-x11-0` | validated in the same container, from a state with the packages removed. Reach for it only when the question is about the window itself — a window manager's resize, a real `RedrawRequested` — since (b) draws the same pixels |
 
-**Recipe (b) packages** (Debian/Ubuntu names):
+**Packages** (Debian/Ubuntu names):
 
 ```sh
-apt-get update && apt-get install -y --no-install-recommends xvfb libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers
+apt-get update && apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers   # (b)
+apt-get install -y --no-install-recommends xvfb libxkbcommon-x11-0                            # + (c)
 ```
 
-- `libxkbcommon-x11-0` — winit's X11 backend loads it at startup and panics
-  without it.
 - `libvulkan1` + `mesa-vulkan-drivers` — the adapter is **Vulkan on Mesa's
-  lavapipe** (llvmpipe, CPU). wgpu's GL path does not work here: with only
-  EGL installed the adapter request fails with
-  `incompatible_surface_backends: Backends(GL)`. So `libegl1` is not needed,
-  and Mesa GL being present is not enough.
-- **No backend environment variable**: the app builds its wgpu instance with
-  `Instance::default()`, which does not read `WGPU_BACKEND` (verified: it
-  still comes up on Vulkan with `WGPU_BACKEND=gl` set). What is installed
-  decides.
-- The window is 800×600 whatever the Xvfb screen size; ask a capture for
-  `width=`/`height=` when you want more pixels (see **See**).
+  lavapipe** (llvmpipe, CPU). Headless, Mesa's GL through EGL works too
+  (`libegl1 libegl-mesa0`; verified with `WGPU_BACKEND=gl`, same bytes);
+  under Xvfb it does not — the window's surface is refused with
+  `incompatible_surface_backends: Backends(GL)` — so Vulkan is the one that
+  serves both recipes.
+- `libxkbcommon-x11-0` — winit's X11 backend loads it at startup and panics
+  without it. Headless loads no winit backend at all, so (b) does not need it.
+- **Choosing the adapter.** `--adapter software` restricts the app to a
+  software (CPU) adapter — lavapipe, llvmpipe — so every runner rasterizes
+  alike whatever GPU it has. wgpu's own variables are honored:
+  `WGPU_BACKEND=vulkan` (or `gl`), `WGPU_POWER_PREF=low|high`,
+  `WGPU_ADAPTER_NAME=<part of the name>`. A launch that can use no adapter
+  exits at startup naming what each attempt hit.
+- The Xvfb window is 800×600 whatever the Xvfb screen size; headless is too,
+  unless `--size` says otherwise.
 - `scripts/ipc_smoke.sh` checks for exactly these and prints the install
   line when one is missing.
+
+**What is different headless.**
+
+- **The clock starts virtual.** Time moves only when you step it, so a run
+  is a pure function of your commands. Animations stand still until
+  `mandalactl clock.step ms=<n>`; an `input.drag`'s samples are queued and
+  land on the step's heartbeats — `input.drag … --wait-settled` returns
+  `pending: 13`, then `mandalactl clock.step frames=20` lands them
+  (`input.pending` reads `0`). `mandalactl clock.set_mode real` gives the app
+  real time instead, and everything then behaves as it does in a window.
+- **No human, no cursor.** Input is only what you send; `settled` is exact.
+- **No window to close.** Tear it down as below.
 
 ## Inspect — text first
 
@@ -218,17 +251,22 @@ rebuilt), so your next read or screenshot sees it. Use it on every mutating
 call you are about to inspect. It is refused on read-only commands.
 
 A real sequence — bring an off-screen node into view, select it, delete it,
-undo:
+undo. It was run headless, so time is virtual and the drag's 13 queued
+samples land on a step; in a window (real time) the `--wait-settled` on the
+drag waits for them itself and the `clock.step` line is not needed:
 
 ```text
 $ mandalactl input.click_node 3.2
-error: not_found: node '3.2' is not on screen: its center lands at surface (350.0, 695.6), outside the 800×600 surface; bring it into view first …
+error: not_found: node '3.2' is not on screen: its center lands at surface (350.0, 645.6), outside the 800×600 surface; bring it into view first …
 $ mandalactl scene.hit_test 780 580 space=surface | grep click_hit.kind
 click_hit.kind: "Empty"                       # empty canvas: a drag here pans
 $ mandalactl input.drag 780 580 780 240 --wait-settled
 applied: false
 pending: 13
-wait.elapsed_ms: 152
+wait.elapsed_ms: 0
+$ mandalactl clock.step frames=20             # headless only: land the queued samples
+frames_run: 20
+now_ms: 321.0
 $ mandalactl input.click_node 3.2 --wait-settled
 applied: true
 $ mandalactl query.selection
@@ -338,16 +376,20 @@ rm -f "$MANDALA_IPC"            # optional: the next launch on this path self-he
 rm -rf "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$pid-artifacts"*   # path-less captures; `*` takes the -N fallback names
 ```
 
-`xvfb-run` stops its Xvfb when the app exits.
+`xvfb-run` stops its Xvfb when the app exits. A one-shot (`--screenshot`)
+cleans up after itself: it exits on its own, through the graceful path.
 
 ## Troubleshooting
 
 | symptom | meaning | fix |
 |---|---|---|
-| app log: `Library libxkbcommon-x11.so could not be loaded` (panic, exit 101) | headless container missing winit's X11 keyboard library | install `libxkbcommon-x11-0` |
-| app log: `failed to create wgpu surface for window: … FailedToCreateSurfaceForAnyBackend` | no usable graphics backend at all (no Vulkan ICD, no EGL) | install `libvulkan1 mesa-vulkan-drivers` |
-| app log: `Failed to find an appropriate adapter: … incompatible_surface_backends: Backends(GL)` | only GL/EGL present; the GL path cannot use the Xvfb window | install `mesa-vulkan-drivers` (lavapipe) |
-| app log: `Could not create an EventLoop: … neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set` (exit 101) | no display | run it under `xvfb-run`, recipe (b) |
+| app log: `mandala: --headless needs --ipc <socket> or --screenshot <path>` (panic, exit 101) | a headless launch nothing could drive or see | add `--ipc <sock>` or `--screenshot <png>`; every refused flag panics the same way, naming itself |
+| app log: `renderer: no GPU adapter could be used without a window: …` (exit 101) | headless, and no adapter at all: no Vulkan ICD, no EGL | install `libvulkan1 mesa-vulkan-drivers`; the message lists what each attempt hit |
+| `--screenshot` exits `1`, log: `screenshot: … exists; set overwrite to replace it` | the one-shot's write guard: the PNG or its sidecar is already there | add `--overwrite`, or pick another path |
+| app log: `Library libxkbcommon-x11.so could not be loaded` (panic, exit 101) | a window (recipe (c)) in a container missing winit's X11 keyboard library | install `libxkbcommon-x11-0`, or launch `--headless`, which loads no winit backend |
+| app log: `failed to create wgpu surface for window: … FailedToCreateSurfaceForAnyBackend` | a window, and no usable graphics backend at all (no Vulkan ICD, no EGL) | install `libvulkan1 mesa-vulkan-drivers` |
+| app log: `renderer: no GPU adapter could present to the window: … incompatible_surface_backends: Backends(GL)` | a window under Xvfb with only GL/EGL present; GL cannot present to it | install `mesa-vulkan-drivers` (lavapipe), or launch `--headless`, where GL works |
+| app log: `Could not create an EventLoop: … neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set` (exit 101) | a window was asked for and there is no display | launch `--headless`, recipe (b) — or under `xvfb-run`, recipe (c) |
 | `mandalactl: … exists but nothing is listening: a stale socket` (exit 2) | the app died or was killed; its socket file remains | read the app log for why; relaunch on the same path (it self-heals) |
 | `mandalactl: no socket path. Pass --ipc <path> or set MANDALA_IPC.` (exit 3) | your shell lost the export | re-export `MANDALA_IPC`, or pass `--ipc` |
 | `no greeting within N s. App busy or frozen?` (exit 2) | the process exists but its loop is not answering | wait and retry once; if it stays, it is wedged — see the next row |
@@ -356,20 +398,25 @@ rm -rf "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$pid-artifacts"*   # path-le
 | screenshot is all background | the frame rendered, but nothing is in it: check the sidecar — `"nodes":[]` means the framing missed the map | frame by a node's `canvas` rect, or `fit=true` with a large `width`/`height` |
 | reply `rendered: false` | the frame was not drawn; no file written | `skipped` says why; `font_system_contended` → just retry |
 | `input.click_node … not_found: … not on screen` | the node is off the surface | pan (drag empty canvas, see **Act**) and retry |
-| `error: busy: 202 injected samples are still queued …` from `input.click_node` | an earlier `input.drag` still has samples queued | `mandalactl clock.wait settled` (or `--wait-settled` the drag), then resend |
+| `error: busy: 202 injected samples are still queued …` from `input.click_node` | an earlier `input.drag` still has samples queued | in real time, `mandalactl clock.wait settled` (or `--wait-settled` the drag), then resend; on a virtual clock — headless, by default — `mandalactl clock.step frames=<n>` lands them first |
+| `clock.wait animations_complete` times out headless | the clock is virtual: animations move only when stepped | `mandalactl clock.step ms=<n>` past the animation, or `clock.set_mode real` |
 
 ## Smoke test
 
 `scripts/ipc_smoke.sh` is this loop as a script: preflight the environment,
-build, start its own Xvfb when there is no display, launch, ping, check the
-map loaded, `clock.wait settled`, capture the window and a region around one
-node, check both PNGs (signature, size, not a flat color) and sidecars, check
-the capture left the camera alone, and tear everything down.
+build, launch — with no window when there is no display, a window when there
+is, or under its own Xvfb on request — ping, check the map loaded, `clock.wait
+settled`, capture the window and a region around one node, check both PNGs
+(signature, size, not a flat color) and sidecars, check the capture left the
+camera alone, check that a one-shot `--screenshot` launch of the map writes
+the same picture byte for byte, and tear everything down.
 
 ```sh
-./scripts/ipc_smoke.sh             # PASS / FAIL: …   exit 0 / 1; 2 = environment missing (prints the install line)
-./scripts/ipc_smoke.sh --debug     # dev-profile build
-./scripts/ipc_smoke.sh --xvfb      # own Xvfb even when $DISPLAY is set
+./scripts/ipc_smoke.sh                 # PASS / FAIL: …   exit 0 / 1; 2 = environment missing (prints the install line)
+./scripts/ipc_smoke.sh --headless      # no window even when there is a display
+./scripts/ipc_smoke.sh --xvfb          # a real window under its own Xvfb
+./scripts/ipc_smoke.sh --compare-xvfb  # also: headless and Xvfb one-shots must be byte-identical
+./scripts/ipc_smoke.sh --debug         # dev-profile build
 ./scripts/ipc_smoke.sh --map <file> --keep
 ```
 

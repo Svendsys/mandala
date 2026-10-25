@@ -168,6 +168,8 @@ than this build is still callable (name=value arguments are then typed from that
 
 SOCKET
   Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
+  With no display (a container, CI), add --headless: no window, and a clock that moves only by
+  clock.step until clock.set_mode real (format/ipc.md \"Headless and one-shot launches\")
   Name it here with --ipc <path>, or once per shell with:  export MANDALA_IPC=<path>
   One client is served at a time. A refusal for that is retried for 2 s, then reported.
 

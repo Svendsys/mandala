@@ -110,7 +110,9 @@ decision, not a drive-by edit.
     `accept()`ing, so a second client is rejected immediately with a
     non-blocking write), plus a per-controller reader thread (blocking
     read → parse → enqueue → wake the loop via a winit
-    `EventLoopProxy` user event) and a per-controller outbound thread
+    `EventLoopProxy` user event, or under `--headless`, with no event
+    loop, `Thread::unpark` of the parked main thread) and a
+    per-controller outbound thread
     (dequeue → serialize → blocking write) that are spawned and torn
     down together per connection. Each connection carries a monotonic
     generation stamp on its requests/replies/events/pending-waits, and
@@ -118,10 +120,12 @@ decision, not a drive-by edit.
     requests and wakes the main thread, which retires the generation
     — canceling its waits and subscriptions — so nothing crosses to a
     successor controller. All see only protocol value types; every
-    IPC command executes on the main thread, in `about_to_wait` right
-    after `drain_inputs` (the `user_event` wake only unparks the
-    loop), with the same access as any input handler, and a command that changes pixels requests a
-    redraw just as the winit input handlers do. The event stream adds
+    IPC command executes on the main thread, in the loop body both
+    native drivers run (`app::pump`, winit's `about_to_wait` or the
+    headless pump) right after `drain_inputs` (the wake only unparks
+    the loop), with the same access as any input handler, and a
+    command that changes pixels requests a redraw just as the input
+    handlers do. The event stream adds
     no thread: events are produced by observing the app on the main
     thread and offered to the outbound queue's own bounded lane with a
     `try_send`, so a slow reader loses stale events and never stalls
@@ -503,24 +507,31 @@ industrial cost/benefit reasoning. This is not license for speculation.
   internal invariants".
 - **Startup paths use `expect("<reason>")` with a human-readable
   message.** Startup is everything before the first frame: CLI parse,
-  the winit event loop and its window, the `--ipc` socket when the
-  flag is passed, the renderer bootstrap, `fonts::init`, and — in the
-  browser — hanging a canvas off the page and reading `?map=` from its
-  URL. What can fail says so where it happens, in five groups. **The
+  the winit event loop and its window (or, under `--headless`,
+  neither), the `--ipc` socket when the flag is passed, the renderer
+  bootstrap, `fonts::init`, and — in the browser — hanging a canvas
+  off the page and reading `?map=` from its URL. What can fail says so
+  where it happens, in six groups. **The command line:**
+  `std::env::args`, as the CLI parse reads it, whose refusal names the
+  flag and what is wrong with it — a value missing, a `--size` that is
+  not two sides in range, `--headless` with neither `--ipc` nor
+  `--screenshot` to reach it. **The
   window:** the event loop — `EventLoop::with_user_event` on native,
   whose loop carries the IPC wake, and `EventLoop::new` in the
   browser — then `create_window`, and `run_app`, whose `Err` is the
   loop itself giving out. The browser's loop and window are created
   in `Application::new` rather than in its run module, so
   `create_window` is named on both targets. **The IPC socket, under
-  `--ipc` only:** `IpcServer::start`, whose message names the path
-  and why it was refused — a parent directory other users can write,
-  a path that is not a stale socket of ours, a live listener — so a
-  bad `--ipc` ends the launch instead of leaving IPC silently
-  missing. **The renderer bootstrap:** `create_surface`, then
-  `request_adapter` and `request_device` — no GPU, no program —
-  reached from both `Renderer::bootstrap_native` and
-  `Renderer::bootstrap_wasm`. **The page, in the browser:**
+  `--ipc` only:** `IpcServer::start`, under either native driver,
+  whose message names the path and why it was refused — a parent
+  directory other users can write, a path that is not a stale socket
+  of ours, a live listener — so a bad `--ipc` ends the launch instead
+  of leaving IPC silently missing. **The renderer bootstrap:**
+  `create_surface` where there is a window, then `adapter::acquire` —
+  every attempt at an adapter and a device on it failed, and the
+  message lists each attempt's failure: no GPU, no program — reached
+  from `Renderer::bootstrap_native`, `Renderer::bootstrap_headless`
+  and `Renderer::bootstrap_wasm`. **The page, in the browser:**
   `web_sys::window`, the `document`, `body` and `canvas` hung off it,
   the `append_child` that attaches one to the other, and the
   `inner_width` / `inner_height` the first surface is sized from —
@@ -547,8 +558,8 @@ industrial cost/benefit reasoning. This is not license for speculation.
   It held one of each of the first two — a renamed renderer
   constructor, and a font initializer that returns nothing — for as
   long as nothing looked; and the third direction did not exist at
-  all, which is how `request_adapter` and `request_device` came to
-  `expect` on every launch of both targets while going unmentioned.
+  all, which is how the adapter and device requests came to `expect`
+  on every launch of both targets while going unmentioned.
 - **"Bare `unwrap()` outside tests is a bug" is enforced twice, and
   the two mechanisms are not redundant.**
   `baumhard::util::unwrap_posture` reads every `.rs` file a shipped

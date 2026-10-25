@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Once-per-process device / surface setup.
+//! Once-per-process surface setup. The adapter and the device it is
+//! configured against are `adapter`'s.
 
-use wgpu::{
-    Adapter, Device, Instance, Queue, Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
-};
+use wgpu::{SurfaceCapabilities, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;
 
 use super::Renderer;
@@ -39,37 +38,5 @@ impl Renderer {
             alpha_mode: surface_capabilities.alpha_modes[0],
             view_formats: vec![],
         }
-    }
-
-    #[inline]
-    pub(super) async fn get_device(adapter: &Adapter) -> (Device, Queue) {
-        adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
-                memory_hints: Default::default(),
-                trace: Default::default(),
-                experimental_features: Default::default(),
-            })
-            .await
-            .expect("Failed to create device")
-    }
-
-    #[inline]
-    pub(super) async fn get_adapter(instance: &Instance, surface: &Surface<'static>) -> Adapter {
-        instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: Some(surface),
-                // Limit bucketing is a fingerprinting defence for
-                // hosts that expose wgpu to untrusted content. This
-                // app runs only its own code, so it keeps the
-                // adapter's real limits, as before the option existed.
-                apply_limit_buckets: false,
-            })
-            .await
-            .expect("Failed to find an appropriate adapter")
     }
 }

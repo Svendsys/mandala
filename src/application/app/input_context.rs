@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Shared per-call context for the native event-loop dispatchers.
+//! Shared per-call context for the native event-loop dispatchers, and
+//! the input arms every raw event enters through.
 //!
 //! Each handler reaches into the same mutable bundle on `InitState`.
 //! `InputHandlerContext<'a>` borrows each persistent field as
 //! `&'a mut T` so handlers can destructure it; per-event payloads stay
 //! as separate function parameters. Built once per event in
-//! [`super::run_native::InitState::input_context`].
+//! [`super::run_native_init::InitState::input_context`].
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -20,14 +21,17 @@ use crate::application::macros::MacroRegistry;
 use crate::application::renderer::Renderer;
 use crate::application::scene_host::AppScene;
 
+use crate::application::platform::input::{ElementState, Key, MouseButton, MouseScrollDelta, TouchPhase};
+use crate::application::platform::window::PhysicalPosition;
+
 use super::single_line_edit::SingleLineEditor;
 use super::text_edit::TextEditState;
 use super::throttled_interaction::{ColorPickerHoverInteraction, DrainContext, ReleaseCommit};
-use super::{DragState, InteractionMode, LastClick};
+use super::{event_cursor_moved, event_keyboard, event_mouse_click, DragState, InteractionMode, LastClick};
 
 /// Borrowed view of the persistent state every interactive-path
 /// dispatcher reads and writes. Built once per event by
-/// [`crate::application::app::run_native::InitState::input_context`]
+/// [`crate::application::app::run_native_init::InitState::input_context`]
 /// and passed to `handle_mouse_input`, `handle_cursor_moved`,
 /// `handle_keyboard_input`, and `submit_line`.
 ///
@@ -112,9 +116,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// The freeze watchdog, for a screenshot to tick as it progresses
     /// and for a clock step to tick once per heartbeat.
     pub watchdog: &'a super::freeze_watchdog::FreezeWatchdog,
-    /// The window, which the cursor-move handler sets the cursor icon
-    /// on.
-    pub window: &'a winit::window::Window,
+    /// What the app is shown in, which the cursor-move handler sets the
+    /// cursor icon on — a no-op with no window (`app::shell`).
+    pub shell: &'a super::shell::Shell,
     /// Touch gesture state machine (`super::touch_gesture`).
     pub touch_recognizer: &'a mut super::touch_gesture::TouchGestureRecognizer,
     /// The app-clock ms at which a tree-mutating drag suspended the
@@ -221,5 +225,183 @@ impl<'a> InputHandlerContext<'a> {
                 picker_hover: &mut *self.picker_hover,
             },
         )
+    }
+}
+
+impl InputHandlerContext<'_> {
+    /// Translate a winit `Touch` event's phase, finger id and
+    /// location into a recognizer step and run it. Takes the payload
+    /// rather than the `Touch` struct so the IPC `input.touch`
+    /// command reaches this same entry point (its `DeviceId` cannot
+    /// be built outside winit). Returns true when the event drove any state
+    /// transition or ran a gesture (the caller should request a
+    /// redraw on true). Modifier state is fixed at all-false —
+    /// touch devices have no modifier keys, and the keybind table's
+    /// `LongPress` binding doesn't carry Ctrl/Shift/Alt either.
+    ///
+    /// **Long-press timing wake-up gap**: `tick` is called only
+    /// from the events themselves (not on a wall-clock timer),
+    /// so a finger held with literally zero `Moved` events
+    /// between Started and Ended would miss the long-press
+    /// emission. In practice touch hardware emits sub-pixel
+    /// jitter `Moved` events constantly while a finger is down,
+    /// so the gap is theoretical — and the recognizer refuses to
+    /// call such a hold a tap either way, on the elapsed time
+    /// rather than on the emission having happened. A future
+    /// improvement would set `ControlFlow::WaitUntil(started_at +
+    /// LONG_PRESS_MS)` from the recognizer's `OneFinger` state.
+    ///
+    /// Timed on the app clock (`AppClock::instant`), so under a
+    /// virtual clock a long-press is virtual milliseconds held.
+    pub(super) fn dispatch_touch_event(
+        &mut self,
+        phase: TouchPhase,
+        id: u64,
+        location: PhysicalPosition<f64>,
+    ) -> bool {
+        use super::touch_gesture::Phase;
+        // Phase translation, recognizer ingest + tick, and the
+        // routing of what it recognized are `cross_dispatch::pointer`'s
+        // `drive_touch_event`; the browser runs the same body, and so
+        // does `apply_touch_effect` below. What is native's own is the
+        // `Dispatch` arm — it goes through `dispatch_action` so a
+        // `NativeOnly` Action bound to a gesture (`EnterResizeMode`)
+        // reaches its arm.
+        let phase = super::dispatch::touch_phase(phase);
+        let pos = (location.x, location.y);
+        // No gesture recognized — but the recognizer may have moved
+        // its internal state (e.g. Started → OneFinger). The caller
+        // still wants a redraw on Started/Moved so any
+        // cursor-following overlay updates.
+        let idle_redraw = matches!(phase, Phase::Started | Phase::Moved);
+        let Some(step) = super::dispatch::drive_touch_event(
+            &mut *self.touch_recognizer,
+            self.keybinds,
+            phase,
+            id,
+            pos,
+            // The app clock's instant: a long-press is a duration on
+            // the same axis as every other behavior's timing.
+            self.clock.instant(),
+        ) else {
+            return idle_redraw;
+        };
+        match step {
+            super::dispatch::TouchStep::Dispatch(d) => {
+                *self.cursor_pos = d.cursor_pos;
+                let Some(a) = d.action else {
+                    return idle_redraw;
+                };
+                let _ = super::dispatch::dispatch_action(a, self, None);
+                true
+            }
+            super::dispatch::TouchStep::Effect(effect) => {
+                let (mut core, _native) = self.split_borrow();
+                super::dispatch::apply_touch_effect(effect, &mut core);
+                // The camera-geometry reprojection a pinch owes is
+                // picked up by `drain_camera_geometry_rebuild` in the
+                // frame this redraw requests, under the same
+                // renderer-side dirty flag the wheel path uses.
+                true
+            }
+        }
+    }
+
+    /// `WindowEvent::MouseInput`. Returns whether to request a redraw.
+    ///
+    /// This, the three `on_*` methods below and
+    /// [`Self::dispatch_touch_event`] are winit's `handle_event` input
+    /// arms, lifted out so the IPC `input` family reaches the handlers
+    /// through the same bodies a winit event does (`format/ipc.md`
+    /// §`input`): from here down, nothing can tell the two apart — and
+    /// with no window (`--headless`) they are the only way input
+    /// arrives at all. They live on the context rather than on
+    /// `InitState` so the heartbeat (`app::heartbeat`) reaches them from
+    /// wherever it runs — either driver's loop, or a `clock step` inside
+    /// a console line.
+    pub(super) fn on_mouse_input(&mut self, state: ElementState, button: MouseButton) -> bool {
+        event_mouse_click::handle_mouse_input(state, button, self);
+        true
+    }
+
+    /// `WindowEvent::MouseWheel`. Returns whether to request a redraw.
+    pub(super) fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) -> bool {
+        let scroll_y = crate::application::app::wheel_lines(delta);
+        // While the console is open, the wheel scrolls the
+        // scrollback rather than zooming the canvas — mouse
+        // events should follow keyboard focus. Fractional
+        // deltas accumulate via `accumulate_wheel_lines` so
+        // sub-line-per-tick scrolls don't round to zero.
+        if self.console_state.is_open() {
+            let lines = if let crate::application::console::ConsoleState::Open { wheel_accum, .. } =
+                &mut *self.console_state
+            {
+                crate::application::app::console_input::accumulate_wheel_lines(wheel_accum, scroll_y as f32)
+            } else {
+                0
+            };
+            if lines == 0 {
+                return false;
+            }
+            crate::application::app::console_input::scroll_console_by_lines(self.console_state, lines);
+            if let Some(doc) = self.document.as_ref() {
+                crate::application::app::console_input::rebuild_console_overlay(
+                    self.console_state,
+                    doc,
+                    self.app_scene,
+                    self.renderer,
+                    self.keybinds,
+                );
+            }
+            return true;
+        }
+        // Wheel zoom is routed through `dispatch_action` so
+        // users can rebind `WheelUp` / `WheelDown` to any
+        // Action (or unbind them entirely). Defaults bind
+        // both to `ZoomIn` / `ZoomOut`. If the user
+        // explicitly clears the bindings, wheel events are
+        // silently ignored.
+        let gesture_name = crate::application::app::wheel_gesture(scroll_y).key_name();
+        // `action_for_gesture` falls back to the unmodified
+        // binding when no exact-modifier match exists, so
+        // `Ctrl+Wheel` keeps zooming even though only
+        // `WheelUp` / `WheelDown` are bound in defaults —
+        // pre-branch behavior was modifier-agnostic and
+        // we preserve it here without forcing every user
+        // to enumerate modifier permutations.
+        let action = self.keybinds.action_for_gesture(
+            gesture_name,
+            self.modifiers.control_key(),
+            self.modifiers.shift_key(),
+            self.modifiers.alt_key(),
+        );
+        let Some(a) = action else {
+            return false;
+        };
+        let _ = crate::application::app::dispatch::dispatch_action(a, self, None);
+        true
+    }
+
+    /// `WindowEvent::CursorMoved`. Returns whether to request a redraw.
+    pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
+        let shell = self.shell;
+        event_cursor_moved::handle_cursor_moved(position, shell, self);
+        // Hover that doesn't drag and doesn't open the
+        // picker doesn't change visuals — no redraw needed.
+        // Any active drag (Pending → Throttled etc.) or an
+        // open picker requires a fresh frame so the drag
+        // preview / hover marker tracks the cursor.
+        !matches!(*self.drag_state, DragState::None) || self.color_picker_state.is_open()
+    }
+
+    /// `WindowEvent::KeyboardInput`. Only a press reaches the
+    /// handler; a release changes nothing. Returns whether to request
+    /// a redraw.
+    pub(super) fn on_keyboard_input(&mut self, logical_key: Key, state: ElementState) -> bool {
+        if state != ElementState::Pressed {
+            return false;
+        }
+        event_keyboard::handle_keyboard_input(logical_key, self);
+        true
     }
 }

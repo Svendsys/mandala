@@ -130,11 +130,11 @@ abstracted over a `MacroDispatchTarget` trait so native and WASM
 share the body byte-for-byte.
 
 Re-implementing the privilege check inline is **forbidden** —
-it's the threat-model defence and must be single-sourced. A
+it's the threat-model defense and must be single-sourced. A
 forked enforcement copy would silently drift when a future
 contributor adds an Action to the denylist.
 
-## What's deferred today (and tracked in TODO.md)
+## What's deferred today (and tracked here)
 
 - The inline label / portal-text editors and the color picker on
   WASM. Track A on individual Actions.

@@ -82,6 +82,18 @@ pub(crate) enum CaptureError {
     Internal(String),
 }
 
+impl CaptureError {
+    /// The refusal's words, without the parameter or the class it was
+    /// charged to: for a caller that reports every refusal the same way.
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            CaptureError::Invalid { message, .. }
+            | CaptureError::Busy(message)
+            | CaptureError::Internal(message) => message,
+        }
+    }
+}
+
 impl From<plan::PlanError> for CaptureError {
     fn from(error: plan::PlanError) -> Self {
         CaptureError::Invalid {
