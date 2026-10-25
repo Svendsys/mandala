@@ -77,9 +77,13 @@ picture**; everything after `@stop` runs unrecorded, which is where the proof
 lines go (`query.camera`, `query.editors`). A failing command fails the run
 and names its script line. Words split the way a shell's quoting splits
 them (`'single'`, `"double"`, backslash) **and nothing else**: `$var`,
-`$(…)`, backticks, `;`, `|` and `*` are ordinary characters, never run, so
-re-running a script someone posted in a PR runs only `mandalactl` on it.
-(That also means `raw -` has no stdin to read; use the verbs.) Line endings
+`$(…)`, backticks, `;`, `|` and `*` are ordinary characters, so no shell
+code runs from a script. **That is not "safe to run unread":** `mandalactl`
+itself can write files with your privileges — `act.console 'save <path>'`
+overwrites any writable file with map JSON, `capture.* path=… overwrite=true`
+with a PNG — so read a script (they are short) before re-running one
+someone else posted. `raw -` has no stdin to read in a script; pass the
+frame inline instead, `raw '<json>'`. Line endings
 may be CRLF; the wrapper checks the whole file parses, and that it holds one
 `@record` and one `@stop` after it, before it builds or launches anything.
 

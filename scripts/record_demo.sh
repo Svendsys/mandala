@@ -38,9 +38,13 @@
 #                            way a shell's quoting splits them — 'single',
 #                            "double", backslash — and nothing more: no
 #                            `$var`, no `$(...)`, no globs, no `;` or `|`;
-#                            they are ordinary characters, so a script is
-#                            data and running someone else's runs only
-#                            mandalactl. (`raw -` has no stdin to read.)
+#                            they are ordinary characters, so no shell code
+#                            runs. It is still not "safe to run unread":
+#                            mandalactl can write files (`act.console 'save
+#                            <path>'`, `capture.* path=... overwrite=true`),
+#                            so read a script before running someone else's.
+#                            (`raw -` has no stdin to read; pass the frame
+#                            inline: `raw '<json>'`.)
 #   @record [record_start params]   start recording here, then hold the "before" beat
 #   @stop                           hold the "after" beat, then stop recording
 # Exactly one @record ... @stop pair. Everything before @record is setup
@@ -164,7 +168,8 @@ fi
 # inside), a backslash outside quotes, whitespace (a CR included) between
 # words, and an unquoted `#` at the start of a word ending the line. No
 # expansion of any kind: `$`, backticks, `;`, `|` and `*` are ordinary
-# characters, which is what makes a script safe to run unread. Fails on an
+# characters, so no shell code runs from a script line (what mandalactl does
+# with its arguments is another matter — it can write files). Fails on an
 # unterminated quote or a trailing backslash.
 split_words() {
     local s="$1" c word="" inword=0 q="" i=0 n=${#1}
