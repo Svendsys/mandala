@@ -274,9 +274,13 @@ pub(super) fn draw<T>(
 ///
 /// Settled is the `clock.wait until=settled` condition, read at the
 /// point that command reads it — and not before the first frame has
-/// been rendered: until then a window may not yet have the size its
-/// window manager gives it, and the view the capture copies is not yet
-/// the window's. A one-shot launch runs on a virtual clock
+/// been rendered, the earliest the window can be said to be on screen.
+/// That is all the first frame promises about the window's size: the
+/// capture is the window at the size it has then, and a window manager
+/// that resizes it after its first expose (a tiling one, typically) is
+/// not waited for, since nothing says one is coming. A launch that needs
+/// an exact size runs `--headless --size`, where the size is the
+/// launch's own. A one-shot launch runs on a virtual clock
 /// (`run_native_init::build`), so an animation never keeps it from
 /// settling, and the capture is the map as loaded.
 ///

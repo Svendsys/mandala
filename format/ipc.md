@@ -233,8 +233,8 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
 - `--screenshot <path> [--overwrite]` — a **one-shot** launch: once
   the app has settled (the `clock.wait until=settled` condition), it
   captures the window's view at the surface size, with its geometry
-  sidecar, to `<path>` — read against the working directory — and
-  exits: `0` when the PNG was written, `1` when it could not be, with
+  sidecar, to `<path>` — read against the working directory — once a
+  first frame has been rendered, and exits: `0` when the PNG was written, `1` when it could not be, with
   the reason on stderr. It is `1`, with nothing written, when the map
   did not load (the load-failure placard is not the map asked for;
   the `startup:` line says why), when the frame cannot be drawn for a
@@ -247,7 +247,11 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
   clock** (below), so it captures the map at its first instant and an
   animation cannot keep it from settling. It works with or without
   `--headless` and `--ipc`; with a window the window opens, and closes
-  once the capture is written. `--overwrite` without `--screenshot` is
+  once the capture is written. A window's capture is at the size the
+  window has when it is taken; a window manager that resizes a new
+  window after its first frame (tiling ones do) is not waited for,
+  since nothing announces such a resize. For an exact size, use
+  `--headless --size`. `--overwrite` without `--screenshot` is
   refused at startup.
 - A startup failure — a refused command line, no usable adapter, a
   socket that cannot be bound — ends the process with Rust's panic

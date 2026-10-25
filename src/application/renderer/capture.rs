@@ -113,8 +113,8 @@ pub(crate) fn padded_bytes_per_row(width: u32) -> u32 {
 /// than one. A frame whose rows all fit is one band.
 ///
 /// The bands exist because the device's buffer limit is smaller than the
-/// largest image a capture admits: `Renderer::new` asks for
-/// `downlevel_defaults()` limits, whose `max_buffer_size` is 256 MiB,
+/// largest image a capture admits: the device is opened
+/// (`adapter::open_device`) with `downlevel_defaults()` limits, whose `max_buffer_size` is 256 MiB,
 /// and a 64 Mpx frame is 256 MiB before its rows are padded.
 pub(crate) fn row_bands(
     height: u32,
