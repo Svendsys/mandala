@@ -1039,25 +1039,33 @@ two things — asking for a frame and setting the cursor icon — and both
 now go through `app/shell.rs`'s `Shell` (`Window(Arc<Window>)` or
 `Headless`). Everything else a frame needs reads the renderer, which
 was sized from the window once and resized by decrees, never by
-asking the window. With no window a frame asked for is a flag the
-headless driver clears by drawing it before it next parks — where
-winit delivers `RedrawRequested` — and then runs another iteration, as
-winit runs `about_to_wait` after every iteration that delivered an
-event; a cursor icon is state nobody sees, so it is no call. The
+asking the window. With no window a frame asked for is the redraw
+ledger's alone (`app/settle.rs`), which every ask already goes
+through: the headless driver draws whenever the ledger says a frame is
+owed — the first one unasked, as a new window's; then each ask no
+render has drawn, unless the last render stalled on a skip retrying
+would not cure — before it next parks, where winit delivers
+`RedrawRequested`, and then runs another iteration, as winit runs
+`about_to_wait` after every iteration that delivered an event. (A flag
+on the shell was the first draft, and a second record of what the
+ledger already knew; review removed it.) A cursor icon is state nobody
+sees, so it is no call. The
 renderer gets the same seam on its side: its frames land in a `Sink`
 (`Window { surface, config, window }` or `Headless`), and its format
 and size live beside the sink rather than inside a surface
 configuration it may not have.
 
-**A headless frame is the CPU half.** Every buffer current, every
-glyph prepared, nothing encoded or presented — the frame an occluded
-window draws (`render()` already returned `Ok` with no surface
-texture). It counts as drawn in the redraw ledger for the reason an
-occluded window's does (§D7's "rendered, not presented"), and pixels
-are drawn only when a capture asks, through the prepare / encode pair
-IPC-07 parameterized. Encoding every headless frame into a texture
-nobody reads was rejected: it would make the headless frame cost a
-GPU pass to produce nothing an agent can see. The format is
+**A headless frame draws nothing.** There is nothing to draw into and
+nobody to see it: the frame is bookkeeping — the ledger records it
+drawn, the FPS and mode-status overlays stay current — and pixels are
+drawn only when a capture asks, through the prepare / encode pair
+IPC-07 parameterized, whose prepare brings every buffer current at the
+capture's own camera. Two heavier frames were rejected: encoding every
+headless frame into a texture nobody reads (a GPU pass for nothing an
+agent can see), and — the first draft — the CPU half alone, an
+occluded window's frame, which review found was the same waste one
+stage earlier: the capture prepares again anyway, and staged uploads
+with no submission accumulate in wgpu until one comes. The format is
 `Bgra8UnormSrgb` — the sRGB format the windowed bootstrap picked under
 Xvfb on Mesa's lavapipe (observed: offered `[Bgra8UnormSrgb,
 Bgra8Unorm]`) — and the default size is 800×600, the size a window
@@ -1131,8 +1139,20 @@ browser parity: a browser page always has its canvas, and running one
 without a display is the browser's own job (`CLAUDE.md` "Dual-target
 status"). It adds no IPC command: the wire protocol is unchanged, and
 an agent drives a headless app exactly as it drives a windowed one.
-And it has no graceful exit but the one-shot's — a signal ends it as a
-signal ends a window, leaving the socket to self-heal.
+**Ending it.** A headless app has no window to close, so its graceful
+exit is an `Action`: `Quit`, the funnel's name for what a window's
+close button does — dispatched over IPC as `act.action Quit`, so no
+command is added and `mandalactl` already speaks it. The arm sets
+`InitState::quit_requested`; the loop body's last step sees it and
+returns `Next::Exit`, and both drivers then run the one
+`pump::shut_down` a closed window runs. It is destructive-classed, so
+only the User tier — the user's own keybinds and macros, the console,
+IPC — can reach it, and unbound by default, since it no more asks
+about unsaved changes than a closed window does. A signal handler was
+the alternative and was not taken: it needs a third sanctioned
+boundary thread or an `unsafe` handler (§3), for a teardown that an
+agent can as easily send as a command. A loop that ends with a
+one-shot capture still owed — `Quit`, a closed window — ends with `1`.
 
 ## What each downstream issue consumes from this design
 
@@ -1309,7 +1329,7 @@ Moved later, by the issue that found the need:
   where building it found the issue's sketch short, each in
   `format/ipc.md` §"Headless and one-shot launches" in the same PR.
   (1) **The pump runs the order winit ran**, not the issue's sketched
-  "IPC first" order (D10). (2) **A headless frame is the CPU half**,
+  "IPC first" order (D10). (2) **A headless frame draws nothing**,
   pixels on demand (D10). (3) **`--size`** sets the surface of either
   driver, and a headless app is 800×600 without it. (4) **`--adapter
   auto|software`** and wgpu's three variables are honored by every
@@ -1319,8 +1339,11 @@ Moved later, by the issue that found the need:
   `capture.screenshot`'s defaults and write guards, exit `0` / `1`; it
   and a headless launch start on a virtual clock. (6) **A headless
   launch needs `--ipc` or `--screenshot`**, or it is refused at
-  startup. (7) **No new IPC command**: what an agent can do is
-  unchanged, which is the point.
+  startup. (7) **No new IPC command**: the graceful exit is a new
+  `Action`, `Quit`, which `act.action` reaches. (8) **A one-shot
+  fails loudly**: exit `1`, nothing written, for a map that did not
+  load, a frame that cannot be drawn, and an app that ends before the
+  capture.
 
 ## Change governance
 

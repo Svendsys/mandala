@@ -235,7 +235,12 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
   captures the window's view at the surface size, with its geometry
   sidecar, to `<path>` — read against the working directory — and
   exits: `0` when the PNG was written, `1` when it could not be, with
-  the reason on stderr. The capture is `capture.screenshot` with no
+  the reason on stderr. It is `1`, with nothing written, when the map
+  did not load (the load-failure placard is not the map asked for;
+  the `startup:` line says why), when the frame cannot be drawn for a
+  reason retrying would not cure, and when the app ends first — its
+  window closed, or `Action::Quit` dispatched. The capture is
+  `capture.screenshot` with no
   parameters but `path`, and its write guards: no symlink at `path` is
   followed, and an existing file there (or its sidecar) is refused
   unless `--overwrite` is given. A one-shot runs on a **virtual
@@ -262,19 +267,25 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
   entry points a window's events do, so nothing below them can tell
   the difference; there is no cursor to draw, so a cursor-icon change
   is no call at all. With no human there, `settled` is exact.
-- **A frame is the CPU half** — every buffer current, every glyph
-  prepared — which is what an occluded window draws. It counts as
-  drawn for `settled` exactly as an occluded window's frame does, and
-  `capture.*` draws the pixels, through the very prepare / encode pair
-  a window's frame uses. A headless capture and a windowed one of the
+- **A frame draws nothing.** There is nothing to draw into and no one
+  to see it, so a headless frame is bookkeeping: it counts as drawn
+  for `settled`, and `capture.*` draws the pixels when asked, through
+  the very prepare / encode pair a window's frame uses — so pixels are
+  produced exactly when they are wanted. A headless capture and a windowed one of the
   same state, on the same machine and adapter, hold the same pixels:
   the target format is the sRGB format a window's surface offers under
   Xvfb on Mesa's lavapipe, and the two have been verified there
   byte-identical, PNG and sidecar.
-- **There is no window to close.** The process ends with a one-shot's
-  capture, or with a signal — which, as under a window, is not a
-  graceful exit: the socket and the artifacts dir are left behind,
-  and the next launch on the same path self-heals the socket.
+- **There is no window to close: `act.action Quit` ends it.** The
+  `Quit` action is the graceful exit — the one a window's close
+  button takes — for either driver: the reply to it is sent, the
+  client hears `shutdown`, a recording in progress is finished, and
+  the socket and the artifacts dir are removed. It is User-tier, as
+  IPC is, and unbound by default (it does not ask about unsaved
+  changes, any more than closing a window does). A one-shot launch
+  ends on its own. A signal, as under a window, is not a graceful
+  exit: the socket and the artifacts dir are left behind, and the
+  next launch on the same path self-heals the socket.
 
 ### Framing
 
@@ -2083,7 +2094,8 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
   exactly the containerized/Xvfb environment the epic targets. So a
   render counts as drawn once its CPU half has run — every buffer
   current, every glyph prepared — whether or not the surface then had a
-  texture to present into. A frame the renderer *skipped* (the font
+  texture to present into. With no window a frame draws nothing and
+  counts as drawn: a capture prepares and draws its own. A frame the renderer *skipped* (the font
   system contended, a failed prepare) has not drawn, and the redraw
   stays owed. One limit no protocol can lift: the render runs when
   winit delivers the `RedrawRequested` the app asked for, and a

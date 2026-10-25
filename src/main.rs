@@ -372,28 +372,33 @@ mod tests {
     }
 
     /// The one-shot's path is read against the working directory, and
-    /// the rest of the line reaches the options as parsed.
+    /// the rest of the line reaches the options as parsed. Run with no
+    /// user config: `cli_options` loads the keybinds, which would
+    /// otherwise read whatever the machine running the suite has.
     #[test]
     fn test_cli_options_reads_the_screenshot_against_the_working_directory() {
-        let options = super::cli_options(
-            ["--headless", "--screenshot", "shots/a.png", "--size", "320x200"].map(String::from),
-        )
-        .expect("parses");
-        let shot = options.one_shot.expect("a one-shot");
-        assert_eq!(
-            shot.path,
-            std::env::current_dir()
-                .expect("a working directory")
-                .join("shots/a.png")
-        );
-        assert!(!shot.overwrite);
-        assert!(options.headless);
-        assert_eq!(options.surface_size, Some((320, 200)));
-        let absolute = super::cli_options(["--screenshot", "/tmp/b.png"].map(String::from)).expect("parses");
-        assert_eq!(
-            absolute.one_shot.expect("a one-shot").path,
-            PathBuf::from("/tmp/b.png")
-        );
+        crate::application::user_config::test_env::with_no_user_config(|| {
+            let options = super::cli_options(
+                ["--headless", "--screenshot", "shots/a.png", "--size", "320x200"].map(String::from),
+            )
+            .expect("parses");
+            let shot = options.one_shot.expect("a one-shot");
+            assert_eq!(
+                shot.path,
+                std::env::current_dir()
+                    .expect("a working directory")
+                    .join("shots/a.png")
+            );
+            assert!(!shot.overwrite);
+            assert!(options.headless);
+            assert_eq!(options.surface_size, Some((320, 200)));
+            let absolute =
+                super::cli_options(["--screenshot", "/tmp/b.png"].map(String::from)).expect("parses");
+            assert_eq!(
+                absolute.one_shot.expect("a one-shot").path,
+                PathBuf::from("/tmp/b.png")
+            );
+        });
     }
 
     fn repo_root() -> PathBuf {

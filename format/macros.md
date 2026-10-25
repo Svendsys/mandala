@@ -126,7 +126,7 @@ The dispatcher gates two surfaces on the macro's `SourceTier`:
 - **Destructive / I/O / clipboard `Action` variants**
   (`SaveDocument`, `DeleteSelection`, `Cut`, `Paste`, `Copy`,
   `OrphanSelection`, `CreateOrphanNode`, `CreateOrphanNodeAndEdit`,
-  `NewDocument`) are User-tier-only via
+  `NewDocument`, `Quit`) are User-tier-only via
   `SourceTier::allows_action`. Navigation / view-state Actions
   (zoom, pan, selection traversal, undo, etc.) pass freely.
 

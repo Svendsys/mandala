@@ -128,6 +128,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// Raw input the IPC `input` family queued for the heartbeat
     /// (`format/ipc.md` §`input`). Always empty without `--ipc`.
     pub injected: &'a mut crate::application::ipc::injected::InjectedQueue,
+    /// Set by `Action::Quit`: the loop ends at its next exit check
+    /// (`app::pump::iterate`).
+    pub quit_requested: &'a mut bool,
     /// The app clock every behavior reads (`crate::application::clock`).
     /// `&mut` because a `clock` console line can switch or step it.
     pub clock: &'a mut crate::application::clock::AppClock,

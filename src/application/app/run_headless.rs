@@ -10,11 +10,14 @@
 //! this driver's to decide. What is its own is what winit does around
 //! that body:
 //!
-//! - **Frames.** A frame asked for is recorded on the shell
-//!   (`app::shell`) and drawn here before the pump next waits — where
-//!   winit would deliver the `RedrawRequested` — then followed by
-//!   another iteration, as winit runs `about_to_wait` after every
-//!   iteration that delivered an event. Frames are paced to one per
+//! - **Frames.** A frame owed — the first one, unasked, as a new
+//!   window's, and then each ask no render has drawn, as the redraw
+//!   ledger keeps them (`RedrawLedger::frame_owed`) — is drawn here
+//!   before the pump next waits, where winit would deliver the
+//!   `RedrawRequested`, then followed by another iteration, as winit
+//!   runs `about_to_wait` after every iteration that delivered an
+//!   event. A headless frame is bookkeeping, not pixels
+//!   (`renderer::Sink::Headless`): a capture draws what it shows. Frames are paced to one per
 //!   [`HEARTBEAT_MS`] of wall time, the refresh a window's present
 //!   blocks on: continuous work (a real-time animation, a paced drag)
 //!   advances at a display's rate instead of spinning a core.
@@ -29,11 +32,11 @@
 //! - **Time.** The clock starts virtual (`run_native_init::build`):
 //!   with no one watching, time moves only when `clock.step` moves it.
 //!
-//! **What ends it.** A one-shot launch's capture (`--screenshot`), with
-//! the code it reports; otherwise the process, as an unclean exit — the
-//! next launch on the socket path self-heals it. That is the same
-//! exit posture a window has under a signal; a window can also be
-//! closed, and there is no window to close.
+//! **What ends it.** `Action::Quit` — sent over IPC as `act.action
+//! Quit` — which is the graceful exit a window's close button is, through
+//! the same `pump::shut_down`; or a one-shot launch's capture
+//! (`--screenshot`), with the code it reports. A signal is an unclean
+//! exit here as under a window: the socket is left to self-heal.
 //!
 //! Native-only (`CLAUDE.md` "Dual-target status", "Headless").
 
@@ -70,7 +73,7 @@ pub(super) fn run(options: Options) -> ExitCode {
         IpcServer::start(path, move || main.unpark())
             .expect("ipc: the `--ipc` listener could not start (format/ipc.md \"Socket, flag, lifecycle\")")
     });
-    let mut init = run_native_init::build(&options, Shell::headless(), watchdog.clone());
+    let mut init = run_native_init::build(&options, Shell::Headless, watchdog.clone());
     watchdog.unparked();
     // What the loop still owes, taken when it fires; `options.one_shot`
     // stays the launch's request, which `build` read above.
@@ -86,7 +89,7 @@ pub(super) fn run(options: Options) -> ExitCode {
         if let Next::Exit(code) = next {
             break code;
         }
-        if init.shell.take_redraw_request() {
+        if init.redraws.frame_owed() {
             pacer.pace(Instant::now());
             init.draw_frame();
             pump::evaluate_wait(&mut ipc, &init);

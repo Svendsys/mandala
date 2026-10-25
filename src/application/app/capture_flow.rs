@@ -274,15 +274,36 @@ pub(super) fn draw<T>(
 ///
 /// Settled is the `clock.wait until=settled` condition, read at the
 /// point that command reads it — and not before the first frame has
-/// been drawn: until then a window may not yet have the size its window
-/// manager gives it, and the view the capture copies is not yet the
-/// window's. A one-shot launch runs on a virtual clock
+/// been rendered: until then a window may not yet have the size its
+/// window manager gives it, and the view the capture copies is not yet
+/// the window's. A one-shot launch runs on a virtual clock
 /// (`run_native_init::build`), so an animation never keeps it from
 /// settling, and the capture is the map as loaded.
+///
+/// Two ways it ends without settling, both `1`: the startup document is
+/// the load-failure placard — a picture of it would be the failure
+/// passed off as the map, so nothing is written, and the loader's
+/// message is the `startup:` line already on stderr — and a render that
+/// stalled (`RedrawLedger::is_stalled`), which will never settle on its
+/// own: the capture is tried anyway, and its own skip says why.
 pub(super) fn one_shot(init: &mut InitState, shot: &OneShot) -> Option<std::process::ExitCode> {
     use std::process::ExitCode;
 
-    if !init.redraws.has_drawn() || !init.settling().holds(Until::Settled) {
+    if init
+        .document
+        .as_ref()
+        .is_some_and(MindMapDocument::is_load_failure_placard)
+    {
+        log::error!(
+            "screenshot: the map did not load (the `startup:` line says why); nothing was written to {}",
+            shot.path.display()
+        );
+        return Some(ExitCode::FAILURE);
+    }
+    if !init.redraws.attempted() {
+        return None;
+    }
+    if !init.redraws.is_stalled() && !init.settling().holds(Until::Settled) {
         return None;
     }
     let (scene, artifacts, _) = CaptureScene::of_init(init);

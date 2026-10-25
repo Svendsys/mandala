@@ -276,6 +276,22 @@ pub enum Action {
     /// Save the currently-open mindmap document to its bound file path.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     SaveDocument,
+    /// Quit the app, gracefully: the exit closing the window is, and the
+    /// only one an app with no window has (`--headless`, where an agent
+    /// sends it as `act.action Quit`). The IPC client hears `shutdown`, a
+    /// recording in progress is finished, the artifacts dir and the
+    /// socket are removed (`app::pump::shut_down`).
+    ///
+    /// **Unbound by default.** Quitting does not ask about unsaved
+    /// changes, any more than closing the window does, so a key that
+    /// does it is the user's to choose rather than one a stray press
+    /// reaches. Destructive for the same reason: a map's or a plugin's
+    /// macro cannot end the user's session.
+    ///
+    /// **WASM: NativeOnly** — a page is closed by its browser, which a
+    /// page cannot do on the user's behalf.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
+    Quit,
     /// Copy the focused component's clipboard representation.
     /// **WASM:** the underlying `clipboard::write_clipboard` is a
     /// log-and-no-op stub today (async-clipboard integration

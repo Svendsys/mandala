@@ -86,6 +86,8 @@ keybind_surface! {
         OpenConsole => open_console = ["/"],
         /// Save the document to its bound path.
         SaveDocument => save_document = ["Ctrl+S"],
+        /// Quit the app. Unbound: it does not ask about unsaved changes.
+        Quit => quit = [],
         /// Copy the focused component's clipboard representation.
         Copy => copy = ["Ctrl+C", "Copy"],
         /// Paste the clipboard into the focused component.

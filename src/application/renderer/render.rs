@@ -166,30 +166,27 @@ impl Renderer {
     /// and target. `Err` names why the frame was not drawn
     /// ([`Renderer::process`]).
     ///
-    /// With no window ([`Sink::Headless`](super::Sink)) the frame is the
-    /// prepare alone — what an occluded window draws — and counts as
-    /// drawn for the same reason: every buffer is current, and there is
-    /// nowhere to present. A capture draws the pixels.
+    /// With no window ([`Sink::Headless`](super::Sink)) there is nothing
+    /// to draw into, so the frame draws nothing: no prepare, no encode.
+    /// It counts as drawn all the same — the frame is current, in the
+    /// only sense a frame nobody can see has — and a capture prepares
+    /// and draws its own (`renderer::capture`), so pixels are produced
+    /// exactly when they are asked for.
     #[inline]
     pub(super) fn render(&mut self) -> Result<(), FrameSkip> {
         if !self.should_render {
             return Err(FrameSkip::NotStarted);
+        }
+        if !self.sink.presents() {
+            return Ok(());
         }
         let camera = self.camera;
         // On lock contention or prepare failure, skip the rest of this
         // frame — before acquiring a surface texture, so a skipped
         // frame takes no vsync backpressure.
         let prepared = self.prepare_frame(&camera, ModalLayer::Drawn)?;
-        let surface = match &self.sink {
-            super::Sink::Window { surface, .. } => surface,
-            #[cfg(not(target_arch = "wasm32"))]
-            super::Sink::Headless => {
-                self.present_nowhere();
-                return Ok(());
-            }
-        };
-        let frame = match surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+        let frame = match self.sink.current_texture() {
+            Some(wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t)) => t,
             other => {
                 // Drawn all the same: the buffers are current, and what
                 // is missing is somewhere to present them, which an
@@ -208,7 +205,7 @@ impl Renderer {
     }
 
     /// End a frame that was prepared and has nowhere to be presented — an
-    /// occluded window's, or any frame with no window at all. The prepare
+    /// occluded window's. The prepare
     /// staged its uploads (both rect batches, the glyph atlas, the text
     /// vertices) on the queue, and wgpu holds staged writes until the
     /// next submission; with none to come until a capture asks, every
@@ -653,10 +650,10 @@ impl Renderer {
     /// what the full render adds is shader compile and the
     /// swapchain allocation, which `prepare` alone doesn't reach.
     ///
-    /// With no window the frame is the prepare alone ([`Self::render`]),
-    /// so what it warms is the glyph atlas; the pipelines compile on the
-    /// first capture, which is the first frame a headless app draws
-    /// pixels for at all.
+    /// With no window the frame draws nothing ([`Self::render`]), so
+    /// there is nothing to warm: the pipelines compile and the atlas
+    /// fills on the first capture, which is the first frame a headless
+    /// app draws pixels for at all.
     ///
     /// Caller must have already populated the canvas-scene buffers
     /// (`flush_canvas_scene_buffers`) and dispatched

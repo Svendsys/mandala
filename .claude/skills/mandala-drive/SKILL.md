@@ -179,7 +179,8 @@ apt-get install -y --no-install-recommends xvfb libxkbcommon-x11-0              
   (`input.pending` reads `0`). `mandalactl clock.set_mode real` gives the app
   real time instead, and everything then behaves as it does in a window.
 - **No human, no cursor.** Input is only what you send; `settled` is exact.
-- **No window to close.** Tear it down as below.
+- **No window to close.** `mandalactl act.action Quit` ends it (see
+  **Tear down**).
 
 ## Inspect — text first
 
@@ -364,8 +365,13 @@ renders images.
 
 ## Tear down
 
-There is no quit command over IPC, and SIGTERM is not a graceful exit, so
-clean up after it:
+```sh
+mandalactl act.action Quit      # the graceful exit, a closed window's: exits 0, removes the socket and the artifacts dir
+```
+
+`Quit` is how a headless app ends (it has no window to close), and it works
+on a windowed one too. If the app no longer answers, kill it — SIGTERM is not
+a graceful exit, so clean up after it:
 
 ```sh
 # The app serving $MANDALA_IPC, and nothing else: not a desktop instance the
@@ -408,8 +414,10 @@ build, launch — with no window when there is no display, a window when there
 is, or under its own Xvfb on request — ping, check the map loaded, `clock.wait
 settled`, capture the window and a region around one node, check both PNGs
 (signature, size, not a flat color) and sidecars, check the capture left the
-camera alone, check that a one-shot `--screenshot` launch of the map writes
-the same picture byte for byte, and tear everything down.
+camera alone, quit it with `act.action Quit` and check it exited 0 and
+removed its socket and artifacts dir, check that a one-shot `--screenshot`
+launch of the map writes the same picture byte for byte, and tear everything
+down.
 
 ```sh
 ./scripts/ipc_smoke.sh                 # PASS / FAIL: …   exit 0 / 1; 2 = environment missing (prints the install line)

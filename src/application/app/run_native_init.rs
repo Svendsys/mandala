@@ -138,6 +138,9 @@ pub(super) struct InitState {
     /// Every redraw asked for and the last one drawn: the "rendered"
     /// half of `clock.wait until=settled` (`app::settle`).
     pub(super) redraws: RedrawLedger,
+    /// `Action::Quit` was dispatched: the loop ends at its next exit
+    /// check (`app::pump::iterate`), gracefully, in either driver.
+    pub(super) quit_requested: bool,
 }
 
 impl InitState {
@@ -176,6 +179,7 @@ impl InitState {
             anim_pause_start_ms: &mut self.anim_pause_start_ms,
             injected: &mut self.injected,
             clock: &mut self.clock,
+            quit_requested: &mut self.quit_requested,
         }
     }
 
@@ -190,19 +194,24 @@ impl InitState {
 
     /// Draw the frame asked for — the sole entry to the render path,
     /// run when winit delivers `RedrawRequested`, or when the headless
-    /// driver finds a frame owed — and tell the ledger whether it drew
-    /// what was asked for, which is what `clock.wait until=settled`
-    /// reads. Asks coalesce: one frame draws every ask before it.
+    /// driver finds a frame owed (`RedrawLedger::frame_owed`) — and tell
+    /// the ledger how it went, which is what `clock.wait until=settled`
+    /// and a one-shot capture read. Asks coalesce: one frame draws every
+    /// ask before it.
     pub(super) fn draw_frame(&mut self) {
         let asked = self.redraws.asked();
         match self.renderer.process() {
             Ok(()) => self.redraws.drew(asked),
-            // Nothing else would ask again with no input to follow,
-            // leaving the window — and a `settled` wait — on the last
-            // frame drawn.
-            Err(skip) if skip.is_transient() => self.request_redraw(),
-            // Retrying would spin; the redraw stays owed.
-            Err(_) => {}
+            Err(skip) => {
+                self.redraws.skipped(skip.is_transient());
+                // Nothing else would ask again with no input to follow,
+                // leaving the window — and a `settled` wait — on the
+                // last frame drawn. A lasting skip is not retried:
+                // retrying would spin, and the redraw stays owed.
+                if skip.is_transient() {
+                    self.request_redraw();
+                }
+            }
         }
     }
 
@@ -291,7 +300,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
             block_on(Renderer::bootstrap_native(Arc::clone(window), options.adapter)),
             window.inner_size(),
         ),
-        Shell::Headless { .. } => {
+        Shell::Headless => {
             let (width, height) = options.surface_size.unwrap_or(HEADLESS_SURFACE_SIZE);
             let size = PhysicalSize::new(width, height);
             (
@@ -415,7 +424,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
     // captures the map at its first instant whatever its animations
     // would do next (`format/ipc.md` §"Headless and one-shot launches").
     let mut clock = AppClock::default();
-    if matches!(shell, Shell::Headless { .. }) || options.one_shot.is_some() {
+    if matches!(shell, Shell::Headless) || options.one_shot.is_some() {
         clock.set_mode(ClockMode::Virtual);
     }
 
@@ -466,6 +475,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         watchdog,
         clock,
         redraws: RedrawLedger::default(),
+        quit_requested: false,
     }
 }
 

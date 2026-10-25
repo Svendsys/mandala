@@ -9,19 +9,22 @@
 //! the frame up to the recorder (`app::heartbeat`), the IPC drain
 //! between the two, the redraw the iteration owes, the FPS overlay's
 //! idle flip, the clock waits, the map the next client is told about,
-//! and a one-shot launch's capture. What it returns is *when the next
-//! one should run* ([`Next`]), as a value: winit turns it into a
-//! `ControlFlow`, the headless pump into a park. So the drivers differ
-//! only in how they wait and in where a frame comes from — winit
-//! delivers `RedrawRequested`, the headless pump draws the frame its
-//! shell recorded as owed — and the order of what runs is not theirs to
+//! and whether the loop ends — a dispatched `Action::Quit`, a one-shot
+//! launch's capture. What it returns is *when the next one should run*
+//! ([`Next`]), as a value: winit turns it into a `ControlFlow`, the
+//! headless pump into a park. So the drivers differ only in how they
+//! wait and in where a frame comes from — winit delivers
+//! `RedrawRequested`, the headless pump draws the frame the redraw
+//! ledger says is owed — and the order of what runs is not theirs to
 //! change. That order is pinned by the tests below against a recording
 //! fake ([`Iteration`] is the seam), so it is held without a GPU
 //! (TEST_CONVENTIONS §T8).
 //!
 //! **Shut down once, too.** [`shut_down`] is what a graceful exit does
 //! in either driver: the client hears `shutdown`, a recording in
-//! progress is finished, and the artifacts dir goes.
+//! progress is finished, and the artifacts dir goes. A loop that ends
+//! with the one-shot's capture still owed — a quit, a closed window —
+//! ends with `1` ([`ended_early`]).
 //!
 //! Native-only, with both drivers (`CLAUDE.md` "Dual-target status").
 
@@ -93,10 +96,10 @@ pub(super) trait Iteration {
     fn evaluate_wait(&mut self);
     /// Tell the IPC server which map is open, for the next `hello`.
     fn publish_map(&mut self);
-    /// Take the one-shot launch's capture if the app has settled, and
-    /// say how the process should end; `None` while there is no
-    /// one-shot, or it is not yet settled.
-    fn one_shot(&mut self) -> Option<ExitCode>;
+    /// Whether the loop ends here, and with what code: when
+    /// `Action::Quit` was dispatched, or when the one-shot launch has its
+    /// capture (or has failed it). `None` while neither.
+    fn exit(&mut self) -> Option<ExitCode>;
 }
 
 /// Run one iteration of the main loop over `app`, and say when the next
@@ -129,8 +132,9 @@ pub(super) trait Iteration {
 ///    as a frame still owed.
 /// 10. The map the next client's `hello` names, after every handler of
 ///     the iteration has run.
-/// 11. The one-shot, last, so it sees the iteration's whole effect —
-///     the same point the clock wait is evaluated at.
+/// 11. The exit check, last — a dispatched `Action::Quit`, or the
+///     one-shot's capture — so it sees the iteration's whole effect,
+///     at the same point the clock wait is evaluated.
 pub(super) fn iterate(app: &mut impl Iteration) -> Next {
     let was_continuing = app.needs_continuation();
     app.drain_frame();
@@ -147,7 +151,7 @@ pub(super) fn iterate(app: &mut impl Iteration) -> Next {
     let wake_by = [fps_deadline, app.deadline()].into_iter().flatten().min();
     app.evaluate_wait();
     app.publish_map();
-    if let Some(code) = app.one_shot() {
+    if let Some(code) = app.exit() {
         return Next::Exit(code);
     }
     if still_continuing || ipc.backlog {
@@ -223,12 +227,28 @@ impl Iteration for Running<'_> {
         }
     }
 
-    fn one_shot(&mut self) -> Option<ExitCode> {
+    fn exit(&mut self) -> Option<ExitCode> {
+        if self.init.quit_requested {
+            return Some(ended_early(self.one_shot, "the app was told to quit").unwrap_or(ExitCode::SUCCESS));
+        }
         let shot = self.one_shot.as_ref()?;
         let code = capture_flow::one_shot(self.init, shot)?;
         *self.one_shot = None;
         Some(code)
     }
+}
+
+/// The loop is ending, for `why`, before the one-shot capture it owes —
+/// a quit, a closed window — so the launch's promise is broken: say so
+/// on stderr, and end with `1`. `None` when no capture is owed, which
+/// leaves the code to whatever ended the loop.
+pub(super) fn ended_early(one_shot: &mut Option<OneShot>, why: &str) -> Option<ExitCode> {
+    let shot = one_shot.take()?;
+    log::error!(
+        "screenshot: {why} before the map was captured; nothing was written to {}",
+        shot.path.display()
+    );
+    Some(ExitCode::FAILURE)
 }
 
 /// Execute queued IPC requests on the main thread, with the same access
@@ -310,7 +330,7 @@ mod tests {
         FpsIdle { continuing: bool },
         EvaluateWait,
         PublishMap,
-        OneShot,
+        Exit,
     }
 
     /// An app that records the order [`iterate`] drives it in, and
@@ -326,7 +346,7 @@ mod tests {
         ipc: DrainOutcome,
         fps_deadline: Option<Instant>,
         deadline: Option<Instant>,
-        one_shot: Option<ExitCode>,
+        exit: Option<ExitCode>,
     }
 
     impl Recorded {
@@ -387,17 +407,17 @@ mod tests {
         fn publish_map(&mut self) {
             self.note(Step::PublishMap);
         }
-        fn one_shot(&mut self) -> Option<ExitCode> {
-            self.note(Step::OneShot);
-            self.one_shot
+        fn exit(&mut self) -> Option<ExitCode> {
+            self.note(Step::Exit);
+            self.exit
         }
     }
 
     /// **The heartbeat order, pinned.** An idle iteration runs the
     /// frame's drains, then the IPC drain, then the recorder, then —
     /// with nothing owed — spends the sleep encoding, flips the FPS
-    /// overlay, evaluates the wait, publishes the map and checks the
-    /// one-shot, in that order, asks for no frame, and parks.
+    /// overlay, evaluates the wait, publishes the map and checks for an
+    /// exit, in that order, asks for no frame, and parks.
     #[test]
     fn test_an_idle_iteration_runs_the_drains_in_order_and_parks() {
         let mut app = Recorded::default();
@@ -414,7 +434,7 @@ mod tests {
                 Step::FpsIdle { continuing: false },
                 Step::EvaluateWait,
                 Step::PublishMap,
-                Step::OneShot,
+                Step::Exit,
             ]
         );
     }
@@ -461,8 +481,8 @@ mod tests {
 
     /// When the next iteration runs: at once while work continues or the
     /// IPC queue is backed up, at the earliest deadline otherwise, else
-    /// at the next event — and never, once the one-shot has its capture,
-    /// whatever else is pending.
+    /// at the next event — and never, once the loop is to end (a quit, a
+    /// one-shot's capture), whatever else is pending.
     #[test]
     fn test_the_next_iteration_is_scheduled_by_what_is_pending() {
         let soon = Instant::now() + Duration::from_millis(5);
@@ -504,14 +524,28 @@ mod tests {
                 repaint: true,
                 backlog: true,
             },
-            one_shot: Some(ExitCode::SUCCESS),
+            exit: Some(ExitCode::SUCCESS),
             ..Recorded::default()
         };
         assert_eq!(iterate(&mut done), Next::Exit(ExitCode::SUCCESS));
         assert_eq!(
             done.steps().last(),
-            Some(&Step::OneShot),
-            "the one-shot is the last word"
+            Some(&Step::Exit),
+            "the exit check is the last word"
         );
+    }
+
+    /// A loop that ends with the one-shot still owed breaks the launch's
+    /// promise and says so with `1`, once; with nothing owed it leaves
+    /// the code to whatever ended the loop.
+    #[test]
+    fn test_ending_before_the_one_shot_capture_is_a_failure() {
+        let mut owed = Some(OneShot {
+            path: "/tmp/never-written.png".into(),
+            overwrite: false,
+        });
+        assert_eq!(ended_early(&mut owed, "a test ended it"), Some(ExitCode::FAILURE));
+        assert_eq!(owed, None, "taken, so a second end does not report it again");
+        assert_eq!(ended_early(&mut owed, "again"), None);
     }
 }

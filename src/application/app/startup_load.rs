@@ -478,6 +478,7 @@ mod tests {
         assert_eq!(adopted.mindmap.name, name);
         assert_eq!(adopted.mindmap.nodes.len(), nodes);
         assert!(adopted.file_path.is_some(), "a real load stays bound to its file");
+        assert!(!adopted.is_load_failure_placard(), "a real load is a map");
     }
 
     /// A rejected load reports the loader's message verbatim, under
@@ -750,6 +751,10 @@ mod tests {
         let doc = native_startup_document(missing);
         assert_eq!(doc.mindmap.name, placard::PLACARD_MAP_NAME);
         assert!(doc.file_path.is_none(), "a placard must never be savable");
+        assert!(
+            doc.is_load_failure_placard(),
+            "a placard says it is one, so a one-shot launch refuses to pass it off as the map"
+        );
         let text = &doc.mindmap.nodes[placard::PLACARD_NODE_ID].sections[0].text;
         let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(flat.contains(missing), "the placard must name the map: {text}");

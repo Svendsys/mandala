@@ -3431,17 +3431,20 @@ that both drivers call and that returns *when the next iteration
 should run* as a value: winit turns it into a `ControlFlow`, the
 headless driver (`app/run_headless.rs`) into a park the IPC threads
 end with `Thread::unpark`. Where winit delivers `RedrawRequested`, the
-headless driver draws the frame its shell recorded as owed, paced to
-one per 16 ms of wall time, and runs another iteration, as winit does
-after any event. A headless frame is the CPU half alone — what an
-occluded window draws (`renderer::Sink::Headless`) — and pixels are
-drawn when a [capture](#screenshot-capture) asks. The clock starts
-virtual, the input is the IPC `input` family's alone, and the
-renderer's adapter is chosen with no surface by the same plan every
-bootstrap runs (`renderer/adapter.rs`: preferred, then software;
-`--adapter software` for software only; wgpu's `WGPU_*` variables).
-A one-shot launch (`--screenshot <path>`) captures once the app has
-settled and exits, under either driver.
+headless driver draws the frame the redraw ledger says is owed
+(`app/settle.rs`), paced to one per 16 ms of wall time, and runs
+another iteration, as winit does after any event. A headless frame
+draws nothing (`renderer::Sink::Headless`): pixels are drawn when a
+[capture](#screenshot-capture) asks. The clock starts virtual, the
+input is the IPC `input` family's alone, and the renderer's adapter is
+chosen with no surface by the same plan every bootstrap runs
+(`renderer/adapter.rs`: preferred, then software; `--adapter software`
+for software only; wgpu's `WGPU_*` variables). It ends gracefully on
+`Action::Quit` (`act.action Quit` over IPC), which either driver honors
+through the same shutdown a closed window runs. A one-shot launch
+(`--screenshot <path>`) captures once the app has settled and exits,
+under either driver — `1` with nothing written for a map that did not
+load, a frame that cannot be drawn, or an app that ends first.
 
 `format/ipc.md` §"Headless and one-shot launches" is the user-facing
 contract; `work_plans/LLM_IPC.md` §D10 the design. **Caveat:**

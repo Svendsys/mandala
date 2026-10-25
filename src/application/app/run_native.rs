@@ -97,7 +97,8 @@ struct NativeApp {
     /// clock) and which stays true after the capture; this one is what
     /// the loop still owes.
     one_shot: Option<OneShot>,
-    /// What [`run`] returns: success, unless a one-shot capture failed.
+    /// What [`run`] returns: success, unless a one-shot capture failed
+    /// or the window closed before it was taken.
     exit_code: ExitCode,
 }
 
@@ -194,8 +195,13 @@ impl ApplicationHandler<IpcWake> for NativeApp {
         self.watchdog.parked();
     }
 
-    /// Graceful exit ([`pump::shut_down`]).
+    /// Graceful exit ([`pump::shut_down`]). A one-shot capture still
+    /// owed here was never taken: the window closed first, and the
+    /// launch ends with `1` ([`pump::ended_early`]).
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(code) = pump::ended_early(&mut self.one_shot, "the window closed") {
+            self.exit_code = code;
+        }
         pump::shut_down(&mut self.ipc, self.init.as_mut());
     }
 }

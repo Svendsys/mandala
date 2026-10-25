@@ -668,13 +668,33 @@ enum Sink {
         #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
         window: Arc<Window>,
     },
-    /// No window (`--headless`). A frame for it is the CPU half alone —
-    /// every buffer current, every glyph prepared — which is the frame
-    /// an occluded window draws: there is nowhere to present it. Pixels
-    /// are drawn when a capture asks for them, into a texture of its own
-    /// (`renderer::capture`), which is the only sink a headless app has.
+    /// No window (`--headless`). A frame for it draws nothing: there is
+    /// nothing to draw into and nobody to see it, and a capture prepares
+    /// and draws its own (`renderer::capture`) into a texture that is
+    /// the only sink a headless app has — so pixels are produced exactly
+    /// when they are asked for.
     #[cfg(not(target_arch = "wasm32"))]
     Headless,
+}
+
+impl Sink {
+    /// Whether a frame drawn for this sink is shown anywhere.
+    fn presents(&self) -> bool {
+        match self {
+            Sink::Window { .. } => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Sink::Headless => false,
+        }
+    }
+
+    /// The window's next swapchain texture, or `None` with no window.
+    fn current_texture(&self) -> Option<wgpu::CurrentSurfaceTexture> {
+        match self {
+            Sink::Window { surface, .. } => Some(surface.get_current_texture()),
+            #[cfg(not(target_arch = "wasm32"))]
+            Sink::Headless => None,
+        }
+    }
 }
 
 /// The color format of a headless renderer's frames. There is no

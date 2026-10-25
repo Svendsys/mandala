@@ -191,9 +191,9 @@ XVFB_PID=""
 teardown() {
     local code=$?
     if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
-        # No IPC command quits the app, and SIGTERM is not a graceful exit:
-        # the socket and the artifacts dir are left behind, so both are
-        # removed below.
+        # Still running: a check failed before the graceful quit below.
+        # SIGTERM is not a graceful exit — the socket and the artifacts
+        # dir are left behind — so both are removed below.
         kill -TERM "$APP_PID" 2>/dev/null || true
         for _ in 1 2 3 4 5 6 7 8 9 10; do
             kill -0 "$APP_PID" 2>/dev/null || break
@@ -424,6 +424,31 @@ else
         || fail "node $node is not wholly inside the region capture framed around it"
     [ "$("$CTL" query.camera)" = "$camera_before" ] || fail "the capture moved the live camera"
 fi
+
+# ---- Graceful quit -----------------------------------------------------
+
+# `act.action Quit` is the exit a closed window takes, and the only one a
+# headless app has: the reply arrives, the process exits 0, and the socket
+# and the artifacts dir go with it. A path-less capture first, so there is
+# an artifacts dir to see removed.
+step "act.action Quit"
+"$CTL" capture.screenshot >/dev/null || fail "a path-less capture.screenshot failed"
+ARTIFACTS="$(compgen -G "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$APP_PID-artifacts*" || true)"
+[ -n "$ARTIFACTS" ] || fail "the path-less capture made no artifacts dir"
+"$CTL" act.action Quit || fail "act.action Quit was not answered"
+quit_rc=0
+for _ in $(seq 1 50); do
+    kill -0 "$APP_PID" 2>/dev/null || break
+    sleep 0.1
+done
+kill -0 "$APP_PID" 2>/dev/null && fail "the app was still running 5 s after Quit"
+wait "$APP_PID" || quit_rc=$?
+[ "$quit_rc" -eq 0 ] || fail "the app exited $quit_rc after Quit, not 0"
+[ ! -e "$SOCK" ] || fail "the socket $SOCK is still there after Quit"
+for dir in $ARTIFACTS; do
+    [ ! -e "$dir" ] || fail "the artifacts dir $dir is still there after Quit"
+done
+echo "   exited 0; socket and artifacts dir removed"
 
 # ---- One-shot launches -------------------------------------------------
 

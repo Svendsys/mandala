@@ -266,7 +266,7 @@ decision, not a drive-by edit.
   - Destructive / I/O / clipboard `Action` variants
     (`SaveDocument`, `DeleteSelection`, `Cut`, `Paste`, `Copy`,
     `OrphanSelection`, `CreateOrphanNode`, `CreateOrphanNodeAndEdit`,
-    `NewDocument`) are User-tier-only via
+    `NewDocument`, `Quit`) are User-tier-only via
     `SourceTier::allows_action`.
   Privilege rejections **fail-closed** — the rest of the macro
   aborts so a `[DeleteSelection, ConsoleLine(rejected),

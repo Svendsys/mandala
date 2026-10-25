@@ -129,6 +129,13 @@ pub struct MindMapDocument {
     pub mindmap: MindMap,
     pub file_path: Option<String>,
     pub dirty: bool,
+    /// This document is the load-failure placard — the stand-in for a
+    /// map that did not load — rather than a map. Set by
+    /// [`Self::load_failure_placard`] alone; a document opened, created
+    /// or loaded after it is a new document without it. Read by a
+    /// one-shot launch, whose capture of the placard would be a picture
+    /// of the failure passed off as the map (`app::capture_flow`).
+    load_failure: bool,
     /// Committed model changes, the generation and the funnel that
     /// drove the latest one (`revision.rs`). Written only through
     /// [`Self::mark_dirty`], [`Self::advance_revision`] and
@@ -701,6 +708,7 @@ impl MindMapDocument {
             mindmap,
             file_path,
             dirty: false,
+            load_failure: false,
             revision: Revision::default(),
             selection: SelectionState::None,
             undo_stack: Vec::new(),
@@ -760,7 +768,18 @@ impl MindMapDocument {
     /// parse — which, being unparseable, is likely the only copy of
     /// whatever the author was hand-editing.
     pub fn load_failure_placard(source: &str, message: &str) -> Self {
-        Self::finalize(placard::load_failure(source, message), None)
+        let mut doc = Self::finalize(placard::load_failure(source, message), None);
+        doc.load_failure = true;
+        doc
+    }
+
+    /// Whether this document is the load-failure placard
+    /// ([`Self::load_failure_placard`]) rather than a map.
+    // Native-only reader: the one-shot capture; the browser has no
+    // command line to ask for one.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn is_load_failure_placard(&self) -> bool {
+        self.load_failure
     }
 
     /// Grow undersized node boxes to fit their text and their
