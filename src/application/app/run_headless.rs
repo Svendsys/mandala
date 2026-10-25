@@ -17,10 +17,11 @@
 //!   `RedrawRequested`, then followed by another iteration, as winit
 //!   runs `about_to_wait` after every iteration that delivered an
 //!   event. A headless frame is bookkeeping, not pixels
-//!   (`renderer::Sink::Headless`): a capture draws what it shows. Frames are paced to one per
-//!   [`HEARTBEAT_MS`] of wall time, the refresh a window's present
-//!   blocks on: continuous work (a real-time animation, a paced drag)
-//!   advances at a display's rate instead of spinning a core.
+//!   (`renderer::Sink::Headless`): a capture draws what it shows.
+//!   Frames are paced to one per [`HEARTBEAT_MS`] of wall time, the
+//!   refresh a window's present blocks on: continuous work (a real-time
+//!   animation, a paced drag) advances at a display's rate instead of
+//!   spinning a core.
 //! - **Waiting.** The pump parks its thread — until the iteration's
 //!   deadline, or indefinitely when it has none — and the IPC threads
 //!   wake it with `Thread::unpark`, the role winit's `EventLoopProxy`

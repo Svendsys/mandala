@@ -18,10 +18,10 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: texture_format,
             // `Auto` is wgpu 30's default and reproduces the color
-            // space every earlier wgpu picked implicitly for the
-            // chosen format: sRGB for the sRGB format
-            // `Renderer::for_window` prefers, and the historical choice
-            // for its `formats[0]` fallback. The canvas renders as it did before the field
+            // space every earlier wgpu picked implicitly for the chosen
+            // format: sRGB for the sRGB format `Renderer::for_window`
+            // prefers, and the historical choice for its `formats[0]`
+            // fallback. The canvas renders as it did before the field
             // existed.
             color_space: wgpu::SurfaceColorSpace::Auto,
             width: surface_size.width,

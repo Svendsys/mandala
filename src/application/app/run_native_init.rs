@@ -78,12 +78,11 @@ pub(super) struct InitState {
     /// Last cursor icon set through the shell (`Shell::set_cursor`,
     /// which is `Window::set_cursor` under a window and nothing with
     /// none). Used by the cursor_moved handler to dedup redundant
-    /// `set_cursor` calls — winit dedupes these on macOS / X11 but NOT on
-    /// Windows (every call → `LoadCursorW` + `SetCursor` + mutex
-    /// lock) or Wayland (calls into pointer manager every time),
-    /// so the per-event cursor icon update needs an
-    /// application-side gate. Initialized to `Default` to match
-    /// the as-launched cursor.
+    /// `set_cursor` calls — winit dedupes these on macOS / X11 but NOT
+    /// on Windows (every call → `LoadCursorW` + `SetCursor` + mutex
+    /// lock) or Wayland (calls into pointer manager every time), so the
+    /// per-event cursor icon update needs an application-side gate.
+    /// Initialized to `Default` to match the as-launched cursor.
     pub(super) cursor_icon_last: CursorIcon,
     /// Throttled, coexistent-with-drag color-picker hover.
     /// Continues to update independently of the active drag

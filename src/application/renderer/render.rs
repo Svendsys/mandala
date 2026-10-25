@@ -205,12 +205,11 @@ impl Renderer {
     }
 
     /// End a frame that was prepared and has nowhere to be presented — an
-    /// occluded window's. The prepare
-    /// staged its uploads (both rect batches, the glyph atlas, the text
-    /// vertices) on the queue, and wgpu holds staged writes until the
-    /// next submission; with none to come until a capture asks, every
-    /// such frame would add to them. An empty submission flushes them,
-    /// as the frame's own would have.
+    /// occluded window's. The prepare staged its uploads (both rect
+    /// batches, the glyph atlas, the text vertices) on the queue, and wgpu
+    /// holds staged writes until the next submission; with none to come
+    /// until a capture asks, every such frame would add to them. An empty
+    /// submission flushes them, as the frame's own would have.
     fn present_nowhere(&mut self) {
         self.queue.submit(std::iter::empty());
         self.atlas.trim();

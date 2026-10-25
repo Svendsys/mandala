@@ -9,13 +9,14 @@
 //! sized from the window once and resized by `RenderDecree`s, never by
 //! asking the window again. So with no window, both calls have a
 //! meaning to keep rather than a hole to paper over: a frame asked for
-//! is written in the redraw ledger (`app::settle`), which every ask goes
-//! through anyway and which the headless driver reads to draw the
+//! is written in the redraw ledger (`app::settle`), which every ask
+//! goes through anyway and which the headless driver reads to draw the
 //! frames it owes before it next parks (`app::run_headless`), as winit
-//! delivers a requested `RedrawRequested`; and a cursor icon is state no
-//! one can see, so setting it is nothing at all. The cursor bookkeeping beside it
-//! (`InitState::cursor_icon_last`) still updates, so the two drivers
-//! leave the app in the same state after the same input.
+//! delivers a requested `RedrawRequested`; and a cursor icon is state
+//! no one can see, so setting it is nothing at all. The cursor
+//! bookkeeping beside it (`InitState::cursor_icon_last`) still updates,
+//! so the two drivers leave the app in the same state after the same
+//! input.
 //!
 //! Native-only: the browser's shell is its canvas (`run_wasm`).
 

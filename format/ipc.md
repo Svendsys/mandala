@@ -230,29 +230,28 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
   preference, and `WGPU_ADAPTER_NAME` picks the first adapter whose
   name contains it, ignoring case. A launch that can use no adapter
   fails at startup with every attempt's reason.
-- `--screenshot <path> [--overwrite]` — a **one-shot** launch: once
-  the app has settled (the `clock.wait until=settled` condition), it
+- `--screenshot <path> [--overwrite]` — a **one-shot** launch: once the
+  app has settled (the `clock.wait until=settled` condition), it
   captures the window's view at the surface size, with its geometry
   sidecar, to `<path>` — read against the working directory — once a
-  first frame has been rendered, and exits: `0` when the PNG was written, `1` when it could not be, with
-  the reason on stderr. It is `1`, with nothing written, when the map
-  did not load (the load-failure placard is not the map asked for;
-  the `startup:` line says why), when the frame cannot be drawn for a
-  reason retrying would not cure, and when the app ends first — its
-  window closed, or `Action::Quit` dispatched. The capture is
-  `capture.screenshot` with no
-  parameters but `path`, and its write guards: no symlink at `path` is
-  followed, and an existing file there (or its sidecar) is refused
-  unless `--overwrite` is given. A one-shot runs on a **virtual
-  clock** (below), so it captures the map at its first instant and an
-  animation cannot keep it from settling. It works with or without
-  `--headless` and `--ipc`; with a window the window opens, and closes
-  once the capture is written. A window's capture is at the size the
-  window has when it is taken; a window manager that resizes a new
-  window after its first frame (tiling ones do) is not waited for,
-  since nothing announces such a resize. For an exact size, use
-  `--headless --size`. `--overwrite` without `--screenshot` is
-  refused at startup.
+  first frame has been rendered, and exits: `0` when the PNG was
+  written, `1` when it could not be, with the reason on stderr. It is
+  `1`, with nothing written, when the map did not load (the load-failure
+  placard is not the map asked for; the `startup:` line says why), when
+  the frame cannot be drawn for a reason retrying would not cure, and
+  when the app ends first — its window closed, or `Action::Quit`
+  dispatched. The capture is `capture.screenshot` with no parameters but
+  `path`, and its write guards: no symlink at `path` is followed, and an
+  existing file there (or its sidecar) is refused unless `--overwrite`
+  is given. A one-shot runs on a **virtual clock** (below), so it
+  captures the map at its first instant and an animation cannot keep it
+  from settling. It works with or without `--headless` and `--ipc`; with
+  a window the window opens, and closes once the capture is written. A
+  window's capture is at the size the window has when it is taken; a
+  window manager that resizes a new window after its first frame (tiling
+  ones do) is not waited for, since nothing announces such a resize. For
+  an exact size, use `--headless --size`. `--overwrite` without
+  `--screenshot` is refused at startup.
 - A startup failure — a refused command line, no usable adapter, a
   socket that cannot be bound — ends the process with Rust's panic
   status (`101`) and a message naming what failed.
@@ -271,15 +270,15 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
   entry points a window's events do, so nothing below them can tell
   the difference; there is no cursor to draw, so a cursor-icon change
   is no call at all. With no human there, `settled` is exact.
-- **A frame draws nothing.** There is nothing to draw into and no one
-  to see it, so a headless frame is bookkeeping: it counts as drawn
-  for `settled`, and `capture.*` draws the pixels when asked, through
-  the very prepare / encode pair a window's frame uses — so pixels are
-  produced exactly when they are wanted. A headless capture and a windowed one of the
-  same state, on the same machine and adapter, hold the same pixels:
-  the target format is the sRGB format a window's surface offers under
-  Xvfb on Mesa's lavapipe, and the two have been verified there
-  byte-identical, PNG and sidecar.
+- **A frame draws nothing.** There is nothing to draw into and no one to
+  see it, so a headless frame is bookkeeping: it counts as drawn for
+  `settled`, and `capture.*` draws the pixels when asked, through the
+  very prepare / encode pair a window's frame uses — so pixels are
+  produced exactly when they are wanted. A headless capture and a
+  windowed one of the same state, on the same machine and adapter, hold
+  the same pixels: the target format is the sRGB format a window's
+  surface offers under Xvfb on Mesa's lavapipe, and the two have been
+  verified there byte-identical, PNG and sidecar.
 - **There is no window to close: `act.action Quit` ends it.** The
   `Quit` action is the graceful exit — the one a window's close
   button takes — for either driver: the reply to it is sent, the
@@ -1627,15 +1626,15 @@ location explicitly).
 
 ### `capture.screenshot` (IPC-07)
 
-Offscreen render of the current document state — never a window
-grab, so it works identically under a compositor, Xvfb, or with no
-display at all ([`--headless`](#headless-and-one-shot-launches)). The frame is drawn by the very prepare /
-encode pair the window is drawn with, into a texture of the
-surface's own format, and read back; a capture at the default
-parameters therefore holds the pixels the window shows. Before
-drawing, the camera-geometry rebuild the next frame owes (a zoom the
-client sent a moment ago) is run, so the capture shows the current
-state rather than the last frame's.
+Offscreen render of the current document state — never a window grab, so
+it works identically under a compositor, Xvfb, or with no display at all
+([`--headless`](#headless-and-one-shot-launches)). The frame is drawn by
+the very prepare / encode pair the window is drawn with, into a texture
+of the surface's own format, and read back; a capture at the default
+parameters therefore holds the pixels the window shows. Before drawing,
+the camera-geometry rebuild the next frame owes (a zoom the client sent
+a moment ago) is run, so the capture shows the current state rather than
+the last frame's.
 
 | param | type | default | meaning |
 |---|---|---|---|
@@ -2088,25 +2087,25 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
   That is what makes `clock.step ms=500` → `clock.wait until=settled` →
   `capture.screenshot` capture an animation exactly 500 ms in.
 
-  **Rendered, not on-screen-presented.** Condition (d) is
-  deliberately about the *render* completing, not a swapchain
-  *present*. `capture.screenshot` is offscreen and must work under an
+  **Rendered, not on-screen-presented.** Condition (d) is deliberately
+  about the *render* completing, not a swapchain *present*.
+  `capture.screenshot` is offscreen and must work under an
   occluded/minimized window and with no display at all
-  ([`--headless`](#headless-and-one-shot-launches)) — where nothing
-  ever presents. Gating `settled` on an
-  on-screen present would make every capture workflow time out in
-  exactly the containerized/Xvfb environment the epic targets. So a
-  render counts as drawn once its CPU half has run — every buffer
-  current, every glyph prepared — whether or not the surface then had a
-  texture to present into. With no window a frame draws nothing and
-  counts as drawn: a capture prepares and draws its own. A frame the renderer *skipped* (the font
-  system contended, a failed prepare) has not drawn, and the redraw
-  stays owed. One limit no protocol can lift: the render runs when
-  winit delivers the `RedrawRequested` the app asked for, and a
-  platform that withholds it from a hidden window withholds the render
-  too; the wait then times out saying the latest frame was not drawn.
-  A headless app has no such dependency: there is no platform between
-  the frame it asks for and the frame it draws.
+  ([`--headless`](#headless-and-one-shot-launches)) — where nothing ever
+  presents. Gating `settled` on an on-screen present would make every
+  capture workflow time out in exactly the containerized/Xvfb
+  environment the epic targets. So a render counts as drawn once its CPU
+  half has run — every buffer current, every glyph prepared — whether or
+  not the surface then had a texture to present into. With no window a
+  frame draws nothing and counts as drawn: a capture prepares and draws
+  its own. A frame the renderer *skipped* (the font system contended, a
+  failed prepare) has not drawn, and the redraw stays owed. One limit no
+  protocol can lift: the render runs when winit delivers the
+  `RedrawRequested` the app asked for, and a platform that withholds it
+  from a hidden window withholds the render too; the wait then times out
+  saying the latest frame was not drawn. A headless app has no such
+  dependency: there is no platform between the frame it asks for and the
+  frame it draws.
 
   **The arbiter is a redraw ledger, not the document revision.** The
   naive "rendered at the current *document* revision" is insufficient:
