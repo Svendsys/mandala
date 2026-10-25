@@ -202,14 +202,16 @@ mandala_start_xvfb() {
 }
 
 # <map> [app args...]: launch the app on the map with --ipc, wait for it to
-# answer. The flag that makes a launch of this MODE's: no window for
-# `headless`, none needed otherwise.
+# answer. Sets MODE_FLAGS, the flag that makes a launch of this MODE's — no
+# window for `headless`, none needed otherwise — for a caller's own launches
+# of the same app (a one-shot `--screenshot`).
 mandala_launch() {
-    local map="$1" mode_flags=()
+    local map="$1"
     shift
-    [ "$MODE" = "headless" ] && mode_flags=(--headless)
-    step "launch ($MODE) $APP ${mode_flags[*]-} $* $map --ipc $SOCK"
-    "$APP" ${mode_flags[@]+"${mode_flags[@]}"} "$@" "$map" --ipc "$SOCK" >"$WORK/app.log" 2>&1 &
+    MODE_FLAGS=()
+    [ "$MODE" = "headless" ] && MODE_FLAGS=(--headless)
+    step "launch ($MODE) $APP ${MODE_FLAGS[*]-} $* $map --ipc $SOCK"
+    "$APP" ${MODE_FLAGS[@]+"${MODE_FLAGS[@]}"} "$@" "$map" --ipc "$SOCK" >"$WORK/app.log" 2>&1 &
     APP_PID=$!
     export MANDALA_IPC="$SOCK"
 
@@ -224,4 +226,33 @@ mandala_launch() {
         sleep 0.5
     done
     [ "$alive" -eq 1 ] || fail "no ping answer within 30 s"
+}
+
+# The directories the app made for path-less captures, which a graceful
+# quit removes.
+mandala_artifacts_dirs() {
+    compgen -G "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$APP_PID-artifacts*" || true
+}
+
+# The graceful exit: `act.action Quit` is the one a closed window takes and
+# the only one a headless app has. The reply arrives, the process exits 0,
+# and the socket and the artifacts dir go with it — each checked here.
+mandala_quit() {
+    step "act.action Quit"
+    local artifacts dir quit_rc=0 _
+    artifacts="$(mandala_artifacts_dirs)"
+    "$CTL" act.action Quit >/dev/null || fail "act.action Quit was not answered"
+    for _ in $(seq 1 50); do
+        kill -0 "$APP_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -0 "$APP_PID" 2>/dev/null && fail "the app was still running 5 s after Quit"
+    wait "$APP_PID" || quit_rc=$?
+    APP_PID=""
+    [ "$quit_rc" -eq 0 ] || fail "the app exited $quit_rc after Quit, not 0"
+    [ ! -e "$SOCK" ] || fail "the socket $SOCK is still there after Quit"
+    for dir in $artifacts; do
+        [ ! -e "$dir" ] || fail "the artifacts dir $dir is still there after Quit"
+    done
+    echo "   exited 0; socket and artifacts dir removed"
 }

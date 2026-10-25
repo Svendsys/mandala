@@ -115,10 +115,6 @@ trap mandala_teardown EXIT
 
 # ---- Launch and liveness -----------------------------------------------
 
-# The flag that makes a launch of this mode's: no window, or none needed.
-MODE_FLAGS=()
-[ "$MODE" = "headless" ] && MODE_FLAGS=(--headless)
-
 mandala_launch "$MAP"
 "$CTL" ping
 
@@ -275,28 +271,12 @@ fi
 
 # ---- Graceful quit -----------------------------------------------------
 
-# `act.action Quit` is the exit a closed window takes, and the only one a
-# headless app has: the reply arrives, the process exits 0, and the socket
-# and the artifacts dir go with it. A path-less capture first, so there is
-# an artifacts dir to see removed.
-step "act.action Quit"
+# A path-less capture first, so there is an artifacts dir for the graceful
+# quit (`mandala_quit`) to see removed.
+step "path-less capture"
 "$CTL" capture.screenshot >/dev/null || fail "a path-less capture.screenshot failed"
-ARTIFACTS="$(compgen -G "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$APP_PID-artifacts*" || true)"
-[ -n "$ARTIFACTS" ] || fail "the path-less capture made no artifacts dir"
-"$CTL" act.action Quit || fail "act.action Quit was not answered"
-quit_rc=0
-for _ in $(seq 1 50); do
-    kill -0 "$APP_PID" 2>/dev/null || break
-    sleep 0.1
-done
-kill -0 "$APP_PID" 2>/dev/null && fail "the app was still running 5 s after Quit"
-wait "$APP_PID" || quit_rc=$?
-[ "$quit_rc" -eq 0 ] || fail "the app exited $quit_rc after Quit, not 0"
-[ ! -e "$SOCK" ] || fail "the socket $SOCK is still there after Quit"
-for dir in $ARTIFACTS; do
-    [ ! -e "$dir" ] || fail "the artifacts dir $dir is still there after Quit"
-done
-echo "   exited 0; socket and artifacts dir removed"
+[ -n "$(mandala_artifacts_dirs)" ] || fail "the path-less capture made no artifacts dir"
+mandala_quit
 
 # ---- One-shot launches -------------------------------------------------
 

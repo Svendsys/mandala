@@ -62,9 +62,10 @@ Beside the GIF it leaves `<out stem>.frames/` — the PNG frames and
 
 ### The script file
 
-One `mandalactl` invocation per line (words shell-quoted, exactly as you
-would type them, minus `mandalactl`), blank lines and `#` comments ignored,
-plus two directives:
+One `mandalactl` invocation per line (the arguments, as you would type
+them minus `mandalactl`), blank lines and `#` comments ignored — a `#` that
+starts a word ends the line, so a trailing `# comment` is fine — plus two
+directives:
 
 | line | meaning |
 |---|---|
@@ -74,8 +75,13 @@ plus two directives:
 Exactly one pair. **Everything before `@record` is setup and is not in the
 picture**; everything after `@stop` runs unrecorded, which is where the proof
 lines go (`query.camera`, `query.editors`). A failing command fails the run
-and names its script line. The script is trusted shell words: it is *your*
-file, and `eval`ed to split them.
+and names its script line. Words split the way a shell's quoting splits
+them (`'single'`, `"double"`, backslash) **and nothing else**: `$var`,
+`$(…)`, backticks, `;`, `|` and `*` are ordinary characters, never run, so
+re-running a script someone posted in a PR runs only `mandalactl` on it.
+(That also means `raw -` has no stdin to read; use the verbs.) Line endings
+may be CRLF; the wrapper checks the whole file parses, and that it holds one
+`@record` and one `@stop` after it, before it builds or launches anything.
 
 The beats are the wrapper's: `--beat-ms` (default 500) of settled, unchanged
 picture right after `@record` and right before `@stop`. They exist so a
@@ -263,9 +269,10 @@ GitHub shows a GIF inline up to **10 MiB**; `record_demo.sh` and
 a typical demo far below that: frames scaled to **640 px wide** (never
 scaled up), recorded at **20 fps**, GIF delays taken from the manifest so
 speed is honest. Measured here: 37 frames / 1.85 s of a 640×480 zoom = 0.45
-MB; 36 frames / 1.8 s of a double-click = 0.54 MB; a busy whole-map view
-costs about double. Plan for ≲ 0.5 MB per second of clip, and read the size
-the run prints.
+MB (0.24 MB/s); 44 frames / 2.2 s of the cropped double-click demo = 0.80
+MB (0.37 MB/s); a busy whole-map view at 640 px cost 0.99 MB for 1.65 s
+(0.6 MB/s). Plan for ≲ 0.6 MB per second of clip, and read the size the run
+prints.
 
 If it is too big, in this order: **shorten** (fewer steps, shorter beats —
 `--beat-ms 300`); **crop** with `region:=` to the subject; **narrow**
@@ -427,13 +434,15 @@ editor opens in one frame, with no animation to judge.
 
 | symptom | meaning | fix |
 |---|---|---|
-| the GIF is two still beats and a jump | a virtual clock, and nothing stepped it between `@record` and `@stop` (an instant change shows as a jump; an animation does not move at all) | add `clock.step ms=<n>` lines; an animation needs steps past its whole `duration_ms`. (`FAIL: … holds 0 or 1 frame(s)` is the same with `--beat-ms 0`) |
+| the GIF is two still beats and a jump | a virtual clock, and nothing stepped it between `@record` and `@stop` (an instant change shows as a jump; an animation does not move at all) | add `clock.step ms=<n>` lines; an animation needs steps past its whole `duration_ms`. (`FAIL: … holds 0 or 1 frame(s)` is a recording with nothing between its beats and nothing in them) |
+| `FAIL: the recording ended by itself ("max_frames") before @stop` | the app stops a recording at `max_frames` (default 600 — 30 s at 20 fps) or its disk budget, so what was assembled would end before the behavior does; the wrapper refuses it rather than ship a clip that looks complete | shorten the script, lower `fps=`, or `@record max_frames=<n>` (up to 3600) |
+| `error: --beat-ms is 1 to 1600000` | a beat under a virtual clock is one `clock.step`, which the app bounds to that range | pass a value in it |
 | first frame is wrong (a different zoom, a selection highlight) | the setup did not finish before `@record`, or it left state | `--wait-settled` each setup line, `DeselectAll`, and read the setup's `query.*` output |
 | the subject is tiny or off to one side | not framed | the framing recipe, or `@record region:=…` |
 | frames look right but the GIF stutters / `NOTE: N frame(s) were due and not taken` | a realtime recording on a slow machine; the manifest's `gaps` name them | use stepped pacing; or accept and say so in the caption |
 | `FAIL: <script>:<n>: mandalactl … -> error: not_found: node … is not on screen` | `input.click_node` needs the node on screen | frame first: `ZoomFit` does not always bring a node on screen (testament at 800×600 stops at zoom 0.05); check `scene.node_geometry` and `PanCameraNorth`/`South`/`East`/`West` it in |
 | `error: … is inside the repo` | the guard working | write under `/tmp` |
-| `error: … exists; pass --overwrite` | `<out>` or `<out stem>.frames/` is there | `--overwrite` (it deletes the frames dir) |
+| `error: … exists; pass --overwrite` | `<out>` or `<out stem>.frames/` is there | `--overwrite`: the old files are replaced only after the new run has passed, so a failed re-run leaves them as they were |
 | `WARNING: over GitHub's 10 MiB inline limit` | too big to inline | **Size discipline** |
 | exit 2 with an `apt-get install` line | no Vulkan ICD / Xvfb in this environment | run the line, or see mandala-drive's matrix |
 | `clock.set_mode … refused while recording` | the mode was changed inside `@record … @stop` | set it in the setup |

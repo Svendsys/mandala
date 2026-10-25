@@ -20,18 +20,27 @@
 #                    wins
 #   --width PX       scale the assembled file down to this many pixels wide
 #                    (default 640; never scaled up)
-#   --beat-ms N      the settled "before" and "after" hold, in ms (default 500)
+#   --beat-ms N      the settled "before" and "after" hold, in ms, 1 to 1600000
+#                    (default 500; a virtual clock's step cap)
 #   --debug          dev-profile build            --no-build  use the binaries as built
-#   --overwrite      replace an existing <out> and its <out stem>.frames/
+#   --overwrite      replace an existing <out> and its <out stem>.frames/ — only
+#                    once the new recording has succeeded; a failed run leaves
+#                    the old one untouched
 #   --allow-in-repo  let <out> land inside this checkout (refused by default:
 #                    recordings are review artifacts, never repo content)
 #
 # After the three arguments, `-- <k=v>...` passes options on to `mandalactl
 # record assemble` (e.g. `-- max_frames=100 fps=12`).
 #
-# The script file, one command per line, blank lines and `#` comments ignored:
-#   <mandalactl arguments>   run as `mandalactl <arguments>` — shell-quoted
-#                            words, exactly as you would type them
+# The script file, one command per line; blank lines and `#` comments ignored
+# (a `#` that starts a word ends the line, as in a shell):
+#   <mandalactl arguments>   run as `mandalactl <arguments>`. Words split the
+#                            way a shell's quoting splits them — 'single',
+#                            "double", backslash — and nothing more: no
+#                            `$var`, no `$(...)`, no globs, no `;` or `|`;
+#                            they are ordinary characters, so a script is
+#                            data and running someone else's runs only
+#                            mandalactl. (`raw -` has no stdin to read.)
 #   @record [record_start params]   start recording here, then hold the "before" beat
 #   @stop                           hold the "after" beat, then stop recording
 # Exactly one @record ... @stop pair. Everything before @record is setup
@@ -111,9 +120,14 @@ case "$SIZE" in
     [0-9]*x[0-9]*) ;;
     *) die 3 "--size is WxH, e.g. 800x600" ;;
 esac
-case "$FPS" in '' | *[!0-9]*) die 3 "--fps is a whole number" ;; esac
+case "$FPS" in '' | *[!0-9]*) die 3 "--fps is a whole number, 1 to 60" ;; esac
+{ [ "$FPS" -ge 1 ] && [ "$FPS" -le 60 ]; } || die 3 "--fps is 1 to 60"
 case "$ASM_WIDTH" in '' | *[!0-9]*) die 3 "--width is a whole number of pixels" ;; esac
-case "$BEAT_MS" in '' | *[!0-9]*) die 3 "--beat-ms is a whole number of milliseconds" ;; esac
+case "$BEAT_MS" in '' | *[!0-9]*) die 3 "--beat-ms is a whole number of milliseconds, 1 to 1600000" ;; esac
+# The app's own clock.step bound (STEP_MS_RANGE): a beat under a virtual
+# clock is one step, so a value it would refuse is refused here, before the
+# build and the launch.
+{ [ "$BEAT_MS" -ge 1 ] && [ "$BEAT_MS" -le 1600000 ]; } || die 3 "--beat-ms is 1 to 1600000"
 [ -f "$MAP" ] || die 3 "map file not found: $MAP"
 [ -f "$SCRIPT" ] || die 3 "script file not found: $SCRIPT"
 case "$OUT" in
@@ -145,13 +159,70 @@ if [ "$OVERWRITE" -eq 0 ]; then
     [ ! -e "$FRAMES" ] || die 3 "$FRAMES exists; pass --overwrite to replace it"
 fi
 
-# The script's shape, checked before anything is launched: one @record, one
-# @stop after it.
-recs="$(grep -c '^[[:space:]]*@record\([[:space:]]\|$\)' "$SCRIPT" || true)"
-stops="$(grep -c '^[[:space:]]*@stop[[:space:]]*$' "$SCRIPT" || true)"
+# <line>: split into WORDS the way a shell's quoting splits, and nothing
+# more — 'single' quotes, "double" quotes (backslash escapes only \" and \\
+# inside), a backslash outside quotes, whitespace (a CR included) between
+# words, and an unquoted `#` at the start of a word ending the line. No
+# expansion of any kind: `$`, backticks, `;`, `|` and `*` are ordinary
+# characters, which is what makes a script safe to run unread. Fails on an
+# unterminated quote or a trailing backslash.
+split_words() {
+    local s="$1" c word="" inword=0 q="" i=0 n=${#1}
+    WORDS=()
+    while [ "$i" -lt "$n" ]; do
+        c="${s:i:1}"
+        if [ "$q" = "'" ]; then
+            if [ "$c" = "'" ]; then q=""; else word+="$c"; fi
+        elif [ "$q" = '"' ]; then
+            if [ "$c" = '"' ]; then
+                q=""
+            elif [ "$c" = '\' ] && [ $((i + 1)) -lt "$n" ] && { [ "${s:i+1:1}" = '"' ] || [ "${s:i+1:1}" = '\' ]; }; then
+                i=$((i + 1))
+                word+="${s:i:1}"
+            else
+                word+="$c"
+            fi
+        elif [ "$c" = "'" ] || [ "$c" = '"' ]; then
+            q="$c"
+            inword=1
+        elif [ "$c" = '\' ]; then
+            i=$((i + 1))
+            [ "$i" -lt "$n" ] || return 1
+            word+="${s:i:1}"
+            inword=1
+        elif [[ "$c" == [[:space:]] ]]; then
+            if [ "$inword" -eq 1 ]; then WORDS+=("$word"); word=""; inword=0; fi
+        elif [ "$c" = "#" ] && [ "$inword" -eq 0 ]; then
+            break
+        else
+            word+="$c"
+            inword=1
+        fi
+        i=$((i + 1))
+    done
+    [ -z "$q" ] || return 1
+    if [ "$inword" -eq 1 ]; then WORDS+=("$word"); fi
+    return 0
+}
+
+# The script's shape, checked before anything is launched: every line
+# parses, and there is one @record and, after it, one @stop.
+recs=0 stops=0 rec_line=0 stop_line=0 n=0
+while IFS= read -r -u 3 line || [ -n "$line" ]; do
+    n=$((n + 1))
+    split_words "$line" || die 3 "$SCRIPT:$n: an unterminated quote or a trailing backslash: $line"
+    [ ${#WORDS[@]} -gt 0 ] || continue
+    case "${WORDS[0]}" in
+        @record) recs=$((recs + 1)); rec_line=$n ;;
+        @stop)
+            [ ${#WORDS[@]} -eq 1 ] || die 3 "$SCRIPT:$n: @stop takes no arguments"
+            stops=$((stops + 1)); stop_line=$n
+            ;;
+        @*) die 3 "$SCRIPT:$n: unknown directive: ${WORDS[0]}" ;;
+    esac
+done 3<"$SCRIPT"
 [ "$recs" -eq 1 ] && [ "$stops" -eq 1 ] || die 3 "$SCRIPT needs exactly one @record and one @stop (found $recs and $stops)"
-[ "$(grep -n '^[[:space:]]*@record\([[:space:]]\|$\)' "$SCRIPT" | cut -d: -f1)" -lt "$(grep -n '^[[:space:]]*@stop[[:space:]]*$' "$SCRIPT" | cut -d: -f1)" ] \
-    || die 3 "$SCRIPT has @stop before @record"
+[ "$rec_line" -lt "$stop_line" ] || die 3 "$SCRIPT has @stop before @record"
 
 cd "$REPO"
 
@@ -171,7 +242,7 @@ mandala_launch "$MAP" --size "$SIZE"
 ctl() { # <label> <mandalactl arguments...>: run one, naming the script line on failure
     local label="$1" out
     shift
-    out="$("$CTL" "$@" 2>&1)" || fail "$label: mandalactl $* -> ${out:-exit $?}"
+    out="$("$CTL" "$@" 2>&1 </dev/null)" || fail "$label: mandalactl $* -> ${out:-exit $?}"
     printf '%s\n' "$out"
 }
 
@@ -190,30 +261,32 @@ beat() {
 
 # ---- Run the script ----------------------------------------------------
 
-# --overwrite (or nothing there) was settled above: clear the way, since the
-# app only records into a directory that is new or empty.
-rm -rf "$FRAMES"
-rm -f "$OUT"
+# The recording goes to a staging dir in the work dir and is published over
+# <out> and <out stem>.frames/ only after everything has passed, so a failed
+# run — a setup line that does not apply, a truncated recording — never
+# costs the recording a --overwrite was replacing. (The app only records
+# into a directory that is new or empty, which the staging dir is.)
+STAGE_FRAMES="$WORK/frames"
+STAGE_OUT="$WORK/out.$FORMAT"
 
 recording=0
 lineno=0
 STOP=""
 step "script $SCRIPT"
-while IFS= read -r line || [ -n "$line" ]; do
+while IFS= read -r -u 3 line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
-    trimmed="${line#"${line%%[![:space:]]*}"}"
-    case "$trimmed" in '' | '#'*) continue ;; esac
+    split_words "$line" || fail "$(basename "$SCRIPT"):$lineno: cannot parse: $line"
+    [ ${#WORDS[@]} -gt 0 ] || continue
     label="$(basename "$SCRIPT"):$lineno"
-    case "$trimmed" in
-        @record | @record[[:space:]]*)
-            eval "words=(${trimmed#@record})" || fail "$label: cannot parse: $trimmed"
-            fps_given=0
-            for w in ${words[@]+"${words[@]}"}; do
-                case "$w" in fps=*) fps_given=1 ;; esac
+    case "${WORDS[0]}" in
+        @record)
+            params=("${WORDS[@]:1}")
+            fps_arg=("fps=$FPS")
+            for w in ${params[@]+"${params[@]}"}; do
+                case "$w" in fps=*) fps_arg=() ;; esac
             done
-            [ "$fps_given" -eq 1 ] && fps_arg=() || fps_arg=("fps=$FPS")
             step "$label: record start"
-            ctl "$label" capture.record_start "$FRAMES" ${fps_arg[@]+"${fps_arg[@]}"} ${words[@]+"${words[@]}"}
+            ctl "$label" capture.record_start "$STAGE_FRAMES" ${fps_arg[@]+"${fps_arg[@]}"} ${params[@]+"${params[@]}"}
             recording=1
             beat
             ;;
@@ -223,56 +296,52 @@ while IFS= read -r line || [ -n "$line" ]; do
             STOP="$(ctl "$label" capture.record_stop)"
             recording=0
             ;;
-        @*) fail "$label: unknown directive: $trimmed" ;;
         *)
-            eval "words=($trimmed)" || fail "$label: cannot parse: $trimmed"
-            echo "+ mandalactl ${words[*]}"
-            ctl "$label" "${words[@]}"
+            echo "+ mandalactl ${WORDS[*]}"
+            ctl "$label" "${WORDS[@]}"
             ;;
     esac
-done <"$SCRIPT"
+done 3<"$SCRIPT"
 [ "$recording" -eq 0 ] || fail "the script ended while still recording"
 
 frames="$(field "$STOP" frames)"
 dropped="$(field "$STOP" dropped_frames)"
+stopped="$(field "$STOP" stopped)"
 duration="$(awk -v ms="$(field "$STOP" duration_ms)" 'BEGIN { printf "%.0f", ms }')"
+# A recording that ended itself (max_frames, the disk budget) is cut off
+# before the behavior ended: evidence that stops early is worse than none.
+[ "$stopped" = '"client"' ] || fail "the recording ended by itself ($stopped) before @stop, so it is cut short: raise @record max_frames= (up to 3600), lower fps=, or shorten the script"
 [ -n "$frames" ] && [ "$frames" -ge 2 ] 2>/dev/null || fail "the recording holds ${frames:-no} frame(s): a recording of one frame proves nothing a screenshot would not (under a virtual clock, did the script step the clock?)"
-pacing="$(sed -n 's/.*"pacing": *"\([a-z]*\)".*/\1/p' "$FRAMES/manifest.json" | head -n 1)"
+pacing="$(sed -n 's/.*"pacing": *"\([a-z]*\)".*/\1/p' "$STAGE_FRAMES/manifest.json" | head -n 1)"
 rec_w="$(field "$STOP" width)"
 
 # ---- Graceful quit -----------------------------------------------------
 
-step "act.action Quit"
-"$CTL" act.action Quit >/dev/null || fail "act.action Quit was not answered"
-for _ in $(seq 1 50); do
-    kill -0 "$APP_PID" 2>/dev/null || break
-    sleep 0.1
-done
-kill -0 "$APP_PID" 2>/dev/null && fail "the app was still running 5 s after Quit"
-quit_rc=0
-wait "$APP_PID" || quit_rc=$?
-APP_PID=""
-[ "$quit_rc" -eq 0 ] || fail "the app exited $quit_rc after Quit, not 0"
+mandala_quit
 
 # ---- Assemble and check ------------------------------------------------
 
 step "assemble $FORMAT"
-asm=(record assemble "$FRAMES" "out=$OUT" "format=$FORMAT")
+asm=(record assemble "$STAGE_FRAMES" "out=$STAGE_OUT" "format=$FORMAT")
 # Never scale up: width= asks for a smaller picture.
 if [ -n "$rec_w" ] && [ "$ASM_WIDTH" -gt 0 ] && [ "$rec_w" -gt "$ASM_WIDTH" ]; then
     asm+=("width=$ASM_WIDTH")
 fi
-[ "$OVERWRITE" -eq 1 ] && asm+=("overwrite=true")
 asm+=(${ASM_EXTRA[@]+"${ASM_EXTRA[@]}"})
 ASM_OUT="$("$CTL" "${asm[@]}" 2>&1)" || fail "mandalactl ${asm[*]} -> $ASM_OUT"
-printf '%s\n' "$ASM_OUT"
-
-[ -s "$OUT" ] || fail "$OUT is missing or empty"
+[ -s "$STAGE_OUT" ] || fail "$STAGE_OUT is missing or empty"
 case "$FORMAT" in
-    gif) [ "$(head -c 3 "$OUT")" = "GIF" ] || fail "$OUT is not a GIF" ;;
-    mp4) [ "$(dd if="$OUT" bs=1 skip=4 count=4 2>/dev/null)" = "ftyp" ] || fail "$OUT is not an MP4" ;;
+    gif) [ "$(head -c 3 "$STAGE_OUT")" = "GIF" ] || fail "$STAGE_OUT is not a GIF" ;;
+    mp4) [ "$(dd if="$STAGE_OUT" bs=1 skip=4 count=4 2>/dev/null)" = "ftyp" ] || fail "$STAGE_OUT is not an MP4" ;;
 esac
-bytes="$(wc -c <"$OUT" | tr -d ' ')"
+bytes="$(wc -c <"$STAGE_OUT" | tr -d ' ')"
+
+# Everything passed: now, and only now, replace what was there.
+step "publish"
+rm -rf "$FRAMES"
+mv "$STAGE_FRAMES" "$FRAMES"
+mv -f "$STAGE_OUT" "$OUT"
+printf '%s\n' "${ASM_OUT//"$STAGE_OUT"/"$OUT"}"
 frames_out="$(field "$ASM_OUT" frames_out)"
 dur_out="$(awk -v ms="$(field "$ASM_OUT" duration_ms)" 'BEGIN { printf "%.0f", ms }')"
 
@@ -296,14 +365,14 @@ repo_rel() { # <path>: relative to the repo when inside it, else as given
 # The command that re-makes it: every option that is not the default, then
 # the paths, then the assemble options.
 repro="scripts/record_demo.sh"
-[ "$MODE" = "$(mandala_default_mode)" ] || repro+=" --$MODE"
+repro+=" --$MODE"
 [ "$SIZE" = "800x600" ] || repro+=" --size $SIZE"
 [ "$FPS" -eq 20 ] || repro+=" --fps $FPS"
 [ "$ASM_WIDTH" -eq 640 ] || repro+=" --width $ASM_WIDTH"
 [ "$BEAT_MS" -eq 500 ] || repro+=" --beat-ms $BEAT_MS"
 [ "$FORMAT" = "gif" ] || repro+=" --mp4"
 [ "$PROFILE" = "release" ] || repro+=" --debug"
-repro+=" $(printf '%q %q %q' "$(repo_rel "$MAP")" "$(repo_rel "$SCRIPT")" "$(basename "$OUT")")"
+repro+=" $(printf '%q %q %q' "$(repo_rel "$MAP")" "$(repo_rel "$SCRIPT")" "$OUT")"
 [ ${#ASM_EXTRA[@]} -eq 0 ] || repro+=" -- ${ASM_EXTRA[*]}"
 
 echo "---- caption (fill in the <...>, then post with the recording) ----"
