@@ -267,6 +267,12 @@ fn dispatch_action_arms(
         return cross_outcome;
     }
     match action {
+        // The loop ends at its next exit check (`app::pump::iterate`),
+        // through the same shutdown a closed window takes.
+        Action::Quit => {
+            *ctx.quit_requested = true;
+            DispatchOutcome::Handled
+        }
         Action::OpenConsole => {
             if ctx.console_state.is_open() {
                 save_console_history(ctx.console_history);

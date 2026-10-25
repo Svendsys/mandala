@@ -119,6 +119,21 @@ the parity trajectory (or why none is owed):
   same frame. Parity is the browser canvas capture parked with the
   WebSocket transport in IPC-15 (#75), resolving asynchronously
   rather than blocking.
+- **Headless and one-shot launches** (`--headless`, `--size`,
+  `--adapter`, `--screenshot`; `src/application/app/run_headless.rs`,
+  `app/pump.rs`, `app/shell.rs`, `renderer/adapter.rs`; IPC-10/#70) —
+  native-only, and no parity is owed: they are command-line launches
+  of a process with no display, and a browser page always has its
+  canvas — running a browser without a display is the browser's own
+  job. What they are made of is not gated where it need not be: the
+  adapter plan (`renderer/adapter.rs`) runs in every bootstrap, the
+  browser's included, and the frame a headless app draws is the
+  `prepare_frame` half every target draws. The headless driver runs
+  the loop body winit's `about_to_wait` runs (`app/pump.rs`), so the
+  native carve-outs below — the console shell, the per-frame drain,
+  virtual-clock stepping, capture — reach it unchanged.
+  Protocol: `format/ipc.md` §"Headless and one-shot launches"; design:
+  `work_plans/LLM_IPC.md` §D10.
 - **Console modal shell** (`src/application/app/console_input/`) —
   the modal shell and its exec path are native-gated; the
   verb/parser layer (`src/application/console/`) is
@@ -350,11 +365,19 @@ the parity trajectory (or why none is owed):
   before repeating a command that changes it. (`--wait-settled` needs
   an app that serves `clock.wait`; it is detected first, and nothing is
   sent when it is missing.)
+  **With no display** — a container, CI, a cloud session — launch
+  `mandala --headless --ipc <socket-path> <map>`: no X server, no
+  window, an adapter chosen with no surface (Mesa's lavapipe on a
+  GPU-less box), the same IPC surface, on a clock that starts virtual
+  (`format/ipc.md` §"Headless and one-shot launches"). For a single
+  picture, `mandala --headless --screenshot out.png <map>` loads,
+  captures once settled, and exits `0`.
   **The whole loop is the `mandala-drive` skill**
-  (`.claude/skills/mandala-drive/SKILL.md`): the launch recipe for a
-  desktop and for a headless container (Xvfb + Mesa lavapipe, and the
-  packages it needs), text-first inspection, acting with
-  `--wait-settled`, screenshots read through their geometry sidecar,
-  teardown, and a troubleshooting table. `scripts/ipc_smoke.sh` is its
-  end-to-end check — deliberately outside `./test.sh`, which holds no
-  live GPU (TEST_CONVENTIONS §T8).
+  (`.claude/skills/mandala-drive/SKILL.md`): the launch recipes — a
+  desktop, `--headless` in a container (Mesa's Vulkan lavapipe, and
+  the packages it needs), and Xvfb for when it must be a real
+  window — text-first inspection, acting with `--wait-settled`,
+  screenshots read through their geometry sidecar, teardown, and a
+  troubleshooting table. `scripts/ipc_smoke.sh` is its end-to-end
+  check — deliberately outside `./test.sh`, which holds no live GPU
+  (TEST_CONVENTIONS §T8).

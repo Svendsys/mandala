@@ -15,13 +15,14 @@
 //! and the glyphon viewport), so the next window frame is exactly the
 //! frame it would have been.
 //!
-//! **The target is the surface format.** Both pipelines are built for
-//! `config.format` (`Renderer::new` picks the sRGB one the surface
-//! offers), so the offscreen texture is created in it too — the format
-//! has one source and the capture reads it from there rather than
-//! naming a constant beside it. The window's texture cannot be copied
-//! from (it is `RENDER_ATTACHMENT` only); this one is `COPY_SRC` as
-//! well.
+//! **The target is the frames' own format.** Both pipelines are built
+//! for the renderer's `format` — the sRGB one the window's surface
+//! offers, or `HEADLESS_FORMAT` with no window — so the offscreen
+//! texture is created in it too: the format has one source and the
+//! capture reads it from there rather than naming a constant beside it.
+//! The window's texture cannot be copied from (it is `RENDER_ATTACHMENT`
+//! only); this one is `COPY_SRC` as well, and with no window it is the
+//! only texture a frame is ever drawn into.
 //!
 //! **Blocking, and bounded.** The readback waits for the GPU on the main
 //! thread, as a synchronous screenshot must, each wait with a timeout
@@ -112,9 +113,10 @@ pub(crate) fn padded_bytes_per_row(width: u32) -> u32 {
 /// than one. A frame whose rows all fit is one band.
 ///
 /// The bands exist because the device's buffer limit is smaller than the
-/// largest image a capture admits: `Renderer::new` asks for
-/// `downlevel_defaults()` limits, whose `max_buffer_size` is 256 MiB,
-/// and a 64 Mpx frame is 256 MiB before its rows are padded.
+/// largest image a capture admits: the device is opened
+/// (`adapter::open_device`) with `downlevel_defaults()` limits, whose
+/// `max_buffer_size` is 256 MiB, and a 64 Mpx frame is 256 MiB before
+/// its rows are padded.
 pub(crate) fn row_bands(
     height: u32,
     padded_row: u32,
@@ -187,7 +189,7 @@ impl Renderer {
         if !self.should_render {
             return Err(CaptureFailure::Skipped(FrameSkip::NotStarted));
         }
-        let format = self.config.format;
+        let format = self.format;
         let order = ChannelOrder::of(format).ok_or(CaptureFailure::UnsupportedFormat(format))?;
         let (width, height) = camera.viewport_size;
         // `capture::plan` is the one way here, and it refuses any side the

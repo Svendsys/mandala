@@ -148,10 +148,7 @@ fn report_stop(stopped: Result<Summary, CaptureError>) -> ExecResult {
                 summary.dir.display()
             ))
         }
-        Err(CaptureError::Invalid { message, .. }) => ExecResult::err(format!("record: {message}")),
-        Err(CaptureError::Busy(message) | CaptureError::Internal(message)) => {
-            ExecResult::err(format!("record: {message}"))
-        }
+        Err(refused) => ExecResult::err(format!("record: {}", refused.into_message())),
     }
 }
 

@@ -59,7 +59,8 @@ time:
   `tick_animations` takes its clock as a parameter with a single
   production call site (the virtualization seam IPC-09 uses).
 - **Dormant intent markers** — `Options.should_exit` ("smoke-tests /
-  CI captures", never read; IPC-10 territory) and the
+  CI captures", never read; IPC-10 territory, which replaced it with
+  the read `one_shot` — D10) and the
   `EventSubscriber` seam ("reserved for the script API", reshaped by
   #43; deliberately *not* consumed by this epic's app-funnel events).
 
@@ -219,7 +220,11 @@ see the generation stamp below). None touches app state.
   main thread only executes and routes for the current gen and only
   honors a `Gone{gen}` for the live gen. This is the mechanism
   behind `format/ipc.md`'s "no session state survives a disconnect."
-- **The main thread** is the only place commands execute. The event
+- **The main thread** is the only place commands execute. *Amended
+  by IPC-10 (#70):* the body described here is `app::pump::iterate`,
+  which winit's `about_to_wait` and the headless driver both run, and
+  with no event loop the wake is `Thread::unpark` of the parked main
+  thread (D10); what follows holds for both. The event
   loop is `EventLoop::<IpcWake>::with_user_event()` — `IpcWake` a
   payload-free wake — and `NativeApp` implements
   `ApplicationHandler::user_event` to tick the watchdog (`unparked`,
@@ -1015,6 +1020,140 @@ fixed cadence keep both.
 
 ---
 
+## D10 — Headless: one loop body, two drivers, no window (IPC-10)
+
+**Decision.** `--headless` runs the app with no event loop, no display
+and no window, on a second native driver (`app/run_headless.rs`) beside
+winit's (`app/run_native.rs`). The two share everything but how they
+wait: the body winit's `about_to_wait` ran is extracted, step for step,
+into one function both call (`app/pump.rs`, `pump::iterate`), which
+returns *when the next iteration should run* as a value (`Next`) —
+winit maps it to a `ControlFlow`, the headless driver to a park. The
+app state (`InitState`) moves out of the winit file into
+`run_native_init.rs` beside its builder, because it is no longer one
+driver's; the input arms (`on_*`, `dispatch_touch_event`) move to
+`input_context.rs` for the same reason.
+
+**The seam is two calls wide.** The app reaches its window for exactly
+two things — asking for a frame and setting the cursor icon — and both
+now go through `app/shell.rs`'s `Shell` (`Window(Arc<Window>)` or
+`Headless`). Everything else a frame needs reads the renderer, which
+was sized from the window once and resized by decrees, never by
+asking the window. With no window a frame asked for is the redraw
+ledger's alone (`app/settle.rs`), which every ask already goes
+through: the headless driver draws whenever the ledger says a frame is
+owed — the first one unasked, as a new window's; then each ask no
+render has drawn, unless the last render stalled on a skip retrying
+would not cure — before it next parks, where winit delivers
+`RedrawRequested`, and then runs another iteration, as winit runs
+`about_to_wait` after every iteration that delivered an event. (A flag
+on the shell was the first draft, and a second record of what the
+ledger already knew; review removed it.) A cursor icon is state nobody
+sees, so it is no call. The
+renderer gets the same seam on its side: its frames land in a `Sink`
+(`Window { surface, config, window }` or `Headless`), and its format
+and size live beside the sink rather than inside a surface
+configuration it may not have.
+
+**A headless frame draws nothing.** There is nothing to draw into and
+nobody to see it: the frame is bookkeeping — the ledger records it
+drawn, the FPS and mode-status overlays stay current — and pixels are
+drawn only when a capture asks, through the prepare / encode pair
+IPC-07 parameterized, whose prepare brings every buffer current at the
+capture's own camera. Two heavier frames were rejected: encoding every
+headless frame into a texture nobody reads (a GPU pass for nothing an
+agent can see), and — the first draft — the CPU half alone, an
+occluded window's frame, which review found was the same waste one
+stage earlier: the capture prepares again anyway, and staged uploads
+with no submission accumulate in wgpu until one comes. The format is
+`Bgra8UnormSrgb` — the sRGB format the windowed bootstrap picked under
+Xvfb on Mesa's lavapipe (observed: offered `[Bgra8UnormSrgb,
+Bgra8Unorm]`) — and the default size is 800×600, the size a window
+asking for none opened at there; `--size` sets either driver's.
+
+**Order is the body's, not the driver's.** The issue sketched the pump
+as "drain IPC → drain inputs → tick → rebuild → render"; the order kept
+is the one CONCEPTS §5 already pinned and winit ran — the frame's
+injected sample and drains first, the IPC drain after them, then the
+recorder, the redraw decision, the FPS flip, the clock wait, the map
+publication — because the issue's own rule was to reuse the functions
+and not fork a second heartbeat. The one-shot check is the eleventh
+step, at the point the clock wait is evaluated. `pump::tests` pins the
+order against a recording fake (§T8: no GPU).
+
+**Waiting and waking.** The headless driver parks its thread — until
+the iteration's deadline, or indefinitely — and the IPC boundary
+threads wake it with `Thread::unpark`, the role the winit
+`EventLoopProxy` plays under a window. An unpark that lands while the
+pump is busy is kept for its next park, so a request is never slept
+through. The `wake` closure `IpcServer::start` takes was already
+driver-neutral; only what it calls changed. Frames are paced to one
+per `HEARTBEAT_MS` of wall time, by a sleep before the draw — the
+role a window's vsync-blocked present plays — so real-time continuous
+work advances at a display's rate rather than spinning a core; an
+idle headless app parks and costs nothing.
+
+**Time starts virtual, with no window.** No one is watching time pass,
+so it moves only when `clock.step` moves it: a headless run is a pure
+function of its commands (D9's determinism contract), and
+`clock.set_mode real` is one command away. A one-shot launch starts
+virtual under a window too, so an animation can never keep it from
+settling.
+
+**Adapter choice: a plan of attempts over `request_adapter`, not a
+re-ranking.** The issue asked for an explicit software-fallback order,
+env-honoring, with `force_fallback_adapter` as a real option, and a
+pure, tested preference function. Ranking `enumerate_adapters`
+ourselves was rejected: a GL adapter is discovered through the surface
+it will present to, and a surface-less enumeration re-ranked could
+lose the only adapter a GL-only desktop has — the windowed path's
+"untouched" requirement rules that out. So `renderer/adapter.rs` keeps
+`request_adapter` as the mechanism (compatible with the window's
+surface when there is one) and makes the *plan* pure: under `auto`,
+the preferred adapter (CPU adapters are already eligible, ranked last,
+so a GPU-less box lands on lavapipe on the first attempt), then a
+software-only attempt when the first adapter could not open a device —
+skipped when it was itself a software adapter, which would come back
+again; under `--adapter software`, the software attempt alone. The
+environment is wgpu's own: `WGPU_BACKEND` through
+`InstanceDescriptor::with_env` (the skill had verified
+`Instance::default()` ignores it), `WGPU_POWER_PREF` for the
+preference (`high` when unset — what the renderer always asked for),
+and `WGPU_ADAPTER_NAME` by wgpu's substring rule, ahead of the plan.
+With none set and no flag, both windowed bootstraps ask exactly what
+they asked before. The browser runs the same plan; it has no
+environment, so the variables are absent there by construction.
+
+**`Options`: no dormant fields.** `should_exit` ("short-circuit after
+the first frame") is replaced by what its doc said it was for:
+`one_shot`, the `--screenshot` capture whose condition is "settled on
+a rendered frame, then exit", read by the loop body in both drivers.
+`window_mode`, `ui_scale` and `launch_gpu_prefer_low_power`, which the
+issue also named, had been deleted before this issue was built; the
+power preference they stood for is `WGPU_POWER_PREF` now. The fields
+`Options` carries are all read: `headless`, `surface_size`,
+`adapter`, `one_shot`.
+
+**What headless is not.** It is not a browser feature and owes no
+browser parity: a browser page always has its canvas, and running one
+without a display is the browser's own job (`CLAUDE.md` "Dual-target
+status"). It adds no IPC command: the wire protocol is unchanged, and
+an agent drives a headless app exactly as it drives a windowed one.
+**Ending it.** A headless app has no window to close, so its graceful
+exit is an `Action`: `Quit`, the funnel's name for what a window's
+close button does — dispatched over IPC as `act.action Quit`, so no
+command is added and `mandalactl` already speaks it. The arm sets
+`InitState::quit_requested`; the loop body's last step sees it and
+returns `Next::Exit`, and both drivers then run the one
+`pump::shut_down` a closed window runs. It is destructive-classed, so
+only the User tier — the user's own keybinds and macros, the console,
+IPC — can reach it, and unbound by default, since it no more asks
+about unsaved changes than a closed window does. A signal handler was
+the alternative and was not taken: it needs a third sanctioned
+boundary thread or an `unsafe` handler (§3), for a teardown that an
+agent can as easily send as a command. A loop that ends with a
+one-shot capture still owed — `Quit`, a closed window — ends with `1`.
+
 ## What each downstream issue consumes from this design
 
 | issue | builds | consumes from IPC-01 |
@@ -1027,7 +1166,7 @@ fixed cadence keep both.
 | IPC-07 | screenshot engine | D7 shapes (params/sidecar/`space` grid/write-guards), offscreen mandate, #7 coordination |
 | IPC-08 | recorder + `mandalactl record assemble` | D7 shapes (manifest), the frames-in-the-app / encoding-outside split, capture-clock `t_ms`, the virtual-clock frame-emission rule |
 | IPC-09 | virtual clock + wait | D7 (`clock.*` shapes; `settled` keys on *rendered* not presented; wait exclusivity; watchdog-per-heartbeat; injected-input queue), D2 (deferred replies); builds D9 |
-| IPC-10 | headless | D7 (offscreen capture path; `settled`-on-rendered makes headless capture terminate), `Options.should_exit` seam; app-shell freeze per EPIC #60 |
+| IPC-10 | headless | D7 (offscreen capture path; `settled`-on-rendered makes headless capture terminate), `Options.should_exit` seam; app-shell freeze per EPIC #60; builds D10 |
 | IPC-11 | `mandalactl` | D3 (protocol pinning/refusal; enum-widening is breaking), `format/ipc.md` as its command source |
 | IPC-12/13 | skills | pinned capture/wait shapes; artifacts + manifest layout |
 | IPC-14 | events + revision | D3 (event frames, reserved classes, envelope `revision`); the render-affecting revision counter + event backpressure coalescing; D8 (#45 boundary), #43 boundary (app-funnel only) |
@@ -1185,6 +1324,26 @@ Moved later, by the issue that found the need:
   state**, kept across controllers like a recording, because
   `mandalactl` is one command per connection. `clock.status` and `ping`
   answer before the window exists, with the real clock a new one is.
+
+- **IPC-10 (#70)** — the design is D10, added by this issue. Refined
+  where building it found the issue's sketch short, each in
+  `format/ipc.md` §"Headless and one-shot launches" in the same PR.
+  (1) **The pump runs the order winit ran**, not the issue's sketched
+  "IPC first" order (D10). (2) **A headless frame draws nothing**,
+  pixels on demand (D10). (3) **`--size`** sets the surface of either
+  driver, and a headless app is 800×600 without it. (4) **`--adapter
+  auto|software`** and wgpu's three variables are honored by every
+  bootstrap, through a plan of `request_adapter` attempts rather than a
+  ranking of our own (D10). (5) **The one-shot is `--screenshot <path>
+  [--overwrite]`**, under either driver: settled, captured with
+  `capture.screenshot`'s defaults and write guards, exit `0` / `1`; it
+  and a headless launch start on a virtual clock. (6) **A headless
+  launch needs `--ipc` or `--screenshot`**, or it is refused at
+  startup. (7) **No new IPC command**: the graceful exit is a new
+  `Action`, `Quit`, which `act.action` reaches. (8) **A one-shot
+  fails loudly**: exit `1`, nothing written, for a map that did not
+  load, a frame that cannot be drawn, and an app that ends before the
+  capture.
 
 ## Change governance
 

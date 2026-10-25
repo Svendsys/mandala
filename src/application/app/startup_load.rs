@@ -478,6 +478,7 @@ mod tests {
         assert_eq!(adopted.mindmap.name, name);
         assert_eq!(adopted.mindmap.nodes.len(), nodes);
         assert!(adopted.file_path.is_some(), "a real load stays bound to its file");
+        assert!(!adopted.is_load_failure_placard(), "a real load is a map");
     }
 
     /// A rejected load reports the loader's message verbatim, under
@@ -750,6 +751,10 @@ mod tests {
         let doc = native_startup_document(missing);
         assert_eq!(doc.mindmap.name, placard::PLACARD_MAP_NAME);
         assert!(doc.file_path.is_none(), "a placard must never be savable");
+        assert!(
+            doc.is_load_failure_placard(),
+            "a placard says it is one, so a one-shot launch refuses to pass it off as the map"
+        );
         let text = &doc.mindmap.nodes[placard::PLACARD_NODE_ID].sections[0].text;
         let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(flat.contains(missing), "the placard must name the map: {text}");
@@ -991,6 +996,10 @@ mod tests {
     const STARTUP_FILES: &[(&str, &str)] = &[
         ("src/main.rs", "the CLI parse"),
         (
+            "src/application/app/run_headless.rs",
+            "the headless driver: the `--ipc` listener, with no event loop or window",
+        ),
+        (
             "src/application/app/mod.rs",
             "`Application::new` — the browser's event loop and window",
         ),
@@ -1017,8 +1026,13 @@ mod tests {
         ),
         ("src/application/renderer/mod.rs", "the renderer bootstrap"),
         (
+            "src/application/renderer/adapter.rs",
+            "the adapter and the device every bootstrap asks wgpu for — attempts that report \
+             their failures to the bootstrap's panic and must therefore panic nowhere",
+        ),
+        (
             "src/application/renderer/pipeline.rs",
-            "the adapter and the device that bootstrap asks wgpu for",
+            "the window's surface configuration",
         ),
         (
             "lib/baumhard/src/font/fonts.rs",
@@ -1061,6 +1075,18 @@ mod tests {
         ),
         ("create_window", "src/application/app/run_native.rs", true, ""),
         ("IpcServer::start", "src/application/app/run_native.rs", true, ""),
+        // The headless driver starts the same listener with the same
+        // promise, waking a parked thread instead of an event loop.
+        (
+            "IpcServer::start",
+            "src/application/app/run_headless.rs",
+            true,
+            "",
+        ),
+        // Keyed on the read of the command line rather than on the
+        // parse: `cli_options` is defined in the same file, and a
+        // definition reads as a call to this roster.
+        ("std::env::args", "src/main.rs", true, ""),
         // The browser creates both in `Application::new` rather than
         // in `run_wasm`, so the same two names need a row per file —
         // an entry keyed only by name reads as covered while the
@@ -1069,13 +1095,7 @@ mod tests {
         ("create_window", "src/application/app/mod.rs", true, ""),
         ("run_app", "src/application/app/run_native.rs", true, ""),
         ("create_surface", "src/application/renderer/mod.rs", true, ""),
-        (
-            "request_adapter",
-            "src/application/renderer/pipeline.rs",
-            true,
-            "",
-        ),
-        ("request_device", "src/application/renderer/pipeline.rs", true, ""),
+        ("adapter::acquire", "src/application/renderer/mod.rs", true, ""),
         ("web_sys::window", "src/application/app/run_wasm/mod.rs", true, ""),
         ("canvas", "src/application/app/run_wasm/mod.rs", true, ""),
         ("document", "src/application/app/run_wasm/mod.rs", true, ""),
@@ -1087,13 +1107,19 @@ mod tests {
             "Renderer::bootstrap_native",
             "src/application/app/run_native_init.rs",
             false,
-            "the failure is one level in, at `create_surface`",
+            "the failures are one level in, at `create_surface` and `adapter::acquire`",
+        ),
+        (
+            "Renderer::bootstrap_headless",
+            "src/application/app/run_native_init.rs",
+            false,
+            "the failure is one level in, at `adapter::acquire`",
         ),
         (
             "Renderer::bootstrap_wasm",
             "src/application/app/run_wasm/mod.rs",
             false,
-            "the failure is one level in, at `create_surface`",
+            "the failures are one level in, at `create_surface` and `adapter::acquire`",
         ),
         (
             "fonts::init",

@@ -665,6 +665,9 @@ fn test_classifiers_cover_every_variant_kind() {
 fn test_is_destructive_destructive_set_is_pinned() {
     let destructive: &[ActionKind] = &[
         ActionKind::SaveDocument,
+        // Ends the session without asking about unsaved changes, as a
+        // closed window does: a map's or a plugin's macro must not.
+        ActionKind::Quit,
         ActionKind::NewDocument,
         ActionKind::DeleteSelection,
         ActionKind::OrphanSelection,

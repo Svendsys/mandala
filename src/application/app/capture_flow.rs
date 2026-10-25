@@ -23,6 +23,12 @@
 //! drag is in flight is therefore refused as busy; one at the live zoom
 //! draws the drag as the window does.
 //!
+//! **And the one-shot launch's capture.** `--screenshot <path>` is the
+//! same engine, called by the loop rather than by a command
+//! ([`one_shot`]): once the app has settled — the condition
+//! `clock.wait until=settled` waits for — it captures the window's view
+//! and the loop ends with the code that says whether it was written.
+//!
 //! Native-only with the engine (`CLAUDE.md` "Dual-target status").
 
 use baumhard::gfx_structs::camera::Camera2D;
@@ -41,9 +47,10 @@ use crate::application::scene_host::AppScene;
 
 use super::freeze_watchdog::FreezeWatchdog;
 use super::input_context::InputHandlerContext;
-use super::run_native::InitState;
+use super::run_native_init::InitState;
 use super::scene_rebuild::rebuild_camera_geometry_at;
-use super::InteractionMode;
+use super::{InteractionMode, OneShot};
+use crate::application::ipc::Until;
 
 /// The app state a capture reads and, for another zoom, briefly
 /// re-projects. Borrowed from `InitState` by the IPC target and from the
@@ -255,4 +262,82 @@ pub(super) fn draw<T>(
         Err(CaptureFailure::Gpu(message)) => return Err(CaptureError::Internal(message)),
     };
     Ok((prepared, drawn))
+}
+
+/// A one-shot launch's capture (`--screenshot`), if the app has settled:
+/// the window's view at the surface size, with its sidecar, written to
+/// the launch's path, and the code the process should end with — `0`
+/// written, `1` refused or failed, with the reason on stderr. `None`
+/// while the app has not settled, and after a transient skip, whose
+/// retry is asked for here: the frame the loop draws for it brings the
+/// next check.
+///
+/// Settled is the `clock.wait until=settled` condition, read at the
+/// point that command reads it — and not before the first frame has
+/// been rendered, the earliest the window can be said to be on screen.
+/// That is all the first frame promises about the window's size: the
+/// capture is the window at the size it has then, and a window manager
+/// that resizes it after its first expose (a tiling one, typically) is
+/// not waited for, since nothing says one is coming. A launch that needs
+/// an exact size runs `--headless --size`, where the size is the
+/// launch's own. A one-shot launch runs on a virtual clock
+/// (`run_native_init::build`), so an animation never keeps it from
+/// settling, and the capture is the map as loaded.
+///
+/// Two ways it ends without settling, both `1`: the startup document is
+/// the load-failure placard — a picture of it would be the failure
+/// passed off as the map, so nothing is written, and the loader's
+/// message is the `startup:` line already on stderr — and a render that
+/// stalled (`RedrawLedger::is_stalled`), which will never settle on its
+/// own: the capture is tried anyway, and its own skip says why.
+pub(super) fn one_shot(init: &mut InitState, shot: &OneShot) -> Option<std::process::ExitCode> {
+    use std::process::ExitCode;
+
+    if init
+        .document
+        .as_ref()
+        .is_some_and(MindMapDocument::is_load_failure_placard)
+    {
+        log::error!(
+            "screenshot: the map did not load (the `startup:` line says why); nothing was written to {}",
+            shot.path.display()
+        );
+        return Some(ExitCode::FAILURE);
+    }
+    if !init.redraws.attempted() {
+        return None;
+    }
+    if !init.redraws.is_stalled() && !init.settling().holds(Until::Settled) {
+        return None;
+    }
+    let (scene, artifacts, _) = CaptureScene::of_init(init);
+    let destination = Destination::Path {
+        path: shot.path.clone(),
+        overwrite: shot.overwrite,
+    };
+    match capture(scene, &CaptureRequest::default(), destination, true, artifacts) {
+        Ok(CaptureOutcome::Written { .. }) => Some(ExitCode::SUCCESS),
+        // Both say "the next frame may draw it": ask for that frame,
+        // whose iteration checks again.
+        Ok(CaptureOutcome::Skipped { skip, .. }) if skip.is_transient() => {
+            init.request_redraw();
+            None
+        }
+        Err(CaptureError::Busy(_)) => {
+            init.request_redraw();
+            None
+        }
+        Ok(CaptureOutcome::Skipped { skip, .. }) => {
+            log::error!(
+                "screenshot: the frame was not drawn ({}); nothing was written to {}",
+                skip.word(),
+                shot.path.display()
+            );
+            Some(ExitCode::FAILURE)
+        }
+        Err(refused) => {
+            log::error!("screenshot: {}", refused.into_message());
+            Some(ExitCode::FAILURE)
+        }
+    }
 }

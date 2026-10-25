@@ -376,20 +376,22 @@ mod tests {
                 (path.display().to_string(), text)
             })
             .collect();
-        let run_native =
-            std::fs::read_to_string(repo_path("src/application/app/run_native.rs")).expect("readable");
+        let entry_points =
+            std::fs::read_to_string(repo_path("src/application/app/input_context.rs")).expect("readable");
         // From the touch entry point to the end of the file, which the
         // `on_*` methods close: every method an injected sample reaches.
-        let start = run_native
+        // (The context struct above them carries the queue the frame
+        // drains, which is the frame's business, not a handler's.)
+        let start = entry_points
             .find("    pub(super) fn dispatch_touch_event(")
-            .expect("run_native.rs has the touch entry point");
+            .expect("input_context.rs has the touch entry point");
         assert!(
-            run_native[start..].contains("    pub(super) fn on_keyboard_input("),
+            entry_points[start..].contains("    pub(super) fn on_keyboard_input("),
             "the on_* entry points follow the touch entry point"
         );
         sources.push((
-            "run_native.rs input entry points".into(),
-            run_native[start..].to_string(),
+            "input_context.rs input entry points".into(),
+            entry_points[start..].to_string(),
         ));
         for (name, text) in sources {
             for word in VOCABULARY {

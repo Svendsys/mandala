@@ -243,9 +243,15 @@ harness. Standing up a headless wgpu instance for tests is a tar pit.
 What we *do* test from the renderer is the pure layout math — cull
 rects, palette frame sizing, palette scroll windows, sacred-border
 layout, backdrop alignment. See `application::renderer::tests` for the
-exemplar. If a bug requires a live wgpu device to reproduce, note it
-in `TODO.md`'s "What needs work" list rather than building a
-headless harness to chase it.
+exemplar. If a bug requires a live wgpu device to reproduce, reproduce
+it with the app itself, outside the suite, rather than building a
+harness to chase it: `mandala --headless --screenshot out.png <map>`
+draws a frame with no display (Mesa's lavapipe on a GPU-less box), and
+the `mandala-drive` skill drives and screenshots a running instance —
+`scripts/ipc_smoke.sh` is that loop as a check. What the suite pins of
+the code around the GPU is what can be pinned without one: the
+adapter plan (`renderer/adapter.rs`), the loop body's order against a
+recording fake (`app/pump.rs`), the headless frame pacing.
 
 ## §T9 Mobile and WASM
 

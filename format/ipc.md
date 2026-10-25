@@ -30,8 +30,12 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > `scene` family — `scene.dump`, `scene.visible_set`,
 > `scene.node_geometry`, `scene.hit_test`, `scene.find_text` (IPC-05,
 > #65); the `input` family (IPC-06, #66); `capture.screenshot` (IPC-07,
-> #67); and the client, `mandalactl` ([Client](#client-mandalactl),
-> IPC-11, #71).
+> #67); `capture.record_start` / `capture.record_stop` (IPC-08, #68);
+> the `clock` family (IPC-09, #69); the `events` family (IPC-14, #74);
+> launches with no display
+> ([Headless and one-shot launches](#headless-and-one-shot-launches),
+> IPC-10, #70); and the client, `mandalactl`
+> ([Client](#client-mandalactl), IPC-11, #71).
 
 ## Transport
 
@@ -50,8 +54,9 @@ mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
   path (`--ipc` last on the line, or `--ipc=`) is a startup error,
   not an IPC-less launch.
 - The listener starts before the event loop takes over (alongside
-  `FreezeWatchdog::spawn()` in `run_native.rs::run`) and lives for
-  the process lifetime.
+  `FreezeWatchdog::spawn()` in `run_native.rs::run`, and in
+  `run_headless.rs::run` with no window) and lives for the process
+  lifetime.
 - **Startup, not runtime.** Bind failures are startup errors per
   CODE_CONVENTIONS §9: fail with `expect("<reason>")`, never limp
   along with IPC silently missing.
@@ -184,6 +189,106 @@ mirroring `console_input`. The carve-out entry lives in `CLAUDE.md`
 browser-side capture, same envelope and commands) is parked in
 IPC-15. Browsers cannot open local sockets, so this is a transport
 gap by nature, not a design gap.
+
+### Headless and one-shot launches
+
+`--ipc` is one of four launch flags this protocol's users reach for;
+the other three exist so an agent, a CI job or a container with **no
+display and no GPU** can run the app at all (IPC-10, #70). Like
+`--ipc` they are native only.
+
+```sh
+mandala --headless --ipc "$XDG_RUNTIME_DIR/mandala.sock" maps/testament.mindmap.json
+mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, capture, exit 0
+```
+
+- `--headless` — run with **no window, no display server and no
+  event loop**. No X11 or Wayland is opened and no surface is made;
+  the renderer is bootstrapped from an adapter chosen with no surface
+  to be compatible with, and draws pixels only when a capture asks for
+  them. Everything in this document works as it does under a window,
+  with the differences listed below. A `--headless` launch with
+  neither `--ipc` nor `--screenshot` is refused at startup: nothing
+  could drive it or see it, and it would run until killed.
+- `--size <width>x<height>` — the size, in pixels, of what frames are
+  drawn for: the window's inner size (a window manager may still
+  resize it), or the headless target's, which nothing resizes. Each
+  side in `1..=16384`; a side the GPU cannot hold is clamped to what
+  it can, as a resized window's is. Without it a window opens at the
+  size it opens at, and a headless app is **800×600** — the size a
+  window that asks for none was observed to open at under Xvfb, so the
+  two frame the same view.
+- `--adapter auto|software` — which GPU adapters the renderer may run
+  on. `auto` (the default) asks wgpu for the adapter the power
+  preference favors — software adapters included, ranked last — and,
+  if that adapter cannot open a device, for a software one.
+  `software` asks for a software (CPU) adapter only — Mesa's lavapipe
+  or llvmpipe, WARP — so every runner rasterizes alike whatever GPU it
+  carries. wgpu's own environment variables are honored with wgpu's
+  meaning, in both drivers: `WGPU_BACKEND` narrows the backends,
+  `WGPU_POWER_PREF` (`low`, `high`, `none`; `high` when unset) sets the
+  preference, and `WGPU_ADAPTER_NAME` picks the first adapter whose
+  name contains it, ignoring case. A launch that can use no adapter
+  fails at startup with every attempt's reason.
+- `--screenshot <path> [--overwrite]` — a **one-shot** launch: once the
+  app has settled (the `clock.wait until=settled` condition), it
+  captures the window's view at the surface size, with its geometry
+  sidecar, to `<path>` — read against the working directory — once a
+  first frame has been rendered, and exits: `0` when the PNG was
+  written, `1` when it could not be, with the reason on stderr. It is
+  `1`, with nothing written, when the map did not load (the load-failure
+  placard is not the map asked for; the `startup:` line says why), when
+  the frame cannot be drawn for a reason retrying would not cure, and
+  when the app ends first — its window closed, or `Action::Quit`
+  dispatched. The capture is `capture.screenshot` with no parameters but
+  `path`, and its write guards: no symlink at `path` is followed, and an
+  existing file there (or its sidecar) is refused unless `--overwrite`
+  is given. A one-shot runs on a **virtual clock** (below), so it
+  captures the map at its first instant and an animation cannot keep it
+  from settling. It works with or without `--headless` and `--ipc`; with
+  a window the window opens, and closes once the capture is written. A
+  window's capture is at the size the window has when it is taken; a
+  window manager that resizes a new window after its first frame (tiling
+  ones do) is not waited for, since nothing announces such a resize. For
+  an exact size, use `--headless --size`. `--overwrite` without
+  `--screenshot` is refused at startup.
+- A startup failure — a refused command line, no usable adapter, a
+  socket that cannot be bound — ends the process with Rust's panic
+  status (`101`) and a message naming what failed.
+
+**What differs with no window.**
+
+- **The clock starts virtual** (§[`clock`](#clock--determinism-ipc-09)):
+  with no one watching, time moves only when `clock.step` moves it, so
+  a headless run is a pure function of its commands. Under it, an
+  animation stands still between steps, and an `input.drag`'s paced
+  samples land on the step's heartbeats (`clock.step frames=<n>`), not
+  on their own. `clock.set_mode real` gives the headless app real
+  time, and with it frames paced at one per 16 ms of wall time — a
+  60 Hz display's rate, the rate a window's present paces it at.
+- **Input is the `input` family's alone.** It enters at the same
+  entry points a window's events do, so nothing below them can tell
+  the difference; there is no cursor to draw, so a cursor-icon change
+  is no call at all. With no human there, `settled` is exact.
+- **A frame draws nothing.** There is nothing to draw into and no one to
+  see it, so a headless frame is bookkeeping: it counts as drawn for
+  `settled`, and `capture.*` draws the pixels when asked, through the
+  very prepare / encode pair a window's frame uses — so pixels are
+  produced exactly when they are wanted. A headless capture and a
+  windowed one of the same state, on the same machine and adapter, hold
+  the same pixels: the target format is the sRGB format a window's
+  surface offers under Xvfb on Mesa's lavapipe, and the two have been
+  verified there byte-identical, PNG and sidecar.
+- **There is no window to close: `act.action Quit` ends it.** The
+  `Quit` action is the graceful exit — the one a window's close
+  button takes — for either driver: the reply to it is sent, the
+  client hears `shutdown`, a recording in progress is finished, and
+  the socket and the artifacts dir are removed. It is User-tier, as
+  IPC is, and unbound by default (it does not ask about unsaved
+  changes, any more than closing a window does). A one-shot launch
+  ends on its own. A signal, as under a window, is not a graceful
+  exit: the socket and the artifacts dir are left behind, and the
+  next launch on the same path self-heals the socket.
 
 ### Framing
 
@@ -1521,15 +1626,15 @@ location explicitly).
 
 ### `capture.screenshot` (IPC-07)
 
-Offscreen render of the current document state — never a window
-grab, so it works identically under a compositor, Xvfb, or (post
-IPC-10) no display at all. The frame is drawn by the very prepare /
-encode pair the window is drawn with, into a texture of the
-surface's own format, and read back; a capture at the default
-parameters therefore holds the pixels the window shows. Before
-drawing, the camera-geometry rebuild the next frame owes (a zoom the
-client sent a moment ago) is run, so the capture shows the current
-state rather than the last frame's.
+Offscreen render of the current document state — never a window grab, so
+it works identically under a compositor, Xvfb, or with no display at all
+([`--headless`](#headless-and-one-shot-launches)). The frame is drawn by
+the very prepare / encode pair the window is drawn with, into a texture
+of the surface's own format, and read back; a capture at the default
+parameters therefore holds the pixels the window shows. Before drawing,
+the camera-geometry rebuild the next frame owes (a zoom the client sent
+a moment ago) is run, so the capture shows the current state rather than
+the last frame's.
 
 | param | type | default | meaning |
 |---|---|---|---|
@@ -1856,7 +1961,9 @@ like a recording, so `mandalactl`'s one command per connection can
 drive it. An app left in virtual mode stays there: its animations stand
 still and, with time frozen, two clicks any distance apart in wall time
 are a double-click. `clock.set_mode real`, or the console's `clock
-real`, gives it back.
+real`, gives it back. A launch starts real, except a `--headless` or
+`--screenshot` one, which starts virtual
+([Headless and one-shot launches](#headless-and-one-shot-launches)).
 
 **What a frame does in each mode.** A frame has an input-driven half —
 the throttled drag and picker hover drains, the rubber band, the
@@ -1980,22 +2087,25 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
   That is what makes `clock.step ms=500` → `clock.wait until=settled` →
   `capture.screenshot` capture an animation exactly 500 ms in.
 
-  **Rendered, not on-screen-presented.** Condition (d) is
-  deliberately about the *render* completing, not a swapchain
-  *present*. `capture.screenshot` is offscreen and must work under an
-  occluded/minimized window and (post IPC-10) with no display at all
-  — where the compositor never presents. Gating `settled` on an
-  on-screen present would make every capture workflow time out in
-  exactly the containerized/Xvfb environment the epic targets. So a
-  render counts as drawn once its CPU half has run — every buffer
-  current, every glyph prepared — whether or not the surface then had a
-  texture to present into. A frame the renderer *skipped* (the font
-  system contended, a failed prepare) has not drawn, and the redraw
-  stays owed. One limit no protocol can lift: the render runs when
-  winit delivers the `RedrawRequested` the app asked for, and a
-  platform that withholds it from a hidden window withholds the render
-  too; the wait then times out saying the latest frame was not drawn.
-  IPC-10's headless heartbeat is where that dependency ends.
+  **Rendered, not on-screen-presented.** Condition (d) is deliberately
+  about the *render* completing, not a swapchain *present*.
+  `capture.screenshot` is offscreen and must work under an
+  occluded/minimized window and with no display at all
+  ([`--headless`](#headless-and-one-shot-launches)) — where nothing ever
+  presents. Gating `settled` on an on-screen present would make every
+  capture workflow time out in exactly the containerized/Xvfb
+  environment the epic targets. So a render counts as drawn once its CPU
+  half has run — every buffer current, every glyph prepared — whether or
+  not the surface then had a texture to present into. With no window a
+  frame draws nothing and counts as drawn: a capture prepares and draws
+  its own. A frame the renderer *skipped* (the font system contended, a
+  failed prepare) has not drawn, and the redraw stays owed. One limit no
+  protocol can lift: the render runs when winit delivers the
+  `RedrawRequested` the app asked for, and a platform that withholds it
+  from a hidden window withholds the render too; the wait then times out
+  saying the latest frame was not drawn. A headless app has no such
+  dependency: there is no platform between the frame it asks for and the
+  frame it draws.
 
   **The arbiter is a redraw ledger, not the document revision.** The
   naive "rendered at the current *document* revision" is insufficient:

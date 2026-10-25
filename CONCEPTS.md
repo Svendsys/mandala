@@ -2156,27 +2156,32 @@ split between "what changed" (document) and "what is on screen"
 
 Lives under [`src/application/`](./src/application/).
 
-### `Application`, `InitState`, `NativeApp`
+### `Application`, `InitState`, and the two native drivers
 
-The native event-loop entry points. `Application` is
-the pre-window root; `InitState` is the persistent post-window
-state; `NativeApp` is the winit `ApplicationHandler` glue.
+The native entry points. `Application` is the pre-window root;
+`InitState` is the persistent app state; `NativeApp` (winit's
+`ApplicationHandler`) and the [headless driver](#headless-driver) are
+the two things that run it.
 
-The platform separation is honest: pre-window
-work (parse args, init fonts, load mutations) happens before any
-GPU resources exist; once the OS gives us a window, we transition
-to `InitState` and stay there for the lifetime of the run.
-`NativeApp` exists only to satisfy winit's trait surface;
-everything substantive lives on `InitState`.
+The platform separation is honest: pre-window work (parse args, init
+fonts, load mutations) happens before any GPU resources exist; once
+there is somewhere to draw — a window the OS gave us, or, under
+`--headless`, nothing — `run_native_init::build` makes the
+`InitState`, and the app stays there for the lifetime of the run.
+Neither driver holds anything substantive: both run the one loop body
+(`app/pump.rs`) over `InitState`, and differ only in how they wait
+and where a frame comes from.
 
-`src/application/app/run_native.rs:48-130`.
-`InitState` carries `window: Arc<Window>`, a
-`document: Option<MindMapDocument>`, `drag_state`, `app_mode`,
-modal UI state (console, node text editor, single-line editor,
-color picker), `picker_hover`, and the resolved keybind table. The
-`input_context()` method at line 137 produces a borrowed view of
-these fields per-event so handlers can borrow disjoint subsets
-without lifetime contortions.
+`src/application/app/run_native_init.rs` holds `InitState` and
+`build`; `run_native.rs` and `run_headless.rs` the two drivers.
+`InitState` carries the `shell` (the window or none, `app/shell.rs`),
+the renderer, a `document: Option<MindMapDocument>`, `drag_state`,
+`interaction_mode`, modal UI state (console, node text editor,
+single-line editor, color picker), `picker_hover`, the resolved
+keybind table, and the clock, recorder and redraw ledger the IPC
+surface reads. Its `input_context()` produces a borrowed view of these
+fields per event so handlers can borrow disjoint subsets without
+lifetime contortions.
 
 The `Option` on `document` is the interactive shell's shape, not
 startup's: init always produces a document, because a load that
@@ -2254,7 +2259,9 @@ pointer events doesn't trigger a flurry of scene rebuilds.
 
 `src/application/app/heartbeat.rs` (the frame) and
 `src/application/app/drain_frame.rs` (its non-throttled drains).
-Called on every winit `AboutToWait` event. Step order:
+Called once per iteration of the loop body both native drivers run
+(`app/pump.rs`, see [Headless driver](#headless-driver)) — winit's
+`AboutToWait`, or the headless pump's pass. Step order:
 
 1. Drive any active throttled interaction
    ([`ThrottledInteraction`](#throttledinteraction-and-throttleddrag)) —
@@ -3237,10 +3244,11 @@ persistent acceptor (one controller at a time; a second client is
 refused immediately), plus a reader and an outbound writer per
 controller — and exchange only protocol values with the main thread
 over one ordered `mpsc` queue in and a bounded one out. They wake the
-parked event loop through a winit user event (`IpcWake`), so an idle
-app answers without polling; `about_to_wait` drains the queue right
-after `drain_inputs` and executes every command on the main thread,
-with the same access an input handler has. Each connection
+parked event loop through a winit user event (`IpcWake`) — or, with no
+event loop under `--headless`, unpark the main thread — so an idle app
+answers without polling; the loop body (`app::pump`) drains the queue
+right after `drain_inputs` and executes every command on the main
+thread, with the same access an input handler has. Each connection
 carries a generation stamp, so nothing a departed controller sent can
 act after it left. A controller that falls behind on its replies is
 paused rather than dropped; one whose socket accepts nothing for ten
@@ -3361,8 +3369,10 @@ picture; the IPC command at the window's size keeps it.
 
 **Caveat:** native-only — the readback blocks on a buffer map, which
 a browser cannot do (`CLAUDE.md` "Dual-target status"; browser
-canvas capture is IPC-15's). **Vision:** IPC-08's recorder and
-IPC-10's headless pump draw through the same prepare / encode pair.
+canvas capture is IPC-15's). IPC-08's recorder and the
+[headless driver](#headless-driver) draw through the same prepare /
+encode pair; with no window, a capture is the only frame ever drawn
+into a texture.
 
 
 ### Frame-sequence recording
@@ -3404,6 +3414,42 @@ plans the GIF from the manifest's times — rounding start times rather
 than delays, so the error does not accumulate, and dropping frames
 closer than the 20 ms a browser honors — and writes one decoded frame
 at a time.
+
+### Headless driver
+
+The app with no window, no display and no event loop (`--headless`):
+the same app state, the same frame and the same IPC surface, run on a
+pump of its own instead of winit's — so a CI job or a cloud agent with
+no X server and no GPU can launch, drive and screenshot it.
+
+What made it a second *driver* rather than a second app is that the
+app's reach into its window was two calls wide — asking for a frame
+and setting the cursor icon — and both now go through `Shell`
+(`app/shell.rs`), which is a window or nothing. The body winit's
+`about_to_wait` ran is one function, `pump::iterate` (`app/pump.rs`),
+that both drivers call and that returns *when the next iteration
+should run* as a value: winit turns it into a `ControlFlow`, the
+headless driver (`app/run_headless.rs`) into a park the IPC threads
+end with `Thread::unpark`. Where winit delivers `RedrawRequested`, the
+headless driver draws the frame the redraw ledger says is owed
+(`app/settle.rs`), paced to one per 16 ms of wall time, and runs
+another iteration, as winit does after any event. A headless frame
+draws nothing (`renderer::Sink::Headless`): pixels are drawn when a
+[capture](#screenshot-capture) asks. The clock starts virtual, the
+input is the IPC `input` family's alone, and the renderer's adapter is
+chosen with no surface by the same plan every bootstrap runs
+(`renderer/adapter.rs`: preferred, then software; `--adapter software`
+for software only; wgpu's `WGPU_*` variables). It ends gracefully on
+`Action::Quit` (`act.action Quit` over IPC), which either driver honors
+through the same shutdown a closed window runs. A one-shot launch
+(`--screenshot <path>`) captures once the app has settled and exits,
+under either driver — `1` with nothing written for a map that did not
+load, a frame that cannot be drawn, or an app that ends first.
+
+`format/ipc.md` §"Headless and one-shot launches" is the user-facing
+contract; `work_plans/LLM_IPC.md` §D10 the design. **Caveat:**
+native-only, with nothing owed to the browser, whose page always has
+its canvas (`CLAUDE.md` "Dual-target status").
 
 ### App clock
 

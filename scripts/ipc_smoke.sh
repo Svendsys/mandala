@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of the --ipc drive-and-see loop: launch the app
-# (under its own Xvfb when there is no display), ping it, check the map
-# loaded, take a window-sized screenshot and a region screenshot around
-# one node, check the PNGs and their geometry sidecars, and tear it all
-# down. The procedure is the one `.claude/skills/mandala-drive/SKILL.md`
+# (with no window when there is no display, `--headless`), ping it, check
+# the map loaded, take a window-sized screenshot and a region screenshot
+# around one node, check the PNGs and their geometry sidecars, check that
+# a one-shot `--screenshot` launch writes the same picture, and tear it
+# all down. The procedure is the one `.claude/skills/mandala-drive/SKILL.md`
 # teaches; this script is that skill's proof that it still works.
 #
 # Deliberately outside ./test.sh: it needs a live GPU adapter, and
 # TEST_CONVENTIONS §T8/§T10 keep live wgpu out of the suite.
 #
 # Usage:
-#   ./scripts/ipc_smoke.sh                   # testament, release build
+#   ./scripts/ipc_smoke.sh                   # testament, release build: a window when
+#                                            # there is a display, --headless when not
+#   ./scripts/ipc_smoke.sh --headless        # no window even when there is a display
+#   ./scripts/ipc_smoke.sh --xvfb            # a real window under its own Xvfb
+#   ./scripts/ipc_smoke.sh --compare-xvfb    # also: a headless one-shot and an Xvfb one
+#                                            # of the same map must be byte-identical
 #   ./scripts/ipc_smoke.sh --map <path>      # another map
 #   ./scripts/ipc_smoke.sh --debug           # dev-profile build (logs info!/debug!)
-#   ./scripts/ipc_smoke.sh --xvfb            # own Xvfb even when $DISPLAY is set
 #   ./scripts/ipc_smoke.sh --keep            # keep the work dir on success too
 #
 # Exit codes: 0 pass; 1 a check failed (the work dir with the app's log
@@ -25,6 +30,8 @@ set -euo pipefail
 MAP=""
 PROFILE="release"
 FORCE_XVFB=0
+FORCE_HEADLESS=0
+COMPARE_XVFB=0
 KEEP=0
 
 usage() {
@@ -40,6 +47,8 @@ while [ $# -gt 0 ]; do
             ;;
         --debug) PROFILE="debug"; shift ;;
         --xvfb) FORCE_XVFB=1; shift ;;
+        --headless) FORCE_HEADLESS=1; shift ;;
+        --compare-xvfb) COMPARE_XVFB=1; shift ;;
         --keep) KEEP=1; shift ;;
         -h | --help) usage; exit 0 ;;
         *) echo "error: unknown argument: $1" >&2; usage; exit 3 ;;
@@ -67,21 +76,42 @@ fail() {
 
 # ---- Environment preflight --------------------------------------------
 
-# Xvfb is the Linux headless recipe. Elsewhere (macOS) the desktop is not
-# announced through $DISPLAY, so a missing one says nothing there.
-USE_XVFB=0
-if [ "$(uname -s)" = "Linux" ]; then
-    if [ "$FORCE_XVFB" -eq 1 ] || { [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; }; then
-        USE_XVFB=1
-    fi
+# What the app runs in: a window on the display that is there, a window on
+# our own Xvfb, or no window at all (`--headless`). With no display the
+# default is no window — the recipe for a container or CI. Elsewhere than
+# Linux (macOS) the desktop is not announced through $DISPLAY, so a missing
+# one says nothing there.
+MODE="window"
+if [ "$FORCE_HEADLESS" -eq 1 ] && [ "$FORCE_XVFB" -eq 1 ]; then
+    echo "error: --headless and --xvfb each name what the app runs in; pick one" >&2
+    exit 3
+elif [ "$FORCE_HEADLESS" -eq 1 ]; then
+    MODE="headless"
 elif [ "$FORCE_XVFB" -eq 1 ]; then
-    echo "error: --xvfb is the Linux headless recipe; this is $(uname -s)" >&2
+    MODE="xvfb"
+elif [ "$(uname -s)" = "Linux" ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    MODE="headless"
+fi
+if [ "$(uname -s)" != "Linux" ] && { [ "$MODE" = "xvfb" ] || [ "$COMPARE_XVFB" -eq 1 ]; }; then
+    echo "error: Xvfb is the Linux recipe; this is $(uname -s)" >&2
     exit 3
 fi
+USE_XVFB=0
+[ "$MODE" = "xvfb" ] && USE_XVFB=1
+# Packages are checked where the script stands up the graphics stack itself
+# — no window, or its own X server — on Linux, where it knows their names.
+CHECK_PACKAGES=0
+if [ "$(uname -s)" = "Linux" ] && { [ "$MODE" != "window" ] || [ "$COMPARE_XVFB" -eq 1 ]; }; then
+    CHECK_PACKAGES=1
+fi
 
-if [ "$USE_XVFB" -eq 1 ]; then
+if [ "$CHECK_PACKAGES" -eq 1 ]; then
     missing=()
-    command -v Xvfb >/dev/null 2>&1 || missing+=("xvfb")
+    WANT_XVFB=0
+    if [ "$USE_XVFB" -eq 1 ] || [ "$COMPARE_XVFB" -eq 1 ]; then
+        WANT_XVFB=1
+        command -v Xvfb >/dev/null 2>&1 || missing+=("xvfb")
+    fi
     # ldconfig lives in /sbin, which a non-root PATH often lacks. Read the
     # cache once: `ldconfig -p | grep -q` under pipefail fails whenever grep
     # exits early and ldconfig takes the SIGPIPE.
@@ -93,11 +123,14 @@ if [ "$USE_XVFB" -eq 1 ]; then
         ldcache=""
     done
     if [ -n "$ldcache" ]; then
-        # winit's X11 backend dlopens libxkbcommon-x11 and panics without it.
-        grep -q 'libxkbcommon-x11\.so' <<<"$ldcache" || missing+=("libxkbcommon-x11-0")
-        # The adapter: Vulkan through Mesa's lavapipe ICD. wgpu's GL backend
-        # reports the Xvfb window surface incompatible, so GL alone is not
-        # enough.
+        # winit's X11 backend dlopens libxkbcommon-x11 and panics without
+        # it; with no window no winit backend is loaded at all.
+        if [ "$WANT_XVFB" -eq 1 ]; then
+            grep -q 'libxkbcommon-x11\.so' <<<"$ldcache" || missing+=("libxkbcommon-x11-0")
+        fi
+        # The adapter: Vulkan through Mesa's lavapipe ICD, the one backend
+        # that serves both: wgpu's GL backend reports the Xvfb window
+        # surface incompatible, though it works with no window.
         grep -q 'libvulkan\.so\.1' <<<"$ldcache" || missing+=("libvulkan1")
     else
         echo "note: ldconfig cannot be run here; the library check is skipped (a missing library shows in the app log)"
@@ -117,7 +150,9 @@ if [ "$USE_XVFB" -eq 1 ]; then
     fi
     [ "$icd_found" -eq 1 ] || missing+=("mesa-vulkan-drivers")
     if [ ${#missing[@]} -gt 0 ]; then
-        echo "error: no display, and the headless recipe needs packages that are missing:" >&2
+        what="the $MODE recipe needs"
+        [ "$COMPARE_XVFB" -eq 1 ] && what="the $MODE recipe and --compare-xvfb need"
+        echo "error: $what packages that are missing:" >&2
         sudo=""
         [ "$(id -u)" -eq 0 ] || sudo="sudo "
         echo "  ${sudo}apt-get update && ${sudo}apt-get install -y --no-install-recommends ${missing[*]}" >&2
@@ -156,9 +191,9 @@ XVFB_PID=""
 teardown() {
     local code=$?
     if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
-        # No IPC command quits the app, and SIGTERM is not a graceful exit:
-        # the socket and the artifacts dir are left behind, so both are
-        # removed below.
+        # Still running: a check failed before the graceful quit below.
+        # SIGTERM is not a graceful exit — the socket and the artifacts
+        # dir are left behind — so both are removed below.
         kill -TERM "$APP_PID" 2>/dev/null || true
         for _ in 1 2 3 4 5 6 7 8 9 10; do
             kill -0 "$APP_PID" 2>/dev/null || break
@@ -212,8 +247,12 @@ fi
 
 # ---- Launch and liveness -----------------------------------------------
 
-step "launch $APP $MAP --ipc $SOCK"
-"$APP" "$MAP" --ipc "$SOCK" >"$WORK/app.log" 2>&1 &
+# The flag that makes a launch of this mode's: no window, or none needed.
+MODE_FLAGS=()
+[ "$MODE" = "headless" ] && MODE_FLAGS=(--headless)
+
+step "launch ($MODE) $APP ${MODE_FLAGS[*]} $MAP --ipc $SOCK"
+"$APP" ${MODE_FLAGS[@]+"${MODE_FLAGS[@]}"} "$MAP" --ipc "$SOCK" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 export MANDALA_IPC="$SOCK"
 
@@ -384,6 +423,74 @@ else
     grep -q "{\"id\":\"$node\",\"rect\":{[^}]*},\"clipped\":false" "$WORK/region.png.geometry.json" \
         || fail "node $node is not wholly inside the region capture framed around it"
     [ "$("$CTL" query.camera)" = "$camera_before" ] || fail "the capture moved the live camera"
+fi
+
+# ---- Graceful quit -----------------------------------------------------
+
+# `act.action Quit` is the exit a closed window takes, and the only one a
+# headless app has: the reply arrives, the process exits 0, and the socket
+# and the artifacts dir go with it. A path-less capture first, so there is
+# an artifacts dir to see removed.
+step "act.action Quit"
+"$CTL" capture.screenshot >/dev/null || fail "a path-less capture.screenshot failed"
+ARTIFACTS="$(compgen -G "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mandala-$APP_PID-artifacts*" || true)"
+[ -n "$ARTIFACTS" ] || fail "the path-less capture made no artifacts dir"
+"$CTL" act.action Quit || fail "act.action Quit was not answered"
+quit_rc=0
+for _ in $(seq 1 50); do
+    kill -0 "$APP_PID" 2>/dev/null || break
+    sleep 0.1
+done
+kill -0 "$APP_PID" 2>/dev/null && fail "the app was still running 5 s after Quit"
+wait "$APP_PID" || quit_rc=$?
+[ "$quit_rc" -eq 0 ] || fail "the app exited $quit_rc after Quit, not 0"
+[ ! -e "$SOCK" ] || fail "the socket $SOCK is still there after Quit"
+for dir in $ARTIFACTS; do
+    [ ! -e "$dir" ] || fail "the artifacts dir $dir is still there after Quit"
+done
+echo "   exited 0; socket and artifacts dir removed"
+
+# ---- One-shot launches -------------------------------------------------
+
+one_shot() { # <png> [launch flags...]: a one-shot launch of the map, which must exit 0
+    local png="$1" rc=0
+    shift
+    "$@" --screenshot "$png" "$MAP" >>"$WORK/oneshot.log" 2>&1 || rc=$?
+    [ "$rc" -eq 0 ] || fail "the one-shot launch ${*} --screenshot $png exited $rc (log: $WORK/oneshot.log)"
+}
+
+same_capture() { # <png> <png>: the two PNGs and their sidecars are byte-identical
+    cmp -s "$1" "$2" || fail "$1 and $2 differ"
+    cmp -s "$1.geometry.json" "$2.geometry.json" || fail "the sidecars of $1 and $2 differ"
+}
+
+# The map as loaded, captured by a launch that exits on its own: the same
+# picture the session's window capture took at load, in the same mode. A
+# window on a real desktop is the exception — a window manager may size the
+# second window differently — so there it is only checked as a picture.
+step "one-shot --screenshot ($MODE)"
+one_shot "$WORK/oneshot.png" "$APP" ${MODE_FLAGS[@]+"${MODE_FLAGS[@]}"}
+read -r os_w os_h <<<"$(png_size "$WORK/oneshot.png")"
+check_png "$WORK/oneshot.png" "$os_w" "$os_h"
+if [ "$MODE" = "window" ]; then
+    echo "   a window on this display: checked as a picture, not against the session's capture"
+else
+    same_capture "$WORK/window.png" "$WORK/oneshot.png"
+    echo "   byte-identical to the session's window capture"
+fi
+
+# IPC-10's acceptance check: with no display and with a real window under
+# Xvfb, the same machine draws the same bytes.
+if [ "$COMPARE_XVFB" -eq 1 ]; then
+    step "compare: headless one-shot against an Xvfb window's"
+    one_shot "$WORK/compare-headless.png" "$APP" --headless
+    if [ "$USE_XVFB" -eq 1 ]; then
+        one_shot "$WORK/compare-xvfb.png" "$APP"
+    else
+        one_shot "$WORK/compare-xvfb.png" env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" "$APP"
+    fi
+    same_capture "$WORK/compare-headless.png" "$WORK/compare-xvfb.png"
+    echo "   byte-identical, PNG and sidecar"
 fi
 
 echo "PASS"

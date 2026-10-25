@@ -9,14 +9,13 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use winit::window::Window;
-
 use crate::application::platform::window::{CursorIcon, PhysicalPosition};
 
 use super::click::rebuild_all_with_mode;
 use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{rebuild_selection_highlight, RebuildTier};
+use super::shell::Shell;
 use super::throttled_interaction::{
     DragInput, EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
     NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
@@ -27,7 +26,7 @@ use crate::application::document::{hit_test, SelectionState};
 
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,
-    window: &Window,
+    shell: &Shell,
     ctx: &mut InputHandlerContext<'_>,
 ) {
     let prev_pos = *ctx.cursor_pos;
@@ -130,7 +129,7 @@ pub(super) fn handle_cursor_moved(
     };
     if let Some(icon) = desired {
         if icon != *ctx.cursor_icon_last {
-            window.set_cursor(icon);
+            shell.set_cursor(icon);
             *ctx.cursor_icon_last = icon;
         }
     }

@@ -40,7 +40,7 @@ use super::console_input::exec::execute_console_line;
 use super::dispatch::{self, DispatchHit, DispatchOutcome};
 use super::input_context::InputHandlerContext;
 use super::record_flow;
-use super::run_native::InitState;
+use super::run_native_init::InitState;
 use super::{ipc_scene, ipc_state};
 
 /// How an anonymous `act.macro` step sequence is named in the macro

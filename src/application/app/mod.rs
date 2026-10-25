@@ -92,6 +92,8 @@ mod ipc_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod ipc_target;
 #[cfg(not(target_arch = "wasm32"))]
+mod pump;
+#[cfg(not(target_arch = "wasm32"))]
 mod record_flow;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
@@ -101,6 +103,8 @@ mod modal_editor;
 #[cfg(not(target_arch = "wasm32"))]
 mod portal_label_drag;
 #[cfg(not(target_arch = "wasm32"))]
+mod run_headless;
+#[cfg(not(target_arch = "wasm32"))]
 mod run_native;
 #[cfg(not(target_arch = "wasm32"))]
 mod run_native_init;
@@ -108,6 +112,8 @@ mod run_native_init;
 mod run_wasm;
 #[cfg(not(target_arch = "wasm32"))]
 mod settle;
+#[cfg(not(target_arch = "wasm32"))]
+mod shell;
 #[cfg(not(target_arch = "wasm32"))]
 mod single_line_edit;
 // Cross-platform: both init paths resolve the initial map load
@@ -118,10 +124,10 @@ mod startup_load;
 mod throttled_interaction;
 mod touch_gesture;
 
-// `InputHandlerContext` has 21 fields. Drift surface for new
-// fields: the struct in `input_context.rs`, the
-// `InitState::input_context()` builder in `run_native.rs`, and
-// `dispatch_action`'s signature in `dispatch/native.rs`.
+// Drift surface for a new `InputHandlerContext` field: the struct in
+// `input_context.rs`, the `InitState::input_context()` builder in
+// `run_native_init.rs`, and `dispatch_action`'s signature in
+// `dispatch/native.rs`.
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::application::document::EdgeRef;
@@ -1003,14 +1009,25 @@ impl Application {
         Application { options }
     }
 
+    /// Run the app until it ends, and say how: under a window when it
+    /// has one, with none under `--headless`. A one-shot launch's code
+    /// says whether its capture was written; every other launch ends
+    /// in success.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn run(self) {
-        run_native::run(self)
+    pub fn run(self) -> std::process::ExitCode {
+        if self.options.headless {
+            run_headless::run(self.options)
+        } else {
+            run_native::run(self)
+        }
     }
 
+    /// Hand the page to the browser's event loop, which outlives this
+    /// call; the page is the app's lifetime, not the process.
     #[cfg(target_arch = "wasm32")]
-    pub fn run(self) {
-        run_wasm::run(self)
+    pub fn run(self) -> std::process::ExitCode {
+        run_wasm::run(self);
+        std::process::ExitCode::SUCCESS
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1024,17 +1041,6 @@ impl Application {
 /// per launch; never mutated post-construction.
 #[derive(Clone)]
 pub struct Options {
-    /// `true` to short-circuit the event loop after the first
-    /// frame, so a caller that only needs one render pass gets one.
-    ///
-    /// Written but never read. Kept as a named seam rather than
-    /// deleted: `work_plans/LLM_IPC.md` reserves it for **IPC-10**
-    /// (headless capture), whose termination condition is exactly
-    /// "settled on rendered, then exit". The consumer is the
-    /// `run_native` / `run_wasm` loop bodies, which will read it
-    /// where they currently read nothing.
-    #[allow(dead_code)]
-    pub should_exit: bool,
     /// Path to the `.mindmap.json` file to load at startup.
     /// Native: filesystem path; WASM: a fetch-relative URL
     /// resolved against the page origin.
@@ -1048,6 +1054,40 @@ pub struct Options {
     /// no IPC thread. Native-only: browsers cannot serve sockets.
     #[cfg(not(target_arch = "wasm32"))]
     pub ipc_socket: Option<std::path::PathBuf>,
+    /// `--headless`: no window, no display and no event loop — the
+    /// headless driver (`run_headless`) runs the app instead of winit,
+    /// with IPC and the one-shot as its only inputs and outputs.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub headless: bool,
+    /// `--size <W>x<H>`: the size, in pixels, of what frames are drawn
+    /// for — the window's inner size, or the headless target's. `None`
+    /// lets the window open at the size it opens at, and a headless app
+    /// take `run_native_init::HEADLESS_SURFACE_SIZE`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub surface_size: Option<(u32, u32)>,
+    /// `--adapter`: which GPU adapters the renderer may run on.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub adapter: crate::application::renderer::AdapterPolicy,
+    /// `--screenshot <path>`: capture the map once it has settled, write
+    /// it there, and exit. The loop's exit condition — "settled on a
+    /// rendered frame, then exit" — is this field, in either driver.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub one_shot: Option<OneShot>,
+}
+
+/// A one-shot launch's capture (`--screenshot`): the window's view, at
+/// the surface size, written with its geometry sidecar to `path`, after
+/// which the process exits — `0` when it was written, `1` when it could
+/// not be (`format/ipc.md` §"Headless and one-shot launches").
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OneShot {
+    /// Absolute: the command line's path read against the working
+    /// directory, as a shell reads it.
+    pub path: std::path::PathBuf,
+    /// `--overwrite`: replace a file already at `path` (and its
+    /// sidecar), which the write guard otherwise refuses.
+    pub overwrite: bool,
 }
 
 /// The node tree and every canvas role tree for `doc` at
