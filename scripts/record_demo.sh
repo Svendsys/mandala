@@ -362,8 +362,12 @@ out_h="$(field "$ASM_OUT" height)"
 repo_rel() { # <path>: relative to the repo when inside it, else as given
     case "$1" in "$REPO"/*) printf '%s' "${1#"$REPO"/}" ;; *) printf '%s' "$1" ;; esac
 }
-# The command that re-makes it: every option that is not the default, then
-# the paths, then the assemble options.
+# The command that re-makes it, as a reviewer on another machine would run
+# it: the mode (always — the default differs between machines), every other
+# option that is not the default, then the paths, then the assemble options.
+# <out> is printed under /tmp whatever the recorder's was: the skill puts
+# recordings there, and a home directory would leak into the PR and not
+# exist for the reviewer.
 repro="scripts/record_demo.sh"
 repro+=" --$MODE"
 [ "$SIZE" = "800x600" ] || repro+=" --size $SIZE"
@@ -372,8 +376,15 @@ repro+=" --$MODE"
 [ "$BEAT_MS" -eq 500 ] || repro+=" --beat-ms $BEAT_MS"
 [ "$FORMAT" = "gif" ] || repro+=" --mp4"
 [ "$PROFILE" = "release" ] || repro+=" --debug"
-repro+=" $(printf '%q %q %q' "$(repo_rel "$MAP")" "$(repo_rel "$SCRIPT")" "$OUT")"
-[ ${#ASM_EXTRA[@]} -eq 0 ] || repro+=" -- ${ASM_EXTRA[*]}"
+case "$OUT" in /tmp/*) repro_out="$OUT" ;; *) repro_out="/tmp/$(basename "$OUT")" ;; esac
+# Only when the printed path is itself inside the repo (a repo checked out
+# under /tmp) does the reviewer's run need the guard lifted.
+case "$repro_out" in "$REPO"/*) repro+=" --allow-in-repo" ;; esac
+repro+=" $(printf '%q %q %q' "$(repo_rel "$MAP")" "$(repo_rel "$SCRIPT")" "$repro_out")"
+if [ ${#ASM_EXTRA[@]} -gt 0 ]; then
+    asm_words="$(printf '%q ' "${ASM_EXTRA[@]}")"
+    repro+=" -- ${asm_words% }"
+fi
 
 echo "---- caption (fill in the <...>, then post with the recording) ----"
 cat <<EOF
