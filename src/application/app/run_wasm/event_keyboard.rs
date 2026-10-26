@@ -12,22 +12,25 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use crate::application::platform::input::Key;
+use crate::application::platform::input::{ElementState, Key};
 
 use super::WasmMacroDispatchTarget;
 use crate::application::app::dispatch;
 use crate::application::app::text_edit::handle_text_edit_key;
 use crate::application::keybinds::Action;
 
-impl super::WasmApp {
-    pub(super) fn handle_keyboard_input(&mut self, logical_key: Key) {
+impl super::Borrowed<'_> {
+    /// `WindowEvent::KeyboardInput`. Only a press reaches the handler;
+    /// a release changes nothing. Returns whether to request a redraw
+    /// — always, for a press, as native does.
+    pub(super) fn on_keyboard_input(&mut self, logical_key: Key, state: ElementState) -> bool {
+        if state != ElementState::Pressed {
+            return false;
+        }
         let key_name = crate::application::keybinds::key_to_name(&logical_key);
-
-        let mut input_borrow = self.input.borrow_mut();
-        let mut renderer_borrow = self.renderer.borrow_mut();
-        let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) else {
-            return;
-        };
+        let input = &mut *self.input;
+        let renderer = &mut *self.renderer;
+        let keybinds = self.keybinds;
 
         // Editor keyboard-steal: if open, route all keys
         // to the editor so hotkeys don't collide with typed text.
@@ -38,7 +41,7 @@ impl super::WasmApp {
         // at `event_keyboard.rs`.
         if input.text_edit_state.is_open() {
             let action = key_name.as_deref().and_then(|n| {
-                self.keybinds.action_for_context(
+                keybinds.action_for_context(
                     crate::application::keybinds::InputContext::TextEdit,
                     n,
                     input.modifiers.control_key(),
@@ -47,27 +50,27 @@ impl super::WasmApp {
                 )
             });
             if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) = &action {
-                let mut core = input.input_context_core(renderer, &self.keybinds);
+                let mut core = input.input_context_core(renderer, keybinds);
                 let _ = dispatch::action_core::dispatch_compatible(modal_action, &mut core, None);
                 self.suppress_keys.set(input.text_edit_state.is_open());
-                return;
+                return true;
             }
             handle_text_edit_key(
                 &key_name,
                 &logical_key,
                 &input.modifiers,
-                &self.keybinds,
+                keybinds,
                 &mut input.text_edit_state,
                 &mut input.mindmap_tree,
                 renderer,
             );
             self.suppress_keys.set(input.text_edit_state.is_open());
-            return;
+            return true;
         }
 
         // Hotkey dispatch via keybinds.
         let action = key_name.as_deref().and_then(|k| {
-            self.keybinds.action_for_context(
+            keybinds.action_for_context(
                 crate::application::keybinds::InputContext::Document,
                 k,
                 input.modifiers.control_key(),
@@ -95,7 +98,7 @@ impl super::WasmApp {
             // touch suppress.
             let was_edit_selection = matches!(a, Action::EditSelection | Action::EditSelectionClean);
             let _ = {
-                let mut core = input.input_context_core(renderer, &self.keybinds);
+                let mut core = input.input_context_core(renderer, keybinds);
                 dispatch::action_core::dispatch_compatible(&a, &mut core, None)
             };
             if was_edit_selection {
@@ -122,7 +125,7 @@ impl super::WasmApp {
                 input.modifiers.shift_key(),
                 input.modifiers.alt_key(),
             );
-            let macro_id = self.keybinds.macro_for(k, ctrl, shift, alt).map(str::to_string);
+            let macro_id = keybinds.macro_for(k, ctrl, shift, alt).map(str::to_string);
             // A macro bound to an id that isn't in the registry
             // (typo'd config, half-loaded macros file) returns false
             // from `dispatch_macro`; fall through to the
@@ -132,7 +135,8 @@ impl super::WasmApp {
                 let mut target = WasmMacroDispatchTarget {
                     input,
                     renderer,
-                    keybinds: &self.keybinds,
+                    keybinds,
+                    after_step: None,
                 };
                 dispatch::macro_core::dispatch_macro(&id, &mut target)
             } else {
@@ -146,14 +150,15 @@ impl super::WasmApp {
                 //
                 // Animated entries (`timing.duration_ms > 0`) start
                 // an instance here and are advanced by the frame:
-                // the `redraw_after = true` this arm sets asks for a
+                // the redraw this arm asks for brings a
                 // `RedrawRequested`, and `event_redraw_requested`
                 // ticks the animation on every frame until it
                 // completes (#144 closed the stall where nothing on
                 // this target ticked it).
-                let mut core = input.input_context_core(renderer, &self.keybinds);
+                let mut core = input.input_context_core(renderer, keybinds);
                 let _ = dispatch::dispatch_custom_mutation_for_key(&mut core, k, ctrl, shift, alt);
             }
         }
+        true
     }
 }

@@ -4,11 +4,11 @@
 //! and the `screenshot` console verb (`format/ipc.md`
 //! §`capture.screenshot`; CONCEPTS §5 "Screenshot capture").
 //!
-//! **One engine, two surfaces.** A capture is planned ([`plan`]), its
-//! destination resolved and checked ([`resolve`]) — both before
+//! **One engine, two surfaces.** A capture is planned (`plan`), its
+//! destination resolved and checked (`resolve`) — both before
 //! anything is drawn, so a refused request costs no frame — then drawn
 //! offscreen by the renderer through the very frame pair the window
-//! draws with (`renderer::capture`), and written here ([`write()`]): the
+//! draws with (`renderer::capture`), and written here (`write()`): the
 //! PNG, its geometry sidecar, and — for a server-chosen path — the
 //! bounded artifacts dir. The app half that sits between planning and
 //! saving — projecting the zoom-dependent roles into the capture's own
@@ -22,28 +22,45 @@
 //! a PNG of a skipped frame would be indistinguishable from a frame
 //! that rendered black.
 //!
-//! Native-only at this module boundary (`CLAUDE.md` "Dual-target
-//! status", "Screenshot capture").
+//! **Two targets, one sidecar.** The geometry sidecar ([`geometry`]) is
+//! what both targets attach to a capture: the browser's canvas
+//! capture (`format/ipc.md` §Transport "Browser") carries it inline
+//! in the reply, as it carries the PNG. Everything else here — the
+//! offscreen plan, the PNG encoder, the artifacts dir, the recorder
+//! and the file writes — is native, item by item (`CLAUDE.md`
+//! "Dual-target status", "Screenshot capture").
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod artifacts;
 pub(crate) mod geometry;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod plan;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod png;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod record;
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
 use baumhard::gfx_structs::camera::Camera2D;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::guarded_file::{self, PublishRefusal};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::application::renderer::{CapturedPixels, FrameSkip};
 
+#[cfg(not(target_arch = "wasm32"))]
 use artifacts::Artifacts;
+#[cfg(not(target_arch = "wasm32"))]
 use geometry::Sidecar;
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The suffix the geometry sidecar adds to the PNG's file name.
 pub(crate) const SIDECAR_SUFFIX: &str = ".geometry.json";
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Where a capture's PNG goes.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Destination {
@@ -55,6 +72,7 @@ pub(crate) enum Destination {
     Artifacts,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// What a capture did.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CaptureOutcome {
@@ -71,6 +89,7 @@ pub(crate) enum CaptureOutcome {
     Skipped { camera: Camera2D, skip: FrameSkip },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Why a capture was refused.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CaptureError {
@@ -80,6 +99,7 @@ pub(crate) enum CaptureError {
     Internal(String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl CaptureError {
     /// The refusal's words, without the parameter or the class it was
     /// charged to: for a caller that reports every refusal the same way.
@@ -90,6 +110,7 @@ impl CaptureError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<plan::PlanError> for CaptureError {
     fn from(error: plan::PlanError) -> Self {
         CaptureError::Invalid {
@@ -99,6 +120,7 @@ impl From<plan::PlanError> for CaptureError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// `path`'s sidecar: the same name with [`SIDECAR_SUFFIX`] after it.
 pub(crate) fn sidecar_path_for(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -106,6 +128,7 @@ pub(crate) fn sidecar_path_for(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Where a capture will be written, resolved and checked before
 /// anything is drawn: a refused path costs no frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -116,6 +139,7 @@ pub(crate) struct Target {
     overwrite: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Resolve `destination` into a [`Target`]: a fresh name in the
 /// artifacts dir, or the caller's path — absolute, and, unless
 /// `overwrite` (or the artifacts dir, which is the app's own) allows
@@ -165,6 +189,7 @@ pub(crate) fn resolve(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Write a drawn frame to `target`: the PNG, then — when the target has
 /// one — the sidecar beside it, both through [`guarded_file::publish`],
 /// and record whatever landed in the artifacts dir so its budget holds.
@@ -211,7 +236,7 @@ pub(crate) fn write(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::application::guarded_file::tests::{names_in, scratch_dir};

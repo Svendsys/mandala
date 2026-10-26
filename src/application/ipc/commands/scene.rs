@@ -35,7 +35,9 @@ use baumhard::mindmap::scene_dump::{
 use baumhard::mindmap::tree_builder::PortalPart;
 
 use crate::application::ipc::envelope::Reply;
-use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
+use crate::application::ipc::registry::{
+    Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support,
+};
 use crate::application::ipc::space::camera_json;
 use crate::application::ipc::SceneView;
 use crate::application::scene_host::CanvasRole;
@@ -72,6 +74,9 @@ pub(super) const FAMILY: Family = Family {
                     "Which element kinds to report, as strings: nodes, edges, labels, portals. \
                      Default: all four.",
                 ),
+                // Native: the browser has no filesystem (`format/ipc.md`
+                // §Transport "Browser").
+                #[cfg(not(target_arch = "wasm32"))]
                 ParamSpec::new(
                     "to_file",
                     ParamType::String,
@@ -79,6 +84,9 @@ pub(super) const FAMILY: Family = Family {
                     "Absolute path. Write the dump there as JSON, atomically, and reply with just \
                      {path, bytes}. For a scene too large to inline.",
                 ),
+                // Native: the browser has no filesystem (`format/ipc.md`
+                // §Transport "Browser").
+                #[cfg(not(target_arch = "wasm32"))]
                 ParamSpec::new(
                     "overwrite",
                     ParamType::Boolean,
@@ -125,6 +133,7 @@ pub(super) const FAMILY: Family = Family {
                     "With to_file only: the size of the file written.",
                 ),
             ],
+            support: Support::Everywhere,
             run: dump,
         },
         CommandSpec {
@@ -155,6 +164,7 @@ pub(super) const FAMILY: Family = Family {
                     "Visible portal parts, as {edge, endpoint_node_id, part}.",
                 ),
             ],
+            support: Support::Everywhere,
             run: visible_set,
         },
         CommandSpec {
@@ -218,6 +228,7 @@ pub(super) const FAMILY: Family = Family {
                     "In the scene only: the ids of the other drawn nodes whose boxes overlap this one.",
                 ),
             ],
+            support: Support::Everywhere,
             run: node_geometry,
         },
         CommandSpec {
@@ -266,6 +277,7 @@ pub(super) const FAMILY: Family = Family {
                      under the point, or null.",
                 ),
             ],
+            support: Support::Everywhere,
             run: hit_test,
         },
         CommandSpec {
@@ -299,6 +311,7 @@ pub(super) const FAMILY: Family = Family {
                  {kind: section, node_id, section_idx | kind: label, edge | kind: portal, edge, \
                  endpoint_node_id, part}, each with text, canvas, surface and visibility.",
             )],
+            support: Support::Everywhere,
             run: find_text,
         },
     ],

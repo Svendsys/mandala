@@ -30,9 +30,9 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use super::gpu_harness::{headless_app, HARNESS_SIZE};
-use super::heartbeat::Beat;
 use super::ipc_target::IpcCommandTarget;
 use super::run_native_init::InitState;
+use super::step::Beat;
 use super::InteractionMode;
 use crate::application::capture::png;
 use crate::application::document::tests_common::first_testament_node_id;

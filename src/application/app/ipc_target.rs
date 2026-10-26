@@ -28,24 +28,22 @@ use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
 use crate::application::ipc::events::Observed;
 use crate::application::ipc::injected::{resolve_command, Delivery, Overloaded, Pacing, Sample, Surface};
-use crate::application::ipc::space::{camera_json, Point, Space};
-use crate::application::ipc::{ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState};
+use crate::application::ipc::space::{camera_json, Point};
+use crate::application::ipc::{
+    ActionOutcome, CommandTarget, Injected, SceneView, Screenshot, ShellState, IPC_STEPS_LABEL,
+};
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
-use crate::application::renderer::Renderer;
 use crate::application::source_tier::SourceTier;
 
 use super::capture_flow::{self, CaptureScene};
 use super::console_input::exec::execute_console_line;
-use super::dispatch::{self, DispatchHit, DispatchOutcome};
+use super::dispatch::{self, DispatchHit};
 use super::input_context::InputHandlerContext;
+use super::ipc_scene::{self, action_outcome, resolve_point, surface_of};
+use super::ipc_state;
 use super::record_flow;
 use super::run_native_init::InitState;
-use super::{ipc_scene, ipc_state};
-
-/// How an anonymous `act.macro` step sequence is named in the macro
-/// dispatcher's diagnostics.
-const IPC_STEPS_LABEL: &str = "(ipc steps)";
 
 /// The app, as one IPC command sees it. Built per command, like an
 /// [`InputHandlerContext`] is built per event.
@@ -71,6 +69,16 @@ impl<'a> IpcCommandTarget<'a> {
         self.init.input_context()
     }
 
+    /// The four modals' open flags, read off the shell's own states.
+    fn open_modals(&self) -> ipc_state::OpenModals {
+        ipc_state::OpenModals {
+            console: self.init.console_state.is_open(),
+            picker: self.init.color_picker_state.as_open().is_some(),
+            single_line: self.init.single_line_edit_state.is_open(),
+            text: self.init.text_edit_state.is_open(),
+        }
+    }
+
     /// `point` in both spaces, `(surface, canvas)`, through the
     /// renderer's camera.
     fn resolve(&self, point: Point) -> (Vec2, Vec2) {
@@ -94,38 +102,6 @@ impl<'a> IpcCommandTarget<'a> {
             held_by: None,
         }
     }
-}
-
-/// The funnel's verdict in the protocol's vocabulary. A refusal keeps
-/// its reason, which `act.action` returns (#194).
-fn action_outcome(outcome: DispatchOutcome) -> ActionOutcome {
-    match outcome {
-        DispatchOutcome::Handled => ActionOutcome::Handled,
-        DispatchOutcome::Unhandled => ActionOutcome::Unhandled,
-        DispatchOutcome::Refused(reason) => ActionOutcome::Refused(reason),
-    }
-}
-
-/// `point` in both spaces, `(surface, canvas)`, through `renderer`'s
-/// camera as it stands now.
-fn resolve_point(renderer: &Renderer, point: Point) -> (Vec2, Vec2) {
-    match point.space {
-        Space::Surface => (
-            Vec2::new(point.x, point.y),
-            renderer.screen_to_canvas(point.x, point.y),
-        ),
-        Space::Canvas => {
-            let canvas = Vec2::new(point.x, point.y);
-            (renderer.canvas_to_screen(canvas), canvas)
-        }
-    }
-}
-
-/// Where `point` lands on the surface, through `renderer`'s camera as
-/// it stands now: how an injected event's position is resolved.
-pub(super) fn surface_of(renderer: &Renderer, point: Point) -> Surface {
-    let (surface, _) = resolve_point(renderer, point);
-    (f64::from(surface.x), f64::from(surface.y))
 }
 
 impl InitState {
@@ -211,20 +187,17 @@ impl CommandTarget for IpcCommandTarget<'_> {
             ShellState::Camera => camera_json(self.init.renderer.camera()),
             ShellState::Mode => ipc_state::mode_to_ipc_json(
                 &self.init.interaction_mode,
-                &self.init.drag_state,
-                &self.init.console_state,
-                &self.init.color_picker_state,
-                &self.init.single_line_edit_state,
-                &self.init.text_edit_state,
+                self.init.drag_state.to_ipc_json(),
+                self.open_modals(),
                 self.init.hovered_node.as_deref(),
                 self.init.cursor_pos,
             ),
             ShellState::Status => json!({ "text": self.init.renderer.mode_status_text() }),
             ShellState::Editors => ipc_state::editors_to_ipc_json(
-                &self.init.console_state,
-                &self.init.color_picker_state,
-                &self.init.single_line_edit_state,
-                &self.init.text_edit_state,
+                ipc_state::console_to_ipc_json(&self.init.console_state),
+                ipc_state::picker_to_ipc_json(&self.init.color_picker_state),
+                self.init.single_line_edit_state.to_ipc_json(),
+                self.init.text_edit_state.to_ipc_json(),
                 self.init.document.as_ref(),
             ),
         }
@@ -353,28 +326,5 @@ impl CommandTarget for IpcCommandTarget<'_> {
         // show where the step left the app.
         self.changed_view = true;
         Ok(stepped)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::application::app::dispatch::native::FastResizeRefusal;
-
-    /// **A refusal reaches IPC with its reason intact** (#194), the
-    /// link between `fast_resize_drag`'s named refusal and the
-    /// `act.action` reply that shows it. The controls are the other two
-    /// verdicts: neither invents a reason, and a `Handled` stays one.
-    #[test]
-    fn test_a_refused_dispatch_keeps_its_reason_for_ipc() {
-        assert_eq!(
-            action_outcome(DispatchOutcome::Refused(FastResizeRefusal::NO_HOLDER)),
-            ActionOutcome::Refused(FastResizeRefusal::NO_HOLDER)
-        );
-        assert_eq!(
-            action_outcome(DispatchOutcome::Unhandled),
-            ActionOutcome::Unhandled
-        );
-        assert_eq!(action_outcome(DispatchOutcome::Handled), ActionOutcome::Handled);
     }
 }

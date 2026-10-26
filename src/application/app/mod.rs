@@ -84,14 +84,13 @@ pub(crate) mod fire_custom_mutation;
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]
 mod heartbeat;
+mod step;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use heartbeat::{step_document, SteppedDocument};
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
 mod interaction_mode;
-#[cfg(not(target_arch = "wasm32"))]
 mod ipc_scene;
-#[cfg(not(target_arch = "wasm32"))]
 mod ipc_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod ipc_target;
@@ -102,7 +101,6 @@ mod record_flow;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `work_plans/WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
-#[cfg(not(target_arch = "wasm32"))]
 mod modal_editor;
 #[cfg(not(target_arch = "wasm32"))]
 mod portal_label_drag;

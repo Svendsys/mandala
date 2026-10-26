@@ -15,13 +15,15 @@
 //! transport sends the reply when the event loop finds it due
 //! (`ipc::wait`). Everything else here replies at once.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use serde_json::{json, Value};
 
 use crate::application::clock::{AppClock, ClockMode, ClockRefusal, StepRequest};
 use crate::application::ipc::envelope::{code, Reply};
-use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
+use crate::application::ipc::registry::{
+    Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec, Support,
+};
 use crate::application::ipc::wait::{PendingWait, Until, DEFAULT_TIMEOUT_MS, TIMEOUT_RANGE};
 
 const MODE: ResultSpec = ResultSpec::new(
@@ -43,6 +45,7 @@ pub(super) const FAMILY: Family = Family {
             summary: "Read the app clock: its mode and its reading.",
             params: &[],
             result: &[MODE, NOW_MS],
+            support: Support::Everywhere,
             run: status,
         },
         CommandSpec {
@@ -56,6 +59,7 @@ pub(super) const FAMILY: Family = Family {
                 "\"real\" or \"virtual\". Refused while a recording runs.",
             )],
             result: &[MODE, NOW_MS],
+            support: Support::Everywhere,
             run: set_mode,
         },
         CommandSpec {
@@ -83,6 +87,7 @@ pub(super) const FAMILY: Family = Family {
                     "Heartbeats executed: frames, or ceil(ms / 16).",
                 ),
             ],
+            support: Support::Everywhere,
             run: step,
         },
         CommandSpec {
@@ -110,6 +115,7 @@ pub(super) const FAMILY: Family = Family {
                 ParamType::Integer,
                 "Wall-clock milliseconds the wait took.",
             )],
+            support: Support::Everywhere,
             run: wait,
         },
     ],

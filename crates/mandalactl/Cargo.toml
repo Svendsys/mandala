@@ -37,3 +37,15 @@ interprocess.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# The relay (`src/bridge/`) and the `--ws` client (`src/client.rs`):
+# `tungstenite` is the WebSocket codec and handshake, blocking `std`
+# I/O like the rest of the crate; `getrandom` mints the relay's token.
+# Under the native table, not `[dependencies]`: the browser build of
+# this crate (the workspace is type-checked for wasm32) is the app's
+# side of the relay, never the controller's, so neither is resolved
+# there — which also keeps `tungstenite`'s `rand` off the wasm32 graph,
+# where `getrandom` needs the root manifest's `wasm_js` feature.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom.workspace = true
+tungstenite = "0.30.0"
