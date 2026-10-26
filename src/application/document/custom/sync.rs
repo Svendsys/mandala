@@ -4,7 +4,7 @@
 //! position, size)` per section back into the model's
 //! `MindSection` shape after a custom mutation lands. The forward
 //! direction (model → tree) lives in
-//! `lib/baumhard/src/mindmap/tree_builder/node.rs::append_node_sections`;
+//! `lib/baumhard/src/mindmap/tree_builder/node.rs::append_section`;
 //! this file is the dedicated reverse counterpart for the
 //! `Persistent` apply path.
 //!
@@ -211,7 +211,7 @@ fn sync_section_font_size(
 /// [`TextRun`], merging fields the tree dropped during the
 /// forward conversion against a `prior` run when the prior
 /// covered the same `Range`. The forward path
-/// (`tree_builder/node.rs::append_node_sections`) only carries
+/// (`tree_builder/node.rs::append_section`) only carries
 /// `range`, `color`, and `font` onto the tree-side region;
 /// `bold` / `italic` / `underline` / `size_pt` / `hyperlink`
 /// disappear into the cosmic-text default attribute set. The

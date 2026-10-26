@@ -106,12 +106,15 @@ pub use section_resize_handle::{
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::tree::GfxMutatorTree;
 use crate::mindmap::model::ChildIndex;
-use node::{append_node_sections, build_descendants, mindnode_container_area};
+use node::build_nodes;
 
 /// Add `element` under `parent` — every glyph builder's one way to grow
 /// a tree. It lands in key order, after any sibling with an equal key
-/// ([`Placement::Last`]), so a builder that adds children in ascending
-/// channel order gets exactly that sibling order.
+/// ([`Placement::Last`]): the key decides a child's place, and the
+/// order children are added in decides only ties. A builder that adds
+/// each row in ascending channel order makes every insert the O(1)
+/// append; any other order costs a scan back past each sibling keyed
+/// above the new one.
 ///
 /// The builders add only under nodes they have just created, so a
 /// refusal names a builder defect rather than bad input: it is logged
@@ -224,32 +227,14 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
     let mut id_counter: usize = 1; // 0 is reserved for the Void root
 
     let index = ChildIndex::build(map);
-    for root in index.roots() {
-        // Roots have no ancestors, so they are never hidden by fold.
-        let area = mindnode_container_area(map, root);
-        let element = GfxElement::new_area_non_indexed_with_id(area, root.channel, id_counter);
-        id_counter += 1;
-
-        let tree_root = tree.root;
-        let Some(node_id) = push_element(&mut tree, tree_root, element) else {
-            continue;
-        };
-        node_map.insert(root.id.clone(), node_id);
-
-        append_node_sections(map, root, node_id, &mut tree, &mut section_map, &mut id_counter);
-
-        build_descendants(
-            map,
-            &index,
-            &root.id,
-            root.folded,
-            node_id,
-            &mut tree,
-            &mut node_map,
-            &mut section_map,
-            &mut id_counter,
-        );
-    }
+    build_nodes(
+        map,
+        &index,
+        &mut tree,
+        &mut node_map,
+        &mut section_map,
+        &mut id_counter,
+    );
 
     let reverse_node_map: HashMap<NodeId, String> = node_map
         .iter()
@@ -417,6 +402,73 @@ mod append_cost_tests {
     /// It pins the source rather than a duration, because a timing
     /// assertion on a shared runner is a flake, and because the
     /// property that matters is structural.
+    /// **Every row of the scene is added in key order.**
+    ///
+    /// The tree keeps each row sorted by channel, and `insert_child`
+    /// finds a new node's place by scanning back from the end of its
+    /// row. A row added in file order whose channels descend therefore
+    /// costs a scan past every sibling already in place — N²/2 key
+    /// reads for N siblings, on every structural rebuild, reachable
+    /// from a `.mindmap.json` alone. The builder sorts each row first,
+    /// so each insert is the append at the end of its row.
+    ///
+    /// Pinned structurally, for the reason the test below gives: the
+    /// arena hands out ids in creation order and the build removes
+    /// nothing, so a node appended at the end of its row has a larger
+    /// id than every sibling before it. Ids that ascend along every
+    /// row are exactly "every insert was the append". The fixture
+    /// descends everywhere the file decides an order: the roots, a
+    /// container's child nodes, and its sections interleaved among
+    /// them by explicit channels.
+    #[test]
+    fn test_every_scene_row_is_built_by_appending() {
+        use crate::mindmap::model::MindSection;
+        use crate::mindmap::test_helpers::{synthetic_map, synthetic_node_full};
+
+        const SIBLINGS: usize = 1000;
+        let node = |id: &str, parent: Option<&str>, channel: usize| {
+            let mut node = synthetic_node_full(id, parent, 0.0, 0.0, 80.0, 40.0, false);
+            node.channel = channel;
+            node
+        };
+        let mut nodes = vec![node("r0", None, 3), node("r1", None, 2), node("r2", None, 1)];
+        // Sections on channels above, among and below the children's.
+        nodes[0].sections = [Some(SIBLINGS + 10), Some(SIBLINGS / 2), None]
+            .into_iter()
+            .map(|channel| MindSection {
+                channel,
+                ..MindSection::new_default("s".into(), vec![])
+            })
+            .collect();
+        for i in 0..SIBLINGS {
+            nodes.push(node(&format!("c{i:04}"), Some("r0"), SIBLINGS - i));
+        }
+        let built = super::build_mindmap_tree(&synthetic_map(nodes, vec![]));
+        let tree = &built.tree;
+
+        let mut rows = 0;
+        for parent in tree.root.descendants(tree.arena()) {
+            let row: Vec<_> = parent.children(tree.arena()).collect();
+            rows += 1;
+            for pair in row.windows(2) {
+                assert!(
+                    pair[0] < pair[1],
+                    "a child of {parent} was inserted ahead of a sibling already in its row \
+                     ({} before {}): the row was not added in key order, so the insert scanned",
+                    pair[1],
+                    pair[0]
+                );
+            }
+        }
+        let wide = built.arena_id_for("r0").expect("r0 is built");
+        assert_eq!(
+            wide.children(tree.arena()).count(),
+            SIBLINGS + 3,
+            "precondition: the wide row holds every child and every section"
+        );
+        assert!(rows > SIBLINGS, "precondition: every row was read ({rows})");
+    }
+
     #[test]
     fn test_the_tree_builder_never_pays_for_a_cycle_check() {
         let (found, value_inserts) = crate::util::source_scan::sorted_insert_checked_calls();

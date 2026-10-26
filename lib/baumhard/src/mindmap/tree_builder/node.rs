@@ -444,144 +444,205 @@ pub(super) fn renderable_section(section: &MindSection) -> bool {
     }
 }
 
-/// Append the section subtree (one `GlyphArea` + one `GlyphModel`
-/// per renderable [`MindSection`] — see [`renderable_section`])
-/// under `parent_node_id` and record the
-/// section-area's `NodeId` in `section_map`. Each section element
-/// carries `Flag::SectionRoot` so click-routing and per-section
-/// scene rebuild can discriminate them from sibling child mind-
-/// node-areas in the same tree.
+/// Append one section subtree — a section-area `GlyphArea` and its
+/// one `GlyphModel` child — under the container `parent_node_id`, and
+/// record the section-area's `NodeId` in `section_map`. The caller
+/// has checked [`renderable_section`]. Both elements carry
+/// `Flag::SectionRoot` so click-routing and per-section scene
+/// rebuild can discriminate them from sibling child mind-node-areas
+/// in the same tree.
 ///
-/// The section-area's `channel` is the section's authored channel
-/// (defaulting to its index in `MindNode.sections`), so per-section
-/// custom mutations targeting `Children` pair up by channel inside
-/// the parent node-area. Channel collisions with sibling child
-/// mind-nodes are accepted as a known authoring footgun — see the
-/// `Predicate::IsSection` / `TargetScope::SectionsOnly` named-seam
-/// note in CONCEPTS.md.
-pub(super) fn append_node_sections(
+/// The section-area's `channel` is the section's effective channel
+/// ([`MindSection::effective_channel`]), so per-section custom mutations targeting
+/// `Children` pair up by channel inside the parent node-area. Channel
+/// collisions with sibling child mind-nodes are accepted as a known
+/// authoring footgun — see the `Predicate::IsSection` /
+/// `TargetScope::SectionsOnly` named-seam note in CONCEPTS.md.
+///
+/// Cost: the two elements' construction, one O(1) append for the
+/// model under its fresh section-area, and the section-area's own
+/// insert — O(1) when the caller adds the container's row in key
+/// order, as [`build_nodes`] does.
+// `clippy::too_many_arguments`: the section's identity triple
+// `(node, section_idx, section)` plus the arena parent and the
+// three out-parameters (`tree`, `section_map`, `id_counter`).
+// Bundling them would only add a borrow indirection.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn append_section(
     map: &MindMap,
     node: &MindNode,
+    section_idx: usize,
+    section: &MindSection,
     parent_node_id: NodeId,
     tree: &mut GfxTree,
     section_map: &mut HashMap<(String, usize), NodeId>,
     id_counter: &mut usize,
 ) {
-    for (section_idx, section) in node.sections.iter().enumerate() {
-        if !renderable_section(section) {
-            continue;
+    let channel = section.effective_channel(section_idx);
+
+    let section_area = mindnode_section_area(map, node, section, section_idx);
+    let section_model = mindnode_section_model(section, &section_area);
+
+    let mut section_element = GfxElement::new_area_non_indexed_with_id(section_area, channel, *id_counter);
+    section_element.set_flag(Flag::SectionRoot);
+    *id_counter += 1;
+
+    let Some(section_id) = super::push_element(tree, parent_node_id, section_element) else {
+        return;
+    };
+    section_map.insert((node.id.clone(), section_idx), section_id);
+
+    let mut model_element = GfxElement::new_model_non_indexed_with_id(section_model, channel, *id_counter);
+    // The model inherits `SectionRoot` so a flag-based
+    // descent walker can climb from "this is the model" to
+    // "this is a section element" without re-checking the
+    // arena edge.
+    model_element.set_flag(Flag::SectionRoot);
+    *id_counter += 1;
+    super::push_element(tree, section_id, model_element);
+}
+
+/// Add the container `GlyphArea` of `node` under `parent` and record
+/// it in `node_map`. `None` when the insert was refused, in which
+/// case the caller skips the node's whole subtree. Cost: the
+/// container area's construction plus one insert — O(1) when the
+/// parent's row is added in key order.
+fn push_container(
+    map: &MindMap,
+    node: &MindNode,
+    parent: NodeId,
+    tree: &mut GfxTree,
+    node_map: &mut HashMap<String, NodeId>,
+    id_counter: &mut usize,
+) -> Option<NodeId> {
+    let area = mindnode_container_area(map, node);
+    let element = GfxElement::new_area_non_indexed_with_id(area, node.channel, *id_counter);
+    *id_counter += 1;
+    let node_id = super::push_element(tree, parent, element)?;
+    node_map.insert(node.id.clone(), node_id);
+    Some(node_id)
+}
+
+/// One child of a node container, as the container's row holds it.
+#[derive(Clone, Copy)]
+enum RowCell<'a> {
+    /// A renderable section and its index in `MindNode.sections`.
+    Section { index: usize, section: &'a MindSection },
+    /// A child mind-node, which becomes a container of its own.
+    Node(&'a MindNode),
+}
+
+impl RowCell<'_> {
+    /// The channel the cell's element carries — the key its row is
+    /// ordered by. O(1).
+    fn channel(&self) -> usize {
+        match *self {
+            RowCell::Section { index, section } => section.effective_channel(index),
+            RowCell::Node(node) => node.channel,
         }
-        // Effective channel: use the authored value when the
-        // user explicitly set one (`Some(_)`); otherwise default
-        // to the section's index. The `Option<usize>` shape
-        // distinguishes "author wrote `0` explicitly" from
-        // "default" — pre-`Option` migration silently overrode
-        // explicit 0 for sections at idx > 0, which the author
-        // had no way to override.
-        let channel = section.channel.unwrap_or(section_idx);
-
-        let section_area = mindnode_section_area(map, node, section, section_idx);
-        let section_model = mindnode_section_model(section, &section_area);
-
-        let mut section_element =
-            GfxElement::new_area_non_indexed_with_id(section_area, channel, *id_counter);
-        section_element.set_flag(Flag::SectionRoot);
-        *id_counter += 1;
-
-        let Some(section_id) = super::push_element(tree, parent_node_id, section_element) else {
-            continue;
-        };
-        section_map.insert((node.id.clone(), section_idx), section_id);
-
-        let mut model_element =
-            GfxElement::new_model_non_indexed_with_id(section_model, channel, *id_counter);
-        // The model inherits `SectionRoot` so a flag-based
-        // descent walker can climb from "this is the model" to
-        // "this is a section element" without re-checking the
-        // arena edge.
-        model_element.set_flag(Flag::SectionRoot);
-        *id_counter += 1;
-        super::push_element(tree, section_id, model_element);
     }
 }
 
-/// Descendant walker — for every visible mind-node under
-/// `parent_mind_id`, append the container area then its section
-/// subtree. Keeps the container, sections, and child mind-nodes as
-/// a flat sibling list under the parent container — same shape as
-/// the pre-section tree, just with extra section siblings.
+/// Build every node container under the tree's root, and everything
+/// below them: for each visible mind-node, its container area, then
+/// its row — its section subtrees and its child mind-nodes' containers
+/// as siblings under it, the same flat shape as the pre-section tree,
+/// just with extra section siblings. Roots are never hidden by fold.
 ///
-/// `parent_folded` is `true` when an ancestor (including the
-/// immediate parent) is folded. A folded node's subtree is hidden
-/// by construction, so it is never descended into — which is also
-/// why the fold check from the old `is_hidden_by_fold` path is
-/// redundant here.
+/// **Every row is added in key order**, so every insert is the O(1)
+/// append at the end of its row. The order of a row is the key's: the
+/// tree keeps children sorted by channel whatever order they are
+/// added in, and the order they are added in decides only ties —
+/// equal channels keep the order they were added. So each row is
+/// stable-sorted by channel before it is added: the roots in
+/// [`ChildIndex`] order, and a container's sections in
+/// `MindNode.sections` order followed by its child mind-nodes in
+/// [`ChildIndex`] order — on a tie, a section before a child node and
+/// both in that source order, exactly as when the sections were added
+/// first and the nodes after. Added in file order instead, a row whose
+/// channels descend would make each insert scan back past every
+/// sibling already in place: O(N²) key reads for N siblings, reachable
+/// from a `.mindmap.json` alone.
 ///
-/// **The descent is iterative, and that is load-bearing.** This
-/// walker's depth is `parent_id` nesting depth, authored in a
-/// `.mindmap.json` — untrusted input, where a linear chain of N
-/// nodes is a legal acyclic tree the loader's cycle check accepts.
-/// The recursive form overflowed the thread stack on such a map
-/// and took the process down with `SIGABRT`: not a panic, so there
-/// was no frame to degrade and nothing to log
-/// (CODE_CONVENTIONS §9). Depth now costs heap. The scene rebuild
-/// runs this on every structural change, so a hostile map that
-/// merely *opens* reached it.
+/// `unique_id`s come from `id_counter` in the order elements are
+/// added: a container's id when its parent's row is added, its
+/// sections' ids when its own row is. The order is deterministic in
+/// the map, which is what the renderer and the scene cache key on.
 ///
-/// Nodes are visited in the same pre-order the recursive form
-/// produced — children are pushed in reverse so the lowest-sorted
-/// sibling pops first. That order is not cosmetic: it fixes arena
-/// sibling order and the `unique_id` values handed out from
-/// `id_counter`, both of which the renderer and the scene cache
-/// key on.
+/// A folded node keeps its sections but adds no child mind-nodes, so
+/// its subtree is hidden by construction — which is also why the fold
+/// check from the old `is_hidden_by_fold` path is redundant here.
 ///
-/// Cost: O(visible descendants). One heap vector holding the
-/// frontier — the sum of the unprocessed sibling rows along the
-/// current path — **one element for a linear chain**, since each
-/// node's only child replaces it, O(n) for a shallow wide tree, and
-/// O(depth x branching) in general.
-// `clippy::too_many_arguments`: an arena walk threading four
-// out-parameters (`tree`, `node_map`, `section_map`, `id_counter`)
-// plus the read-only `(map, index, parent)` triple. Bundling the
-// out-params into a struct would just add a borrow indirection.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_descendants<'a>(
+/// **The descent is iterative, and that is load-bearing.** Its depth
+/// is `parent_id` nesting depth, authored in a `.mindmap.json` —
+/// untrusted input, where a linear chain of N nodes is a legal acyclic
+/// tree the loader's cycle check accepts. The recursive form
+/// overflowed the thread stack on such a map and took the process
+/// down with `SIGABRT`: not a panic, so there was no frame to degrade
+/// and nothing to log (CODE_CONVENTIONS §9). Depth now costs heap.
+/// The scene rebuild runs this on every structural change, so a
+/// hostile map that merely *opens* reached it.
+///
+/// Cost: O(visible nodes + sections) inserts, each an O(1) append,
+/// plus one stable sort per row — O(r log r) for a row of r — in a row
+/// buffer reused across containers. One heap vector holds the
+/// frontier: the containers placed but not yet expanded, the sum of
+/// the unexpanded rows along the current path — **one element for a
+/// linear chain**, O(n) for a shallow wide tree, and O(depth x
+/// branching) in general.
+pub(super) fn build_nodes<'a>(
     map: &MindMap,
     index: &ChildIndex<'a>,
-    parent_mind_id: &str,
-    parent_folded: bool,
-    parent_node_id: NodeId,
     tree: &mut GfxTree,
     node_map: &mut HashMap<String, NodeId>,
     section_map: &mut HashMap<(String, usize), NodeId>,
     id_counter: &mut usize,
 ) {
-    if parent_folded {
-        return;
+    let mut roots: Vec<&'a MindNode> = index.roots().to_vec();
+    roots.sort_by_key(|node| node.channel);
+    let tree_root = tree.root;
+    let mut placed: Vec<(&'a MindNode, NodeId)> = Vec::new();
+    for root in roots {
+        if let Some(node_id) = push_container(map, root, tree_root, tree, node_map, id_counter) {
+            placed.push((root, node_id));
+        }
     }
-    let mut pending: Vec<(&'a MindNode, NodeId)> = index
-        .children_of(parent_mind_id)
-        .iter()
-        .rev()
-        .map(|child| (*child, parent_node_id))
-        .collect();
+    // Popped in row order, so the containers are expanded in tree
+    // pre-order.
+    let mut pending: Vec<(&'a MindNode, NodeId)> = placed.drain(..).rev().collect();
 
-    while let Some((child, arena_parent)) = pending.pop() {
-        let area = mindnode_container_area(map, child);
-        let element = GfxElement::new_area_non_indexed_with_id(area, child.channel, *id_counter);
-        *id_counter += 1;
+    let mut row: Vec<RowCell<'a>> = Vec::new();
+    while let Some((node, node_id)) = pending.pop() {
+        row.clear();
+        row.extend(
+            node.sections
+                .iter()
+                .enumerate()
+                .filter(|(_, section)| renderable_section(section))
+                .map(|(index, section)| RowCell::Section { index, section }),
+        );
+        if !node.folded {
+            row.extend(
+                index
+                    .children_of(&node.id)
+                    .iter()
+                    .map(|&child| RowCell::Node(child)),
+            );
+        }
+        row.sort_by_key(RowCell::channel);
 
-        let Some(child_node_id) = super::push_element(tree, arena_parent, element) else {
-            continue;
-        };
-        node_map.insert(child.id.clone(), child_node_id);
-
-        append_node_sections(map, child, child_node_id, tree, section_map, id_counter);
-
-        if !child.folded {
-            for grandchild in index.children_of(&child.id).iter().rev() {
-                pending.push((grandchild, child_node_id));
+        for &cell in &row {
+            match cell {
+                RowCell::Section { index, section } => {
+                    append_section(map, node, index, section, node_id, tree, section_map, id_counter)
+                }
+                RowCell::Node(child) => {
+                    if let Some(child_id) = push_container(map, child, node_id, tree, node_map, id_counter) {
+                        placed.push((child, child_id));
+                    }
+                }
             }
         }
+        pending.extend(placed.drain(..).rev());
     }
 }
