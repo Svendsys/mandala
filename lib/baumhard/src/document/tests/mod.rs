@@ -11,6 +11,7 @@ pub mod deps_tests;
 pub mod element_tests;
 pub mod ids_tests;
 pub mod inspect_tests;
+pub mod journal_tests;
 pub mod resolve_tests;
 pub mod shape_tests;
 /// Crate-private: the tests and their bench bodies build documents with

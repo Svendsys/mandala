@@ -42,6 +42,9 @@ pub mod ids;
 /// [`DocField`](inspect::DocField): what a predicate can test on an
 /// element.
 pub mod inspect;
+/// The engine's `Interpolable` for the document: numbers, positions,
+/// sizes and literal colors blend; everything else snaps.
+pub mod interpolation;
 /// Per-field style resolution with read recording.
 pub mod resolve;
 /// The shape rules: which kinds may hold which.

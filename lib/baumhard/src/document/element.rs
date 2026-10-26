@@ -576,5 +576,13 @@ impl TreeElement for DocElement {
         DocElement::Map(MapData::default())
     }
 
+    /// `==`: every field of every kind is state — a document element
+    /// holds no callback, cache or other bookkeeping — and the derived
+    /// `Clone` copies all of it. (A `NaN` compares unequal to itself,
+    /// which costs a redundant journal entry, never a lost one.)
+    fn same_state(&self, other: &Self) -> bool {
+        self == other
+    }
+
     fn inherit(&self, _parent: &()) {}
 }

@@ -6,6 +6,7 @@ use baumhard::document::tests::deps_tests::*;
 use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::ids_tests::*;
 use baumhard::document::tests::inspect_tests::*;
+use baumhard::document::tests::journal_tests::*;
 use baumhard::document::tests::resolve_tests::*;
 use baumhard::document::tests::shape_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
@@ -1761,6 +1762,18 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_document_bounds_node_ident)
     });
     c.bench_function("document_bounds_counts", |b| b.iter(do_document_bounds_counts));
+    c.bench_function("document_journal_reverts_and_replays_exactly", |b| {
+        b.iter(do_document_journal_reverts_and_replays_exactly)
+    });
+    c.bench_function("document_same_state_sees_every_field", |b| {
+        b.iter(do_document_same_state_sees_every_field)
+    });
+    c.bench_function("document_write_interpolated", |b| {
+        b.iter(do_document_write_interpolated)
+    });
+    c.bench_function("document_interpolate_blends_numbers_and_colors", |b| {
+        b.iter(do_document_interpolate_blends_numbers_and_colors)
+    });
     c.bench_function("document_never_reissues_an_ident", |b| {
         b.iter(do_document_never_reissues_an_ident)
     });
