@@ -761,32 +761,61 @@ pub(crate) fn node_position_component_writes() -> Vec<(String, usize, String)> {
     out
 }
 
-/// The methods that make a `Vec` longer. A call to any of these on a
-/// `.sections` receiver is a site that can push a node past
-/// `MAX_SECTIONS_PER_NODE`.
-const SECTION_GROWTH_METHODS: &[&str] = &[
-    "insert",
-    "push",
+/// The `Vec` methods that add exactly **one** element. Only these can
+/// be guarded by `room_for_another_section`, which promises room for
+/// one more section and nothing beyond.
+const SECTION_SINGLE_GROWTH_METHODS: &[&str] = &["push", "insert"];
+
+/// The `Vec` methods that add **any number** of elements. A one-more
+/// guard says nothing about these, so they are always reported
+/// unguarded: a writer that needs one has to bound its count against
+/// `MAX_SECTIONS_PER_NODE` itself and be argued for by name.
+const SECTION_MULTI_GROWTH_METHODS: &[&str] = &[
     "extend",
     "extend_from_slice",
+    "extend_from_within",
     "append",
     "splice",
     "resize",
     "resize_with",
 ];
 
+/// Iterator methods whose closure argument runs once per item, so a
+/// growth inside it is a growth in a loop. Not exhaustive — a closure
+/// handed to anything else is assumed to run once, which is how both
+/// shipped writers use one (an undo envelope runs its closure once).
+const ITERATING_CLOSURE_METHODS: &[&str] = &[
+    "for_each",
+    "try_for_each",
+    "map",
+    "filter_map",
+    "flat_map",
+    "fold",
+    "try_fold",
+    "scan",
+    "inspect",
+    "any",
+    "all",
+];
+
 /// How a [`SectionGrowth`] writes the vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GrowthKind {
-    /// `x.sections.push(…)` and the other [`SECTION_GROWTH_METHODS`],
-    /// however rustfmt wraps the chain.
-    Method,
-    /// `Vec::push(&mut x.sections, …)` — the same call, spelled as a
-    /// path.
+    /// `x.sections.push(…)` / `insert(…)`, however rustfmt wraps the
+    /// chain: one element, so guardable — unless it sits in a loop.
+    Single,
+    /// `extend` and the rest of [`SECTION_MULTI_GROWTH_METHODS`]: any
+    /// number of elements, never guarded by a one-more check.
+    Multi,
+    /// `Vec::push(&mut x.sections, …)` — the same call spelled as a
+    /// path; one element for `push` / `insert`, else counted as
+    /// [`GrowthKind::Multi`].
     Ufcs,
-    /// `x.sections = …`: a wholesale replacement. Not a growth by one,
-    /// but nothing about the syntax bounds the new length, so it is
-    /// reported for the caller to account for.
+    /// A wholesale replacement: `x.sections = …`,
+    /// `x.sections.clone_from(…)`, or `std::mem::{replace, swap, take}`
+    /// with `&mut x.sections`. Not a growth by one, and nothing about
+    /// the syntax bounds the new length, so it is reported for the
+    /// caller to account for by name.
     Assign,
 }
 
@@ -802,39 +831,53 @@ pub(crate) struct SectionGrowth {
     /// The enclosing fn's name.
     pub function: String,
     pub kind: GrowthKind,
-    /// Whether a statement earlier in the same fn body propagates
-    /// `room_for_another_section`'s refusal — see
-    /// [`section_growths_in`] for exactly what counts.
+    /// Whether this site is covered by a `room_for_another_section`
+    /// guard — see [`section_growths_in`] for exactly what counts.
     pub guarded: bool,
 }
 
 /// Every site in `source` that grows or replaces a `sections` vector,
-/// with its enclosing fn and whether that fn is **guarded** at the
-/// point of growth.
+/// with its enclosing fn and whether it is **guarded**.
 ///
-/// Read as syntax (`syn`), not as lines: a growth is a method call on
-/// a `.sections` field receiver, or a path call whose first argument is
-/// `&mut <expr>.sections`, or an assignment to one, wherever it sits in
-/// the fn body — a closure included, which is the shape both shipped
-/// writers use (the growth runs inside an undo envelope's closure). So
-/// the rustfmt-wrapped `node.sections\n    .push(` is the same site as
-/// the one-line spelling.
+/// Read as syntax (`syn`), not as lines, so the rustfmt-wrapped
+/// `node.sections\n    .push(` is the same site as the one-line
+/// spelling. A site is any of: a growing method on a `.sections` field
+/// receiver ([`SECTION_SINGLE_GROWTH_METHODS`],
+/// [`SECTION_MULTI_GROWTH_METHODS`]); the same as a path call whose
+/// first argument is `&mut <expr>.sections`; or a replacement
+/// ([`GrowthKind::Assign`]) — wherever it sits in the fn body, a
+/// closure included (both shipped writers grow inside an undo
+/// envelope's closure).
 ///
 /// **Guarded** is deliberately narrow, so a mention cannot pass for a
-/// check. A fn is guarded from the first *top-level* statement of its
-/// body whose result propagates a `room_for_another_section(…)`
-/// refusal:
+/// check. A site is guarded only when all of these hold:
 ///
-/// - an expression statement `…room_for_another_section(…)…?;`, or a
-///   `let` whose initializer is such a `?` expression;
-/// - a `let … = …room_for_another_section(…)… else { … }` whose else
-///   block returns; or
-/// - an `if` / `match` over the call whose body returns.
+/// - it adds **one** element: `push` / `insert`, as a method or a path
+///   call — `room_for_another_section` promises room for exactly one,
+///   so a multi-element method is never guarded by it;
+/// - it is **not in a loop** — a `for` / `while` / `loop` body, or a
+///   closure passed to one of [`ITERATING_CLOSURE_METHODS`] — since a
+///   push repeated N times is N growths behind one check;
+/// - an earlier **top-level** statement of the same fn body propagates
+///   the guard's refusal, in one of four shapes: `room_for_another_section(…)`
+///   followed only by `map_err(…)` / `ok()` and then `?` (as a
+///   statement or a `let` initializer); `let Ok(..) = room_for_another_section(…)
+///   else { return … }`; `if room_for_another_section(…)….is_err() { return … }`
+///   or `if let Err(..) = room_for_another_section(…) { return … }`; or a
+///   `match room_for_another_section(…)` whose `Err(..)` arm returns.
+///   The call counts as a path (`validate::room_for_another_section(n)`)
+///   or a method (`n.room_for_another_section()`).
 ///
-/// Only statements *before* the one holding the growth count. Not a
-/// guard: a discarded result (`let _ = …`), a call inside a closure or
-/// a branch, a call after the growth, or a check in a helper the fn
-/// calls. Those are reported unguarded — the conservative direction.
+/// Not a guard, so reported unguarded: a discarded result (`let _ = …`),
+/// a call inside a closure or on a branch, a call after the growth, a
+/// refusal swallowed (`or_else(…)?`) or inverted (`is_ok()`), or a check
+/// in a helper the fn calls.
+///
+/// Two approximations, stated so nobody reads in more: the guard is
+/// **not tied to the growth's receiver** — `room_for_another_section(a)?`
+/// covers a later `b.sections.push(…)` — and the receiver's **type is
+/// not resolved**, so a `.sections` field on an unrelated struct is a
+/// site too (the conservative direction: it is reported, not missed).
 ///
 /// What this cannot see: a growth through a binding
 /// (`let s = &mut node.sections; s.push(…)`), a raw pointer, or code
@@ -876,21 +919,24 @@ pub(crate) fn section_growths_in(source: &str) -> Vec<SectionGrowth> {
 /// Scan one fn body's top-level statements in order: collect the
 /// growths in each, then let the statement turn the guard on.
 fn scan_fn_body(function: &str, body: &syn::Block, out: &mut Vec<SectionGrowth>) {
-    let mut guarded = false;
+    let mut guard_seen = false;
     for stmt in &body.stmts {
-        let mut finder = GrowthFinder { found: Vec::new() };
+        let mut finder = GrowthFinder {
+            found: Vec::new(),
+            loop_depth: 0,
+        };
         syn::visit::Visit::visit_stmt(&mut finder, stmt);
-        for (line, kind) in finder.found {
+        for (line, kind, in_loop) in finder.found {
             out.push(SectionGrowth {
                 file: String::new(),
                 line,
                 function: function.to_string(),
                 kind,
-                guarded,
+                guarded: guard_seen && matches!(kind, GrowthKind::Single | GrowthKind::Ufcs) && !in_loop,
             });
         }
         if propagates_section_guard(stmt) {
-            guarded = true;
+            guard_seen = true;
         }
     }
 }
@@ -906,30 +952,89 @@ fn is_sections_field(expr: &syn::Expr) -> bool {
     }
 }
 
-/// Collects the growth sites inside one statement. Nested fn items are
-/// skipped here — the outer visitor scans them as fns of their own.
+/// Is `expr` `&mut <expr>.sections`?
+fn is_mut_ref_to_sections(expr: &syn::Expr) -> bool {
+    matches!(expr, syn::Expr::Reference(r) if r.mutability.is_some() && is_sections_field(&r.expr))
+}
+
+/// Collects the sites inside one statement, each with whether it sits
+/// in a loop. Nested fn items are skipped — the outer visitor scans
+/// them as fns of their own.
 struct GrowthFinder {
-    found: Vec<(usize, GrowthKind)>,
+    found: Vec<(usize, GrowthKind, bool)>,
+    loop_depth: usize,
+}
+
+impl GrowthFinder {
+    fn record(&mut self, line: usize, kind: GrowthKind) {
+        self.found.push((line, kind, self.loop_depth > 0));
+    }
 }
 
 impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
     fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
 
+    fn visit_expr_for_loop(&mut self, e: &'ast syn::ExprForLoop) {
+        self.loop_depth += 1;
+        syn::visit::visit_expr_for_loop(self, e);
+        self.loop_depth -= 1;
+    }
+
+    fn visit_expr_while(&mut self, e: &'ast syn::ExprWhile) {
+        self.loop_depth += 1;
+        syn::visit::visit_expr_while(self, e);
+        self.loop_depth -= 1;
+    }
+
+    fn visit_expr_loop(&mut self, e: &'ast syn::ExprLoop) {
+        self.loop_depth += 1;
+        syn::visit::visit_expr_loop(self, e);
+        self.loop_depth -= 1;
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        if SECTION_GROWTH_METHODS.contains(&call.method.to_string().as_str())
-            && is_sections_field(&call.receiver)
-        {
-            self.found.push((call.span().start().line, GrowthKind::Method));
+        let method = call.method.to_string();
+        if is_sections_field(&call.receiver) {
+            let line = call.span().start().line;
+            if SECTION_SINGLE_GROWTH_METHODS.contains(&method.as_str()) {
+                self.record(line, GrowthKind::Single);
+            } else if SECTION_MULTI_GROWTH_METHODS.contains(&method.as_str()) {
+                self.record(line, GrowthKind::Multi);
+            } else if method == "clone_from" {
+                self.record(line, GrowthKind::Assign);
+            }
         }
-        syn::visit::visit_expr_method_call(self, call);
+        if ITERATING_CLOSURE_METHODS.contains(&method.as_str()) {
+            // The receiver runs once; the closure arguments run per item.
+            self.visit_expr(&call.receiver);
+            self.loop_depth += 1;
+            for arg in &call.args {
+                self.visit_expr(arg);
+            }
+            self.loop_depth -= 1;
+        } else {
+            syn::visit::visit_expr_method_call(self, call);
+        }
     }
 
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
         if let syn::Expr::Path(path) = &*call.func {
-            let last = path.path.segments.last().map(|s| s.ident.to_string());
-            let first_is_sections = matches!(call.args.first(), Some(syn::Expr::Reference(r)) if r.mutability.is_some() && is_sections_field(&r.expr));
-            if last.is_some_and(|m| SECTION_GROWTH_METHODS.contains(&m.as_str())) && first_is_sections {
-                self.found.push((call.span().start().line, GrowthKind::Ufcs));
+            let last = path
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            let line = call.span().start().line;
+            let first_is_sections = call.args.first().is_some_and(is_mut_ref_to_sections);
+            if first_is_sections && SECTION_SINGLE_GROWTH_METHODS.contains(&last.as_str()) {
+                self.record(line, GrowthKind::Ufcs);
+            } else if first_is_sections && SECTION_MULTI_GROWTH_METHODS.contains(&last.as_str()) {
+                self.record(line, GrowthKind::Multi);
+            } else if ["replace", "swap", "take"].contains(&last.as_str())
+                && call.args.iter().any(is_mut_ref_to_sections)
+            {
+                self.record(line, GrowthKind::Assign);
             }
         }
         syn::visit::visit_expr_call(self, call);
@@ -937,40 +1042,34 @@ impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
 
     fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
         if is_sections_field(&assign.left) {
-            self.found.push((assign.span().start().line, GrowthKind::Assign));
+            self.record(assign.span().start().line, GrowthKind::Assign);
         }
         syn::visit::visit_expr_assign(self, assign);
     }
 }
 
-/// Whether `expr` contains a call to `room_for_another_section`, by
-/// path or as a method, not counting closure bodies (a closure is not
-/// run where it is written).
-fn calls_section_guard(expr: &syn::Expr) -> bool {
-    struct Finder(bool);
-    impl<'ast> syn::visit::Visit<'ast> for Finder {
-        fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
-        fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
-        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-            if let syn::Expr::Path(path) = &*call.func {
-                if path
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|s| s.ident == "room_for_another_section")
-                {
-                    self.0 = true;
-                }
-            }
-            syn::visit::visit_expr_call(self, call);
+/// Whether `expr` *is* a `room_for_another_section` call — as a path
+/// (`validate::room_for_another_section(n)`) or a method
+/// (`n.room_for_another_section()`) — optionally followed only by
+/// `map_err(…)` and/or `ok()`, which keep the refusal (as `Err` or
+/// `None`) rather than swallow it.
+fn is_section_guard_call(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Call(call) => matches!(
+            &*call.func,
+            syn::Expr::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "room_for_another_section")
+        ),
+        syn::Expr::MethodCall(call) => {
+            call.method == "room_for_another_section"
+                || (["map_err", "ok"].contains(&call.method.to_string().as_str())
+                    && is_section_guard_call(&call.receiver))
         }
+        syn::Expr::Paren(inner) => is_section_guard_call(&inner.expr),
+        _ => false,
     }
-    let mut finder = Finder(false);
-    syn::visit::Visit::visit_expr(&mut finder, expr);
-    finder.0
 }
 
-/// Whether `block` (or `expr`) contains a `return`, outside closures.
+/// Whether `expr` contains a `return`, outside closures.
 fn returns(expr: &syn::Expr) -> bool {
     struct Finder(bool);
     impl<'ast> syn::visit::Visit<'ast> for Finder {
@@ -984,30 +1083,57 @@ fn returns(expr: &syn::Expr) -> bool {
     finder.0
 }
 
+/// Whether `block` contains a `return`, outside closures.
+fn block_returns(block: &syn::Block) -> bool {
+    returns(&syn::Expr::Block(syn::ExprBlock {
+        attrs: Vec::new(),
+        label: None,
+        block: block.clone(),
+    }))
+}
+
+/// Whether `pat` is `Err(..)` / `Ok(..)` (by the variant's last path
+/// segment).
+fn is_variant_pattern(pat: &syn::Pat, variant: &str) -> bool {
+    match pat {
+        syn::Pat::TupleStruct(p) => p.path.segments.last().is_some_and(|s| s.ident == variant),
+        _ => false,
+    }
+}
+
 /// Does this top-level statement propagate a `room_for_another_section`
-/// refusal out of the fn? See [`section_growths_in`] for the shapes.
+/// refusal out of the fn? See [`section_growths_in`] for the four
+/// shapes; anything else is not a guard.
 fn propagates_section_guard(stmt: &syn::Stmt) -> bool {
-    let try_guard = |expr: &syn::Expr| matches!(expr, syn::Expr::Try(t) if calls_section_guard(&t.expr));
+    let try_guard = |expr: &syn::Expr| matches!(expr, syn::Expr::Try(t) if is_section_guard_call(&t.expr));
     match stmt {
         syn::Stmt::Expr(expr, _) => match expr {
             syn::Expr::Try(_) => try_guard(expr),
             syn::Expr::If(i) => {
-                calls_section_guard(&i.cond)
-                    && returns(&syn::Expr::Block(syn::ExprBlock {
-                        attrs: Vec::new(),
-                        label: None,
-                        block: i.then_branch.clone(),
-                    }))
+                let cond_is_refusal = match &*i.cond {
+                    // `if room_for_another_section(…).is_err()`
+                    syn::Expr::MethodCall(call) => {
+                        call.method == "is_err" && is_section_guard_call(&call.receiver)
+                    }
+                    // `if let Err(..) = room_for_another_section(…)`
+                    syn::Expr::Let(l) => is_variant_pattern(&l.pat, "Err") && is_section_guard_call(&l.expr),
+                    _ => false,
+                };
+                cond_is_refusal && block_returns(&i.then_branch)
             }
             syn::Expr::Match(m) => {
-                calls_section_guard(&m.expr) && m.arms.iter().any(|arm| returns(&arm.body))
+                is_section_guard_call(&m.expr)
+                    && m.arms
+                        .iter()
+                        .any(|arm| is_variant_pattern(&arm.pat, "Err") && returns(&arm.body))
             }
             _ => false,
         },
         syn::Stmt::Local(local) => match &local.init {
             Some(init) => {
                 try_guard(&init.expr)
-                    || (calls_section_guard(&init.expr)
+                    || (is_variant_pattern(&local.pat, "Ok")
+                        && is_section_guard_call(&init.expr)
                         && init.diverge.as_ref().is_some_and(|(_, diverge)| returns(diverge)))
             }
             None => false,

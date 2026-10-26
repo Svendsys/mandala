@@ -52,7 +52,10 @@ that moved.
    constant, so the editor refuses the section the loader would
    refuse. `test_every_section_growth_checks_the_cap` holds that by
    scanning the shipped source for growth sites; `split_section`
-   skipped the check until #208.
+   skipped the check until #208. The guard promises room for one
+   section, so the scan accepts it only before a single `push` /
+   `insert` outside a loop; a writer that adds several at once has to
+   bound its count against the constant itself.
 3. **Coherence — `verify` reports.** Everything else: a file that
    loads and renders but still says something incoherent. Dangling
    edge references, a Dewey ID that disagrees with `parent_id`, an

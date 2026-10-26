@@ -1129,16 +1129,22 @@ mod section_cap_writer_tests {
     /// editor path that grows the vector unchecked authors a map that
     /// will not reopen. `add_section` was guarded and `split_section`
     /// was not, for as long as the list of writers was kept in heads
-    /// (#208). This scans the workspace's shipped source for every
-    /// `.sections.<growing method>(` and fails for one whose enclosing
-    /// function does not call the guard — so a third writer cannot
-    /// miss it the way the second did.
+    /// (#208). This parses the workspace's shipped source for every
+    /// site that grows or replaces a `sections` vector and fails for a
+    /// growth not preceded, at the top of its fn, by a statement that
+    /// propagates the guard's refusal — so a third writer cannot miss
+    /// it the way the second did. A guard promises room for **one**
+    /// section, so it covers only a single `push` / `insert` outside a
+    /// loop; a multi-element growth or one in a loop always fails.
     ///
-    /// Fails when: a growth site's function drops the guard, or a new
-    /// growth site is added without one. A growth written through a
-    /// binding (`let s = &mut node.sections; s.push(…)`), a raw
-    /// pointer or a macro is text this scan cannot see — see
-    /// `section_growth_sites` for the approximation it makes.
+    /// Fails when: a growth site's fn drops the guard or swallows its
+    /// refusal, a new growth site is added without one, or a wholesale
+    /// replacement appears outside the (file, fn) snapshot restores
+    /// named below. A growth written through a binding
+    /// (`let s = &mut node.sections; s.push(…)`), a raw pointer or a
+    /// macro is text this scan cannot see — see
+    /// `source_scan::section_growths_in` for exactly what counts and
+    /// the approximations it makes.
     #[test]
     fn test_every_section_growth_checks_the_cap() {
         use crate::util::source_scan::{section_growth_sites, GrowthKind};
@@ -1153,7 +1159,7 @@ mod section_cap_writer_tests {
             assert!(
                 sites
                     .iter()
-                    .any(|site| site.function == writer && site.kind == GrowthKind::Method),
+                    .any(|site| site.function == writer && site.kind == GrowthKind::Single),
                 "the scan did not find `{writer}`, a known writer of node.sections — the \
                  scan is what broke, not the writer:\n{sites:#?}"
             );
@@ -1180,30 +1186,48 @@ mod section_cap_writer_tests {
         // room for one more" — it says nothing about the new length. The
         // ones that ship are undo restores: they put back a snapshot taken
         // from the same node, which the guard already held to the cap
-        // when it was live. Any other replacement is a new writer whose
-        // length bound has to be argued, so it fails here until it is
-        // added with its reason.
-        const SNAPSHOT_RESTORES: &[&str] = &["undo", "mutate_node_with_undo"];
+        // when it was live. Keyed by (file, fn), not by a bare fn name, so
+        // an unrelated `fn undo` elsewhere is not excused by this one.
+        // Any other replacement is a new writer whose length bound has to
+        // be argued, so it fails here until it is added with its reason.
+        const SNAPSHOT_RESTORES: &[(&str, &str)] = &[
+            // `EditNodeText` and `EditNodeStyle` each restore a snapshot.
+            ("src/application/document/undo.rs", "undo"),
+            (
+                "src/application/document/nodes/undo_envelope.rs",
+                "mutate_node_with_undo",
+            ),
+        ];
         let unexplained: Vec<_> = assigns
             .iter()
-            .filter(|site| !SNAPSHOT_RESTORES.contains(&site.function.as_str()))
+            .filter(|site| {
+                !SNAPSHOT_RESTORES
+                    .iter()
+                    .any(|&(file, function)| site.file == file && site.function == function)
+            })
             .collect();
         assert!(
             unexplained.is_empty(),
             "these lines replace `node.sections` wholesale outside the known snapshot \
              restores ({SNAPSHOT_RESTORES:?}):\n{}\n\nA replacement has no length bound of \
-             its own. Bound it against MAX_SECTIONS_PER_NODE and add the fn here with the \
-             reason, or route it through a guarded writer.",
+             its own. Bound it against MAX_SECTIONS_PER_NODE and add the (file, fn) here with \
+             the reason, or route it through a guarded writer.",
             unexplained
                 .iter()
                 .map(|site| format!("  {}:{} (in fn {})", site.file, site.line, site.function))
                 .collect::<Vec<_>>()
                 .join("\n")
         );
-        assert!(
-            !assigns.is_empty(),
-            "precondition: the undo restores replace node.sections, so the scan must see \
-             at least one assignment — if it sees none, its assignment arm is what broke"
+        // Pinned, not merely non-empty: a fourth restore inside one of the
+        // excused fns would otherwise pass unread, and a scan that lost
+        // its assignment arm would see zero and pass the filter above.
+        assert_eq!(
+            assigns.len(),
+            3,
+            "the excused fns hold exactly three snapshot restores (two in `undo`, one in \
+             `mutate_node_with_undo`); a different count means a restore was added or removed \
+             there — read it and update this number — or the scan's assignment arm broke:\n\
+             {assigns:#?}"
         );
     }
 
@@ -1242,7 +1266,7 @@ impl Doc {
         let node = self.node(id)?;
         validate::room_for_another_section(node)?;
         self.mutate(id, move |node| {
-            node.sections.extend([MindSection::default()]);
+            node.sections.push(MindSection::default());
             Some(0)
         })
     }
@@ -1285,8 +1309,98 @@ impl Doc {
         Ok(())
     }
 
+    pub fn guarded_by_method_form(&mut self, node: &mut MindNode) -> Result<(), String> {
+        node.room_for_another_section()?;
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn guarded_ufcs(&mut self, node: &mut MindNode) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        Vec::insert(&mut node.sections, 0, MindSection::default());
+        Ok(())
+    }
+
+    pub fn if_is_err_returns(&mut self, node: &mut MindNode) -> Result<(), String> {
+        if validate::room_for_another_section(node).is_err() {
+            return Err("full".into());
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn match_err_arm_returns(&mut self, node: &mut MindNode) -> Result<(), String> {
+        match validate::room_for_another_section(node) {
+            Ok(()) => {}
+            Err(e) => return Err(e),
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn extend_after_guard(&mut self, node: &mut MindNode, more: Vec<MindSection>) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        node.sections.extend(more);
+        Ok(())
+    }
+
+    pub fn extend_from_within_after_guard(&mut self, node: &mut MindNode) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        node.sections.extend_from_within(..);
+        Ok(())
+    }
+
+    pub fn push_in_for_loop_after_guard(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        for _ in 0..n {
+            node.sections.push(MindSection::default());
+        }
+        Ok(())
+    }
+
+    pub fn push_in_for_each_after_guard(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        (0..n).for_each(|_| node.sections.push(MindSection::default()));
+        Ok(())
+    }
+
+    pub fn inverted_is_ok(&mut self, node: &mut MindNode) -> Result<(), String> {
+        if validate::room_for_another_section(node).is_ok() {
+            return Err("inverted".into());
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn swallowed_or_else(&mut self, node: &mut MindNode) -> Result<(), String> {
+        validate::room_for_another_section(node).or_else(|_| Ok::<(), String>(()))?;
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn match_ok_arm_returns(&mut self, node: &mut MindNode) -> Result<(), String> {
+        match validate::room_for_another_section(node) {
+            Ok(()) => return Ok(()),
+            Err(_) => {}
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
     pub fn replaces(&mut self, node: &mut MindNode, snapshot: Vec<MindSection>) {
         node.sections = snapshot;
+    }
+
+    pub fn mem_replace(&mut self, node: &mut MindNode, snapshot: Vec<MindSection>) {
+        let _old = std::mem::replace(&mut node.sections, snapshot);
+    }
+
+    pub fn mem_swap(&mut self, node: &mut MindNode, other: &mut Vec<MindSection>) {
+        std::mem::swap(&mut node.sections, other);
+    }
+
+    pub fn clone_from(&mut self, node: &mut MindNode, snapshot: &Vec<MindSection>) {
+        node.sections.clone_from(snapshot);
     }
 
     pub fn reads_only(&self, node: &MindNode) -> usize {
@@ -1304,22 +1418,36 @@ impl Doc {
         assert_eq!(
             found,
             [
-                ("guarded_push", Method, true),
-                ("guarded_wrapped_chain", Method, true),
-                ("guarded_by_let_else", Method, true),
-                ("guarded_in_a_closure", Method, true),
-                ("unguarded_insert", Method, false),
-                ("unguarded_wrapped_chain", Method, false),
+                ("guarded_push", Single, true),
+                ("guarded_wrapped_chain", Single, true),
+                ("guarded_by_let_else", Single, true),
+                ("guarded_in_a_closure", Single, true),
+                ("unguarded_insert", Single, false),
+                ("unguarded_wrapped_chain", Single, false),
                 ("unguarded_ufcs", Ufcs, false),
-                ("discarded_result", Method, false),
-                ("guard_in_a_closure_called_later", Method, false),
-                ("guard_on_a_branch", Method, false),
-                ("guard_too_late", Method, false),
+                ("discarded_result", Single, false),
+                ("guard_in_a_closure_called_later", Single, false),
+                ("guard_on_a_branch", Single, false),
+                ("guard_too_late", Multi, false),
+                ("guarded_by_method_form", Single, true),
+                ("guarded_ufcs", Ufcs, true),
+                ("if_is_err_returns", Single, true),
+                ("match_err_arm_returns", Single, true),
+                ("extend_after_guard", Multi, false),
+                ("extend_from_within_after_guard", Multi, false),
+                ("push_in_for_loop_after_guard", Single, false),
+                ("push_in_for_each_after_guard", Single, false),
+                ("inverted_is_ok", Single, false),
+                ("swallowed_or_else", Single, false),
+                ("match_ok_arm_returns", Single, false),
                 ("replaces", Assign, false),
+                ("mem_replace", Assign, false),
+                ("mem_swap", Assign, false),
+                ("clone_from", Assign, false),
             ],
             "each planted site must be found once, in its own fn, with its kind, and guarded \
-             only where a top-level statement before it propagates the guard's refusal; a \
-             read and a comment are not sites"
+             only where it adds one element, outside a loop, after a top-level statement \
+             that propagates the guard's refusal; a read and a comment are not sites"
         );
     }
 }
