@@ -6,7 +6,10 @@
 //! [key](crate::engine::key::BranchKey) it routes on and is sorted by
 //! among its siblings, a placeholder to pad structure with, the
 //! state it hands its children ([`TreeElement::inherit`](crate::engine::element::TreeElement::inherit)), and —
-//! only for element types with geometry — a box to hit-test. Every
+//! only for element types with geometry — a box to hit-test. A
+//! [journal](crate::engine::journal::Journal) needs one more: whether two values
+//! of the element hold the same state
+//! ([`TreeElement::same_state`](crate::engine::element::TreeElement::same_state)). Every
 //! other fact about an element is the business of its
 //! [`Mutation`](crate::engine::mutation::Mutation)s and its
 //! [`Inspect`](crate::engine::predicate::Inspect) surface.
@@ -22,9 +25,12 @@ use std::hash::Hash;
 /// An element a [`Tree`](crate::engine::tree::Tree) can hold and the
 /// walker can mutate.
 ///
-/// Implementations are expected to be small values: the walker clones
-/// none of them, but every other consumer of a tree (journals,
-/// interpolation) works per element.
+/// Implementations are expected to be small values: a plain walk clones
+/// none of them, but a journaled walk clones each element it applies
+/// to once, and a journal clones it again to restore it.
+///
+/// `Clone` must copy the element's whole state — a journal's
+/// before-image is a clone, and `revert` writes it back.
 pub trait TreeElement: Clone + Debug + Inspect {
     /// The element's kind: the first half of its
     /// [`key`](Self::key). The walker routes on kind and channel
@@ -78,6 +84,26 @@ pub trait TreeElement: Clone + Debug + Inspect {
 
     /// A neutral placeholder, used as the root of an empty tree.
     fn void() -> Self;
+
+    /// Whether `self` and `other` hold the same **state**: every field
+    /// that is the element's own value — what a mutation can change,
+    /// what a journal restores, and what is drawn or saved from it.
+    /// Bookkeeping that is not state (callbacks, memoized derived
+    /// values) is left out.
+    ///
+    /// A [`Journal`](crate::engine::journal::Journal) asks this when it
+    /// closes: an element whose state is the same before and after,
+    /// and whose position did not change, did not change at all, and
+    /// its entry is dropped. An answer of `true` for two different
+    /// states therefore loses that change from the journal — its
+    /// `revert` would not undo it — so an implementation compares
+    /// every state field, never a coarser identity. `false` for equal
+    /// states costs only a redundant entry.
+    ///
+    /// Required, with no default, so that a new element type states
+    /// what its state is. For a plain value type it is `==`. Cost: an
+    /// implementation's field compares; no allocation.
+    fn same_state(&self, other: &Self) -> bool;
 
     /// The state this element hands its children, given the state
     /// its own parent handed it. Called once per element the walker

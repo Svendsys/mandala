@@ -16,6 +16,7 @@ pub mod bvh_descent_tests;
 pub mod camera_tests;
 pub mod delta_tests;
 pub mod element_tests;
+pub mod journal_tests;
 pub mod map_children_tests;
 pub mod model_tests;
 pub mod mutator_tests;

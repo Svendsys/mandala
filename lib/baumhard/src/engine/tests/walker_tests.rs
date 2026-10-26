@@ -11,6 +11,8 @@
 //! Follows the `do_*()` / `test_*()` split (§T2.2): every `do_*` body
 //! has a bench entry in `benches/test_bench.rs`.
 
+use crate::engine::anchor::Anchors;
+use crate::engine::journal::JournalBuilder;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::{Comparator, Predicate};
 use crate::engine::tests::test_element::{
@@ -453,4 +455,45 @@ pub fn do_engine_walk_wide_and_deep_tree() {
         .map(|c| c.children(tree.arena()).filter(|g| value(&tree, *g) == 2).count())
         .sum();
     assert_eq!(grandchildren_set, 16);
+}
+
+#[test]
+fn test_engine_journaled_walk_wide_and_deep_tree() {
+    do_engine_journaled_walk_wide_and_deep_tree();
+}
+
+/// [`do_engine_walk_wide_and_deep_tree`]'s tree and mutator, walked
+/// journaled from the root: the same 20 elements change, the walk
+/// records each once, and the closed journal names exactly those 20
+/// and reverts every one. The journaled walk's per-node work beside the
+/// plain walk's, plus its close and revert.
+pub fn do_engine_journaled_walk_wide_and_deep_tree() {
+    let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
+    let root = tree.root;
+    for i in 0..16 {
+        let child = add(&mut tree, root, TestElement::new(i % 4, 1));
+        for j in 0..16 {
+            add(&mut tree, child, TestElement::new(j % 4, 1));
+        }
+    }
+    let mut mt = MutatorTree::new();
+    let mroot = mt.root;
+    let level_one = add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(1), plain(1)));
+    add_mutator(
+        &mut mt,
+        level_one,
+        Mutator::new(TestMutation::SetToInherited, plain(1)),
+    );
+
+    let mut builder = JournalBuilder::new();
+    mt.apply_at_journaled(&mut tree, &Anchors::Nodes(vec![root]), |_, _| 0, &mut builder)
+        .unwrap();
+    let changed = |tree: &Tree<TestElement>| tree.descendants().filter(|id| value(tree, *id) == 2).count();
+    // 4 level-one targets and 16 grandchildren reach 2, as in the plain
+    // walk.
+    assert_eq!(changed(&tree), 20);
+    let journal = builder.close(&tree);
+    assert_eq!(journal.touched().count(), 20);
+    journal.revert(&mut tree).unwrap();
+    assert_eq!(changed(&tree), 0, "every changed element is reverted");
 }

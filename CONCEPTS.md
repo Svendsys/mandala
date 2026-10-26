@@ -183,7 +183,8 @@ run of its key (`First`, `Last`, or `Before` / `After` an equal-key
 sibling), `update(id, f)` — the one way to change an element outside
 a walk — moves an element whose key `f` changed, `remove_subtree`
 removes, and a walk moves the elements whose key it changed once it
-is over. `check_sorted` verifies it.
+is over. `check_sorted` verifies it. `update_journaled(id, journal, f)`
+is `update` recorded in a [journal](#journals--journalbuilder-journal-touch).
 
 Defined in `lib/baumhard/src/engine/tree.rs`. Wraps
 `indextree::Arena<E>`, read through `arena()`; adds `root: NodeId`,
@@ -236,7 +237,11 @@ Every anchor's seed is taken before any anchor is walked, and a stale
 anchor refuses the whole call with nothing applied. The resolution
 costs work in the anchors and their rows, never in the rest of the
 tree. `apply_to(&mut target, &seed)` is `apply_at` anchored at the
-root.
+root. `apply_at_journaled(&mut target, &anchors, seed_for, &mut
+journal)` is `apply_at` recorded in a
+[journal](#journals--journalbuilder-journal-touch), for a tree that
+keeps history; the plain entry points are for trees that need none
+(glyph layers that are rebuilt).
 
 **Inherited state.** Some mutations need a value their element
 inherits rather than stores. The walker carries `E::Inherited` down
@@ -911,8 +916,70 @@ Key functions: `walk_tree_from` (the pair entry), `align_child_walks`
 and `merge_rows` (the key-based pairing), `process_instruction_node`
 (the loop/spatial/map dispatch), `default_terminator` (the
 continuation that resumes key alignment after a `RepeatWhile` exits),
-and `Rekeyed` (the children whose key the walk changed). Branchless
-enough that matching-pair cost dominates.
+and `Walk` (what a walk keeps beside the two trees: the children whose
+key it changed, and the journal a journaled walk records into). Every
+apply goes through one function, `apply_recorded`, which is where a
+journaled walk records its before-images. Branchless enough that
+matching-pair cost dominates.
+
+### Journals — `JournalBuilder`, `Journal`, `Touch`
+
+An exact record of what a walk changed, which can undo it, redo it,
+or show it part-way.
+
+Undo, redo, transactions, animated edits and change notifications
+all need to know exactly what an edit did. A journal recorded by the
+walker cannot forget a field and cannot disagree with what the walk
+did, because nothing but the walker writes it: the walker records an
+element's before-image (a clone) and its position immediately before
+its first apply within a `JournalBuilder`, and later applies to the
+same element record nothing. `Mutation`s know nothing about journals
+and cannot opt out. `JournalBuilder::close(&tree)` reads every
+recorded element's after-state and drops the ones whose
+`TreeElement::same_state` is unchanged and which did not move, so an
+empty `Journal` means "nothing changed". `Journal::revert` (newest
+entry first) and `Journal::replay` (oldest first) write recorded
+values and positions and evaluate nothing — no `Mutation::apply_to`,
+no `inherit` — and refuse a tree whose referenced nodes are stale
+before writing anything. `touched()` names what changed; `before` /
+`after` read one element's two states.
+
+An element whose key changed is moved among its siblings, so a
+journal restores positions too: every position it records is the
+element's place in the arrangement the builder started from — an
+earlier move in the same builder that shifted the element's
+neighbors is accounted for when that move happens — and a restore
+puts the moved elements back in that arrangement's order. Those
+positions are exact only if the tree changes through nothing but
+journaled calls on the builder until it closes. A builder is all or
+nothing: a journaled call that fails reverts everything the builder
+recorded before returning its error, and `JournalBuilder::abandon` is
+the same step for a failure its caller detects.
+
+`lib/baumhard/src/engine/journal.rs`. `Touch::{Inserted, Removed,
+Moved}` are reserved for structural commands; today every entry is a
+`Touch::Field`.
+
+### Interpolation — `Interpolate`, `Snap`, `Interpolable`
+
+The state between a journal's before and after, so any change can be
+shown part-way without animation code of its own.
+
+`Interpolate::lerp(from, to, t)` blends one value (scalars, `Vec2`,
+`OrderedVec2`, `OrderedFloat<f32>`, RGBA as `[f32; 4]` or rounded
+`[u8; 4]`), returning the endpoints themselves at `t = 0` and
+`t = 1`. An `Interpolable` element type says which of its fields
+interpolate; every other field takes the before or the after value by
+`Snap` — `Start` switches as soon as `t > 0`, `End` only at `t = 1`.
+`Journal::write_interpolated(&mut tree, t, snap)` writes every
+entry's interpolated element, and stands moved elements in the
+before or the after arrangement by the same snap, so the rows stay
+sorted. The glyph instantiation interpolates an area's position,
+render bounds, scale, line height and background color, and a
+model's position.
+
+`lib/baumhard/src/engine/interpolate.rs`; `Interpolable for
+GfxElement` in `lib/baumhard/src/gfx_structs/element.rs`.
 
 ### Mutator builder DSL — `MutatorNode`, `BuildContext`, `Repeat`, runtime holes
 
