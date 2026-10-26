@@ -89,7 +89,8 @@ impl MindMapDocument {
     ///   otherwise. Runs past the old end (a table that overshot
     ///   its text) are clamped to the old text first, so they
     ///   neither lend their style nor leave part of the new text
-    ///   uncovered.
+    ///   uncovered; if that leaves no run, the section becomes
+    ///   run-less and draws its whole text.
     ///   A section with non-empty `text_runs` draws only the
     ///   graphemes its runs cover (`baumhard::font::attrs::
     ///   displayed_text`), so leaving the new graphemes uncovered

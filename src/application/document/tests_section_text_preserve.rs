@@ -259,3 +259,16 @@ fn test_preserve_does_not_carry_a_hyperlink_onto_appended_text() {
     assert!(control.set_section_text_preserving_runs(&cid, 1, "Hello world".into()));
     assert_eq!(runs_of(&control, &cid), vec![run(0, 11, "#ff0000", true)]);
 }
+
+/// When every run sat past the old text, the clamp leaves none and
+/// the section becomes run-less, drawing its whole text — as a
+/// shorter edit that drops every run already does. The control is
+/// the drawing before the edit, which shows nothing.
+#[test]
+fn test_preserve_grow_leaves_a_section_run_less_when_every_run_overshot() {
+    let (mut doc, id) = seeded("abc", vec![run(4, 6, "#00ff00", false)]);
+    assert_eq!(drawn_text(&doc, &id, 1), "", "before: no run covers \"abc\"");
+    assert!(doc.set_section_text_preserving_runs(&id, 1, "abcdefg".into()));
+    assert!(runs_of(&doc, &id).is_empty());
+    assert_eq!(drawn_text(&doc, &id, 1), "abcdefg");
+}

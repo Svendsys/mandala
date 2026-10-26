@@ -145,9 +145,11 @@ words they used to cover:
   (typing past a link's end does not extend it): a linked last run
   keeps its range, and the appended graphemes get a copy of its
   style with no link.
-- A run that starts or ends past the old end (a table that overshot
-  its text) is clamped to the old text before any of this, so it
-  lends no style and leaves no appended grapheme uncovered.
+- On longer text, a run that starts or ends past the old end (a
+  table that overshot its text) is clamped to the old text first, so
+  it lends no style and leaves no appended grapheme uncovered. If
+  that leaves no run, the section becomes run-less and draws its
+  whole text, as when a shorter edit drops every run.
 
 A section with no runs stays run-less and draws its whole text.
 Without the longer-text rule the appended graphemes would sit in
