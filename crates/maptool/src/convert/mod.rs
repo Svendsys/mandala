@@ -17,6 +17,7 @@
 mod cleanup;
 mod enums;
 mod ids;
+mod markers;
 mod palettes;
 mod portals;
 mod sections;
@@ -97,11 +98,12 @@ pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), Strin
         // folded into a `sections[]` array at the end. Sections last
         // so an already-cleaned tree converges on the post-section
         // shape.
+        let no_legacy_marker = markers::first_legacy_marker(root).is_none();
         let nodes = root
             .get("nodes")
             .and_then(|v| v.as_object())
             .ok_or_else(|| "missing or invalid \"nodes\" object".to_string())?;
-        let id_map = ids::assign_dewey_ids(nodes);
+        let id_map = ids::assign_dewey_ids(nodes, no_legacy_marker);
         ids::rewrite_ids(root, &id_map);
         let folded_portals = portals::fold_portals_into_edges(root)?;
         enums::convert_enums(root);

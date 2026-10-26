@@ -1054,24 +1054,22 @@ fn test_default_long_press_resolves_to_enter_resize_mode() {
 /// while the recognizer went on moving the camera underneath it.
 ///
 /// **Two consequences of the deletion, recorded because neither is
-/// visible from the assertions below and neither is fixed here:**
+/// visible from the assertions below; #160 closed both:**
 ///
-/// 1. A user whose only pointer is a touchscreen loses
-///    `FastResizeStart` outright. It ships bound to `Ctrl+RightDrag`
-///    alone now, and that needs a mouse. The touch route back is
-///    `LongPress` → `EnterResizeMode` plus a resize-handle drag,
-///    which is native-only today (CLAUDE.md's Dual-target registry).
-/// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` is
-///    **silently accepted and never matches** — the same
-///    `KeyBind::parse` permissiveness that makes the first assertion
-///    below meaningful also means a retired token parses into a
-///    binding for a key nothing will ever press. There is no warning
-///    and no migration note. Warning on it would mean the resolver
-///    could tell "a gesture name that no longer exists" from "an
-///    ordinary key", which it cannot: every single letter is a valid
-///    key name. The honest fix is a known-gesture check at parse
-///    time, which is a keybind-surface change rather than a touch
-///    one, so it is written down here instead of half-done.
+/// 1. `FastResizeStart` ships bound to `Ctrl+RightDrag` alone, which
+///    needs a mouse. The touch route to a resize is `LongPress` →
+///    `EnterResizeMode`, then a finger on a handle — which until #160
+///    panned the camera instead, so a touch-only user could not resize
+///    at all. A finger that lands on a handle in Resize mode now drives
+///    the handle drag (`app::touch_handle`); native-only, as the drag
+///    state is (CLAUDE.md's Dual-target registry).
+/// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` used to
+///    be **silently accepted and never match**: `KeyBind::parse`
+///    takes any non-modifier word as a key, so a retired token parsed
+///    into a binding for a key nothing will ever press. It is now
+///    refused at parse time with a diagnostic, through the
+///    `RETIRED_NAMES` table (#160) —
+///    `test_a_retired_name_in_a_user_config_is_skipped_rather_than_bound`.
 #[test]
 fn test_two_finger_drag_is_not_a_bindable_gesture() {
     use strum::IntoEnumIterator;
@@ -1085,6 +1083,111 @@ fn test_two_finger_drag_is_not_a_bindable_gesture() {
         !MouseGesture::iter().any(|g| g.key_name() == "twofingerdrag"),
         "twofingerdrag must not be back in the gesture vocabulary"
     );
+}
+
+/// **A retired name is refused with a diagnostic, not parsed into a
+/// dead binding** (#160). The diagnostic names the spelling the user
+/// typed and what replaced it, and holds under modifiers and any case.
+///
+/// The negative controls are the unretired names beside it: the live
+/// gestures, an ordinary key, and a word that merely *starts* like the
+/// retired one. Each still parses, so the check is a lookup of the
+/// whole token and not a blanket refusal of gesture-looking words.
+#[test]
+fn test_a_retired_name_is_refused_with_a_diagnostic() {
+    for input in [
+        "TwoFingerDrag",
+        "twofingerdrag",
+        "Ctrl+TwoFingerDrag",
+        " Shift + TWOFINGERDRAG ",
+    ] {
+        let err = KeyBind::parse(input).expect_err("a retired name must not parse");
+        assert!(
+            err.contains("'TwoFingerDrag'") && err.contains("no longer a bindable name"),
+            "the diagnostic must say which name is retired: {err}"
+        );
+        assert!(err.contains("#35"), "and point at why: {err}");
+    }
+    for live in [
+        "LongPress",
+        "RightDrag",
+        "Ctrl+RightDrag",
+        "t",
+        "TwoFinger",
+        "TwoFingerDragging",
+    ] {
+        assert!(
+            KeyBind::parse(live).is_ok(),
+            "{live} is not retired and must still parse"
+        );
+    }
+}
+
+/// **The point of the diagnostic, end to end**: a `keybinds.json` that
+/// still binds a retired name loses that one entry, and nothing else —
+/// through `from_json`, the loader's own parse, then `resolve`.
+///
+/// Fails without the `RETIRED_NAMES` check in a way the user could
+/// never see: `TwoFingerDrag` parsed as the key `twofingerdrag`, so the
+/// first lookup answered `Some(FastResizeStart)` for a gesture the
+/// recognizer no longer emits.
+///
+/// The sibling entry is `Alt+F9`, deliberately **not**
+/// `fast_resize_start`'s built-in default: a sibling equal to the
+/// default would pass under a fault that dropped the whole field back
+/// to its default on a bad entry (§T13's default-shadowed control).
+/// So the second lookup proves the user's own entry survived, and the
+/// third proves the field is the user's, not the default — the
+/// default `Ctrl+RightDrag` no longer binds.
+#[test]
+fn test_a_retired_name_in_a_user_config_is_skipped_rather_than_bound() {
+    let cfg = KeybindConfig::from_json(r#"{ "fast_resize_start": ["TwoFingerDrag", "Alt+F9"] }"#)
+        .expect("a JSON object loads");
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_gesture("twofingerdrag", false, false, false),
+        None,
+        "the retired entry must bind nothing"
+    );
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "f9", false, false, true),
+        Some(Action::FastResizeStart),
+        "the live entry beside it in the same list must still bind"
+    );
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        None,
+        "the user's list replaced the default, so Ctrl+RightDrag must not bind"
+    );
+}
+
+/// **A retired name cannot come back by accident.** Every row is
+/// spelled in the lowercase form `KeyBind::parse` normalizes to (or
+/// its lookup would never match), and none is a live gesture — which
+/// would make that gesture unbindable while it still fires. The second
+/// half is the one that bites: re-adding `TwoFingerDrag` to
+/// `MouseGesture` without deleting its row here fails this test, not a
+/// user's config.
+#[test]
+fn test_every_retired_name_is_normalized_and_out_of_the_live_vocabulary() {
+    use crate::application::keybinds::bind::RETIRED_NAMES;
+    use strum::IntoEnumIterator;
+    assert!(
+        !RETIRED_NAMES.is_empty(),
+        "the table the check reads went missing"
+    );
+    for retired in RETIRED_NAMES {
+        assert_eq!(
+            retired.token,
+            normalize_key_name(retired.spelling),
+            "a token must be the normalized form of its spelling"
+        );
+        assert!(
+            !MouseGesture::iter().any(|g| g.key_name() == retired.token),
+            "{} is retired but is a live gesture again",
+            retired.spelling
+        );
+    }
 }
 
 /// Default `enter_resize_mode` config carries both `r` (kbd)

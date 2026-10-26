@@ -49,6 +49,26 @@ pub struct DispatchHit {
     /// Canvas-space cursor position at the gesture's trigger time.
     /// Used by orphan-creation / open-editor arms.
     pub canvas_pos: Vec2,
+    /// The mouse button holding the gesture this hit came from, for a
+    /// drag gesture's threshold cross (`LeftDrag`, `RightDrag`): the
+    /// button whose release must end what the Action starts. `None`
+    /// for a discrete gesture (a double-click) and for a synthetic
+    /// pointer with no button down (IPC `act.action` with a target).
+    ///
+    /// `Action::FastResizeStart` is the reader (#194): it starts a
+    /// drag only the holding button's release finalizes, so it reads
+    /// the owner here, and refuses a hit with none rather than start a
+    /// drag no release can end. Its default `Ctrl+RightDrag` is the
+    /// one binding that reaches a node: only the empty-canvas leg of a
+    /// left press consults `LeftDrag`, so that cross's hit is always
+    /// `Empty`, and a `LeftDrag`-bound fast-resize is refused as off a
+    /// node. The left button is still what holds that gesture.
+    ///
+    /// Native-only: the browser has no drag gesture for a button to
+    /// hold (CLAUDE.md, the Rubber-band select entry), so its one
+    /// construction site — the double-click — has nothing to say here.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub held_by: Option<crate::application::platform::input::MouseButton>,
 }
 
 /// What a double-click does, decided before anything is mutated.
