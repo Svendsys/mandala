@@ -51,6 +51,19 @@ pub(crate) const BUTTON_WORDS: [(&str, MouseButton); 3] = [
     ("middle", MouseButton::Middle),
 ];
 
+/// The table as prose — `"left", "right" or "middle"` — for the
+/// messages and docs that list the words, so none of them spells the
+/// vocabulary a second time. The `input` family's `button` docs are
+/// `&'static str` consts and cannot call this; a test holds them to it.
+pub(crate) fn button_words_prose() -> String {
+    let quoted: Vec<String> = BUTTON_WORDS.iter().map(|(w, _)| format!("\"{w}\"")).collect();
+    match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
 /// The button `word` names, if the wire names one by it.
 pub(crate) fn button_from_word(word: &str) -> Option<MouseButton> {
     BUTTON_WORDS.iter().find(|(w, _)| *w == word).map(|(_, b)| *b)

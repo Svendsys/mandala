@@ -120,8 +120,9 @@ enum PanCanvasRoute {
 /// momentary is decided by who dispatched it. That is why a running
 /// pan answers two different ways here: a toggled one was armed by an
 /// input with no release, so the next `pan_canvas` — from a key, a
-/// macro, the console or IPC — is the only dispatch that can end it, while a held one already has its
-/// end coming and a second dispatch must not pre-empt it.
+/// macro, the console or IPC — is the only dispatch that can end it,
+/// while a held one already has its end coming and a second dispatch
+/// must not pre-empt it.
 fn route_pan_canvas(drag_state: &DragState) -> PanCanvasRoute {
     match drag_state {
         DragState::Panning {
@@ -258,8 +259,9 @@ pub(in crate::application::app) fn dispatch_action(
 /// with no release behind it (a macro step, a console line, IPC
 /// `act.action`) calls [`dispatch_action`] and leaves its pan
 /// toggled, and so does the touch `LongPress`: [`HeldInput`] has no
-/// finger, so nothing could claim its pan. The arm cannot tell the two apart itself: the funnel
-/// hands it an `Action`, and the input is gone by then.
+/// finger, so nothing could claim its pan. The arm cannot tell the
+/// two apart itself: the funnel hands it an `Action`, and the input
+/// is gone by then.
 pub(in crate::application::app) fn dispatch_held_action(
     action: Action,
     ctx: &mut InputHandlerContext<'_>,

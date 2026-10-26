@@ -25,7 +25,9 @@ use baumhard::util::grapheme_chad::{count_grapheme_clusters, split_graphemes_own
 use serde_json::{json, Value};
 
 use crate::application::ipc::envelope::{code, Reply};
-use crate::application::ipc::injected::{button_from_word, InputEvent, Pacing, Sample, INJECTED_QUEUE_CAP};
+use crate::application::ipc::injected::{
+    button_from_word, button_words_prose, InputEvent, Pacing, Sample, INJECTED_QUEUE_CAP,
+};
 use crate::application::ipc::registry::{Call, CommandSpec, Family, ParamSpec, ParamType, ResultSpec};
 use crate::application::ipc::space::{Point, Space};
 use crate::application::ipc::Injected;
@@ -75,7 +77,7 @@ const BUTTON: ParamSpec = ParamSpec::new(
     "button",
     ParamType::String,
     false,
-    "\"left\" (default), \"right\" or \"middle\".",
+    "\"left\", \"right\" or \"middle\"; \"left\" when omitted.",
 );
 
 const APPLIED: ResultSpec = ResultSpec::new(
@@ -650,7 +652,7 @@ fn parse_button(call: &Call<'_>) -> Result<MouseButton, Reply> {
         Some(word) => button_from_word(word).ok_or_else(|| {
             call.invalid_params(
                 "button",
-                format!("`button` must be \"left\", \"right\" or \"middle\", got {word:?}"),
+                format!("`button` must be {}, got {word:?}", button_words_prose()),
             )
         }),
     }
@@ -878,6 +880,31 @@ mod tests {
     use crate::application::keybinds::Action;
     use crate::application::macros::MacroStep;
     use crate::application::scene_host::AppScene;
+
+    /// **Every `button` doc lists the words `BUTTON_WORDS` holds, in its
+    /// order, spelled by `button_words_prose`** — the docs are `&'static
+    /// str` consts and cannot call it, so this is what keeps the table
+    /// and the prose from drifting. The count is the negative control
+    /// for a vacuous loop: two commands document a `button` parameter,
+    /// and a third is checked the moment it appears. Fails on the
+    /// pre-review spelling `"left" (default), "right" or "middle"`,
+    /// which split the list.
+    #[test]
+    fn test_every_button_doc_spells_the_table() {
+        let prose = button_words_prose();
+        assert_eq!(prose, r#""left", "right" or "middle""#);
+        let docs: Vec<&str> = FAMILY
+            .commands
+            .iter()
+            .flat_map(|command| command.params.iter())
+            .filter(|param| param.name == "button")
+            .map(|param| param.doc)
+            .collect();
+        assert!(docs.len() >= 2, "the button docs went missing: {docs:?}");
+        for doc in docs {
+            assert!(doc.starts_with(&prose), "{doc:?} must list exactly {prose}");
+        }
+    }
 
     /// The app behind the `CommandTarget` seam, as far as the `input`
     /// family reaches it: a camera to convert canvas positions, the
