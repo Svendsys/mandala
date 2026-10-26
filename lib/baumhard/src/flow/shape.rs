@@ -49,7 +49,10 @@ use crate::util::grapheme_chad;
 /// ([`place_on_closed`](crate::flow::place_on_closed),
 /// [`place_on_open`](crate::flow::place_on_open)); its glyphs carry
 /// this value in [`GlyphMetrics::span`], and their
-/// [`GlyphMetrics::bytes`] index the filler text.
+/// [`GlyphMetrics::bytes`] index the filler text as drawn, its
+/// paragraph separators left out.
+/// A glyph whose span cannot be found reports it too, so it is never
+/// taken for a link.
 pub const FILLER_SPAN: usize = usize::MAX;
 
 /// What shaping measured about one glyph of a [`ShapedRun`].
@@ -66,14 +69,21 @@ pub struct GlyphMetrics {
     pub bytes: Range<usize>,
     /// The horizontal advance, in points, at the size it was shaped at.
     pub advance: f32,
+    /// The glyph's pen position in its shaped line, in points from the
+    /// line's left edge. Placement sets each glyph of a grapheme cluster
+    /// at its pen position relative to the cluster's leftmost, so a mark
+    /// sits on its base as shaped (ruling R9.1) — which is not always its
+    /// base's advance on: a right-to-left mark shares its letter's pen
+    /// position.
+    pub x: f32,
     /// The face's ascent at the glyph's size: how far above the
     /// baseline the face reaches.
     pub ascent: f32,
     /// The face's descent at the glyph's size, positive: how far below
     /// the baseline the face reaches.
     pub descent: f32,
-    /// Whether this glyph begins a grapheme cluster, in the order the
-    /// glyphs are listed. A glyph that continues the previous glyph's
+    /// Whether this glyph begins a grapheme cluster, in the (visual) order
+    /// the glyphs are listed. A glyph that continues the previous glyph's
     /// cluster (a mark shaped as a glyph of its own) is `false`, so a
     /// cut that keeps whole graphemes keeps whole runs of glyphs from
     /// one `true` to the next (ruling R6, reading 1).
@@ -94,7 +104,9 @@ pub struct ShapedRun {
     pub buffer: Arc<Buffer>,
     /// One entry per glyph, in the order [`ShapedRun::layout_glyphs`]
     /// yields the buffer's glyphs: line by line, each line in visual
-    /// order. [`PlacedGlyph::glyph`](crate::flow::PlacedGlyph::glyph)
+    /// order, left to right by pen position. (cosmic-text lists a
+    /// right-to-left line's glyphs right to left; they are reversed
+    /// here.) [`PlacedGlyph::glyph`](crate::flow::PlacedGlyph::glyph)
     /// indexes this.
     pub glyphs: Vec<GlyphMetrics>,
     /// The run's line height: the largest of its spans' (point size ×
@@ -130,8 +142,12 @@ impl ShapedRun {
     /// [`PlacedGlyph`](crate::flow::PlacedGlyph)'s position.
     ///
     /// Cost: a lazy walk over the buffer's layout lines; no allocation.
+    /// Collect it once per use: finding glyph *i* by `nth` walks *i*
+    /// glyphs.
     pub fn layout_glyphs(&self) -> impl Iterator<Item = &LayoutGlyph> + '_ {
-        self.buffer.layout_runs().flat_map(|run| run.glyphs.iter())
+        self.buffer
+            .layout_runs()
+            .flat_map(|run| visual(run.glyphs, run.rtl))
     }
 
     /// Where the run's baseline sits below the top of a glyph's placed
@@ -173,15 +189,31 @@ pub struct ShapedBox {
     pub glyph_spans: Vec<(usize /* span */, Range<usize> /* bytes */)>,
 }
 
-/// Which characters of a flow's text are not drawn: a path flow is one
-/// line, so neither line break is drawn; a box flow breaks at `\n` and
-/// draws no `\r` (D26).
+/// Which characters of a flow's text are not drawn: every paragraph
+/// separator ([`is_paragraph_separator`]) but a box flow's `\n`, which
+/// breaks the line (D26, ruling R9.5). A path flow is one line, so it
+/// draws none of them and breaks at none.
 #[derive(Copy, Clone, PartialEq)]
 enum Breaks {
-    /// `\n` and `\r` are left out.
+    /// Every paragraph separator is left out.
     None,
-    /// `\n` breaks the line; `\r` is left out.
+    /// `\n` breaks the line; every other paragraph separator is left out.
     Newline,
+}
+
+/// Whether `ch` is a paragraph separator: Unicode bidi class B —
+/// U+000A (`\n`), U+000D (`\r`), U+001C–U+001E, U+0085 (NEL) and U+2029
+/// (PARAGRAPH SEPARATOR).
+///
+/// cosmic-text starts a new line at every one of them, which would break
+/// a run into two lines and a box where D26 does not, and would strand
+/// the glyphs after it outside the piece table. So shaping never hands
+/// one to cosmic-text, except the `\n` a box breaks at (ruling R9.5).
+fn is_paragraph_separator(ch: char) -> bool {
+    matches!(
+        ch,
+        '\n' | '\r' | '\u{1C}' | '\u{1D}' | '\u{1E}' | '\u{85}' | '\u{2029}'
+    )
 }
 
 /// The text and attributes handed to cosmic-text, and the piece table
@@ -267,7 +299,7 @@ fn assemble<'f>(
             assembly.font_size = assembly.font_size.max(metrics.font_size);
         };
         let mut start = 0usize;
-        for (at, ch) in text.match_indices(['\n', '\r']) {
+        for (at, ch) in text.match_indices(is_paragraph_separator) {
             push(&mut assembly, &mut open_break, start, at, line, &mut line_len);
             if breaks == Breaks::Newline && ch == "\n" {
                 // The break itself is handed to cosmic-text so it splits
@@ -277,7 +309,7 @@ fn assemble<'f>(
                 line += 1;
                 line_len = 0;
             }
-            start = at + 1;
+            start = at + ch.len();
         }
         push(
             &mut assembly,
@@ -345,14 +377,29 @@ fn piece_of(pieces: &[Piece], line: usize, at: usize) -> Option<&Piece> {
 /// `glyph`'s span and its cluster as bytes of that span's text.
 fn span_bytes(pieces: &[Piece], line: usize, glyph: &LayoutGlyph) -> (usize, Range<usize>) {
     // Every glyph starts inside a piece, since cosmic-text shapes only
-    // the text it was handed; the fallback keeps a frame from failing if
-    // that ever stops being true.
+    // the text it was handed and no separator that would move a glyph to
+    // a line of its own reaches it. If that ever stops being true, the
+    // glyph names no span — never a real one, whose link a click would
+    // follow (ruling R9.5).
     let Some(piece) = piece_of(pieces, line, glyph.start) else {
-        return (0, 0..0);
+        debug_assert!(
+            false,
+            "flow: a glyph at line {line} byte {} has no piece",
+            glyph.start
+        );
+        return (FILLER_SPAN, 0..0);
     };
     let offset = glyph.start - piece.line_start;
     let end = glyph.end.min(piece.line_start + piece.len).max(glyph.start) - piece.line_start;
     (piece.span, piece.span_start + offset..piece.span_start + end)
+}
+
+/// A laid-out line's glyphs in visual order, left to right: cosmic-text
+/// lists a right-to-left line's glyphs right to left (its pen positions
+/// fall along the list), so those are walked backward. No allocation.
+fn visual(glyphs: &[LayoutGlyph], rtl: bool) -> impl Iterator<Item = &LayoutGlyph> + '_ {
+    let last = glyphs.len().saturating_sub(1);
+    (0..glyphs.len()).map(move |i| &glyphs[if rtl { last - i } else { i }])
 }
 
 /// The ascent and descent, per unit of size, assumed for a glyph whose
@@ -384,7 +431,7 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
             starts.extend(grapheme_chad::grapheme_byte_starts(run.text));
             previous_cluster = None;
         }
-        for glyph in run.glyphs {
+        for glyph in visual(run.glyphs, run.rtl) {
             let (span, bytes) = span_bytes(pieces, run.line_i, glyph);
             let (ascent, descent) = match face {
                 Some((seen, ascent, descent))
@@ -413,6 +460,7 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
                 span,
                 bytes,
                 advance: glyph.w,
+                x: glyph.x,
                 ascent: ascent * glyph.font_size,
                 descent: descent * glyph.font_size,
                 grapheme_start,
@@ -425,12 +473,20 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
 /// Shape `spans` as one line, every span's size times `scale`.
 ///
 /// The input of the path and point flows. Each span is shaped with its
-/// own face, size, weight, slant and color ([`span_attrs`]); a `\n` or
-/// `\r` in a span is not drawn, since a run is one line. `scale` is
-/// what `Fit` uses to rescale a flow (#239 §6); a caller shaping at the
-/// declared size passes `1.0`.
+/// own face, size, weight, slant and color ([`span_attrs`]); no paragraph
+/// separator in a span (`\n`, `\r`, U+001C–U+001E, U+0085, U+2029) is
+/// drawn, since a run is one line. `scale` is what `Fit` uses to
+/// rescale a flow (#239 §6); a caller shaping at the declared size
+/// passes `1.0`.
 ///
 /// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
+///
+/// **Precondition: call [`fonts::init`](crate::font::fonts::init) before
+/// taking the guard.** Resolving a span's face reads the compiled font
+/// table, whose first read registers the fonts under the font lock; with
+/// the table still cold, that read would re-enter the lock this
+/// caller holds and panic. The app initializes at startup; any other
+/// caller (a tool, a fuzz target) does it once before its first guard.
 ///
 /// Cost: one cosmic-text buffer and one shaping pass over the text,
 /// under the guard the caller holds (this never acquires the font
@@ -483,7 +539,10 @@ pub(crate) fn reshape(
 ) -> ShapedRun {
     // The filler's text and family name outlive the attribute list that
     // borrows them.
-    let filler_text: String = filler.map_or_else(String::new, |(text, _)| text.replace(['\n', '\r'], ""));
+    // The filler is one line, so no paragraph separator in it is drawn.
+    let filler_text: String = filler.map_or_else(String::new, |(text, _)| {
+        text.chars().filter(|&ch| !is_paragraph_separator(ch)).collect()
+    });
     let filler_family = filler.and_then(|(_, style)| families_of(std::iter::once(style), fs).pop().flatten());
 
     let mut rich: Vec<(&str, Attrs<'_>)> = Vec::with_capacity(run.pieces.len() + 2);
@@ -497,10 +556,21 @@ pub(crate) fn reshape(
     };
     let mut line_len = 0usize;
     for piece in run.pieces.iter().filter(|piece| piece.span != FILLER_SPAN) {
-        let Some(line) = run.buffer.lines.get(piece.line) else {
-            continue;
-        };
-        let Some(slice) = line.text().get(piece.line_start..piece.line_start + piece.len) else {
+        // Every piece is on a line of the buffer it was shaped into, since
+        // no separator reaches cosmic-text to move it (ruling R9.5). A
+        // piece that is not there would be text silently dropped, so a
+        // debug build refuses it; a release build keeps the frame.
+        let slice = run
+            .buffer
+            .lines
+            .get(piece.line)
+            .and_then(|line| line.text().get(piece.line_start..piece.line_start + piece.len));
+        let (Some(line), Some(slice)) = (run.buffer.lines.get(piece.line), slice) else {
+            debug_assert!(
+                false,
+                "flow: a piece of span {} is not in its shaped line",
+                piece.span
+            );
             continue;
         };
         let attrs = scaled(&line.attrs_list().get_span(piece.line_start), factor);
@@ -552,6 +622,13 @@ fn scaled<'a>(attrs: &Attrs<'a>, factor: f32) -> Attrs<'a> {
         .metrics(Metrics::new(size, size * LINE_HEIGHT_FACTOR))
 }
 
+/// `min` with every axis held to a finite, non-negative length: glam's
+/// `max` passes a `NaN` through, and a box must not be `NaN` wide.
+fn usable_min_size(min: Vec2) -> Vec2 {
+    let axis = |v: f32| if v.is_finite() { v.max(0.0) } else { 0.0 };
+    Vec2::new(axis(min.x), axis(min.y))
+}
+
 /// Shape `spans` as a box: lines broken at `\n` only (D26), the box
 /// sized to the larger of `min_size` and the text's natural size, and
 /// every line aligned within the box's width by `align`.
@@ -561,10 +638,15 @@ fn scaled<'a>(attrs: &Attrs<'a>, factor: f32) -> Attrs<'a> {
 /// as tall as the span it sits in, and empty text one empty line). A
 /// `\n` with nothing after it ends the box with an empty line, as an
 /// editor shows it; no spans at all is an empty box. Each span keeps its
-/// own face, size, weight, slant and color ([`span_attrs`]); a `\r` is
-/// not drawn.
+/// own face, size, weight, slant and color ([`span_attrs`]); no other
+/// paragraph separator (`\r`, U+001C–U+001E, U+0085, U+2029) is drawn
+/// or breaks a line. A minimum size is read per axis as a finite,
+/// non-negative length: a `NaN`, infinite or negative axis asks for
+/// nothing.
 ///
-/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
+/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)),
+/// and [`fonts::init`](crate::font::fonts::init) must have run before the
+/// guard was taken, as for [`shape_run`].
 ///
 /// Cost: one cosmic-text buffer, shaped once and laid out twice (once
 /// unbounded to measure, once at the box's width to align — the second
@@ -599,7 +681,7 @@ pub fn shape_box(
             natural.y += run.line_height;
         }
     }
-    let size = min_size.map_or(natural, |min| natural.max(min));
+    let size = min_size.map_or(natural, |min| natural.max(usable_min_size(min)));
     buffer.set_size(Some(size.x), None);
     buffer.shape_until_scroll(fs, false);
 

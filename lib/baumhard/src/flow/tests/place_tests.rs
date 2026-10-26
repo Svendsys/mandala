@@ -9,7 +9,7 @@
 use glam::Vec2;
 
 use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
-use crate::flow::tests::support::{center, close, style, synthetic, with_fonts};
+use crate::flow::tests::support::{center, close, de_casteljau, real_run, style, synthetic, with_fonts};
 use crate::flow::{
     offset, outline, place_at_point, place_on_closed, place_on_open, ring_offset, Curve, Outline, PlacedRun,
     Rect, ShapedRun,
@@ -137,19 +137,26 @@ pub fn do_flow_place_diagonal_step_blends_advance_and_height() {
 }
 
 #[test]
-fn test_flow_place_step_is_taken_at_its_middle() {
-    do_flow_place_step_is_taken_at_its_middle();
+fn test_flow_place_step_follows_the_chord_at_a_corner() {
+    do_flow_place_step_follows_the_chord_at_a_corner();
 }
 
-/// A glyph's step is resolved at its middle, not at its start (#239 §5
-/// step 2, the second round). On a sharp 100 × 100 square from x = 75
-/// on the top side, the second glyph (advance 20, height 10) starts at
-/// x = 95, still on the top side, but the middle of a 20-step would be
-/// 5 down the right side: re-taken there, its step is the line height,
-/// 10, so its center is half of that on, exactly at the corner
-/// (100, 0). Taking θ only at the glyph's start would give a step of 20
-/// and a center at (100, 5).
-pub fn do_flow_place_step_is_taken_at_its_middle() {
+/// At a sharp corner a step's direction is the chord it spans (#239 §5
+/// step 2, ruling R9.2). On a sharp 100 × 100 square from x = 75 on the
+/// top side, the second glyph (advance 20, height 10) starts at x = 95.
+/// Worked by hand:
+///
+/// 1. seed: the direction at 95 is level, so 20;
+/// 2. the chord over 20, from (95, 0) to (100, 15), gives
+///    `(5·20 + 15·10)/√(5² + 15²) = 15.811`;
+/// 3. the chord over that, to (100, 10.811), gives
+///    `(5·20 + 10.811·10)/√(5² + 10.811²) = 17.472`.
+///
+/// So the center is 8.736 on, at (100, 3.736): between the corner, where
+/// the tangent taken half a step on would put it, and (100, 5), where the
+/// tangent at the glyph's start alone would. The first glyph, entirely
+/// on the top side, steps its advance either way.
+pub fn do_flow_place_step_follows_the_chord_at_a_corner() {
     let run = synthetic(&[20.0, 20.0], 10.0);
     let path = sharp(0.0, 0.0, 100.0, 100.0);
     let placed = closed(
@@ -162,7 +169,112 @@ pub fn do_flow_place_step_is_taken_at_its_middle() {
     );
     let c = centers(&run, &placed);
     assert!(c[0].distance(Vec2::new(85.0, 0.0)) < 1e-3, "{}", c[0]);
-    assert!(c[1].distance(Vec2::new(100.0, 0.0)) < 1e-3, "{}", c[1]);
+    assert!(c[1].distance(Vec2::new(100.0, 3.7358)) < 1e-3, "{}", c[1]);
+}
+
+#[test]
+fn test_flow_place_corner_moves_continuously() {
+    do_flow_place_corner_moves_continuously();
+}
+
+/// A glyph walked past a sharp corner in hundredth-of-a-point steps
+/// never jumps: between consecutive start points its center moves by
+/// little more than the start point does. A step taken from the tangent
+/// alone jumps by up to half the difference of advance and line height
+/// (here 25) as its middle crosses the corner.
+pub fn do_flow_place_corner_moves_continuously() {
+    let run = synthetic(&[10.0, 60.0], 10.0);
+    let path = sharp(0.0, 0.0, 100.0, 100.0);
+    let mut previous: Option<Vec2> = None;
+    for i in 0..=2000 {
+        let at = 0.5 + 0.5 * i as f32 / 2000.0;
+        let placed = closed(
+            &run,
+            &path,
+            start(Edge::Top, at),
+            Direction::Clockwise,
+            &ONCE,
+            false,
+        );
+        let second = centers(&run, &placed)[1];
+        if let Some(previous) = previous {
+            let moved = second.distance(previous);
+            assert!(moved < 0.5, "at {at}: the second glyph jumped {moved}");
+        }
+        previous = Some(second);
+    }
+}
+
+#[test]
+fn test_flow_place_keeps_marks_with_their_letters() {
+    do_flow_place_keeps_marks_with_their_letters();
+}
+
+/// The grapheme cluster is the unit of placement (ruling R9.1). Down a
+/// vertical line, a combining mark, a stack of two, a Hebrew point (RTL,
+/// listed before its letter), and the ZWJ of an unligated sequence all
+/// sit in their base's row at their pen position, and each cluster is
+/// one line below the last: as many rows as clusters. A glyph's place
+/// in its cluster's box is its pen position as shaped, relative to the
+/// cluster's first (leftmost) glyph; the Hebrew point shares its
+/// letter's pen position.
+pub fn do_flow_place_keeps_marks_with_their_letters() {
+    for text in [
+        "x\u{301}y",
+        "q\u{323}\u{302}z",
+        "\u{5D0}\u{5B8}\u{5D1}",
+        "a\u{200D}b",
+        "\u{1F469}\u{200D}\u{1F4BB}e",
+    ] {
+        let (run, placed) = with_fonts(|fs| {
+            let run = real_run(text, &style(12.0), fs);
+            let (_, placed) = place_on_open(
+                &run,
+                &Curve::Line(Vec2::ZERO, Vec2::new(0.0, 500.0)),
+                &ONCE,
+                0.0,
+                &style(12.0),
+                fs,
+            );
+            (run, placed)
+        });
+        let clusters = run.glyphs.iter().filter(|g| g.grapheme_start).count();
+        assert!(
+            clusters < run.glyphs.len() || text.starts_with('\u{1F469}'),
+            "{text:?}: the fixture needs a glyph inside a cluster"
+        );
+        assert_eq!(placed.glyphs.len(), run.glyphs.len(), "{text:?}");
+        let mut row = 0usize;
+        let mut first = placed.glyphs[0];
+        let mut first_x = run.glyphs[first.glyph as usize].x;
+        for placed_glyph in &placed.glyphs {
+            let glyph = &run.glyphs[placed_glyph.glyph as usize];
+            if glyph.grapheme_start && placed_glyph.glyph != placed.glyphs[0].glyph {
+                close(
+                    placed_glyph.pos.y - first.pos.y,
+                    run.line_height,
+                    1e-3,
+                    "the next cluster is a line down",
+                );
+                first = *placed_glyph;
+                first_x = glyph.x;
+                row += 1;
+            }
+            close(
+                placed_glyph.pos.y,
+                first.pos.y,
+                1e-3,
+                "a mark keeps its base's row",
+            );
+            close(
+                placed_glyph.pos.x - first.pos.x,
+                glyph.x - first_x,
+                1e-3,
+                "at its pen position as shaped",
+            );
+        }
+        assert_eq!(row + 1, clusters, "{text:?}: one row per cluster");
+    }
 }
 
 #[test]
@@ -344,14 +456,18 @@ fn test_flow_place_on_a_bezier() {
 }
 
 /// Along a quadratic, every glyph center is on the curve: the nearest
-/// of 20 000 dense samples is within a twentieth of a point.
+/// of 20 000 dense samples, evaluated here by de Casteljau rather than
+/// through `Curve`, is within a twentieth of a point.
 pub fn do_flow_place_on_a_bezier() {
     let run = synthetic(&[7.0, 5.0, 9.0], 12.0);
-    let curve = Curve::Quadratic(Vec2::ZERO, Vec2::new(150.0, -200.0), Vec2::new(300.0, 0.0));
+    let points = [Vec2::ZERO, Vec2::new(150.0, -200.0), Vec2::new(300.0, 0.0)];
+    let curve = Curve::Quadratic(points[0], points[1], points[2]);
     let placed = open(&run, curve, &FitMode::Repeat, 1.0);
     let c = centers(&run, &placed);
     assert!(c.len() > 20);
-    let dense: Vec<Vec2> = (0..=20_000).map(|i| curve.point(i as f32 / 20_000.0)).collect();
+    let dense: Vec<Vec2> = (0..=20_000)
+        .map(|i| de_casteljau(&points, i as f32 / 20_000.0))
+        .collect();
     for p in &c {
         let nearest = dense.iter().map(|q| q.distance(*p)).fold(f32::MAX, f32::min);
         assert!(nearest < 0.05, "{p} is {nearest} off the curve");

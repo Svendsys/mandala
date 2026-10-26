@@ -34,9 +34,10 @@ pub const LINE_HEIGHT_FACTOR: f32 = 1.2;
 /// through `link`, where it leads.
 #[derive(Copy, Clone, Debug)]
 pub struct FlowSpan<'a> {
-    /// The text. A path flow is one line, so a `\n` or `\r` in it is
-    /// not drawn; a box flow breaks lines at `\n` and does not draw a
-    /// `\r` (D26).
+    /// The text. A path flow is one line, so no paragraph separator in
+    /// it (`\n`, `\r`, U+001C–U+001E, U+0085, U+2029) is drawn; a box
+    /// flow breaks lines at `\n` and draws none of the others (D26,
+    /// ruling R9.5).
     pub text: &'a str,
     /// The resolved style. Its size must be in points: a frame's `Rel`
     /// size is converted by the projection before it reaches shaping

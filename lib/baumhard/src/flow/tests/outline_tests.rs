@@ -10,7 +10,7 @@ use glam::Vec2;
 
 use crate::document::values::{Direction, Edge, Percent, Shape, StartPoint};
 use crate::flow::path::ArcPath;
-use crate::flow::tests::support::close;
+use crate::flow::tests::support::{close, de_casteljau, de_casteljau_derivative};
 use crate::flow::{offset, outline, ring_offset, Curve, Outline, Rect};
 
 fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -229,21 +229,23 @@ fn test_flow_bezier_walk_measures_arc_length() {
 }
 
 /// A cubic's arc-length walk measures its length — against a Simpson
-/// integral of its speed computed here, independently — and every point
-/// it yields is on the curve: the nearest of 20 000 dense samples is
-/// within a hundredth of a point. Distance is also uniform: two points
-/// `Δs` apart along the walk are at most `Δs` apart in the plane and
-/// nearly that on a gentle curve.
+/// integral of its speed, the curve evaluated here by de Casteljau
+/// rather than through `Curve` — and every point it yields is on the
+/// curve: the nearest of 20 000 dense de Casteljau samples is within a
+/// hundredth of a point. Distance is also uniform: two points `Δs` apart
+/// along the walk are at most `Δs` apart in the plane and nearly that
+/// on a gentle curve.
 pub fn do_flow_bezier_walk_measures_arc_length() {
-    let curve = Curve::Cubic(
+    let points = [
         Vec2::new(0.0, 0.0),
         Vec2::new(100.0, -80.0),
         Vec2::new(220.0, 160.0),
         Vec2::new(320.0, 40.0),
-    );
+    ];
+    let curve = Curve::Cubic(points[0], points[1], points[2], points[3]);
     let path = ArcPath::open(&curve, 1.5);
     let steps = 20_000;
-    let speed = |t: f32| curve.derivative(t).length();
+    let speed = |t: f32| de_casteljau_derivative(&points, t).length();
     let mut integral = speed(0.0) + speed(1.0);
     for i in 1..steps {
         let t = i as f32 / steps as f32;
@@ -253,7 +255,7 @@ pub fn do_flow_bezier_walk_measures_arc_length() {
     close(path.length(), integral, integral * 1e-4, "length");
 
     let dense: Vec<Vec2> = (0..=steps)
-        .map(|i| curve.point(i as f32 / steps as f32))
+        .map(|i| de_casteljau(&points, i as f32 / steps as f32))
         .collect();
     for i in 0..=100 {
         let s = path.length() * i as f32 / 100.0;
@@ -268,6 +270,46 @@ pub fn do_flow_bezier_walk_measures_arc_length() {
         chord <= 10.0 + 1e-3 && chord > 9.9,
         "10 along the walk is {chord} in the plane"
     );
+}
+
+#[test]
+fn test_flow_curve_point_and_derivative_by_hand() {
+    do_flow_curve_point_and_derivative_by_hand();
+}
+
+/// `Curve`'s point, derivative and speed bound against values worked by
+/// hand, so the curve tests that compare against de Casteljau are not
+/// the only witness:
+///
+/// - the cubic (0,0) (100,−80) (220,160) (320,40) at ½ is
+///   `(P0 + 3P1 + 3P2 + P3)/8 = (160, 35)`, its derivative
+///   `¾(P3 + P2 − P1 − P0) = (330, 210)`, and its speed bound three
+///   times its longest leg, `3·√(120² + 240²)`;
+/// - the quadratic (0,0) (150,−200) (300,0) at ½ is `(150, −100)`, its
+///   derivative `(C − A) + (B − C) = (300, 0)`;
+/// - the line (0,0) (4,8) at ¼ is (1, 2), its derivative (4, 8).
+pub fn do_flow_curve_point_and_derivative_by_hand() {
+    let near = |a: Vec2, b: Vec2| assert!(a.distance(b) < 1e-3, "{a} vs {b}");
+    let cubic = Curve::Cubic(
+        Vec2::new(0.0, 0.0),
+        Vec2::new(100.0, -80.0),
+        Vec2::new(220.0, 160.0),
+        Vec2::new(320.0, 40.0),
+    );
+    near(cubic.point(0.5), Vec2::new(160.0, 35.0));
+    near(cubic.derivative(0.5), Vec2::new(330.0, 210.0));
+    close(
+        cubic.speed_bound(),
+        3.0 * 72_000.0_f32.sqrt(),
+        1e-3,
+        "cubic speed bound",
+    );
+    let quadratic = Curve::Quadratic(Vec2::ZERO, Vec2::new(150.0, -200.0), Vec2::new(300.0, 0.0));
+    near(quadratic.point(0.5), Vec2::new(150.0, -100.0));
+    near(quadratic.derivative(0.5), Vec2::new(300.0, 0.0));
+    let line = Curve::Line(Vec2::ZERO, Vec2::new(4.0, 8.0));
+    near(line.point(0.25), Vec2::new(1.0, 2.0));
+    near(line.derivative(0.25), Vec2::new(4.0, 8.0));
 }
 
 #[test]

@@ -6,10 +6,13 @@
 
 use glam::Vec2;
 
-use crate::document::values::{Align, Weight};
+use crate::document::values::{Align, FitMode, Weight};
 use crate::flow::shape::reshape;
 use crate::flow::tests::support::{close, real_run, style, with_fonts};
-use crate::flow::{shape_box, shape_run, span_attrs, FlowSpan, ShapedBox, FILLER_SPAN, LINE_HEIGHT_FACTOR};
+use crate::flow::{
+    place_on_open, shape_box, shape_run, span_attrs, Curve, FlowSpan, ShapedBox, FILLER_SPAN,
+    LINE_HEIGHT_FACTOR,
+};
 use crate::font::{FontWeight, Metrics, Style};
 
 /// `text` shaped as a box in one 20 pt span.
@@ -467,4 +470,257 @@ fn test_flow_rel_size_reaching_shaping_is_a_caller_error() {
         crate::flow::point_size(&relative),
         crate::font::fonts::MIN_FONT_SIZE_PT
     );
+}
+
+/// The paragraph separators other than `\n` and `\r` (ruling R9.5).
+const SEPARATORS: [char; 5] = ['\u{1C}', '\u{1D}', '\u{1E}', '\u{85}', '\u{2029}'];
+
+#[test]
+fn test_flow_separators_never_break_a_run() {
+    do_flow_separators_never_break_a_run();
+}
+
+/// No paragraph separator breaks a run or is drawn (ruling R9.5): for
+/// each of U+001C–U+001E, U+0085 and U+2029, `"ab" + sep + "cd"` is one
+/// line reading `"abcd"`, and the glyphs after the separator name span 0
+/// at their own bytes, past it.
+pub fn do_flow_separators_never_break_a_run() {
+    for separator in SEPARATORS {
+        let text = format!("ab{separator}cd");
+        let run = with_fonts(|fs| real_run(&text, &style(14.0), fs));
+        let after = 2 + separator.len_utf8();
+        assert_eq!(run.buffer.lines.len(), 1, "{separator:?}: a run is one line");
+        assert_eq!(run.buffer.lines[0].text(), "abcd", "{separator:?}");
+        let mapped: Vec<_> = run.glyphs.iter().map(|g| (g.span, g.bytes.clone())).collect();
+        assert_eq!(
+            mapped,
+            vec![
+                (0, 0..1),
+                (0, 1..2),
+                (0, after..after + 1),
+                (0, after + 1..after + 2)
+            ],
+            "{separator:?}"
+        );
+    }
+}
+
+#[test]
+fn test_flow_separators_never_break_a_box() {
+    do_flow_separators_never_break_a_box();
+}
+
+/// A box breaks at `\n` only (D26, ruling R9.5): with any other paragraph
+/// separator in it, `"ab" + sep + "cd"` is one line, and with a `\n`
+/// after that, two.
+pub fn do_flow_separators_never_break_a_box() {
+    for separator in SEPARATORS {
+        let one = boxed(&format!("ab{separator}cd"), None, Align::Left);
+        assert_eq!(one.buffer.layout_runs().count(), 1, "{separator:?}");
+        assert_eq!(one.glyph_spans.len(), 4, "{separator:?}");
+        let two = boxed(&format!("ab{separator}cd\nef"), None, Align::Left);
+        assert_eq!(two.buffer.layout_runs().count(), 2, "{separator:?}");
+    }
+}
+
+#[test]
+fn test_flow_separators_survive_a_reshape() {
+    do_flow_separators_survive_a_reshape();
+}
+
+/// The paths that shape a run again keep all of its text when it held a
+/// separator (ruling R9.5): a `Fit` places all four letters of
+/// `"ab" + sep + "cd"`, and a `Once` filler — itself holding a separator,
+/// which is not drawn — comes after all four, not instead of them.
+pub fn do_flow_separators_survive_a_reshape() {
+    let line = Curve::Line(Vec2::ZERO, Vec2::new(300.0, 0.0));
+    for separator in ['\u{85}', '\u{2029}'] {
+        let text = format!("ab{separator}cd");
+        let (fitted, placed) = with_fonts(|fs| {
+            let run = real_run(&text, &style(12.0), fs);
+            place_on_open(
+                &run,
+                &line,
+                &FitMode::Fit { min: 0.5, max: 2.0 },
+                0.0,
+                &style(12.0),
+                fs,
+            )
+        });
+        let fitted = fitted.expect("the fit rescales");
+        assert_eq!(fitted.glyphs.len(), 4, "{separator:?}");
+        assert_eq!(placed.glyphs.len(), 4, "{separator:?}");
+        assert!(!placed.truncated, "{separator:?}");
+
+        let filler = FitMode::Once {
+            filler: Some(format!("-{separator}")),
+        };
+        let (filled, placed) = with_fonts(|fs| {
+            let run = real_run(&text, &style(12.0), fs);
+            place_on_open(&run, &line, &filler, 0.0, &style(12.0), fs)
+        });
+        let filled = filled.expect("the filler is placed");
+        let spans: Vec<usize> = filled.glyphs.iter().map(|g| g.span).collect();
+        assert_eq!(spans, vec![0, 0, 0, 0, FILLER_SPAN], "{separator:?}");
+        let text_placed = placed.glyphs.iter().filter(|g| g.glyph < 4).count();
+        assert_eq!(text_placed, 4, "{separator:?}: the text is placed whole");
+    }
+}
+
+#[test]
+fn test_flow_box_reads_a_bad_minimum_as_none() {
+    do_flow_box_reads_a_bad_minimum_as_none();
+}
+
+/// A minimum size is held to a finite, non-negative length per axis: a
+/// `NaN`, an infinity or a negative axis asks for nothing, so the box is
+/// its natural size rather than `NaN` or infinitely wide.
+pub fn do_flow_box_reads_a_bad_minimum_as_none() {
+    let natural = boxed("hi", None, Align::Left).size;
+    for min in [
+        Vec2::new(f32::NAN, f32::NAN),
+        Vec2::new(f32::INFINITY, f32::NEG_INFINITY),
+        Vec2::new(-50.0, f32::NAN),
+    ] {
+        assert_eq!(boxed("hi", Some(min), Align::Left).size, natural, "{min}");
+    }
+    let mixed = boxed("hi", Some(Vec2::new(f32::NAN, 300.0)), Align::Left).size;
+    assert_eq!(mixed, Vec2::new(natural.x, 300.0));
+}
+
+#[test]
+fn test_flow_shape_run_maps_bidi_text() {
+    do_flow_shape_run_maps_bidi_text();
+}
+
+/// Hebrew between two Latin spans comes out in visual order — bet, then
+/// alef with its qamats — each glyph naming the Hebrew span and the bytes
+/// of its own cluster there: bet at 4..6, alef and qamats sharing 0..4.
+/// The Latin either side keeps its own spans and bytes.
+pub fn do_flow_shape_run_maps_bidi_text() {
+    let latin = style(12.0);
+    let run = with_fonts(|fs| {
+        shape_run(
+            &[
+                FlowSpan {
+                    text: "ab ",
+                    style: &latin,
+                    link: None,
+                },
+                FlowSpan {
+                    text: "\u{5D0}\u{5B8}\u{5D1}",
+                    style: &latin,
+                    link: None,
+                },
+                FlowSpan {
+                    text: " cd",
+                    style: &latin,
+                    link: None,
+                },
+            ],
+            1.0,
+            fs,
+        )
+    });
+    let mapped: Vec<_> = run
+        .glyphs
+        .iter()
+        .map(|g| (g.span, g.bytes.clone(), g.grapheme_start))
+        .collect();
+    assert_eq!(
+        mapped,
+        vec![
+            (0, 0..1, true),
+            (0, 1..2, true),
+            (0, 2..3, true),
+            (1, 4..6, true),
+            (1, 0..4, true),
+            (1, 0..4, false),
+            (2, 0..1, true),
+            (2, 1..2, true),
+            (2, 2..3, true),
+        ]
+    );
+    let pens: Vec<f32> = run.glyphs.iter().map(|g| g.x).collect();
+    assert!(
+        pens.windows(2).all(|pair| pair[0] <= pair[1]),
+        "listed left to right: {pens:?}"
+    );
+}
+
+#[test]
+fn test_flow_shape_run_maps_a_zwj_emoji() {
+    do_flow_shape_run_maps_a_zwj_emoji();
+}
+
+/// A ZWJ emoji sequence is one grapheme cluster, whether or not a face
+/// ligates it: every glyph names span 0 and bytes inside the sequence,
+/// only the first begins a cluster, and the letter after it begins the
+/// next one, at its own bytes.
+pub fn do_flow_shape_run_maps_a_zwj_emoji() {
+    let text = "\u{1F469}\u{200D}\u{1F4BB}e";
+    let run = with_fonts(|fs| real_run(text, &style(12.0), fs));
+    let (last, sequence) = run.glyphs.split_last().unwrap();
+    assert!(!sequence.is_empty());
+    assert!(sequence[0].grapheme_start);
+    for glyph in sequence {
+        assert_eq!(glyph.span, 0);
+        assert!(glyph.bytes.start < 11 && glyph.bytes.end <= 11, "{glyph:?}");
+    }
+    assert!(sequence[1..].iter().all(|g| !g.grapheme_start));
+    assert_eq!(
+        (last.span, last.bytes.clone(), last.grapheme_start),
+        (0, 11..12, true)
+    );
+}
+
+/// Shaping's precondition (`shape_run`'s docs): `fonts::init` runs before
+/// the guard is taken. Each half runs in a fresh child process, so the
+/// compiled font table really is cold there. With the call, a cold
+/// process shapes; without it, the first face lookup registers the fonts
+/// under the lock the caller holds, and the re-entrancy check refuses it
+/// by name. Plain `#[test]`: it spawns processes and drives a panic
+/// (lib/baumhard/CONVENTIONS.md §B8, class 2).
+#[test]
+fn test_flow_shaping_needs_fonts_init_before_the_guard() {
+    use crate::font::fonts::{self, acquire_font_system_write};
+    // Set in a child process to say which half it runs: `init` calls
+    // `fonts::init` before taking the guard, `none` does not.
+    const COLD_CHILD_ENV: &str = "MANDALA_FLOW_COLD_CHILD";
+    if let Ok(mode) = std::env::var(COLD_CHILD_ENV) {
+        if mode == "init" {
+            fonts::init();
+        }
+        let mut fs = acquire_font_system_write("flow::cold");
+        let run = real_run("cold", &style(12.0), &mut fs);
+        println!("FLOW_COLD_SHAPED {}", run.glyphs.len());
+        return;
+    }
+    let name = format!(
+        "{}::test_flow_shaping_needs_fonts_init_before_the_guard",
+        module_path!()
+            .split_once("::")
+            .expect("module paths start with the crate")
+            .1
+    );
+    let child = |mode: &str| {
+        std::process::Command::new(std::env::current_exe().expect("the test binary has a path"))
+            .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+            .env(COLD_CHILD_ENV, mode)
+            .output()
+            .expect("the test binary runs")
+    };
+    let warm = child("init");
+    let warm_out = String::from_utf8_lossy(&warm.stdout);
+    assert!(warm.status.success(), "{warm_out}");
+    assert!(warm_out.contains("FLOW_COLD_SHAPED 4"), "{warm_out}");
+    let cold = child("none");
+    let cold_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cold.stdout),
+        String::from_utf8_lossy(&cold.stderr)
+    );
+    assert!(!cold.status.success(), "{cold_out}");
+    assert!(cold_out.contains("re-entrant"), "{cold_out}");
+    assert!(!cold_out.contains("FLOW_COLD_SHAPED"), "{cold_out}");
 }

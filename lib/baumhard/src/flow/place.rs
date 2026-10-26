@@ -5,18 +5,32 @@
 //! in length (§6.4, D10).
 //!
 //! **Glyphs are never rotated.** A curve is made by where glyphs sit,
-//! the way ASCII art makes one. A glyph of advance `w` and line height
-//! `h` placed at distance `s` along the path occupies a step
-//! `|cos θ|·w + |sin θ|·h`, θ being the direction of travel half a step
-//! on: along a horizontal stretch glyphs sit side by side, along a
-//! vertical one they stack a line apart, and on a curve the two blend.
-//! The step is a fixed point (θ depends on the step); it is resolved in
-//! two rounds, θ first taken at `s` and then re-taken half a step on.
-//! The glyph's box, `w × h`, is centered on the path half a step on —
-//! on a closed path pushed outward by half its extent along the normal,
-//! `|n.x|·w/2 + |n.y|·h/2`, so text sits on the outline rather than
-//! across it — and the next glyph starts a step (plus any spacing)
-//! later.
+//! the way ASCII art makes one. The unit of placement is the **grapheme
+//! cluster** (ruling R9.1): a letter with its combining marks, a ZWJ
+//! sequence, whatever reads as one character. A cluster of summed
+//! advance `w` and line height `h` placed at distance `s` along the path
+//! occupies a step `|cos θ|·w + |sin θ|·h`: along a horizontal stretch
+//! clusters sit side by side, along a vertical one they stack a line
+//! apart, and on a curve the two blend. θ is the direction of the
+//! **chord** the step spans, from `p(s)` to `p(s + step)` (ruling R9.2),
+//! so the step turns continuously through a sharp corner instead of
+//! jumping; on a straight stretch, and on a circular arc at the step's
+//! middle, it is the direction of travel. The step depends on θ and θ on
+//! the step, so it is resolved in a bounded number of rounds.
+//!
+//! The cluster's box, `w × h`, is centered on the path half a step on —
+//! on a closed path pushed outward by half its extent along the chord's
+//! outward normal, `|n.x|·w/2 + |n.y|·h/2`, so text sits on the outline
+//! rather than across it — and every glyph of the cluster sits in that
+//! box at its pen position from the shaped line, so a mark never leaves
+//! its base. The next cluster starts a step (plus any spacing) later.
+//!
+//! **Cuts keep the start of the text as it is read** (ruling R9.4). When
+//! text is longer than its path, what is kept is the longest prefix in
+//! reading order — the order of the text, which for right-to-left and
+//! mixed text is not the visual order the glyphs are listed and walked
+//! in — and the kept clusters are laid in visual order. An RTL run so
+//! keeps its beginning and loses its end, as an LTR one does.
 //!
 //! A run is placed once and re-placed at will: placement reads the
 //! run's [`GlyphMetrics`] and never its text, so moving a node re-places
@@ -24,6 +38,8 @@
 //! the font system they are handed: `Fit`, which rescales the run, and
 //! `Once` with a filler, which appends the filler; both return the run
 //! their placement refers to (ruling R6).
+
+use std::ops::Range;
 
 use glam::Vec2;
 
@@ -43,16 +59,19 @@ use crate::font::FontSystem;
 pub const MAX_PLACED_GLYPHS: usize = 1 << 20;
 
 /// How far inside its end condition a solved spacing lands: `Spread`
-/// and `Fit` end their last glyph's step within this of the path's
-/// length (and never past it).
+/// and `Fit` end their last cluster's step within this of the path's
+/// length, and never past it.
 const SOLVE_TOLERANCE: f32 = 0.05;
 
-/// The most rounds the spacing and scale solvers take. Each is bounded,
-/// so no placement loops unbounded on an interactive path.
+/// The most rounds the spacing solver takes. Each solver is bounded, so
+/// no placement loops unbounded on an interactive path.
 const SOLVE_ROUNDS: usize = 48;
 
 /// The most rounds `Fit` takes to shrink its scale until the text fits.
 const FIT_ROUNDS: usize = 16;
+
+/// The chord rounds that resolve a step after its seed (ruling R9.2).
+const CHORD_ROUNDS: usize = 2;
 
 /// One glyph placed: which glyph of the run, and where its box's
 /// top-left corner sits on the canvas.
@@ -63,123 +82,263 @@ pub struct PlacedGlyph {
     pub glyph: u32,
     /// The top-left corner of the glyph's `advance × line_height` box.
     /// The glyph is drawn upright in it, its baseline
-    /// [`ShapedRun::baseline`] below this corner.
+    /// [`ShapedRun::baseline`] below this corner. Glyphs of one grapheme
+    /// cluster share the cluster's box, each at its pen position in it.
     pub pos: Vec2,
 }
 
 /// A run placed along a path or at a point.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlacedRun {
-    /// The placed glyphs, in the order they were walked.
+    /// The placed glyphs: the clusters in the order they were walked,
+    /// each cluster's glyphs in visual order.
     pub glyphs: Vec<PlacedGlyph>,
     /// Whether the flow's text could not be placed whole even once: it
-    /// was cut at the last grapheme that fits, or placement stopped at
-    /// [`MAX_PLACED_GLYPHS`]. A `Repeat` whose last copy is cut, or a
-    /// filler that stops short of the end, is the mode working, not a
-    /// truncation.
+    /// was cut to the longest reading-order prefix that fits, or
+    /// placement stopped at [`MAX_PLACED_GLYPHS`]. A `Repeat` whose last
+    /// copy is cut, or a filler that stops short of the end, is the mode
+    /// working, not a truncation.
     pub truncated: bool,
 }
 
 /// The tolerance a float compare against the path's length allows, so
-/// that a glyph ending exactly at the end is not cut by rounding: a
+/// that a cluster ending exactly at the end is not cut by rounding: a
 /// thousandth of a point, or a millionth of the path, whichever is
 /// larger.
 fn end_slack(length: f32) -> f32 {
     (length * 1e-6).max(1e-3)
 }
 
+/// A grapheme cluster of a run: the unit placement steps, cuts and
+/// spaces (ruling R9.1).
+#[derive(Clone, Debug)]
+struct Cluster {
+    /// Its glyphs, as indices into the run's glyphs, in visual order.
+    glyphs: Range<usize>,
+    /// The sum of its glyphs' advances: its box's width.
+    advance: f32,
+    /// The leftmost pen position of its glyphs in the shaped line: each
+    /// glyph sits that far into the box from its own pen position.
+    left: f32,
+    /// Where it starts in reading order: the span and span byte of its
+    /// first character.
+    reading: (usize, usize),
+}
+
+/// The clusters of `glyphs[range]`, in visual order: a cluster begins
+/// at every glyph marked [`GlyphMetrics::grapheme_start`] (and at the
+/// range's first glyph).
+///
+/// Cost: O(glyphs); one `Vec` entry per cluster.
+fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
+    let mut clusters: Vec<Cluster> = Vec::new();
+    for index in range {
+        let glyph = &glyphs[index];
+        let reading = (glyph.span, glyph.bytes.start);
+        match clusters.last_mut() {
+            Some(cluster) if !glyph.grapheme_start && cluster.glyphs.end == index => {
+                cluster.glyphs.end = index + 1;
+                cluster.advance += glyph.advance;
+                cluster.left = cluster.left.min(glyph.x);
+                cluster.reading = cluster.reading.min(reading);
+            }
+            _ => clusters.push(Cluster {
+                glyphs: index..index + 1,
+                advance: glyph.advance,
+                left: glyph.x,
+                reading,
+            }),
+        }
+    }
+    clusters
+}
+
+/// Why a lay stopped.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Laid {
+    /// Every cluster fit; the next would start at this distance.
+    Fits(f32),
+    /// A cluster's step would have ended past the path.
+    Overran,
+    /// Placing a cluster would have passed [`MAX_PLACED_GLYPHS`].
+    Capped,
+}
+
+/// The extent a `w × h` box spans along unit direction `dir`.
+fn extent(dir: Vec2, w: f32, h: f32) -> f32 {
+    dir.x.abs() * w + dir.y.abs() * h
+}
+
 /// The walk: a path, the run's line height and whether glyphs are
 /// pushed outside the outline.
+#[derive(Copy, Clone)]
 struct PathWalk<'p> {
     path: &'p ArcPath,
-    /// `h`: every glyph's box height and vertical extent.
+    /// `h`: every cluster's box height and vertical extent.
     line_height: f32,
     outward: bool,
-    /// `P` plus [`end_slack`].
+    /// How far along the path a step may end: `P` plus [`end_slack`].
     limit: f32,
 }
 
 impl PathWalk<'_> {
-    /// The step a glyph of advance `w` (and height `h`) takes at `s`
-    /// (#239 §5 step 2): θ at `s`, then re-taken at `s + step/2`.
-    fn step(&self, s: f32, w: f32, h: f32) -> f32 {
-        let extent = |tangent: Vec2| tangent.x.abs() * w + tangent.y.abs() * h;
-        let first = extent(self.path.at(s).1);
-        extent(self.path.at(s + first * 0.5).1)
+    /// The direction of the chord from `p(s)` to `p(s + len)`, or the
+    /// direction of travel at `s` where the chord has no length.
+    fn chord(&self, s: f32, len: f32) -> Vec2 {
+        let (from, tangent) = self.path.at(s);
+        let (to, _) = self.path.at(s + len);
+        (to - from).try_normalize().unwrap_or(tangent)
     }
 
-    /// The top-left corner of a `w × h` glyph whose step `step` starts
-    /// at `s` (#239 §5 steps 3 and 4).
-    fn corner(&self, s: f32, step: f32, w: f32, h: f32) -> Vec2 {
-        let (point, tangent) = self.path.at(s + step * 0.5);
-        let mut center = point;
+    /// The step a `w × h` cluster takes from `s`, and the direction θ it
+    /// is taken in (#239 §5 step 2, ruling R9.2).
+    ///
+    /// The seed is the extent along the direction of travel at `s`; each
+    /// of [`CHORD_ROUNDS`] rounds then re-takes θ from the chord the step
+    /// spans. Where the path is straight, or smooth at the scale of one
+    /// step, that is the direction of travel. At a sharp corner the chord
+    /// turns with the corner: a step that straddles it blends the two
+    /// sides by how much of it lies on each.
+    ///
+    /// Every round is continuous in `s`. The seed jumps only when `s` is
+    /// exactly at a corner, and the chord from a corner runs along the
+    /// side after it whatever its length, so the jump does not survive
+    /// the first round. (A seed taken half a step on would jump while the
+    /// step still straddles the corner, and two chord rounds leave a
+    /// visible jump: `test_flow_place_corner_moves_continuously` sees
+    /// 3.1 pt.) So a cluster's position, and the end of a run of steps,
+    /// move continuously as the run moves along, which is what lets
+    /// `Spread`'s and `Fit`'s end conditions be solved on a sharp outline.
+    fn step(&self, s: f32, w: f32, h: f32) -> (f32, Vec2) {
+        let mut step = extent(self.path.at(s).1, w, h);
+        for _ in 0..CHORD_ROUNDS {
+            step = extent(self.chord(s, step), w, h);
+        }
+        (step, self.chord(s, step))
+    }
+
+    /// The top-left corner of a `w × h` cluster box whose step `step`,
+    /// taken in direction `dir`, starts at `s` (#239 §5 steps 3 and 4).
+    fn corner(&self, s: f32, step: f32, dir: Vec2, w: f32, h: f32) -> Vec2 {
+        let (mut center, _) = self.path.at(s + step * 0.5);
         if self.outward {
-            let normal = self.path.outward(tangent);
-            center += normal * (normal.x.abs() * w * 0.5 + normal.y.abs() * h * 0.5);
+            let normal = self.path.outward(dir);
+            center += normal * extent(normal, w * 0.5, h * 0.5);
         }
         center - Vec2::new(w, h) * 0.5
     }
 
-    /// Where the last glyph's step ends when every glyph of `glyphs`
+    /// Where the last cluster's step ends when every one of `clusters`
     /// is walked from 0 with `gap` between steps, at `scale` times its
     /// size, cutting nothing: the natural length `L` at `gap = 0`.
     /// Advances and line heights are linear in size (cosmic-text's
     /// default hinting is off), so `L(scale)` needs no reshape.
-    fn measure(&self, glyphs: &[GlyphMetrics], scale: f32, gap: f32) -> f32 {
+    fn measure(&self, clusters: &[Cluster], scale: f32, gap: f32) -> f32 {
         let h = self.line_height * scale;
         let mut s = 0.0_f32;
         let mut end = 0.0_f32;
-        for glyph in glyphs {
-            end = s + self.step(s, glyph.advance * scale, h);
+        for cluster in clusters {
+            end = s + self.step(s, cluster.advance * scale, h).0;
             s = end + gap;
         }
         end
     }
 
-    /// Place `glyphs[range]` (indices into `glyphs`) from `s` with `gap`
-    /// between steps, onto `out`, while each step ends within the path.
-    ///
-    /// Returns where the glyph after the last one would start, or `None`
-    /// when a glyph did not fit: then every glyph of its grapheme
-    /// cluster placed so far is taken back off `out`, so the cut keeps
-    /// whole graphemes. Also `None` at [`MAX_PLACED_GLYPHS`].
-    fn lay(
+    /// Place `clusters` from `s` with `gap` between steps onto `out`,
+    /// each whole: its glyphs share its box, each at its pen position.
+    /// Stops before the first cluster whose step would end past the path,
+    /// or that would pass [`MAX_PLACED_GLYPHS`], and says which.
+    fn lay<'c>(
         &self,
         glyphs: &[GlyphMetrics],
-        range: std::ops::Range<usize>,
+        clusters: impl IntoIterator<Item = &'c Cluster>,
         mut s: f32,
         gap: f32,
         out: &mut Vec<PlacedGlyph>,
-    ) -> Option<f32> {
-        let mut cluster_start = out.len();
-        for index in range {
-            let glyph = &glyphs[index];
-            if glyph.grapheme_start {
-                cluster_start = out.len();
+    ) -> Laid {
+        let h = self.line_height;
+        for cluster in clusters {
+            let (step, dir) = self.step(s, cluster.advance, h);
+            // The same arithmetic, in the same order, as `measure`: a
+            // solved spacing that measures within the path must lay
+            // within it, to the last bit.
+            let end = s + step;
+            if end > self.limit {
+                return Laid::Overran;
             }
-            let step = self.step(s, glyph.advance, self.line_height);
-            if s + step > self.limit || out.len() >= MAX_PLACED_GLYPHS {
-                out.truncate(cluster_start);
-                return None;
+            if out.len() + cluster.glyphs.len() > MAX_PLACED_GLYPHS {
+                return Laid::Capped;
             }
-            out.push(PlacedGlyph {
-                glyph: index as u32,
-                pos: self.corner(s, step, glyph.advance, self.line_height),
-            });
-            s += step + gap;
+            let corner = self.corner(s, step, dir, cluster.advance, h);
+            for index in cluster.glyphs.clone() {
+                out.push(PlacedGlyph {
+                    glyph: index as u32,
+                    pos: corner + Vec2::new(glyphs[index].x - cluster.left, 0.0),
+                });
+            }
+            s = end + gap;
         }
-        Some(s)
+        Laid::Fits(s)
+    }
+
+    /// [`lay`](Self::lay) `clusters`; when they overrun, lay instead the
+    /// longest prefix of them in reading order that fits, in visual order
+    /// (ruling R9.4). Returns how the final lay stopped and whether text
+    /// was cut.
+    ///
+    /// Cost: one lay when everything fits; otherwise a sort of the
+    /// clusters by reading order and a binary search over the prefix
+    /// length, O(log clusters) more lays.
+    fn lay_or_cut(
+        &self,
+        glyphs: &[GlyphMetrics],
+        clusters: &[Cluster],
+        s: f32,
+        gap: f32,
+        out: &mut Vec<PlacedGlyph>,
+    ) -> (Laid, bool) {
+        let mark = out.len();
+        match self.lay(glyphs, clusters, s, gap, out) {
+            Laid::Overran => {}
+            laid => return (laid, false),
+        }
+        let mut order: Vec<usize> = (0..clusters.len()).collect();
+        order.sort_by_key(|&index| clusters[index].reading);
+        let mut rank = vec![0usize; clusters.len()];
+        for (position, &index) in order.iter().enumerate() {
+            rank[index] = position;
+        }
+        let lay_prefix = |keep: usize, out: &mut Vec<PlacedGlyph>| {
+            out.truncate(mark);
+            let kept = clusters
+                .iter()
+                .zip(&rank)
+                .filter(|(_, &r)| r < keep)
+                .map(|(c, _)| c);
+            self.lay(glyphs, kept, s, gap, out)
+        };
+        // `fits` keeps a prefix that fits (none trivially does); `overruns`
+        // one that does not (all of them, just seen).
+        let (mut fits, mut overruns) = (0usize, clusters.len());
+        while overruns - fits > 1 {
+            let middle = fits + (overruns - fits) / 2;
+            match lay_prefix(middle, out) {
+                Laid::Fits(_) => fits = middle,
+                Laid::Overran | Laid::Capped => overruns = middle,
+            }
+        }
+        (lay_prefix(fits, out), true)
     }
 }
 
 /// Place `run` around the closed `path` (a frame ring), from `start`
 /// in `direction`, as `fit` says (#239 §5, §6).
 ///
-/// With `outward`, each glyph is pushed off the outline by half its
+/// With `outward`, each cluster is pushed off the outline by half its
 /// extent along the outward normal, so the ring sits outside the
-/// outline; without, glyph centers sit on it. A ring placed around
+/// outline; without, cluster centers sit on it. A ring placed around
 /// `offset(outline, ring_offset(...))` clears the rings inside it.
-/// "Fits" means the last glyph's step ends at or before the path's
+/// "Fits" means the last cluster's step ends at or before the path's
 /// length: the start point is not reused.
 ///
 /// `flow` is the flow's own resolved style (sizes in points), read only
@@ -192,9 +351,10 @@ impl PathWalk<'_> {
 /// for `Once` — and the placement.
 ///
 /// Cost: one arc-length path (O(1) for a rounded rectangle or a circle,
-/// a table for an ellipse); O(glyphs placed) steps, each two path
-/// lookups; `Spread` and `Fit` measure the run a bounded number of times
-/// more to solve their end condition; `Fit` and a filler shape once.
+/// a table for an ellipse); O(clusters placed) steps, each a handful of
+/// path lookups; `Spread` and `Fit` measure the run a bounded number of
+/// times more to solve their end condition, and a cut a logarithmic
+/// number; `Fit` and a filler shape once.
 #[allow(clippy::too_many_arguments)] // #239's signature, as amended by ruling R6.
 pub fn place_on_closed(
     run: &ShapedRun,
@@ -212,10 +372,10 @@ pub fn place_on_closed(
 }
 
 /// Place `run` along the open `curve` (a connector or a line link),
-/// from its source end, as `fit` says, with `spacing` between glyphs
+/// from its source end, as `fit` says, with `spacing` between clusters
 /// (#239 §5, §6).
 ///
-/// Glyph centers sit on the curve. `spacing` is the gap between steps
+/// Cluster centers sit on the curve. `spacing` is the gap between steps
 /// for `Once` and `Repeat` (and between filler copies); `Spread` and
 /// `Fit` solve the gap that fills the curve, which replaces it (ruling
 /// R6, reading 7).
@@ -243,25 +403,22 @@ pub fn place_on_open(
 }
 
 /// Place `run` as one line centered on `center`: a portal marker.
-/// Glyphs sit side by side at their advances, all on one baseline;
-/// nothing is cut.
+/// Glyphs sit at their pen positions as shaped, the line as wide as its
+/// advances, all on one baseline; nothing is cut.
 ///
 /// Cost: O(glyphs); one allocation for the placement.
 pub fn place_at_point(run: &ShapedRun, center: Vec2) -> PlacedRun {
     let width: f32 = run.glyphs.iter().map(|g| g.advance).sum();
-    let mut corner = center - Vec2::new(width, run.line_height) * 0.5;
+    let left = run.glyphs.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+    let corner = center - Vec2::new(width, run.line_height) * 0.5;
     let glyphs = run
         .glyphs
         .iter()
         .enumerate()
         .take(MAX_PLACED_GLYPHS)
-        .map(|(index, glyph)| {
-            let placed = PlacedGlyph {
-                glyph: index as u32,
-                pos: corner,
-            };
-            corner.x += glyph.advance;
-            placed
+        .map(|(index, glyph)| PlacedGlyph {
+            glyph: index as u32,
+            pos: corner + Vec2::new(glyph.x - left, 0.0),
         })
         .collect();
     PlacedRun {
@@ -305,39 +462,39 @@ fn place(
         limit: path.length() + end_slack(path.length()),
     };
     match fit {
-        FitMode::Once { filler } => once(run, &walk(run), spacing, filler.as_deref(), flow, fs, &walk),
+        FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs, &walk),
         FitMode::Repeat => (None, repeat(run, &walk(run), spacing)),
-        FitMode::Spread => (None, spread(run, &walk(run))),
+        FitMode::Spread => (None, spread(run, &walk(run), 0.0)),
         FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs, &walk),
     }
 }
 
-/// Every glyph once from the start, `gap` apart, cut at the last
-/// grapheme that fits.
+/// Every cluster once from the start, `gap` apart, cut to the longest
+/// reading-order prefix that fits. Also returns where the next cluster
+/// would start, when the text was placed whole.
 fn once_text(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> (PlacedRun, Option<f32>) {
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let mut glyphs = Vec::with_capacity(run.glyphs.len());
-    let next = walk.lay(&run.glyphs, 0..run.glyphs.len(), 0.0, gap, &mut glyphs);
-    (
-        PlacedRun {
-            glyphs,
-            truncated: next.is_none(),
-        },
-        next,
-    )
+    let (laid, cut) = walk.lay_or_cut(&run.glyphs, &clusters, 0.0, gap, &mut glyphs);
+    let next = match laid {
+        Laid::Fits(next) if !cut => Some(next),
+        _ => None,
+    };
+    let truncated = cut || laid == Laid::Capped;
+    (PlacedRun { glyphs, truncated }, next)
 }
 
 /// `Once`: the text once from the start; then, with a filler and room
 /// left, whole copies of the filler until the next would pass the end.
 fn once<'p>(
     run: &ShapedRun,
-    walk: &PathWalk<'p>,
     gap: f32,
     filler: Option<&str>,
     flow: &ResolvedText,
     fs: &mut FontSystem,
     walk_for: &dyn Fn(&ShapedRun) -> PathWalk<'p>,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    let (placed, next) = once_text(run, walk, gap);
+    let (placed, next) = once_text(run, &walk_for(run), gap);
     let (Some(filler), Some(_)) = (filler, next) else {
         return (None, placed);
     };
@@ -349,31 +506,32 @@ fn once<'p>(
     // The filled run may be taller (a larger filler), which moves the
     // text; place everything again with its line height.
     let walk = walk_for(&filled);
+    let text = clusters_of(&filled.glyphs, 0..text_glyphs);
+    let copy = clusters_of(&filled.glyphs, text_glyphs..filled.glyphs.len());
     let mut glyphs = Vec::with_capacity(filled.glyphs.len());
-    let Some(mut s) = walk.lay(&filled.glyphs, 0..text_glyphs, 0.0, gap, &mut glyphs) else {
+    let Laid::Fits(mut s) = walk.lay(&filled.glyphs, &text, 0.0, gap, &mut glyphs) else {
         return (None, placed);
     };
     let mut copies = 0usize;
+    let mut capped = false;
     loop {
         let before = glyphs.len();
-        match walk.lay(
-            &filled.glyphs,
-            text_glyphs..filled.glyphs.len(),
-            s,
-            gap,
-            &mut glyphs,
-        ) {
-            Some(next) if next > s => {
+        match walk.lay(&filled.glyphs, &copy, s, gap, &mut glyphs) {
+            Laid::Fits(next) => {
                 copies += 1;
+                if next <= s {
+                    // A copy that does not advance would repeat forever.
+                    break;
+                }
                 s = next;
             }
-            Some(_) => {
-                // A copy that does not advance would repeat forever.
-                copies += 1;
+            Laid::Overran => {
+                glyphs.truncate(before);
                 break;
             }
-            None => {
+            Laid::Capped => {
                 glyphs.truncate(before);
+                capped = true;
                 break;
             }
         }
@@ -381,64 +539,79 @@ fn once<'p>(
     if copies == 0 {
         return (None, placed);
     }
-    (
-        Some(filled),
-        PlacedRun {
-            glyphs,
-            truncated: false,
-        },
-    )
+    let truncated = capped;
+    (Some(filled), PlacedRun { glyphs, truncated })
 }
 
 /// `Repeat`: the text again and again until the path is full, the last
-/// copy cut at the last grapheme that fits. Every copy reuses the run's
-/// glyph indices.
+/// copy cut to the longest reading-order prefix that fits. Every copy
+/// reuses the run's glyph indices.
 fn repeat(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> PlacedRun {
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let mut glyphs = Vec::new();
     let mut s = 0.0_f32;
     let mut copies = 0usize;
-    while let Some(next) = walk.lay(&run.glyphs, 0..run.glyphs.len(), s, gap, &mut glyphs) {
-        copies += 1;
-        if next <= s {
-            // A copy that does not advance would repeat forever.
-            break;
+    let truncated = loop {
+        let before = glyphs.len();
+        match walk.lay(&run.glyphs, &clusters, s, gap, &mut glyphs) {
+            Laid::Fits(next) => {
+                copies += 1;
+                if next <= s {
+                    // A copy that does not advance would repeat forever.
+                    break false;
+                }
+                s = next;
+            }
+            Laid::Overran => {
+                glyphs.truncate(before);
+                let (laid, _) = walk.lay_or_cut(&run.glyphs, &clusters, s, gap, &mut glyphs);
+                break copies == 0 || laid == Laid::Capped;
+            }
+            Laid::Capped => {
+                glyphs.truncate(before);
+                break true;
+            }
         }
-        s = next;
-    }
-    let capped = glyphs.len() >= MAX_PLACED_GLYPHS;
-    PlacedRun {
-        glyphs,
-        truncated: copies == 0 || capped,
-    }
+    };
+    PlacedRun { glyphs, truncated }
 }
 
-/// `Spread`: the text once, with the equal extra spacing that ends its
-/// last glyph's step at the path's end (ruling R6). The spacing starts
-/// from `(P − L)/(n − 1)` — exact on a path of constant direction — and
-/// is solved numerically from there, because spacing moves glyphs onto
-/// stretches where their steps differ. Too long for the path even with
-/// no spacing, the text is cut at the last grapheme that fits. One
-/// glyph takes no spacing.
-fn spread(run: &ShapedRun, walk: &PathWalk<'_>) -> PlacedRun {
-    let count = run.glyphs.len();
+/// `Spread`: the text once, with the equal extra spacing between
+/// clusters that ends its last step at the path's end (ruling R6). The
+/// spacing starts from `(P − L)/(n − 1)` — exact on a path of constant
+/// direction — and is solved numerically from there, because spacing
+/// moves clusters onto stretches where their steps differ. Too long for
+/// the path even with no spacing, the text is cut to the longest
+/// reading-order prefix that fits — unless it overruns by no more than
+/// `overrun_slack`, which `Fit` allows for the float noise of a reshape
+/// (ruling R9.3). One cluster takes no spacing.
+fn spread(run: &ShapedRun, walk: &PathWalk<'_>, overrun_slack: f32) -> PlacedRun {
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let length = walk.path.length();
-    if count <= 1 {
+    if clusters.len() <= 1 {
         return once_text(run, walk, 0.0).0;
     }
-    let natural = walk.measure(&run.glyphs, 1.0, 0.0);
+    let natural = walk.measure(&clusters, 1.0, 0.0);
     if natural.is_nan() || natural >= length {
-        return once_text(run, walk, 0.0).0;
+        let walk = PathWalk {
+            limit: walk.limit + overrun_slack,
+            ..*walk
+        };
+        return once_text(run, &walk, 0.0).0;
     }
-    let gap = solve_gap(walk, &run.glyphs, length, (length - natural) / (count - 1) as f32);
+    let guess = (length - natural) / (clusters.len() - 1) as f32;
+    let gap = solve_gap(walk, &clusters, length, guess);
     once_text(run, walk, gap).0
 }
 
-/// The gap `e ≥ 0` at which `glyphs` walked `e` apart end within
+/// The gap `e ≥ 0` at which `clusters` walked `e` apart end within
 /// [`SOLVE_TOLERANCE`] of `length`, never past it, starting from
 /// `guess`. Regula falsi (Illinois) on a bracket whose low side always
-/// fits; bounded by [`SOLVE_ROUNDS`].
-fn solve_gap(walk: &PathWalk<'_>, glyphs: &[GlyphMetrics], length: f32, guess: f32) -> f32 {
-    let miss = |gap: f32| walk.measure(glyphs, 1.0, gap) - length;
+/// fits; bounded by [`SOLVE_ROUNDS`]. The end moves with `e` without the
+/// jumps a tangent-taken step has at a sharp corner ([`PathWalk::step`]),
+/// so the bracket closes on the end condition rather than on a jump.
+fn solve_gap(walk: &PathWalk<'_>, clusters: &[Cluster], length: f32, guess: f32) -> f32 {
+    let miss = |gap: f32| walk.measure(clusters, 1.0, gap) - length;
     let tolerance = SOLVE_TOLERANCE.max(length * 1e-6);
     let (mut low, mut low_miss) = (0.0_f32, miss(0.0));
     // Find a gap that overshoots, doubling the guess.
@@ -484,13 +657,18 @@ fn solve_gap(walk: &PathWalk<'_>, glyphs: &[GlyphMetrics], length: f32, guess: f
 }
 
 /// `Fit { min, max }`: the run rescaled so it fills the path exactly once
-/// (ruling R6). The scale starts at `clamp(P / L, min, max)`; while it is
-/// unclamped and the text at that scale is still longer than the path —
-/// rescaling moves glyphs onto stretches where their steps differ — it
-/// shrinks by `P / L(s)`, measured arithmetically. The run is reshaped
-/// once at the final scale, and the rest of the path is spread as extra
-/// spacing, never below zero; text still too long at `min` is cut at the
-/// last grapheme that fits.
+/// (rulings R6, R9.3). The scale starts at `clamp(P / L, min, max)`.
+/// Whenever the text at that scale is longer than the path — rescaling
+/// moves clusters onto stretches where their steps differ, and a scale
+/// held at `max` can overrun too — it shrinks by `P / L(s)`, measured
+/// arithmetically, until the text fits or the scale reaches `min`. Where
+/// that shrink creeps — on an outline whose sides are short beside the
+/// glyphs, `L(s)` can fall much more slowly than `s` — it is finished by
+/// bisection between `min` and the last scale that overran. The run is
+/// reshaped once, at the final scale, and the rest of the path is spread
+/// as extra spacing, never below zero. Only text still too long at `min`
+/// is cut (design §6.4 step 4); an overrun no larger than the solver's
+/// tolerance, the float noise of the reshape, is placed as is.
 fn fit_to<'p>(
     run: &ShapedRun,
     path: &'p ArcPath,
@@ -501,40 +679,66 @@ fn fit_to<'p>(
 ) -> (Option<ShapedRun>, PlacedRun) {
     let walk = walk_for(run);
     let length = path.length();
-    let natural = walk.measure(&run.glyphs, 1.0, 0.0);
-    if run.glyphs.is_empty() || natural.is_nan() || natural <= 0.0 {
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
+    let natural = walk.measure(&clusters, 1.0, 0.0);
+    if clusters.is_empty() || natural.is_nan() || natural <= 0.0 {
         return (None, once_text(run, &walk, 0.0).0);
     }
     let (low, high) = scale_window(min, max);
     let ideal = length / natural;
-    let mut scale = if ideal.is_nan() {
+    let start = if ideal.is_nan() {
         1.0
     } else {
         ideal.clamp(low, high)
     };
-    let mut clamped = !(low..=high).contains(&ideal);
-    for _ in 0..FIT_ROUNDS {
-        if clamped {
-            break;
-        }
-        let at_scale = walk.measure(&run.glyphs, scale, 0.0);
-        if at_scale <= length {
-            break;
-        }
-        // A hair under the ratio, so the shrink converges from above
-        // instead of settling a rounding error past the end.
-        let next = scale * (length / at_scale) * (1.0 - 1e-6);
-        if next <= low {
-            scale = low;
-            clamped = true;
-        } else {
-            scale = next;
-        }
-    }
+    let scale = fitting_scale(&walk, &clusters, length, start, low);
     let rescaled = (scale != 1.0).then(|| reshape(run, scale, None, fs));
     let placed_run = rescaled.as_ref().unwrap_or(run);
-    let placed = spread(placed_run, &walk_for(placed_run));
+    let slack = if scale > low { SOLVE_TOLERANCE } else { 0.0 };
+    let placed = spread(placed_run, &walk_for(placed_run), slack);
     (rescaled, placed)
+}
+
+/// The largest scale, at most `start`, at which `clusters` fit `length`
+/// (ruling R9.3), or `low` when even that overruns.
+///
+/// First the shrink `s ← s·P/L(s)` (a hair under, so it converges from
+/// above), at most [`FIT_ROUNDS`] times; then, if the text still
+/// overruns, bisection between `low` and the last overrunning scale, at
+/// most [`SOLVE_ROUNDS`] times, keeping the side that fits. Every round
+/// is one arithmetic measure; nothing is reshaped.
+fn fitting_scale(walk: &PathWalk<'_>, clusters: &[Cluster], length: f32, start: f32, low: f32) -> f32 {
+    let fits = |scale: f32| walk.measure(clusters, scale, 0.0) <= length;
+    let mut over = start;
+    for _ in 0..FIT_ROUNDS {
+        let at_scale = walk.measure(clusters, over, 0.0);
+        if at_scale <= length {
+            return over;
+        }
+        if over <= low {
+            return low;
+        }
+        over = (over * (length / at_scale) * (1.0 - 1e-6)).max(low);
+    }
+    if fits(over) {
+        return over;
+    }
+    if !fits(low) {
+        return low;
+    }
+    let mut under = low;
+    for _ in 0..SOLVE_ROUNDS {
+        if over - under <= under * 1e-6 {
+            break;
+        }
+        let middle = 0.5 * (under + over);
+        if fits(middle) {
+            under = middle;
+        } else {
+            over = middle;
+        }
+    }
+    under
 }
 
 /// `Fit`'s scale window, made usable whatever it holds: a reversed pair

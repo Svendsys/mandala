@@ -1925,8 +1925,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_place_rings_stack_outward", |b| {
         b.iter(do_flow_place_rings_stack_outward)
     });
-    c.bench_function("flow_place_step_is_taken_at_its_middle", |b| {
-        b.iter(do_flow_place_step_is_taken_at_its_middle)
+    c.bench_function("flow_place_step_follows_the_chord_at_a_corner", |b| {
+        b.iter(do_flow_place_step_follows_the_chord_at_a_corner)
     });
     c.bench_function("flow_place_on_an_ellipse", |b| {
         b.iter(do_flow_place_on_an_ellipse)
@@ -1975,6 +1975,45 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_flow_box_keeps_a_larger_minimum)
     });
     c.bench_function("flow_box_aligns_lines", |b| b.iter(do_flow_box_aligns_lines));
+    c.bench_function("flow_box_reads_a_bad_minimum_as_none", |b| {
+        b.iter(do_flow_box_reads_a_bad_minimum_as_none)
+    });
+    c.bench_function("flow_curve_point_and_derivative_by_hand", |b| {
+        b.iter(do_flow_curve_point_and_derivative_by_hand)
+    });
+    c.bench_function("flow_cut_keeps_the_reading_start", |b| {
+        b.iter(do_flow_cut_keeps_the_reading_start)
+    });
+    c.bench_function("flow_fit_shrinks_below_max", |b| {
+        b.iter(do_flow_fit_shrinks_below_max)
+    });
+    c.bench_function("flow_fit_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_fit_sweeps_a_sharp_rect)
+    });
+    c.bench_function("flow_place_corner_moves_continuously", |b| {
+        b.iter(do_flow_place_corner_moves_continuously)
+    });
+    c.bench_function("flow_place_keeps_marks_with_their_letters", |b| {
+        b.iter(do_flow_place_keeps_marks_with_their_letters)
+    });
+    c.bench_function("flow_separators_never_break_a_box", |b| {
+        b.iter(do_flow_separators_never_break_a_box)
+    });
+    c.bench_function("flow_separators_never_break_a_run", |b| {
+        b.iter(do_flow_separators_never_break_a_run)
+    });
+    c.bench_function("flow_separators_survive_a_reshape", |b| {
+        b.iter(do_flow_separators_survive_a_reshape)
+    });
+    c.bench_function("flow_shape_run_maps_a_zwj_emoji", |b| {
+        b.iter(do_flow_shape_run_maps_a_zwj_emoji)
+    });
+    c.bench_function("flow_shape_run_maps_bidi_text", |b| {
+        b.iter(do_flow_shape_run_maps_bidi_text)
+    });
+    c.bench_function("flow_spread_sweeps_a_sharp_rect", |b| {
+        b.iter(do_flow_spread_sweeps_a_sharp_rect)
+    });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
     c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {

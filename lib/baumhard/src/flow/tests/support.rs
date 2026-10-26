@@ -78,11 +78,17 @@ pub(crate) fn clustered(glyphs: &[(f32, bool)], line_height: f32) -> ShapedRun {
         buffer: Arc::new(Buffer::new_empty(Metrics::new(line_height, line_height))),
         glyphs: glyphs
             .iter()
+            .scan(0.0_f32, |pen, &(advance, grapheme_start)| {
+                let x = *pen;
+                *pen += advance;
+                Some((x, advance, grapheme_start))
+            })
             .enumerate()
-            .map(|(i, &(advance, grapheme_start))| GlyphMetrics {
+            .map(|(i, (x, advance, grapheme_start))| GlyphMetrics {
                 span: 0,
                 bytes: i..i + 1,
                 advance,
+                x,
                 ascent: line_height * 0.6,
                 descent: line_height * 0.2,
                 grapheme_start,
@@ -91,6 +97,25 @@ pub(crate) fn clustered(glyphs: &[(f32, bool)], line_height: f32) -> ShapedRun {
         line_height,
         pieces: Vec::new(),
     }
+}
+
+/// The Bézier with control points `points` at `t`, by de Casteljau's
+/// repeated interpolation — a derivation that shares nothing with
+/// `Curve::point`'s Bernstein polynomials, so a test can hold the one
+/// against the other (TEST_CONVENTIONS §T13, shape 6).
+pub(crate) fn de_casteljau(points: &[Vec2], t: f32) -> Vec2 {
+    let mut row = points.to_vec();
+    while row.len() > 1 {
+        row = row.windows(2).map(|pair| pair[0].lerp(pair[1], t)).collect();
+    }
+    row[0]
+}
+
+/// The derivative of that Bézier at `t`: its degree times the de
+/// Casteljau point of its control polygon's legs.
+pub(crate) fn de_casteljau_derivative(points: &[Vec2], t: f32) -> Vec2 {
+    let legs: Vec<Vec2> = points.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    de_casteljau(&legs, t) * (points.len() - 1) as f32
 }
 
 /// The center of placed glyph `pos`'s `w × h` box.

@@ -407,3 +407,168 @@ pub fn do_flow_spread_too_long_is_cut() {
     assert_eq!(x, vec![0.0, 30.0]);
     assert!(placed.truncated);
 }
+
+/// The last placed glyph's box on a sharp rectangle placed from the
+/// middle of its top side, as `(right edge, center height)`: a whole run
+/// that fills the outline ends there, level, on the top side.
+fn end_on_top(run: &ShapedRun, placed: &PlacedRun) -> (f32, f32) {
+    let last = placed.glyphs.last().unwrap();
+    (
+        last.pos.x + run.glyphs[last.glyph as usize].advance,
+        last.pos.y + run.line_height / 2.0,
+    )
+}
+
+#[test]
+fn test_flow_spread_sweeps_a_sharp_rect() {
+    do_flow_spread_sweeps_a_sharp_rect();
+}
+
+/// `Spread` on the default frame's outline, a sharp rectangle, over a
+/// sweep of runs — three advances, 26 lengths each, all short enough to
+/// fit — rather than one fixture: every run is placed whole, and its last
+/// step ends back at the start within half a point (rulings R6, R9.2).
+/// With steps taken from the tangent, the end jumps at each corner and
+/// the solver settles on a jump: up to 9 pt short, in the review's sweep.
+pub fn do_flow_spread_sweeps_a_sharp_rect() {
+    let path = rounded(200.0, 120.0, 0);
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.5,
+    };
+    for w in [5.0_f32, 6.0, 7.5] {
+        for n in (10..=60).step_by(2) {
+            let run = synthetic(&vec![w; n], 14.0);
+            let (_, placed) = with_fonts(|fs| {
+                place_on_closed(
+                    &run,
+                    &path,
+                    start,
+                    Direction::Clockwise,
+                    &FitMode::Spread,
+                    false,
+                    &style(12.0),
+                    fs,
+                )
+            });
+            let what = format!("w {w}, n {n}");
+            assert!(!placed.truncated, "{what}: truncated");
+            assert_eq!(placed.glyphs.len(), n, "{what}");
+            let (end, level) = end_on_top(&run, &placed);
+            close(level, 0.0, 1e-3, &format!("{what}: on the top side"));
+            close(end, 100.0, 0.5, &format!("{what}: ends at the start"));
+        }
+    }
+}
+
+#[test]
+fn test_flow_fit_sweeps_a_sharp_rect() {
+    do_flow_fit_sweeps_a_sharp_rect();
+}
+
+/// `Fit` on the default frame's outline, a sharp rectangle, over every
+/// prefix of a sentence from 5 to 68 characters, shaped for real: no
+/// prefix is truncated, and each ends back at the start within half a
+/// point — whether its scale is free, held at `max` with spacing to
+/// spare, or shrunk below `max` because it overran (rulings R6, R9.2,
+/// R9.3).
+pub fn do_flow_fit_sweeps_a_sharp_rect() {
+    let path = rounded(200.0, 120.0, 0);
+    let sentence = "the quick brown fox jumps over the lazy dog while the poem goes around";
+    let fit = FitMode::Fit { min: 0.1, max: 10.0 };
+    for n in 5..=68 {
+        let text = &sentence[..n];
+        let (run, rescaled, placed) = shaped_around(text, &path, &fit);
+        let rescaled = rescaled.expect("the scale is never exactly 1 here");
+        assert!(!placed.truncated, "{text:?}: truncated");
+        assert_eq!(placed.glyphs.len(), run.glyphs.len(), "{text:?}");
+        let (end, level) = end_on_top(&rescaled, &placed);
+        close(level, 0.0, 1e-3, &format!("{text:?}: on the top side"));
+        close(end, 100.0, 0.5, &format!("{text:?}: ends at the start"));
+    }
+}
+
+#[test]
+fn test_flow_fit_shrinks_below_max() {
+    do_flow_fit_shrinks_below_max();
+}
+
+/// Text short enough that `P / L` is past `max`, but that at `max` still
+/// overruns the outline — its glyphs grow onto the sides, where each
+/// steps its line height — is shrunk below `max` until it fits, not cut
+/// (ruling R9.3: only text too long at `min` is cut).
+pub fn do_flow_fit_shrinks_below_max() {
+    let path = rounded(200.0, 120.0, 0);
+    let fit = FitMode::Fit { min: 0.1, max: 10.0 };
+    let (run, rescaled, placed) = shaped_around("abcdefghi", &path, &fit);
+    let natural: f32 = run.glyphs.iter().map(|g| g.advance).sum();
+    assert!(
+        640.0 / natural > 10.0,
+        "the fixture needs P / L past max: {}",
+        640.0 / natural
+    );
+    let rescaled = rescaled.expect("the run is rescaled");
+    let scale = rescaled.line_height / run.line_height;
+    assert!(scale < 10.0 * 0.99, "scale {scale} was not shrunk below max");
+    assert!(!placed.truncated);
+    assert_eq!(placed.glyphs.len(), run.glyphs.len());
+    let (end, level) = end_on_top(&rescaled, &placed);
+    close(level, 0.0, 1e-3, "the last glyph is on the top side");
+    close(end, 100.0, 0.5, "it ends at the start");
+}
+
+#[test]
+fn test_flow_cut_keeps_the_reading_start() {
+    do_flow_cut_keeps_the_reading_start();
+}
+
+/// A cut keeps the start of the text as it is read (ruling R9.4): five
+/// Hebrew letters, listed and walked right to left in visual order, on a
+/// line that holds three keep alef, bet and gimel — the first three
+/// read — and lay them in visual order, gimel first. A visual-order cut
+/// would keep the last three read instead.
+pub fn do_flow_cut_keeps_the_reading_start() {
+    let text = "\u{5D0}\u{5D1}\u{5D2}\u{5D3}\u{5D4}";
+    let run = with_fonts(|fs| real_run(text, &style(12.0), fs));
+    assert_eq!(run.glyphs.len(), 5);
+    assert!(
+        run.glyphs[0].bytes.start > run.glyphs[4].bytes.start,
+        "the fixture needs right-to-left visual order"
+    );
+    let first_three: f32 = run
+        .glyphs
+        .iter()
+        .filter(|g| g.bytes.start < 6)
+        .map(|g| g.advance)
+        .sum();
+    let shortest = run.glyphs.iter().map(|g| g.advance).fold(f32::MAX, f32::min);
+    let placed = on_line(
+        &run,
+        line(first_three + shortest * 0.5),
+        &FitMode::Once { filler: None },
+        0.0,
+    );
+    assert!(placed.truncated);
+    let kept: Vec<usize> = placed
+        .glyphs
+        .iter()
+        .map(|g| run.glyphs[g.glyph as usize].bytes.start)
+        .collect();
+    assert_eq!(kept, vec![4, 2, 0]);
+}
+
+/// Hitting the glyph ceiling stops a placement and says so, even when it
+/// stops inside a copy: three-glyph clusters never land exactly on
+/// `MAX_PLACED_GLYPHS` (2²⁰ is not a multiple of 3), so the copy that
+/// would pass it is left out whole, and the run reports `truncated`
+/// although fewer glyphs than the ceiling were placed. Plain `#[test]`:
+/// the enumeration is the runtime (lib/baumhard/CONVENTIONS.md §B8,
+/// class 3).
+#[test]
+fn test_flow_repeat_reports_the_glyph_ceiling() {
+    let run = clustered(&[(0.5, true), (0.25, false), (0.25, false)], 2.0);
+    let placed = on_line(&run, line(400_000.0), &FitMode::Repeat, 0.0);
+    assert!(placed.glyphs.len() < crate::flow::MAX_PLACED_GLYPHS);
+    assert_eq!(placed.glyphs.len(), crate::flow::MAX_PLACED_GLYPHS / 3 * 3);
+    assert!(placed.truncated, "the ceiling stopped the placement");
+}
