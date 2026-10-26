@@ -381,7 +381,7 @@ mod reach_tests {
     ///
     /// The drive-by finding of this PR is that hand-kept lists drift;
     /// this is that lesson applied to the list the PR itself added
-    /// (CLAUDE.md §5).
+    /// (CLAUDE.md §4).
     #[test]
     fn test_covers_reach_table_covers_every_variant_pair() {
         use std::collections::BTreeSet;
@@ -463,7 +463,7 @@ mod reach_tests {
     /// `format/schema.md`'s value list, from `format/mutations.md`'s
     /// scope table, and from CONCEPTS §4's variant sentence, which
     /// still read "Six variants". Hand-repairing it again next time
-    /// is not the fix; failing the suite is (CLAUDE.md §5).
+    /// is not the fix; failing the suite is (CLAUDE.md §4).
     ///
     /// Reads the docs themselves rather than a copy of them, per
     /// [`crate::util::doc_fixtures`] — so editing the doc is what

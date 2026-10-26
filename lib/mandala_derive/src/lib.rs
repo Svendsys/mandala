@@ -226,7 +226,7 @@ fn derive_action_classify_impl(input: DeriveInput) -> syn::Result<TokenStream2> 
             }
 
             /// Whether this Action can fire on WASM today. See
-            /// `WASM_CONVERGENCE.md` for the porting path each
+            /// `work_plans/WASM_CONVERGENCE.md` for the porting path each
             /// `NativeOnly` arm follows. Generated from the
             /// `wasm = ...` key on each variant's `#[action(...)]`
             /// attribute.

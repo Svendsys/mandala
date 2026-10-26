@@ -19,7 +19,7 @@
 //! `super::native`.
 //!
 //! This is the Track-C path documented in
-//! `WASM_CONVERGENCE.md`: incrementally lift arm bodies as they
+//! `work_plans/WASM_CONVERGENCE.md`: incrementally lift arm bodies as they
 //! turn out to need only cross-platform state, without waiting
 //! for a full context-type unification. Each migration removes
 //! duplication and the "keep in sync" maintenance tax that

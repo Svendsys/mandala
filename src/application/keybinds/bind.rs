@@ -42,7 +42,7 @@ pub struct KeyBind {
 /// binds bare `LeftClick`. `RightClick` and `RightDrag` are
 /// reintroduced below alongside their dispatch sites in
 /// `event_mouse_click.rs` / `event_cursor_moved.rs` —
-/// fast-resize gesture per `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3.
+/// fast-resize gesture per `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum_macros::EnumIter, strum_macros::IntoStaticStr)]
 pub enum MouseGesture {
     /// Left-button held down + cursor movement past the drag threshold,

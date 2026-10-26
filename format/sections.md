@@ -129,7 +129,7 @@ spellings verbatim.
 ### Subverbs (Batch 5 redesign)
 
 The `section …` verb takes kv-style arguments per
-SECTIONS_BORDERS_RESIZE_PLAN.md §4.5 — the prior positional
+[`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`](../work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md) §4.5 — the prior positional
 `<dx> <dy>` / `<w> <h>` forms are gone (CODE_CONVENTIONS §10:
 no compatibility shims). Nine subverbs:
 
@@ -145,6 +145,7 @@ no compatibility shims). Nine subverbs:
 | `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. |
 | `section delete` | `[section=<idx>]` | Remove. Errors when only one section remains. |
 | `section split` | `[section=<idx>] at=<grapheme>` | Split in two at the given grapheme boundary. `at=` is required (use `section show` to see the section's grapheme count); pass `at=N` where `N` equals the count to split at end-of-text (creates an empty suffix). |
+| `section frame` | `show \| reset \| preview …`, or `<key>=<value> …` | The section's own frame-border override (`frame_border`), a subverb tree of its own — full grammar under [Console verbs (section frames)](./border-patterns.md#console-verbs-section-frames). |
 
 Mutually exclusive forms reject at the parser layer:
 `section move dx=1 x=2` errors with "cannot mix delta form

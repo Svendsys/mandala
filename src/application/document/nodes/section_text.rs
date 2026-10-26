@@ -76,9 +76,11 @@ impl MindMapDocument {
     /// wholly inside the new text length carry through unchanged;
     /// runs that straddle the new end get clipped at the new
     /// `grapheme_count`; runs entirely past the new end are
-    /// dropped. Uncovered ranges (anything past the last surviving
-    /// run's `end`) fall through to section / node defaults per
-    /// `format/text-runs.md`. No-op (returns `false`, no undo push)
+    /// dropped. Nothing extends a run, so anything past the last
+    /// surviving run's `end` is uncovered and, by the coverage rule
+    /// in `format/text-runs.md`, **not drawn** — new text appended
+    /// in this mode is invisible until a run covers it. That is a
+    /// defect, not the contract (#197). No-op (returns `false`, no undo push)
     /// when the section doesn't exist or its text already matches.
     ///
     /// Distinct from [`Self::set_section_text`] which collapses

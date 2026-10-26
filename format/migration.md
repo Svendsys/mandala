@@ -134,6 +134,23 @@ a no-op) and runs automatically inside `convert --legacy` for
 miMind imports, so a single legacy hop produces a post-section
 file in one step.
 
+Two edge cases, both in `convert::sections::migrate_one_node`:
+
+- **A node that already has non-empty `sections` *and* legacy
+  `text` / `text_runs`** keeps its sections, and the legacy fields
+  are **dropped without a per-node message** — they are treated as
+  stale leftovers of a partial migration. The node does count toward
+  the summary line's total, which is the only trace. If such a node's
+  legacy text matters, copy it into a section before converting.
+- **A node with `"sections": []`** (or no `sections` and no `text`)
+  gets one fresh section with empty `text`, which is also what makes
+  `convert --sections` the fix for the loader's zero-section
+  refusal.
+
+The loader's own refusal messages currently spell this command with
+one path; it takes two (the same path twice converts in place).
+That mismatch is #199.
+
 ## The legacy-format command
 
 ```
@@ -151,17 +168,25 @@ to a staging file (`<dir>/.<name>.<pid>.tmp`) which is then renamed
 over the output path. The existing file at that path is never opened
 for writing, so an interrupted run — a kill, a full disk, a crash —
 leaves either the original file intact or the converted file
-complete, never a truncated partial. That is what makes passing the
+complete, never a truncated partial. (The writer does not `fsync`, so
+that guarantee covers a killed process and a full disk; a power loss
+between the write and the rename is the filesystem's to answer.) That is what makes passing the
 same path for input and output safe on every verb, not just
 `--portals`. The app's own save path (`save_to_file`) uses the same
 writer.
 
 **The output is a new inode.** That is the mechanism, not a detail:
 
-- The file's **permissions are preserved** when the output path
-  already exists — a map you `chmod 600` because it carries private
-  notes stays owner-only across an in-place convert, rather than
-  reverting to the umask default.
+- The file's **mode is carried over, masked by the process umask**,
+  when the output path already exists. The mode goes onto the staging
+  file at creation (`create_with_mode` in
+  `lib/baumhard/src/mindmap/loader.rs`), and `open(2)` clears any bit
+  the umask clears — so the result is never *wider* than the original:
+  a map you `chmod 600` because it carries private notes stays
+  owner-only across an in-place convert. A mode the umask would
+  narrow is narrowed, though: under a `022` umask a `666` file comes
+  back `644`. A new output file takes the umask default, as it would
+  from any other writer.
 - **Hard links are detached.** Another name for the old file keeps
   the *old* content; it does not follow the conversion.
 - **A symlink at the output path is replaced**, not followed: after
@@ -185,16 +210,28 @@ path and move the result into place yourself.
    [The fold, exactly](#the-fold-exactly) above.
 3. **Converts integer enums to named strings** for `shape_type` →
    `shape`, `layout.type`, `layout.direction`, `line_style`,
-   `anchor_from`, `anchor_to`. Unknown integer values fall back to
-   sensible defaults (documented in each enum's value list —
-   see [enums.md](./enums.md)).
+   `anchor_from`, `anchor_to`. Unknown integer values fall back to a
+   default per enum. Only `shape`'s is published — see
+   [miMind `shape_type` ordinals](#mimind-shape_type-ordinals) below;
+   the other five fallbacks live only in `convert/enums.rs`, for the
+   reason given at the end of that section.
 4. **Hoists color schemas to top-level palettes**. Each unique palette is
    defined once; per-node `color_schema` becomes a lightweight reference.
    The `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
-   `"coral-v3"`). A negative `level` is floored to 0 with a message —
-   the model types it `usize`, so emitting one would produce a file
-   this tool could not read back.
+   `"coral-v3"`). A schema with no `palette` name is keyed
+   `"default"`, and missing `starts_at_root` / `connections_colored`
+   default to `true`. A negative `level` is floored to 0 with a
+   message — the model types it `usize`, so emitting one would produce
+   a file this tool could not read back.
+
+   **Only level-0 schemas with a non-empty `groups` array define a
+   palette** (`collect_palettes`). A palette that appears in the input
+   only on deeper nodes is never hoisted, and those nodes are left
+   referencing a name the output does not define — which
+   `maptool verify` reports under `palettes`. The rewritten
+   `color_schema` carries exactly `palette`, `level`, `starts_at_root`
+   and `connections_colored`; any other key on it is dropped (#198).
 
    **The hoisted palette is authoritative at render time.** The
    converter leaves each node's `style` colors where it found them,
@@ -296,7 +333,14 @@ legacy key means *the file is older than the format* — the name is
 taken, the migration exists, and preserving it would only carry a
 contradiction forward.
 
-The conversion is idempotent-safe for files that already look current
-(already-Dewey IDs survive unchanged, already-string enums pass through,
-already-hoisted palettes don't double-hoist). But the converter is
-intended as a one-shot migration, not an always-on pipeline.
+The converter is a one-shot migration, not an always-on pipeline, and
+**it is not idempotent on a file that is already current** — do not
+run `convert --legacy` over a map that does not need it. Two passes
+change such a file (#198): sibling order is rebuilt from the legacy
+`index` field, and with that field gone the fallback order is
+lexicographic, so a sibling group of ten or more is renumbered
+(`"x.10"` sorts before `"x.2"`); and every `color_schema` is rebuilt
+from four keys, which drops `overrides`. Already-string enums do pass
+through unchanged. `convert --portals` and `convert --sections` change
+no value in a file that has nothing for them to migrate (the file is
+still rewritten).
