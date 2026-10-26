@@ -120,6 +120,13 @@ fn first_selected_node_id(sel: &SelectionState) -> Result<String, String> {
 /// `border show verbose` is telling the user *where* a color they
 /// did not expect is coming from, and "the palette" is now one of
 /// the answers.
+///
+/// Every answer names the theme as `color_schema.palette`, the field
+/// a reader can grep for, never bare "palette": the readout's
+/// `border palette:` row three lines down is a different field
+/// (`style.border.color_palette`, per-glyph cycling), and two bare
+/// "palette"s read as *a palette set this color* followed by
+/// *palette: none* (#137).
 fn frame_color_source(map: &MindMap, node: &MindNode) -> String {
     let Some(schema) = node.color_schema.as_ref() else {
         return "style.frame_color".to_string();
@@ -135,22 +142,37 @@ fn frame_color_source(map: &MindMap, node: &MindNode) -> String {
     if map.node_frame_theme_tier(node).is_none() {
         return match map.resolve_theme_colors(node) {
             Some(_) => format!(
-                "style.frame_color (palette `{}` sets no frame at level {})",
+                "style.frame_color (color_schema.palette `{}` sets no frame at level {})",
                 schema.palette, schema.level
             ),
             None => format!(
-                "style.frame_color (palette `{}` does not resolve)",
+                "style.frame_color (color_schema.palette `{}` does not resolve)",
                 schema.palette
             ),
         };
     }
     if schema.overrides.frame.as_deref().is_some_and(|f| !f.is_empty()) {
         return format!(
-            "color_schema.overrides.frame (excepting palette `{}`)",
+            "color_schema.overrides.frame (excepting color_schema.palette `{}`)",
             schema.palette
         );
     }
-    format!("palette `{}` at level {}", schema.palette, schema.level)
+    format!(
+        "color_schema.palette `{}` at level {}",
+        schema.palette, schema.level
+    )
+}
+
+/// Width of the readout's label column: the widest top-level label,
+/// `border palette: `, so every value starts in the same column.
+/// The cycling row is named after its verb rather than squeezed into
+/// a narrower column, because the name is what keeps it from reading
+/// as the node's theme (#137).
+const LABEL_WIDTH: usize = "border palette: ".len();
+
+/// A top-level readout label, padded to [`LABEL_WIDTH`].
+fn label(name: &str) -> String {
+    format!("{name:<LABEL_WIDTH$}")
 }
 
 fn format_border_readout(
@@ -186,6 +208,11 @@ fn format_border_readout(
         .unwrap_or("(default)");
     let visible = node.style.show_frame;
 
+    // `style.border.color_palette`, the border's own per-glyph
+    // cycling — not the node's theme, which the verbose cascade
+    // names as `color_schema.palette`. The row is labeled with the
+    // verb that sets it so the two cannot be read as one field
+    // (#137), and the unset case says what the field would do.
     let palette_summary = match style.color_palette.as_ref() {
         Some(name) => match palettes.get(name) {
             Some(p) => format!(
@@ -196,7 +223,7 @@ fn format_border_readout(
             ),
             None => format!("{} (not found in map)", name),
         },
-        None => "(none)".to_string(),
+        None => "(none)  (per-glyph cycling: `border palette <name>`)".to_string(),
     };
 
     let face = style.font_name.clone();
@@ -206,11 +233,13 @@ fn format_border_readout(
     // doubles as a discoverability surface — users learn the
     // verb shape from the show output.
     lines.push(OutputLine::plain(format!(
-        "visible: {:<3}  (toggle: `border toggle`)",
+        "{}{:<3}  (toggle: `border toggle`)",
+        label("visible:"),
         if visible { "on" } else { "off" }
     )));
     lines.push(OutputLine::plain(format!(
-        "preset:  {:<8}  (cycle: `border preset cycle`)",
+        "{}{:<8}  (cycle: `border preset cycle`)",
+        label("preset:"),
         preset_name
     )));
     let face_str = face.as_deref().unwrap_or("(default)");
@@ -227,8 +256,11 @@ fn format_border_readout(
         })
         .unwrap_or("hardcoded floor");
     lines.push(OutputLine::plain(format!(
-        "font:    {} ({} pt)  (override: `border font <family>`, source: {})",
-        face_str, style.font_size_pt, font_override
+        "{}{} ({} pt)  (override: `border font <family>`, source: {})",
+        label("font:"),
+        face_str,
+        style.font_size_pt,
+        font_override
     )));
     if verbose {
         // Surface every color surface the border sits on, so the
@@ -248,20 +280,24 @@ fn format_border_readout(
             frame_color_source(map, node)
         )));
         lines.push(OutputLine::plain(format!(
-            "  style.frame_color    = {}          # the unthemed tier, set via `color border=`",
+            "  style.frame_color      = {}          # the unthemed tier, set via `color border=`",
             node.style.frame_color
         )));
         let per_node_color = node.style.border.as_ref().and_then(|c| c.color.as_deref());
         let cascade_target = per_node_color.unwrap_or(frame_color);
         let per_node_label = per_node_color.unwrap_or("(unset)");
         lines.push(OutputLine::plain(format!(
-            "  style.border.color   = {} [\u{2192} {}]   # set via `border color`",
+            "  style.border.color     = {} [\u{2192} {}]   # set via `border color`",
             per_node_label, cascade_target
         )));
     } else {
-        lines.push(OutputLine::plain(format!("color:   {}", style.color)));
+        lines.push(OutputLine::plain(format!("{}{}", label("color:"), style.color)));
     }
-    lines.push(OutputLine::plain(format!("palette: {}", palette_summary)));
+    lines.push(OutputLine::plain(format!(
+        "{}{}",
+        label("border palette:"),
+        palette_summary
+    )));
     // Padding cascades per-node → canvas-default → 4px hardcoded
     // floor. Always print the resolved value so the readout is
     // useful even for nodes with no per-node override (the canvas
@@ -273,10 +309,18 @@ fn format_border_readout(
         .map(|c| c.padding)
         .or_else(|| canvas_default.map(|c| c.padding))
         .unwrap_or(4.0);
-    lines.push(OutputLine::plain(format!("padding: {} px", resolved_padding)));
     lines.push(OutputLine::plain(format!(
-        "size:    {}×{} px ({} cluster cols, {} rows)",
-        node.size.width as i64, node.size.height as i64, char_count, row_count
+        "{}{} px",
+        label("padding:"),
+        resolved_padding
+    )));
+    lines.push(OutputLine::plain(format!(
+        "{}{}×{} px ({} cluster cols, {} rows)",
+        label("size:"),
+        node.size.width as i64,
+        node.size.height as i64,
+        char_count,
+        row_count
     )));
 
     let side_face = face.clone();
@@ -287,7 +331,7 @@ fn format_border_readout(
     };
     if want("top") {
         lines.push(side_line(
-            "top:    ",
+            &label("top:"),
             &style.side_patterns.top,
             char_count,
             &side_face,
@@ -295,7 +339,7 @@ fn format_border_readout(
     }
     if want("bottom") {
         lines.push(side_line(
-            "bottom: ",
+            &label("bottom:"),
             &style.side_patterns.bottom,
             char_count,
             &side_face,
@@ -303,7 +347,7 @@ fn format_border_readout(
     }
     if want("left") {
         lines.push(side_line(
-            "left:   ",
+            &label("left:"),
             &style.side_patterns.left,
             row_count,
             &side_face,
@@ -311,7 +355,7 @@ fn format_border_readout(
     }
     if want("right") {
         lines.push(side_line(
-            "right:  ",
+            &label("right:"),
             &style.side_patterns.right,
             row_count,
             &side_face,
@@ -336,7 +380,8 @@ fn side_line(label: &str, pattern: &SidePattern, width: usize, face: &Option<Str
 
 fn corner_line(style: &baumhard::mindmap::border::BorderStyle, face: &Option<String>) -> OutputLine {
     let text = format!(
-        "corners: tl={}  tr={}  bl={}  br={}",
+        "{}tl={}  tr={}  bl={}  br={}",
+        label("corners:"),
         style.corners.top_left,
         style.corners.top_right,
         style.corners.bottom_left,
@@ -387,7 +432,7 @@ mod tests {
         );
         let blob = readout_blob(&map, node, false);
         assert!(
-            blob.contains(&format!("color:   {effective}")),
+            blob.contains(&format!("{}{effective}", label("color:"))),
             "readout must print the color the border is painted in: {blob}"
         );
     }
@@ -409,7 +454,7 @@ mod tests {
         let node = doc.mindmap.nodes.get(&id).unwrap();
         let blob = readout_blob(&doc.mindmap, node, true);
         assert!(
-            blob.contains(&format!("palette `{palette}`")),
+            blob.contains(&format!("# source: color_schema.palette `{palette}` at level")),
             "a themed node must be told its color comes from the palette: {blob}"
         );
 
@@ -423,6 +468,93 @@ mod tests {
         assert!(
             blob.contains("#00ff00"),
             "...and the effective color must be the one just set: {blob}"
+        );
+    }
+
+    /// The verbose readout names two different palette fields three
+    /// lines apart: the theme the frame color came from
+    /// (`color_schema.palette`) and the border's own per-glyph
+    /// cycling (`style.border.color_palette`). Labeled with the same
+    /// bare word they read as *a palette set this color* followed by
+    /// *palette: none* (#137), so each must say which field it is —
+    /// including when the *same* palette fills both, the case where a
+    /// bare label could not be told apart at all.
+    #[test]
+    fn test_border_show_verbose_tells_the_two_palette_fields_apart() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        let (palette, level) = doc
+            .mindmap
+            .nodes
+            .get(&id)
+            .and_then(|n| n.color_schema.as_ref())
+            .map(|s| (s.palette.clone(), s.level))
+            .expect("testament nodes are themed");
+        let groups = doc
+            .mindmap
+            .palettes
+            .get(&palette)
+            .expect("the theme resolves")
+            .groups
+            .len();
+
+        // No cycling palette: the theme is named by its field, and the
+        // unset cycling row is named by its verb, never bare `palette:`.
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        let lines: Vec<String> = format_border_readout(&doc.mindmap, node, None, true)
+            .into_iter()
+            .map(|l| l.text)
+            .collect();
+        assert!(
+            lines.iter().any(|l| l.ends_with(&format!(
+                "# source: color_schema.palette `{palette}` at level {level}"
+            ))),
+            "the cascade must name the theme's field: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "border palette: (none)  (per-glyph cycling: `border palette <name>`)"),
+            "the unset cycling row must say which field it is: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.starts_with("palette:")),
+            "no row may be labeled with the bare word: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("# source: palette")),
+            "the source must not name the theme by the bare word: {lines:?}"
+        );
+
+        // Same palette in both fields: cycle the palette the theme
+        // uses. The cycling row reports it, under its own label, and
+        // the source row keeps naming the theme's field — so neither
+        // assertion above held only because a row was empty.
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.style.border = Some(baumhard::mindmap::model::GlyphBorderConfig {
+            color_palette: Some(palette.clone()),
+            ..Default::default()
+        });
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        let lines: Vec<String> = format_border_readout(&doc.mindmap, node, None, true)
+            .into_iter()
+            .map(|l| l.text)
+            .collect();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == &format!("border palette: {palette} (cycling 'frame' across {groups} groups)")),
+            "a set cycling palette must be reported on its own row: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.ends_with(&format!(
+                "# source: color_schema.palette `{palette}` at level {level}"
+            ))),
+            "...and the theme row must still name the theme's field: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.starts_with("palette:")),
+            "no row may be labeled with the bare word: {lines:?}"
         );
     }
 
@@ -482,7 +614,7 @@ mod tests {
             "an empty override is skipped by the reader and must not be named: {blob}"
         );
         assert!(
-            blob.contains(&format!("palette `{palette}`")),
+            blob.contains(&format!("# source: color_schema.palette `{palette}` at level")),
             "the group is what the renderer used, so the readout must say so: {blob}"
         );
 
