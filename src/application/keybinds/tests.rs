@@ -2019,7 +2019,7 @@ fn test_parametric_filesystem_variants_resolve() {
 }
 
 #[test]
-fn test_clear_zoom_rejects_the_parametric_binding_shape() {
+fn test_a_stale_clear_zoom_shape_costs_only_clear_zoom() {
     // `ClearZoom` is a unit variant, and the `keybind_surface!`
     // table puts every unit variant on the simple string-list
     // surface — the `simple` section names the variant with no
@@ -2800,12 +2800,55 @@ fn test_unknown_top_level_keys_names_a_renamed_action() {
 fn test_unknown_top_level_key_does_not_discard_the_rest_of_the_config() {
     // Warn, don't reject: `deny_unknown_fields` would answer one
     // stale key by throwing away every good binding beside it.
-    let json = r#"{ "cancel_mode": ["Escape"], "undo": ["Ctrl+Alt+U"] }"#;
-    let cfg = KeybindConfig::from_json(json).unwrap();
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+    let json = r#"{ "cancel_mode": ["Escape"], "exit_modes": ["Escape"], "undo": ["Ctrl+Alt+U"] }"#;
+    let (cfg, captured) = capture(|| KeybindConfig::from_json(json));
+    let cfg = cfg.unwrap();
     assert_eq!(cfg.undo, vec!["Ctrl+Alt+U".to_string()]);
     assert_eq!(
         cfg.resolve().action_for("u", true, false, true),
         Some(Action::Undo),
+    );
+
+    // And it told somebody, through the loader itself rather than the
+    // test seam: one warning per stale key, each with the half only
+    // its branch produces. A key name alone would also appear in a
+    // malformed-value warning.
+    let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(
+        messages[0].starts_with("keybinds: unrecognized key 'cancel_mode' — ignored. None of the "),
+        "{}",
+        messages[0]
+    );
+    assert!(
+        messages[1]
+            .starts_with("keybinds: unrecognized key 'exit_modes' — ignored. Did you mean 'exit_mode'?"),
+        "{}",
+        messages[1]
+    );
+}
+
+/// A key written twice is the third way a hand-edited file goes stale.
+/// The last occurrence is used — what appending an override at the
+/// bottom of the file means — and the repeat is named. A one-pass
+/// typed parse used to refuse the whole file over it.
+#[test]
+fn test_a_repeated_keybinds_key_uses_the_last_occurrence_and_says_so() {
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+    let json = r#"{ "undo": ["Ctrl+Alt+U"], "select_all": ["Ctrl+Alt+A"], "undo": ["Ctrl+Alt+X"] }"#;
+    let (cfg, captured) = capture(|| KeybindConfig::from_json(json));
+    let cfg = cfg.expect("a repeated key is not a whole-file failure");
+    assert_eq!(cfg.undo, vec!["Ctrl+Alt+X".to_string()]);
+    assert_eq!(cfg.select_all, vec!["Ctrl+Alt+A".to_string()]);
+    let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        vec!["keybinds: key 'undo' appears more than once; the last occurrence is used"]
     );
 }
 

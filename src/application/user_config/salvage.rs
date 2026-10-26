@@ -36,11 +36,20 @@
 //! (this layer has nothing usable). What would otherwise be written
 //! three times is written here once.
 //!
+//! **A repeated key is the third way a file goes stale**, beside an
+//! unknown key and a malformed value, and it gets the same posture:
+//! [`parse_object`] and [`parse_array`] warn once per repeat, naming
+//! its path, and the **last** occurrence is the one used — what a
+//! plain JSON parse keeps, and what a user who appended an override
+//! at the bottom of the file meant. A one-pass typed parse refused the
+//! whole file instead; a `Value` on its own would keep the last one
+//! silently.
+//!
 //! Every function here is cross-platform: the desktop and browser
 //! loaders call the same parsers, so both targets degrade the same way
 //! (CODE_CONVENTIONS §4).
 
-use baumhard::format::json::{parse, parse_value, Map, Value};
+use baumhard::format::json::{parse_reporting_duplicates, parse_value, Map, Value};
 use serde::de::DeserializeOwned;
 
 /// A parsed JSON object, keyed by field name: what [`parse_object`]
@@ -51,12 +60,14 @@ pub type JsonObject = Map<String, Value>;
 ///
 /// `Err` is the whole-layer failure: text that is not JSON, or JSON
 /// whose outer value is anything but an object. The message names
-/// which, so the log line tells a syntax error from a wrong shape.
+/// which, so the log line tells a syntax error from a wrong shape. A
+/// key repeated anywhere in the document is warned about under
+/// `label`, by path, and its last occurrence kept.
 ///
 /// Costs one parse into an owned `Map`; the values are moved out of it
 /// later by [`take_field`] rather than cloned.
-pub fn parse_object(source: &str) -> Result<JsonObject, String> {
-    match parse::<Value>(source)? {
+pub fn parse_object(label: &str, source: &str) -> Result<JsonObject, String> {
+    match parse_warning_duplicates(label, source)? {
         Value::Object(object) => Ok(object),
         other => Err(format!("expected a JSON object, found {}", json_kind(&other))),
     }
@@ -64,12 +75,21 @@ pub fn parse_object(source: &str) -> Result<JsonObject, String> {
 
 /// Parse `source` as a JSON array, or say why it is not one. The array
 /// peer of [`parse_object`], with the same whole-layer meaning for
-/// `Err`.
-pub fn parse_array(source: &str) -> Result<Vec<Value>, String> {
-    match parse::<Value>(source)? {
+/// `Err` and the same report of repeated keys inside the entries.
+pub fn parse_array(label: &str, source: &str) -> Result<Vec<Value>, String> {
+    match parse_warning_duplicates(label, source)? {
         Value::Array(values) => Ok(values),
         other => Err(format!("expected a JSON array, found {}", json_kind(&other))),
     }
+}
+
+/// Parse `source` into a `Value`, warning once per repeated key.
+fn parse_warning_duplicates(label: &str, source: &str) -> Result<Value, String> {
+    let (value, duplicates) = parse_reporting_duplicates(source)?;
+    for path in duplicates {
+        log::warn!("{label}: key '{path}' appears more than once; the last occurrence is used");
+    }
+    Ok(value)
 }
 
 /// Move `key` out of `object` and deserialize it as `T`.
@@ -86,7 +106,7 @@ pub fn parse_array(source: &str) -> Result<Vec<Value>, String> {
 /// afterwards is what no field claimed.
 pub fn take_field<T: DeserializeOwned>(label: &str, object: &mut JsonObject, key: &str) -> Option<T> {
     let value = object.remove(key)?;
-    match parse_value::<T>(value) {
+    match parse_value::<T>(&value) {
         Ok(parsed) => Some(parsed),
         Err(e) => {
             log::warn!("{label}: '{key}' has a malformed value and keeps its default: {e}");
@@ -103,10 +123,10 @@ pub fn take_field<T: DeserializeOwned>(label: &str, object: &mut JsonObject, key
 /// `tier` says which list it came from (`"user"`, `"Map-tier"`, ...),
 /// since the same id can live in several.
 ///
-/// Costs one clone of `value`, which the caller owns; `parse_value`
-/// consumes its input.
+/// Deserializes straight out of the borrowed `value`; nothing is
+/// cloned beyond what `T` keeps.
 pub fn parse_entry<T: DeserializeOwned>(label: &str, tier: &str, index: usize, value: &Value) -> Option<T> {
-    match parse_value::<T>(value.clone()) {
+    match parse_value::<T>(value) {
         Ok(parsed) => Some(parsed),
         Err(e) => {
             let id = value.get("id").and_then(Value::as_str).unwrap_or("<no id>");
@@ -146,29 +166,63 @@ mod tests {
 
     #[test]
     fn test_parse_object_tells_a_wrong_shape_from_text_that_is_not_json() {
-        assert!(parse_object(r#"{"a": 1}"#).is_ok());
-        let shape = parse_object("[1, 2]").unwrap_err();
+        assert!(parse_object("salvage-test", r#"{"a": 1}"#).is_ok());
+        let shape = parse_object("salvage-test", "[1, 2]").unwrap_err();
         assert_eq!(shape, "expected a JSON object, found an array");
         // Control: text that is not JSON fails in serde, before any
         // shape is known, so the message is serde's and not the shape
         // one — the two failures stay distinguishable in the log.
-        let syntax = parse_object("{ not json").unwrap_err();
+        let syntax = parse_object("salvage-test", "{ not json").unwrap_err();
         assert!(!syntax.contains("expected a JSON object"), "{syntax}");
     }
 
     #[test]
     fn test_parse_array_tells_a_wrong_shape_from_text_that_is_not_json() {
-        assert_eq!(parse_array("[]").unwrap(), Vec::<Value>::new());
-        let shape = parse_array(r#"{"id": "x"}"#).unwrap_err();
+        assert_eq!(parse_array("salvage-test", "[]").unwrap(), Vec::<Value>::new());
+        let shape = parse_array("salvage-test", r#"{"id": "x"}"#).unwrap_err();
         assert_eq!(shape, "expected a JSON array, found an object");
-        let syntax = parse_array("[ 1,").unwrap_err();
+        let syntax = parse_array("salvage-test", "[ 1,").unwrap_err();
         assert!(!syntax.contains("expected a JSON array"), "{syntax}");
+    }
+
+    /// A repeated key is warned about by path, once per repeat, and the
+    /// last occurrence wins — at the top level and inside an entry.
+    #[test]
+    fn test_a_repeated_key_is_named_and_the_last_occurrence_wins() {
+        baumhard::util::test_logger::install();
+        let (object, captured) = capture(|| {
+            parse_object(
+                "salvage-test",
+                r#"{"dup-4b0e": ["first"], "other": 1, "dup-4b0e": ["last"]}"#,
+            )
+        });
+        assert_eq!(object.unwrap()["dup-4b0e"], serde_json::json!(["last"]));
+        let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            vec!["salvage-test: key 'dup-4b0e' appears more than once; the last occurrence is used"]
+        );
+
+        let (values, captured) =
+            capture(|| parse_array("salvage-test", r#"[{"id": "a"}, {"id": "b", "id": "c"}]"#));
+        assert_eq!(values.unwrap()[1]["id"], "c");
+        let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            vec!["salvage-test: key '[1].id' appears more than once; the last occurrence is used"]
+        );
+
+        // Control: the same documents without the repeat warn nothing,
+        // so the lines above are the repeat's doing.
+        let (_, captured) = capture(|| parse_object("salvage-test", r#"{"dup-4b0e": ["last"], "other": 1}"#));
+        assert!(captured.records.is_empty(), "{:?}", captured.records);
     }
 
     #[test]
     fn test_take_field_degrades_a_malformed_value_and_names_its_key() {
         baumhard::util::test_logger::install();
-        let mut object = parse_object(r#"{"good": ["a"], "bad-7d1f": 5, "rest": true}"#).unwrap();
+        let mut object =
+            parse_object("salvage-test", r#"{"good": ["a"], "bad-7d1f": 5, "rest": true}"#).unwrap();
 
         let (good, captured) = capture(|| take_field::<Vec<String>>("salvage-test", &mut object, "good"));
         assert_eq!(good, Some(vec!["a".to_string()]));
@@ -218,6 +272,7 @@ mod tests {
             n: u32,
         }
         let values = parse_array(
+            "salvage-test",
             r#"[
                 {"id": "first", "n": 1},
                 {"id": "broken-3c9a", "n": "one"},

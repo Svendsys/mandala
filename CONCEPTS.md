@@ -4019,7 +4019,8 @@ treated as comments, which is how the shipped
 *malformed value* under a recognized key gets the same posture one
 level down: the file is parsed field by field (a loop generated from
 the same table), so that key is warned about and keeps its default
-while every other binding loads. Only text that is not a JSON object
+while every other binding loads; a key written twice uses its last
+occurrence, also with a warning. Only text that is not a JSON object
 costs the layer. `user_config::salvage` holds the primitives, and
 `macros.json` and `mutations.json` use them per entry.
 

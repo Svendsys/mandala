@@ -80,7 +80,7 @@ pub fn parse_user_macros_json(source: &str) -> Result<Vec<Macro>, String> {
     if source.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let values = parse_array(source).map_err(|e| format!("malformed user macros JSON: {e}"))?;
+    let values = parse_array("macros", source).map_err(|e| format!("malformed user macros JSON: {e}"))?;
     Ok(parse_entries("macros", "user", &values))
 }
 
@@ -556,6 +556,24 @@ mod tests {
         // so the skip above is the typo's doing.
         let fixed = source.replace("Acton", "Action");
         assert_eq!(parse_user_macros_json(&fixed).unwrap().len(), 3);
+    }
+
+    /// A field repeated inside a user macro is named by its path and
+    /// the last occurrence used — the macro still loads.
+    #[test]
+    fn test_parse_user_macros_json_names_a_repeated_field_and_keeps_the_macro() {
+        baumhard::util::test_logger::install();
+        let source = r#"[
+            {"id": "first-id", "steps": [{"kind": "Action", "action": "Undo"}], "id": "last-id"}
+        ]"#;
+        let (parsed, captured) = baumhard::util::log::capture::capture(|| parse_user_macros_json(source));
+        let ids: Vec<String> = parsed.unwrap().into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["last-id".to_string()]);
+        let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            vec!["macros: key '[0].id' appears more than once; the last occurrence is used"]
+        );
     }
 
     /// A user file that is not a JSON array has no entries to salvage,

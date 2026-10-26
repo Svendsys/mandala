@@ -91,9 +91,18 @@ pub fn parse_mutations_json(source: &str) -> Result<Vec<CustomMutation>, String>
 /// A skipped user mutation that was overriding an App-tier mutation of
 /// the same id leaves the App one in effect. A missing `mutations`
 /// key is an empty list, as in the strict parser.
+///
+/// The envelope's only key is `mutations`; any other (a `"mutation"` or
+/// `"Mutations"` typo, most likely, which would otherwise load as an
+/// empty tier) is warned about and ignored, as `keybinds.json` treats
+/// a key it does not recognize. Keys starting with `_` are comments.
 pub fn parse_user_mutations_json(source: &str) -> Result<Vec<CustomMutation>, String> {
-    let mut envelope = parse_object(source)?;
-    match envelope.remove("mutations") {
+    let mut envelope = parse_object("mutations", source)?;
+    let mutations = envelope.remove("mutations");
+    for key in envelope.keys().filter(|key| !key.starts_with('_')) {
+        log::warn!("mutations: unrecognized key '{key}' in the user mutations file — ignored; only `mutations` is read");
+    }
+    match mutations {
         None => Ok(Vec::new()),
         Some(Value::Array(values)) => Ok(parse_entries("mutations", "user", &values)),
         Some(_) => Err("expected `mutations` to be a JSON array".to_string()),
@@ -176,6 +185,31 @@ mod tests {
         let fixed = source.replace("NoSuchScope", "SelfOnly");
         assert_eq!(parse_user_mutations_json(&fixed).unwrap().len(), 3);
         assert_eq!(parse_mutations_json(&fixed).unwrap().len(), 3);
+    }
+
+    /// A key beside `mutations` in the envelope is reported, not
+    /// silently dropped: a `"mutation"` typo would otherwise load as an
+    /// empty tier with nothing said.
+    #[test]
+    fn test_parse_user_mutations_json_reports_an_unrecognized_envelope_key() {
+        baumhard::util::test_logger::install();
+        let source = format!(
+            r#"{{"mutation": [{}], "_note": "a comment"}}"#,
+            mutation_json("typo-ed", "SelfOnly")
+        );
+        let (parsed, captured) = baumhard::util::log::capture::capture(|| parse_user_mutations_json(&source));
+        assert!(parsed.unwrap().is_empty(), "only `mutations` is read");
+        let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            vec!["mutations: unrecognized key 'mutation' in the user mutations file — ignored; only `mutations` is read"],
+            "one warning, and none for the `_`-prefixed comment"
+        );
+        // Control: spelled right, the entry loads and nothing is said.
+        let fixed = source.replace(r#""mutation":"#, r#""mutations":"#);
+        let (parsed, captured) = baumhard::util::log::capture::capture(|| parse_user_mutations_json(&fixed));
+        assert_eq!(parsed.unwrap().len(), 1);
+        assert!(captured.records.is_empty(), "{:?}", captured.records);
     }
 
     /// The envelope itself is the boundary: not an object, or a

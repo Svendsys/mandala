@@ -32,7 +32,9 @@ same `id`):
    it, not by the user, and this tier is trusted as the user's own.
    The file is read **entry by entry**: a mutation that does not
    parse logs a `warn!` naming its index and `id` and is skipped,
-   and the others load. Only a file that is not a JSON object, or
+   and the others load. A key written twice uses its last occurrence,
+   and a top-level key other than `mutations` is ignored; both log a
+   `warn!` naming the key. Only a file that is not a JSON object, or
    whose `mutations` is not an array, is dropped whole.
 3. **Map-level** — the `custom_mutations: [...]` array in the
    `.mindmap.json` file itself.

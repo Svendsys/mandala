@@ -462,11 +462,12 @@ names the instance that taught it.
    that is not JSON at all, so it would still have passed had the
    input started failing for an unrelated reason — `clear_zoom`
    deleted from the table, say.
-   `test_clear_zoom_rejects_the_parametric_binding_shape` added the
-   discriminating half — serde naming the value shape it refused —
-   and kept it when #129 turned that refusal into a per-key warning,
-   where the key name alone is the universal part: an
-   unrecognized-key warning carries it too. Assert the part of the
+   The test that added the discriminating half — serde naming the
+   value shape it refused — kept it when #129 turned that refusal
+   into a per-key warning, and is now
+   `test_a_stale_clear_zoom_shape_costs_only_clear_zoom`, after what it
+   asserts; in the warning the key name alone is the universal part,
+   since an unrecognized-key warning carries it too. Assert the part of the
    message only *this* failure produces.
 
 4. **Captured but never asserted.** A field rendered into a fixture,

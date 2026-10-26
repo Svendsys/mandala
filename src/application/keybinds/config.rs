@@ -511,18 +511,23 @@ impl KeybindConfig {
     ///
     /// - a key the object leaves out keeps its default, which is what
     ///   makes a partial config work;
-    /// - a key this config does not recognize is warned about and
-    ///   ignored — `unrecognized_keys` says why;
     /// - a recognized key whose value has the wrong shape is warned
-    ///   about by name and keeps its default, and costs nothing else.
+    ///   about by name and keeps its default, and costs nothing else;
+    /// - a key that appears twice is warned about, and its last
+    ///   occurrence is the one used (`salvage::parse_object`);
+    /// - a key this config does not recognize is warned about and
+    ///   ignored — `unclaimed_keys` says why.
     ///
-    /// The last two are the same posture, *warn, don't reject*, for
-    /// the two ways a hand-edited file goes stale. The per-field walk
-    /// is generated from the `keybind_surface!` table
-    /// (`take_fields`), so a new row is read the day it is added.
+    /// All of these are one posture, *warn, don't reject*, for the
+    /// ways a hand-edited file goes stale. The per-field walk is
+    /// generated from the `keybind_surface!` table (`take_fields`),
+    /// so a new row is read the day it is added, and "recognized"
+    /// means exactly "claimed by that walk": whatever it leaves in the
+    /// object is what gets reported.
     pub fn from_json(json: &str) -> Result<Self, String> {
-        let mut object = parse_object(json).map_err(|e| format!("parse keybinds JSON: {e}"))?;
-        let unknown = Self::unrecognized_keys(&object);
+        let mut object = parse_object("keybinds", json).map_err(|e| format!("parse keybinds JSON: {e}"))?;
+        let config = Self::take_fields(&mut object);
+        let unknown = Self::unclaimed_keys(object);
         if !unknown.is_empty() {
             // `known_keys()` allocates, so it is built once for the
             // whole report rather than per offending key.
@@ -544,14 +549,15 @@ impl KeybindConfig {
                 }
             }
         }
-        Ok(Self::take_fields(&mut object))
+        Ok(config)
     }
 
-    /// The keys of `object` that this config does not recognize,
-    /// sorted. Keys starting with `_` are skipped: JSON has no comment
-    /// syntax, and the shipped `config/default_keybinds.json` carries
-    /// its instructions in a `_comment` key, so the underscore prefix
-    /// is the documented way to annotate a config.
+    /// The keys `take_fields` left in `object` — the ones no table row
+    /// claimed — minus comments, sorted. Keys starting with `_` are
+    /// skipped: JSON has no comment syntax, and the shipped
+    /// `config/default_keybinds.json` carries its instructions in a
+    /// `_comment` key, so the underscore prefix is the documented way
+    /// to annotate a config.
     ///
     /// **Warn, don't reject.** A hand-edited config is exactly the
     /// surface where a silently-ignored key is the whole bug: a
@@ -562,12 +568,11 @@ impl KeybindConfig {
     /// and names the key instead. A malformed *value* under a
     /// recognized key gets the same treatment one level down — see
     /// [`Self::from_json`].
-    fn unrecognized_keys(object: &JsonObject) -> Vec<String> {
-        let known = Self::known_keys();
+    fn unclaimed_keys(object: JsonObject) -> Vec<String> {
         let mut unknown: Vec<String> = object
-            .keys()
-            .filter(|key| !key.starts_with('_') && !known.contains(&key.as_str()))
-            .cloned()
+            .into_iter()
+            .map(|(key, _)| key)
+            .filter(|key| !key.starts_with('_'))
             .collect();
         unknown.sort();
         unknown
@@ -575,11 +580,14 @@ impl KeybindConfig {
 
     /// The keys of `json` that `from_json` would warn about as
     /// unrecognized; nothing when `json` is not a JSON object. A test
-    /// seam over the same definition the loader reads.
+    /// seam over the same walk the loader runs.
     #[cfg(test)]
     pub(super) fn unknown_top_level_keys(json: &str) -> Vec<String> {
-        parse_object(json)
-            .map(|object| Self::unrecognized_keys(&object))
+        parse_object("keybinds", json)
+            .map(|mut object| {
+                Self::take_fields(&mut object);
+                Self::unclaimed_keys(object)
+            })
             .unwrap_or_default()
     }
 
