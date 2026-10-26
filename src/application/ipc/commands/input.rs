@@ -186,7 +186,8 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "input.touch",
-            summary: "One finger event, as a Touch event, into the touch-gesture recognizer.",
+            summary: "One finger event, as a Touch event: to the touch-gesture recognizer, or, for a finger \
+                      that starts on a resize handle in Resize mode, to the handle drag.",
             params: &[
                 ParamSpec::new(
                     "phase",

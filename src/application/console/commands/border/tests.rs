@@ -2198,3 +2198,37 @@ fn test_a_dangling_palette_from_a_file_loads_reads_and_does_not_block_edits() {
         "...and leave the name as it was"
     );
 }
+
+/// `border show`'s slot holds one closed word, `verbose`. A word
+/// outside it is refused by name, echoed as typed, rather than read
+/// as the slot's absence — `border show verbos` used to print the
+/// plain readout, a confident wrong answer (#135).
+#[test]
+fn test_border_show_refuses_an_unknown_slot_word() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    for (line, typed) in [
+        ("border show verbos", "verbos"),
+        ("border show Nonsense", "Nonsense"),
+    ] {
+        match run(line, &mut doc) {
+            ExecResult::Err(msg) => assert_eq!(
+                msg,
+                format!(
+                    "border show: unknown word '{typed}'; pick verbose or side=<top|bottom|left|right|all>"
+                )
+            ),
+            other => panic!("{line:?} must be refused, got {other:?}"),
+        }
+    }
+    // Control: the word itself, in any case, is the verbose readout.
+    for line in ["border show verbose", "border show VERBOSE"] {
+        match run(line, &mut doc) {
+            ExecResult::Lines(lines) => assert!(
+                join_lines(&lines).contains("color (cascade):"),
+                "{line:?} must print the verbose readout"
+            ),
+            other => panic!("{line:?} must print a readout, got {other:?}"),
+        }
+    }
+}

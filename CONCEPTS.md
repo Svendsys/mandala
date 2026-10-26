@@ -2935,14 +2935,24 @@ the camera instead, and the variant is gone rather than
 default-unbound, because a binding firing on the same event as
 the camera step would be a conflict rather than a choice.
 
-Two consequences of that deletion, neither fixed: a user whose
-only pointer is a touchscreen loses `FastResizeStart` (it ships
-bound to `Ctrl+RightDrag` alone, which needs a mouse), and an
-existing `keybinds.json` naming `"TwoFingerDrag"` is silently
-accepted and never matches, because `KeyBind::parse` takes any
-non-modifier word and cannot tell a retired gesture name from an
-ordinary key. `test_two_finger_drag_is_not_a_bindable_gesture`
-carries the reasoning.
+Two consequences of that deletion, both since closed (#160).
+**A touch-only user lost every resize, not only
+`FastResizeStart`**: the route this paragraph used to offer —
+long-press into `Resize`, then drag a handle — did not exist,
+because a one-finger drag is always the recognizer's `Pan` and
+moved the camera out from under the handle. Now a finger that
+starts a gesture on a handle in `Resize` mode is the left button
+until it lifts (`app/touch_handle.rs`): it drives the press,
+cursor-move and release handlers a mouse drives, so the handle drag
+is the one that already exists, and it is never fed to the
+recognizer. Every other touch is unchanged, so one-finger pan and
+pinch keep their meaning everywhere off a handle. That makes
+`FastResizeStart` a mouse accelerator by design rather than by
+accident. Native-only, as the drag state is. **And an existing
+`keybinds.json` naming `"TwoFingerDrag"` was silently accepted and
+never matched**, because `KeyBind::parse` takes any non-modifier
+word; a retired name is now refused at parse time through the
+`RETIRED_NAMES` table, with a diagnostic saying what replaced it.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 

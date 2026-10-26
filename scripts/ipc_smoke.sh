@@ -296,6 +296,65 @@ done
 "$CTL" input.mouse_button middle release --wait-settled >/dev/null || fail "middle release failed"
 [ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "the middle release did not end its pan"
 
+# ---- A finger resizes from a handle -----------------------------------
+
+# A touch-only user's resize route (#160): long-press a node to enter
+# Resize mode, then drag a handle with a finger. The finger is the left
+# button only while it holds the handle, and the recognizer never sees
+# it, so the drag resizes and the camera stays put. Like the step above,
+# this wiring (`dispatch_touch_event`) needs a live renderer, so this is
+# the one place it runs. Uses the node the region check found wholly on
+# screen.
+if [ -z "$node" ]; then
+    echo "   no node is wholly inside the window capture; touch-resize check skipped"
+else
+    step "touch resize of $node"
+    rect() { # the node's surface rect: x y w h
+        local geo
+        geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+        printf '%s %s %s %s' "$(field "$geo" surface.x)" "$(field "$geo" surface.y)" \
+            "$(field "$geo" surface.w)" "$(field "$geo" surface.h)"
+    }
+    model_size() { # the node's model size: w h
+        local geo
+        geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+        printf '%s %s' "$(field "$geo" model.size.width)" "$(field "$geo" model.size.height)"
+    }
+    # Zoom in about the node until a handle is a finger's width from
+    # the middle, so a touch at the middle cannot land on one.
+    for _ in $(seq 1 40); do
+        read -r x y w h <<<"$(rect)"
+        awk -v w="$w" 'BEGIN { exit !(w >= 80) }' && break
+        "$CTL" input.wheel 3 x="$(awk -v x="$x" -v w="$w" 'BEGIN { print x + w / 2 }')" \
+            y="$(awk -v y="$y" -v h="$h" 'BEGIN { print y + h / 2 }')" >/dev/null || fail "zoom failed"
+    done
+    read -r x y w h <<<"$(rect)"
+    mx="$(awk -v x="$x" -v w="$w" 'BEGIN { print x + w / 2 }')"; my="$(awk -v y="$y" -v h="$h" 'BEGIN { print y + h / 2 }')"
+    "$CTL" input.touch started 1 "$mx" "$my" >/dev/null && "$CTL" input.touch ended 1 "$mx" "$my" >/dev/null \
+        || fail "tap on $node failed"
+    "$CTL" input.touch started 1 "$mx" "$my" >/dev/null || fail "long-press start failed"
+    "$CTL" clock.step ms=500 >/dev/null || fail "clock.step failed"
+    "$CTL" input.touch moved 1 "$mx" "$my" >/dev/null && "$CTL" input.touch ended 1 "$mx" "$my" >/dev/null \
+        || fail "long-press end failed"
+    [ "$(field "$("$CTL" query.mode)" interaction_mode.kind)" = '"Resize"' ] || fail "a long-press did not enter Resize mode"
+    before="$(model_size)"; camera_before="$("$CTL" query.camera)"
+    ex="$(awk -v x="$x" -v w="$w" 'BEGIN { print x + w }')"; ey="$(awk -v y="$y" -v h="$h" 'BEGIN { print y + h }')"
+    "$CTL" input.touch started 2 "$ex" "$ey" >/dev/null || fail "handle touch failed"
+    for i in 1 2 3 4 5; do
+        "$CTL" input.touch moved 2 "$(awk -v a="$ex" -v i="$i" 'BEGIN { print a + i * 8 }')" \
+            "$(awk -v a="$ey" -v i="$i" 'BEGIN { print a + i * 8 }')" >/dev/null || fail "handle drag failed"
+        "$CTL" clock.step frames=1 >/dev/null || fail "clock.step failed"
+    done
+    "$CTL" input.touch ended 2 "$(awk -v a="$ex" 'BEGIN { print a + 40 }')" \
+        "$(awk -v a="$ey" 'BEGIN { print a + 40 }')" >/dev/null || fail "handle lift failed"
+    "$CTL" clock.step frames=3 >/dev/null || fail "clock.step failed"
+    [ "$("$CTL" query.camera)" = "$camera_before" ] || fail "the handle drag moved the camera: the finger panned"
+    [ "$(model_size)" != "$before" ] || fail "the handle drag did not resize $node (still $before)"
+    "$CTL" act.action Undo --wait-settled >/dev/null || fail "undo failed"
+    [ "$(model_size)" = "$before" ] || fail "one undo did not restore $node's size"
+    "$CTL" act.action ExitMode --wait-settled >/dev/null || fail "ExitMode failed"
+fi
+
 # ---- A right drag resizes from where it pressed ----------------------
 
 # `Ctrl+RightDrag` is `FastResizeStart`: the `RightDrag` threshold cross

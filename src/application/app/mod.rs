@@ -127,6 +127,7 @@ mod startup_load;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
 mod touch_gesture;
+mod touch_handle;
 
 // Drift surface for a new `InputHandlerContext` field: the struct in
 // `input_context.rs`, the `InitState::input_context()` builder in

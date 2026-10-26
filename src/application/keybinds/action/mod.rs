@@ -330,9 +330,15 @@ pub enum Action {
     /// run on WASM today), but WASM has no `DragState`, no
     /// throttled-drag pipeline, and no handle hit-test in
     /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
-    /// render handles the user can't use.    /// (no half-features), the Action is `NativeOnly` until Batches
+    /// render handles the user can't use. Rather than ship that
+    /// (no half-features), the Action is `NativeOnly` until Batches
     /// 4 / 7 land the WASM gesture pipeline. Reclassification is a
     /// one-line change at that point.
+    ///
+    /// **This is the touch route to a resize.** Default-bound to
+    /// `LongPress` as well as `r`; on native a finger that then lands
+    /// on a handle drags it (`app::touch_handle`, #160), which is why
+    /// [`Self::FastResizeStart`] needs no touch binding.
     ///
     /// Non-destructive — flips a mode bit and triggers a scene
     /// rebuild, no document mutation. The actual resize commit
@@ -370,6 +376,10 @@ pub enum Action {
     /// two fingers on a canvas now drive the camera directly. WASM
     /// gets fast-resize when the browser gains a drag-state
     /// machine.
+    ///
+    /// **A mouse accelerator by design** (#160). Touch reaches the
+    /// same resize through [`Self::EnterResizeMode`]: long-press a
+    /// node, then drag one of its handles with a finger.
     ///
     /// Marked `destructive` so the macro privilege gate
     /// (`SourceTier::allows_action`) blocks System / Plugin /

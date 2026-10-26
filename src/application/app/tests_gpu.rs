@@ -574,6 +574,151 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
     panic!("the font system stayed contended through {ATTEMPTS} capture attempts: {reply}");
 }
 
+/// **A finger on a resize handle resizes; a finger anywhere else pans**
+/// (#160), through the real `dispatch_touch_event` on a device, which
+/// no renderer-free test reaches: the claim is decided next to the
+/// renderer that converts the finger to canvas space.
+///
+/// In `Resize` mode on node 1, a finger that lands on its SE handle
+/// and drags drives the handle drag: the node grows, the camera does
+/// not move, the drag ends at `None` on lift, and one undo entry
+/// stands. Before #160 that drag was the recognizer's one-finger pan.
+///
+/// The control is the same finger, same mode, same distance, started
+/// in the node's middle instead: it pans the camera and resizes
+/// nothing. So the handle, and only the handle, is what changes where
+/// the finger goes — which fails on a claim that never fires (every
+/// touch to the recognizer: the size assertion) and on one that fires
+/// everywhere (the control's camera assertion).
+///
+/// Two preconditions are asserted first, with their own messages, so a
+/// drifted fixture does not fail as a claim that resized nothing: the
+/// zoom-in moved the camera, and the corner the press sees is the
+/// node's resize handle with no label on it (a label grab outranks a
+/// handle, #218).
+#[test]
+fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
+    use crate::application::platform::input::TouchPhase;
+    use crate::application::platform::window::PhysicalPosition;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.document.as_mut().expect("document").selection = SelectionState::Single("1".into());
+    let (reply, _) = act(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "EnterResizeMode"}),
+    );
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    assert!(matches!(init.interaction_mode, InteractionMode::Resize { .. }));
+
+    let node_rect = |init: &InitState| {
+        let n = &init.document.as_ref().expect("document").mindmap.nodes["1"];
+        (
+            glam::Vec2::new(n.position.x as f32, n.position.y as f32),
+            glam::Vec2::new(n.size.width as f32, n.size.height as f32),
+        )
+    };
+    // One finger, `id`, from `from` (surface pixels) 40 px down-right,
+    // a frame between moves as a hand's samples land.
+    let drag_finger = |init: &mut InitState, id: u64, from: glam::Vec2| {
+        let at = |i: f32| PhysicalPosition::new(f64::from(from.x + i * 8.0), f64::from(from.y + i * 8.0));
+        init.input_context()
+            .dispatch_touch_event(TouchPhase::Started, id, at(0.0));
+        for i in 1..=5 {
+            init.input_context()
+                .dispatch_touch_event(TouchPhase::Moved, id, at(i as f32));
+            init.input_context().drain_frame(Beat::Loop);
+        }
+        init.input_context()
+            .dispatch_touch_event(TouchPhase::Ended, id, at(5.0));
+        init.input_context().drain_frame(Beat::Loop);
+    };
+
+    // Zoom in about the node until nothing else sits on its corner: at
+    // the fixture's opening zoom an edge label overlaps the SE handle,
+    // and a label grab outranks a handle grab at the threshold cross
+    // for a mouse and a finger alike (`Grab::PRECEDENCE`).
+    let (pos, size) = node_rect(init);
+    let center = pos + size / 2.0;
+    let zoom_before = init.renderer.camera_zoom();
+    for id in 0..12 {
+        let (reply, _) = act(
+            init,
+            json!({"id": 10 + id, "cmd": "act.action", "action": "ZoomIn", "x": center.x, "y": center.y}),
+        );
+        assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    }
+    init.input_context().drain_frame(Beat::Loop);
+    let zoomed = init.renderer.camera_zoom();
+    assert!(
+        zoomed > zoom_before,
+        "precondition: ZoomIn must zoom in about the node, or a label may still sit on its corner: \
+         {zoomed} from {zoom_before}"
+    );
+    // What the press at the corner would capture besides the handle,
+    // asked of the same hit-tests the press runs and of nothing the
+    // touch claim decides, so a fixture that drifts fails here and not
+    // as a claim that resized nothing.
+    let se = init.renderer.canvas_to_screen(pos + size);
+    // The corner as the press sees it: through surface pixels and back.
+    let corner = init.renderer.screen_to_canvas(se.x, se.y);
+    let tolerance = super::HANDLE_HIT_TOLERANCE_PX * init.renderer.canvas_per_pixel();
+    assert!(
+        super::event_mouse_click::resize_handle_press(
+            init.document.as_ref(),
+            &init.interaction_mode,
+            corner,
+            tolerance
+        )
+        .node
+        .is_some(),
+        "precondition: node 1's SE corner must be its resize handle in Resize mode"
+    );
+    let parts = super::compute_click_hit(corner, init.mindmap_tree.as_mut(), &mut init.app_scene);
+    assert!(
+        parts.edge_label_hit.is_none() && parts.portal_icon_hit.is_none() && parts.portal_text_hit.is_none(),
+        "precondition: no label may sit on node 1's SE corner, since a label grab outranks the handle \
+         (`Grab::PRECEDENCE`, #218); zoom further in"
+    );
+    let undo_before = init.document.as_ref().expect("document").undo_stack.len();
+
+    let camera = init.renderer.camera().position;
+    drag_finger(init, 2, se);
+    let (_, resized) = node_rect(init);
+    assert!(
+        resized.x > size.x && resized.y > size.y,
+        "a finger dragged from the SE handle must grow the node: {size:?} -> {resized:?}"
+    );
+    assert_eq!(
+        init.renderer.camera().position,
+        camera,
+        "a finger holding a handle is never the recognizer's, so it must not pan"
+    );
+    assert!(
+        matches!(init.drag_state, super::DragState::None),
+        "the lift ended the drag"
+    );
+    assert_eq!(
+        init.document.as_ref().expect("document").undo_stack.len(),
+        undo_before + 1,
+        "the lift committed the resize with one undo entry of its own"
+    );
+
+    // Control: the same drag from the node's middle, still in Resize.
+    let (pos, size) = node_rect(init);
+    let camera = init.renderer.camera().position;
+    let middle = init.renderer.canvas_to_screen(pos + size / 2.0);
+    drag_finger(init, 3, middle);
+    assert_eq!(node_rect(init).1, size, "off a handle the finger resizes nothing");
+    assert_ne!(
+        init.renderer.camera().position,
+        camera,
+        "off a handle the finger is the recognizer's one-finger pan"
+    );
+}
+
 /// Node 1's canvas AABB as (min, size).
 fn node_1_rect(init: &InitState) -> (glam::Vec2, glam::Vec2) {
     let n = &init.document.as_ref().expect("document").mindmap.nodes["1"];

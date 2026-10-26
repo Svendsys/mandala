@@ -4,8 +4,9 @@
 //!
 //! Sub-commands:
 //! - `mutation list [filter]` — list mutations surfaced to the user
-//!   (contexts include `map` and not just `internal`). `--all` shows
-//!   every registered mutation, including internals.
+//!   (contexts include `map` and not just `internal`). `--all`, in
+//!   any case, shows every registered mutation, including internals;
+//!   any other `--` word is refused by name.
 //! - `mutation apply <id> [node-id]` — apply the named mutation to a
 //!   single-node selection (or the given `node-id`). Refuses internal
 //!   mutations and any id not in the registry.
@@ -24,11 +25,19 @@ use crate::application::console::spec::{
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SelectionState};
 
-/// The one flag in the console. It is a *slot value* rather than a
-/// subverb, so `commands/mod.rs` § Casing's case-insensitive subverb
-/// rule does not reach it and `mutation list --ALL` still falls to
-/// the filter arm (#135). Declaring it here is what makes it
-/// discoverable at all: no completer offered it before.
+/// The one `--`-spelled word in the console. It is a closed-vocabulary
+/// *slot word*, the same kind as `border show verbose`, so it follows
+/// `commands/mod.rs` § Casing's rule for those: matched
+/// case-insensitively, offered by the popup in its canonical
+/// spelling. `mutation list --ALL` used to miss the exact compare and
+/// answer as a substring filter — "no mutations match '--ALL'", a
+/// confident wrong answer (#135).
+///
+/// Kept as `--all` rather than converted to a bare `all`: `list`'s
+/// other slot is a free substring filter, and `all` is a plausible
+/// one, so a bare word would make that filter unreachable. The `--`
+/// is what tells the two apart, which is also why [`list`] refuses
+/// any *other* `--` word by name instead of filtering on it.
 const ALL_FLAG: &[Word] = &[Word::new(
     "--all",
     "include internal mutations and ones that do not target the map",
@@ -141,17 +150,37 @@ fn execute_mutation(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn list(descent: &Descent, args: &Args, eff: &ConsoleEffects) -> ExecResult {
-    // `--all` is a slot value rather than a subverb, so it stays
-    // case-sensitive (#135) and sits in either of the two slots the
-    // form declares.
+    // `--all` sits in either of the two slots the form declares and
+    // is matched case-insensitively (`ALL_FLAG`). A leading `--` is
+    // what separates it from the filter, so any other `--` word is
+    // refused by name rather than filtered on — `--al` or `--ALLL`
+    // answering "no mutations match" is the silent wrong answer #135
+    // is about, with a typo in place of a capital.
     let slots = descent.slot_value(args);
     let mut show_all = false;
     let mut filter: Option<&str> = None;
     for i in 0..2 {
         match slots.get(i) {
-            Some("--all") => show_all = true,
-            Some(other) if filter.is_none() => filter = Some(other),
-            Some(_) | None => {}
+            Some(s) if Vocabulary::Words(ALL_FLAG).admits(s) => show_all = true,
+            Some(s) if s.starts_with("--") => {
+                return ExecResult::err(format!(
+                    "mutation list: unknown flag '{}'; the only flag is {}",
+                    s, ALL_FLAG[0].name
+                ));
+            }
+            Some(other) => match filter {
+                None => filter = Some(other),
+                // One filter only. Dropping the second word answered
+                // `mutation list sec dec` with "no mutations match
+                // 'sec'" — two words typed, one reported.
+                Some(first) => {
+                    return ExecResult::err(format!(
+                        "mutation list: one filter only; got '{}' and '{}' (quote a filter that has a space: \"…\")",
+                        first, other
+                    ));
+                }
+            },
+            None => {}
         }
     }
 
@@ -455,6 +484,95 @@ mod tests {
         match run("mutation list --all", &mut doc) {
             ExecResult::Lines(ls) => assert!(ls.iter().any(|l| l.text.contains("secret"))),
             other => panic!("expected Lines, got {:?}", other),
+        }
+    }
+
+    /// The flag is a closed-vocabulary slot word, matched
+    /// case-insensitively in either slot; it used to answer `--ALL` as
+    /// a substring filter, "no mutations match '--ALL'" (#135).
+    #[test]
+    fn list_all_is_matched_case_insensitively_in_either_slot() {
+        for line in [
+            "mutation list --ALL",
+            "mutation list --All",
+            "mutation list sec --ALL",
+        ] {
+            let mut doc = fixture_doc(
+                vec![
+                    ("secret", make_cm("secret", vec!["internal"], "d")),
+                    ("public", make_cm("public", vec!["map.node"], "d")),
+                ],
+                vec![],
+            );
+            match run(line, &mut doc) {
+                ExecResult::Lines(ls) => {
+                    let all = joined(&ls);
+                    assert!(all.contains("secret"), "{line:?} must include internals: {all}");
+                }
+                other => panic!("{line:?} must list, got {other:?}"),
+            }
+        }
+        // Control: without the flag the internal one stays hidden, so
+        // the rows above are the flag's doing.
+        let mut doc = fixture_doc(vec![("secret", make_cm("secret", vec!["internal"], "d"))], vec![]);
+        match run("mutation list sec", &mut doc) {
+            ExecResult::Ok(msg) => assert_eq!(msg, "no mutations match 'sec'"),
+            other => panic!("expected the empty-filter answer, got {other:?}"),
+        }
+    }
+
+    /// Two filter words are refused by name rather than the second
+    /// being dropped, which answered for the first word alone.
+    #[test]
+    fn list_refuses_a_second_filter_word() {
+        let mut doc = fixture_doc(
+            vec![("grow-font", make_cm("grow-font", vec!["map.node"], "d"))],
+            vec![],
+        );
+        match run("mutation list sec dec", &mut doc) {
+            ExecResult::Err(msg) => assert_eq!(
+                msg,
+                "mutation list: one filter only; got 'sec' and 'dec' (quote a filter that has a space: \"…\")"
+            ),
+            other => panic!("two filter words must be refused, got {other:?}"),
+        }
+        // Control: the same two words quoted are one filter.
+        match run("mutation list \"grow font\"", &mut doc) {
+            ExecResult::Ok(msg) => assert_eq!(msg, "no mutations match 'grow font'"),
+            other => panic!("a quoted filter is one filter, got {other:?}"),
+        }
+    }
+
+    /// Any other `--` word is refused by name, echoed as typed: a typo
+    /// of the flag must not answer as a filter either.
+    #[test]
+    fn list_refuses_an_unknown_flag_by_name() {
+        for (line, typed) in [
+            ("mutation list --al", "--al"),
+            ("mutation list --ALLL", "--ALLL"),
+            ("mutation list grow --nope", "--nope"),
+        ] {
+            let mut doc = fixture_doc(
+                vec![("grow-font", make_cm("grow-font", vec!["map.node"], "d"))],
+                vec![],
+            );
+            match run(line, &mut doc) {
+                ExecResult::Err(msg) => assert_eq!(
+                    msg,
+                    format!("mutation list: unknown flag '{typed}'; the only flag is --all")
+                ),
+                other => panic!("{line:?} must be refused, got {other:?}"),
+            }
+        }
+        // Control: a filter that merely *contains* `--` mid-word is
+        // still a filter.
+        let mut doc = fixture_doc(
+            vec![("grow--font", make_cm("grow--font", vec!["map.node"], "d"))],
+            vec![],
+        );
+        match run("mutation list w--f", &mut doc) {
+            ExecResult::Lines(ls) => assert!(joined(&ls).contains("grow--font")),
+            other => panic!("expected the filtered list, got {other:?}"),
         }
     }
 
