@@ -24,14 +24,35 @@
 
 use crate::util::doc_fixtures::repo_path;
 use crate::util::engine_isolation::{references_to, rust_files};
+use crate::util::rust_source::{blank_string_literals, strip_comments};
 use std::collections::BTreeSet;
 use syn::visit::{self, Visit};
 use syn::{Fields, Item, PathSegment, Type};
 
-/// Identifiers no file outside the document and the benches may write in
-/// code: the document's test builder, a back door around the loader and
-/// the writer.
-const BUILDER: &[&str] = &["DocumentBuilder", "test_support"];
+/// The identifier no file outside the document and the benches may write
+/// in code: the document's test builder, a back door around the loader
+/// and the writer.
+const BUILDER: &[&str] = &["DocumentBuilder"];
+
+/// The builder's module path, which no such file may write either. The
+/// qualified path, not the bare module name, so another `test_support`
+/// module elsewhere stays free to exist.
+const BUILDER_MODULE: &str = "document::tests::test_support";
+
+/// Every `(line, needle)` in `source` that names the builder in code: its
+/// type by name ([`BUILDER`]), or its module by path
+/// ([`BUILDER_MODULE`]). Comments are stripped and string literals
+/// blanked first.
+fn builder_references(source: &str) -> Vec<(usize, &'static str)> {
+    let mut found = references_to(source, BUILDER);
+    let code = blank_string_literals(&strip_comments(source));
+    for (index, line) in code.lines().enumerate() {
+        if line.contains(BUILDER_MODULE) {
+            found.push((index + 1, BUILDER_MODULE));
+        }
+    }
+    found
+}
 
 /// Identifiers no document file may write in code.
 const FORBIDDEN: &[&str] = &["mindmap", "gfx_structs", "parent_id", "edge_type", "parent_child"];
@@ -201,7 +222,7 @@ mod tests {
                 || relative.starts_with("lib/baumhard/benches/");
             let source = std::fs::read_to_string(file)
                 .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-            let found = references_to(&source, BUILDER);
+            let found = builder_references(&source);
             if inside {
                 read_inside |= !found.is_empty();
                 continue;
@@ -235,6 +256,13 @@ mod tests {
             ]
         );
         let code = "use crate::mindmap::model::MindNode;\n// parent_id in prose\nfn f(edge_type: u8) {}\n";
+        let planted = "use crate::document::tests::test_support::example;\nfn f(_: DocumentBuilder) {}\n\
+                       mod test_support {}\n// DocumentBuilder in prose\n";
+        assert_eq!(
+            builder_references(planted),
+            vec![(2, "DocumentBuilder"), (1, BUILDER_MODULE)],
+            "the type and the qualified module are found; a bare `test_support` module and prose are not"
+        );
         assert_eq!(
             references_to(code, FORBIDDEN),
             vec![(1, "mindmap"), (3, "edge_type")]
