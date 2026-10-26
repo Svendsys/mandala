@@ -100,14 +100,33 @@ fn breaks_a_record(c: char) -> bool {
 /// reads the same however the line was reached. On wasm32 there is
 /// no home to fold and this is [`excerpt`].
 pub fn console_line_excerpt(line: &str) -> String {
-    excerpt(&collapse_home_in(line))
+    match home_dir() {
+        Some(home) => console_line_excerpt_with(line, &home),
+        None => excerpt(line),
+    }
+}
+
+/// [`console_line_excerpt`] with the home directory supplied: the
+/// composition as a pure function, which is what the tests drive —
+/// with a home long enough that cutting first would land inside it,
+/// which no machine's `$HOME` can be relied on to be.
+pub fn console_line_excerpt_with(line: &str, home: &Path) -> String {
+    excerpt(&collapse_home_in_with(line, home))
 }
 
 /// A console failure, for a log line: home-collapsed, then excerpted
 /// at [`FAILURE_WIDTH`]. The peer of [`console_line_excerpt`] for the
 /// other half of the same record.
 pub fn failure_excerpt(failure: &str) -> String {
-    excerpt_to(&collapse_home_in(failure), FAILURE_WIDTH)
+    match home_dir() {
+        Some(home) => failure_excerpt_with(failure, &home),
+        None => excerpt_to(failure, FAILURE_WIDTH),
+    }
+}
+
+/// [`failure_excerpt`] with the home directory supplied, pure.
+pub fn failure_excerpt_with(failure: &str, home: &Path) -> String {
+    excerpt_to(&collapse_home_in_with(failure, home), FAILURE_WIDTH)
 }
 
 /// `path`, for a log line: the home directory folded to `~` when the
@@ -281,44 +300,84 @@ mod tests {
         assert_eq!(excerpt("a\u{2028}b\u{2029}c\u{85}d\x1b[2Je\tf"), "a b c d [2Je f");
     }
 
+    /// A home an ordinary `$HOME` is short of: longer than the
+    /// excerpt width on its own, so a cut taken before the fold lands
+    /// inside it — the case the composed helpers exist for.
+    const LONG_HOME: &str = "/home/firstname.lastname-longcorp/workspaces/2026/q4";
+
+    /// Pure over an injected home, so it holds whatever `$HOME` is on
+    /// the machine running it — `/`, a trailing slash, unset, or
+    /// longer than the line.
     #[test]
     fn test_console_line_and_failure_excerpts_fold_home_before_they_cut() {
-        let Some(home) = home_dir() else {
-            eprintln!("no home directory in this environment; the composed helpers are unexercised here");
-            return;
-        };
-        let home = home.display().to_string();
-        // Exactly `EXCERPT_WIDTH` cells once folded, so the line is
-        // kept whole with the account name gone. Unfolded it is longer by
-        // the home path less the `~`, so the other order — cut first,
-        // fold second — keeps the home path and cuts the tail, which
-        // the control below shows.
-        let tail = "m".repeat(EXCERPT_WIDTH - "open ~/".len());
-        let line = format!("open {home}/{tail}");
-        assert_eq!(console_line_excerpt(&line), format!("open ~/{tail}"));
+        let short_home = Path::new("/home/mikal");
+        let long_home = Path::new(LONG_HOME);
         assert!(
-            excerpt(&line).contains(&home),
-            "control: cutting before folding keeps the account name: {:?}",
-            excerpt(&line)
+            LONG_HOME.len() > EXCERPT_WIDTH,
+            "the long home must not fit in an excerpt on its own, or the control below proves nothing"
+        );
+        // Exactly `EXCERPT_WIDTH` cells once folded, so the line is
+        // kept whole with the account name gone, whichever home it
+        // held.
+        let tail = "m".repeat(EXCERPT_WIDTH - "open ~/".len());
+        for home in [short_home, long_home] {
+            let line = format!("open {}/{tail}", home.display());
+            assert_eq!(
+                console_line_excerpt_with(&line, home),
+                format!("open ~/{tail}"),
+                "{home:?}"
+            );
+        }
+        // Control, the other order: cutting first lands inside the
+        // long home, so the fold that follows finds no home to fold
+        // and the head of the account path is what the record keeps.
+        let line = format!("open {}/{tail}", long_home.display());
+        let cut_first = collapse_home_in_with(&excerpt(&line), long_home);
+        assert!(
+            cut_first.starts_with("open /home/firstname.lastname"),
+            "control: cutting before folding keeps the head of the account path: {cut_first:?}"
         );
         assert_eq!(
-            failure_excerpt(&format!("could not open '{home}/x': denied")),
+            failure_excerpt_with(&format!("could not open '{LONG_HOME}/x': denied"), long_home),
             "could not open '~/x': denied"
         );
         // The failure width is the wider one: a diagnosis of
         // `EXCERPT_WIDTH + 1` cells survives `failure_excerpt` whole
         // and is cut by `excerpt`.
         let diagnosis = "d".repeat(EXCERPT_WIDTH + 1);
-        assert_eq!(failure_excerpt(&diagnosis), diagnosis);
+        assert_eq!(failure_excerpt_with(&diagnosis, short_home), diagnosis);
         assert_eq!(
             excerpt(&diagnosis),
             format!("{}{EXCERPT_MARK}", "d".repeat(EXCERPT_WIDTH))
         );
         let paragraph = "p".repeat(FAILURE_WIDTH + 1);
         assert_eq!(
-            failure_excerpt(&paragraph),
+            failure_excerpt_with(&paragraph, short_home),
             format!("{}{EXCERPT_MARK}", "p".repeat(FAILURE_WIDTH))
         );
+    }
+
+    /// The environment-reading pair is wired to the same composition.
+    /// The expectation is derived from what `usable_home` makes of
+    /// this machine's `$HOME` — folded when there is a usable one,
+    /// untouched when there is none (unset, empty, `/`) — so the test
+    /// holds under any home and still goes red if either function
+    /// stops reading it.
+    #[test]
+    fn test_console_line_and_failure_excerpts_read_the_home_the_collapse_helpers_read() {
+        let home = home_dir();
+        match home.as_deref().and_then(usable_home) {
+            Some(home) => {
+                let shown = home.to_string_lossy();
+                let needle = shown.trim_end_matches(['/', '\\']);
+                assert_eq!(console_line_excerpt(&format!("open {needle}/x")), "open ~/x");
+                assert_eq!(failure_excerpt(&format!("{needle}/x: denied")), "~/x: denied");
+            }
+            None => {
+                assert_eq!(console_line_excerpt("open /x"), "open /x");
+                assert_eq!(failure_excerpt("/x: denied"), "/x: denied");
+            }
+        }
     }
 
     /// A path under the home directory folds to `~`, the home itself

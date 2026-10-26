@@ -24,8 +24,8 @@ pub mod capture;
 pub mod redact;
 
 pub use redact::{
-    collapse_home, collapse_home_in, collapse_home_in_with, console_line_excerpt, excerpt, excerpt_to,
-    failure_excerpt, tilde_path, EXCERPT_WIDTH, FAILURE_WIDTH,
+    collapse_home, collapse_home_in, collapse_home_in_with, console_line_excerpt, console_line_excerpt_with,
+    excerpt, excerpt_to, failure_excerpt, failure_excerpt_with, tilde_path, EXCERPT_WIDTH, FAILURE_WIDTH,
 };
 
 /// Initialize the global logger for whichever target this binary

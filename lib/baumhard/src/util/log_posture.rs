@@ -438,7 +438,8 @@ fn f(path: &std::path::Path, msg: &str) {
         assert!(
             report.invocations >= INVOCATION_FLOOR,
             "the reader found only {} shipped `warn!` / `error!` invocations where roughly \
-             200 exist; it has lost most of the surface it checks",
+             200 exist; it has lost part of the surface it checks — if sites were removed on \
+             purpose, lower `INVOCATION_FLOOR` with them",
             report.invocations
         );
         // The floor is a sum, and a sum cannot say *where* the
