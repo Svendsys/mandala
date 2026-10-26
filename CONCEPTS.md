@@ -1108,7 +1108,13 @@ replaces; nothing in the app uses it until the cut-over (V1-C3).
   its owners, the node's palette binding, the map's `Defaults` and
   `BUILT_IN` (`document::defaults`), recording every input it reads
   through a `ReadRecorder` so the projection can learn what depends on
-  what.
+  what. An input names as little as the read needed — an element's
+  style, a node's palette binding, a children row, the theme, a
+  palette, the defaults, a depth — and `document::deps::inputs_changed`
+  maps a change of one element onto them, so moving or resizing a node
+  dirties no resolution. A connector's, portal marker's, label's or
+  frame's size and color stay in their own flow and never come from
+  the node's text.
 - **Shape rules** (`document::shape::validate_shape`) say which kind
   may hold which; **bounds** (`document::bounds`) every number's
   range.
