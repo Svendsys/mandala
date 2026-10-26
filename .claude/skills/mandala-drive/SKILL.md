@@ -465,11 +465,11 @@ look. Until then the PNG is unverified on WebGPU — whether a same-task
 `toDataURL` holds the frame just drawn or the last presented one is the
 open question (`format/ipc.md` §`capture.screenshot`) — and the sidecar,
 computed from the scene, is the half to trust. (There is no WebGL
-fallback yet, tracked as #220. The `webgl` feature *is* compiled in, but
+fallback yet: tracked as #220, fixed by #224. The `webgl` feature *is* compiled in, but
 wgpu 30's web `Instance::new` takes its WebGPU context whenever
 `navigator.gpu` is defined, adapter or not, and never tries the GL
 backend — so headless Chromium that defines `navigator.gpu` with no
-adapter behind it panics at the adapter. Until #220 merges, the fallback
+adapter behind it panics at the adapter. Until #224 merges, the fallback
 does not exist.) Nothing in `./test.sh` runs a browser (TEST_CONVENTIONS
 §T8).
 

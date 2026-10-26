@@ -133,7 +133,7 @@ the parity trajectory (or why none is owed):
   its canvas and reads it back in the same task (`to_data_url`,
   `run_wasm/ipc_target.rs::capture_canvas`) — whether that read holds
   the frame just drawn is unverified on WebGPU, the one backend the
-  bundle runs until #220 (`format/ipc.md` §`capture.screenshot`) —
+  bundle runs until #224 merges (`format/ipc.md` §`capture.screenshot`) —
   returning the PNG inline
   (`png_base64`) with the geometry sidecar — `capture/geometry.rs`,
   one body for both — inline beside it, which `mandalactl --ws`

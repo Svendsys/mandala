@@ -1815,7 +1815,8 @@ task (`toDataURL`), before that task yields to the browser's rendering
 update. What that read-back holds is **established for WebGL's
 presentation model only, and unverified for WebGPU** — and WebGPU is
 the backend the bundle takes whenever the browser defines
-`navigator.gpu`; there is no WebGL fallback until #220 lands. On WebGL
+`navigator.gpu`; there is no WebGL fallback until #224 (fixing #220)
+merges. On WebGL
 without `preserveDrawingBuffer`, a same-task `toDataURL` reads the
 frame just drawn and a read one frame later reads a cleared buffer
 (observed in headless Chromium's WebGL2 on a plain canvas, not on this
