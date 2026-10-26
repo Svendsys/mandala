@@ -4087,6 +4087,19 @@ declares its name, its sentence and its vocabulary, and what
 non-custom-preset gate — are handwritten handlers *behind* the
 table.
 
+*Which* handler a matched subverb runs is declared too, through
+`spec::route`: each dispatcher keeps a `Routes` table pairing
+every declared name with a variant of its own route enum, and
+matches on the variant. Before it, dispatchers matched
+`subverb.name` and most let `_ =>` absorb the last name, so a new
+`Subverb` row was right on every derived surface and ran the
+catch-all's behavior: `fps snapshot` would have toggled the
+rolling average (#155). The match is now exhaustive without a
+catch-all (a variant no row constructs is dead code, which the
+clippy gate refuses), and a registry test holds every table
+against the subverbs its levels declare, in both directions, so
+a row with no handler fails the suite naming the subverb.
+
 `console::spec`'s own tests hold the declaration against itself
 over the whole registry, in both directions: a form naming a
 key its level does not declare, and a key no form prints. The

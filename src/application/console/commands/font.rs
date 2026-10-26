@@ -42,6 +42,7 @@ use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
     kvs, usage, Bare, Descent, Form, Grammar, Key, Slot, Subverb, Vocabulary,
 };
@@ -90,6 +91,22 @@ const SUBVERBS: &[Subverb] = &[
         "list every loaded font, each rendered in its face",
     ),
 ];
+
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    Set,
+    List,
+}
+
+const ROUTES: &Routes<Route> = &[("set", Route::Set), ("list", Route::List)];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
 
 pub static GRAMMAR: Grammar = Grammar {
     label: "font",
@@ -230,12 +247,13 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // and the loaded-family lookup owns that comparison.
     let descent = descend(&GRAMMAR, args.tokens());
     match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "set" => execute_font_set(&descent, args, eff),
-            _ => match kvs::read_strict(&descent, args) {
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(Route::Set) => execute_font_set(&descent, args, eff),
+            Some(Route::List) => match kvs::read_strict(&descent, args) {
                 Ok(_) => execute_font_list(),
                 Err(msg) => ExecResult::err(msg),
             },
+            None => ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::Bare => {
             let parsed = match parse_font_args(&descent, args) {

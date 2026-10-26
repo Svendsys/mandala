@@ -19,6 +19,7 @@ use crate::application::common::FpsDisplayMode;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{kvs, usage, Grammar, Subverb};
 use crate::application::console::{ConsoleEffects, ExecResult};
 
@@ -27,6 +28,21 @@ const SUBVERBS: &[Subverb] = &[
     Subverb::bare("off", "overlay", "hide the readout"),
     Subverb::bare("debug", "overlay", "show the rolling per-frame average"),
 ];
+
+/// One mode per declared subverb; see `spec::route` for why this is
+/// a table rather than a `match` with a catch-all.
+const ROUTES: &Routes<FpsDisplayMode> = &[
+    ("on", FpsDisplayMode::Snapshot),
+    ("off", FpsDisplayMode::Off),
+    ("debug", FpsDisplayMode::Debug),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
 
 pub static GRAMMAR: Grammar = Grammar {
     label: "fps",
@@ -53,10 +69,9 @@ fn execute_fps(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         return ExecResult::err(msg);
     }
     let mode = match descent.stop {
-        Stop::Matched(subverb) => match subverb.name {
-            "on" => FpsDisplayMode::Snapshot,
-            "off" => FpsDisplayMode::Off,
-            _ => FpsDisplayMode::Debug,
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(mode) => mode,
+            None => return ExecResult::err(route::miss(descent.level, subverb)),
         },
         Stop::Bare => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
         _ => {

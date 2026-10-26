@@ -18,6 +18,7 @@ use crate::application::color_picker::{ColorTarget, NodeColorAxis, SectionColorA
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{
     bare_words, free_words, kvs, usage, Bare, Descent, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word,
 };
@@ -59,6 +60,30 @@ const SUBVERBS: &[Subverb] = &[
         .gated(),
 ];
 
+/// Which handler each declared subverb runs (`spec::route`). The
+/// four wheel subverbs differ only in the axis they hand the picker;
+/// `pick` is the axis-agnostic legacy flow.
+#[derive(Clone, Copy)]
+enum Route {
+    Wheel(Option<NodeColorAxis>),
+    Picker,
+}
+
+const ROUTES: &Routes<Route> = &[
+    ("bg", Route::Wheel(Some(NodeColorAxis::Bg))),
+    ("text", Route::Wheel(Some(NodeColorAxis::Text))),
+    ("border", Route::Wheel(Some(NodeColorAxis::Border))),
+    ("pick", Route::Wheel(None)),
+    ("picker", Route::Picker),
+];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 pub static GRAMMAR: Grammar = Grammar {
     label: "color",
     subverb_sets: &[SUBVERBS],
@@ -87,39 +112,42 @@ fn execute_picker(
     args: &Args,
     eff: &mut ConsoleEffects,
     name: &'static str,
+    route: Route,
 ) -> ExecResult {
-    if name == "picker" {
-        return match descent
-            .slot_value(args)
-            .get(0)
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("on") => {
-                eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPickerStandalone);
-                eff.close_console = true;
-                ExecResult::ok_empty()
-            }
-            Some("off") => {
-                eff.side_effect = Some(super::super::ConsoleSideEffect::CloseColorPicker);
-                eff.close_console = true;
-                ExecResult::ok_empty()
-            }
-            _ => ExecResult::err(usage::subverb_usage(
-                descent.level,
-                descent.subverb().unwrap_or(&SUBVERBS[4]),
-            )),
-        };
-    }
-    match picker_target_for(name, &eff.document().selection) {
+    let axis = match route {
+        Route::Wheel(axis) => axis,
+        Route::Picker => {
+            return match descent
+                .slot_value(args)
+                .get(0)
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
+                Some("on") => {
+                    eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPickerStandalone);
+                    eff.close_console = true;
+                    ExecResult::ok_empty()
+                }
+                Some("off") => {
+                    eff.side_effect = Some(super::super::ConsoleSideEffect::CloseColorPicker);
+                    eff.close_console = true;
+                    ExecResult::ok_empty()
+                }
+                _ => ExecResult::err(usage::subverb_usage(
+                    descent.level,
+                    descent.subverb().unwrap_or(&SUBVERBS[4]),
+                )),
+            };
+        }
+    };
+    match picker_target_for(axis, &eff.document().selection) {
         PickerTargetOutcome::Open(target) => {
             eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPicker(target));
             eff.close_console = true;
             ExecResult::ok_empty()
         }
         PickerTargetOutcome::NotApplicable(msg) => ExecResult::err(msg),
-        // The four axis subverbs are all `picker_target_for` knows;
-        // an `Unknown` here means the selection carries no target.
+        // An `Unknown` here means the selection carries no target.
         PickerTargetOutcome::Unknown => ExecResult::err(format!(
             "color {}: nothing to pick for this selection",
             descent.typed.unwrap_or(name)
@@ -133,8 +161,9 @@ enum PickerTargetOutcome {
     Unknown,
 }
 
-/// Map a bare positional verb (`pick`, `bg`, `text`, `border`) to a
-/// concrete `ColorTarget` based on the current selection.
+/// Map a wheel subverb's axis (`bg`, `text`, `border`, or `None` for
+/// `pick`) to a concrete `ColorTarget` based on the current
+/// selection.
 ///
 /// Node targets carry the axis directly. Edge / portal targets
 /// collapse axis into their one color field: `bg`/`border` on an
@@ -142,14 +171,7 @@ enum PickerTargetOutcome {
 /// resolves to the portal's fill. Section targets honor the `text`
 /// axis and report NotApplicable for `bg` / `border` (sections have
 /// no chrome by spec — see `format/sections.md`).
-fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutcome {
-    let axis = match verb {
-        "bg" => Some(NodeColorAxis::Bg),
-        "text" => Some(NodeColorAxis::Text),
-        "border" => Some(NodeColorAxis::Border),
-        "pick" => None, // axis-agnostic legacy flow
-        _ => return PickerTargetOutcome::Unknown,
-    };
+fn picker_target_for(axis: Option<NodeColorAxis>, selection: &SelectionState) -> PickerTargetOutcome {
     match selection {
         SelectionState::Single(id) => match axis {
             Some(a) => PickerTargetOutcome::Open(ColorTarget::Node {
@@ -286,7 +308,12 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Err(msg) => return ExecResult::err(msg),
     };
     match descent.stop {
-        Stop::Matched(subverb) => return execute_picker(&descent, args, eff, subverb.name),
+        Stop::Matched(subverb) => {
+            return match route::lookup(ROUTES, subverb) {
+                Some(route) => execute_picker(&descent, args, eff, subverb.name, route),
+                None => ExecResult::err(route::miss(descent.level, subverb)),
+            }
+        }
         Stop::KvForm => return ExecResult::err(descent.quoting_hint(args)),
         Stop::Unknown => {
             return ExecResult::err(usage::unknown_subverb_message(

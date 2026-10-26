@@ -1057,3 +1057,133 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
     assert_eq!(value(&pairs, "absent"), None);
     assert_eq!(value(&[], "glyph"), None);
 }
+
+/// Every subverb dispatcher in the registry: a name for failure
+/// messages, the levels it serves, and the names its route tables
+/// handle (`spec::route`). A dispatcher serving several levels — the
+/// three canvas subjects, the five staging levels — is listed once
+/// with all of them, because one table answers for every level it
+/// serves.
+fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)> {
+    use crate::application::console::commands::{
+        border, canvas, clock, color, font, fps, label, mode, mutation, node, record, section, zoom,
+    };
+    vec![
+        ("fps", vec![&fps::GRAMMAR], fps::routed_names()),
+        ("mutation", vec![&mutation::GRAMMAR], mutation::routed_names()),
+        ("node", vec![&node::GRAMMAR], node::routed_names()),
+        ("mode", vec![&mode::GRAMMAR], mode::routed_names()),
+        ("clock", vec![&clock::GRAMMAR], clock::routed_names()),
+        ("record", vec![&record::GRAMMAR], record::routed_names()),
+        ("font", vec![&font::GRAMMAR], font::routed_names()),
+        ("label", vec![&label::GRAMMAR], label::routed_names()),
+        ("color", vec![&color::GRAMMAR], color::routed_names()),
+        ("zoom", vec![&zoom::GRAMMAR], zoom::routed_names()),
+        (
+            "section",
+            vec![&section::grammar::SECTION],
+            section::routed_names(),
+        ),
+        (
+            "section frame",
+            vec![&section::SECTION_FRAME],
+            section::frame_routed_names(),
+        ),
+        ("border", vec![&border::grammar::BORDER], border::routed_names()),
+        (
+            "canvas subjects",
+            vec![
+                &canvas::grammar::CANVAS_BORDER,
+                &canvas::grammar::CANVAS_SECTION_FRAME,
+                &canvas::grammar::CANVAS_SECTION_FRAME_FOCUSED,
+            ],
+            canvas::routed_names(),
+        ),
+        (
+            "border preview",
+            vec![
+                &border::grammar::BORDER_PREVIEW,
+                &canvas::grammar::CANVAS_BORDER_PREVIEW,
+                &canvas::grammar::CANVAS_SECTION_FRAME_PREVIEW,
+                &canvas::grammar::CANVAS_FOCUSED_PREVIEW,
+                &section::SECTION_FRAME_PREVIEW,
+            ],
+            border::preview_routed_names(),
+        ),
+    ]
+}
+
+/// A route table handles exactly the subverbs its levels declare.
+///
+/// The failing input is the one #155 names: a `Subverb` row added to
+/// a level whose dispatcher has no handler for it. Every surface the
+/// declaration derives — the parse loop, completion, `usage`, the
+/// popup hints — is right for the new row by the same edit, and the
+/// dispatcher used to run whatever its `_ =>` arm ran: `fps snapshot`
+/// would have toggled the rolling average. The dispatcher's match is
+/// now over its own route enum and exhaustive without a catch-all, so
+/// the gap left is a declared name its table has no row for, and that
+/// is what this names. The reverse direction catches a row for a name
+/// the level does not declare, which no input can reach; a name
+/// routed twice is refused because `route::lookup` takes the first.
+///
+/// A subverb opening a child level is not routed: the descent steps
+/// through it, so it never arrives as `Stop::Matched`.
+#[test]
+fn test_every_dispatcher_routes_exactly_what_its_levels_declare() {
+    for (site, levels, routed) in dispatchers() {
+        let mut seen: Vec<&'static str> = Vec::new();
+        for name in &routed {
+            assert!(!seen.contains(name), "{site}: routes subverb '{name}' twice");
+            seen.push(name);
+        }
+        for level in levels {
+            let declared: Vec<&'static str> = level
+                .subverbs()
+                .filter(|s| s.child.is_none())
+                .map(|s| s.name)
+                .collect();
+            for name in &declared {
+                assert!(
+                    routed.contains(name),
+                    "{site}: level `{}` declares subverb '{name}' but no route table handles it, \
+                     so running it would reach `route::miss`",
+                    level.label
+                );
+            }
+            for name in &routed {
+                assert!(
+                    declared.contains(name),
+                    "{site}: routes subverb '{name}', which level `{}` does not declare",
+                    level.label
+                );
+            }
+        }
+    }
+}
+
+/// Every level that declares a routable subverb belongs to some
+/// dispatcher in [`dispatchers`].
+///
+/// [`test_every_dispatcher_routes_exactly_what_its_levels_declare`]
+/// can only hold the dispatchers it is told about. The failing input
+/// here is a new level — or a new verb — whose subverbs nobody
+/// listed, which would leave its dispatch unchecked however it is
+/// written.
+#[test]
+fn test_every_level_with_subverbs_has_a_listed_dispatcher() {
+    let listed: Vec<&'static Grammar> = dispatchers()
+        .into_iter()
+        .flat_map(|(_, levels, _)| levels)
+        .collect();
+    for (verb, grammar) in all_levels() {
+        if grammar.subverbs().all(|s| s.child.is_some()) {
+            continue;
+        }
+        assert!(
+            listed.iter().any(|l| std::ptr::eq(*l, grammar)),
+            "{verb}: level `{}` declares subverbs, but no dispatcher in `dispatchers()` claims it",
+            grammar.label
+        );
+    }
+}

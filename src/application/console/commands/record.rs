@@ -23,6 +23,7 @@ use super::Command;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
+use crate::application::console::spec::route::{self, Routes};
 use crate::application::console::spec::{free, kvs, usage, Form, Grammar, Key, Subverb};
 use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ExecResult};
 
@@ -76,6 +77,22 @@ const SUBVERBS: &[Subverb] = &[
     Subverb::bare("stop", "recording", "stop recording and finish the manifest"),
 ];
 
+/// Which handler each declared subverb runs (`spec::route`).
+#[derive(Clone, Copy)]
+enum Route {
+    Start,
+    Stop,
+}
+
+const ROUTES: &Routes<Route> = &[("start", Route::Start), ("stop", Route::Stop)];
+
+/// The names [`ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn routed_names() -> Vec<&'static str> {
+    route::names(ROUTES)
+}
+
 pub static GRAMMAR: Grammar = Grammar {
     label: "record",
     subverb_sets: &[SUBVERBS],
@@ -100,13 +117,14 @@ fn execute_record(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Err(msg) => return ExecResult::err(msg),
     };
     let line = match descent.stop {
-        Stop::Matched(subverb) if subverb.name == "start" => {
-            match read_start(|name| kvs::value(&pairs, name)) {
+        Stop::Matched(subverb) => match route::lookup(ROUTES, subverb) {
+            Some(Route::Start) => match read_start(|name| kvs::value(&pairs, name)) {
                 Ok(line) => RecordLine::Start(line),
                 Err(message) => return ExecResult::err(message),
-            }
-        }
-        Stop::Matched(_) => RecordLine::Stop,
+            },
+            Some(Route::Stop) => RecordLine::Stop,
+            None => return ExecResult::err(route::miss(descent.level, subverb)),
+        },
         Stop::Bare => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
         _ => {
             return ExecResult::err(usage::unknown_subverb_message(
