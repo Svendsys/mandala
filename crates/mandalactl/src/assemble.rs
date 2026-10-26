@@ -1787,10 +1787,11 @@ mod tests {
 
         let (exit, out, err) = run_line(&["assemble", &relative], &cwd, false);
         assert_eq!(exit, Exit::Success, "{err}");
-        assert!(
-            out.contains(&format!("out: \"{}\"", dir.join("recording.gif").display())),
-            "{out}"
-        );
+        // The value is a JSON string, so a Windows path's backslashes
+        // print escaped.
+        let expected =
+            serde_json::to_string(&dir.join("recording.gif").display().to_string()).expect("a string");
+        assert!(out.contains(&format!("out: {expected}")), "{out}");
         assert!(
             out.contains("frames_out: 2") && out.contains("format: \"gif\""),
             "{out}"

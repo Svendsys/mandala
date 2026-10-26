@@ -300,7 +300,12 @@ mod tests {
             panic!("`{line}` is not an invocation");
         };
         let verb = verbs::lookup(&call.command).unwrap_or_else(|| panic!("`{line}`: no such verb"));
-        build_params(&Signature::of(verb), &tokenize(&call.words), None)
+        // No working directory on Unix, so a taught path that is not
+        // absolute fails here. On Windows the examples' `/tmp/...` is
+        // absolute but for its drive, which comes from the shell's
+        // directory — as it would for a user running the line there.
+        let cwd = cfg!(windows).then(|| std::path::Path::new(r"C:\work"));
+        build_params(&Signature::of(verb), &tokenize(&call.words), cwd)
             .unwrap_or_else(|e| panic!("`{line}`: {e}"));
         if call.options.wait_settled {
             assert_eq!(

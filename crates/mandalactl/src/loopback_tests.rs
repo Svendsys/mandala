@@ -1107,11 +1107,15 @@ fn test_a_reply_that_trickles_in_cannot_outlast_the_timeout() {
 }
 
 #[test]
-fn test_a_send_the_app_never_drains_is_bounded_and_means_nothing_ran() {
-    // The app greets and never reads: the socket buffer fills part way
-    // through a request near the 1 MiB cap, and the write must give up
-    // at the deadline. The request line is incomplete, so the server
-    // could not have executed it — exit 2, not 4.
+fn test_a_send_the_app_never_drains_is_bounded_and_says_whether_it_may_have_run() {
+    // The app greets and never reads: the buffer fills part way through
+    // a request near the 1 MiB cap, and the write must give up at the
+    // deadline. On a socket the timed-out write sent nothing more, the
+    // request line is incomplete, and the server could not have run it
+    // — exit 2, not 4. On a pipe the write cannot be canceled: it is
+    // left pending, and an app that starts draining again reads the
+    // rest — so it may run, exit 4, and saying "nothing ran" would be
+    // the lie this distinction exists to prevent.
     let server = FakeServer::start(|_, peer, _| {
         peer.send(&hello());
         thread::sleep(Duration::from_secs(5));
@@ -1123,7 +1127,10 @@ fn test_a_send_the_app_never_drains_is_bounded_and_means_nothing_ran() {
         None,
         &frame,
     );
+    #[cfg(unix)]
     let err = transport_failure(&outcome);
+    #[cfg(windows)]
+    let err = unconfirmed_failure(&outcome);
     assert!(err.contains("room to send `input.text`"), "{err}");
     assert!(
         started.elapsed() < Duration::from_secs(3),
