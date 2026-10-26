@@ -55,7 +55,8 @@ that moved.
    skipped the check until #208. The guard promises room for one
    section, so the scan accepts it only before a single `push` /
    `insert`, and one guard covers one such growth — a second needs a
-   guard of its own. In a loop, only a guard in the same loop body,
+   guard of its own, and any growth after the guard (a nested loop, a
+   multi-element growth) leaves it stale for the next. In a loop, only a guard in the same loop body,
    run once per iteration, counts; a writer that adds several at once
    has to bound its count against the constant itself. The scan does
    not reason about exclusive branches, so `if a { push } else { push }`

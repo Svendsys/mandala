@@ -1538,6 +1538,50 @@ impl Doc {
         Ok(())
     }
 
+    pub fn push_after_a_guarded_loop(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        for _ in 0..n {
+            validate::room_for_another_section(node)?;
+            node.sections.push(MindSection::default());
+        }
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
+    pub fn push_after_a_guarded_inner_loop(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
+        for _ in 0..n {
+            validate::room_for_another_section(node)?;
+            for _ in 0..n {
+                validate::room_for_another_section(node)?;
+                node.sections.push(MindSection::default());
+            }
+            node.sections.push(MindSection::default());
+        }
+        Ok(())
+    }
+
+    pub fn push_after_a_guarded_loop_in_an_envelope(&mut self, id: &str, n: usize) -> Result<(), String> {
+        validate::room_for_another_section(self.node(id)?)?;
+        self.mutate(id, move |node| {
+            for _ in 0..n {
+                if validate::room_for_another_section(node).is_err() {
+                    break;
+                }
+                node.sections.push(MindSection::default());
+            }
+            node.sections.push(MindSection::default());
+            Some(0)
+        });
+        Ok(())
+    }
+
+    pub fn push_after_a_multi_growth(&mut self, node: &mut MindNode, more: Vec<MindSection>) -> Result<(), String> {
+        validate::room_for_another_section(node)?;
+        node.sections.extend(more);
+        node.sections.push(MindSection::default());
+        Ok(())
+    }
+
     pub fn push_in_repeat_with_after_guard(&mut self, node: &mut MindNode, n: usize) -> Result<(), String> {
         validate::room_for_another_section(node)?;
         std::iter::repeat_with(|| node.sections.push(MindSection::default()))
@@ -1638,6 +1682,14 @@ impl Doc {
                 ("two_pushes_per_iteration", Single, true),
                 ("two_pushes_per_iteration", Single, false),
                 ("push_in_from_fn_after_guard", Single, false),
+                ("push_after_a_guarded_loop", Single, true),
+                ("push_after_a_guarded_loop", Single, false),
+                ("push_after_a_guarded_inner_loop", Single, true),
+                ("push_after_a_guarded_inner_loop", Single, false),
+                ("push_after_a_guarded_loop_in_an_envelope", Single, true),
+                ("push_after_a_guarded_loop_in_an_envelope", Single, false),
+                ("push_after_a_multi_growth", Multi, false),
+                ("push_after_a_multi_growth", Single, false),
                 ("push_in_repeat_with_after_guard", Single, false),
                 ("exclusive_arms_after_one_guard", Single, true),
                 ("exclusive_arms_after_one_guard", Single, false),

@@ -891,10 +891,15 @@ pub(crate) struct SectionGrowth {
 ///   cannot follow, so a growth in it is never guarded rather than
 ///   guessed at;
 /// - the guard has **not been spent**. It promises room for one
-///   section, so it covers the first guardable site after it in its
-///   body and no other: a second `push` after one guard — in the same
-///   statement, the same envelope closure, a second envelope, or the
-///   same iteration — needs a guard of its own.
+///   section against the length when it ran, so it covers the first
+///   guardable site after it in its body and no other: a second `push`
+///   after one guard — in the same statement, the same envelope
+///   closure, a second envelope, or the same iteration — needs a guard
+///   of its own. And *any* site recorded after the guard spends it,
+///   covered or not: a `Multi` or `Assign` site, one in an opaque
+///   closure, or one in a nested loop (each behind its own
+///   per-iteration check, which says nothing about the length after the
+///   loop) leaves the guard stale for whatever follows.
 ///
 /// The propagating shapes are four: `room_for_another_section(…)`
 /// followed only by `map_err(…)` / `ok()` and then `?` (as a statement
@@ -927,7 +932,9 @@ pub(crate) struct SectionGrowth {
 ///
 /// What this cannot see: a growth through a binding
 /// (`let s = &mut node.sections; s.push(…)`), a raw pointer, or code
-/// inside a macro invocation's tokens.
+/// inside a macro invocation's tokens — nor a growth hidden in a call,
+/// so `room(n)?; doc.add_section(…)?; n.sections.push(…)` counts the
+/// push as covered although the helper made the guard stale.
 ///
 /// Pure over its input so the classification is tested against
 /// planted text, not only against whatever the workspace holds.
@@ -974,15 +981,18 @@ fn scan_fn_body(function: &str, body: &syn::Block, out: &mut Vec<SectionGrowth>)
         };
         syn::visit::Visit::visit_stmt(&mut finder, stmt);
         for site in finder.found {
-            let guarded = site.guardable()
-                && if site.loop_depth == 0 {
-                    // One guard is room for one section: the first
-                    // guardable site after it spends it, and the next
-                    // growth needs a guard of its own.
-                    std::mem::take(&mut guard_seen)
-                } else {
-                    site.iteration_guarded
-                };
+            // One guard is room for one section, checked against the
+            // length *then*. Only a guardable site at fn level is covered
+            // by it, but **every** site recorded after it — any kind, any
+            // loop depth, inside an opaque closure or not — spends it: a
+            // growth the guard did not count leaves it stale for the next.
+            let covered_here = site.loop_depth == 0 && site.guardable() && guard_seen;
+            guard_seen = false;
+            let guarded = if site.loop_depth == 0 {
+                covered_here
+            } else {
+                site.guardable() && site.iteration_guarded
+            };
             out.push(SectionGrowth {
                 file: String::new(),
                 line: site.line,
@@ -1087,12 +1097,16 @@ impl GrowthFinder {
             let start = self.found.len();
             syn::visit::Visit::visit_stmt(self, stmt);
             for site in &mut self.found[start..] {
-                // As at fn level, the guard covers the first guardable
-                // site after it in this iteration, and only that one.
+                // As at fn level: the guard covers the first guardable site
+                // at this depth after it, and any site at this depth or
+                // deeper spends it, covered or not.
+                if site.loop_depth < self.loop_depth {
+                    continue;
+                }
                 if guard_seen && site.loop_depth == self.loop_depth && site.guardable() {
                     site.iteration_guarded = true;
-                    guard_seen = false;
                 }
+                guard_seen = false;
             }
             if propagates_section_guard(stmt) {
                 guard_seen = true;
