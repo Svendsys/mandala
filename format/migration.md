@@ -364,8 +364,9 @@ an `index` key left on a node, is enough. (A map the app wrote from
 scratch meets it. A map it loaded carrying one of the legacy keys the
 loader tolerates — node `index`, `style.shape_type`, or
 `color_schema.groups` / `theme_id` / `variant` — keeps that key across
-saves, as every unknown key is kept, and is renumbered; `maptool
-verify` reports each one under `unknown_keys`. The other markers the
+saves, as every unknown key is kept, and is renumbered on purpose:
+`maptool verify` rejects each of those keys, reporting it under
+`unknown_keys`. The other markers the
 loader refuses outright, so no saved map carries them. Separately, a
 key the app always writes and a hand-written file may omit, such as a
 node's `channel`, is filled in by step 6.)
