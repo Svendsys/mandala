@@ -194,7 +194,10 @@ impl Artifacts {
                 self.total -= bytes;
                 if let Err(e) = std::fs::remove_file(file) {
                     if e.kind() != std::io::ErrorKind::NotFound {
-                        log::warn!("capture: could not evict `{}`: {e}", file.display());
+                        log::warn!(
+                            "capture: could not evict `{}`: {e}",
+                            baumhard::util::log::tilde_path(file)
+                        );
                     }
                 }
             }
@@ -203,7 +206,10 @@ impl Artifacts {
                 // `remove_dir_all` does not follow a symlink inside it.
                 if let Err(e) = std::fs::remove_dir_all(dir) {
                     if e.kind() != std::io::ErrorKind::NotFound {
-                        log::warn!("capture: could not evict `{}`: {e}", dir.display());
+                        log::warn!(
+                            "capture: could not evict `{}`: {e}",
+                            baumhard::util::log::tilde_path(dir)
+                        );
                     }
                 }
             }
@@ -237,7 +243,7 @@ impl Artifacts {
             if let Err(e) = std::fs::remove_dir_all(&dir) {
                 log::warn!(
                     "capture: could not remove the artifacts dir `{}`: {e}",
-                    dir.display()
+                    baumhard::util::log::tilde_path(&dir)
                 );
             }
         }

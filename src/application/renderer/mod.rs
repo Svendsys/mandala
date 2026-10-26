@@ -635,7 +635,7 @@ pub struct Renderer {
     /// palette backdrop, and any other solid-color fill that needs
     /// to sit in the render pipeline alongside text. See the
     /// `RECT_SHADER_WGSL` const above for the shader, and
-    /// `push_canvas_rect` / `push_screen_rect` for the CPU-side
+    /// `push_rect_ndc` for the CPU-side
     /// vertex layout.
     rect_pipeline: RenderPipeline,
     /// Persistent vertex buffer for the rect pipeline. Grows
@@ -671,7 +671,7 @@ pub struct Renderer {
     /// Clear color for the render pass, driven by the map's
     /// `Canvas.background_color`. Starts as opaque black so the
     /// app looks sensible before a map loads; the event loop
-    /// calls `set_clear_color` right after load.
+    /// calls `set_clear_color_from_hex` right after load.
     clear_color: Color,
 }
 
@@ -791,7 +791,7 @@ impl NodeBackgroundRect {
 pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: u32) -> (u32, u32) {
     let clamped_width = if width > max_dim {
         warn!(
-            "Requested surface width {} exceeds GPU max_texture_dimension_2d {}; clamping",
+            "renderer: requested surface width {} exceeds GPU max_texture_dimension_2d {}; clamping",
             width, max_dim
         );
         max_dim
@@ -800,7 +800,7 @@ pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: 
     };
     let clamped_height = if height > max_dim {
         warn!(
-            "Requested surface height {} exceeds GPU max_texture_dimension_2d {}; clamping",
+            "renderer: requested surface height {} exceeds GPU max_texture_dimension_2d {}; clamping",
             height, max_dim
         );
         max_dim
@@ -1388,11 +1388,11 @@ impl Renderer {
     #[inline]
     fn update_surface_size(&mut self, width: u32, height: u32) {
         if width == 0 {
-            error!("Width has to be higher than 0 but was {}", width);
+            error!("renderer: width has to be higher than 0 but was {}", width);
             return;
         }
         if height == 0 {
-            error!("Height has to be higher than 0 but was {}", height);
+            error!("renderer: height has to be higher than 0 but was {}", height);
             return;
         }
         let max_dim = self.device.limits().max_texture_dimension_2d;

@@ -215,7 +215,7 @@ const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
 /// `handle_cursor_moved` stores `WindowEvent::CursorMoved`'s
 /// `PhysicalPosition` into `cursor_pos` unconverted, and
 /// `dispatch_touch_event` hands the recognizer `touch.location`, a
-/// `PhysicalPosition` too. There is no `scale_factor` call anywhere
+/// `PhysicalPosition` too. There is no `winit::window::Window::scale_factor` call anywhere
 /// under `src/application` to convert either. Parity is unaffected —
 /// both pointers are measured with the same ruler, which is the
 /// property this constant exists for — but the *number* scales with

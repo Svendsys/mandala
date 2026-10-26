@@ -233,7 +233,7 @@ fn report_line(source: &str, message: &str) -> String {
 fn adopt(surface: StartupSurface) -> MindMapDocument {
     let (document, report) = resolve(surface);
     if let Some(message) = report {
-        log::error!("startup: {}", message);
+        log::error!("startup: {}", baumhard::util::log::collapse_home_in(&message));
     }
     document
 }
@@ -869,7 +869,7 @@ mod tests {
             .unwrap_or_else(|| panic!("{THIS_FILE} must still declare `fn adopt(`"));
         let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            flat.contains(r#"log::error!("startup: {}", message);"#),
+            flat.contains(r#"log::error!("startup: {}", baumhard::util::log::collapse_home_in(&message));"#),
             "`adopt` must still write the report to the log under the \
              `\"<area>: message\"` prefix — the placard is an addition to that line, \
              not a replacement for it. Body seen: {flat}"

@@ -262,7 +262,7 @@ impl MindMapDocument {
     /// font).
     ///
     /// Forks a fresh `GlyphConnectionConfig` on first edit via
-    /// `ensure_glyph_connection`. A single `UndoAction::EditEdge`
+    /// `ensure_glyph_connection_inline`. A single `UndoAction::EditEdge`
     /// entry covers the change so Ctrl+Z reverses cleanly.
     /// Family-name validation is the caller's job — the data model
     /// stores the string verbatim and the tree builder resolves

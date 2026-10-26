@@ -10,7 +10,7 @@
 //!   diagnosing perf regressions.
 //! - `fps off` → `FpsDisplayMode::Off` — hide the readout.
 //!
-//! Signals the dispatcher via `ConsoleEffects::set_fps_display`; the
+//! Signals the dispatcher via `ConsoleSideEffect::SetFpsDisplay`; the
 //! actual mode change reaches the renderer in `exec.rs` which calls
 //! `Renderer::set_fps_display`.
 

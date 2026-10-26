@@ -1592,7 +1592,7 @@ fn parse_side_or_fallback(s: &str, fallback: char, side: &str) -> SidePattern {
         Ok(p) => p,
         Err(e) => {
             log::warn!(
-                "border {} pattern '{}' rejected ({}); falling back to preset",
+                "mindmap::border: {} pattern '{}' rejected ({}); falling back to preset",
                 side,
                 s,
                 e
@@ -1753,7 +1753,7 @@ pub fn resolve_palette_cycle(
     };
     let Some(palette) = palettes.get(name) else {
         log::warn!(
-            "border color_palette '{}' not found in map; falling back to single color",
+            "mindmap::border: color_palette '{}' not found in map; falling back to single color",
             name
         );
         return Vec::new();

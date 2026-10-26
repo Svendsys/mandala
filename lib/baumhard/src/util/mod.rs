@@ -30,6 +30,16 @@ pub(crate) mod doc_commands;
 /// it. Native-only — the specs live on the filesystem.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doc_fixtures;
+/// CODE_CONVENTIONS §8's "prose must not name an item the same
+/// change deleted", held against every `///` and `//!` on an item in
+/// the tree: a backticked `snake_case` name that is qualified
+/// (`Type::method`, `module::function`) must be one that type or the
+/// workspace declares, a bare multi-word one must be declared or
+/// written in some file's code, or either is marked `(gone)` (#163).
+/// Test-only and native-only for the same reasons `source_scan`, whose
+/// walkers it reads through, is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod doc_identifiers;
 /// Small-scale 2D geometry: pivot rotation, epsilon compare,
 /// pixel-space ordering.
 pub mod geometry;
@@ -41,6 +51,12 @@ pub mod grapheme_chad;
 /// since `log` is the universal Rust facade. On native, `capture`
 /// collects the `warn!` / `error!` records one stretch of code emits.
 pub mod log;
+/// CODE_CONVENTIONS §9's two log-content rules, checked: every
+/// shipped `warn!` / `error!` names its area, and none formats a
+/// path raw. Test-only and native-only for the same reasons
+/// `unwrap_posture`, whose file list it reads, is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod log_posture;
 /// Reader over the workspace's own `Cargo.toml` files, so the
 /// "one version, declared once in `[workspace.dependencies]`" rule
 /// is enforced instead of merely written down. Test-only and

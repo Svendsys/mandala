@@ -220,8 +220,8 @@ fn take_rubber_band_for_target_picker(
 ///     is `single_line_edit_state`, a `NativeContextExt` field the
 ///     browser has no counterpart for; the arm below is that one
 ///     step and nothing else. `CreateOrphanNodeAndEdit` no longer
-///     appears here at all: `dispatch_create_orphan_and_edit` is
-///     gone and the mouse path reaches
+///     appears here at all: `dispatch_create_orphan_and_edit` (gone)
+///     went with it, and the mouse path reaches
 ///     `apply_create_orphan_node_and_edit` through
 ///     `DoubleClickRoute::CreateOrphanAndEdit`,
 ///   - a `DoubleClickActivate` dispatched with no `DispatchHit` at
@@ -858,7 +858,11 @@ fn dispatch_action_arms(
                     }
                 }
                 None => {
-                    log::warn!("dispatch: {}: no document loaded; skipping '{}'", verb, line);
+                    log::warn!(
+                        "dispatch: {}: no document loaded; skipping '{}'",
+                        verb,
+                        baumhard::util::log::console_line_excerpt(&line)
+                    );
                     DispatchOutcome::Unhandled
                 }
             }
@@ -1198,7 +1202,7 @@ impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchT
             None => {
                 log::warn!(
                     "macros: ConsoleLine step: no document loaded; skipping '{}'",
-                    line
+                    baumhard::util::log::console_line_excerpt(line)
                 );
                 false
             }

@@ -225,7 +225,7 @@ pub struct MindMapDocument {
     /// cleared by `cancel_border_preview` /
     /// `commit_border_preview`; lazily ignored by the scene
     /// builder when the live selection no longer covers the
-    /// preview's `selection_snapshot` (drift). Drives the
+    /// preview's `BorderPreviewTarget` (drift). Drives the
     /// `border preview …` / `section frame preview …` /
     /// `canvas border preview …` /
     /// `canvas section-frame [focused] preview …` console verbs.

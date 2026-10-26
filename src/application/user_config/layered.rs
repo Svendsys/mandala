@@ -87,7 +87,7 @@ where
         let payload = match (layer.fetch)() {
             None => continue,
             Some(Err(e)) => {
-                log::warn!("{}: {} load failed: {}", label, layer.source, e);
+                log::warn!("user config: {} {} load failed: {}", label, layer.source, e);
                 continue;
             }
             Some(Ok(p)) => p,
@@ -97,12 +97,12 @@ where
         // no stat to check against, so this is the only guard it
         // gets, and running it for both keeps one rule in one place.
         if let Err(e) = check_cap(payload.len() as u64) {
-            log::warn!("{}: {} load failed: {}", label, layer.source, e);
+            log::warn!("user config: {} {} load failed: {}", label, layer.source, e);
             continue;
         }
         match parse(&payload) {
             Ok(v) => return Some((v, layer.source)),
-            Err(e) => log::warn!("{}: {} parse failed: {}", label, layer.source, e),
+            Err(e) => log::warn!("user config: {} {} parse failed: {}", label, layer.source, e),
         }
     }
     None

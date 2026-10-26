@@ -185,23 +185,24 @@ fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// Directories the walk must show work from before its silence
+/// means anything. Same posture as `bench_surface`'s body
+/// witnesses: "no offenders" reads identically to "looked
+/// nowhere", so each crate that ships code is pinned by name and
+/// a root that moves goes red naming itself. Shared with
+/// `log_posture`, which walks the same files for a different rule.
+pub(crate) const SHIPPED_ROOTS: &[&str] = &[
+    "lib/baumhard/src/",
+    "lib/mandala_derive/src/",
+    "src/application/",
+    "crates/maptool/src/",
+    "crates/mandalactl/src/",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::util::doc_fixtures::repo_path;
-
-    /// Directories the walk must show work from before its silence
-    /// means anything. Same posture as `bench_surface`'s body
-    /// witnesses: "no offenders" reads identically to "looked
-    /// nowhere", so each crate that ships code is pinned by name and
-    /// a root that moves goes red naming itself.
-    const SHIPPED_ROOTS: &[&str] = &[
-        "lib/baumhard/src/",
-        "lib/mandala_derive/src/",
-        "src/application/",
-        "crates/maptool/src/",
-        "crates/mandalactl/src/",
-    ];
 
     /// A file that is dense with `unwrap()` and is **not** shipped,
     /// used as the control that the reader fires at all. Chosen for

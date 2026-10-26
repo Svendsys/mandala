@@ -16,7 +16,7 @@
 //! the whole subverb tree one positional right, and expressing that
 //! as a nested [`Grammar`] is what makes every slot past it fall out
 //! of the same descent — the hand-written completer had to
-//! re-derive `verb_at` per arm, and each arm written for one depth
+//! re-derive `verb_at` (gone) per arm, and each arm written for one depth
 //! left the next depth answering with kv keys.
 
 use crate::application::console::commands::border::grammar::{

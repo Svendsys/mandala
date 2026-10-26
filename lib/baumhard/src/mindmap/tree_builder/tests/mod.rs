@@ -2,7 +2,7 @@
 
 //! Tree-builder tests sharded by subject so each file stays small
 //! and greppable. Shared fixtures (`test_map_path`, `synthetic_node`,
-//! `synthetic_map`, `mk_chain_map`, `mk_star_map`, `synthetic_portal`,
+//! `synthetic_map`, `mk_chain_map`, `mk_star_map`, `synthetic_portal_edge`,
 //! `glyph_area_of`) live in [`fixtures`].
 //!
 //! - [`node_basic`] — `build_mindmap_tree` structure, root-node count,

@@ -37,12 +37,11 @@ pub(in crate::application::app) struct LineRun {
 
 /// Parse and execute a console line against `ctx`, and return what the
 /// verb produced. `None` when no document is loaded, because every verb
-/// runs against one. Drains deferred modal handoffs
-/// (`open_single_line_edit`, `open_color_picker`), custom mutation
-/// apply requests (`run_mutation`, needs tree access), binding overlay
-/// updates (`bind_mutation` / `unbind_mutation`, need
-/// `ResolvedKeybinds` access), and alias writes (`set_alias`). Rebuilds
-/// the scene on any document mutation.
+/// runs against one. Takes the one `ConsoleSideEffect` the verb
+/// returned — a modal handoff, an FPS mode, a document replacement, a
+/// recording or a clock step — and performs it here, where the tree
+/// and the console state are reachable. Rebuilds the scene on any
+/// document mutation.
 ///
 /// The one entry point for every caller: the console prompt, the
 /// file-path Actions, a macro `ConsoleLine` step, and the IPC
@@ -254,9 +253,16 @@ pub(in crate::application::app) fn print_console_line(
 /// dropped.
 pub(in crate::application::app) fn log_console_line(line: &str, outcome: &LineOutcome) {
     if let Some(failure) = outcome.failure() {
+        // The line is the user's (or a macro author's) text, the
+        // failure echoes the token it rejected, and either may name a
+        // file: a release build keeps this record, so both halves are
+        // home-collapsed and excerpted — the failure at the wider
+        // `FAILURE_WIDTH`, since it carries the diagnosis (§9).
         log::warn!(
             code = crate::application::console::LINE_FAILED_CODE;
-            "console: `{line}` failed: {failure}"
+            "console: `{}` failed: {}",
+            baumhard::util::log::console_line_excerpt(line),
+            baumhard::util::log::failure_excerpt(&failure)
         );
     }
 }
@@ -607,7 +613,7 @@ pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMap
             true
         }
         Err(e) => {
-            log::error!(code = SAVE_FAILED_CODE; "save: {}", e);
+            log::error!(code = SAVE_FAILED_CODE; "save: {}", baumhard::util::log::collapse_home_in(&e));
             false
         }
     }

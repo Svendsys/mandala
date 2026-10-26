@@ -99,7 +99,7 @@ pub enum PickerGesture {
 /// `MindMapDocument::color_picker_preview`, so cancel just clears
 /// the preview and commit calls `set_edge_color` once on the final
 /// HSV — the committed model is untouched during hover and the
-/// fork-on-first-edit semantics of `ensure_glyph_connection` only
+/// fork-on-first-edit semantics of `ensure_glyph_connection_inline` only
 /// fire on commit.
 ///
 /// Hot path design: the target handle (when present) is captured at

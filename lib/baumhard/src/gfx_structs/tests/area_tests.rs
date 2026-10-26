@@ -464,7 +464,7 @@ pub fn do_area_rotate_command_applies() {
 ///
 /// `Rotate` is the first `GlyphAreaCommand` variant carrying a
 /// `Vec2`, and glam serializes `Vec2` as a **2-element sequence**
-/// (`serialize_tuple_struct`; its visitor implements only
+/// (`Serializer::serialize_tuple_struct`; its visitor implements only
 /// `visit_seq`), *not* as an `{ "x": …, "y": … }` map. Nothing else
 /// in the suite touches this command's serialization, so a doc
 /// example in the wrong shape would sail past every other test and
