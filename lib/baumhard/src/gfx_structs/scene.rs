@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Top-level container for multiple
-//! [`Tree`](crate::gfx_structs::tree::Tree)s that together make up
+//! [`Tree`](crate::gfx_structs::tree::GfxTree)s that together make up
 //! one rendered frame.
 //!
-//! A `Scene` owns N `Tree<GfxElement, GfxMutator>` components,
+//! A `Scene` owns N `GfxTree` components,
 //! each with its own *layer* (draw order) and screen-space *offset*.
 //! The mindmap itself is one tree; borders, connections, the console
 //! overlay, and the color picker are sibling trees at higher layers.
@@ -17,14 +17,10 @@
 //! against one named tree, for callers whose own priority ladder
 //! already picked the component. Each individual tree then resolves
 //! the concrete target via
-//! [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at)
+//! [`Tree::descendant_at`](crate::engine::tree::Tree::descendant_at)
 //! — so the scene-level index stays cheap (O(trees)) and the
 //! per-tree walk stays linear in the tree's own node count.
-
-use crate::core::primitives::Applicable;
-use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::{MutatorTree, Tree};
+use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use crate::util::geometry::aabb_contains;
 use glam::Vec2;
 use indextree::NodeId;
@@ -54,7 +50,7 @@ impl SceneTreeId {
 /// assignment. Read via the accessors; mutate via [`Scene`]'s
 /// `set_layer` / `set_offset` / `set_visible` / `apply_mutator`.
 pub struct SceneEntry {
-    tree: Tree<GfxElement, GfxMutator>,
+    tree: GfxTree,
     layer: i32,
     offset: Vec2,
     visible: bool,
@@ -63,14 +59,14 @@ pub struct SceneEntry {
 impl SceneEntry {
     /// Immutable borrow of the registered tree. Used by the
     /// renderer's per-tree buffer walker.
-    pub fn tree(&self) -> &Tree<GfxElement, GfxMutator> {
+    pub fn tree(&self) -> &GfxTree {
         &self.tree
     }
 
     /// Consume this entry and return the tree it owned. After this
     /// call the entry no longer exists in the scene; use
     /// [`Scene::remove`] to obtain an entry before calling this.
-    pub fn into_tree(self) -> Tree<GfxElement, GfxMutator> {
+    pub fn into_tree(self) -> GfxTree {
         self.tree
     }
 
@@ -153,7 +149,7 @@ impl Scene {
     /// O(1) into the slab; marks the layer-order cache dirty so the
     /// next ordered iteration rebuilds it. No allocation on the hot
     /// path unless the slab grows.
-    pub fn insert(&mut self, tree: Tree<GfxElement, GfxMutator>, layer: i32, offset: Vec2) -> SceneTreeId {
+    pub fn insert(&mut self, tree: GfxTree, layer: i32, offset: Vec2) -> SceneTreeId {
         let entry = SceneEntry {
             tree,
             layer,
@@ -185,15 +181,15 @@ impl Scene {
     /// Mutable borrow of just the tree. Builder-phase escape hatch.
     /// Mutations via the returned reference that touch GlyphArea
     /// position or bounds **must** call
-    /// [`Tree::invalidate_caches`] afterwards, or the scene's
+    /// [`Tree::invalidate_caches`](crate::engine::tree::Tree::invalidate_caches) afterwards, or the scene's
     /// hit-test memos will drift. Prefer [`Self::apply_mutator`]
     /// which handles invalidation automatically.
-    pub fn tree_mut(&mut self, id: SceneTreeId) -> Option<&mut Tree<GfxElement, GfxMutator>> {
+    pub fn tree_mut(&mut self, id: SceneTreeId) -> Option<&mut GfxTree> {
         self.trees.get_mut(id.0).map(|e| &mut e.tree)
     }
 
     /// Immutable borrow of just the tree.
-    pub fn tree(&self, id: SceneTreeId) -> Option<&Tree<GfxElement, GfxMutator>> {
+    pub fn tree(&self, id: SceneTreeId) -> Option<&GfxTree> {
         self.trees.get(id.0).map(|e| &e.tree)
     }
 
@@ -225,11 +221,11 @@ impl Scene {
 
     /// Apply a mutator tree to the named scene tree. The scene's
     /// blessed way of mutating state — mirrors
-    /// [`MutatorTree::apply_to`] but scoped to the entry. No-op if
+    /// [`MutatorTree::apply_to`](crate::engine::tree::MutatorTree::apply_to) but scoped to the entry. No-op if
     /// `id` is unknown.
-    pub fn apply_mutator(&mut self, id: SceneTreeId, mutator: &MutatorTree<GfxMutator>) {
+    pub fn apply_mutator(&mut self, id: SceneTreeId, mutator: &GfxMutatorTree) {
         if let Some(entry) = self.trees.get_mut(id.0) {
-            mutator.apply_to(&mut entry.tree);
+            mutator.apply_to(&mut entry.tree, &());
         }
     }
 
@@ -253,14 +249,14 @@ impl Scene {
     /// O(trees) outer scan + a memoized AABB check per tree
     /// (O(1) when warm, O(descendants) once after each mutator).
     /// On a hit, one additional O(descendants) walk inside the
-    /// matched tree via [`Tree::descendant_at`]. Misses cost only
+    /// matched tree via [`Tree::descendant_at`](crate::engine::tree::Tree::descendant_at). Misses cost only
     /// the bbox check — they don't trigger the inner walk.
     ///
     /// # Precondition
     ///
     /// All pending mutations must be applied before calling this
     /// method. The BVH caches are invalidated by
-    /// [`MutatorTree::apply_to`](crate::gfx_structs::tree::MutatorTree)
+    /// [`MutatorTree::apply_to`](crate::engine::tree::MutatorTree::apply_to)
     /// and lazily recomputed on the first query after mutation.
     /// Calling `component_at` between a mutation and its
     /// application may return stale results.
@@ -315,7 +311,7 @@ impl Scene {
     ///
     /// One memoized AABB reject (O(1) warm, O(descendants) once
     /// after each mutator) plus, on a hit, one BVH descent via
-    /// [`Tree::descendant_at`]. A miss costs only the bbox check.
+    /// [`Tree::descendant_at`](crate::engine::tree::Tree::descendant_at). A miss costs only the bbox check.
     ///
     /// # Precondition
     ///

@@ -10,9 +10,7 @@
 //! [`AppScene`](crate::application::scene_host::AppScene) and
 //! Baumhard's per-tree BVH; the renderer owns no spatial index.
 
-use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::mutator::GfxMutator;
-use baumhard::gfx_structs::tree::Tree;
+use baumhard::gfx_structs::tree::GfxTree;
 use glam::Vec2;
 
 use super::Renderer;
@@ -28,7 +26,7 @@ pub(crate) const FIT_PADDING_FRACTION: f32 = 0.05;
 /// the one a `fit`-framed capture frames.
 ///
 /// O(tree elements), no allocation.
-pub(crate) fn content_bounds(tree: &Tree<GfxElement, GfxMutator>) -> Option<(Vec2, Vec2)> {
+pub(crate) fn content_bounds(tree: &GfxTree) -> Option<(Vec2, Vec2)> {
     let mut bounds: Option<(Vec2, Vec2)> = None;
     for descendant_id in tree.root().descendants(&tree.arena) {
         let Some(area) = tree.arena.get(descendant_id).and_then(|n| n.get().glyph_area()) else {
@@ -61,7 +59,7 @@ impl Renderer {
     /// ([`content_bounds`]), with [`FIT_PADDING_FRACTION`] of the
     /// viewport held back on each side. A tree with no glyph areas
     /// leaves the camera alone.
-    pub fn fit_camera_to_tree(&mut self, tree: &Tree<GfxElement, GfxMutator>) {
+    pub fn fit_camera_to_tree(&mut self, tree: &GfxTree) {
         if let Some((min, max)) = content_bounds(tree) {
             self.camera
                 .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::FitToBounds {

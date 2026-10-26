@@ -137,7 +137,7 @@ impl ColorFontRegion {
     /// exists for the same reason the comparison does: the derived
     /// `Hash` on this type hashes the [`Range`] alone, because it
     /// has to agree with a `PartialEq` that is set identity. A
-    /// consumer summarising "would this render differently?" into
+    /// consumer summarizing "would this render differently?" into
     /// one integer therefore cannot use `Hash` — a recolored span
     /// hashes to the value it replaced.
     ///
@@ -895,7 +895,7 @@ pub trait Flaggable {
 ///
 /// Every tagged enum in the mutation pipeline — [`GfxElement`](crate::gfx_structs::element::GfxElement),
 /// [`GfxMutator`](crate::gfx_structs::mutator::GfxMutator),
-/// [`Mutation`](crate::gfx_structs::mutator::Mutation),
+/// [`GfxMutation`](crate::gfx_structs::mutator::GfxMutation),
 /// [`GlyphAreaField`](crate::gfx_structs::area::GlyphAreaField),
 /// [`GlyphModelField`](crate::gfx_structs::model::GlyphModelField),
 /// [`GlyphAreaCommand`](crate::gfx_structs::area::GlyphAreaCommand),

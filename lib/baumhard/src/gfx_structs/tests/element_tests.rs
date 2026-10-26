@@ -16,11 +16,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::core::primitives::{Discriminated, Flag, Flaggable};
+use crate::engine::element::TreeElement;
 use crate::font::fonts;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::{GfxElement, GfxElementType};
 use crate::gfx_structs::mutator::GlyphTreeEventInstance;
-use crate::gfx_structs::tree::{BranchChannel, EventSubscriber};
+use crate::gfx_structs::tree::EventSubscriber;
 
 // ── constructor: GlyphArea variant ─────────────────────────────────
 

@@ -192,7 +192,7 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// and with no guard either: every comparison is `>=` / `<=`, and
 /// both are false against `NaN`. That is a deliberate difference
 /// from the four-way *disjunction* this replaced at
-/// [`crate::gfx_structs::tree_walker`]'s BVH prune, which spelled
+/// the glyph tree's BVH prune (`bvh_find`), which spelled
 /// the same question as `x < min.x || x > max.x || …` and so
 /// answered "outside is false, descend" for a `NaN` box — walking a
 /// subtree whose bounds are not a box. No reachable `NaN` was found
@@ -239,7 +239,7 @@ pub fn almost_equal_vec2(vec1: Vec2, vec2: Vec2) -> bool {
 ///
 /// Used by per-axis edge / portal-label setters to short-circuit
 /// "no-op writes" when the user re-types a value that's
-/// within-epsilon of the stored one. Centralised here so the
+/// within-epsilon of the stored one. Centralized here so the
 /// setter no-op contract is single-sourced across edges/style.rs,
 /// edge_label_drag, portal_label_drag, and the connection cache's
 /// font-size diff. Cost: O(1).

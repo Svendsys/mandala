@@ -2,10 +2,11 @@
 
 //! Baumhard — glyph-oriented rendering primitives for Mandala.
 //!
-//! Owns the GPU-adjacent data model: the `Tree<GfxElement,
-//! GfxMutator>` that underpins every glyph layout, the mindmap
-//! model and scene builder, shader entry points, and the
-//! declarative mutator-builder DSL.
+//! Owns the mutation engine — trees, mutators, the walker, predicates
+//! and the declarative builder DSL, generic over the element type and
+//! the mutation payload — and its glyph instantiation, the `GfxTree`
+//! that underpins every glyph layout, plus the mindmap model and scene
+//! builder and the shader entry points.
 //!
 //! Prescriptive rules (mutation-not-rebuild, arena discipline,
 //! benchmark-reuse, no-unsafe) live in
@@ -30,9 +31,13 @@
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-/// Low-level primitives: colour regions, outlines, apply-operations,
+/// Low-level primitives: color regions, outlines, apply-operations,
 /// and pure-data value types.
 pub mod core;
+/// The mutation engine, generic over the element type and the
+/// mutation payload: `Tree` / `MutatorTree`, `Mutator` and
+/// `Instruction`, the walker, `Predicate`, and the builder DSL.
+pub mod engine;
 /// Font loading, shaping, and glyph-metric lookups backed by
 /// cosmic-text. Owns the long-lived font cache.
 pub mod font;
@@ -41,14 +46,12 @@ pub mod font;
 /// specs). The mindmap format itself lives under
 /// [`mindmap::loader`].
 pub mod format;
-/// GPU-facing structs: `GfxElement`, `GfxMutator`, `GlyphArea`,
-/// `Tree`/`MutatorTree`, predicates, and the instruction vocabulary.
+/// GPU-facing structs, the engine's glyph instantiation:
+/// `GfxElement`, `GfxMutation` / `GfxMutator`, `GlyphArea`,
+/// `GfxTree` / `GfxMutatorTree`, and the glyph spatial queries.
 pub mod gfx_structs;
 /// `.mindmap.json` data model, loaders, scene/tree builders, and
 /// the `CustomMutation` carrier.
 pub mod mindmap;
-/// Declarative mutator-tree DSL: `MutatorNode` AST + `SectionContext`
-/// runtime look-up + `build` walker.
-pub mod mutator_builder;
 /// Shared math, container, and formatting helpers across the crate.
 pub mod util;

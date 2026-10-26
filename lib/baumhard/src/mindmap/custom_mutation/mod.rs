@@ -5,21 +5,24 @@
 //! A `CustomMutation` is a named, reusable bundle the host application
 //! dispatches in response to triggers (clicks, hovers, key bindings)
 //! or console commands (`mutation apply`). The payload is a
-//! [`MutatorNode`](crate::mutator_builder::MutatorNode) AST that the
-//! [`crate::mutator_builder`] walker compiles to a
-//! `MutatorTree<GfxMutator>` at apply time. Simple mutations bake
-//! their `Vec<Mutation>` into the AST via
+//! [`MutatorNode`](crate::engine::builder::MutatorNode) AST that the
+//! [`crate::engine::builder`] walker compiles to a
+//! `GfxMutatorTree` at apply time. Simple mutations bake
+//! their `Vec<GfxMutation>` into the AST via
 //! `scope::self_only`, `scope::descendants`, or
 //! `scope::self_and_descendants`;
 //! size-aware mutations use a `MutatorNode` with runtime holes and a
-//! `SectionContext` registered by the host application under the
+//! `BuildContext` registered by the host application under the
 //! mutation's `id`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::gfx_structs::predicate::Predicate;
-use crate::mutator_builder::MutatorNode;
+use crate::engine::builder::MutatorNode;
+use crate::engine::mutation::Mutation;
+use crate::engine::predicate::Predicate;
+use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::mutator::GfxMutation;
 
 /// Well-known context tags for `CustomMutation::contexts` — the
 /// stable vocabulary for where/on-what a mutation applies.
@@ -40,7 +43,7 @@ mod tests;
 /// The serde impl accepts two shapes:
 /// - **new** — a `mutator` field carrying a [`MutatorNode`] AST. Produced
 ///   by save + canonical for new authorship.
-/// - **legacy** — `mutations: Vec<Mutation>` + `target_scope` (no
+/// - **legacy** — `mutations: Vec<GfxMutation>` + `target_scope` (no
 ///   `mutator` field). Translated on load via [`scope`] helpers.
 ///   `maptool` does not yet auto-rewrite these files; they stay in
 ///   the legacy shape until resaved, at which point the canonical
@@ -65,9 +68,9 @@ pub struct CustomMutation {
     /// mutations that only do document-level actions (theme switch,
     /// etc.) without touching any tree node. Runtime holes in the
     /// AST are resolved at apply time via a
-    /// [`crate::mutator_builder::SectionContext`] the host application
+    /// [`crate::engine::builder::BuildContext`] the host application
     /// registers under this mutation's `id`.
-    pub mutator: Option<MutatorNode>,
+    pub mutator: Option<MutatorNode<GfxElement, GfxMutation>>,
     /// Which nodes to snapshot + sync for undo. The payload
     /// [`MutatorNode`] is responsible for actually performing the
     /// changes; this field tells the undo path which model nodes to
@@ -101,7 +104,7 @@ pub struct CustomMutation {
     ///   gate filters every candidate so authors notice the
     ///   no-op rather than chase a missing visual change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub predicate: Option<Predicate>,
+    pub predicate: Option<Predicate<GfxElement>>,
     /// Optional canvas/document-level actions that fire alongside the
     /// node mutations. These target the `MindMap` itself (theme, etc.)
     /// rather than any tree node, so they're dispatched separately
@@ -277,18 +280,18 @@ pub enum PlatformContext {
 /// Apply a set of mutations directly to a single GfxElement. Retained
 /// from the pre-unification shape because the app layer still uses it
 /// for every [`TargetScope`] — it iterates the affected model nodes
-/// and calls this helper per-target with the flat Mutation list
+/// and calls this helper per-target with the flat GfxMutation list
 /// extracted from the MutatorNode via [`flat_mutations`].
 pub fn apply_mutations_to_element(
-    mutations: &[crate::gfx_structs::mutator::Mutation],
+    mutations: &[crate::gfx_structs::mutator::GfxMutation],
     target: &mut crate::gfx_structs::element::GfxElement,
 ) {
     for mutation in mutations {
-        mutation.apply_to(target);
+        mutation.apply_to(target, &());
     }
 }
 
-/// Extract the flat `Vec<Mutation>` carried by a MutatorNode whose
+/// Extract the flat `Vec<GfxMutation>` carried by a MutatorNode whose
 /// root is a `Macro` with a `MutationListSrc::Literal` payload —
 /// the shape emitted by [`scope::self_only`],
 /// [`scope::self_and_descendants`], and any other scope helper.
@@ -297,7 +300,7 @@ pub fn apply_mutations_to_element(
 /// Instruction roots without a Macro sibling).
 ///
 /// The flat-apply path uses this to preserve today's iterate-targets-
-/// and-apply-per-target semantics while the richer `mutator_builder`
+/// and-apply-per-target semantics while the richer `engine::builder`
 /// walker path is phased in for size-aware mutations in a separate
 /// session.
 ///
@@ -334,7 +337,7 @@ pub fn apply_mutations_to_element(
 ///    no-op rather than a special case.
 ///
 ///    "Agree" is
-///    [`Mutation::writes_the_same`](crate::gfx_structs::mutator::Mutation::writes_the_same),
+///    [`GfxMutation::writes_the_same`](crate::gfx_structs::mutator::GfxMutation::writes_the_same),
 ///    not `==`. Derived `PartialEq` over `f32` is not reflexive, so
 ///    under `==` a `NaN` in that helper's duplicated payload would
 ///    make it disagree with **itself** and decline, while the same
@@ -342,11 +345,11 @@ pub fn apply_mutations_to_element(
 ///    compare — applied. Two helpers differing only in scope must
 ///    not differ in whether the mutation runs.
 ///
-/// [`MutationSrc`](crate::mutator_builder::MutationSrc) payloads on an
+/// [`MutationSrc`](crate::engine::builder::MutationSrc) payloads on an
 /// `Instruction` wrapper are unevaluatable by rule 1 for the same
 /// reason: `MutationSrc::Runtime` is resolved by a
-/// [`SectionContext`](crate::mutator_builder::SectionContext) the flat
-/// path never consults, and `MutationSrc::AreaDelta` is a per-cell
+/// [`BuildContext`](crate::engine::builder::BuildContext) the flat
+/// path never consults, and `MutationSrc::Template` is a per-cell
 /// template. Both scope helpers that build wrappers set
 /// `mutation: MutationSrc::None`, so requiring it costs nothing.
 ///
@@ -356,8 +359,8 @@ pub fn apply_mutations_to_element(
 /// mutator to save a payload that does not exist.
 ///
 /// Channel 0 is the condition, not a formality. A `Void`'s channel is
-/// branch routing: [`build`](crate::mutator_builder::build) emits
-/// `GfxMutator::new_void(channel)` and the walker aligns that node's
+/// branch routing: [`build`](crate::engine::builder::build) emits
+/// `Mutator::new_void(channel)` and the walker aligns that node's
 /// children only against the target child on the matching channel, so
 /// `Void{channel: 7}` is a routing gate rather than pure grouping.
 /// The flat path is channel-blind by construction — it produces one
@@ -384,11 +387,13 @@ pub fn apply_mutations_to_element(
 /// list once — including the clones it compares and discards — so a
 /// declined mutator still allocates. The comparison itself allocates
 /// only when two payloads are not `==` (see
-/// [`Mutation::writes_the_same`](crate::gfx_structs::mutator::Mutation::writes_the_same)).
+/// [`GfxMutation::writes_the_same`](crate::gfx_structs::mutator::GfxMutation::writes_the_same)).
 /// Called on every apply (three times: once by the unsupported-field
 /// warning and once per tree), plus once per animation start; none of
 /// those is a frame path.
-pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
+pub fn flat_mutations(
+    mutator: &MutatorNode<GfxElement, GfxMutation>,
+) -> Option<Vec<crate::gfx_structs::mutator::GfxMutation>> {
     // The outer `Option` is the decline verdict; the inner one
     // distinguishes "carries this payload" from "payload-free
     // structure". A root that reaches the end payload-free (a bare
@@ -407,8 +412,10 @@ pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::m
 ///   `list`.
 ///
 /// Cost: see [`flat_mutations`].
-fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator::Mutation>>> {
-    use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode as N};
+fn extract(
+    node: &MutatorNode<GfxElement, GfxMutation>,
+) -> Option<Option<Vec<crate::gfx_structs::mutator::GfxMutation>>> {
+    use crate::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode as N};
     let (mut payload, children) = match node {
         // Pure structural grouping — no payload of its own. Channel
         // 0 only: off channel 0 a `Void` is a routing gate the flat
@@ -483,7 +490,7 @@ fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator:
 /// element.
 ///
 /// Element-wise
-/// [`Mutation::writes_the_same`](crate::gfx_structs::mutator::Mutation::writes_the_same)
+/// [`GfxMutation::writes_the_same`](crate::gfx_structs::mutator::GfxMutation::writes_the_same)
 /// rather than `==` on the slices, because the derived `PartialEq`
 /// over `f32` is not reflexive and this predicate decides whether a
 /// mutator runs at all — see that method for why a `NaN` otherwise
@@ -498,8 +505,8 @@ fn extract(node: &MutatorNode) -> Option<Option<Vec<crate::gfx_structs::mutator:
 /// Cost: O(n) comparisons, no allocation unless an element
 /// disagrees under `==`.
 fn lists_agree(
-    a: &[crate::gfx_structs::mutator::Mutation],
-    b: &[crate::gfx_structs::mutator::Mutation],
+    a: &[crate::gfx_structs::mutator::GfxMutation],
+    b: &[crate::gfx_structs::mutator::GfxMutation],
 ) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.writes_the_same(y))
 }
@@ -521,7 +528,7 @@ pub enum MutatorReach {
     /// The anchor's direct children (reached via `MapChildren`).
     Children,
     /// Arbitrary descendants (reached via `RepeatWhile` /
-    /// `RotateWhile` / `SpatialDescend`).
+    /// `SpatialDescend`).
     Descendants,
 }
 
@@ -534,9 +541,9 @@ pub enum MutatorReach {
 /// undo.
 ///
 /// Cost: O(AST size), no allocation.
-pub fn mutator_reach(mutator: &MutatorNode) -> MutatorReach {
-    use crate::mutator_builder::{InstructionSpec, MutatorNode as N};
-    fn walk(node: &MutatorNode, reach: &mut MutatorReach) {
+pub fn mutator_reach(mutator: &MutatorNode<GfxElement, GfxMutation>) -> MutatorReach {
+    use crate::engine::builder::{InstructionSpec, MutatorNode as N};
+    fn walk(node: &MutatorNode<GfxElement, GfxMutation>, reach: &mut MutatorReach) {
         let widen = |r: &mut MutatorReach, to: MutatorReach| {
             if to > *r {
                 *r = to;
@@ -556,7 +563,6 @@ pub fn mutator_reach(mutator: &MutatorNode) -> MutatorReach {
                 match instruction {
                     InstructionSpec::RepeatWhileAlwaysTrue
                     | InstructionSpec::RepeatWhile(_)
-                    | InstructionSpec::RotateWhile(_, _)
                     | InstructionSpec::SpatialDescend(_) => {
                         widen(reach, MutatorReach::Descendants);
                     }

@@ -106,7 +106,6 @@ fn connection_identity_sequence_changes_with_structural_shifts() {
 /// color preview / theme switches that do not move endpoints).
 #[test]
 fn connection_mutator_round_trip_matches_full_rebuild() {
-    use crate::core::primitives::Applicable;
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
     use crate::mindmap::scene_cache::EdgeKey;
     use crate::mindmap::tree_builder::ConnectionElement;
@@ -140,7 +139,7 @@ fn connection_mutator_round_trip_matches_full_rebuild() {
 
     let mut tree_a = build_connection_tree(std::slice::from_ref(&elem_a));
     let mutator = build_connection_mutator_tree(std::slice::from_ref(&elem_b));
-    mutator.apply_to(&mut tree_a);
+    mutator.apply_to(&mut tree_a, &());
 
     let expected = build_connection_tree(std::slice::from_ref(&elem_b));
 
@@ -177,7 +176,6 @@ fn connection_mutator_round_trip_matches_full_rebuild() {
 /// glyphs without touching the arena.
 #[test]
 fn connection_label_mutator_round_trip_handles_text_edit() {
-    use crate::core::primitives::Applicable;
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
     use crate::mindmap::scene_cache::EdgeKey;
     use crate::mindmap::tree_builder::ConnectionLabelElement;
@@ -210,7 +208,7 @@ fn connection_label_mutator_round_trip_handles_text_edit() {
 
     let mut tree_a = build_connection_label_tree(std::slice::from_ref(&elem_a)).tree;
     let mutator = build_connection_label_mutator_tree(std::slice::from_ref(&elem_b));
-    mutator.mutator.apply_to(&mut tree_a);
+    mutator.mutator.apply_to(&mut tree_a, &());
 
     let expected = build_connection_label_tree(std::slice::from_ref(&elem_b)).tree;
     let actual_leaves: Vec<NodeId> = tree_a.root.children(&tree_a.arena).collect();

@@ -6,23 +6,21 @@
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
-use glam::Vec2;
-use indextree::NodeId;
-
-use crate::core::primitives::Applicable;
 use crate::font::fonts;
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::{GfxMutator, Mutation};
+use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use crate::gfx_structs::scene::{Scene, SceneTreeId};
-use crate::gfx_structs::tree::{MutatorTree, Tree};
+use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
+use glam::Vec2;
+use indextree::NodeId;
 
 /// Build a small tree with one `GlyphArea` of the given AABB,
 /// returning the tree and the id of the single leaf we can hit-test
 /// against.
-fn tree_with_area(position: Vec2, bounds: Vec2, channel: usize) -> (Tree<GfxElement, GfxMutator>, NodeId) {
+fn tree_with_area(position: Vec2, bounds: Vec2, channel: usize) -> (GfxTree, NodeId) {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let area = GlyphArea::new_with_str("x", 1.0, 10.0, position, bounds);
     let element = GfxElement::new_area_non_indexed_with_id(area, channel, channel);
     let leaf = tree.arena.new_node(element);
@@ -31,11 +29,11 @@ fn tree_with_area(position: Vec2, bounds: Vec2, channel: usize) -> (Tree<GfxElem
 }
 
 /// A tree containing two overlapping glyph areas: an outer 100x100
-/// and an inner 20x20 centred in the outer. Used to verify
+/// and an inner 20x20 centered in the outer. Used to verify
 /// smallest-first hit semantics.
-fn tree_outer_inner() -> (Tree<GfxElement, GfxMutator>, NodeId, NodeId) {
+fn tree_outer_inner() -> (GfxTree, NodeId, NodeId) {
     fonts::init();
-    let mut tree = Tree::new_non_indexed();
+    let mut tree = GfxTree::new_non_indexed();
     let outer = GlyphArea::new_with_str("outer", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0));
     let inner = GlyphArea::new_with_str("inner", 1.0, 10.0, Vec2::new(40.0, 40.0), Vec2::new(20.0, 20.0));
     let outer_id = tree
@@ -85,7 +83,7 @@ pub fn test_descendant_at_returns_none_on_empty_tree() {
 
 pub fn do_descendant_at_returns_none_on_empty_tree() {
     fonts::init();
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     assert_eq!(tree.descendant_at(Vec2::new(0.0, 0.0)), None);
 }
 
@@ -194,7 +192,7 @@ pub fn do_scene_component_in_resolves_overlap_by_smallest_area() {
     // not move.
     fonts::init();
     let build = |small_first: bool| {
-        let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+        let mut tree: GfxTree = GfxTree::new_non_indexed();
         let big = GlyphArea::new_with_str("big", 1.0, 10.0, Vec2::ZERO, Vec2::new(100.0, 100.0));
         let small = GlyphArea::new_with_str("small", 1.0, 10.0, Vec2::new(40.0, 40.0), Vec2::new(10.0, 10.0));
         let big_id = tree
@@ -355,17 +353,17 @@ pub fn do_descendants_aabb_cache_invalidated_by_mutator() {
 
     // Mutator: void parent + child that overwrites the area's
     // position to (100, 100). Bounds and size unchanged.
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     let area_delta = crate::gfx_structs::area::DeltaGlyphArea::new(vec![
         GlyphAreaField::position(100.0, 100.0),
         GlyphAreaField::Operation(crate::core::primitives::ApplyOperation::Assign),
     ]);
     let mutator_node = mutator
         .arena
-        .new_node(GfxMutator::new(Mutation::area_delta(area_delta), 1));
+        .new_node(GfxMutator::new(GfxMutation::area_delta(area_delta), 1));
     mutator.root.append(mutator_node, &mut mutator.arena);
 
-    mutator.apply_to(&mut tree);
+    mutator.apply_to(&mut tree, &());
 
     let after = tree
         .descendants_aabb()

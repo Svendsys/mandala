@@ -28,7 +28,7 @@ pub const HUE_SLOT_COUNT: usize = 24;
 // tree position. Without stability, swapping the picker's full
 // rebuild for a mutator-driven update would silently misalign
 // (Baumhard's `align_child_walks` in
-// `lib/baumhard/src/gfx_structs/tree_walker.rs` pairs mutator
+// `lib/baumhard/src/engine/walker.rs` pairs mutator
 // children with target children by ascending channel).
 //
 // The channel layout now lives in `widgets/color_picker.json` under
@@ -52,11 +52,9 @@ pub const HUE_SLOT_COUNT: usize = 24;
 pub fn picker_channel(section: &str, index: usize) -> usize {
     static CACHE: OnceLock<std::collections::HashMap<(String, usize), usize>> = OnceLock::new();
     let map = CACHE.get_or_init(|| {
-        use baumhard::mutator_builder::{iter_section_channels, SectionContext};
-        struct NoCtx;
-        impl SectionContext for NoCtx {}
+        use baumhard::engine::builder::{iter_section_channels, NoRuntime};
         let mut out = Vec::new();
-        iter_section_channels(&load_spec().mutator_spec, &NoCtx, &mut out);
+        iter_section_channels(&load_spec().mutator_spec, &NoRuntime, &mut out);
         out.into_iter().map(|(s, i, c)| ((s, i), c)).collect()
     });
     *map.get(&(section.to_string(), index))

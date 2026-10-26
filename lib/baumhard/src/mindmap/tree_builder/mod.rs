@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Mindmap tree builder — projects a `MindMap` into Baumhard
-//! `Tree<GfxElement, GfxMutator>`s, one per canvas role (nodes,
+//! `GfxTree`s, one per canvas role (nodes,
 //! borders, portals, connections, connection-labels, section
 //! frames, edge / node / section handles), which the app crate's
 //! scene rebuilders register into `AppScene`.
@@ -32,8 +32,7 @@ use std::collections::HashMap;
 use indextree::NodeId;
 
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::model::MindMap;
 
 mod border;
@@ -121,7 +120,7 @@ use node::{append_node_sections, build_descendants, mindnode_container_area};
 ///
 /// [`MindSection`]: crate::mindmap::model::MindSection
 pub struct MindMapTree {
-    pub tree: Tree<GfxElement, GfxMutator>,
+    pub tree: GfxTree,
     /// Maps MindNode ID → arena `NodeId` of the *container* area.
     /// Private to keep §B10 — callers reach this through
     /// [`Self::arena_id_for`] / [`Self::node_ids`] accessors so a
@@ -162,7 +161,7 @@ pub struct MindMapTree {
     section_counts: HashMap<String, usize>,
 }
 
-/// Builds a `Tree<GfxElement, GfxMutator>` from a MindMap's
+/// Builds a `GfxTree` from a MindMap's
 /// hierarchy.
 ///
 /// The tree structure mirrors the MindMap's parent-child
@@ -183,7 +182,7 @@ pub struct MindMapTree {
 ///   section-area (a future per-component-mutation seam — the
 ///   renderer skips it).
 pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let mut node_map: HashMap<String, NodeId> = HashMap::new();
     let mut section_map: HashMap<(String, usize), NodeId> = HashMap::new();
     let mut id_counter: usize = 1; // 0 is reserved for the Void root

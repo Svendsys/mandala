@@ -774,7 +774,7 @@ impl<'a> CanvasFrame<'a> {
     /// closes: when the color picker is open, every throttled
     /// `AboutToWait` drain calls `rebuild_scene_only`, which runs
     /// this. Pre-dispatch, that meant a fresh
-    /// `Tree<GfxElement, GfxMutator>` allocation per picker-hover
+    /// `GfxTree` allocation per picker-hover
     /// frame plus a full canvas-scene buffer re-shape —
     /// O(n_borders × per-glyph shape cost). With the structural
     /// dispatch below, hover takes the in-place mutator path (which
@@ -2387,8 +2387,8 @@ mod content_signature_dispatch {
     use crate::application::scene_host::{AppScene, CanvasRole, CanvasSignatures};
     use baumhard::core::primitives::ApplyOperation;
     use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
-    use baumhard::gfx_structs::mutator::{GfxMutator, Mutation};
-    use baumhard::gfx_structs::tree::MutatorTree;
+    use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
+    use baumhard::gfx_structs::tree::GfxMutatorTree;
 
     /// Text no border run or portal marker can hold, written into
     /// the registered tree so a later projection either overwrites
@@ -2421,11 +2421,11 @@ mod content_signature_dispatch {
     /// channel path under the root. Built by hand rather than
     /// through a role's own builder so it cannot be confused with
     /// the work the dispatcher does or does not do.
-    fn sentinel_mutator(channel_path: &[usize]) -> MutatorTree<GfxMutator> {
+    fn sentinel_mutator(channel_path: &[usize]) -> GfxMutatorTree {
         let (leaf_channel, void_channels) = channel_path
             .split_last()
             .expect("a sentinel path names at least the leaf");
-        let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
+        let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
         let mut parent = mt.root;
         for channel in void_channels {
             parent = parent.append_value(GfxMutator::new_void(*channel), &mut mt.arena);
@@ -2435,7 +2435,7 @@ mod content_signature_dispatch {
             GlyphAreaField::Operation(ApplyOperation::Assign),
         ]);
         parent.append_value(
-            GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), *leaf_channel),
+            GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), *leaf_channel),
             &mut mt.arena,
         );
         mt

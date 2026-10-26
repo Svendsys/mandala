@@ -130,8 +130,8 @@
 //! - A name moved to another module: the authority for bare and
 //!   module-qualified names is "exists somewhere", so a reference
 //!   whose target moved still resolves.
-//! - A name that exists and is the wrong one: `bvh_find` named where
-//!   `spatial_descend_best` was meant resolves, because both exist.
+//! - A name that exists and is the wrong one: `descendant_at` named
+//!   where `descendant_near` was meant resolves, because both exist.
 //!   The review of this gate's own landing found two such
 //!   substitutions among the names it had corrected.
 //! - A bare multi-word name of an external API that no file in the
@@ -1656,7 +1656,7 @@ fn doc_text(attr: &Attribute) -> Option<(String, usize)> {
 /// A trailing call group is dropped — `` `refill(&key, params)` ``
 /// names `refill` — as are a macro's `!`, a `?`, a leading `&`,
 /// `&mut` or `*`, and any `<…>` generic arguments
-/// (`` `Tree<GfxElement, GfxMutator>::descendant_at` `` names
+/// (`` `Tree<GfxElement>::descendant_at` `` names
 /// `Tree::descendant_at`).
 fn classify(span: &str) -> Option<Candidate> {
     let mut s = span.trim();
@@ -2117,7 +2117,7 @@ pub fn almost_equal() {}
     }
 
     /// Generic arguments are dropped before the path is read, so
-    /// `Tree<GfxElement, GfxMutator>::descendant_at` is held to `Tree`,
+    /// `Tree<Elem, Mut>::descendant_at` is held to `Tree`,
     /// and a turbofish is dropped with the `::` that carried it, so
     /// `parse_all::<u8>` is held as `parse_all`.
     #[test]
@@ -2153,7 +2153,7 @@ fn parse_all() {}
             })
         );
         assert_eq!(
-            classify("Tree<GfxElement, GfxMutator>::descendant_at"),
+            classify("Tree<Elem, Mut>::descendant_at"),
             Some(Candidate {
                 name: "descendant_at".into(),
                 qualifier: Qualifier::Type("Tree".into()),

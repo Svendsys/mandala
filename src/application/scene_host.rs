@@ -21,10 +21,8 @@
 
 use std::collections::HashMap;
 
-use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::scene::{Scene, SceneEntry, SceneTreeId};
-use baumhard::gfx_structs::tree::{MutatorTree, Tree};
+use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use baumhard::mindmap::scene_cache::EdgeKey;
 use baumhard::mindmap::tree_builder::{EdgeChannelIndex, PortalHit, PortalHitIndex};
 use glam::Vec2;
@@ -396,12 +394,7 @@ impl AppScene {
     }
 
     /// Register (or replace) a canvas-space role tree.
-    pub fn register_canvas(
-        &mut self,
-        role: CanvasRole,
-        tree: Tree<GfxElement, GfxMutator>,
-        offset: Vec2,
-    ) -> SceneTreeId {
+    pub fn register_canvas(&mut self, role: CanvasRole, tree: GfxTree, offset: Vec2) -> SceneTreeId {
         if let Some(old) = self.canvas_role_slot_mut(role).take() {
             self.canvas.remove(old);
         }
@@ -574,7 +567,7 @@ impl AppScene {
     /// for incremental updates per §B1 of the baumhard
     /// conventions — the upcoming connection / border drag
     /// shaping cache will land through this.
-    pub fn apply_canvas_mutator(&mut self, role: CanvasRole, mutator: &MutatorTree<GfxMutator>) {
+    pub fn apply_canvas_mutator(&mut self, role: CanvasRole, mutator: &GfxMutatorTree) {
         if let Some(id) = self.canvas_id(role) {
             self.canvas.apply_mutator(id, mutator);
         }
@@ -599,12 +592,7 @@ impl AppScene {
     /// If a tree was already registered for the role it is removed
     /// first — overlay open-close cycles shouldn't leak slab
     /// entries.
-    pub fn register_overlay(
-        &mut self,
-        role: OverlayRole,
-        tree: Tree<GfxElement, GfxMutator>,
-        offset: Vec2,
-    ) -> SceneTreeId {
+    pub fn register_overlay(&mut self, role: OverlayRole, tree: GfxTree, offset: Vec2) -> SceneTreeId {
         if let Some(old) = self.overlay_role_slot_mut(role).take() {
             self.overlay.remove(old);
         }
@@ -669,7 +657,7 @@ impl AppScene {
     /// role. Path of choice for hover updates per §B1; the
     /// upcoming color-picker mutator-only hover path lands
     /// through this.
-    pub fn apply_overlay_mutator(&mut self, role: OverlayRole, mutator: &MutatorTree<GfxMutator>) {
+    pub fn apply_overlay_mutator(&mut self, role: OverlayRole, mutator: &GfxMutatorTree) {
         if let Some(id) = self.overlay_id(role) {
             self.overlay.apply_mutator(id, mutator);
         }
@@ -855,6 +843,7 @@ pub(in crate::application) mod tests {
     use super::*;
     use baumhard::font::fonts;
     use baumhard::gfx_structs::area::GlyphArea;
+    use baumhard::gfx_structs::element::GfxElement;
     use baumhard::mindmap::tree_builder::PortalPart;
     use baumhard::util::geometry::aabb_center;
 
@@ -1227,9 +1216,9 @@ pub(in crate::application) mod tests {
         assert_eq!(app.portal_at(probe + shift).as_ref(), Some(&expected));
     }
 
-    fn overlay_tree(position: Vec2, bounds: Vec2) -> (Tree<GfxElement, GfxMutator>, NodeId) {
+    fn overlay_tree(position: Vec2, bounds: Vec2) -> (GfxTree, NodeId) {
         fonts::init();
-        let mut tree = Tree::new_non_indexed();
+        let mut tree = GfxTree::new_non_indexed();
         let area = GlyphArea::new_with_str("overlay", 1.0, 10.0, position, bounds);
         let element = GfxElement::new_area_non_indexed_with_id(area, 0, 0);
         let leaf = tree.arena.new_node(element);

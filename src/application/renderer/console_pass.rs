@@ -14,7 +14,7 @@ use baumhard::font::{Color, FontSystem};
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
-use baumhard::gfx_structs::tree::Tree;
+use baumhard::gfx_structs::tree::GfxTree;
 use baumhard::util::color::FloatRgba;
 
 use super::console_geometry::{
@@ -446,8 +446,8 @@ pub(super) fn build_console_overlay_tree(
     geometry: &ConsoleOverlayGeometry,
     layout: &ConsoleFrameLayout,
     font_system: &mut FontSystem,
-) -> Tree<GfxElement, GfxMutator> {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+) -> GfxTree {
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     for (channel, area) in console_overlay_areas(geometry, layout, font_system) {
         let element = GfxElement::new_area_non_indexed_with_id(area, channel, channel);
         let leaf = tree.arena.new_node(element);
@@ -456,7 +456,7 @@ pub(super) fn build_console_overlay_tree(
     tree
 }
 
-/// Build a [`baumhard::gfx_structs::tree::MutatorTree`] that updates
+/// Build a [`baumhard::gfx_structs::tree::GfxMutatorTree`] that updates
 /// an already-registered console overlay tree to the current
 /// `(geometry, layout)` state
 /// without rebuilding the arena. Pairs with
@@ -477,15 +477,15 @@ pub(super) fn build_console_overlay_mutator(
     geometry: &ConsoleOverlayGeometry,
     layout: &ConsoleFrameLayout,
     font_system: &mut FontSystem,
-) -> baumhard::gfx_structs::tree::MutatorTree<GfxMutator> {
+) -> baumhard::gfx_structs::tree::GfxMutatorTree {
     use baumhard::gfx_structs::area::DeltaGlyphArea;
-    use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::gfx_structs::tree::MutatorTree;
+    use baumhard::gfx_structs::mutator::GfxMutation;
+    use baumhard::gfx_structs::tree::GfxMutatorTree;
 
-    let mut mt = MutatorTree::new_with(GfxMutator::new_void(0));
+    let mut mt = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for (channel, area) in console_overlay_areas(geometry, layout, font_system) {
         let delta = DeltaGlyphArea::full_assign_from(&area);
-        let mutator = GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel);
+        let mutator = GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), channel);
         let id = mt.arena.new_node(mutator);
         mt.root.append(id, &mut mt.arena);
     }

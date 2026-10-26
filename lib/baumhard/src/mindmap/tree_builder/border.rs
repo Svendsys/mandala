@@ -17,7 +17,7 @@ use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::shape::NodeShape;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::mindmap::border::{build_border_regions, resolve_border_style};
 use crate::mindmap::model::{GlyphBorderConfig, MindMap};
@@ -426,10 +426,7 @@ pub fn border_content_signature(nodes: &[BorderNodeData]) -> u64 {
 /// — the convenience entry point for callers with no preview and
 /// no active `NodeEdit`; the app's per-frame path calls
 /// [`border_node_data`] directly so it can thread both.
-pub fn build_border_tree(
-    map: &MindMap,
-    offsets: &HashMap<String, (f32, f32)>,
-) -> Tree<GfxElement, GfxMutator> {
+pub fn build_border_tree(map: &MindMap, offsets: &HashMap<String, (f32, f32)>) -> GfxTree {
     let hidden_set = map.fold_hidden_set();
     build_border_tree_from_nodes(&border_node_data(
         map,
@@ -443,8 +440,8 @@ pub fn build_border_tree(
 /// node data. Use this in the dispatch path that already called
 /// [`border_node_data`] to derive the dispatch signatures — saves
 /// one walk over `MindMap.nodes`.
-pub fn build_border_tree_from_nodes(nodes: &[BorderNodeData]) -> Tree<GfxElement, GfxMutator> {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+pub fn build_border_tree_from_nodes(nodes: &[BorderNodeData]) -> GfxTree {
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let mut unique_id: usize = 1;
     for node in nodes {
         append_border_sub_tree(&mut tree, node, &mut unique_id);
@@ -452,7 +449,7 @@ pub fn build_border_tree_from_nodes(nodes: &[BorderNodeData]) -> Tree<GfxElement
     tree
 }
 
-/// Build a [`MutatorTree`](crate::gfx_structs::tree::MutatorTree)
+/// Build a [`MutatorTree`](crate::gfx_structs::tree::GfxMutatorTree)
 /// that updates an already-registered border tree to the current
 /// `(map, offsets)` state without rebuilding the arena. Pairs
 /// with [`build_border_tree`] — both consume
@@ -470,7 +467,7 @@ pub fn build_border_tree_from_nodes(nodes: &[BorderNodeData]) -> Tree<GfxElement
 pub fn build_border_mutator_tree(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
-) -> crate::gfx_structs::tree::MutatorTree<GfxMutator> {
+) -> crate::gfx_structs::tree::GfxMutatorTree {
     let hidden_set = map.fold_hidden_set();
     build_border_mutator_tree_from_nodes(&border_node_data(
         map,
@@ -485,12 +482,12 @@ pub fn build_border_mutator_tree(
 /// already called [`border_node_data`].
 pub fn build_border_mutator_tree_from_nodes(
     nodes: &[BorderNodeData],
-) -> crate::gfx_structs::tree::MutatorTree<GfxMutator> {
+) -> crate::gfx_structs::tree::GfxMutatorTree {
     use crate::gfx_structs::area::DeltaGlyphArea;
-    use crate::gfx_structs::mutator::Mutation;
-    use crate::gfx_structs::tree::MutatorTree;
+    use crate::gfx_structs::mutator::GfxMutation;
+    use crate::gfx_structs::tree::GfxMutatorTree;
 
-    let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
+    let mut mt: GfxMutatorTree = GfxMutatorTree::new_with(GfxMutator::new_void(0));
     for node in nodes {
         let parent_node = mt
             .root
@@ -519,7 +516,7 @@ pub fn build_border_mutator_tree_from_nodes(
             area.zoom_visibility = node.zoom_visibility;
             let delta = DeltaGlyphArea::full_assign_from(&area);
             parent_node.append_value(
-                GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), spec.channel),
+                GfxMutator::new(GfxMutation::AreaDelta(Box::new(delta)), spec.channel),
                 &mut mt.arena,
             );
         }
@@ -532,11 +529,7 @@ pub fn build_border_mutator_tree_from_nodes(
 /// `build_border_tree` stays readable. `BorderNodeData.parent_channel`
 /// is the stable 1-based sorted-index channel — see
 /// [`BorderNodeData::parent_channel`].
-fn append_border_sub_tree(
-    tree: &mut Tree<GfxElement, GfxMutator>,
-    node: &BorderNodeData,
-    unique_id: &mut usize,
-) {
+fn append_border_sub_tree(tree: &mut GfxTree, node: &BorderNodeData, unique_id: &mut usize) {
     let specs = crate::mindmap::border::border_run_specs(
         &node.border_style,
         (node.pos_x, node.pos_y),
@@ -583,7 +576,7 @@ fn append_border_sub_tree(
 // a struct would just rename the same data with no readability win.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_border_run(
-    tree: &mut Tree<GfxElement, GfxMutator>,
+    tree: &mut GfxTree,
     parent_id: NodeId,
     channel: usize,
     unique_id: usize,

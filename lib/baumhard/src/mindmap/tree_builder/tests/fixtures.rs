@@ -79,20 +79,14 @@ pub(super) fn mk_star_map(n: usize) -> MindMap {
 }
 
 pub(super) fn glyph_area_of(
-    tree: &crate::gfx_structs::tree::Tree<
-        crate::gfx_structs::element::GfxElement,
-        crate::gfx_structs::mutator::GfxMutator,
-    >,
+    tree: &crate::gfx_structs::tree::GfxTree,
     node_id: indextree::NodeId,
 ) -> &crate::gfx_structs::area::GlyphArea {
     tree.arena.get(node_id).unwrap().get().glyph_area().unwrap()
 }
 
-/// Shorthand for the `Tree` every builder in this module emits.
-pub(super) type GfxTree = crate::gfx_structs::tree::Tree<
-    crate::gfx_structs::element::GfxElement,
-    crate::gfx_structs::mutator::GfxMutator,
->;
+/// The tree every builder in this module emits.
+pub(super) use crate::gfx_structs::tree::GfxTree;
 
 /// A `GlyphArea`'s clickable rectangle as `(top_left, extent)` —
 /// the same pair the BVH tests against.

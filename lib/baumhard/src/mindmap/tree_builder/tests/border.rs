@@ -132,7 +132,7 @@ fn border_tree_run_channels_are_stable_1_to_8() {
     // Bottom fill=2, Left fill=3, Right fill=4, TL corner=5,
     // TR corner=6, BL corner=7, BR corner=8. Stability matters
     // because mutator trees target runs by channel.
-    use crate::gfx_structs::tree::BranchChannel;
+    use crate::engine::element::TreeElement;
     let map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
     let tree = build_border_tree(&map, &HashMap::new());
     let parent = tree.root.children(&tree.arena).next().unwrap();
@@ -153,7 +153,7 @@ fn border_tree_run_channels_are_stable_1_to_8() {
 /// the same channel set.
 #[test]
 fn border_parent_channels_are_sorted_index_based() {
-    use crate::gfx_structs::tree::BranchChannel;
+    use crate::engine::element::TreeElement;
     // Three framed nodes; lexicographic order is a, b, c.
     let map = synthetic_map(
         vec![
@@ -180,8 +180,6 @@ fn border_parent_channels_are_sorted_index_based() {
 /// same frame flag, but a drag offset and a color change.
 #[test]
 fn border_mutator_round_trip_matches_full_rebuild() {
-    use crate::core::primitives::Applicable;
-
     let mut map = synthetic_map(
         vec![
             synthetic_node("a", None, 0.0, 0.0),
@@ -215,7 +213,7 @@ fn border_mutator_round_trip_matches_full_rebuild() {
         &map.fold_hidden_set(),
     );
     let mutator = build_border_mutator_tree_from_nodes(&nodes_b);
-    mutator.apply_to(&mut tree_a);
+    mutator.apply_to(&mut tree_a, &());
 
     let expected = build_border_tree(&map, &offsets);
 
@@ -401,9 +399,9 @@ fn border_tree_left_column_rows_use_floor_not_ceil() {
 /// grapheme-count site itself.
 #[test]
 fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
-    use crate::gfx_structs::tree::Tree;
+    use crate::gfx_structs::tree::GfxTree;
 
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let parent = tree.arena.new_node(GfxElement::new_void_with_id(0, 0));
     tree.root.append(parent, &mut tree.arena);
 
@@ -513,7 +511,6 @@ fn border_tree_honors_custom_side_pattern() {
 /// shows up here as a `text` mismatch on every run.
 #[test]
 fn border_mutator_picks_up_pattern_change() {
-    use crate::core::primitives::Applicable;
     use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
 
     let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
@@ -562,7 +559,7 @@ fn border_mutator_picks_up_pattern_change() {
         &map.fold_hidden_set(),
     );
     let mutator = build_border_mutator_tree_from_nodes(&nodes_b);
-    mutator.apply_to(&mut tree_a);
+    mutator.apply_to(&mut tree_a, &());
 
     let expected = build_border_tree(&map, &HashMap::new());
 

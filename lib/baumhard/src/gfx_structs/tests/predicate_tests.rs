@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Tests for [`crate::gfx_structs::predicate`] — comparator and
-//! predicate fundamentals (§T1).
+//! Tests for [`crate::engine::predicate`] over the glyph instantiation
+//! ([`crate::gfx_structs::inspect`]) — comparator and predicate
+//! fundamentals (§T1).
 //!
 //! Covers every [`Comparator`] variant via `compare_f32`, and the
 //! two key [`Predicate`] contracts: `always_true()` matches any
@@ -15,10 +16,10 @@ use glam::Vec2;
 use lazy_static::lazy_static;
 
 use crate::core::primitives::{ColorFontRegionField, Flag, Flaggable, Range};
+use crate::engine::predicate::{Comparator, Predicate};
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
 use crate::gfx_structs::element::{GfxElement, GfxElementField};
 use crate::gfx_structs::model::{GlyphLine, GlyphMatrix, GlyphModel, GlyphModelField};
-use crate::gfx_structs::predicate::{Comparator, Predicate};
 
 // ── Comparator::Equals (==) ────────────────────────────────────────
 
@@ -304,7 +305,7 @@ fn test_predicate_region_color_with_less_than_degrades_to_false() {
     do_predicate_region_color_with_less_than_degrades_to_false();
 }
 
-/// Colours are opaque too — same degrade posture as font. O(1).
+/// Colors are opaque too — same degrade posture as font. O(1).
 pub fn do_predicate_region_color_with_less_than_degrades_to_false() {
     let range = Range::new(0, 1);
     let pred = Predicate {

@@ -164,7 +164,6 @@ fn portal_pair_channels_are_strictly_ascending() {
 /// path's observable output is identical to a full rebuild's.
 #[test]
 fn portal_mutator_round_trip_matches_full_rebuild() {
-    use crate::core::primitives::Applicable;
     let mut map = synthetic_map(
         vec![
             synthetic_node("a", None, 0.0, 0.0),
@@ -193,7 +192,7 @@ fn portal_mutator_round_trip_matches_full_rebuild() {
     let selected = Some(("a", "b", "cross_link"));
 
     let mutator = build_portal_mutator_tree(&map, &offsets, selected, None, None, None, 1.0);
-    mutator.mutator.apply_to(&mut tree_a);
+    mutator.mutator.apply_to(&mut tree_a, &());
 
     let expected = build_portal_tree(&map, &offsets, selected, None, None, None, 1.0).tree;
 

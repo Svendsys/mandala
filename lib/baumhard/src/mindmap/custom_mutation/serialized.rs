@@ -11,9 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::gfx_structs::mutator::Mutation;
-use crate::gfx_structs::predicate::Predicate;
-use crate::mutator_builder::MutatorNode;
+use crate::engine::builder::MutatorNode;
+use crate::engine::predicate::Predicate;
+use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::mutator::GfxMutation;
 
 use super::{scope, CustomMutation, DocumentAction, MutationBehavior, TargetScope};
 
@@ -29,17 +30,17 @@ pub(super) struct CustomMutationIn {
     #[serde(default)]
     pub contexts: Vec<String>,
     #[serde(default)]
-    pub mutator: Option<MutatorNode>,
+    pub mutator: Option<MutatorNode<GfxElement, GfxMutation>>,
     /// Legacy flat-list payload. Combined with `target_scope` by
     /// [`scope`] helpers to synthesize a MutatorNode when `mutator`
     /// is absent.
     #[serde(default)]
-    pub mutations: Vec<Mutation>,
+    pub mutations: Vec<GfxMutation>,
     pub target_scope: TargetScope,
     #[serde(default)]
     pub behavior: MutationBehavior,
     #[serde(default)]
-    pub predicate: Option<Predicate>,
+    pub predicate: Option<Predicate<GfxElement>>,
     #[serde(default)]
     pub document_actions: Vec<DocumentAction>,
     #[serde(default)]
@@ -99,7 +100,7 @@ pub(crate) struct CustomMutationOut {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub contexts: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mutator: Option<MutatorNode>,
+    pub mutator: Option<MutatorNode<GfxElement, GfxMutation>>,
     pub target_scope: TargetScope,
     /// Omitted at its `Persistent` default — the reader's
     /// `#[serde(default)]` restores it, and writing it out would
@@ -108,7 +109,7 @@ pub(crate) struct CustomMutationOut {
     #[serde(skip_serializing_if = "behavior_is_default")]
     pub behavior: MutationBehavior,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub predicate: Option<Predicate>,
+    pub predicate: Option<Predicate<GfxElement>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub document_actions: Vec<DocumentAction>,
     #[serde(skip_serializing_if = "Option::is_none")]

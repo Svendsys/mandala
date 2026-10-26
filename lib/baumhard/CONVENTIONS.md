@@ -49,12 +49,14 @@ This is the central rule of the crate. The tree is an arena; changing
 it should almost never mean allocating a new arena.
 
 - **Use `MutatorTree::apply_to` for changes.** Build a
-  `MutatorTree<GfxMutator>` describing the delta, then call its
-  `apply_to` method with the target `Tree` as `&mut` argument. The
-  `Applicable` trait lives in `lib/baumhard/src/core/primitives.rs`;
-  the concrete impl for the `GfxElement` tree lives in
-  `lib/baumhard/src/gfx_structs/tree.rs`; the walk itself is
-  `walk_tree_from` in `lib/baumhard/src/gfx_structs/tree_walker.rs`.
+  `MutatorTree` describing the delta (`GfxMutatorTree` for a glyph
+  tree), then call its `apply_to` method with the target `Tree` as
+  `&mut` argument and the walk's inherited-state seed (`&()` for a
+  glyph tree). Both live in `lib/baumhard/src/engine/tree.rs`, generic
+  over the element type and the payload; the walk itself is
+  `walk_tree_from` in `lib/baumhard/src/engine/walker.rs`. The field
+  deltas a glyph payload carries apply through the `Applicable`
+  trait in `lib/baumhard/src/core/primitives.rs`.
 - **Do not clone a subtree, edit it, and reinsert it.** That is a
   full-arena copy to change one field. Use a mutator with the
   targeted field variant (`GlyphAreaField::*` or
@@ -165,7 +167,7 @@ access to it.
   has been called. The init lives in `lib/baumhard/src/font/fonts.rs`.
 - **`FONT_SYSTEM` is a global `RwLock<FontSystem>`.** Acquire the
   guard for the minimum scope needed for a single layout pass. Holding
-  the write lock across a long computation serialises the whole
+  the write lock across a long computation serializes the whole
   renderer — which on a single-threaded event loop means stalling the
   entire frame.
 - **`FONT_SYSTEM` is private; the lock is reached through three
@@ -331,7 +333,7 @@ rationale.
   under a header claiming every public body in them was
   benchmark-reachable.
 - **The id names what the row measures, and by default that is the
-  body's name minus `do_`.** 505 of the 541 entries are exactly
+  body's name minus `do_`.** 553 of the 589 entries are exactly
   that, and a new entry should be. The 36 that are not depart in
   three ways, none of which the default can express:
 
@@ -372,8 +374,8 @@ rationale.
   **The list below is not a list of permissions.** It is the shapes
   a body *cannot* take the split in, enumerated so that a body which
   could is never left off the surface by argument. Four exist, and
-  they are what a census of the tree finds: 65 plain non-wrapper
-  `#[test]` fns live in the `pub mod tests;` trees, and 34 of them
+  they are what a census of the tree finds: 42 plain non-wrapper
+  `#[test]` fns live in the `pub mod tests;` trees, and 31 of them
   are one of these.
 
   1. **The body cannot compile into the library.** `syn` is a
@@ -384,13 +386,13 @@ rationale.
      gate does not even see them. Eighteen.
   2. **The body drives a panic.** Criterion iterates what it is
      given, so a `#[should_panic]` test keeps its body inline —
-     twelve of these, among them `fonts_tests`'s re-entrancy
-     regression. `metric_cache_tests`'s twin is the thirteenth: it
+     nine of these, among them `fonts_tests`'s re-entrancy
+     regression. `metric_cache_tests`'s twin is the tenth: it
      catches its own panic under `catch_unwind` instead of
      declaring it, but like its sibling it holds the `FONT_SYSTEM`
      write guard across a deliberate re-entrant acquire, so an
      iteration measures the refusal and never reaches the code.
-     Thirteen.
+     Ten.
   3. **The enumeration is the runtime, not the primitive.**
      `test_color_to_float_round_trips_through_new_f32` sweeps 16.7
      million byte quads; the number would be the loop.
@@ -408,13 +410,13 @@ rationale.
   not the disk. Their entries say so, so the number is read as I/O
   rather than mistaken for a classifier's.
 
-  **The other 31 are not opt-outs; they are unconverted.** Nothing
+  **The other 11 are not opt-outs; they are unconverted.** Nothing
   about them forbids the split — they are ordinary unit tests over
   pure functions, written beside the convention rather than under
-  it: 20 in `mutator_builder_tests`, the seven `test_factor_*` in
-  `region_params_tests`, the three camera-invariance tests in
-  `camera_tests`, and `test_clone_preserves_depth_first_pre_order`
-  in `arena_utils_tests`. Converting them is a §B8 two-file change
+  it: the seven `test_factor_*` in `region_params_tests`, the three
+  camera-invariance tests in `camera_tests`, and
+  `test_clone_preserves_depth_first_pre_order` in
+  `arena_utils_tests`. Converting them is a §B8 two-file change
   each, and a judgment about what earns a criterion row rather than
   unfinished #44 work — #44's subject was the 173 `do_*()` bodies
   with no entry, and that set is closed. Naming them here is what keeps

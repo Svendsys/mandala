@@ -415,7 +415,7 @@ impl TestNudgeMutation {
     /// Materialize the `CustomMutation`. Consumes the builder.
     pub(in crate::application) fn build(self) -> baumhard::mindmap::custom_mutation::CustomMutation {
         use baumhard::gfx_structs::area::GlyphAreaCommand;
-        use baumhard::gfx_structs::mutator::Mutation;
+        use baumhard::gfx_structs::mutator::GfxMutation;
         use baumhard::mindmap::custom_mutation::{CustomMutation, MutationBehavior};
         CustomMutation {
             id: self.id.clone(),
@@ -423,7 +423,7 @@ impl TestNudgeMutation {
             description: self.description,
             contexts: self.contexts,
             mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
-                Mutation::area_command(GlyphAreaCommand::NudgeRight(self.magnitude)),
+                GfxMutation::area_command(GlyphAreaCommand::NudgeRight(self.magnitude)),
             ])),
             target_scope: self.scope,
             behavior: MutationBehavior::Persistent,

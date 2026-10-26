@@ -104,9 +104,11 @@ shapes on load; save always emits the canonical `mutator` form.
 
 ### Mutation vocabulary
 
-`Mutation` is an enum from `baumhard::gfx_structs::mutator`. The
-JSON tag is the variant name; the payload is the variant's inner
-value. The most common variants for authoring:
+`GfxMutation` is an enum from `baumhard::gfx_structs::mutator` — the
+glyph payload of the mutation engine. The JSON tag is the variant
+name; the payload is the variant's inner value. It has no no-op
+variant: a mutator with nothing to apply says so structurally.
+The most common variants for authoring:
 
 - `{"AreaCommand": { "GrowFont": 2.0 }}` — grow font size by 2pt.
 - `{"AreaCommand": { "ShrinkFont": 2.0 }}` — inverse.
@@ -417,13 +419,20 @@ mutations that don't filter stay byte-identical on disk.
 
 ## `mutator` — the MutatorNode AST
 
-The mutator AST mirrors Baumhard's `GfxMutator` variants plus a
+The mutator AST mirrors the variants of the engine's `Mutator` plus a
 `Repeat` wrapper for "N children at consecutive channels". See
-`lib/baumhard/src/mutator_builder/ast.rs` for the type definitions.
-Four top-level variants:
+`lib/baumhard/src/engine/builder/ast.rs` for the type definitions. The
+AST is generic over the element type and the mutation payload; in a
+custom mutation it is the glyph instantiation,
+`MutatorNode<GfxElement, GfxMutation>`, so its predicates name
+`GfxElementField`s and its literal mutations and templates are glyph
+mutations. Four top-level variants:
 
 - **`Void`** — structural grouping, no mutation. Walks children.
 - **`Single { channel, mutation }`** — one mutation at one channel.
+  With `"mutation": "None"` it builds as a `Void` on that channel:
+  a mutator's "no payload" is structural, and a mutation payload has
+  no no-op variant of its own.
 - **`Macro { channel, mutations, children }`** — a flat list of
   mutations applied to the matched target. `mutations` is
   `{ "Literal": [...] }` for baked-in values or
@@ -475,7 +484,7 @@ Four top-level variants:
     Two corollaries of "every payload must agree":
 
     - An `Instruction` wrapper carrying its own `mutation` — a
-      `Runtime` hole or an `AreaDelta` per-cell template — is
+      `Runtime` hole or a per-cell `Template` — is
       declined. Both are payloads the flat path provably cannot
       evaluate. The scope helpers all set `"mutation": "None"`.
     - A `Void` **on channel 0** is transparent, since it carries no
@@ -490,10 +499,12 @@ Four top-level variants:
       `"mutation": "None"`: it is a leaf whose `channel` selects the
       target it writes, so admitting it would widen the flat path
       into precisely the routing it cannot honor.
-  - `RotateWhile(<f32>, <Predicate>)` — rotation stub (reserved).
-  - `SpatialDescend(<OrderedVec2>)` — descend by AABB containment to
-    the deepest node that holds the point, deliver the instruction's
-    attached mutation.
+  - `SpatialDescend(<OrderedVec2>)` — find the smallest descendant
+    whose own box holds the point (the first in pre-order on a tie)
+    and deliver the instruction's attached mutation to it. Only for
+    an element type with geometry: glyph trees have it, and the
+    builder refuses it for any other (see "Build errors" below).
+  - `RotateWhile` is not part of V1; its design is V2 sub-issue #265.
   - `MapChildren` — **zip-by-sibling-position**. Pairs the
     mutator's direct children with the target's direct children
     by index, **bypassing channel alignment**. See "MapChildren"
@@ -503,6 +514,35 @@ Four top-level variants:
   each derived from `template`. `count` is `{ "Literal": N }` or
   `{ "Runtime": "<label>" }`. Used by widgets (the picker's hue
   ring) and any runtime-shaped section.
+
+### Mutation sources
+
+A `Single`'s or an `Instruction`'s `mutation` is one of three
+spellings:
+
+- `{ "Template": [<CellField>, …] }` — a per-iteration template,
+  resolved for each `Repeat` iteration by the build context into one
+  `AreaDelta`: a bare slot (`"Text"`, `"position"`, `"bounds"`,
+  `"scale"`, `"line_height"`, `"ColorFontRegions"`, `"Outline"`) is
+  pulled from that iteration's cell, a tagged one
+  (`{ "Operation": "Assign" }`) is baked in. Only valid inside a
+  `Repeat` template.
+- `{ "Runtime": "<label>" }` — the build context supplies the
+  mutation under that label, the same keying a `Macro`'s
+  `{ "Runtime": "<label>" }` list uses.
+- `"None"` — no mutation (the default on an `Instruction`).
+
+### Build errors
+
+Building an AST into a mutator tree refuses, rather than panics on,
+every shape no mutator tree can express — the AST is untrusted map
+content and the build runs on an interactive path:
+
+- a `Repeat` at the root (it describes a parent's children);
+- `"channel": "SectionIndex"` outside a `Repeat` template;
+- a `Template` mutation outside a `Repeat` template;
+- a `Repeat` whose `template` is itself a `Repeat`;
+- `SpatialDescend` for an element type with no geometry.
 
 ### Channel alignment vs. `MapChildren`
 
@@ -517,7 +557,7 @@ strictly by **sibling position** (zip), ignoring channels entirely.
 This is the shape size-aware layouts want — the `i`-th target child
 gets the `i`-th mutator child, regardless of how channels are
 assigned. A typical declarative layout pairs `MapChildren` with a
-`Repeat` expansion fed by a `SectionContext`:
+`Repeat` expansion fed by a `BuildContext`:
 
 ```json
 {
@@ -532,7 +572,7 @@ assigned. A typical declarative layout pairs `MapChildren` with a
         "template": {
           "Single": {
             "channel": "SectionIndex",
-            "mutation": { "AreaDelta": ["position"] }
+            "mutation": { "Template": ["position"] }
           }
         }
       }
@@ -541,29 +581,30 @@ assigned. A typical declarative layout pairs `MapChildren` with a
 }
 ```
 
-At apply time the registered `SectionContext` supplies
-`count("children") = N` and per-index
-`field("children", i, &CellField::position)`; the walker expands the
-`Repeat` into N `Single` mutators and `MapChildren` zips them against
-the N target children.
+At build time the registered `BuildContext` supplies
+`count("children") = N` and resolves the template once per index —
+`resolve("children", i, ["position"])` — into that child's
+`AreaDelta`; the builder expands the `Repeat` into N `Single`
+mutators and, at apply time, `MapChildren` zips them against the N
+target children.
 
 ### Runtime holes
 
-A MutatorNode may embed runtime variants (`Runtime`, `AreaDelta`
-with `CellField`s fed from the area lookup). At apply time the
-walker consults a `SectionContext` registered by the host
-application for the mutation's `id`. Pure-data mutations (no runtime
-holes) use a no-op context.
+A MutatorNode may embed runtime variants (`Runtime` mutations and
+lists, runtime counts, and `Template`s resolved per iteration). At
+build time the builder consults a `BuildContext` registered by the
+host application for the mutation's `id`. Pure-data mutations (no
+runtime holes) use a context that supplies nothing.
 
 ### Imperative handlers vs. declarative mutators
 
 Two apply paths coexist:
 
 - **Declarative (`mutator: Some(MutatorNode)`)** — the walker
-  compiles the AST to a `MutatorTree<GfxMutator>` and walks it over
+  compiles the AST to a `GfxMutatorTree` and walks it over
   the Baumhard tree. The framework syncs mutated nodes back from the
   tree to the model for undo. Runtime holes are resolved via a
-  `SectionContext` keyed on the mutation `id`. Preferred for
+  `BuildContext` keyed on the mutation `id`. Preferred for
   mutations expressible in the AST (pure-data field changes,
   MapChildren-shaped per-index layouts, predicate-gated recursion).
 - **Imperative (`DynamicMutationHandler`)** — a Rust function
@@ -577,7 +618,7 @@ Two apply paths coexist:
 
 Decision rule: reach for the declarative path first. Move to a
 handler when the AST gets contorted — typically when you find
-yourself wanting per-target state that `SectionContext` can't
+yourself wanting per-target state that `BuildContext` can't
 cleanly express, or multiple tree passes. `flower_layout.rs` and
 `tree_cascade.rs` under `src/application/document/mutations/` are
 the canonical handler examples; both are registered by

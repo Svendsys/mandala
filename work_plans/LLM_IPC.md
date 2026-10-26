@@ -569,7 +569,7 @@ camera read accessor is `Renderer::camera()`; IPC-05 reuses it.
 
 *As built by IPC-05 (#65):* the pipeline question the issue raised is
 settled by #22 having closed: there is no flat `RenderScene` left, and
-every model-derived visual is a `Tree<GfxElement, GfxMutator>`. So the
+every model-derived visual is a `GfxTree`. So the
 serializer is a Baumhard primitive over those trees,
 `baumhard::mindmap::scene_dump`, and nothing in the family re-derives
 geometry from the model. Three seams were extended rather than

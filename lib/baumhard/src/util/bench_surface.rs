@@ -277,6 +277,7 @@ mod tests {
     /// name and a root that moves goes red naming itself.
     const BODY_WITNESSES: &[&str] = &[
         "lib/baumhard/src/core/tests/",
+        "lib/baumhard/src/engine/tests/",
         "lib/baumhard/src/font/tests/",
         "lib/baumhard/src/gfx_structs/tests/",
         "lib/baumhard/src/util/tests/",

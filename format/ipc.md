@@ -1392,7 +1392,7 @@ pixels.
 
 **The source of truth is the drawn trees.** Since the dual-pipeline
 consolidation (#22) every model-derived visual reaches the GPU through
-one `Tree<GfxElement, GfxMutator>` per canvas role, so those trees *are*
+one `GfxTree` per canvas role, so those trees *are*
 the laid-out scene: positions after layout and in-flight drag offsets,
 sizes after text fitting, zoom windows after cascade, text after run
 coverage. The family reads them through Baumhard's serializer

@@ -3,10 +3,8 @@
 //! Layout-then-dynamic apply composition: ensures the dynamic
 //! mutator's slim per-cell delta lands on the same observable state
 //! as a fresh build, when applied on top of a layout-built tree.
-
-use baumhard::core::primitives::Applicable;
+use baumhard::engine::element::TreeElement;
 use baumhard::gfx_structs::area::GlyphArea;
-use baumhard::gfx_structs::tree::BranchChannel;
 
 use super::fixtures::picker_sample_geometry;
 use crate::application::color_picker::{compute_color_picker_layout, PickerHit};
@@ -43,9 +41,9 @@ fn picker_dynamic_mutator_composes_on_layout_built_tree() {
 
     let mut tree = build_color_picker_overlay_tree(&g_a, &layout_a);
     // Layout phase first (sets static fields for state B).
-    build_color_picker_overlay_mutator(&g_b, &layout_b).apply_to(&mut tree);
+    build_color_picker_overlay_mutator(&g_b, &layout_b).apply_to(&mut tree, &());
     // Dynamic phase on top (refreshes per-frame fields for state B).
-    build_color_picker_overlay_dynamic_mutator(&g_b, &layout_b).apply_to(&mut tree);
+    build_color_picker_overlay_dynamic_mutator(&g_b, &layout_b).apply_to(&mut tree, &());
 
     let expected = picker_glyph_areas(&g_b, &layout_b);
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
@@ -102,8 +100,8 @@ fn picker_dynamic_mutator_composes_across_repeated_applies() {
     let layout = compute_color_picker_layout(&g_a, 1280.0, 720.0);
 
     let mut tree = build_color_picker_overlay_tree(&g_a, &layout);
-    build_color_picker_overlay_dynamic_mutator(&g_b, &layout).apply_to(&mut tree);
-    build_color_picker_overlay_dynamic_mutator(&g_c, &layout).apply_to(&mut tree);
+    build_color_picker_overlay_dynamic_mutator(&g_b, &layout).apply_to(&mut tree, &());
+    build_color_picker_overlay_dynamic_mutator(&g_c, &layout).apply_to(&mut tree, &());
 
     // A dynamic apply of C onto a layout-A-built tree should leave
     // the dynamic fields at C and the static fields at A's layout —

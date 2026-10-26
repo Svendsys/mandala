@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Tests for [`crate::gfx_structs::tree::Tree`] — arena operations,
+//! Tests for [`crate::gfx_structs::tree::GfxTree`] — arena operations,
 //! mutations, events, and subscriber dispatch (§T1).
 //!
 //! Follows the `do_*()` / `test_*()` split from §T2.2: every `do_*`
@@ -15,6 +15,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use strum::IntoEnumIterator;
 
+use crate::engine::element::TreeElement;
+use crate::engine::mutator::Instruction::RepeatWhile;
+use crate::engine::walker::walk_tree_from;
 use crate::font::fonts;
 use crate::font::fonts::AppFont::{
     self, AliceInWonderland, AlphaMusicMan, AppleTea, Casanova, DenseLetters, Evilz, NorseBold,
@@ -26,16 +29,14 @@ use crate::gfx_structs::element::{GfxElement, GfxElementField};
 use crate::gfx_structs::model::{
     GlyphComponent, GlyphLine, GlyphModel, GlyphModelCommand, GlyphModelCommandType, GlyphModelField,
 };
-use crate::gfx_structs::mutator::Instruction::RepeatWhile;
-use crate::gfx_structs::mutator::{GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance, Mutation};
-use crate::gfx_structs::tree::{BranchChannel, EventSubscriber, MutatorTree, Tree};
-use crate::gfx_structs::tree_walker::walk_tree_from;
+use crate::gfx_structs::mutator::{GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance};
+use crate::gfx_structs::tree::{EventSubscriber, GfxMutatorTree, GfxTree};
 use crate::util::color::{add_rgba, Color, FloatRgba};
 
 use crate::core::primitives::{
     Applicable, ApplyOperation, ColorFontRegion, ColorFontRegionField, ColorFontRegions, Discriminated, Range,
 };
-use crate::gfx_structs::predicate::{Comparator, Predicate};
+use crate::engine::predicate::{Comparator, Predicate};
 use crate::gfx_structs::util::regions::RegionParams;
 use crate::util::geometry;
 use crate::util::ordered_vec2::OrderedVec2;
@@ -77,7 +78,7 @@ pub fn do_basics_solo_mutation() {
     );
 
     let mutator = GfxMutator::new(
-        Mutation::area_delta(DeltaGlyphArea::new(vec![
+        GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
                 Range::new(0, 1),
@@ -89,7 +90,7 @@ pub fn do_basics_solo_mutation() {
         0,
     );
 
-    mutator.apply_to(&mut element);
+    mutator.apply_to(&mut element, &());
 
     assert_element_delta(
         &element,
@@ -1114,8 +1115,8 @@ pub fn do_event_propagation_complex_symmetric() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let region_params = Rc::new(RegionParams::new(10, (1000, 1000)));
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new(region_params);
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
+    let mut model: GfxTree = GfxTree::new(region_params);
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
 
     let mut model_index: FxHashMap<String, NodeId> = FxHashMap::default();
     let mut mutator_index: FxHashMap<String, NodeId> = FxHashMap::default();
@@ -1159,7 +1160,7 @@ pub fn do_event_propagation_complex_symmetric() {
 
         // Create the mutator node
         let mutator_node = GfxMutator::new(
-            Mutation::Event(GlyphTreeEventInstance::new(entry.0.clone(), 0)),
+            GfxMutation::Event(GlyphTreeEventInstance::new(entry.0.clone(), 0)),
             entry.1,
         );
         let mutator_node_id = mutator.arena.new_node(mutator_node);
@@ -1188,6 +1189,7 @@ pub fn do_event_propagation_complex_symmetric() {
         &mutator,
         *model_index.get("0").unwrap(),
         *mutator_index.get("0").unwrap(),
+        &(),
     );
 }
 
@@ -1200,8 +1202,8 @@ pub fn test_event_propagation_simple() {
 pub fn do_event_propagation_simple() {
     // This is necessary to initialize lazy statics
     fonts::init();
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
+    let mut model: GfxTree = GfxTree::new_non_indexed();
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
     let mut id_head: usize = 0;
     let mut model_root = GfxElement::new_void_with_id(0, incr(&mut id_head));
     let mut model_baby = GfxElement::new_void_with_id(0, incr(&mut id_head));
@@ -1226,7 +1228,7 @@ pub fn do_event_propagation_simple() {
     model_root_id.append(model_baby_id, &mut model.arena);
 
     let event = GfxMutator::new(
-        Mutation::Event(GlyphTreeEventInstance {
+        GfxMutation::Event(GlyphTreeEventInstance {
             event_type: GlyphTreeEvent::AppEvent,
             event_time_millis: 0,
         }),
@@ -1234,7 +1236,7 @@ pub fn do_event_propagation_simple() {
     );
 
     let event_baby = GfxMutator::new(
-        Mutation::Event(GlyphTreeEventInstance {
+        GfxMutation::Event(GlyphTreeEventInstance {
             event_type: GlyphTreeEvent::KillEvent,
             event_time_millis: 0,
         }),
@@ -1244,7 +1246,7 @@ pub fn do_event_propagation_simple() {
     let event_id = mutator.arena.new_node(event);
     let event_baby_id = mutator.arena.new_node(event_baby);
     event_id.append(event_baby_id, &mut mutator.arena);
-    walk_tree_from(&mut model, &mutator, model_root_id, event_id);
+    walk_tree_from(&mut model, &mutator, model_root_id, event_id, &());
 }
 
 #[test]
@@ -1255,8 +1257,8 @@ pub fn test_complex_tree_mutation() {
 pub fn do_complex_tree_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
-    let mut mutator_c: MutatorTree<GfxMutator> = MutatorTree::new();
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut mutator_c: GfxMutatorTree = GfxMutatorTree::new();
+    let mut model: GfxTree = GfxTree::new_non_indexed();
 
     // Create the tree-model nodes
     let root_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
@@ -1498,12 +1500,12 @@ pub fn do_complex_tree_mutation() {
 
     let mutator_child_c = mutator_c.arena.new_node(GfxMutator::new_macro(
         vec![
-            Mutation::area_command(GlyphAreaCommand::SetRegionFont(
+            GfxMutation::area_command(GlyphAreaCommand::SetRegionFont(
                 Range::new(0, 1),
                 AppFont::CarnivaleeFreakshow,
             )),
-            Mutation::area_command(GlyphAreaCommand::GrowFont(20.0)),
-            Mutation::area_command(GlyphAreaCommand::NudgeDown(200.0)),
+            GfxMutation::area_command(GlyphAreaCommand::GrowFont(20.0)),
+            GfxMutation::area_command(GlyphAreaCommand::NudgeDown(200.0)),
         ],
         0,
     ));
@@ -1511,7 +1513,7 @@ pub fn do_complex_tree_mutation() {
     c_instruction.append(mutator_child_c, &mut mutator_c.arena);
 
     // Apply mutation
-    walk_tree_from(&mut model, &mutator_c, root_id, c_instruction);
+    walk_tree_from(&mut model, &mutator_c, root_id, c_instruction, &());
     // The root node should not be mutated, because by specification it is the children of the instruction-node that
     // should be applied to the children of the target node. If we want to also mutate the root, then we can do that
     // a few ways. For example a mutator can be set in the instruction node that specifically targets the root
@@ -1714,7 +1716,7 @@ pub fn do_complex_tree_mutation() {
     assert_eq!(bbaaa.get().position(), Vec2::new(80.0, 110.0));
     assert_eq!(bbaaa.get().glyph_area().unwrap().scale, 1.0);
 
-    let mut mutator_a: MutatorTree<GfxMutator> = MutatorTree::new();
+    let mut mutator_a: GfxMutatorTree = GfxMutatorTree::new();
     let mut a_predicate = Predicate::new();
     a_predicate
         .fields
@@ -1726,9 +1728,9 @@ pub fn do_complex_tree_mutation() {
 
     let mutator_child_a = mutator_a.arena.new_node(GfxMutator::new_macro(
         vec![
-            Mutation::area_command(GlyphAreaCommand::SetRegionFont(Range::new(0, 1), AppFont::Norse)),
-            Mutation::area_command(GlyphAreaCommand::GrowFont(10.0)),
-            Mutation::area_command(GlyphAreaCommand::NudgeDown(100.0)),
+            GfxMutation::area_command(GlyphAreaCommand::SetRegionFont(Range::new(0, 1), AppFont::Norse)),
+            GfxMutation::area_command(GlyphAreaCommand::GrowFont(10.0)),
+            GfxMutation::area_command(GlyphAreaCommand::NudgeDown(100.0)),
         ],
         1,
     ));
@@ -1736,7 +1738,7 @@ pub fn do_complex_tree_mutation() {
     a_instruction.append(mutator_child_a, &mut mutator_a.arena);
     assert!(mutator_a.get(a_instruction).is_some());
 
-    walk_tree_from(&mut model, &mutator_a, root_id, a_instruction);
+    walk_tree_from(&mut model, &mutator_a, root_id, a_instruction, &());
 
     let a = model.get(node_a_id).unwrap();
     assert_eq!(
@@ -1902,8 +1904,8 @@ pub fn test_simple_tree_mutation() {
 pub fn do_simple_tree_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
-    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut mutator: GfxMutatorTree = GfxMutatorTree::new();
+    let mut model: GfxTree = GfxTree::new_non_indexed();
 
     // Create the tree-model nodes
     let root_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
@@ -1975,7 +1977,7 @@ pub fn do_simple_tree_mutation() {
 
     // Create mutator-tree
     let mutator_root = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(DeltaGlyphArea::new(vec![
+        GfxMutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
             GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
                 Range::new(0, 1),
@@ -1987,32 +1989,32 @@ pub fn do_simple_tree_mutation() {
     ));
 
     let mutator_a = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(-1.0, -5.0))),
+        GfxMutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(-1.0, -5.0))),
         1,
     ));
 
     let mutator_b = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(Some(NorseBold), None, Vec2::new(-1.0, -5.0))),
+        GfxMutation::area_delta(make_mutator(Some(NorseBold), None, Vec2::new(-1.0, -5.0))),
         2,
     ));
 
     let mutator_c = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(0.0, -4.0))),
+        GfxMutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(0.0, -4.0))),
         0,
     ));
 
     let mutator_ca = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(Some(Casanova), None, Vec2::new(0.0, -4.0))),
+        GfxMutation::area_delta(make_mutator(Some(Casanova), None, Vec2::new(0.0, -4.0))),
         0,
     ));
 
     let mutator_ba = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(-25.0, 25.0))),
+        GfxMutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(-25.0, 25.0))),
         1,
     ));
 
     let mutator_bb = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(25.0, 25.0))),
+        GfxMutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(25.0, 25.0))),
         2,
     ));
 
@@ -2027,7 +2029,7 @@ pub fn do_simple_tree_mutation() {
     mutator_c.append(mutator_ca, &mut mutator.arena);
 
     // Do mutation
-    walk_tree_from(&mut model, &mutator, root_id, mutator_root);
+    walk_tree_from(&mut model, &mutator, root_id, mutator_root, &());
 
     let root = model.get(root_id).unwrap();
     assert_eq!(root.get().position(), Vec2::new(50.0, 50.0));

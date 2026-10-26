@@ -41,8 +41,7 @@ use std::collections::{HashMap, HashSet};
 use indextree::NodeId;
 
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::mindmap::border::{resolve_palette_cycle, BorderStyle};
 use crate::mindmap::model::{GlyphBorderConfig, MindMap};
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
@@ -395,7 +394,7 @@ pub fn section_frame_content_signature(elements: &[SectionFrameElement]) -> u64 
     h.finish()
 }
 
-/// Build a `Tree<GfxElement, GfxMutator>` from a slice of
+/// Build a `GfxTree` from a slice of
 /// [`SectionFrameElement`]s. Each element's resolved
 /// [`crate::mindmap::border::BorderStyle`] is fed to
 /// [`crate::mindmap::border::border_run_specs`] for the
@@ -408,8 +407,8 @@ pub fn section_frame_content_signature(elements: &[SectionFrameElement]) -> u64 
 /// caller (`scene_rebuild`) gates this against
 /// `InteractionMode::NodeEdit` so non-NodeEdit rebuilds produce
 /// a trivial tree.
-pub fn build_section_frame_tree(elements: &[SectionFrameElement]) -> Tree<GfxElement, GfxMutator> {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+pub fn build_section_frame_tree(elements: &[SectionFrameElement]) -> GfxTree {
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let mut unique_id: usize = 1;
     for (idx, frame) in elements.iter().enumerate() {
         let parent_channel = idx + 1;
@@ -434,7 +433,7 @@ pub fn build_section_frame_tree(elements: &[SectionFrameElement]) -> Tree<GfxEle
 /// approximation, palette-offset sweep around the rectangle —
 /// for free.
 fn append_frame_runs(
-    tree: &mut Tree<GfxElement, GfxMutator>,
+    tree: &mut GfxTree,
     parent_id: NodeId,
     frame: &SectionFrameElement,
     unique_id: &mut usize,

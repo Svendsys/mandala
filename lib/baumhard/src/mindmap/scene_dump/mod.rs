@@ -2,7 +2,7 @@
 
 //! Scene introspection: what the canvas trees **draw**, where, and
 //! whether the camera shows it — as plain serializable data, read
-//! straight off the `Tree<GfxElement, GfxMutator>`s the renderer
+//! straight off the `GfxTree`s the renderer
 //! shapes.
 //!
 //! **The trees are the source of truth, not the model.** Since the
@@ -62,9 +62,7 @@ use serde::Serialize;
 use crate::font::attrs::displayed_text;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::camera::{Camera2D, Visibility};
-use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::GfxTree;
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::mindmap::model::MindMap;
 use crate::mindmap::scene_cache::EdgeKey;
@@ -438,7 +436,7 @@ pub struct EdgeDump {
 /// mismatch, never produced by the dispatcher) is left out with a
 /// `warn!`.
 pub fn dump_edges(
-    tree: &Tree<GfxElement, GfxMutator>,
+    tree: &GfxTree,
     offset: Vec2,
     camera: &Camera2D,
     index: &EdgeChannelIndex,
@@ -498,7 +496,7 @@ pub struct LabelDump {
 /// [`displayed_text`] per kept label when the filter asks for text. A
 /// label the index cannot name is left out with a `warn!`.
 pub fn dump_labels(
-    tree: &Tree<GfxElement, GfxMutator>,
+    tree: &GfxTree,
     offset: Vec2,
     camera: &Camera2D,
     index: &EdgeChannelIndex,
@@ -551,7 +549,7 @@ pub struct PortalDump {
 /// one [`displayed_text`] per kept leaf when the filter asks for text.
 /// A leaf the index cannot name is left out with a `warn!`.
 pub fn dump_portals(
-    tree: &Tree<GfxElement, GfxMutator>,
+    tree: &GfxTree,
     offset: Vec2,
     camera: &Camera2D,
     index: &PortalHitIndex,

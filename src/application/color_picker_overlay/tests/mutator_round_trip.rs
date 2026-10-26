@@ -3,10 +3,11 @@
 //! Layout-mutator output shape + round-trip equivalence between
 //! a freshly-built tree and an in-place mutator apply.
 
-use baumhard::core::primitives::{Applicable, Discriminated};
+use baumhard::core::primitives::Discriminated;
+use baumhard::engine::element::TreeElement;
+use baumhard::engine::mutator::MutatorType;
 use baumhard::gfx_structs::area::GlyphArea;
-use baumhard::gfx_structs::mutator::{GfxMutator, Mutation, MutatorType};
-use baumhard::gfx_structs::tree::BranchChannel;
+use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
 
 use super::fixtures::picker_sample_geometry;
 use crate::application::color_picker::{compute_color_picker_layout, PickerHit};
@@ -19,7 +20,7 @@ use crate::application::color_picker_overlay::picker_glyph_areas::{
 /// (24 hue + 16 sat + 16 val + preview + hex), each carrying an
 /// `AreaDelta` with exactly 8 fields. Guards against
 /// drift between `widgets/color_picker.json`'s `mutator_spec` block
-/// and the `baumhard::mutator_builder` walker — if either side silently
+/// and the `baumhard::engine::builder` walker — if either side silently
 /// changes shape, the picker's registered tree alignment breaks and
 /// this test fires first.
 #[test]
@@ -48,7 +49,7 @@ fn picker_mutator_output_matches_spec_shape() {
             "every picker cell is a Single"
         );
         let GfxMutator::Single { mutation, .. } = child else { unreachable!() };
-        let Mutation::AreaDelta(delta) = mutation else {
+        let GfxMutation::AreaDelta(delta) = mutation else {
             panic!("picker cells carry AreaDelta");
         };
         assert_eq!(
@@ -82,7 +83,7 @@ fn picker_overlay_mutator_round_trips_across_paired_tree() {
 
     let mut tree = build_color_picker_overlay_tree(&g_a, &layout_a);
     let mutator = build_color_picker_overlay_mutator(&g_b, &layout_b);
-    mutator.apply_to(&mut tree);
+    mutator.apply_to(&mut tree, &());
 
     let expected = picker_glyph_areas(&g_b, &layout_b);
     let mut got: Vec<(usize, GlyphArea)> = Vec::new();
@@ -124,7 +125,7 @@ fn picker_mutator_round_trips_to_fresh_build() {
     // computed from state B.
     let mut tree = build_color_picker_overlay_tree(&g_a, &layout_a);
     let mutator = build_color_picker_overlay_mutator(&g_b, &layout_b);
-    mutator.apply_to(&mut tree);
+    mutator.apply_to(&mut tree, &());
 
     // Fresh build at state B, for comparison.
     let expected = picker_glyph_areas(&g_b, &layout_b);

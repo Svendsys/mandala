@@ -4,7 +4,7 @@
 //! rasterization, every text/rect/border buffer Mandala paints
 //! lives under [`Renderer`]. `Renderer` reads two intermediate
 //! representation the document layer hands it
-//! (`Tree<GfxElement, GfxMutator>`, one per canvas role — nodes,
+//! (`GfxTree`, one per canvas role — nodes,
 //! borders, connections, labels, portals, handles); it never
 //! reaches into the document directly, and the document never
 //! holds GPU resources (CODE_CONVENTIONS §3 "Model / view
@@ -352,9 +352,9 @@ const MODE_STATUS_OVERLAY_BOUNDS: (f32, f32) = (640.0, 24.0);
 /// Mode-status text color. The status row and the selection tint
 /// are the same "this is active" affordance, so they are the same
 /// color — derived from the one definition of it rather than
-/// re-quantised here, which is how this used to read
-/// `Color::rgba(0, 230, 255, 255)` against a `#00E5FF` whose green
-/// channel is 229.
+/// re-quantized here, where a hand-written
+/// `Color::rgba(0, 230, 255, 255)` would disagree with `#00E5FF`, whose
+/// green channel is 229.
 pub(crate) const MODE_STATUS_COLOR: baumhard::font::Color =
     baumhard::font::color::cosmic_color_from_color(baumhard::mindmap::SELECTION_HIGHLIGHT);
 

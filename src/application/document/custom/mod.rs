@@ -40,7 +40,7 @@ use crate::application::source_tier::SourceTier;
 /// produces a silent no-op without this check; the warn surfaces
 /// the issue at the dispatch site so the author can fix it
 /// rather than chase a missing visual change.
-/// `true` when this `Mutation` writes an *absolute* position
+/// `true` when this `GfxMutation` writes an *absolute* position
 /// (`MoveTo`, `Assign` on the position field). Used by the
 /// section fan-out in [`MindMapDocument::apply_to_tree`] to
 /// route absolute-position commands to the container only —
@@ -49,14 +49,14 @@ use crate::application::source_tier::SourceTier;
 /// then collapses `section.offset` to `(0, 0)` after sync-back.
 /// Delta commands (`Nudge*`) and non-position mutations are NOT
 /// matched; those fan out safely.
-fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutation) -> bool {
+fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::GfxMutation) -> bool {
     use baumhard::core::primitives::ApplyOperation;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
     use baumhard::gfx_structs::area_fields::{GlyphAreaField, GlyphAreaFieldType};
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     match m {
-        Mutation::AreaCommand(cmd) => matches!(**cmd, GlyphAreaCommand::MoveTo(_, _)),
-        Mutation::AreaDelta(delta) => {
+        GfxMutation::AreaCommand(cmd) => matches!(**cmd, GlyphAreaCommand::MoveTo(_, _)),
+        GfxMutation::AreaDelta(delta) => {
             // `Assign` on the position field sets it absolutely;
             // `Add` / `Sub` are deltas (safe to fan out).
             // `DeltaGlyphArea.fields` carries the touched fields
@@ -75,7 +75,7 @@ fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutati
 }
 
 /// The tree-side `GlyphArea` fields a single
-/// [`baumhard::gfx_structs::mutator::Mutation`] touches
+/// [`baumhard::gfx_structs::mutator::GfxMutation`] touches
 /// that [`MindMapDocument::sync_node_from_tree`] has **no model
 /// home for** — so a mutation writing them lands on the display
 /// tree for one frame and reverts on the next rebuild-from-model.
@@ -88,13 +88,13 @@ fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutati
 /// zoom-visibility window — has a tree representation but no
 /// reverse converter, so it can't survive a `rebuild_all`. Returns
 /// the human-readable names of any such fields the mutation writes.
-fn unsupported_fields_of_mutation(m: &baumhard::gfx_structs::mutator::Mutation) -> Vec<&'static str> {
+fn unsupported_fields_of_mutation(m: &baumhard::gfx_structs::mutator::GfxMutation) -> Vec<&'static str> {
     use baumhard::gfx_structs::area::GlyphAreaCommand as Cmd;
     use baumhard::gfx_structs::area_fields::GlyphAreaFieldType as FieldType;
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     let mut out = Vec::new();
     match m {
-        Mutation::AreaCommand(cmd) => {
+        GfxMutation::AreaCommand(cmd) => {
             if matches!(
                 **cmd,
                 Cmd::SetLineHeight(_) | Cmd::GrowLineHeight(_) | Cmd::ShrinkLineHeight(_)
@@ -102,7 +102,7 @@ fn unsupported_fields_of_mutation(m: &baumhard::gfx_structs::mutator::Mutation) 
                 out.push("line-height");
             }
         }
-        Mutation::AreaDelta(delta) => {
+        GfxMutation::AreaDelta(delta) => {
             // A delta can touch several fields at once; report each
             // unsupported one so the warning names the full gap.
             for key in delta.fields.keys() {
@@ -543,13 +543,13 @@ impl MindMapDocument {
     }
 
     /// Apply a custom mutation's payload to the Baumhard tree, iterating
-    /// every affected model node and applying the flat `Vec<Mutation>`
+    /// every affected model node and applying the flat `Vec<GfxMutation>`
     /// extracted from the MutatorNode to each target element. Mutations
     /// without a `mutator` (document-actions-only) are no-ops here —
     /// [`Self::apply_document_actions`] handles their canvas effects
     /// separately. Mutations whose MutatorNode can't be reduced to a
     /// flat list (runtime-hole-bearing, size-aware) are skipped at this
-    /// layer; a later session wires the richer `mutator_builder::build`
+    /// layer; a later session wires the richer `engine::builder::build`
     /// path for those.
     ///
     /// **Section fan-out.** Post-section the per-node element shape is
@@ -572,7 +572,7 @@ impl MindMapDocument {
             // [`Self::warn_about_mutator`], which every
             // user-gesture caller runs exactly once before reaching
             // here; see that doc for why it is not logged in this
-            // function. The richer `mutator_builder` walker path is
+            // function. The richer `engine::builder` walker path is
             // the eventual home for these shapes (size-aware /
             // predicate-filtered descendant iteration).
             return;
@@ -1173,7 +1173,7 @@ mod unsupported_field_tests {
     use super::unsupported_fields_of_mutation;
     use baumhard::core::primitives::ApplyOperation;
     use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField};
-    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::mutator::GfxMutation;
     use baumhard::gfx_structs::shape::NodeShape;
 
     /// Font-size commands (`GrowFont` / `ShrinkFont` / `SetFontSize`)
@@ -1186,7 +1186,7 @@ mod unsupported_field_tests {
             GlyphAreaCommand::ShrinkFont(2.0),
             GlyphAreaCommand::SetFontSize(20.0),
         ] {
-            let m = Mutation::area_command(cmd);
+            let m = GfxMutation::area_command(cmd);
             assert!(
                 unsupported_fields_of_mutation(&m).is_empty(),
                 "font-size command {:?} must be treated as supported",
@@ -1204,7 +1204,7 @@ mod unsupported_field_tests {
             GlyphAreaCommand::MoveTo(1.0, 2.0),
             GlyphAreaCommand::SetBounds(10.0, 10.0),
         ] {
-            let m = Mutation::area_command(cmd);
+            let m = GfxMutation::area_command(cmd);
             assert!(unsupported_fields_of_mutation(&m).is_empty());
         }
     }
@@ -1220,7 +1220,7 @@ mod unsupported_field_tests {
             GlyphAreaCommand::GrowLineHeight(0.2),
             GlyphAreaCommand::ShrinkLineHeight(0.2),
         ] {
-            let m = Mutation::area_command(cmd);
+            let m = GfxMutation::area_command(cmd);
             assert_eq!(
                 unsupported_fields_of_mutation(&m),
                 vec!["line-height"],
@@ -1244,7 +1244,7 @@ mod unsupported_field_tests {
             baumhard::gfx_structs::area_fields::GlyphAreaFieldType::Shape,
             GlyphAreaField::Shape(NodeShape::Ellipse),
         );
-        let m = Mutation::area_delta(delta);
+        let m = GfxMutation::area_delta(delta);
         let mut flagged = unsupported_fields_of_mutation(&m);
         flagged.sort_unstable();
         assert_eq!(
@@ -1262,7 +1262,7 @@ mod unsupported_field_tests {
             GlyphAreaField::scale(20.0),
             GlyphAreaField::Operation(ApplyOperation::Assign),
         ]);
-        let m = Mutation::area_delta(delta);
+        let m = GfxMutation::area_delta(delta);
         assert!(unsupported_fields_of_mutation(&m).is_empty());
     }
 }

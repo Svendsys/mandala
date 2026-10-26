@@ -408,10 +408,8 @@ mod tests {
             "the criterion bench file survived the path exclusion"
         );
         assert!(
-            files
-                .iter()
-                .any(|f| f == "lib/baumhard/src/gfx_structs/tree_walker.rs"),
-            "the walker sits next to `gfx_structs/tests/` and is shipped code; an exclusion \
+            files.iter().any(|f| f == "lib/baumhard/src/engine/walker.rs"),
+            "the walker sits next to `engine/tests/` and is shipped code; an exclusion \
              that swallowed it would swallow most of the crate"
         );
     }

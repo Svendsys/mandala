@@ -40,9 +40,9 @@ rise and fall together.
   offset when the offset comes from user input; you land mid-grapheme on
   the first emoji.
 - **Tree mutation** through `MutatorTree::apply_to`. Build a
-  `MutatorTree<GfxMutator>` and apply it via `Applicable`
-  (`lib/baumhard/src/core/primitives.rs`, impl in
-  `lib/baumhard/src/gfx_structs/tree.rs`). Never clone-edit-reinsert a
+  `GfxMutatorTree` and apply it with `apply_to(&mut tree, &())`
+  (`lib/baumhard/src/engine/tree.rs`; the walk is
+  `lib/baumhard/src/engine/walker.rs`). Never clone-edit-reinsert a
   subtree to change one field.
 - **Font** through `baumhard::font::fonts`. `fonts::init()` once at
   startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`
@@ -147,13 +147,13 @@ decision, not a drive-by edit.
     else (`work_plans/LLM_IPC.md` §D2).
 - **Model / view separation.** `MindMapDocument` owns the data model;
   `Renderer` owns GPU resources. The renderer reads intermediate
-  representation (`Tree<GfxElement, GfxMutator>`, one per canvas
+  representation (`GfxTree`, one per canvas
   role). The renderer never reaches into the document; the document
   never holds GPU handles.
 - **Render document content through the Baumhard tree.** Every
   visual that comes from the model — nodes, connections, borders,
   portals, labels, section frames, handles — converges on
-  `Tree<GfxElement, GfxMutator>` and is shaped by
+  `GfxTree` and is shaped by
   `src/application/renderer/tree_walker.rs`. There is exactly one
   pipeline for them: a data pass plus a tree projection under
   `lib/baumhard/src/mindmap/tree_builder/`, driven by `CanvasFrame`
@@ -175,7 +175,7 @@ decision, not a drive-by edit.
   node). A new visual qualifies only on that test; if it is a
   rendering of document content, it belongs in the tree.
 - **Mutation-first interaction.** Where a user action can be expressed
-  as a `MutatorTree<GfxMutator>`, express it that way. Every user-facing
+  as a `GfxMutatorTree`, express it that way. Every user-facing
   mutation gets a matching `UndoAction` variant and an `undo()` branch.
 - **Single-parent tree.** `MindNode.parent_id: Option<String>` is the
   hierarchy. Non-hierarchical relationships are edges with
@@ -257,7 +257,7 @@ decision, not a drive-by edit.
     mouse gesture.
 
     The line this carve-out draws is therefore "is the effect a
-    continuous camera delta?", not "did a funnelled press start it".
+    continuous camera delta?", not "did a funneled press start it".
     A continuous gesture that *mutates the document* per frame is a
     different question and is not covered here — see the
     `ThrottledDrag` ladder.

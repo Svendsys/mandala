@@ -5,9 +5,7 @@
 //! rects) into the `Renderer`'s per-role buffer maps.
 
 use baumhard::font::fonts;
-use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::mutator::GfxMutator;
-use baumhard::gfx_structs::tree::Tree;
+use baumhard::gfx_structs::tree::GfxTree;
 use glam::Vec2;
 
 use super::scene_shape_cache::{self, ScenePassKind};
@@ -70,7 +68,7 @@ impl Renderer {
     /// Rebuild text buffers from a Baumhard tree (nodes rendered from GlyphArea
     /// elements). This is the primary text-rendering path; borders and
     /// connections use their own `rebuild_*_buffers` methods alongside it.
-    pub fn rebuild_buffers_from_tree(&mut self, tree: &Tree<GfxElement, GfxMutator>) {
+    pub fn rebuild_buffers_from_tree(&mut self, tree: &GfxTree) {
         self.mindmap_buffers.clear();
         // Node backgrounds live on GlyphArea and are collected
         // fresh alongside the text buffers. The render pipeline
@@ -127,7 +125,7 @@ impl Renderer {
     /// caller is expected to fall back to a full
     /// `rebuild_buffers_from_tree` if it cannot guarantee the
     /// arena id is fresh.
-    pub fn reshape_buffer_for(&mut self, arena_id: indextree::NodeId, tree: &Tree<GfxElement, GfxMutator>) {
+    pub fn reshape_buffer_for(&mut self, arena_id: indextree::NodeId, tree: &GfxTree) {
         let Some(element) = tree.arena.get(arena_id).map(|n| n.get()) else {
             return;
         };
@@ -206,7 +204,7 @@ impl Renderer {
     /// O(n) descendant walk, but no text shaping, no font-system
     /// lock — just position and color reads from the arena.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub fn rebuild_node_backgrounds_from_tree(&mut self, tree: &Tree<GfxElement, GfxMutator>) {
+    pub fn rebuild_node_backgrounds_from_tree(&mut self, tree: &GfxTree) {
         self.node_background_rects.clear();
         // Single source of background-rect math: routes through the
         // walker's `extract_background_rect` so the drag-fast-path

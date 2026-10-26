@@ -314,8 +314,7 @@ fn test_console_frame_layout_scales_with_font_size() {
 /// branch on every input change frame.
 #[test]
 fn console_mutator_round_trips_to_fresh_build() {
-    use baumhard::core::primitives::Applicable;
-    use baumhard::gfx_structs::tree::BranchChannel;
+    use baumhard::engine::element::TreeElement;
     baumhard::font::fonts::init();
 
     let mut g_a = sample_console_geometry();
@@ -341,7 +340,7 @@ fn console_mutator_round_trips_to_fresh_build() {
         let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay mutator)");
         build_console_overlay_mutator(&g_b, &layout_b, &mut fs)
     };
-    mutator.apply_to(&mut tree);
+    mutator.apply_to(&mut tree, &());
 
     let expected = {
         let mut fs =
@@ -999,10 +998,9 @@ use baumhard::gfx_structs::area::DeltaGlyphArea;
 use baumhard::gfx_structs::area_fields::{GlyphAreaField, GlyphAreaFieldType, OutlineStyle};
 use baumhard::gfx_structs::delta::DeltaField;
 use baumhard::gfx_structs::element::GfxElement;
-use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
 use baumhard::gfx_structs::shape::NodeShape;
-use baumhard::gfx_structs::tree::Tree;
+use baumhard::gfx_structs::tree::GfxTree;
 use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
 use strum::IntoEnumIterator;
 
@@ -1029,7 +1027,7 @@ fn overlay_cache_fixture_area() -> GlyphArea {
 /// the test has a real [`SceneTreeId`] to key against.
 fn overlay_cache_fixture() -> (Scene, SceneTreeId, GfxElement) {
     let element = GfxElement::new_area_non_indexed_with_id(overlay_cache_fixture_area(), 7, 7);
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let leaf = tree.arena.new_node(element.clone());
     tree.root.append(leaf, &mut tree.arena);
     let mut scene = Scene::new();
@@ -1178,7 +1176,7 @@ fn test_scene_shape_cache_invalidates_on_identity_and_offset() {
     );
 
     // A second tree in the same scene is a different overlay.
-    let other_tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let other_tree: GfxTree = GfxTree::new_non_indexed();
     let other_id = scene.insert(other_tree, 1, Vec2::ZERO);
     assert_eq!(
         cached.classify(other_id, &element, Vec2::ZERO),
@@ -1570,7 +1568,7 @@ fn canvas_fill_fixture_scene() -> (Scene, Vec<SceneTreeId>) {
     let mut scene = Scene::new();
     let mut ids = Vec::new();
     for (tree_idx, base_x) in [(0usize, 0.0f32), (1usize, 500.0f32)] {
-        let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+        let mut tree: GfxTree = GfxTree::new_non_indexed();
         for leaf_idx in 0..2usize {
             let unique_id = tree_idx * 10 + leaf_idx + 1;
             let area = canvas_fill_fixture_area(&format!("r{unique_id}"), base_x + 60.0 * leaf_idx as f32);
@@ -1719,7 +1717,7 @@ fn test_canvas_fill_inputs_are_all_visible_to_the_reuse_key() {
 
     let base = canvas_fill_fixture_area("fill", 3.0);
     let mut scene = Scene::new();
-    let id = scene.insert(Tree::new_non_indexed(), 0, Vec2::ZERO);
+    let id = scene.insert(GfxTree::new_non_indexed(), 0, Vec2::ZERO);
 
     let inputs: [NamedFillMutation; 6] = [
         ("background_color", |a| a.background_color = Some([1, 2, 3, 4])),
@@ -1938,7 +1936,7 @@ fn test_canvas_text_inputs_are_all_visible_to_the_reuse_key() {
     base.align_center = false;
 
     let mut scene = Scene::new();
-    let id = scene.insert(Tree::new_non_indexed(), 0, Vec2::ZERO);
+    let id = scene.insert(GfxTree::new_non_indexed(), 0, Vec2::ZERO);
 
     let inputs: [NamedTextMutation; 1] = [("align_center", |a| a.align_center = !a.align_center)];
 
@@ -2058,7 +2056,7 @@ fn test_the_text_stream_puts_every_halo_stamp_before_the_glyph_it_rings() {
         color: [255, 0, 0, 255],
         px: 3.0,
     };
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     for (unique_id, ring) in [(1usize, true), (2usize, false)] {
         let mut area = canvas_fill_fixture_area(&format!("h{unique_id}"), 40.0 * unique_id as f32);
         area.outline = ring.then_some(outline);
@@ -2203,7 +2201,7 @@ fn test_walker_records_the_stamp_offset_of_every_emitted_buffer() {
 /// plain glyph moved too" are both visible. Walk order: the `Void`
 /// root, the outlined leaf (`unique_id` 7), the plain leaf (8).
 fn patch_fixture_scene() -> (Scene, SceneTreeId) {
-    let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
+    let mut tree: GfxTree = GfxTree::new_non_indexed();
     let outlined = overlay_cache_fixture_area();
     let mut plain = GlyphArea::new_with_str("plain", 16.0, 18.0, Vec2::new(90.0, 5.0), Vec2::new(60.0, 20.0));
     plain.regions = ColorFontRegions::single_span(5, Some([0.4, 0.5, 0.6, 1.0]), None);
@@ -3722,7 +3720,7 @@ fn test_every_selection_highlight_form_carries_one_rgb_triple() {
     assert_eq!(
         [doc[0], doc[1], doc[2]],
         hex_rgb,
-        "document::HIGHLIGHT_COLOR quantises to a different cyan than the model emits"
+        "document::HIGHLIGHT_COLOR quantizes to a different cyan than the model emits"
     );
     assert_eq!(
         doc[3],

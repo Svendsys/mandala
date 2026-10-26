@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Unit tests for the text-edit cursor / grapheme / caret helpers
-//! defined in the parent module, plus `Mutation::AreaDelta`
+//! defined in the parent module, plus `GfxMutation::AreaDelta`
 //! round-trips that pin the editor-to-baumhard contract.
 
 use super::*;
@@ -153,8 +153,8 @@ fn test_insert_caret_empty() {
 }
 
 // -----------------------------------------------------------------
-// Baumhard Mutation round-trip: constructing and applying a
-// `Mutation::AreaDelta` with `GlyphAreaField::Text + Assign`
+// Baumhard GfxMutation round-trip: constructing and applying a
+// `GfxMutation::AreaDelta` with `GlyphAreaField::Text + Assign`
 // mutates the target GlyphArea's text in place. This verifies we
 // really are flowing text edits through Baumhard's existing
 // vocabulary instead of patching around it.
@@ -260,7 +260,7 @@ fn test_text_edit_preserves_multi_run_regions_on_insertion() {
 }
 
 /// Backspace inside a multi-run node shrinks the containing run
-/// without bleeding the neighbour run's color in. Exercises the
+/// without bleeding the neighbor run's color in. Exercises the
 /// new `shrink_regions_after` primitive through the text-edit
 /// path's delete handler contract.
 #[test]
@@ -693,7 +693,7 @@ fn test_apply_text_edit_cursor_home_end() {
 // `insert_caret` and `insert_at_cursor` operate on grapheme-cluster
 // indices. Pre-Tier-D, the codepoint vs grapheme cluster
 // distinction was tested at the model layer only; the keystroke
-// hot path that produces the `Mutation::AreaDelta` payload was
+// hot path that produces the `GfxMutation::AreaDelta` payload was
 // untested. A regression here would silently drop the caret or
 // truncate emoji on every keystroke into a multi-section node.
 

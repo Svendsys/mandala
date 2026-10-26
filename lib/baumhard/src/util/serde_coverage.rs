@@ -214,9 +214,22 @@ pub struct TypeInfo {
     /// decision [`Self::fields`] carries for a field's: a file may
     /// write it, so a route may cross it.
     pub variants: Vec<String>,
-    /// Every type name mentioned by a deserializable field, in
-    /// source order and de-duplicated by the walk rather than here.
-    pub referenced: Vec<String>,
+    /// The item's type parameters, by name, in declaration order —
+    /// `["E", "M"]` for `MutatorNode<E, M>`. A reference that writes
+    /// arguments for them (`MutatorNode<GfxElement, GfxMutation>`)
+    /// **binds** them for the walk below that reference: a parameter
+    /// used as data is walked as its argument, and a projection
+    /// through one (`E::Field`) as the associated type the argument's
+    /// `impl` declares. The arguments themselves are not walked at the
+    /// reference — an argument the item only projects through is not
+    /// data the file holds.
+    pub generics: Vec<String>,
+    /// The declared type of every deserializable field — every
+    /// variant's, for an enum — in source order, or the right-hand
+    /// side of a `type` alias. Kept as types rather than names because
+    /// what a name inside one means depends on the bindings the walk
+    /// reached the item with.
+    pub referenced: Vec<DeclaredType>,
     /// Every place a deserializer can put on-disk data into this
     /// type, with the JSON member it is read under and the type it
     /// reads into.
@@ -383,6 +396,35 @@ impl TypeInfo {
 pub struct TypeGraph {
     items: BTreeMap<String, TypeInfo>,
     duplicates: BTreeSet<String>,
+    /// Every associated type an `impl` block declares, keyed by the
+    /// implementing type's name and the associated type's name —
+    /// `("GfxElement", "Field") → GfxElementField`. What a projection
+    /// through a bound parameter (`E::Field`) resolves to. More than
+    /// one entry under a key is kept, so a disagreement is visible
+    /// rather than decided by declaration order.
+    associated: BTreeMap<(String, String), Vec<DeclaredType>>,
+}
+
+/// What a generic item's type parameters stand for at one place the
+/// walk reached it: parameter name → the argument written there, with
+/// any parameters of the *enclosing* item already substituted.
+type Bindings = BTreeMap<String, Type>;
+
+/// One instantiation of an indexed item the walk reached: the item,
+/// and what its type parameters were bound to on the way in. A
+/// non-generic item is reached with empty bindings, once.
+struct Reached<'g> {
+    info: &'g TypeInfo,
+    bindings: Bindings,
+}
+
+/// One name a type mentions in a position that holds data, together
+/// with the type arguments written on it there. Module qualifiers
+/// come along with no arguments, as they always have — a name only
+/// matters when the index holds a type by that name.
+struct Mention {
+    name: String,
+    arguments: Vec<Type>,
 }
 
 impl TypeGraph {
@@ -485,7 +527,7 @@ impl TypeGraph {
     ///
     /// Cost: one BFS over the reached types; no I/O.
     pub fn omit_predicates_from(&self, root: &str) -> BTreeSet<String> {
-        self.walk(root, FollowSerializeProxy::Yes, &[])
+        distinct_items(self.walk(root, FollowSerializeProxy::Yes, &[]))
             .iter()
             .flat_map(|info| info.omit_predicates.iter().cloned())
             .collect()
@@ -521,8 +563,11 @@ impl TypeGraph {
         let mut out = BTreeSet::new();
         for (field, element) in self.sequence_fields_from(root) {
             let mut mentioned = Vec::new();
-            collect_type_names(element, &mut mentioned);
-            if !mentioned.iter().any(|name| self.carries_named_keys(name)) {
+            self.mentions(&element, &mut mentioned);
+            if !mentioned
+                .iter()
+                .any(|mention| self.carries_named_keys(&mention.name))
+            {
                 continue;
             }
             if let Some(member) = &field.member {
@@ -599,12 +644,16 @@ impl TypeGraph {
     }
 
     /// Every field reachable from `root` whose type is a growable
-    /// array, paired with the element type a route crosses into.
-    fn sequence_fields_from(&self, root: &str) -> Vec<(&SerdeField, &Type)> {
+    /// array, paired with the element type a route crosses into —
+    /// with the parameters of the item that declares the field
+    /// substituted, so `Vec<M>` inside `MutationListSrc<M>` reached as
+    /// `MutationListSrc<GfxMutation>` is an array of `GfxMutation`.
+    fn sequence_fields_from(&self, root: &str) -> Vec<(&SerdeField, Type)> {
         let mut out = Vec::new();
-        for info in self.reachable_from(root) {
-            for field in &info.fields {
-                if let Some(element) = self.sequence_element(&field.ty.0) {
+        for reached in self.walk(root, FollowSerializeProxy::No, &[]) {
+            for field in &reached.info.fields {
+                let declared = self.substitute(&field.ty.0, &reached.bindings);
+                if let Some(element) = self.sequence_element(&declared) {
                     out.push((field, element));
                 }
             }
@@ -630,7 +679,7 @@ impl TypeGraph {
     /// `tests::test_every_walk_terminator_is_an_expected_one` makes a
     /// reader vet it. The independent check against the derived
     /// `Deserialize` impls is the second net under the same case.
-    fn sequence_element<'g>(&'g self, ty: &'g Type) -> Option<&'g Type> {
+    fn sequence_element(&self, ty: &Type) -> Option<Type> {
         let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut current = ty;
         loop {
@@ -646,13 +695,13 @@ impl TypeGraph {
                 // length the file decides. `[T; N]` is `Type::Array`
                 // and deliberately keeps falling through — its arity
                 // is the format's, not the document's.
-                Type::Slice(slice) => return Some(&slice.elem),
+                Type::Slice(slice) => return Some((*slice.elem).clone()),
                 Type::Path(path) => {
                     let segment = path.path.segments.last()?;
                     let name = segment.ident.to_string();
                     let argument = first_type_argument(&segment.arguments);
                     if SEQUENCE_CONTAINERS.contains(&name.as_str()) {
-                        return Some(argument.unwrap_or(current));
+                        return Some(argument.unwrap_or(current).clone());
                     }
                     if TRANSPARENT_WRAPPERS.contains(&name.as_str()) {
                         current = argument?;
@@ -711,15 +760,27 @@ impl TypeGraph {
     /// against [`EXPECTED_TERMINATORS`]. A newly unresolved name goes
     /// red instead of silently shrinking the covered set.
     ///
+    /// Names are read with the reached item's parameters substituted,
+    /// so a parameter bound at the reference is never a terminator;
+    /// one that was left unbound, or a projection no `impl` resolves,
+    /// is — and goes red the same way.
+    ///
     /// Cost: same walk as `reachable_from` plus one set insert per
     /// referenced name; no I/O.
     pub fn unresolved_from(&self, root: &str) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
-        for info in self.reachable_from(root) {
-            let mentioned = info.referenced.iter().chain(info.deserialize_proxy.as_ref());
-            for name in mentioned {
+        for reached in self.walk(root, FollowSerializeProxy::No, &[]) {
+            let mut mentioned = Vec::new();
+            for declared in &reached.info.referenced {
+                self.mentions(&self.substitute(&declared.0, &reached.bindings), &mut mentioned);
+            }
+            let names = mentioned
+                .into_iter()
+                .map(|mention| mention.name)
+                .chain(reached.info.deserialize_proxy.iter().cloned());
+            for name in names {
                 if !self.items.contains_key(name.as_str()) {
-                    out.insert(name.clone());
+                    out.insert(name);
                 }
             }
         }
@@ -727,16 +788,18 @@ impl TypeGraph {
     }
 
     /// Every indexed type reachable from `root` by following
-    /// deserializable fields, including `root` itself.
+    /// deserializable fields, including `root` itself — each once,
+    /// however many instantiations of it the walk met.
     ///
     /// Names that are not indexed (`String`, `f64`,
-    /// `serde_json::Value`, generic parameters) terminate the walk —
-    /// they carry no fields of ours. Aliases forward to the types
-    /// their right-hand side mentions.
+    /// `serde_json::Value`) terminate the walk — they carry no fields
+    /// of ours. Aliases forward to the types their right-hand side
+    /// mentions, and a generic item's parameters are followed as what
+    /// the reference bound them to (see [`TypeInfo::generics`]).
     ///
-    /// Cost: O(reached types × their field count); no I/O.
+    /// Cost: O(reached instantiations × their field count); no I/O.
     pub fn reachable_from(&self, root: &str) -> Vec<&TypeInfo> {
-        self.walk(root, FollowSerializeProxy::No, &[])
+        distinct_items(self.walk(root, FollowSerializeProxy::No, &[]))
     }
 
     /// Every indexed type reachable from `root` **without passing
@@ -754,7 +817,7 @@ impl TypeGraph {
     ///
     /// Cost: same walk as `reachable_from`; no I/O.
     pub fn reachable_from_excluding(&self, root: &str, blocked: &[&str]) -> Vec<&TypeInfo> {
-        self.walk(root, FollowSerializeProxy::No, blocked)
+        distinct_items(self.walk(root, FollowSerializeProxy::No, blocked))
     }
 
     /// The BFS behind [`reachable_from`],
@@ -764,41 +827,205 @@ impl TypeGraph {
     /// `#[serde(into)]` proxies only when the caller is asking a
     /// question about the write path. A name in `blocked` is never
     /// entered, so nothing reachable only through it is reported.
-    fn walk(&self, root: &str, serialize: FollowSerializeProxy, blocked: &[&str]) -> Vec<&TypeInfo> {
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
-        let mut queue: VecDeque<&str> = VecDeque::new();
-        let mut out: Vec<&TypeInfo> = Vec::new();
+    ///
+    /// The unit of the walk is an *instantiation*: an item together
+    /// with what its parameters were bound to on the way in, so
+    /// `Delta<GlyphAreaField>` and `Delta<GlyphModelField>` are both
+    /// walked, and `MutatorNode<GfxElement, GfxMutation>` is walked as
+    /// what those two arguments make its fields mean. An item reached
+    /// again with the same bindings is not re-entered, which is what
+    /// ends the walk on a recursive type.
+    fn walk(&self, root: &str, serialize: FollowSerializeProxy, blocked: &[&str]) -> Vec<Reached<'_>> {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut queue: VecDeque<(&str, Bindings)> = VecDeque::new();
+        let mut out: Vec<Reached<'_>> = Vec::new();
 
         if blocked.contains(&root) {
             return out;
         }
-        queue.push_back(root);
-        seen.insert(root);
-        while let Some(name) = queue.pop_front() {
+        queue.push_back((root, Bindings::new()));
+        seen.insert(instantiation_key(root, &Bindings::new()));
+        while let Some((name, bindings)) = queue.pop_front() {
             let Some(info) = self.items.get(name) else { continue };
-            out.push(info);
             let write_proxy = match serialize {
                 FollowSerializeProxy::Yes => info.serialize_proxy.as_deref(),
                 FollowSerializeProxy::No => None,
             };
-            let successors = info
-                .referenced
-                .iter()
-                .map(String::as_str)
-                .chain(info.deserialize_proxy.as_deref())
-                .chain(write_proxy);
-            for next in successors {
-                if blocked.contains(&next) {
+            let mut successors: Vec<(String, Bindings)> = Vec::new();
+            for declared in &info.referenced {
+                let mut mentioned = Vec::new();
+                self.mentions(&self.substitute(&declared.0, &bindings), &mut mentioned);
+                for mention in mentioned {
+                    let Some(next) = self.items.get(&mention.name) else { continue };
+                    let bound = next.generics.iter().cloned().zip(mention.arguments).collect();
+                    successors.push((mention.name, bound));
+                }
+            }
+            for proxy in info.deserialize_proxy.as_deref().into_iter().chain(write_proxy) {
+                successors.push((proxy.to_string(), Bindings::new()));
+            }
+            for (next, bound) in successors {
+                if blocked.contains(&next.as_str()) {
                     continue;
                 }
-                if let Some(entry) = self.items.get_key_value(next) {
-                    if seen.insert(entry.0.as_str()) {
-                        queue.push_back(entry.0.as_str());
+                if let Some((key, _)) = self.items.get_key_value(&next) {
+                    if seen.insert(instantiation_key(key, &bound)) {
+                        queue.push_back((key.as_str(), bound));
                     }
                 }
             }
+            out.push(Reached { info, bindings });
         }
         out
+    }
+
+    /// `ty` with every parameter in `bindings` replaced by what it is
+    /// bound to: a bare parameter (`M`) by its argument, a projection
+    /// through one (`E::Field`, `<E as Inspect>::Field` read as its
+    /// last segment) by the associated type the argument's `impl`
+    /// declares, recursively through generic arguments, references,
+    /// slices, arrays and tuples. A projection no `impl` resolves is
+    /// left as written, so its names reach
+    /// [`unresolved_from`](Self::unresolved_from) and are vetted
+    /// there.
+    fn substitute(&self, ty: &Type, bindings: &Bindings) -> Type {
+        if bindings.is_empty() {
+            return ty.clone();
+        }
+        let mut out = ty.clone();
+        self.substitute_in_place(&mut out, bindings);
+        out
+    }
+
+    fn substitute_in_place(&self, ty: &mut Type, bindings: &Bindings) {
+        match ty {
+            Type::Path(path) => {
+                if path.qself.is_none() {
+                    let segments = &path.path.segments;
+                    let first = segments.first().map(|segment| segment.ident.to_string());
+                    if let Some(bound) = first.as_deref().and_then(|name| bindings.get(name)) {
+                        match segments.len() {
+                            1 => {
+                                *ty = bound.clone();
+                                return;
+                            }
+                            2 => {
+                                let projected = segments[1].ident.to_string();
+                                if let Some(resolved) = self.project(bound, &projected) {
+                                    *ty = resolved;
+                                    return;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(qself) = &mut path.qself {
+                    self.substitute_in_place(&mut qself.ty, bindings);
+                }
+                for segment in path.path.segments.iter_mut() {
+                    if let PathArguments::AngleBracketed(arguments) = &mut segment.arguments {
+                        for argument in arguments.args.iter_mut() {
+                            if let GenericArgument::Type(inner) = argument {
+                                self.substitute_in_place(inner, bindings);
+                            }
+                        }
+                    }
+                }
+            }
+            Type::Reference(inner) => self.substitute_in_place(&mut inner.elem, bindings),
+            Type::Slice(inner) => self.substitute_in_place(&mut inner.elem, bindings),
+            Type::Array(inner) => self.substitute_in_place(&mut inner.elem, bindings),
+            Type::Paren(inner) => self.substitute_in_place(&mut inner.elem, bindings),
+            Type::Group(inner) => self.substitute_in_place(&mut inner.elem, bindings),
+            Type::Tuple(tuple) => {
+                for inner in tuple.elems.iter_mut() {
+                    self.substitute_in_place(inner, bindings);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The associated type `name` that `owner`'s `impl` declares, when
+    /// exactly one spelling of it is declared. `None` for an owner
+    /// that is not a plain path, an associated type no `impl`
+    /// declares, or one two `impl`s declare differently.
+    fn project(&self, owner: &Type, name: &str) -> Option<Type> {
+        let Type::Path(owner) = owner else {
+            return None;
+        };
+        let owner = owner.path.segments.last()?.ident.to_string();
+        let candidates = self.associated.get(&(owner, name.to_string()))?;
+        let first = candidates.first()?;
+        let agreed = candidates
+            .iter()
+            .all(|other| render(&other.0) == render(&first.0));
+        agreed.then(|| first.0.clone())
+    }
+
+    /// Every name `ty` mentions in a position that holds data, with
+    /// the arguments written on it — [`collect_type_names`]'s answer,
+    /// minus the arguments of an indexed generic item: those are
+    /// bindings for the item's parameters, followed through the item
+    /// when it uses them, and not data at the place they are written.
+    fn mentions(&self, ty: &Type, out: &mut Vec<Mention>) {
+        match ty {
+            Type::Path(path) => {
+                if let Some(qself) = &path.qself {
+                    self.mentions(&qself.ty, out);
+                }
+                for segment in &path.path.segments {
+                    let name = segment.ident.to_string();
+                    let binds = self
+                        .items
+                        .get(&name)
+                        .is_some_and(|info| !info.generics.is_empty());
+                    let mut arguments = Vec::new();
+                    match &segment.arguments {
+                        PathArguments::AngleBracketed(args) => {
+                            for arg in &args.args {
+                                if let GenericArgument::Type(inner) = arg {
+                                    if binds {
+                                        arguments.push(inner.clone());
+                                    } else {
+                                        self.mentions(inner, out);
+                                    }
+                                }
+                            }
+                        }
+                        PathArguments::Parenthesized(args) => {
+                            for inner in &args.inputs {
+                                self.mentions(&inner.ty, out);
+                            }
+                        }
+                        PathArguments::None => {}
+                    }
+                    out.push(Mention { name, arguments });
+                }
+            }
+            Type::Reference(inner) => self.mentions(&inner.elem, out),
+            Type::Slice(inner) => self.mentions(&inner.elem, out),
+            Type::Array(inner) => self.mentions(&inner.elem, out),
+            Type::Paren(inner) => self.mentions(&inner.elem, out),
+            Type::Group(inner) => self.mentions(&inner.elem, out),
+            Type::Ptr(inner) => self.mentions(&inner.elem, out),
+            Type::Tuple(tuple) => {
+                for inner in &tuple.elems {
+                    self.mentions(inner, out);
+                }
+            }
+            // The unreadable forms keep their sentinels — see
+            // [`collect_type_names`], whose arm this mirrors.
+            other => {
+                let mut names = Vec::new();
+                collect_type_names(other, &mut names);
+                out.extend(names.into_iter().map(|name| Mention {
+                    name,
+                    arguments: Vec::new(),
+                }));
+            }
+        }
     }
 
     fn index_items(&mut self, items: &[Item], file: &Path) {
@@ -823,6 +1050,7 @@ impl TypeGraph {
                         flattened_fields: flattened_fields(&item.fields),
                         has_named_fields: matches!(item.fields, Fields::Named(_)),
                         variants: Vec::new(),
+                        generics: type_parameters(&item.generics),
                         referenced: referenced_types(&item.fields),
                         omit_predicates: omit_predicates(&item.fields),
                         unread_serde: unread_serde_attrs_with_fields(&item.attrs, &item.fields),
@@ -891,6 +1119,7 @@ impl TypeGraph {
                         flattened_fields: flattened,
                         has_named_fields,
                         variants,
+                        generics: type_parameters(&item.generics),
                         referenced,
                         omit_predicates: predicates,
                         unread_serde: unread,
@@ -898,8 +1127,7 @@ impl TypeGraph {
                     });
                 }
                 Item::Type(item) => {
-                    let mut referenced = Vec::new();
-                    collect_type_names(&item.ty, &mut referenced);
+                    let referenced = vec![DeclaredType((*item.ty).clone())];
                     self.insert(TypeInfo {
                         transparent_target: Some(DeclaredType((*item.ty).clone())),
                         fields: Vec::new(),
@@ -915,11 +1143,34 @@ impl TypeGraph {
                         flattened_fields: Vec::new(),
                         has_named_fields: false,
                         variants: Vec::new(),
+                        generics: type_parameters(&item.generics),
                         referenced,
                         omit_predicates: Vec::new(),
                         unread_serde: unread_serde_attrs(&item.attrs),
                         has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
+                }
+                Item::Impl(item) => {
+                    // An `impl` declares no type of its own; what it
+                    // contributes is the associated types a
+                    // projection through a bound parameter resolves to.
+                    if is_test_gated(&item.attrs) {
+                        continue;
+                    }
+                    let Type::Path(owner) = &*item.self_ty else {
+                        continue;
+                    };
+                    let Some(owner) = owner.path.segments.last() else {
+                        continue;
+                    };
+                    for member in &item.items {
+                        if let syn::ImplItem::Type(associated) = member {
+                            self.associated
+                                .entry((owner.ident.to_string(), associated.ident.to_string()))
+                                .or_default()
+                                .push(DeclaredType(associated.ty.clone()));
+                        }
+                    }
                 }
                 Item::Mod(item) => {
                     if is_test_gated(&item.attrs) {
@@ -1148,18 +1399,24 @@ fn last_path_segment(path: &str) -> String {
     path.rsplit("::").next().unwrap_or(path).trim().to_string()
 }
 
-/// Type names mentioned by fields that serde can populate. A field
+/// The declared types of the fields serde can populate. A field
 /// marked `#[serde(skip)]` / `#[serde(skip_deserializing)]` never
 /// receives on-disk data, so it does not extend the contract.
-fn referenced_types(fields: &Fields) -> Vec<String> {
-    let mut out = Vec::new();
-    for field in fields {
-        if is_skipped(&field.attrs) {
-            continue;
-        }
-        collect_type_names(&field.ty, &mut out);
-    }
-    out
+fn referenced_types(fields: &Fields) -> Vec<DeclaredType> {
+    fields
+        .iter()
+        .filter(|field| !is_skipped(&field.attrs))
+        .map(|field| DeclaredType(field.ty.clone()))
+        .collect()
+}
+
+/// The names of an item's type parameters, in declaration order.
+/// Lifetimes and const parameters bind nothing a field type names.
+fn type_parameters(generics: &syn::Generics) -> Vec<String> {
+    generics
+        .type_params()
+        .map(|param| param.ident.to_string())
+        .collect()
 }
 
 /// Container spellings serde writes as a JSON array whose **length
@@ -1707,6 +1964,111 @@ fn collect_type_names(ty: &Type, out: &mut Vec<String>) {
     }
 }
 
+/// The items a walk reached, each once and in the order first met —
+/// the per-item view of a per-instantiation walk, for the questions
+/// that are about an item's own attributes and members rather than
+/// about what its parameters were bound to.
+fn distinct_items(reached: Vec<Reached<'_>>) -> Vec<&TypeInfo> {
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    reached
+        .into_iter()
+        .filter(|entry| seen.insert(entry.info.name.as_str()))
+        .map(|entry| entry.info)
+        .collect()
+}
+
+/// The identity of one instantiation: the item's name and what each
+/// parameter is bound to, in parameter-name order.
+fn instantiation_key(name: &str, bindings: &Bindings) -> String {
+    let mut key = name.to_string();
+    for (parameter, bound) in bindings {
+        key.push_str(&format!(" {parameter}={}", render(bound)));
+    }
+    key
+}
+
+/// `ty` as canonical text — enough to tell two types apart and to
+/// tell two spellings of one type alike. Not source: a lifetime or a
+/// const argument renders as `_`, and an array's length is not kept.
+fn render(ty: &Type) -> String {
+    let mut out = String::new();
+    render_into(ty, &mut out);
+    out
+}
+
+fn render_into(ty: &Type, out: &mut String) {
+    match ty {
+        Type::Path(path) => {
+            if let Some(qself) = &path.qself {
+                out.push('<');
+                render_into(&qself.ty, out);
+                out.push('>');
+            }
+            for (index, segment) in path.path.segments.iter().enumerate() {
+                if index > 0 || path.path.leading_colon.is_some() {
+                    out.push_str("::");
+                }
+                out.push_str(&segment.ident.to_string());
+                match &segment.arguments {
+                    PathArguments::AngleBracketed(arguments) => {
+                        out.push('<');
+                        for argument in &arguments.args {
+                            match argument {
+                                GenericArgument::Type(inner) => render_into(inner, out),
+                                _ => out.push('_'),
+                            }
+                            out.push(',');
+                        }
+                        out.push('>');
+                    }
+                    PathArguments::Parenthesized(arguments) => {
+                        out.push('(');
+                        for inner in &arguments.inputs {
+                            render_into(&inner.ty, out);
+                            out.push(',');
+                        }
+                        out.push(')');
+                    }
+                    PathArguments::None => {}
+                }
+            }
+        }
+        Type::Reference(inner) => {
+            out.push('&');
+            render_into(&inner.elem, out);
+        }
+        Type::Slice(inner) => {
+            out.push('[');
+            render_into(&inner.elem, out);
+            out.push(']');
+        }
+        Type::Array(inner) => {
+            out.push('[');
+            render_into(&inner.elem, out);
+            out.push_str(";_]");
+        }
+        Type::Paren(inner) => render_into(&inner.elem, out),
+        Type::Group(inner) => render_into(&inner.elem, out),
+        Type::Ptr(inner) => {
+            out.push('*');
+            render_into(&inner.elem, out);
+        }
+        Type::Tuple(tuple) => {
+            out.push('(');
+            for inner in &tuple.elems {
+                render_into(inner, out);
+                out.push(',');
+            }
+            out.push(')');
+        }
+        other => {
+            let mut names = Vec::new();
+            collect_type_names(other, &mut names);
+            out.push_str(&names.join(" "));
+        }
+    }
+}
+
 /// Absolute path to baumhard's own `src/` directory, resolved from
 /// the crate's `CARGO_MANIFEST_DIR` so the walk finds the sources no
 /// matter which crate's test invoked it.
@@ -1730,10 +2092,12 @@ mod tests {
     ///    every segment of a path, so
     ///    `crate::mindmap::animation::AnimationTiming` contributes
     ///    three names that are not types alongside the one that is.
-    /// 3. **Foreign types, traits, and generic parameters** — `Vec2`
-    ///    (glam), `OrderedFloat` (ordered-float), the `Discriminated`
-    ///    trait named by a `<F as Discriminated>::Discriminant`
-    ///    qself, and `F` itself. Their shape is not ours to annotate;
+    /// 3. **Foreign types and traits** — `Vec2` (glam), `OrderedFloat`
+    ///    (ordered-float), and the `Discriminated` trait named by a
+    ///    `<F as Discriminated>::Discriminant` qself. A generic
+    ///    parameter is not on the list: the walk follows it as what the
+    ///    reference bound it to (`TypeInfo::generics`), so one that
+    ///    reaches this list was left unbound. Their shape is not ours to annotate;
     ///    if one ever grows named JSON keys a map can write, that is
     ///    a review decision, not a silent one.
     /// 4. **Types this walk genuinely cannot see** — `AppFont`, which
@@ -1767,9 +2131,8 @@ mod tests {
         "crate",
         "mindmap",
         "serde_json",
-        // 3. foreign types, traits, and generic parameters
+        // 3. foreign types and traits
         "Discriminated",
-        "F",
         "OrderedFloat",
         "Vec2",
         // 4. real types this walk cannot see
@@ -2399,6 +2762,67 @@ mod tests {
             graph.key_bearing_sequences_from("Root").is_empty(),
             "and it must not be published under a name it does not have: {:?}",
             graph.key_bearing_sequences_from("Root")
+        );
+    }
+
+    /// A generic item's arguments are **bound**, not walked.
+    /// `Holder` writes `Wrapper<Marker, Payload>`; `Wrapper` holds its
+    /// `M` as data and reaches its `E` only through a projection,
+    /// `E::Field`, which `Marker`'s `impl` resolves to `Leaf`. So the
+    /// walk reaches `Payload` and `Leaf` — and not `Marker`, nor the
+    /// `Secret` only `Marker` holds, which no file can contain under
+    /// `Holder`. Both arrays are arrays of what their parameters were
+    /// bound to, and no parameter is left over as a terminator.
+    ///
+    /// The control drops the `impl`: the projection then resolves to
+    /// nothing, and its names are reported rather than walked as
+    /// whatever the argument happens to be.
+    #[test]
+    fn test_a_generic_items_parameters_are_walked_as_their_bindings() {
+        const SOURCE: &str = "#[derive(Deserialize)] pub struct Holder { pub wrapped: Wrapper<Marker, Payload> }\n\
+             #[derive(Deserialize)] pub struct Wrapper<E: Probe, M> { pub list: Vec<M>, pub probe: Vec<E::Field> }\n\
+             pub struct Marker { pub hidden: Secret }\n\
+             pub trait Probe { type Field; }\n\
+             #[derive(Deserialize)] pub struct Payload { pub x: f64 }\n\
+             #[derive(Deserialize)] pub struct Leaf { pub y: f64 }\n\
+             pub struct Secret { pub z: f64 }\n";
+        const IMPL: &str = "impl Probe for Marker { type Field = Leaf; }\n";
+
+        let graph = graph_of(&format!("{SOURCE}{IMPL}"));
+        let reached: Vec<&str> = graph
+            .reachable_from("Holder")
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect();
+        for data in ["Holder", "Wrapper", "Payload", "Leaf"] {
+            assert!(
+                reached.contains(&data),
+                "{data} is data under Holder: {reached:?}"
+            );
+        }
+        for not_data in ["Marker", "Secret"] {
+            assert!(
+                !reached.contains(&not_data),
+                "{not_data} is only projected through, not held: {reached:?}"
+            );
+        }
+        let unresolved = graph.unresolved_from("Holder");
+        for parameter in ["E", "M", "Field"] {
+            assert!(
+                !unresolved.contains(parameter),
+                "a bound parameter is not a terminator: {unresolved:?}"
+            );
+        }
+        let arrays = graph.key_bearing_sequences_from("Holder");
+        assert!(
+            arrays.contains("list") && arrays.contains("probe"),
+            "both arrays hold what their parameter was bound to: {arrays:?}"
+        );
+
+        let unimplemented = graph_of(SOURCE).unresolved_from("Holder");
+        assert!(
+            unimplemented.contains("E") && unimplemented.contains("Field"),
+            "the control: an unresolvable projection is reported: {unimplemented:?}"
         );
     }
 

@@ -64,19 +64,21 @@ nodes of the instruction node should be applied to the *children* nodes of the t
 
 In this simple example, we have an instruction node with a RepeatWhile instruction. The RepeatWhile has a predicate, which
 in this case is "channel equals 0", the most basic kind of predicate. The channels of the instruction-node's child(ren)
-are ignored, and the predicate takes full precedence. As per now there are only two types of instructions; 
-RepeatWhile and RotateWhile, but more may be added of course. First and foremost, instructions allows to target several
+are ignored, and the predicate takes full precedence. As per now there are three types of instructions;
+RepeatWhile, SpatialDescend and MapChildren, but more may be added of course (a RotateWhile is V2 sub-issue #265). First and foremost, instructions allows to target several
 target nodes using predicates. As far as tree-mutation goes, we have now covered the conceptual basics. 
 
 ### Types of Mutations
-GfxMutator is the basic mutator node, and can be of different types:
+`Mutator` is the basic mutator node — generic over the element type `E` and the mutation payload `M`, in
+`lib/baumhard/src/engine/mutator.rs` — and can be of different types. The glyph trees use
+`GfxMutator = Mutator<GfxElement, GfxMutation>`:
 
 ```Rust
-pub enum GfxMutator {
-    Single { mutation: Mutation, channel: usize },
+pub enum Mutator<E: TreeElement, M: Mutation<E>> {
     Void { channel: usize },
-    Instruction { instruction: Instruction, channel: usize, mutation: Mutation },
-    Macro { channel: usize, mutations: Vec<Mutation> },
+    Single { channel: usize, mutation: M },
+    Macro { channel: usize, mutations: Vec<M> },
+    Instruction { channel: usize, instruction: Instruction<E>, mutation: Option<M> },
 }
 ```
 The payload-free `MutatorType` tag used for cheap variant checks is
@@ -84,17 +86,17 @@ The payload-free `MutatorType` tag used for cheap variant checks is
 never list a kind the mutator does not have. Reach it with
 `mutator.variant()` (the `Discriminated` trait) or `mutator.is(MutatorType::Macro)`.
 A 'Single' simply means that the mutator contains a single mutation, while a macro is a list of mutations. 
-The rest of the types have been covered above. Mutations can also be different types, as per right now we have
+The rest of the types have been covered above. A mutator with nothing to apply says so structurally — a Void, or
+an Instruction whose `mutation` is `None`. The glyph mutations can also be different types, as per right now we have
 these types:
 
 ```Rust
-pub enum Mutation {
+pub enum GfxMutation {
     AreaDelta(Box<DeltaGlyphArea>),
     AreaCommand(Box<GlyphAreaCommand>),
     ModelDelta(Box<DeltaGlyphModel>),
     ModelCommand(Box<GlyphModelCommand>),
     Event(GlyphTreeEventInstance),
-    None,
 }
 ```
 Let's focus on the four first types for a bit. We have two kinds of mutations for each target type; one "delta" mutation

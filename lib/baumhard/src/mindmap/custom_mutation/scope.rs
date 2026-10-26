@@ -1,36 +1,29 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Constructor helpers that produce a
-//! [`MutatorNode`] equivalent to
-//! each legacy `TargetScope` variant. A
-//! [`CustomMutation`]
-//! whose payload used to be a flat `Vec<Mutation>` + `target_scope`
-//! now carries a `mutator: MutatorNode` — these helpers bake a flat
-//! `Vec<Mutation>` into the AST shape that matches the scope the
-//! author intended.
+//! Constructor helpers that produce the [`MutatorNode`] for each
+//! `TargetScope` variant: each bakes a flat `Vec<GfxMutation>` into the
+//! AST shape that applies it where the scope says. A
+//! [`CustomMutation`] carries its payload as a `mutator: MutatorNode`;
+//! the backward-compat deserializer, tests and human authors reach for
+//! these named helpers rather than open-coding that shape each time.
 //!
-//! The shapes mirror the ones the
-//! `build_mutator_tree_for_scope` (gone) function emitted. Keeping the
-//! constructors as named helpers lets the backward-compat deserializer,
-//! tests, and human authors reach for them without open-coding the
-//! AST shape each time.
-//!
-//! Not every legacy scope is expressible as a single MutatorTree —
+//! Not every scope is expressible as a single MutatorTree —
 //! `Parent` and `Siblings` require explicit iteration over the
 //! application's structural index. The helpers for those produce a
 //! `SelfOnly`-shaped MutatorNode; the application layer is
 //! responsible for iterating the right set of targets and anchoring
 //! the mutator at each of them.
 
-use crate::gfx_structs::mutator::Mutation;
-use crate::gfx_structs::predicate::Predicate;
-use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+use crate::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+use crate::engine::predicate::Predicate;
+use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::mutator::GfxMutation;
 
 /// Build a MutatorNode that applies `mutations` only to the
 /// anchor node.
 ///
 /// Shape: a single `Macro` node on channel 0 with no children.
-pub fn self_only(mutations: Vec<Mutation>) -> MutatorNode {
+pub fn self_only(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMutation> {
     MutatorNode::Macro {
         channel: 0,
         mutations: MutationListSrc::Literal(mutations),
@@ -43,7 +36,7 @@ pub fn self_only(mutations: Vec<Mutation>) -> MutatorNode {
 ///
 /// Shape: an `Instruction(RepeatWhile(always_true))` root wrapping one
 /// `Macro` child carrying the mutations.
-pub fn descendants(mutations: Vec<Mutation>) -> MutatorNode {
+pub fn descendants(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMutation> {
     MutatorNode::Instruction {
         channel: 0,
         instruction: InstructionSpec::RepeatWhile(Predicate::always_true()),
@@ -62,16 +55,14 @@ pub fn descendants(mutations: Vec<Mutation>) -> MutatorNode {
 /// Shape: a `Macro` root carrying the mutations on channel 0 (applies
 /// to self), with one `Instruction(RepeatWhile(always_true))` child
 /// whose own `Macro` child carries the same mutations (applies to
-/// each descendant via the walker's repeat-while semantics). Mirrors
-/// the topology the `build_mutator_tree_for_scope` (gone)
-/// function emitted.
+/// each descendant via the walker's repeat-while semantics).
 ///
 /// The `mutations` list is cloned once into the root Macro and the
 /// ownership-moved original passes to the nested Macro. The two
 /// copies are independent payloads on the wire (round-tripping
-/// through serde); at apply time they trigger the same `Mutation`
+/// through serde); at apply time they trigger the same `GfxMutation`
 /// on the anchor and on every descendant via separate walker steps.
-pub fn self_and_descendants(mutations: Vec<Mutation>) -> MutatorNode {
+pub fn self_and_descendants(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMutation> {
     MutatorNode::Macro {
         channel: 0,
         // First copy: the root Macro applies this list to the anchor.
@@ -98,7 +89,7 @@ pub fn self_and_descendants(mutations: Vec<Mutation>) -> MutatorNode {
 ///
 /// Same shape as [`self_only`]. Kept as a distinct helper so author
 /// intent is explicit in code.
-pub fn at_anchor(mutations: Vec<Mutation>) -> MutatorNode {
+pub fn at_anchor(mutations: Vec<GfxMutation>) -> MutatorNode<GfxElement, GfxMutation> {
     self_only(mutations)
 }
 
@@ -116,15 +107,13 @@ pub fn at_anchor(mutations: Vec<Mutation>) -> MutatorNode {
 mod tests {
     use super::*;
     use crate::core::primitives::Discriminated;
+    use crate::engine::builder::{build, NoRuntime};
+    use crate::engine::mutator::Instruction;
+    use crate::engine::mutator::MutatorType;
     use crate::gfx_structs::area::GlyphAreaCommand;
-    use crate::gfx_structs::mutator::{Instruction, MutatorType};
-    use crate::mutator_builder::{build, SectionContext};
 
-    struct NoCtx;
-    impl SectionContext for NoCtx {}
-
-    fn nudge(n: f32) -> Mutation {
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(n))
+    fn nudge(n: f32) -> GfxMutation {
+        GfxMutation::area_command(GlyphAreaCommand::NudgeRight(n))
     }
 
     #[test]
@@ -147,7 +136,7 @@ mod tests {
     #[test]
     fn self_only_builds_to_macro_mutator() {
         let node = self_only(vec![nudge(10.0)]);
-        let mt = build(&node, &NoCtx);
+        let mt = build(&node, &NoRuntime).unwrap();
         let root = mt.arena.get(mt.root).unwrap().get();
         assert!(matches!(root.variant(), MutatorType::Macro));
     }
@@ -171,7 +160,7 @@ mod tests {
     #[test]
     fn descendants_builds_to_instruction_with_always_true_predicate() {
         let node = descendants(vec![nudge(1.0)]);
-        let mt = build(&node, &NoCtx);
+        let mt = build(&node, &NoRuntime).unwrap();
         let root = mt.arena.get(mt.root).unwrap().get();
         assert!(matches!(
             root,

@@ -1,188 +1,42 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Predicate language that steers walker traversal — the condition
-//! expressions inside `Instruction::RepeatWhile` and its siblings.
-//! A `Predicate` pairs a `Comparator` with a field selector drawn
-//! from the `GfxElement` / `GlyphArea` / `GlyphModel` field enums,
-//! so a mutator can express things like "repeat on every child
-//! whose text starts empty" without hand-coding a walker. Pure
-//! data + O(1) evaluations; serde-serializable so the mutator DSL
-//! can persist predicates verbatim.
+//! How a [`GfxElement`](crate::gfx_structs::element::GfxElement) answers a predicate: the glyph
+//! instantiation of [`Inspect`](crate::engine::predicate::Inspect). A
+//! [`Predicate<GfxElement>`](crate::engine::predicate::Predicate)
+//! names facets of an element through [`GfxElementField`](crate::gfx_structs::element::GfxElementField) — the
+//! `GlyphArea` / `GlyphModel` field enums, a color-font region, the
+//! channel, the id or a flag — so a mutator can express things like
+//! "repeat on every child whose text starts empty" without hand-coding
+//! a walker. O(1) evaluations, no allocation.
+//!
+//! **Negation flag worked example.** A
+//! `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
+//! matches every element whose `SectionRoot` flag is **set** —
+//! `Equals(false)` is the un-negated `==`. The negation form
+//! `Equals(true)` matches every element *without* the flag.
 
 use crate::core::primitives::{ColorFontRegionField, Flaggable};
+use crate::engine::element::TreeElement;
+use crate::engine::predicate::Comparator::{Equals, Exists, GreaterThan, LessThan};
+use crate::engine::predicate::{Comparator, Inspect};
 use crate::gfx_structs::area::GlyphAreaField;
 use crate::gfx_structs::area::GlyphAreaField::{Bounds, ColorFontRegions, LineHeight, Scale, Text};
 use crate::gfx_structs::element::GfxElementField::{Channel, GlyphArea, GlyphModel, Id, Region};
 use crate::gfx_structs::element::{GfxElement, GfxElementField};
 use crate::gfx_structs::model::GlyphModelField;
 use crate::gfx_structs::model::GlyphModelField::{GlyphLine, GlyphLines, GlyphMatrix, Layer};
-use crate::gfx_structs::predicate::Comparator::{Equals, Exists, GreaterThan, LessThan};
-use crate::gfx_structs::tree::BranchChannel;
-use crate::util::geometry::{
-    almost_equal, almost_equal_vec2, pixel_greater_than, pixel_lesser_than, vec2_area,
-};
+use crate::util::geometry::{almost_equal_vec2, pixel_greater_than, pixel_lesser_than, vec2_area};
 use glam::Vec2;
-use serde::{Deserialize, Serialize};
 
-/// A comparison operator used by [`Predicate`] to test a single field of a
-/// [`GfxElement`] against a reference value.
-///
-/// Each variant wraps a `bool` *negation flag*: when `false` the comparison
-/// is applied as-is; when `true` the result is inverted. This lets a single
-/// enum express both a comparator and its logical complement (e.g. `==` and
-/// `!=`) without doubling the variant count.
-///
-/// Costs: all comparisons are O(1); floating-point equality delegates to
-/// [`crate::util::geometry::almost_equal`] to absorb rounding.
-///
-/// **Negation flag worked example.** A
-/// `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
-/// matches every element whose `SectionRoot` flag is **set** —
-/// `Equals(false)` is the un-negated `==`, so the predicate
-/// passes when `is_set == true`. The negation form
-/// `Equals(true)` reads as `!=`, so it passes when `is_set == false`
-/// (every element *without* the flag). The two interpretations
-/// are easy to flip in your head — keep this example pinned at
-/// the call site if you write a new field arm.
-#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
-pub enum Comparator {
-    /// Equality test. `Equals(false)` means `==`; `Equals(true)` means `!=`.
-    Equals(bool),
-    /// Existence test. `Exists(false)` returns `true` unconditionally (the
-    /// field is present); `Exists(true)` returns `false` (the field must
-    /// *not* exist). Primarily used for optional sub-fields like region
-    /// font/color.
-    Exists(bool),
-    /// Strict greater-than. `GreaterThan(false)` means `a > b`;
-    /// `GreaterThan(true)` means `a <= b` (the negation).
-    GreaterThan(bool),
-    /// Strict less-than. `LessThan(false)` means `a < b`;
-    /// `LessThan(true)` means `a >= b` (the negation).
-    LessThan(bool),
-}
+/// Predicate fields over a glyph element are [`GfxElementField`]s.
+/// Both glyph kinds are covered: `GlyphArea` fields test an area
+/// element, `GlyphModel` fields a model element, and the
+/// element-level fields (channel, id, flag) any element.
+impl Inspect for GfxElement {
+    type Field = GfxElementField;
 
-impl Comparator {
-    /// Construct an equality comparator (`==`). O(1), no allocation.
-    pub fn equals() -> Self {
-        Equals(false)
-    }
-
-    /// Construct a not-equal comparator (`!=`). O(1), no allocation.
-    pub fn not_equals() -> Self {
-        Equals(true)
-    }
-
-    /// Construct an existence comparator — always returns `true`. O(1).
-    pub fn exists() -> Self {
-        Exists(false)
-    }
-
-    /// Construct a non-existence comparator — always returns `false`. O(1).
-    pub fn not_exists() -> Self {
-        Exists(true)
-    }
-
-    /// Construct a strict greater-than comparator (`>`). O(1).
-    pub fn greater() -> Self {
-        GreaterThan(false)
-    }
-
-    /// Construct a less-or-equal comparator (`<=`), the negation of
-    /// greater-than. O(1).
-    pub fn less_or_equal() -> Self {
-        GreaterThan(true)
-    }
-
-    /// Construct a strict less-than comparator (`<`). O(1).
-    pub fn less() -> Self {
-        LessThan(false)
-    }
-
-    /// Construct a greater-or-equal comparator (`>=`), the negation of
-    /// less-than. O(1).
-    pub fn greater_or_equal() -> Self {
-        LessThan(true)
-    }
-
-    /// Compare two `f32` values using this comparator's semantics.
-    ///
-    /// * `a` — the element-side value (left operand).
-    /// * `b` — the reference value from the predicate field (right operand).
-    ///
-    /// Equality uses [`crate::util::geometry::almost_equal`] to absorb
-    /// floating-point rounding. `Exists` ignores both inputs and returns
-    /// the existence flag directly. O(1), no allocation.
-    pub fn compare_f32(&self, a: f32, b: f32) -> bool {
-        match self {
-            Equals(negation) => almost_equal(a, b) != *negation,
-            GreaterThan(negation) => (a > b) != *negation,
-            LessThan(negation) => (a < b) != *negation,
-            Exists(negation) => !negation,
-        }
-    }
-}
-
-/// A condition that can be tested against a [`GfxElement`] to decide
-/// whether a mutation or query should apply to it.
-///
-/// A `Predicate` holds a list of `(GfxElementField, Comparator)` pairs.
-/// [`Predicate::test`] walks the list and returns `true` when the first
-/// matching field comparison succeeds, or `false` when no field matches.
-/// The special `always_match` flag short-circuits the walk and
-/// unconditionally returns `true` — used by `TargetScope::Descendants`
-/// to blanket-apply mutations.
-///
-/// Costs: `test()` is O(n) in `fields.len()`, but typical predicates
-/// carry one or two fields so the cost is effectively O(1). No
-/// allocation on the test path.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Predicate {
-    /// The field/comparator pairs to evaluate against a candidate element.
-    /// Evaluation stops at the first pair whose field matches the element's
-    /// variant — remaining pairs are not consulted.
-    pub fields: Vec<(GfxElementField, Comparator)>,
-    /// When true, this predicate matches any element regardless of fields.
-    /// Used by TargetScope::Descendants to apply mutations to all descendants.
-    #[serde(default)]
-    pub always_match: bool,
-}
-impl Predicate {
-    /// Create an empty predicate that matches nothing (no fields, no
-    /// `always_match`). O(1), one empty `Vec` allocation.
-    pub fn new() -> Self {
-        Predicate {
-            fields: vec![],
-            always_match: false,
-        }
-    }
-
-    /// Create a predicate that matches every element unconditionally.
-    /// O(1), one empty `Vec` allocation.
-    pub fn always_true() -> Self {
-        Predicate {
-            fields: vec![],
-            always_match: true,
-        }
-    }
-
-    /// Test whether `element` satisfies this predicate.
-    ///
-    /// * Returns `true` immediately if `always_match` is set.
-    /// * Otherwise walks `fields` and returns the result of the first
-    ///   field whose variant matches a property of `element`.
-    /// * Returns `false` if no field matches.
-    ///
-    /// Costs: O(n) in `fields.len()`, no allocation.
-    pub fn test(&self, element: &GfxElement) -> bool {
-        if self.always_match {
-            return true;
-        }
-        for (field, comparator) in &self.fields {
-            if let Some(verdict) = evaluate_field(element, field, comparator) {
-                return verdict;
-            }
-        }
-        false
+    fn test_field(&self, field: &GfxElementField, comparator: &Comparator) -> Option<bool> {
+        evaluate_field(self, field, comparator)
     }
 }
 
@@ -193,7 +47,7 @@ impl Predicate {
 /// (e.g. a `GlyphAreaField::Outline` axis that the predicate
 /// language deliberately doesn't expose, or a `Region` axis whose
 /// region isn't present on the element). The outer loop in
-/// [`Predicate::test`] continues to the next field on `None` and
+/// [`Predicate::test`](crate::engine::predicate::Predicate::test) continues to the next field on `None` and
 /// returns `false` if every field falls through.
 fn evaluate_field(element: &GfxElement, field: &GfxElementField, comparator: &Comparator) -> Option<bool> {
     match field {

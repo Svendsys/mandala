@@ -31,7 +31,7 @@ pub use super::region_indexer::RegionIndexer;
 ///   panicked while holding it. The region state may be inconsistent;
 ///   the caller should not retry.
 ///
-/// **Removed:** an earlier `Updating` variant signalled
+/// **Removed:** an earlier `Updating` variant signaled
 /// "lock-would-block" from the per-field `RwLock::try_read` shape. After the
 /// 6-locks → 1-lock collapse, reads use a blocking
 /// `RwLock::read` that always succeeds (or returns `Poisoned`), so
@@ -395,7 +395,7 @@ impl RegionParams {
 /// Copy + 16 bytes so shipping one through a channel will be free —
 /// no heap, no clone.
 ///
-/// [`Tree`]: crate::gfx_structs::tree::Tree
+/// [`Tree`]: crate::gfx_structs::tree::GfxTree
 #[derive(Debug, Clone, Copy)]
 pub struct RegionElementKeyPair {
     region_num: usize,
