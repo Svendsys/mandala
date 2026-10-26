@@ -1114,10 +1114,12 @@ fn test_a_send_the_app_never_drains_is_bounded_and_says_whether_it_may_have_run(
     // a request near the 1 MiB cap, and the write must give up at the
     // deadline. On a socket the timed-out write sent nothing more, the
     // request line is incomplete, and the server could not have run it
-    // — exit 2, not 4. On a pipe the write cannot be canceled: it is
-    // left pending, and an app that starts draining again reads the
-    // rest — so it may run, exit 4, and saying "nothing ran" would be
-    // the lie this distinction exists to prevent.
+    // — exit 2, not 4. On a pipe, today, exit 4: the pipe client hands
+    // the whole remainder of the body to one write it cannot cancel
+    // (`PipeWire::write`), so on a timeout all of it is counted as
+    // possibly delivered. That is a choice of the client, not a property
+    // of pipes; capping the write (#226, after #219 lands in client.rs)
+    // makes the incomplete body provable and this exit 2 on both.
     let server = FakeServer::start(|_, peer, _| {
         peer.send(&hello());
         thread::sleep(Duration::from_secs(5));
