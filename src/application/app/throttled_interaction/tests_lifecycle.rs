@@ -26,8 +26,8 @@
 //! here, because production drops the interaction at release.
 //!
 //! **What a `Drain` step models.** The real `drain()` bodies need a
-//! live `Renderer`, which TEST_CONVENTIONS §T8 keeps out of the
-//! harness. A `Drain` step here performs exactly the part of the
+//! live `Renderer`, which these renderer-free tests do not stand up
+//! (TEST_CONVENTIONS §T8). A `Drain` step here performs exactly the part of the
 //! real drain that the *release* path can observe, and nothing else:
 //!
 //! - `MovingNode` — folds `pending_delta` into the tree, clears

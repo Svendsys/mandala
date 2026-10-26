@@ -990,7 +990,8 @@ fn frame_interval_ring_clear_restores_empty_state() {
 // reuse rule in `scene_shape_cache` — what invalidates a cached
 // element, and what deliberately does not. The pass itself is not
 // exercised: it lives on `Renderer`, and standing up a wgpu device
-// for a test is what TEST_CONVENTIONS §T8 forbids. What is
+// belongs to the GPU-backed tier (TEST_CONVENTIONS §T8), not to this
+// renderer-free file. What is
 // exercised is the whole of the decision that pass makes.
 
 use baumhard::core::primitives::{Applicable, ApplyOperation, ColorFontRegions};

@@ -7,8 +7,10 @@
 # all down. The procedure is the one `.claude/skills/mandala-drive/SKILL.md`
 # teaches; this script is that skill's proof that it still works.
 #
-# Deliberately outside ./test.sh: it needs a live GPU adapter, and
-# TEST_CONVENTIONS §T8/§T10 keep live wgpu out of the suite.
+# Deliberately outside ./test.sh: it needs the built binaries, a socket
+# and a process to drive, and it checks the launch, IPC and capture loop
+# end to end. The suite's GPU-backed tests (TEST_CONVENTIONS §T8) build
+# the app in-process on the same adapter; this script is the other half.
 #
 # Usage:
 #   ./scripts/ipc_smoke.sh                   # testament, release build: a window when

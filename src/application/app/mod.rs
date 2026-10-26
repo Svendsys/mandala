@@ -1125,3 +1125,14 @@ pub(crate) fn project_scene_for_tests(
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests;
+
+// The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
+// native app with no window on whatever adapter the machine has —
+// Mesa's lavapipe on a GPU-less box — skipped with a note where there
+// is none, and never skipped in CI.
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod gpu_harness;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu;

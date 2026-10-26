@@ -3103,8 +3103,8 @@ actually called. The reason is the same one
 [`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
 the drag-release path: both tiers need `&mut Renderer`, so an
 interaction that *decides* a tier could not be tested at all
-while deciding and performing were one statement (TEST_CONVENTIONS
-§T8 keeps live wgpu out of the harness). Handing the decision back
+while deciding and performing were one statement in a renderer-free
+test (TEST_CONVENTIONS §T8). Handing the decision back
 as a value is what lets a test ask which tier a given interaction
 picks.
 

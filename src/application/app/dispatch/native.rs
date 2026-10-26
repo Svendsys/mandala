@@ -66,8 +66,8 @@ fn quote_console_arg(s: &str) -> String {
 /// What [`Action::PanCanvas`] does with the drag state it finds.
 ///
 /// Pure so the arm is pinnable at `DragState` level — the arm itself
-/// takes an `InputHandlerContext`, i.e. a live wgpu device, which
-/// TEST_CONVENTIONS §T8 keeps out of the harness. Same shape, and
+/// takes an `InputHandlerContext`, i.e. a live wgpu device, which only
+/// the suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8). Same shape, and
 /// for the same reason, as `event_mouse_click::route_middle_button`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PanCanvasRoute {
@@ -130,8 +130,8 @@ fn route_pan_canvas(drag_state: &DragState) -> PanCanvasRoute {
 ///
 /// The shell around [`take_rubber_band_for_target_picker`], which is
 /// the whole of it except dropping the overlay rectangle —
-/// `&mut Renderer` is a live wgpu device, which TEST_CONVENTIONS §T8
-/// keeps out of the harness.
+/// `&mut Renderer` is a live wgpu device, which only the suite's
+/// GPU-backed tier stands up (TEST_CONVENTIONS §T8).
 fn end_target_picker_rubber_band(
     drag_state: &mut DragState,
     document: &mut Option<crate::application::document::MindMapDocument>,

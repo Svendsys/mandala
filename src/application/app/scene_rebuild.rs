@@ -30,8 +30,8 @@ use baumhard::mindmap::tree_builder::{FrameOverrides, InteractionModeOverrides};
 /// this is not an intra-doc link — the wasm32 doc leg would not
 /// resolve it), and for the same reason: both
 /// tiers need `&mut Renderer`, so a caller that *decides* a tier
-/// cannot be exercised at the same time as one that *performs* it —
-/// TEST_CONVENTIONS §T8 keeps live wgpu out of the harness. Handing
+/// cannot be exercised at the same time as one that *performs* it in
+/// a renderer-free test (TEST_CONVENTIONS §T8). Handing
 /// the decision back as a value is what lets a test ask "which tier
 /// does a click that only moves the selection ask for?" without
 /// standing up a device.

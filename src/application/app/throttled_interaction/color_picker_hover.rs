@@ -138,8 +138,8 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
         // to pass. Unreachable in practice (`startup_load` installs
         // a document before any drain), which is why it is
         // described here rather than covered by a test — driving
-        // `drain` needs a live `Renderer`, and TEST_CONVENTIONS §T8
-        // / §T10 rule out GPU test infrastructure.
+        // `drain` needs a live `Renderer`, and no GPU-backed test
+        // (TEST_CONVENTIONS §T8) covers the picker yet.
         rebuild_color_picker_overlay(color_picker_state, app_scene, renderer);
         self.pending.clear_flags();
     }

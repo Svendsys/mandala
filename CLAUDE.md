@@ -277,8 +277,16 @@ the parity trajectory (or why none is owed):
   holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
   baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
   §T9): it skips with a note without the target or `node`, and CI sets
-  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. The
-  test count itself is not a gate — a summary-format change makes it
+  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. **And for
+  the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
+  TEST_CONVENTIONS §T8): they build the real app headless on whatever
+  adapter the machine has — Mesa's lavapipe on a GPU-less box,
+  `apt-get install mesa-vulkan-drivers`; an agent container needs the
+  apt-over-HTTPS recipe in the `mandala-drive` skill — and skip with a
+  `SKIPPED:` note without one, so a green run on a box with no adapter
+  has proved nothing about the code behind `&mut Renderer`. CI installs
+  lavapipe and sets `MANDALA_REQUIRE_GPU`, so they cannot skip there.
+  The test count itself is not a gate — a summary-format change makes it
   print "count unavailable" rather than ending the run, which is
   what it used to do, silently, under `set -euo pipefail`. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs

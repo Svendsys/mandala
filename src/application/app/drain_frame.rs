@@ -92,9 +92,9 @@ use crate::application::renderer::Renderer;
 /// snapshot, and the delta would have to reproduce by hand four
 /// overlay decisions the fresh-tree path gets for free (drop the
 /// pre-drag selection's highlight, keep the `NodeEdit` dim, keep
-/// active toggles above the preview, stamp the preview). There is no
-/// GPU test in this repo (TEST_CONVENTIONS §T8) that could catch
-/// getting one of those wrong.
+/// active toggles above the preview, stamp the preview). No test pins
+/// those four decisions on a device yet; the GPU-backed tier
+/// (TEST_CONVENTIONS §T8) is where one would.
 ///
 /// Putting the preview on the document also closed a hole: an
 /// animation tick landing mid-gesture runs its `rebuild_all` *after*
@@ -163,8 +163,8 @@ pub(super) fn drain_rect_select(
 /// finds and whether a covered set is currently installed.
 ///
 /// Pure so the invariant is pinnable at `DragState` level — the
-/// drain takes a `&mut Renderer`, i.e. a live wgpu device, which
-/// TEST_CONVENTIONS §T8 keeps out of the harness. Same shape, and
+/// drain takes a `&mut Renderer`, i.e. a live wgpu device, which only
+/// the suite's GPU-backed tier stands up (TEST_CONVENTIONS §T8). Same shape, and
 /// for the same reason, as `event_mouse_click::route_middle_button`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RectSelectFrame {
@@ -381,7 +381,7 @@ mod tests {
                 .is_some_and(|d| d.rect_select_preview().is_some()),
         );
         // The drain's own body, minus the half that needs a live wgpu
-        // device (TEST_CONVENTIONS §T8): the frame's answer is what
+        // device (the renderer-free tier of TEST_CONVENTIONS §T8): the frame's answer is what
         // decides whether the covered set is handed back, so a wrong
         // answer strands it here exactly as it would on screen.
         if matches!(frame, RectSelectFrame::End { repaint: true }) {

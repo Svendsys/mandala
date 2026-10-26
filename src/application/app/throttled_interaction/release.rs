@@ -10,8 +10,8 @@
 //! per-frame drains left stale samples in it, and rebuild. Only the
 //! first two are gesture-specific; the last two are a decree the
 //! body *names* rather than performs, so the whole commit stays
-//! renderer-free and therefore testable (TEST_CONVENTIONS §T8 keeps
-//! live wgpu out of the harness). [`ReleaseRefresh::execute`] is the
+//! renderer-free and therefore pinnable without a device (the
+//! renderer-free tier of TEST_CONVENTIONS §T8). [`ReleaseRefresh::execute`] is the
 //! shell that runs the decree.
 
 #![cfg(not(target_arch = "wasm32"))]
@@ -82,8 +82,8 @@ pub(in crate::application::app) enum ThrottledRelease {
 /// Pure, and separated from the two dispatchers for exactly the
 /// reason PR #91 in this epic needed: unit tests on the interactions
 /// cannot see a caller that finalizes the wrong gestures, and both
-/// dispatchers need a live renderer, which TEST_CONVENTIONS §T8
-/// keeps out of the harness.
+/// dispatchers need a live renderer, which only the GPU-backed tier
+/// of the suite stands up (TEST_CONVENTIONS §T8).
 ///
 /// **The button that started the gesture is the one that finalizes
 /// it.** A release from any other button hands the drag back
@@ -145,8 +145,8 @@ pub(in crate::application::app) fn resolve_release(
 /// and pulling the commit branch out here is what makes "does a
 /// right release on a left-started drag write anything?" a question
 /// the harness can ask. The full shell takes `&mut
-/// InputHandlerContext`, i.e. a live wgpu device, which
-/// TEST_CONVENTIONS §T8 keeps out of the tests.
+/// InputHandlerContext`, i.e. a live wgpu device, which only the
+/// suite's GPU-backed tier has (TEST_CONVENTIONS §T8).
 pub(in crate::application::app) fn commit_if_resolved(
     released: MouseButton,
     drag: &mut ThrottledDrag,
