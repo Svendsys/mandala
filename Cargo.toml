@@ -228,18 +228,19 @@ png.workspace = true
 rustix = { version = "1.1.5", features = ["process", "fs"] }
 
 # The `--ipc` named-pipe transport (`src/application/ipc/transport/pipe.rs`,
-# #169). `interprocess` creates the pipe and its owner-only security
-# descriptor; its `tokio` feature is what makes a stalled write
-# cancellable — dropping the timed-out future cancels the overlapped
-# write, which a blocking pipe write offers no way to do. `tokio` itself
-# is the small runtime those futures run on: one worker for the pipe
-# I/O, with each boundary thread blocking on one call at a time, the
-# shape `work_plans/LLM_IPC.md` §D2 asks for. `widestring` spells the
-# SDDL string the way `SecurityDescriptor::deserialize` takes it.
+# #169). `interprocess` creates the pipe — its first instance, with the
+# owner-only security descriptor. Every later instance, and every
+# connection, is a `tokio` named-pipe server: the only safe API in the
+# graph that can time a pipe write out and disconnect a client stalled
+# on one (`NamedPipeServer::disconnect`), which a blocking pipe write
+# offers no way to do. `tokio` runs on one worker for the pipe I/O, with
+# each boundary thread blocking on one call at a time, the shape
+# `work_plans/LLM_IPC.md` §D2 asks for. `widestring` spells the SDDL
+# string the way `SecurityDescriptor::deserialize` takes it.
 # Windows-only, so neither the Unix nor the wasm32 graph changes.
 [target.'cfg(windows)'.dependencies]
-interprocess = { workspace = true, features = ["tokio"] }
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "time", "sync", "macros", "io-util"] }
+interprocess.workspace = true
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
 widestring = "1.2.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

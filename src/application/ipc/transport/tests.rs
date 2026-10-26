@@ -24,7 +24,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -58,10 +58,27 @@ const FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 const READER_PAUSE: Duration = Duration::from_millis(250);
 const _: () = assert!(READER_PAUSE.as_millis() * 8 <= STALLED_WRITE_TIMEOUT.as_millis());
 
-/// A server plus the wake channel its boundary threads signal.
+/// Wait for `thread` to finish, failing the test after
+/// `FRAME_TIMEOUT` rather than hanging it: a thread blocked on a
+/// connection the server should have ended is exactly the regression
+/// these tests exist to catch.
+fn join_within<T>(thread: JoinHandle<T>, what: &str) -> T {
+    let deadline = Instant::now() + FRAME_TIMEOUT;
+    while !thread.is_finished() {
+        assert!(Instant::now() < deadline, "{what} did not finish within {FRAME_TIMEOUT:?}");
+        thread::sleep(Duration::from_millis(5));
+    }
+    thread.join().unwrap_or_else(|_| panic!("{what} panicked"))
+}
+
+/// A server plus the wake channel its boundary threads signal. Dropping
+/// it shuts the server down as a graceful exit does, so no scenario
+/// leaves boundary threads behind for the next one.
 struct Harness {
     _dir: TempDir,
     path: PathBuf,
+    /// What every boundary thread holds while it runs.
+    link: Weak<Link>,
     wake: mpsc::Sender<()>,
     wakes: Option<Receiver<()>>,
     server: Option<IpcServer>,
@@ -88,6 +105,7 @@ impl Harness {
         Harness {
             _dir: dir,
             path,
+            link: Arc::downgrade(&server.link),
             wake,
             wakes: Some(wakes),
             server: Some(server),
@@ -131,22 +149,46 @@ impl Harness {
 
     /// Stop the fake main thread and shut the server down gracefully.
     fn shutdown(mut self) {
-        if let Some(main) = self.main.take() {
-            self.stop.store(true, Ordering::SeqCst);
-            let _ = self.wake.send(());
-            self.server = Some(main.join().expect("the fake main thread does not panic"));
+        if let Some(main) = self.stop_main() {
+            self.server = Some(join_within(main, "the fake main thread"));
         }
         self.server.take().expect("a server").shutdown();
+    }
+
+    /// Ask the fake main thread to stop; it does once its current drain
+    /// returns, and a drain never waits on a client.
+    fn stop_main(&mut self) -> Option<JoinHandle<IpcServer>> {
+        let main = self.main.take()?;
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = self.wake.send(());
+        Some(main)
     }
 }
 
 impl Drop for Harness {
     fn drop(&mut self) {
-        if let Some(main) = self.main.take() {
-            self.stop.store(true, Ordering::SeqCst);
-            let _ = self.wake.send(());
-            let _ = main.join();
+        if let Some(main) = self.stop_main() {
+            // A main thread that panicked has failed its test already.
+            self.server = main.join().ok();
         }
+        if let Some(server) = self.server.take() {
+            server.shutdown();
+        }
+    }
+}
+
+/// Wait until every boundary thread of the server behind `link` has
+/// ended — each holds the link while it runs — failing after
+/// `FRAME_TIMEOUT`.
+fn assert_no_boundary_thread_outlives(link: &Weak<Link>, when: &str) {
+    let deadline = Instant::now() + FRAME_TIMEOUT;
+    while link.strong_count() > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "{} boundary thread(s) still running {when}",
+            link.strong_count()
+        );
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -454,7 +496,7 @@ fn test_ipc_loopback_a_client_that_pauses_reading_is_paused_not_dropped() {
     for id in 0..1000 {
         assert_eq!(client.next()["id"], json!(id), "nothing lost while paused");
     }
-    sender.join().expect("sender");
+    join_within(sender, "the sender");
 }
 
 #[test]
@@ -475,8 +517,12 @@ fn test_ipc_loopback_drops_a_client_that_stops_reading() {
     let (mut next, _) = Client::attach(&harness.path);
     next.send(r#"{"id":"after","cmd":"ping"}"#);
     assert_eq!(next.next()["id"], json!("after"));
+    // Still holding its end open: the server's giving up is what ends
+    // the sender's writes, not the client leaving. (On a pipe this was
+    // a hang — the dropped instance kept its pending write, and the
+    // sender stayed blocked on its own.)
+    join_within(sender, "the dead client's sender");
     drop(client);
-    sender.join().expect("sender");
 }
 
 #[test]
@@ -543,6 +589,37 @@ fn test_ipc_loopback_shutdown_says_so_and_removes_the_socket() {
     let _ = path;
 }
 
+/// A graceful exit ends every boundary thread — the acceptor, and the
+/// reader and writer of a controller that is still connected and
+/// silent — while that client holds its end open. The failing inputs
+/// are an acceptor that waits on clients alone, which only a client
+/// could end, and a reader the hang-up does not reach.
+#[test]
+fn test_ipc_loopback_no_boundary_thread_outlives_a_shutdown() {
+    let harness = Harness::running("ipc-outlive-shutdown");
+    let link = harness.link.clone();
+    let (mut client, _) = Client::attach(&harness.path);
+    harness.shutdown();
+    assert_eq!(client.next(), json!({ "event": "shutdown", "data": {} }));
+    assert_no_boundary_thread_outlives(&link, "after a graceful exit");
+    drop(client);
+}
+
+/// The same when the server is dropped without a graceful exit — a
+/// panic unwinding past the event loop.
+#[test]
+fn test_ipc_loopback_no_boundary_thread_outlives_a_dropped_server() {
+    let mut harness = Harness::paused("ipc-outlive-drop");
+    let link = harness.link.clone();
+    let (client, _) = Client::attach(&harness.path);
+    // The controller is known to the main thread, as it is to the app
+    // once a drain has run.
+    let _ = harness.server().drain(execute_detached);
+    drop(harness.server.take());
+    assert_no_boundary_thread_outlives(&link, "after the server was dropped");
+    drop(client);
+}
+
 #[test]
 fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
     // The window closes while the controller is paused on a full queue:
@@ -576,7 +653,7 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
     }
     assert!(answered > 0, "the burst was under way when the app exited");
     assert!(client.at_eof(), "the connection closes after `shutdown`");
-    exiting.join().expect("shutdown does not panic");
+    join_within(exiting, "the shutdown");
 }
 
 #[test]
@@ -935,14 +1012,18 @@ mod pipe_client {
     use std::sync::Arc;
 
     use interprocess::os::windows::named_pipe::{pipe_mode, DuplexPipeStream, SendPipeStream};
+    use interprocess::ConnectWaitMode;
 
     use super::FRAME_TIMEOUT;
 
     pub(super) fn connect(path: &Path) -> (LineReader, Writer) {
         let name = path.to_str().expect("test endpoints are Unicode");
         let pipe = super::super::pipe_name::pipe_path(name).expect("test endpoints name a pipe");
-        let stream = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path(pipe.as_str())
-            .expect("connect to the server");
+        let stream = DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
+            pipe.as_str(),
+            ConnectWaitMode::Timeout(FRAME_TIMEOUT),
+        )
+        .expect("connect to the server");
         let (recv, send) = stream.split();
         let (requests, wanted) = mpsc::channel::<()>();
         let (lines_tx, lines) = mpsc::channel();

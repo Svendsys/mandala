@@ -77,8 +77,15 @@ jobs:
   #
   # Same triggers as the Linux job, so a pull request cannot merge red on
   # the platform this code is for.
+  #
+  # `timeout-minutes` is a backstop, not the guard: every wait in the
+  # transport and in its tests has a deadline of its own, and a hang is
+  # a bug to fix there. It only caps what a regression can cost a run
+  # (the default is six hours) — this job takes a few minutes, mostly
+  # the build.
   windows-ipc:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 

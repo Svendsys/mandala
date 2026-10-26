@@ -6,19 +6,40 @@
 //! changed: the write timeout is the socket's own `SO_SNDTIMEO`, the
 //! halves are `try_clone`s of one stream, and ending a connection is
 //! `shutdown(Both)`, which wakes a reader blocked on it.
+//!
+//! The one addition is the acceptor's stop: `accept()` on a listening
+//! socket cannot be interrupted portably, so closing the endpoint sets
+//! a flag and then connects to the socket once
+//! (`socket::BoundSocket::close`). The acceptor wakes for that
+//! connection, sees the flag, and ends.
 
 use std::io::{self, Write};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use super::connection::{Conn, HangUp, Listen, Outlet};
 use super::STALLED_WRITE_TIMEOUT;
 
-impl Listen for UnixListener {
+/// The listening socket and the flag that ends its acceptor.
+#[derive(Debug)]
+pub(super) struct SocketAcceptor {
+    pub(super) listener: UnixListener,
+    pub(super) stop: Arc<AtomicBool>,
+}
+
+impl Listen for SocketAcceptor {
     type Conn = UnixStream;
 
-    fn accept(&self) -> io::Result<UnixStream> {
-        UnixListener::accept(self).map(|(stream, _)| stream)
+    fn accept(&mut self) -> io::Result<Option<UnixStream>> {
+        let accepted = self.listener.accept();
+        // Checked after the wait, whatever ended it: the wake-up
+        // connection, a client that raced it, or an error.
+        if self.stop.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        accepted.map(|(stream, _)| Some(stream))
     }
 }
 

@@ -194,10 +194,20 @@ shipped the Unix transport):
 - **Half-close** does not exist for a pipe. A client that closes its
   end still has a final unterminated line executed, but it cannot read
   the reply, so send a terminated line and read before closing.
-- **Closing discards unread output** on a pipe, where a socket's
-  buffer still drains after `shutdown`: the server flushes before it
-  closes a connection that ended in order (after `shutdown` or
-  `connection_rejected`), bounded by the stalled-write timeout.
+- **Closing.** A connection that ended in order (after `shutdown`, a
+  `connection_rejected`, or a client that left) is closed without
+  discarding anything: what the client has not read yet stays
+  readable, as a socket's buffer drains after `shutdown`. A connection
+  the server gives up on — a write stalled past the stalled-write
+  timeout, or a hang-up — is *disconnected*, which discards its unread
+  output and fails the client's own pending writes, so a client that
+  stopped reading is never left blocked on a pipe the server has let
+  go of.
+- **Connecting** waits for a free instance (`WaitNamedPipeW`). The
+  server keeps one waiting except for the instant between handing one
+  to a client and creating the next, so a client should connect with a
+  short deadline rather than fail on the first `ERROR_PIPE_BUSY`;
+  `mandalactl` does.
 
 ### WASM
 

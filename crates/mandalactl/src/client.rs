@@ -650,6 +650,7 @@ mod pipe_wire {
     use std::time::Duration;
 
     use interprocess::os::windows::named_pipe::{pipe_mode, DuplexPipeStream};
+    use interprocess::ConnectWaitMode;
 
     use super::stream::Wire;
     use super::{pipe_path, LAUNCH_HINT};
@@ -803,34 +804,31 @@ mod pipe_wire {
     }
 
     /// Connect to the pipe `--ipc <name>` names, giving up after
-    /// `timeout` the same way the Unix connect does: on a thread this
-    /// one abandons.
+    /// `timeout`. Unlike a socket's, a pipe's connect takes a deadline
+    /// of its own: it waits for a free instance with `WaitNamedPipeW`,
+    /// which the server always has one of but for the instant between
+    /// handing one over and making the next.
     pub fn connect(path: &Path, timeout: Duration) -> Result<PipeWire, String> {
         let name = path
             .to_str()
             .ok_or_else(|| format!("`--ipc {}`: a pipe name must be valid Unicode", path.display()))?;
         let pipe = pipe_path(name)?;
-        let (sender, receiver) = mpsc::channel();
-        let target = pipe.clone();
-        thread::spawn(move || {
-            let _ = sender.send(DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path(
-                target.as_str(),
-            ));
-        });
-        match receiver.recv_timeout(timeout) {
-            Ok(Ok(stream)) => Ok(PipeWire::new(stream)),
-            Ok(Err(e)) => Err(unreachable(&pipe, &e)),
-            Err(_) => Err(format!(
-                "timed out after {:.1} s connecting to {pipe}. App busy or frozen? A wedged app is aborted by its \
-                 freeze watchdog after 10 s",
-                timeout.as_secs_f64()
-            )),
-        }
+        DuplexPipeStream::<pipe_mode::Bytes>::connect_by_path_with_wait_mode(
+            pipe.as_str(),
+            ConnectWaitMode::Timeout(timeout),
+        )
+        .map(PipeWire::new)
+        .map_err(|e| unreachable(&pipe, &e, timeout))
     }
 
     /// Why `connect` failed, in words that name the next step.
-    fn unreachable(pipe: &str, error: &io::Error) -> String {
+    fn unreachable(pipe: &str, error: &io::Error, timeout: Duration) -> String {
         match error.kind() {
+            ErrorKind::TimedOut => format!(
+                "timed out after {:.1} s connecting to {pipe}. App busy or frozen? A wedged app is aborted by its \
+                 freeze watchdog after 10 s",
+                timeout.as_secs_f64()
+            ),
             ErrorKind::NotFound => {
                 format!("no pipe {pipe}. App not running, or started without --ipc? {LAUNCH_HINT}")
             }

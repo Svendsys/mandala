@@ -8,7 +8,9 @@
 //!
 //! **Who owns what** (`work_plans/LLM_IPC.md` §D2). A persistent
 //! *acceptor* always waits in `accept()`, so a second client learns it
-//! is refused at once. Each controller connection gets a *reader*
+//! is refused at once; it ends when the server closes its endpoint, at
+//! a graceful exit or on drop, so no boundary thread outlives the
+//! server. Each controller connection gets a *reader*
 //! (bytes → lines → [`IpcRequest`]s) and an *outbound* writer
 //! (frames → bytes), spawned together and torn down together. None of
 //! them sees `InitState`, the document or the renderer; they exchange
@@ -533,7 +535,8 @@ impl IpcServer {
 
     /// Graceful exit: tell the controller, if any, that the app is
     /// going away, give that frame until [`SHUTDOWN_FLUSH`] to reach
-    /// it, close the connection and remove the socket file. Requests
+    /// it, close the connection, stop the acceptor and remove the
+    /// socket file. Requests
     /// still queued are not executed — the app is exiting, and the
     /// `shutdown` event is the answer they get.
     ///
@@ -571,7 +574,27 @@ impl IpcServer {
             }
             hangup.hang_up();
         }
-        self.endpoint.unlink();
+        self.endpoint.close();
+    }
+}
+
+impl Drop for IpcServer {
+    /// Dropped without [`IpcServer::shutdown`] — a panic unwinding past
+    /// the event loop, or a test — the server still leaves nothing
+    /// running: every controller it knows of, or has yet to hear about,
+    /// is hung up, and the endpoint is closed, which stops the
+    /// acceptor. After a graceful shutdown this finds nothing left to
+    /// do; closing the endpoint twice is a no-op.
+    fn drop(&mut self) {
+        if let Some(controller) = self.controller.take() {
+            controller.hangup.hang_up();
+        }
+        while let Ok(message) = self.inbound.try_recv() {
+            if let Inbound::Connected(controller) = message {
+                controller.hangup.hang_up();
+            }
+        }
+        self.endpoint.close();
     }
 }
 

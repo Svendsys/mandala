@@ -42,12 +42,13 @@ const WRITE_BATCH_BYTES: usize = 64 << 10;
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// A listening endpoint: hands out one connection per client, in the
-/// order they arrived.
+/// order they arrived, until the server closes it.
 pub(super) trait Listen: Send + 'static {
     type Conn: Conn;
 
-    /// Block until the next client connects.
-    fn accept(&self) -> io::Result<Self::Conn>;
+    /// Block until the next client connects, or until the server closes
+    /// the endpoint — `Ok(None)`, after which the acceptor ends.
+    fn accept(&mut self) -> io::Result<Option<Self::Conn>>;
 }
 
 /// One accepted connection, before it is anybody's.
@@ -87,13 +88,15 @@ pub(super) trait HangUp: Send + 'static {
 }
 
 /// The acceptor: install the first connection as controller, refuse
-/// every other one while it stays, forever. Runs for the process
-/// lifetime on `mandala-ipc-acceptor`.
-pub(super) fn accept_loop<L: Listen>(listener: L, link: Arc<Link>) {
+/// every other one while it stays. Runs on `mandala-ipc-acceptor` until
+/// the server closes its endpoint — at a graceful exit, or when the
+/// server is dropped — so it never outlives the server.
+pub(super) fn accept_loop<L: Listen>(mut listener: L, link: Arc<Link>) {
     let mut generation = 0u64;
     loop {
         let stream = match listener.accept() {
-            Ok(stream) => stream,
+            Ok(Some(stream)) => stream,
+            Ok(None) => return,
             Err(e) => {
                 log::warn!("ipc: accept failed: {e}");
                 std::thread::sleep(ACCEPT_BACKOFF);
