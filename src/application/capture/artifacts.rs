@@ -196,7 +196,7 @@ impl Artifacts {
                     if e.kind() != std::io::ErrorKind::NotFound {
                         log::warn!(
                             "capture: could not evict `{}`: {e}",
-                            baumhard::util::log::tilde_path(&file)
+                            baumhard::util::log::tilde_path(file)
                         );
                     }
                 }
@@ -208,7 +208,7 @@ impl Artifacts {
                     if e.kind() != std::io::ErrorKind::NotFound {
                         log::warn!(
                             "capture: could not evict `{}`: {e}",
-                            baumhard::util::log::tilde_path(&dir)
+                            baumhard::util::log::tilde_path(dir)
                         );
                     }
                 }
