@@ -48,6 +48,7 @@ develops it.
 | D21 | The theme stores its variants and the *name* of the active one; the live values are read from the active variant, never stored as a second copy. | §5.3, §7 |
 | D22 | A Connector (the line to the parent) is always a line. A parent-child relation shown as a portal is a hidden connector plus a portal link. `edge_type` no longer exists. | §5.6 |
 | D23 | Neither pan nor zoom re-projects anything; screen-space min/max connection font sizes are dropped from V1 (V2-13). | §12.4 |
+| D24 | `GlyphModel` (and its `GlyphMatrix` / `GlyphLine` / `GlyphComponent` family, its commands and deltas) stays, as a first-class part of the glyph instantiation: models are stamped onto an area and have their own operations, and they are meant for building animations. V1 keeps them working and tested; it adds no use of them. Stamping models from presentations is V2-14. | §4.2, §18 |
 
 ---
 
@@ -1391,8 +1392,9 @@ outlines; `RotateWhile`; a create-child-node action (today only orphan
 creation exists); fold / unfold actions (fold has no production
 writer); section merge and reorder; the `Touch` platform context for
 triggers; per-glyph function effects in glyph presentations;
-screen-space text-size clamps (D23). Each is a sub-issue of the V2
-epic, #258, ready to pick up.
+screen-space text-size clamps (D23); `GlyphModel` stamps in
+presentations (D24). Each is a sub-issue of the V2 epic, #258, ready
+to pick up.
 
 ---
 

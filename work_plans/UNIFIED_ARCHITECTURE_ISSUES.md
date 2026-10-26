@@ -67,3 +67,4 @@ questions the owner answers on the issue.
 | V2-11 | #269 | Touch platform context for triggers | Sonnet | 3 |
 | V2-12 | #270 | Per-glyph function effects | Opus | 4 |
 | V2-13 | #271 | Screen-space text-size clamps | Sonnet | 3 |
+| V2-14 | #272 | `GlyphModel` stamps in presentations | Opus | 4 |
