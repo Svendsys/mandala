@@ -25,6 +25,7 @@
 //! the capture engine, which is why the third test captures.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -560,18 +561,38 @@ fn test_a_zoom_through_act_action_reprojects_and_a_capture_draws_the_frame() {
 /// — `font_system_contended`, the font lock held by another test's
 /// shaping in this process — the way the heartbeat retries a skipped
 /// frame on the next beat. Any other outcome is returned as is.
+///
+/// The retry is bounded by **time**, not by a count of attempts: how
+/// long another test holds the lock is one shaping pass on whatever
+/// the runner is doing, while a yield returns in microseconds, so a
+/// fixed number of yields ran out under CI load while the lock was
+/// still legitimately held. A lock that is never released — the
+/// failure this guards against — still fails, at the deadline.
 fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
-    const ATTEMPTS: usize = 200;
+    /// How long to wait out a held font lock: time, not attempts, bounds
+    /// it, because CI load decides how long one shaping pass holds it. The
+    /// lock's own budget, so the helper waits exactly as long as any
+    /// blocking acquire treats a hold as legitimate rather than a deadlock.
+    const PATIENCE: Duration = baumhard::font::fonts::FONT_SYSTEM_LOCK_TIMEOUT;
+    /// The pause between tries, so a wait spends its time asleep rather
+    /// than spinning against the holder.
+    const BACKOFF: Duration = Duration::from_millis(1);
     let request = json!({"id": 2, "cmd": "capture.screenshot", "path": path});
-    let mut reply = Value::Null;
-    for _ in 0..ATTEMPTS {
-        reply = act(init, request.clone()).0;
+    let deadline = Instant::now() + PATIENCE;
+    let mut attempts = 0_usize;
+    loop {
+        let reply = act(init, request.clone()).0;
+        attempts += 1;
         if reply["result"]["skipped"] != "font_system_contended" {
             return reply;
         }
-        std::thread::yield_now();
+        if Instant::now() >= deadline {
+            panic!(
+                "the font system stayed contended for {PATIENCE:?} ({attempts} capture attempts): {reply}"
+            );
+        }
+        std::thread::sleep(BACKOFF);
     }
-    panic!("the font system stayed contended through {ATTEMPTS} capture attempts: {reply}");
 }
 
 /// **A finger on a resize handle resizes; a finger anywhere else pans**
