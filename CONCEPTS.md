@@ -1235,8 +1235,13 @@ replaces; nothing in the app uses it until the cut-over (V1-C3).
   frame's size and color stay in their own flow and never come from
   the node's text.
 - **Shape rules** (`document::shape::validate_shape`) say which kind
-  may hold which; **bounds** (`document::bounds`) every number's
-  range.
+  may hold which — `Document::validate_subtree` judges a detached
+  subtree's rows the same way before a structural insert puts it in;
+  **bounds** (`document::bounds`) every number's range.
+- **Structure** changes through the engine's
+  [structural commands](#structural-commands--structop-subtree). Only a
+  span splits and merges: at a grapheme-cluster index, and with a
+  neighbor of the same style and link.
 
 `lib/baumhard/src/document/`. `util::document_surface` holds it to
 naming nothing of the model it replaces.
