@@ -72,7 +72,7 @@ pub(crate) use positional::{positional_subverb_to_edits, BorderSurface};
 // Each dispatcher's routed names, for the registry test in
 // `console::spec::tests` (`spec::route`).
 #[cfg(test)]
-pub(crate) use execute::routed_names;
+pub(crate) use execute::{delegated_sets, routed_names};
 #[cfg(test)]
 pub(crate) use positional::routed_names as positional_routed_names;
 #[cfg(test)]

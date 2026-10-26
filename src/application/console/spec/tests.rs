@@ -1116,8 +1116,9 @@ fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)
 /// Every shared subverb set a dispatcher hands on through a
 /// `route::Delegates` row, with the names the set's own table routes.
 /// A dispatcher reports a delegated set's names as routed, so the set's
-/// table has to be held against the set here — a new `Delegates` set
-/// owes an entry.
+/// table has to be held against the set here.
+/// [`test_every_delegated_set_is_a_listed_shared_set`] refuses a
+/// delegated set missing from this list.
 fn shared_sets() -> Vec<(&'static str, &'static [Subverb], Vec<&'static str>)> {
     use crate::application::console::commands::border;
     vec![(
@@ -1125,6 +1126,41 @@ fn shared_sets() -> Vec<(&'static str, &'static [Subverb], Vec<&'static str>)> {
         border::grammar::POSITIONAL_SUBVERBS,
         border::positional_routed_names(),
     )]
+}
+
+/// Every dispatcher that hands a shared set on, with the sets it hands
+/// on (each exports them beside its `routed_names()`).
+fn delegating_dispatchers() -> Vec<(&'static str, Vec<&'static [Subverb]>)> {
+    use crate::application::console::commands::{border, canvas};
+    vec![
+        ("border", border::delegated_sets()),
+        ("canvas subjects", canvas::delegated_sets()),
+    ]
+}
+
+/// Every set a dispatcher delegates is listed in [`shared_sets`].
+///
+/// The failing input is a second shared set handed on through a new
+/// `Delegates` row with no `shared_sets()` entry. The delegating
+/// dispatcher reports all of that set's names as routed, so the level
+/// test stays green, and nothing holds the set against its own table:
+/// a row added to the set with no table row would reach `route::miss`,
+/// #155's failure one level down. Sets are compared by their names
+/// rather than by address, for the reason `route::declares` gives.
+#[test]
+fn test_every_delegated_set_is_a_listed_shared_set() {
+    let names = |set: &[Subverb]| set.iter().map(|s| s.name).collect::<Vec<_>>();
+    let listed: Vec<Vec<&'static str>> = shared_sets().into_iter().map(|(_, set, _)| names(set)).collect();
+    for (site, sets) in delegating_dispatchers() {
+        for set in sets {
+            assert!(
+                listed.contains(&names(set)),
+                "{site}: delegates the shared set {:?}, which `shared_sets()` does not list, so \
+                 nothing holds it against its own table",
+                names(set)
+            );
+        }
+    }
 }
 
 /// A shared set's own table routes exactly the set.

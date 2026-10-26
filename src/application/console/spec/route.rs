@@ -119,6 +119,13 @@ pub fn names<R>(routes: &Routes<R>) -> Vec<&'static str> {
     routes.iter().map(|(name, _)| *name).collect()
 }
 
+/// The shared sets a [`Delegates`] table hands on, for the registry
+/// test to check each is held against its own table.
+#[cfg(test)]
+pub fn sets<R>(delegates: &Delegates<R>) -> Vec<&'static [Subverb]> {
+    delegates.iter().map(|(set, _)| *set).collect()
+}
+
 /// [`names`], plus every name a [`Delegates`] row hands on. The
 /// delegated set's own table is held against the set separately.
 #[cfg(test)]

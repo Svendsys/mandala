@@ -150,6 +150,14 @@ pub(crate) fn routed_names() -> Vec<&'static str> {
     route::names_with(ROUTES, DELEGATES)
 }
 
+/// The shared sets [`DELEGATES`] hands on, for the registry test in
+/// `console::spec::tests` to check each is listed in its
+/// `shared_sets()`.
+#[cfg(test)]
+pub(crate) fn delegated_sets() -> Vec<&'static [crate::application::console::spec::Subverb]> {
+    route::sets(DELEGATES)
+}
+
 /// One subject level — `canvas border`, `canvas section-frame`, or
 /// the same past the `focused` modifier. The three differ only in
 /// which document slot `surface` names; the grammar they read is

@@ -61,6 +61,14 @@ pub(crate) fn routed_names() -> Vec<&'static str> {
     route::names_with(ROUTES, DELEGATES)
 }
 
+/// The shared sets [`DELEGATES`] hands on, for the registry test in
+/// `console::spec::tests` to check each is listed in its
+/// `shared_sets()`.
+#[cfg(test)]
+pub(crate) fn delegated_sets() -> Vec<&'static [crate::application::console::spec::Subverb]> {
+    route::sets(DELEGATES)
+}
+
 pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let descent = descend(&BORDER, args.tokens());
     // `preview` is the one subverb with a level of its own; the
