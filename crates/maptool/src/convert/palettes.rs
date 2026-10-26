@@ -67,12 +67,19 @@ fn collect_palettes(root: &Value, defined: &HashSet<String>) -> HashMap<String, 
 /// Derive a palette key from a color_schema object. Uses the palette
 /// name, with variant folded in for non-standard variants.
 ///
-/// The fold happens once. A `palette` that already names a palette in
-/// `defined` (the input's own table) or already ends in `-v{variant}`
-/// was folded on an earlier pass, so it is the key as it stands. The
-/// loader keeps a stray `variant` on a current map as an unknown key,
-/// and folding again turned `coral-v3` into `coral-v3-v3`, a name no
-/// table defines (#211 review).
+/// The fold happens once. A `palette` that already ends in
+/// `-v{variant}` is taken to have been folded on an earlier pass, and
+/// so is one that names a palette in `defined` (the input's own table)
+/// when the schema has no `groups` of its own to hoist; either is the
+/// key as it stands. The loader keeps a stray `variant` on a current
+/// map as an unknown key, and folding again turned `coral-v3` into
+/// `coral-v3-v3`, a name no table defines (#211 review).
+///
+/// The `groups` condition is what keeps a legacy schema's own palette:
+/// `{palette: "autumn", variant: 3, groups: [...]}` in a map whose
+/// table already defines `autumn` has not been hoisted, so it still
+/// folds to `autumn-v3` and its groups land there, instead of binding
+/// silently to `autumn` and dropping them.
 fn palette_key(schema: &serde_json::Map<String, Value>, defined: &HashSet<String>) -> String {
     let base = schema
         .get("palette")
@@ -80,7 +87,11 @@ fn palette_key(schema: &serde_json::Map<String, Value>, defined: &HashSet<String
         .unwrap_or("default");
     let variant = schema.get("variant").and_then(|v| v.as_i64()).unwrap_or(2);
     let suffix = format!("-v{variant}");
-    if variant == 2 || defined.contains(base) || base.ends_with(&suffix) {
+    let has_groups = schema
+        .get("groups")
+        .and_then(Value::as_array)
+        .is_some_and(|groups| !groups.is_empty());
+    if variant == 2 || (!has_groups && defined.contains(base)) || base.ends_with(&suffix) {
         base.to_string()
     } else {
         format!("{base}{suffix}")
@@ -287,17 +298,32 @@ mod tests {
     /// The loader keeps it as an unknown key, so an app-saved map can
     /// carry one; folding `coral-v3` again gave `coral-v3-v3`, which
     /// no table defines. Both guards are checked: a name the table
-    /// already defines, and a name that already ends in the suffix.
+    /// already defines on a schema with nothing to hoist, and a name
+    /// that already ends in the suffix. A schema that does carry its
+    /// own `groups` still folds even when its base name is defined.
     #[test]
     fn test_hoist_palettes_folds_a_variant_once() {
-        // Defined in the table; the suffix would not match `-v5`.
+        // Defined in the table, no groups to hoist; the suffix would
+        // not match `-v5`.
         let mut root = legacy_map_with_level(json!(0));
         root["palettes"] = json!({ "coral-v3": { "groups": [] } });
         let schema = root["nodes"]["0"]["color_schema"].as_object_mut().unwrap();
         schema.insert("palette".into(), json!("coral-v3"));
         schema.insert("variant".into(), json!(5));
+        schema.remove("groups");
         hoist_palettes(&mut root);
         assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
+
+        // Defined in the table, but the schema has its own groups: it
+        // has not been hoisted, so it folds and its groups are kept.
+        let mut root = legacy_map_with_level(json!(0));
+        root["palettes"] = json!({ "coral": { "groups": [{ "background": "#defined" }] } });
+        root["nodes"]["0"]["color_schema"]["variant"] = json!(3);
+        let own_groups = root["nodes"]["0"]["color_schema"]["groups"].clone();
+        hoist_palettes(&mut root);
+        assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
+        assert_eq!(root["palettes"]["coral-v3"]["groups"], own_groups);
+        assert_eq!(root["palettes"]["coral"]["groups"][0]["background"], "#defined");
 
         // Not in any table, but already folded with this variant.
         let mut root = legacy_map_with_level(json!(0));

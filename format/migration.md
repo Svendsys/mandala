@@ -230,9 +230,11 @@ path and move the result into place yourself.
    defined once; per-node `color_schema` becomes a lightweight reference.
    The `groups`, `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
-   `"coral-v3"`) — unless `palette` already names a palette the
-   input's `palettes` table defines, or already ends in that `-vN`,
-   either of which means the fold happened on an earlier pass. A schema
+   `"coral-v3"`) — unless `palette` already ends in that `-vN`, or the
+   schema carries no `groups` of its own and `palette` already names a
+   palette the input's `palettes` table defines; either is taken to
+   mean the fold happened on an earlier pass (see
+   [Known limitations](#known-limitations)). A schema
    with no `palette` name is keyed
    `"default"`, and missing `starts_at_root` / `connections_colored`
    default to `true`. A negative `level` is floored to 0 with a
@@ -327,6 +329,12 @@ change.
   variant but different `groups`): first-writer-wins. Rare in practice
   because miMind produces consistent palettes across nodes in the same
   theme.
+- **A palette name that already ends in its own variant suffix** is
+  not folded again (step 4), because that is what an already-hoisted
+  name looks like. A legacy palette literally named `foo-v3` with
+  `variant: 3` therefore keys as `foo-v3`, and collides with another
+  node's `foo` + `variant: 3` under first-writer-wins. miMind's
+  palette names (`coral`, `navy`, …) never end in `-vN`.
 
 ## After conversion
 
