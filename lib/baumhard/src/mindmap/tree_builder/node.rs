@@ -158,7 +158,7 @@ pub(super) fn mindnode_container_area(map: &MindMap, node: &MindNode) -> GlyphAr
     // The motive is the duplicate log line, not cost: the surviving
     // call is `ShapeSpelling::classify`, which walks more spellings
     // than the chain it replaced, and no claim either way is made or
-    // measurable here (CLAUDE.md §7).
+    // measurable here (CLAUDE.md §6).
     let shape = NodeShape::from_style_string(&node.style.shape);
 
     // `background_padding` math — see `mindmap/border.rs` for the

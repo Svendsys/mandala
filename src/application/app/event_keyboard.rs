@@ -16,6 +16,22 @@ use super::modal_editor::{steal_key_for_modal, ModalEditor};
 use super::single_line_edit::{
     handle_single_line_edit_key, open_single_line_edit, resolve_single_line_target,
 };
+use super::HeldInput;
+
+/// A key came up: end the pan it holds, if it holds one (#153). The
+/// one thing a release does — every Action fires on the press — and
+/// it runs ahead of every modal steal, because a pan the key armed
+/// before a modal opened is still that key's to end.
+///
+/// The name is `key_to_name`'s, as on the press. For a letter that
+/// lets a Shift lifted before its key still match, since both
+/// spellings lowercase to the same name; for a key whose shifted
+/// character differs it does not (see `HeldInput::Key`).
+pub(super) fn handle_key_release(logical_key: &Key, ctx: &mut InputHandlerContext<'_>) {
+    if let Some(name) = crate::application::keybinds::key_to_name(logical_key) {
+        ctx.drag_state.end_pan_held_by(&HeldInput::Key(name));
+    }
+}
 
 pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerContext<'_>) {
     let key_name = crate::application::keybinds::key_to_name(&logical_key);
@@ -131,9 +147,13 @@ pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerCont
         return;
     }
 
-    if let Some(a) = action {
+    if let (Some(a), Some(name)) = (action, key_name.as_deref()) {
         // Action body lives in `super::dispatch::dispatch_action`.
-        let _ = super::dispatch::dispatch_action(a, ctx, None);
+        // Held: the key is down, so a pan the Action arms is
+        // momentary and ends on this key's release
+        // ([`handle_key_release`]). A macro step below has no release
+        // behind it, and its pans toggle.
+        let _ = super::dispatch::dispatch_held_action(a, ctx, None, HeldInput::Key(name.to_string()));
     } else {
         // No built-in action matched — try ctx.macros first, then custom
         // mutations. Resolution order is documented in CONCEPTS.md §5

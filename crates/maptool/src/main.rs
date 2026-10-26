@@ -30,6 +30,9 @@ mod convert;
 mod export;
 mod verify;
 
+#[cfg(test)]
+mod migration_advice;
+
 const USAGE: &str = "\
 Usage: maptool <command> <map.json> <args...>
 
@@ -101,12 +104,23 @@ Commands:
                                 an interrupted run leaves the original
                                 intact rather than truncated.
   verify <map.json>             Check the file against the format's
-                                structural invariants (parent_id
-                                consistency, Dewey IDs, edge and portal
-                                references, palette references, named
-                                enums, text-run bounds). Exit 0 if
-                                valid; nonzero with a list of
-                                violations otherwise.";
+                                invariants: the parent_id tree, Dewey
+                                IDs, edge and portal references,
+                                duplicate edges, palette references,
+                                named enums, section bounds and
+                                counts, the numeric domain the loader
+                                enforces (font sizes, extents,
+                                coordinates, glyph lengths, text-run
+                                bounds, zoom windows), and keys or
+                                constructs this build does not
+                                recognize. Exit 0 if clean or if only
+                                warnings are found; nonzero with a
+                                list of violations otherwise. Each
+                                violation is tagged with one of the
+                                categories: tree, ids, references,
+                                edges, palettes, enums, sections,
+                                numeric, unknown_keys,
+                                unknown_variant.";
 
 fn main() -> ExitCode {
     // maptool is a shipped release binary that walks the same
@@ -641,15 +655,12 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use baumhard::util::doc_fixtures::repo_path;
     use baumhard::util::test_temp::TempDir;
     use std::path::PathBuf;
 
     fn testament() -> MindMap {
-        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.pop(); // crates/maptool -> crates
-        p.pop(); // crates -> root
-        p.push("maps/testament.mindmap.json");
-        load_from_file(&p).unwrap()
+        load_from_file(&repo_path("maps/testament.mindmap.json")).unwrap()
     }
 
     fn rx(pattern: &str, case_insensitive: bool) -> Regex {
@@ -869,10 +880,7 @@ mod tests {
 
     #[test]
     fn run_verify_on_testament_succeeds() {
-        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.pop();
-        p.pop();
-        p.push("maps/testament.mindmap.json");
+        let p = repo_path("maps/testament.mindmap.json");
         let args = as_strings(&["verify", p.to_str().unwrap()]);
         assert!(run(&args).is_ok(), "testament map must verify clean");
     }

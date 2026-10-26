@@ -849,7 +849,7 @@ pub(in crate::application::document) fn merge_outcome(
 /// `set_canvas_default_border`,
 /// `set_canvas_default_section_frame_border_config`) so the
 /// detection logic lives in exactly one place. When the auto-
-/// promote path is removed (per `SECTIONS_BORDERS_RESIZE_PLAN.md`
+/// promote path is removed (per `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md`
 /// §5.4), this function and the `BorderEditOutcome.preset_auto_promoted`
 /// field go together.
 pub(super) fn detect_preset_auto_promote(

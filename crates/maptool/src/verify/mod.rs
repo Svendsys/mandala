@@ -292,3 +292,176 @@ mod loader_parity_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod category_parity_tests {
+    /// One verify module's shipped source — everything before its
+    /// first `#[cfg(test)]`, so a category a test constructs is not
+    /// mistaken for one the module emits.
+    ///
+    /// A module `verify` calls that has no row here fails
+    /// [`test_every_verify_category_is_published`] by name: the table
+    /// is the one place a new module has to be announced, and the
+    /// failure says so.
+    fn shipped_source(module: &str) -> Option<&'static str> {
+        let full = match module {
+            "edges" => include_str!("edges.rs"),
+            "enums" => include_str!("enums.rs"),
+            "ids" => include_str!("ids.rs"),
+            "numeric" => include_str!("numeric.rs"),
+            "palettes" => include_str!("palettes.rs"),
+            "references" => include_str!("references.rs"),
+            "sections" => include_str!("sections.rs"),
+            "tree" => include_str!("tree.rs"),
+            "unknown_keys" => include_str!("unknown_keys.rs"),
+            _ => return None,
+        };
+        Some(full.split("#[cfg(test)]").next().unwrap_or(full))
+    }
+
+    /// Every category string `source` hands to a `Violation`
+    /// constructor: a literal first argument
+    /// (`Violation::node("ids", …)`), or an identifier naming any
+    /// `const NAME: &str = "…"` the module declares (`CATEGORY` is the
+    /// usual one, but any name resolves). An identifier that names no
+    /// such constant is a route this scan cannot read, so it stops the
+    /// test rather than leaving that category unpublished in silence.
+    fn categories_in(source: &str) -> Vec<String> {
+        let mut constants: Vec<(&str, &str)> = Vec::new();
+        for (at, _) in source.match_indices("const ") {
+            let decl = &source[at + "const ".len()..];
+            let Some((name, rest)) = decl.split_once(": &str = \"") else { continue };
+            let Some((value, _)) = rest.split_once('"') else { continue };
+            constants.push((name.trim(), value));
+        }
+        let mut out = Vec::new();
+        for (at, _) in source.match_indices("Violation::") {
+            let Some((_, args)) = source[at..].split_once('(') else { continue };
+            let args = args.trim_start();
+            if let Some(literal) = args.strip_prefix('"') {
+                if let Some((value, _)) = literal.split_once('"') {
+                    out.push(value.to_string());
+                }
+                continue;
+            }
+            let ident: String = args
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let (_, value) = constants
+                .iter()
+                .find(|(name, _)| *name == ident)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "a `Violation` is built with category `{ident}`, which is neither \
+                         a string literal nor a `const …: &str` this module declares — \
+                         teach `categories_in` the route, or the category goes unchecked"
+                    )
+                });
+            out.push(value.to_string());
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The comma-separated words that follow `marker` up to the next
+    /// `.`, with backticks and whitespace stripped — the shape both
+    /// published lists are written in.
+    fn listed_after(text: &str, marker: &str) -> Vec<String> {
+        let tail = text
+            .split_once(marker)
+            .unwrap_or_else(|| panic!("the list must still open with {marker:?}"))
+            .1;
+        let list = tail.split_once('.').map(|(list, _)| list).unwrap_or(tail);
+        let mut out: Vec<String> = list
+            .replace(" and ", ", ")
+            .split(',')
+            .map(|word| word.trim().trim_matches('`').to_string())
+            .filter(|word| !word.is_empty())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// **The category list is published twice, and both copies are
+    /// held to what the modules emit.** `maptool --help`'s `verify`
+    /// paragraph and `format/validation.md` each name the categories a
+    /// violation can carry. #51 found the help text naming six of the
+    /// checks `verify` runs while it ran nine — a hand-kept list that
+    /// had drifted with nothing to notice — so neither copy is kept by
+    /// hand any more: the set is derived from `verify`'s own body (the
+    /// modules it calls) and those modules' shipped source (the
+    /// category each `Violation` is built with), and each published
+    /// list must equal it exactly.
+    ///
+    /// Fails when: a module is added to `verify` without a row in
+    /// [`shipped_source`]; a module starts emitting a category neither
+    /// list names; a list names a category nothing emits any more; a
+    /// `Violation` takes its category through a route the scan cannot
+    /// resolve (anything but a literal or a module `const …: &str`); or
+    /// either list stops opening with the words this test looks for.
+    #[test]
+    fn test_every_verify_category_is_published() {
+        let here = include_str!("mod.rs");
+        let body = here
+            .split_once("pub fn verify(map: &MindMap) -> Vec<Violation> {")
+            .expect("verify must still be spelled this way")
+            .1
+            .split_once("out.sort_by")
+            .expect("verify's checks must still end at the sort")
+            .0;
+
+        let mut modules: Vec<&str> = body
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("out.extend("))
+            .filter_map(|call| call.split_once("::").map(|(module, _)| module))
+            .collect();
+        modules.dedup();
+        // Precondition: a scan that read nothing would find every list
+        // trivially complete.
+        assert!(
+            modules.len() >= 9,
+            "the body scan found {} modules, fewer than `verify` already calls — the \
+             parse is what broke: {modules:?}",
+            modules.len()
+        );
+
+        let mut emitted: Vec<String> = Vec::new();
+        for module in &modules {
+            let source = shipped_source(module).unwrap_or_else(|| {
+                panic!(
+                    "`verify` calls `{module}`, which has no row in `shipped_source` — add \
+                     one so its categories are held to the published lists"
+                )
+            });
+            let found = categories_in(source);
+            assert!(
+                !found.is_empty(),
+                "`{module}` emits no category this scan can read, so the scan is what \
+                 broke — every module `verify` calls reports under at least one"
+            );
+            emitted.extend(found);
+        }
+        emitted.sort();
+        emitted.dedup();
+
+        // The help text is wrapped to a column, so the list spans
+        // lines; collapsing whitespace reads it as the one sentence it is.
+        let usage = crate::USAGE.split_whitespace().collect::<Vec<_>>().join(" ");
+        let help = listed_after(&usage, "tagged with one of the categories: ");
+        assert_eq!(
+            help, emitted,
+            "`maptool --help`'s verify paragraph lists categories {help:?}, and the \
+             modules `verify` runs emit {emitted:?}"
+        );
+
+        let doc = include_str!("../../../../format/validation.md");
+        let published = listed_after(doc, "The categories are ");
+        assert_eq!(
+            published, emitted,
+            "`format/validation.md` lists categories {published:?}, and the modules \
+             `verify` runs emit {emitted:?}"
+        );
+    }
+}

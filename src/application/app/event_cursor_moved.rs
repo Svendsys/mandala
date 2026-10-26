@@ -20,9 +20,10 @@ use super::throttled_interaction::{
     DragInput, EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
     NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
 };
-use super::DragState;
+use super::{DragState, HeldInput};
 use crate::application::common::RenderDecree;
 use crate::application::document::{hit_test, SelectionState};
+use crate::application::platform::input::MouseButton;
 
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,
@@ -177,7 +178,7 @@ fn start_promoted_gesture(ctx: &mut InputHandlerContext<'_>, origin: (f64, f64),
 /// live gesture, or promote a pending press past the threshold.
 fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), cursor_pos_val: (f64, f64)) {
     match ctx.drag_state {
-        DragState::Panning => {
+        DragState::Panning { .. } => {
             let dx = cursor_pos_val.0 - prev_pos.0;
             let dy = cursor_pos_val.1 - prev_pos.1;
             ctx.renderer
@@ -600,7 +601,14 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
                             click_hit: super::ClickHit::Empty,
                             canvas_pos,
                         };
-                        super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
+                        // Held: the left button is down, and a pan
+                        // the dispatch arms ends on its release.
+                        super::dispatch::dispatch_held_action(
+                            a,
+                            ctx,
+                            Some(&dispatch_hit),
+                            HeldInput::Button(MouseButton::Left),
+                        );
                         // If the arm didn't take ownership of the
                         // gesture the state is still `Pending`, and
                         // every following cursor move would re-cross
@@ -634,7 +642,7 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
             hit_section_idx,
         } => {
             // Threshold-cross arm for the right-button fast-resize
-            // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+            // gesture (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
             // Same `POINTER_DRAG_THRESHOLD_SQ_PX` as the left-button arm
             // above. The DispatchHit carries the **press-time**
             // canvas position and hit (not the threshold-cross
@@ -671,7 +679,12 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev_pos: (f64, f64), c
                     click_hit,
                     canvas_pos: *start_canvas,
                 };
-                super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
+                super::dispatch::dispatch_held_action(
+                    a,
+                    ctx,
+                    Some(&dispatch_hit),
+                    HeldInput::Button(MouseButton::Right),
+                );
             }
             // After dispatch the state should be `Throttled(...)` if
             // the arm took ownership of the gesture. If the arm
@@ -778,7 +791,7 @@ fn drag_input(
 /// that starts some *other* gesture doesn't get a free camera
 /// nudge on its first frame.
 fn emits_first_pan_delta(drag_state: &DragState) -> bool {
-    matches!(drag_state, DragState::Panning)
+    drag_state.is_panning()
 }
 
 /// Map a `ResizeHandleSide` to the matching winit `CursorIcon`
@@ -786,7 +799,7 @@ fn emits_first_pan_delta(drag_state: &DragState) -> bool {
 /// map to `NwseResize` / `NeswResize`; edge midpoints map to the
 /// vertical / horizontal resize cursors. Used by both
 /// handle-driven Resize-mode drags and right-button fast-resize
-/// gestures (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
+/// gestures (`work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
 fn cursor_icon_for_resize_side(side: baumhard::mindmap::tree_builder::ResizeHandleSide) -> CursorIcon {
     use baumhard::mindmap::tree_builder::ResizeHandleSide as S;
     match side {
@@ -1101,7 +1114,11 @@ mod tests {
     /// move the camera.
     #[test]
     fn test_emits_first_pan_delta_only_in_panning_state() {
-        assert!(emits_first_pan_delta(&DragState::Panning));
+        assert!(emits_first_pan_delta(&DragState::Panning {
+            owner: super::super::PanOwner::Held(super::super::HeldInput::Button(
+                crate::application::platform::input::MouseButton::Left,
+            )),
+        }));
         assert!(!emits_first_pan_delta(&DragState::None));
         assert!(!emits_first_pan_delta(&DragState::SelectingRect {
             start_canvas: glam::Vec2::ZERO,

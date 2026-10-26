@@ -1442,7 +1442,8 @@ const SECTION_FRAME_FLOOR_FONT_SIZE_PT: f32 = 10.0;
 /// fallback only shows through when the user picked custom but
 /// supplied no glyph fields.
 ///
-/// Reachable per tree rebuild (`tree_builder/border.rs:111`),
+/// Reachable per tree rebuild (`border_node_data` in
+/// `tree_builder/border.rs`),
 /// which §9 puts in interactive territory — no panic site. The
 /// fallback is statically known to exist because `PRESET_TABLE`
 /// is `const &[…; 4]` (non-empty by construction).

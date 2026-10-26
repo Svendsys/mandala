@@ -37,8 +37,10 @@ these seams explicitly.
 
 Each entry uses bold labels in this order: **Summary** (one
 sentence), **What it's for** (the problem it solves), **Under
-the hood** (file references in `path/to/file.rs:line` form, jump
-targets), and where useful **Vision** (named trajectory) and
+the hood** (file references as a path plus the item to search for —
+`path/to/file.rs` and a `fn` or `struct` name, never a line number,
+which rots silently while still reading as authority), and where
+useful **Vision** (named trajectory) and
 **Caveat** (gotchas).
 
 ## Table of contents
@@ -298,7 +300,7 @@ addressable for mutation.
 The hierarchy is: `GlyphModel` owns a
 `GlyphMatrix`; `GlyphMatrix` owns a `Vec<GlyphLine>`; `GlyphLine`
 owns a `Vec<GlyphComponent>`; `GlyphComponent` is
-`{ text, font: Option<AppFont>, color: Option<FloatRgba> }`. All
+`{ text, font: AppFont, color: Color }`. All
 files in `lib/baumhard/src/gfx_structs/model/`. Matrix/Line both
 auto-expand on out-of-range index write, so callers can poke at
 arbitrary coordinates without pre-sizing. The central
@@ -331,8 +333,11 @@ A single node's text can have multiple styles —
 a bold first word, a red annotation, a smaller footnote. Rather
 than fragmenting text into per-style nodes, Baumhard carries
 **span tables**: `[start, end)` ranges that say "between these
-two positions, use this color and/or this font". Any part of the
-text not covered by a span inherits the area-level defaults.
+two positions, use this color and/or this font". What becomes of
+text no span covers is the *bridge's* decision, not the primitive's:
+`attrs_list_from_regions` leaves it at the `AttrsList` default,
+while the renderer's `rich_text_spans_into` draws only the covered
+slices (see [text runs](#text-runs)).
 The same primitive drives rich-text on mindmap nodes
 ([`text runs`](#text-runs)), highlight on selected regions, and
 transient live-edit previews.
@@ -349,10 +354,12 @@ offsets** — the unit baumhard's text primitives speak in (see
 `font/attrs.rs` slice through `find_byte_index_of_grapheme`. The
 primitive itself just holds `usize` pairs and does not enforce a
 unit at the type level, so consumers that reach in from elsewhere
-must agree on the grapheme convention. Five mutation primitives keep the set
-consistent under text edit: `insert_regions_at`,
-`shrink_regions_after`, `split_and_separate`,
-`shift_regions_after`, `set_or_insert`. A spatial index
+must agree on the grapheme convention. The mutation surface is nine
+`&mut self` methods. Four re-index the set under a text edit —
+`insert_regions_at`, `shrink_regions_after`, `shift_regions_after`,
+`split_and_separate` — and five write regions directly:
+`submit_region`, `set_or_insert`, `replace_regions`, `remove`,
+`remove_range`. A spatial index
 ([`RegionIndexer`](#regionparams-regionindexer-regionerror)) can
 be layered on top for hit-testing.
 
@@ -372,8 +379,12 @@ single shared `Range` type means span operations compose across
 modules without glue.
 
 `lib/baumhard/src/core/primitives.rs`. Totally
-ordered for `BTreeSet` use; ships with `magnitude`, `push_left`,
-`push_right`, `overlaps`, `to_rust_range`.
+ordered for `BTreeSet` use; ships with exactly six methods — `new`,
+`tup`, `magnitude`, `overlaps`, `to_rust_range` and
+`checked_push_right`. The checked shift is the only shift: every
+caller moves a range whose bounds came from a document, and the
+unchecked predecessor wrapped silently in release, turning a
+far-right region into a far-left one.
 
 ### `Channel` and `BranchChannel`
 
@@ -452,9 +463,16 @@ data. A subscriber *can* enqueue further mutations as a
 reaction, which is how reactive chains are built.
 
 `lib/baumhard/src/gfx_structs/mutator.rs`.
-`GlyphTreeEvent` is the enum of event kinds (`KeyboardEvent`,
-`MouseEvent`, `AppEvent`, `CloseEvent`, `KillEvent`);
-`GlyphTreeEventInstance` wraps it with a timestamp;
+`GlyphTreeEvent` is the enum of event kinds, seven variants:
+`KeyboardEvent`, `MouseEvent(MouseEventData)`, `AppEvent`,
+`CloseEvent`, `KillEvent`, `MutationEvent`, `NoopEvent(usize)`.
+None of them is constructed on a production path in either crate:
+`MouseEvent`, `AppEvent`, `CloseEvent`, `KillEvent` and `NoopEvent`
+are built only under `lib/baumhard/src/gfx_structs/tests/`, and
+`KeyboardEvent` and `MutationEvent` are constructed nowhere at all —
+the latter is the mutation-fired kind the `Flag::MutationEvents`
+seam is reserved for. `GlyphTreeEventInstance` wraps the kind with a
+timestamp;
 `EventSubscriber` is
 `Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance)
  + Send + Sync>>`. The `Arc<Mutex<…>>` shape exists so that
@@ -482,7 +500,8 @@ decides whether to recurse.
 `lib/baumhard/src/gfx_structs/predicate.rs`.
 Pure data (serializable); typical predicates carry one or two
 fields, so evaluation is effectively `O(1)`. Float comparisons
-use `almost_equal` with a `1e-5` epsilon
+use `almost_equal`, whose epsilon is `ERROR_TOLERANCE_ALMOST_EQUAL`,
+declared beside it
 ([`util/geometry.rs`](#utilities--grapheme_chad-color-geometry)). The
 `Comparator` uses a *negation flag* pattern: `Equals(false)` is
 `==`, `Equals(true)` is `!=`, halving the variant count.
@@ -605,7 +624,7 @@ Some operations have fixed semantics that
 don't map to "add/subtract/assign": *pop the last three
 graphemes*, *change the range of this region*, *delete a
 specific region*. Commands are the vocabulary for those.
-Imperatively named, grapheme-aware, covers ~16 operations.
+Imperatively named, grapheme-aware; nineteen variants today.
 
 `lib/baumhard/src/gfx_structs/area_mutators.rs`.
 All grapheme-touching commands use `grapheme_chad` helpers, so
@@ -634,11 +653,20 @@ descent.
 A node's visual silhouette and its clickable
 silhouette must agree. `NodeShape` names the two today
 (rectangle, ellipse) and gives both pipelines one source of
-truth for "is this point inside?". Adding a new shape is
-four small changes: one enum variant, one `style_spellings`
-arm, one WGSL shader `case`, one `contains_local` arm. The
-`style_spellings` `match` is exhaustive over the variants, so
-the first change does not compile without the second.
+truth for "is this point inside?". Adding a new shape is one
+enum variant, the match arms the compiler then demands, and a
+`SHAPE_*` constant plus a `case` arm in the WGSL shader;
+`shape.rs`'s own module header is the recipe. What makes it safe
+to follow is that the arms are not remembered: four `match`es over
+`NodeShape` in `shape.rs` are exhaustive — `shader_id`,
+`style_spellings`, `contains_local`, `intersects_local_aabb` — so a
+planted variant is four E0004s, and once those are answered a
+fifth lands in the mandala crate, `wgsl_shape_const_name` in
+`renderer/tests.rs`. The shader half is not a `match` and is
+forced by a test instead:
+`test_every_node_shape_has_a_matching_wgsl_constant_and_case_arm`
+reads the WGSL as text and fails on a variant with no constant, a
+constant carrying the wrong id, and a missing `case` arm.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
@@ -707,8 +735,8 @@ honor it — no script, no custom mutation, just two fields.
 
 `lib/baumhard/src/gfx_structs/zoom_visibility.rs`.
 Two `Option<f32>` fields, a `contains(zoom) -> bool` predicate;
-cost is two branchless float comparisons, benchmarked as
-sub-nanosecond. No cosmic-text reshaping or buffer-cache
+the cost is two float comparisons and nothing else — no
+cosmic-text reshaping or buffer-cache
 invalidation fires on zoom steps. At the mindmap layer the
 surface is two flat fields (`min_zoom_to_render`,
 `max_zoom_to_render`) on `MindNode`, `MindEdge`,
@@ -744,8 +772,8 @@ says "pan by 10 pixels" and an animation says "fit-to-bounds with
 
 `lib/baumhard/src/gfx_structs/camera.rs`.
 Position in canvas space (the point at the viewport center),
-`zoom: f32` clamped between `MIN_ZOOM = 0.05` and `MAX_ZOOM =
-5.0`. `CameraMutation` variants: `Pan { screen_delta }`,
+`zoom: f32` clamped between `Camera2D::MIN_ZOOM` and
+`Camera2D::MAX_ZOOM`. `CameraMutation` variants: `Pan { screen_delta }`,
 `ZoomAt { screen_focus, factor }`, `ZoomCenter { factor }`,
 `SetPosition { canvas_pos }`, `SetZoom { factor }`,
 `FitToBounds { min, max, padding_fraction }`. Projection
@@ -782,9 +810,9 @@ entry carries `layer: i32`, `offset: Vec2`, and `visible: bool`.
 Hit-test is `O(trees)` at the scene level and `O(tree size)`
 inside the matched tree.
 
-### `TreeWalker`
+### Tree walker — `walk_tree_from`
 
-The recursive dispatch engine that walks a
+The recursive dispatch engine (a set of functions, not a type) that walks a
 `MutatorTree` against a `Tree` and applies matched mutations.
 
 Every mutation that ever lands on an element
@@ -836,8 +864,8 @@ from `ColorFontRegions` to the two cosmic-text shaping API shapes.
 Every piece of text shaping in the project
 flows through these. `fonts::init()` is called once at startup;
 the `FONT_SYSTEM` `RwLock` is private and is acquired through
-`acquire_font_system_write("site-name")` (or its `try_` / `_read`
-siblings). Re-acquiring on the same thread panics at once; a wait on
+`acquire_font_system_write("site-name")` (or its siblings
+`try_acquire_font_system_write` / `acquire_font_system_read`). Re-acquiring on the same thread panics at once; a wait on
 another thread's hold is bounded and ends in a panic naming the
 holder, never a hang. `AppFont` is generated at build time by scanning
 `lib/baumhard/src/font/fonts/` — drop a font file in, recompile,
@@ -864,8 +892,9 @@ fallback rather than aborting — interactive paths must not panic
 ([`CODE_CONVENTIONS.md §9`](./CODE_CONVENTIONS.md)). The lock tells
 its two failures apart rather than timing them: a thread
 re-acquiring what it already holds is refused at once from a
-thread-local record, and the 60-second timeout bounds only a wait on
-*another* thread's hold, which is a deadlock if it runs that long.
+thread-local record, and `FONT_SYSTEM_LOCK_TIMEOUT` bounds only a
+wait on *another* thread's hold, which is a deadlock if it runs that
+long.
 
 ### `RegionParams`, `RegionIndexer`, `RegionError`
 
@@ -934,7 +963,7 @@ own take:
 
 - **`grapheme_chad`** — the only legitimate way to manipulate
   `String`/`&str` when the offset comes from user input.
-  Functions: `count_grapheme_clusters`,
+  Among its functions: `count_grapheme_clusters`,
   `find_byte_index_of_grapheme`,
   `replace_graphemes_until_newline`, `split_off_graphemes`,
   `delete_back_unicode`, `delete_front_unicode`,
@@ -949,8 +978,9 @@ own take:
   color types, `Palette = Vec<FloatRgba>`, plus compile-time
   macros `rgb!`, `rgba!`, and (non-const) `hex!`. Channel-index
   constants for consistency.
-- **`geometry`** — `almost_equal` (`|a - b| ≤ 1e-5`, the
-  baumhard-wide epsilon), `clockwise_rotation_around_pivot`,
+- **`geometry`** — `almost_equal` (`|a - b| ≤
+  ERROR_TOLERANCE_ALMOST_EQUAL`, the baumhard-wide epsilon, declared
+  beside it), `clockwise_rotation_around_pivot`,
   y-dominant `pixel_greater_than` and siblings (cursor-reading
   order), `vec2_area`. `Comparator` float equality uses
   `almost_equal`.
@@ -987,11 +1017,13 @@ Helper methods (`children_of`, `all_descendants`,
 `is_hidden_by_fold`, `is_ancestor_or_self`, `resolve_theme_colors`)
 walk the data on demand rather than caching.
 
-`lib/baumhard/src/mindmap/model/mod.rs`. The shape is a flat
-`HashMap<String, MindNode>` (keyed by Dewey id), a
+`lib/baumhard/src/mindmap/model/mod.rs`. The shape is `version` and
+`name`, a flat `HashMap<String, MindNode>` (keyed by Dewey id), a
 `Vec<MindEdge>`, a [`canvas: Canvas`](#canvas), a `palettes:
-HashMap<String, Palette>`, and
-`custom_mutations: Vec<CustomMutation>`. See
+HashMap<String, Palette>`, `custom_mutations: Vec<CustomMutation>`,
+an opaque `macros: Vec<serde_json::Value>`, and the two
+`#[serde(skip)]` carriers a load fills and a save writes back —
+`unknown_keys` and `skipped_constructs`. See
 [`format/schema.md`](./format/schema.md) for the JSON surface and
 [`format/README.md`](./format/README.md) for a minimum-viable
 example.
@@ -1168,9 +1200,13 @@ shared state. It sits on `MindMap` directly (`canvas: Canvas`)
 and is consulted at scene-build time for defaults and theme
 resolution.
 
-`lib/baumhard/src/mindmap/model/canvas.rs`. Key fields:
-`background_color`, default-style records for nodes and
-connections, `theme_variables: HashMap<String, String>` (live
+`lib/baumhard/src/mindmap/model/canvas.rs`. Fields:
+`background_color`; four optional default records —
+`default_border` (nodes), `default_connection` (edges),
+`default_section_frame_border` and
+`default_focused_section_frame_border` (the section-frame chrome,
+see [`SectionFrameElement`](#sectionframeelement-and-section-frame-chrome));
+`theme_variables: HashMap<String, String>` (live
 values), `theme_variants: HashMap<String, HashMap<String,
 String>>` (named presets). The
 [`SetThemeVariant`](#document-actions) document action copies
@@ -1217,9 +1253,11 @@ section per node (offset `(0, 0)`, fills the parent); authors who
 want multiple strata of data on one node opt in by appending
 extra sections.
 
-`lib/baumhard/src/mindmap/model/node.rs:MindSection`.
+`lib/baumhard/src/mindmap/model/node.rs` (`MindSection`).
 Plain data — `text`, `text_runs`, `offset`, optional `size`,
-`channel`. In the runtime tree each section becomes a
+optional `channel`, its own `trigger_bindings`, and an optional
+`frame_border` for the per-section frame chrome. In the runtime
+tree each section becomes a
 `GfxElement::GlyphArea` child of the owning node's container area,
 plus a structural `GfxElement::GlyphModel` grandchild that exists
 as a future per-component-mutation seam (the renderer skips it).
@@ -1390,10 +1428,16 @@ spans for shaping. The user-visible effect is a per-span
 override: emphasis on the first word, a colored annotation in
 the middle, a link at the end — all on one node.
 
-`lib/baumhard/src/mindmap/model/node.rs`.
-Each run carries `start`, `end`, `bold`, `italic`, `underline`,
-optional `font`, optional `size_pt`, optional `color`, optional
-`hyperlink`. Indexed by **grapheme clusters** — what users see
+`lib/baumhard/src/mindmap/model/node.rs` (`TextRun`).
+Each run carries `start` and `end` — the only two keys a file must
+write — plus `bold`, `italic`, `underline` (default off), `font`
+and `color` (strings; the empty string means the section-level
+default), `size_pt` (default `DEFAULT_TEXT_RUN_SIZE_PT`, declared
+beside the struct) and `hyperlink: Option<String>`. The struct
+fields are not `Option`s: every styling field defaults to the value
+that renders like the section's own text, so `{"start": 0, "end":
+5, "bold": true}` is a complete run. Indexed by **grapheme
+clusters** — what users see
 as one character — matching `ColorFontRegions::Range` and
 baumhard's text primitives (see
 `lib/baumhard/CONVENTIONS.md §B1` and the
@@ -1402,20 +1446,24 @@ that ends after a Hebrew niqqud combining mark or a ZWJ-emoji
 family on the same boundary the cosmic-text bridges in
 `baumhard::font::attrs` slice on, so per-region styling lands
 on whole glyphs. Validation: non-overlapping, ascending,
-`end <= text's grapheme-cluster count`. Uncovered ranges
-inherit the node-level style. Full reference:
+`end <= text's grapheme-cluster count`. Full reference:
 [`format/text-runs.md`](./format/text-runs.md).
 
 If `text_runs` is non-empty, **only covered ranges
-render** — uncovered graphemes drop silently. So authors must
-cover every grapheme they want visible, not just the ones they
-want to restyle. This is by design (it simplifies the
+render** — uncovered graphemes drop silently; nothing inherits.
+So authors must cover every grapheme they want visible, not just
+the ones they want to restyle. This is by design (it simplifies the
 renderer's region pass) but it is the single biggest trap in
 the format; `maptool verify` does not catch partial-coverage
-intent vs. accident. What a section *displays* is therefore not its
-`text`: `baumhard::font::attrs::displayed_text` answers it, through
-the same coverage rule the renderer slices spans by, and the IPC
-`scene` family reports that string.
+intent vs. accident. The rule lives in one place for both
+cosmic-text bridges, `covered_slices` in
+`lib/baumhard/src/font/attrs.rs`: `rich_text_spans_into` shapes
+exactly those slices and `displayed_text` concatenates them, so
+what a section *displays* is not its `text` —
+`baumhard::font::attrs::displayed_text` answers it, and the IPC
+`scene` family reports that string. The only inheritance in the
+model is *within* a run: a styling field a run leaves at its default
+renders like the section's own text would have.
 
 ### Theme variables
 
@@ -1463,9 +1511,12 @@ parametric positions along the border perimeter.
 `GlyphBorderConfig` per-node record (in
 `lib/baumhard/src/mindmap/model/node.rs`) carries:
 
-- `preset: String` — one of `"light"` (`─ │ ┌ ┐ └ ┘`),
-  `"heavy"` (`━ ┃ ┏ ┓ ┗ ┛`), `"double"` (`═ ║ ╔ ╗ ╚ ╝`),
-  `"rounded"` (`─ │ ╭ ╮ ╰ ╯`, the default), or `"custom"`.
+- `preset: String` — one of `"light"` (`─ │ ┌ ┐ └ ┘`, the
+  default: `default_border_preset` in `model/node.rs` is the serde
+  default, and `resolve_border_style` in `border.rs` floors an
+  unnamed preset to the same word), `"heavy"` (`━ ┃ ┏ ┓ ┗ ┛`),
+  `"double"` (`═ ║ ╔ ╗ ╚ ╝`), `"rounded"` (`─ │ ╭ ╮ ╰ ╯`), or
+  `"custom"`.
 - `font: Option<String>` — font family override; `None` =
   system default.
 - `font_size_pt: f32` — glyph size.
@@ -1475,6 +1526,10 @@ parametric positions along the border perimeter.
   overrides (top / bottom / left / right / four corners); only
   consulted when `preset = "custom"`.
 - `padding: f32` — border-to-content gap in pixels.
+- `color_palette: Option<String>` / `color_palette_field:
+  Option<String>` — cycle a named palette's field across the border
+  glyphs instead of one flat color (`border palette=…` on the
+  console).
 
 Geometry constants (`BORDER_CORNER_OVERLAP_FRAC`,
 `BORDER_APPROX_CHAR_WIDTH_FRAC`) are shared between the
@@ -1501,11 +1556,13 @@ interpreted as the target *on-screen* size at zoom = 1.0;
 screen-space size as the camera zooms, so a long edge stays
 readable both zoomed in and zoomed out.
 
-`lib/baumhard/src/mindmap/model/edge.rs:335+`.
+`lib/baumhard/src/mindmap/model/edge.rs` (`GlyphConnectionConfig`).
 Fields: `body: String` (default mid-dot `·`), `cap_start` /
 `cap_end: Option<String>`, `font: Option<String>`, `font_size_pt:
-f32`, `min_font_size_pt` / `max_font_size_pt: Option<f32>`,
-`color: Option<String>`. Color cascade priority (highest
+f32`, `min_font_size_pt` / `max_font_size_pt: f32` (plain floats
+with serde defaults, not `Option`s), `color: Option<String>`, and
+`spacing: f32` (the gap between body glyphs along the path). Color
+cascade priority (highest
 first): edge-label → `glyph_connection.color` → the source
 node's frame tier (`overrides.frame`, else its palette group's
 `frame`) → `canvas.default_connection.color` → `edge.color`.
@@ -1615,19 +1672,21 @@ shapes.
 
 ### Portal geometry
 
-The conversion between `border_t ∈ [0, 4)` and a
-canvas point on a rectangular node's border, plus directional
-defaults.
+The conversion between `border_t` — a side-indexed parameter with
+period `BORDER_T_PERIOD`, one unit per side — and a canvas point on
+a rectangular node's border, plus directional defaults.
 
 Portal endpoints must sit on their owning
 node's border, parametrically — so when the node is resized, a
 label at "the middle of the right edge" stays at the middle of
-the right edge. The side-indexed encoding (`[0, 1)` = top,
-`[1, 2)` = right, `[2, 3)` = bottom, `[3, 4)` = left) is the right
-abstraction: stable across resize, deterministic across corners.
+the right edge. The side-indexed encoding — each side owns one
+unit of `t`, top, right, bottom, left in that order, so the period
+is the side count — is the right abstraction: stable across resize,
+deterministic across corners.
 
-`lib/baumhard/src/mindmap/portal_geometry.rs`.
-Functions: `wrap_border_t` (rem-Euclid into `[0, 4)`),
+`lib/baumhard/src/mindmap/portal_geometry.rs`, where
+`BORDER_T_PERIOD` is declared.
+Functions: `wrap_border_t` (rem-Euclid into `[0, BORDER_T_PERIOD)`),
 `border_point_at`, `border_outward_normal`,
 `default_border_t` (the auto-orientation: cast a ray from owner
 to partner center), `nearest_border_t` (project a canvas point to
@@ -1678,9 +1737,12 @@ mind-node. Section-areas (and section-models) carry
 ### Canvas-role projection
 
 Projects a `MindMap` into one `Tree<GfxElement, GfxMutator>` per
-canvas role — nodes, borders, connections, connection labels,
-portals, section frames, and the three handle families. There is
-no flat intermediate scene: the walker in
+canvas role (`CanvasRole`, eight of them) — borders, connections,
+connection labels, portals, section frames, and the three handle
+families — beside the node tree the [tree builder](#tree-builder)
+produces, which the renderer takes through its own
+`rebuild_buffers_from_tree` rather than as a role. There is no
+flat intermediate scene: the walker in
 `src/application/renderer/tree_walker.rs` is the only consumer,
 and every role reaches it as a tree.
 
@@ -1774,8 +1836,8 @@ endpoints have not moved.
 
 Sampling a cubic Bézier path at uniform arc
 length is the most expensive per-edge work. The cache invalidates
-on endpoint drag (via `drag_offsets`) and on zoom or structural
-change. Otherwise the previous frame's samples are reused with a
+on endpoint drag (via the drag `offsets` map) and on zoom or
+structural change. Otherwise the previous frame's samples are reused with a
 cheap `point_inside_any_node` clip filter.
 
 `lib/baumhard/src/mindmap/scene_cache.rs`.
@@ -1831,16 +1893,22 @@ connection passes.
 
 ### Trigger bindings
 
-Per-node bindings of input events to custom-mutation
-ids: `OnClick`, `OnHover`, `OnKey`, `OnLink`.
+Per-node and per-section bindings of input events to
+custom-mutation ids: `Trigger::{OnClick, OnHover, OnKey(String),
+OnLink(String)}`.
 
 Authoring interactive map elements without
 custom code: a button-like node fires a custom mutation when
-clicked. Bindings carry an optional context filter (Desktop /
-Web / Touch); empty means "all platforms".
+clicked. Each `TriggerBinding` carries `trigger`, `mutation_id`
+and `contexts: Vec<PlatformContext>` — the platform filter
+(Desktop / Web / Touch); empty means "all platforms". There is no
+separate gate type: the binding's own `contexts` field is the
+carrier.
 
-`MindNode.trigger_bindings`; dispatch lives
-in the application's input handlers. Missing mutation IDs are
+`MindNode.trigger_bindings` and `MindSection.trigger_bindings`
+(`lib/baumhard/src/mindmap/custom_mutation/mod.rs` for the types);
+dispatch lives in the application's input handlers
+(`click_triggers::fire_onclick_triggers` for `OnClick`). Missing mutation IDs are
 silent no-ops — runtime ignores rather than panicking.
 
 ---
@@ -1877,9 +1945,10 @@ deltas ("add 2pt to font") and structural algorithms
 `contexts` (taxonomy tags — see
 [contexts](#contexts-taxonomy)), `mutator` (an optional
 `MutatorNode` AST), `target_scope` (which nodes the change
-covers), `behavior` (`Persistent` or `Toggle`),
-`document_actions` (optional canvas-level operations), `timing`
-(optional `AnimationTiming`).
+covers), `behavior` (`Persistent` or `Toggle`), `predicate` (an
+optional `Predicate` filtering the targets the scope resolved),
+`document_actions` (canvas-level operations, empty when none),
+`timing` (optional `AnimationTiming`).
 
 ### Four-source loader
 
@@ -1896,8 +1965,11 @@ each id, so `mutation help <id>` can report it.
 
 `src/application/document/mutations_loader/`. Native:
 - App from `assets/mutations/application.json` via `include_str!`.
-- User from `$XDG_CONFIG_HOME/mandala/mutations.json` (or
-  `--mutations <path>` on the CLI).
+- User from `$XDG_CONFIG_HOME/mandala/mutations.json`. The desktop
+  wrapper takes an explicit-path layer ahead of it, but the CLI
+  never fills it — `run_native_init` calls
+  `load_app_and_user(None)`, and `--keybinds` is the only config
+  flag `main.rs` parses.
 
 WASM:
 - App from the same embedded JSON.
@@ -1930,7 +2002,7 @@ shape mirrors `GfxMutator` — `Void`, `Single`, `Macro`,
 children at consecutive channels with the same template" (the
 flower-petal pattern, etc.).
 
-`build_mutator(ast, context)` in `lib/baumhard/src/mutator_builder/`
+`build(ast, context)` in `lib/baumhard/src/mutator_builder/build.rs`
 walks the AST recursively, expands `Repeat` to N children with
 incrementing channels, resolves `Runtime("<label>")` holes via the
 `SectionContext`, and returns a fully-inflated `MutatorTree`. The
@@ -2019,8 +2091,8 @@ sync back, push undo. The sync-back
 position, section offset / size / text / color+font runs, and
 **font size** (the tree-side `scale` is distributed back across a
 section's run `size_pt` values as a delta, preserving relative
-run sizing); line-height is derived (`scale * 1.2`) so it needs no
-separate home. Fields with no reverse converter (outline, shape,
+run sizing); line-height is derived (`scale * LINE_HEIGHT_FACTOR`,
+`tree_builder/node.rs`) so it needs no separate home. Fields with no reverse converter (outline, shape,
 zoom-visibility, line-height) are `warn!`-flagged at apply time
 rather than silently applied-then-reverted. The undo entry and the
 `dirty` flag are gated on the sync-back reporting an actual model
@@ -2077,9 +2149,9 @@ Relabeling a gesture would silently stop every `["Web"]`-gated
 trigger from firing under a finger in the browser, so which
 platform a build *is* stays a build fact until the authoring
 format decides otherwise (`format/mutations.md`).
-Embedded in `MutationApplicabilityGate.contexts:
-Vec<PlatformContext>` so a mutation can declare which platforms
-it applies to.
+Carried as `TriggerBinding.contexts: Vec<PlatformContext>` (see
+[trigger bindings](#trigger-bindings)) so a binding can declare
+which platforms it fires on; empty means all of them.
 
 ### Document actions
 
@@ -2092,7 +2164,9 @@ it touches `canvas.theme_variables`. Document actions cover that
 seam. They run alongside the tree mutation; a single mutation
 can both restyle nodes and switch the theme in one apply.
 
-`lib/baumhard/src/mindmap/custom_mutation/document_action.rs`.
+`lib/baumhard/src/mindmap/custom_mutation/mod.rs` (`DocumentAction`,
+`#[non_exhaustive]` so the macro dispatcher's privilege carve-outs
+must grow with it — see [Action dispatch](#action-dispatch)).
 `SetThemeVariant` copies a named preset from
 `canvas.theme_variants` into the live `theme_variables`;
 `SetThemeVariables` overwrites individual entries while
@@ -2136,12 +2210,17 @@ node. `MutationSrc::Runtime("<label>")` and
 it as it walks. Pure-data mutations (no holes) use a no-op
 context.
 
-`lib/baumhard/src/mutator_builder/context.rs`. The trait:
-`fn count(&self, label) -> usize`,
-`fn mutation(&self, label) -> Option<Mutation>`,
-`fn area(&self, label, index) -> Option<GlyphArea>`. Custom
-mutations register their context at apply time so the build
-produces the right concrete tree.
+`lib/baumhard/src/mutator_builder/context.rs`. The trait's five
+methods all have default bodies, so a context implements only the
+holes its mutation uses: `count(&self, name) -> usize`,
+`area(&self, section, index) -> &GlyphArea`, `field(&self, section,
+index, template) -> GlyphAreaField` (derived from `area` by
+default), `mutation(&self, label) -> Mutation` and
+`mutation_list(&self, label) -> Vec<Mutation>`. The defaults
+`unreachable!` rather than return a placeholder, because a hole the
+AST names and the context does not fill is an authoring error, not
+a runtime value. Custom mutations register their context at apply
+time so the build produces the right concrete tree.
 
 ---
 
@@ -2175,11 +2254,14 @@ and where a frame comes from.
 `src/application/app/run_native_init.rs` holds `InitState` and
 `build`; `run_native.rs` and `run_headless.rs` the two drivers.
 `InitState` carries the `shell` (the window or none, `app/shell.rs`),
-the renderer, a `document: Option<MindMapDocument>`, `drag_state`,
-`interaction_mode`, modal UI state (console, node text editor,
-single-line editor, color picker), `picker_hover`, the resolved
-keybind table, and the clock, recorder and redraw ledger the IPC
-surface reads. Its `input_context()` produces a borrowed view of these
+the renderer, a `document: Option<MindMapDocument>`, the
+`mindmap_tree` the tree builder projects from it (an
+`Option<MindMapTree>` — the tree is app state, not document state),
+`app_scene` and `scene_cache`, `drag_state`, `interaction_mode`,
+modal UI state (console, node text editor, single-line editor, color
+picker), `picker_hover`, the resolved keybind table and macro
+registry, the touch recognizer, and the clock, recorder, injected
+queue, watchdog and redraw ledger the IPC surface reads. Its `input_context()` produces a borrowed view of these
 fields per event so handlers can borrow disjoint subsets without
 lifetime contortions.
 
@@ -2221,16 +2303,20 @@ parent-cycle report, is 56 wrapped lines), and the budget is what
 keeps the placard a map the loader itself accepts: unbounded, a
 4 MB message asks for a node twice as tall as `MAX_NODE_AXIS`.
 
-`src/application/app/startup_load.rs` is the decision. Both init
-paths call `startup_load::adopt(startup_load::startup_surface(...))`
-and nothing else: `StartupSurface` has one arm per outcome, `adopt`
-is the only place the rejected arm is matched, and it is where the
-message reaches the log. That is what keeps the browser build and
-the desktop build reporting a bad map identically (§1
-"Cross-platform as first-class"); the browser build's earlier DOM
-overlay is gone, replaced by this. Adding a third outcome is a
-compile error in `adopt` rather than a silent return to the empty
-window.
+`src/application/app/startup_load.rs` is the decision. Each init
+path has one entry — `native_startup_document` and
+`wasm_startup_document` — and both are
+`adopt(startup_surface(...))` and nothing else. `StartupSurface` has
+one arm per outcome and is private to the module; `resolve` is the
+only place its arms are matched, and is pure, so which document is
+installed and what is said about it are both assertable without a
+logger; `adopt` is the three-line shell that runs `resolve` and
+logs its report. That is what keeps the browser build and the
+desktop build reporting a bad map identically (§1 "Cross-platform
+as first-class"); the browser build's earlier DOM overlay is gone,
+replaced by this. Adding a third outcome is a compile error in
+`resolve` rather than a silent return to the empty window — planting
+one yields a single E0004 there, and `adopt` is untouched.
 
 The placard is bound to no file path, which is load-bearing rather
 than incidental: `save` and `Ctrl+S` both refuse a document without
@@ -2245,56 +2331,93 @@ one.
 
 ### Event loop and `drain_frame`
 
-The per-frame heartbeat: tick watchdog, drive
-throttled interactions, advance animations (`animation_drain`, the
-body the browser's frame runs too), rebuild geometry,
-rebuild scene if dirty, render, log frame interval.
+The per-frame heartbeat: land one injected-input sample, drive the
+throttled drag and the picker hover, re-derive the rubber band,
+rebuild camera-driven geometry, tick animations (`animation_drain`,
+the body the browser's frame runs too). It does **not** render — the
+frame is drawn from winit's `RedrawRequested` (or the headless
+driver's owed-frame check), never from the drain.
 
-Every frame runs the same six steps in the
-same order. Inputs arriving between frames mutate the document;
-the throttled-interaction shells and the per-frame geometry
-flags ensure the next `drain_frame` rebuilds only what changed.
-This decouples mutation frequency (often per-input-sample) from
-rebuild frequency (at most once per frame), so a flurry of
-pointer events doesn't trigger a flurry of scene rebuilds.
+Inputs arriving between frames mutate the document; the
+throttled-interaction shells and the renderer's
+connection-geometry flag ensure the drain rebuilds only what
+changed. This decouples mutation frequency (often per-input-sample)
+from rebuild frequency (at most once per frame), so a flurry of
+pointer events doesn't trigger a flurry of scene rebuilds. Scene
+rebuilds after a *mutation* are not the drain's business at all:
+they run at their call sites (`rebuild_all` and its tiers, see
+[scene rebuild granularity](#scene-rebuild-granularity)), and the
+[dirty flag](#dirty-flag) is the unsaved-changes marker, not a
+rebuild trigger.
 
-`src/application/app/heartbeat.rs` (the frame) and
-`src/application/app/drain_frame.rs` (its non-throttled drains).
-Called once per iteration of the loop body both native drivers run
-(`app/pump.rs`, see [Headless driver](#headless-driver)) — winit's
-`AboutToWait`, or the headless pump's pass. Step order:
+`src/application/app/heartbeat.rs` holds the frame:
+`InputHandlerContext::drain_frame(beat)` lands the injected sample
+and calls `drain_inputs`, whose body is the drain. Two of its steps
+are the helpers in `src/application/app/drain_frame.rs` (native-only,
+like the drag state they read); the animation tick is
+`animation_drain::drain_animation_tick` in
+`src/application/app/animation_drain.rs`, which is not native's alone
+— the browser's frame (`run_wasm/event_redraw_requested.rs`) runs the
+same body from `RedrawRequested` since #144; the rest are inline. It
+is called once per iteration of the loop body both
+native drivers run (`pump::iterate` in `app/pump.rs`, see
+[Headless driver](#headless-driver)) — winit's `about_to_wait`, or
+the headless pump's pass. Step order, as the code runs it:
 
-1. Drive any active throttled interaction
-   ([`ThrottledInteraction`](#throttledinteraction-and-throttleddrag)) —
-   apply pending delta if the throttle says drain.
-2. Advance running animations; on completion, push undo entry.
-3. Rebuild connection geometry if edges moved.
-4. Rebuild the scene where the frame's work requires it —
-   mutation-path rebuilds run at their call sites
-   (`rebuild_all`); the [dirty flag](#dirty-flag) is the
-   unsaved-changes marker, not a rebuild trigger.
-5. Dispatch to `Renderer::process` to push GPU buffers.
-6. Update FPS rolling-average / snapshot counter.
+1. Land one injected-input sample from the IPC queue
+   (`apply_injected`), delivered to the same `on_*` arm the winit
+   event would reach — in real time, or on a step's heartbeat.
+2. Drive the active throttled drag, if any
+   ([`ThrottledInteraction::drive`](#throttledinteraction-and-throttleddrag)):
+   drain the pending delta if the throttle says so.
+3. Drive the picker-hover interaction while the picker is open
+   (`ColorPickerHoverInteraction::drive`); if the picker closed with
+   a drain still queued, clear the pending flags directly rather
+   than strand them behind the throttle window.
+4. `drain_rect_select` — unconditional, every frame, so the rubber
+   band's overlay and covered set are re-derived from whatever
+   `DragState` is found (see [`DragState`](#dragstate)).
+5. `drain_camera_geometry_rebuild` — the camera-driven re-projection
+   of the zoom-dependent roles, under the renderer's
+   `connection_geometry_dirty` flag, suppressed while a node is
+   being moved.
+6. Animation pause/resume bookkeeping around tree-mutating drags
+   (native's alone: there is no drag to pause for without a drag
+   state), then `animation_drain::drain_animation_tick` — advance
+   running animations, commit on completion (an undo entry is pushed
+   there) — when the frame moves time and no tree-mutating drag is
+   live.
 
-**Two halves.** Steps 1, 3 and 4 are *input-driven*: they flush what
-input already did and need no clock. The *time-driven* half — one
-sample of the IPC injected-input queue ahead of step 1, the animation
-tick of step 2, and an active recording's frame after the IPC drain —
-is a function of when the frame runs, read off the
-[app clock](#app-clock). In real time every iteration runs both. Under
-a virtual clock the loop's own iterations run the input-driven half
-only, and `clock.step` runs the whole frame at the virtual instants it
-names — a heartbeat every 16 ms and every frame boundary of a running
-recording — ticking the watchdog per heartbeat. The frame is a method
-set on `InputHandlerContext` rather than on `InitState`, with the input
-arms (`on_*`) beside it, so a `clock step` console line runs the very
-frame the IPC command does.
+What the loop body does *around* the drain is `pump::iterate`'s
+business and is pinned by its tests: the IPC drain runs after
+`drain_frame`, the recorder's `record_tick` after that, then the
+redraw request, the FPS overlay's idle flip, the `clock.wait`
+evaluation and the exit check. On native, `Renderer::process` — the
+GPU half — runs only through `InitState::draw_frame`, which the
+`RedrawRequested` arm in `run_native.rs` calls, and which
+`run_headless.rs` calls when the redraw ledger (`app/settle.rs`)
+says a frame is owed; the FPS counter ticks there, not here.
+
+**Two halves.** Steps 2 through 5 are *input-driven*: they flush
+what input already did and need no clock. The *time-driven* half —
+the injected sample of step 1, the animation tick of step 6, and an
+active recording's frame after the IPC drain — is a function of when
+the frame runs, read off the [app clock](#app-clock). In real time
+every iteration runs both. Under a virtual clock the loop's own
+iterations (`Beat::Loop`) run the input-driven half only, and
+`clock.step` runs the whole frame at the virtual instants it names —
+a heartbeat every `HEARTBEAT_MS` (`Beat::Cadence`) and every frame
+boundary of a running recording (`Beat::Boundary`, which lands no
+injected sample) — ticking the watchdog per heartbeat. The frame is
+a method set on `InputHandlerContext` rather than on `InitState`,
+with the input arms (`on_*`) beside it, so a `clock step` console
+line runs the very frame the IPC command does.
 
 ### `MindMapDocument`
 
-The data plane: owns the `MindMap`, the tree mirror,
-the undo stack, the running animations, and the mutation
-registries.
+The data plane: owns the `MindMap`, the selection, the undo stack,
+the running animations, the mutation registries, and the transient
+previews the projection reads.
 
 This is where every persistent piece of state
 lives. It is the only owner of the model and the undo stack; the
@@ -2303,18 +2426,25 @@ it. Transient previews (live color picker, in-flight label edit,
 in-flight portal-caption edit) belong to it too — read by the scene
 builder, never committed back without an explicit step.
 
-`src/application/document/mod.rs:64-151`. Fields include
-`mindmap: MindMap`, `tree: Option<MindMapTree>`, `selection:
+`src/application/document/mod.rs` (`struct MindMapDocument`). Its
+seventeen fields, in declaration order: `mindmap: MindMap`,
+`file_path`, `dirty: bool`, `load_failure: bool` (this document *is*
+the [load-failure placard](#load-failure-placard), which a one-shot
+`--screenshot` launch reads so it does not capture the placard as the
+map), `revision`
+(see [document revision](#document-revision)), `selection:
 SelectionState`, `undo_stack: Vec<UndoAction>`,
-`active_animations`, `active_toggles`, `mutation_registry`,
-`mutation_handlers`, `mutation_sources`, `dirty: bool`,
-`label_edit_preview`, `portal_text_edit_preview`,
-`color_picker_preview`, `border_preview`,
-`rect_select_preview` (the node ids a rubber-band rectangle
-currently covers — see [`DragState`](#dragstate)). What it does
-**not**
-own: the renderer, GPU resources, drag/mode state, modal editor
-state, keybinds — those are all on `InitState`.
+`mutation_registry`, `mutation_sources`, `mutation_handlers`,
+`active_toggles`, `active_animations`, `label_edit_preview`,
+`portal_text_edit_preview`, `color_picker_preview`,
+`border_preview`, and `rect_select_preview` (the node ids a
+rubber-band rectangle currently covers — see
+[`DragState`](#dragstate)). What it does **not** own: the projected
+tree (`InitState::mindmap_tree` on native,
+`WasmInputState::mindmap_tree` in the browser — a view the tree
+builder derives from the model, rebuilt rather than kept in step),
+the renderer, GPU resources, drag/mode state, modal editor state,
+keybinds — those are all on `InitState`.
 
 ### `SelectionState`
 
@@ -2422,7 +2552,7 @@ Edges have no stable id (§3:
 console arguments all carry this triple. Equality and lookup are
 by triple match against the model's `Vec<MindEdge>`.
 
-`src/application/document/types.rs:71-97`. The `matches`
+`src/application/document/types.rs` (`EdgeRef`). The `matches`
 method walks the edge vector linearly; this is fine because
 edges are sparse and the lookup happens at user-event frequency,
 not in hot loops.
@@ -2447,11 +2577,11 @@ the user is *doing right now*.
 - `Reparent { sources }` — the next left-click on a node
   attaches `sources` as its last children; left-click on empty
   canvas promotes them to root; Esc cancels. Triggered by
-  Ctrl+R on a selection.
+  `Ctrl+P` (`enter_reparent_mode`) on a selection.
 - `Connect { source }` — the next left-click on a target node
   creates a `cross_link` edge from `source`; left-click on
-  empty canvas cancels. Esc also cancels. Triggered by Ctrl+D
-  on one node.
+  empty canvas cancels. Esc also cancels. Triggered by `Ctrl+D`
+  (`enter_connect_mode`) on one node.
 - `Resize { target }` — chrome shows resize handles on the
   target (a `ResizeTarget::Node(id)` or
   `ResizeTarget::Section { node_id, section_idx }`). Drag a
@@ -2463,8 +2593,10 @@ the user is *doing right now*.
   the active node's sections in cyan. Click a section to lift
   it into a `Section` selection; Enter (or `section edit`)
   opens the inline text editor on the active section. Esc /
-  outside-click returns to `Default`. Triggered by `n` /
-  `mode node-edit` / `node edit`.
+  outside-click returns to `Default`. `EnterNodeEdit` and
+  `EnterNodeEditClean` ship **unbound** (`enter_node_edit: []`), so
+  the mode is reached through `mode node-edit` / `node edit` on the
+  console or a binding the user adds.
 
 `src/application/app/interaction_mode.rs`. The enum is cross-
 platform (compiles + the field plumbs through `InitState` /
@@ -2488,7 +2620,7 @@ The console verbs `mode resize` / `mode node-edit` /
 [section=<idx>]` and `node edit` are sugar over the
 mode-flip + side-effect handler.
 
-See `SECTIONS_BORDERS_RESIZE_PLAN.md` §2 for the design
+See `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §2 for the design
 problem this lifted, and §3-§4 for the resize / node-edit
 mode UX. Plan §1 captured the three problems the
 `InteractionMode` enum unified (the consolidation of the
@@ -2512,7 +2644,11 @@ on what was hit.
 itself is 64 bytes rather than the 912 the widest variant used to
 impose on every state — including the `None` that is live for all
 but a few seconds of a session. `PendingRight`, 64 bytes, is the
-widest variant left and stays unboxed.
+widest variant left and stays unboxed. Those three figures are the
+ones the comment on `DragState::Pending` in `app/mod.rs` records
+from the pass that boxed the two; no `size_of` assertion pins them,
+so read them as that comment's measurement rather than as a checked
+invariant.
 
 **`SelectingRect` splits its per-frame work in two, and only one
 half runs every frame.** The overlay rectangle tracks the pointer
@@ -2671,17 +2807,49 @@ exception on both halves until #37 — it overwrote any state on
 press and forced `None` on release — and the right-button guard's
 comment named that overwrite as the posture it was rejecting.
 
-**One state is outside the rule, and knowingly.** `Panning` does
-not record which button armed it, and three things arm it (a
-middle press, the `LeftDrag` threshold cross, any keyboard or
-macro `pan_canvas`), so a middle release during a left-drag pan
-ends it and a left release ends a middle-started one. Nothing is
-at risk — `Panning` owes the model no write and no undo entry,
-which is exactly what puts it outside the class above — and
-closing it is a decision about `Action::PanCanvas`'s semantics
-rather than a guard: the variant would have to carry its origin,
-and a keyboard-armed pan has no button to name, so "momentary or
-modal" has to be answered first.
+**A pan belongs to the input that armed it** (#153).
+`Panning { owner: PanOwner }` records it, and the release rule
+above extends to it unchanged: a pan ends on its owner's release
+and on no other, so a middle release no longer ends a left-drag
+pan, nor a left release a middle-started one. What `pan_canvas`
+means on a key is the one decision this needed, and it is
+**momentary**: a key holds the pan exactly as a button does, and
+ends it on its own key-up (the Space-to-pan posture of most canvas
+tools). The reason is that momentary is what a held input *is* —
+the release is the "stop" every other pointer gesture here already
+reads — and it makes a key's auto-repeat harmless, where a toggle
+would flip the pan off and on while the key is down. An input
+with no release — a macro step, a console line, IPC `act.action`
+— cannot be momentary, so its pan is **modal**: `Toggled`, ended
+by the next `pan_canvas` from a key, a macro, the console or IPC.
+(Not from the mouse: a middle press arms only from `None`, so it
+cannot reach the arm while a pan runs.) One rule covers both
+halves: *held inputs hold, the rest toggle.* A touch `LongPress`
+bound to `pan_canvas` is one of the rest — `HeldInput` has no
+finger — so its pan toggles too. Whatever owns a pan, a left
+*press* re-arms `Pending` over it, as it always has: `Panning` owes
+the model nothing, and the release rule is about releases.
+
+The Action cannot see which input reached it — the funnel hands it
+only an `Action` — so the arm arms every pan `Toggled`, and a held
+input claims the pan its own dispatch armed on the way out of
+`dispatch_held_action` (the same read-the-decision-back shape the
+`LeftDrag` first-delta gate uses). A key bound to something else,
+pressed during a toggled pan, claims nothing: the claim is only for
+a pan that did not exist before the dispatch.
+
+**Focus loss resolves every state** (`DragState::end_on_focus_loss`,
+`WindowEvent::Focused(false)`). Before #153 nothing ran on it, so a
+`Throttled` gesture whose owning release never arrived — focus
+lost, the OS eating the release — was unreachable. Now the state
+ends at `None` and a throttled drag is **committed**, through the
+same `resolve_release` gate with `Release::FocusLost`, which
+answers `Commit` whichever button started it. Commit rather than
+discard because commit is the reversible one: the model takes what
+the user was looking at, with its undo entry, while a discard
+snaps the canvas back and leaves nothing to redo. A pending press
+is dropped without firing its click; a pan of either kind, and a
+rubber band, are simply ended. Native-only, as `DragState` is.
 
 ### `TouchGestureRecognizer`
 
@@ -2700,8 +2868,8 @@ project targets — has no input path at all on a phone.
 - **`Tap`** on the lift of a finger that never left
   `POINTER_DRAG_THRESHOLD_PX` and was down for less than
   `LONG_PRESS_MS`.
-- **`LongPress`** from `tick(now)` — "held for 350 ms" is a
-  wall-clock transition, not an event — once per episode.
+- **`LongPress`** from `tick(now)` — "held for `LONG_PRESS_MS`" is
+  a clock transition, not an event — once per episode.
 - **`Pan { pos, delta }`** on every `Moved` from the threshold
   crossing onward. The first emission carries the travel since
   the finger *landed*, so summing an episode's deltas gives
@@ -2826,6 +2994,12 @@ canvas work a commit owes once its model write has landed:
 `None`, `SceneOnly`, or `All`. Named rather than performed, so
 the commit body stays renderer-free.
 
+**What ends a drag is a `Release`**: `Button(b)` commits only when
+`b` started the gesture and hands the drag back otherwise;
+`FocusLost` commits whichever button did, because the owning
+release may never come and nothing else finalizes a throttled drag
+(see [`DragState`](#dragstate)).
+
 Variants:
 
 - `MovingNode(MovingNodeInteraction)`
@@ -2849,10 +3023,18 @@ Variants:
 `as_dyn_mut()` / `as_dyn()` widen to
 `&mut dyn ThrottledDragInteraction` — the drag trait, which has
 `ThrottledInteraction` as a supertrait, so one ladder serves all
-three phases. Those two matches are the only per-variant matches
-in the crate: `event_cursor_moved`'s accumulate arm,
+three phases. Those two are the only per-variant matches on the
+*gesture* path: `event_cursor_moved`'s accumulate arm,
 `event_mouse_click`'s left-release arm and its right-release arm
-are each a single call through them.
+are each a single call through them. One more production-path
+match exists by design — `ThrottledDrag::to_ipc_json` in
+`app/ipc_state.rs`, the exhaustive projection `query.mode` reports
+the gesture through (see [IPC server](#ipc-server-ipcserver)) — and
+the test builds add three more — `variant_name` and
+`latches_the_cursor` in this module's tests, and the enumeration in
+`app/ipc_state.rs`'s own test module. Planting a variant yields
+E0004 at exactly those three production sites, and at those three
+test sites under `--all-targets`.
 
 Touch does **not** ride this ladder. Pinch-zoom, one-finger pan
 and tap-select ship as `TouchGestureRecognizer` emissions that
@@ -2880,10 +3062,12 @@ average; if the average exceeds budget, it raises `n` (the
 "drain divisor"); if work is well under budget with hysteresis
 margin, it lowers `n` toward 1.
 
-`src/application/frame_throttle.rs:64-183`.
-Default budget `14_000` µs (60 Hz minus safety), default
-window 8 frames, default hysteresis 30%. `n` clamps in
-`[1, 8]`. Each `ThrottledDrag` owns its own throttle, so
+`src/application/frame_throttle.rs` (`MutationFrequencyThrottle`).
+`DEFAULT_BUDGET` is the per-frame budget (a 60 Hz frame minus a
+safety margin), `WINDOW_SIZE` the moving-average window, `MAX_N` the
+ceiling `n` clamps to above 1; the hysteresis band is a factor in
+the arithmetic of the adjust step rather than a named constant, so
+read it there. Each `ThrottledDrag` owns its own throttle, so
 per-gesture profiles tune independently — a 500-node move
 budget does not bias an edge-label drag's average.
 
@@ -2901,10 +3085,13 @@ mutation means adding a new variant, snapshotting the right
 same commit.
 
 `src/application/document/undo_action.rs`. The thirteen
-variants: `MoveNodes`, `CustomMutation`, `ReparentNodes`,
+variants, in declaration order (the count is read off that enum; the
+IPC projection in `document/ipc_state.rs` and `undo()` itself are
+the exhaustive matches that make a fourteenth a compile error, this
+list is not): `MoveNodes`, `CustomMutation`, `ReparentNodes`,
 `DeleteEdge`, `CreateEdge`, `EditEdge`, `CreateNode`,
 `EditNodeText`, `EditNodeStyle`, `EditNodeZoom`,
-`CanvasSnapshot`, `EditNodeAabb`, `DeleteNode`. `CustomMutation`
+`CanvasSnapshot`, `EditNodeAabb`, `DeleteNodes`. `CustomMutation`
 is the general bucket — it snapshots the `target_scope`-defined
 window so any declarative or imperative mutation replays
 cleanly. Every arm is bounds-checked (e.g. `index <
@@ -2968,17 +3155,19 @@ pipelines, atlases, and the FPS ring buffer; every frame, its
 buffers, and submits to the GPU. It never holds a reference to
 the document.
 
-`src/application/renderer/mod.rs:224-878`.
+`src/application/renderer/mod.rs` (`struct Renderer`).
 The dual pipeline lives here:
 - **Rect / SDF pipeline** — node fills, ellipse SDF (shape-aware
   fills via `RECT_SHADER_WGSL`), background fills.
 - **Glyph pipeline** — every visible character, via
   cosmic-text + glyphon atlas.
 
-Sub-passes sit in `borders.rs`, `connections.rs`,
-`console_pass.rs`, `color_picker.rs`. Visibility culling
-combines `Camera2D::is_visible` (spatial) with
-[`ZoomVisibility`](#zoomvisibility) (window).
+Sub-passes sit in `borders.rs`, `console_pass.rs`,
+`color_picker.rs` and `selection_overlay.rs`; connection glyphs
+have no pass of their own — they are a canvas-role tree walked by
+`tree_walker.rs` like every other role. Visibility culling is
+`Camera2D::visibility`, which answers the spatial cull and the
+[`ZoomVisibility`](#zoomvisibility) window in one verdict.
 
 ### `AppScene` and scene host
 
@@ -3003,7 +3192,7 @@ second, and swapping them still renders correctly while undoing
 the whole point (see
 [canvas-role projection](#canvas-role-projection)).
 
-`src/application/scene_host.rs:1-150`. Each
+`src/application/scene_host.rs` (`struct AppScene`). Each
 role has named slots (`CanvasRole`, `OverlayRole`); each slot
 has a corresponding `Tree<GfxElement, GfxMutator>` and a
 mutator registry. The same idiom drives both canvas-role
@@ -3073,8 +3262,9 @@ a statement.
 
 ### Scene rebuild granularity
 
-Five tiered rebuild functions, each scoped to a
-specific change kind.
+Whole-canvas rebuild functions, a selection-change chooser, a
+camera-driven re-projection, and one updater per canvas role — each
+scoped to a specific change kind.
 
 Different changes invalidate different
 amounts of work. Editing a node's text might change its width
@@ -3084,17 +3274,26 @@ only touches portal markers (portal-only rebuild). Each tier
 is dispatched explicitly so the cheapest one runs.
 
 `src/application/app/scene_rebuild.rs`.
-Functions: `rebuild_all` (node tree + every canvas role),
+Free functions: `rebuild_all` (node tree + every canvas role),
 `rebuild_scene_only` (reuse the node tree, refresh every canvas
 role), `rebuild_selection_highlight` (node text buffers only — no
 canvas roles, no mode-status line: what a change to *which nodes
-are highlighted* actually needs), and the per-role methods on
+are highlighted* actually needs), `rebuild_after_selection_change`
+(the chooser, below), and `rebuild_camera_geometry` (the
+zoom-dependent roles only — connections, labels, portals, edge
+handles — which both targets reach: native from
+`drain_camera_geometry_rebuild` once per frame under the renderer's
+flag, the browser from its wheel handler; `rebuild_camera_geometry_at`
+is the screenshot engine's variant that projects at another camera
+and back). Then the per-role methods on
 [`CanvasFrame`](#canvas-role-projection) —
 `update_connection_trees` (edges + their grab handles),
 `update_portal_tree`, `update_border_tree`,
-`update_connection_label_tree`, `update_section_frame_tree`, and
-the two resize-handle updaters — each callable on its own so a
-caller refreshes only what its interaction can change.
+`update_connection_label_tree`, `update_section_frame_tree`,
+`update_node_resize_handle_tree` and
+`update_section_resize_handle_tree` — each callable on its own so a
+caller refreshes only what its interaction can change, with
+`update_all` as the every-role batch the whole-canvas tiers call.
 
 **`RebuildTier` names the top two rather than running them.**
 `RebuildTier::{All, SceneOnly}` is the choice between the first
@@ -3128,8 +3327,8 @@ Two constructors carry the rules:
   mutated the document, so §4's peers were wrong in opposite
   directions.
 
-`highlight_entries_for(doc)` is the one mapping all four
-node-tree rebuild sites use for *which* nodes to tint: the
+`highlight_entries_for(doc)` is the one mapping every
+node-tree rebuild site uses for *which* nodes to tint: the
 rubber-band preview when one is live, `doc.selection` otherwise.
 The preview replaces rather than adds to the selection's entries,
 because the gesture's release writes `SelectionState::from_ids`
@@ -3237,10 +3436,11 @@ and the single-threaded invariant for the model/view pipeline is
 preserved because the watchdog only *reads* a shared `AtomicU64`,
 never touching app state.
 
-`src/application/app/freeze_watchdog.rs:38-134`. Main thread
-calls `tick()` at every event-loop boundary; watchdog reads
-the atomic every second; if the gap exceeds `FREEZE_THRESHOLD`
-(10 seconds), prints diagnostics and aborts. Not present on
+`src/application/app/freeze_watchdog.rs` (`FreezeWatchdog`). Main
+thread calls `tick()` at every event-loop boundary; the watchdog
+reads the atomic every `WATCHDOG_POLL`; if the gap exceeds
+`FREEZE_THRESHOLD`, prints diagnostics and aborts. Both constants
+are declared at the top of that file. Not present on
 WASM — browsers already provide an "unresponsive tab" dialog
 for free.
 
@@ -3267,8 +3467,9 @@ right after `drain_inputs` and executes every command on the main
 thread, with the same access an input handler has. Each connection
 carries a generation stamp, so nothing a departed controller sent can
 act after it left. A controller that falls behind on its replies is
-paused rather than dropped; one whose socket accepts nothing for ten
-seconds is dropped. The socket is created owner-only, refuses any
+paused rather than dropped; one whose socket accepts nothing for
+`STALLED_WRITE_TIMEOUT` (`ipc/transport/mod.rs`) is dropped. The
+socket is created owner-only, refuses any
 directory on its path that another user could rename it out of, and
 replaces an existing path only when it is provably a stale socket of
 ours.
@@ -3309,7 +3510,9 @@ reach, so the drag state machines, double-click timing and modal
 steals cannot tell them apart. `input.drag` paces its samples one per
 frame through the injected-input queue (`ipc/injected.rs`), so the
 throttled drag drains between its moves as under a real hand;
-`input.click_node` is a move and a click at a node's center. The
+`input.click_node` is a move and a click at a node's center, and
+`input.pending` reports how many injected samples are still queued,
+so a client polls it to zero before reading what a drag did. The
 `capture` family is what is drawn as pixels: `capture.screenshot` is
 a thin wire over the screenshot engine (see
 [Screenshot capture](#screenshot-capture)), which the `screenshot`
@@ -3416,8 +3619,9 @@ half: it starts a recording, takes a frame each time `about_to_wait`
 finds one due (an active recording is a loop timer source, so an idle
 canvas still wakes for its frames), and ends it. Each frame is drawn
 by `capture_flow::draw`, the screenshot's own path, and held as raw
-pixels until 256 MiB of them wait or the recording ends, so a frame
-costs the loop a render and a readback and never an encode. A frame
+pixels until `PENDING_BYTES` of them wait or the recording ends, so
+a frame costs the loop a render and a readback and never an
+encode. A frame
 that was due and not taken — the loop was late, the renderer skipped
 it, a node drag made it undrawable — is a *gap* with its reason, never
 a silent drop.
@@ -3428,8 +3632,8 @@ artifacts dir's budget, the app exiting) is kept until
 `capture.record_stop` collects it. In `mandalactl`, `assemble.rs`
 plans the GIF from the manifest's times — rounding start times rather
 than delays, so the error does not accumulate, and dropping frames
-closer than the 20 ms a browser honors — and writes one decoded frame
-at a time.
+closer than `GIF_MIN_DELAY_CS` (the shortest delay browsers honor
+rather than stretch) — and writes one decoded frame at a time.
 
 ### Headless driver
 
@@ -3448,8 +3652,9 @@ should run* as a value: winit turns it into a `ControlFlow`, the
 headless driver (`app/run_headless.rs`) into a park the IPC threads
 end with `Thread::unpark`. Where winit delivers `RedrawRequested`, the
 headless driver draws the frame the redraw ledger says is owed
-(`app/settle.rs`), paced to one per 16 ms of wall time, and runs
-another iteration, as winit does after any event. A headless frame
+(`app/settle.rs`), paced to one per `HEARTBEAT_MS` of wall time
+(`FRAME_INTERVAL` in `run_headless.rs`), and runs another iteration,
+as winit does after any event. A headless frame
 draws nothing (`renderer::Sink::Headless`): pixels are drawn when a
 [capture](#screenshot-capture) asks. The clock starts virtual, the
 input is the IPC `input` family's alone, and the renderer's adapter is
@@ -3490,17 +3695,22 @@ stored on the axis is ever rebased. Driven by the IPC `clock` family
 and the `clock` console verb; `clock.wait` is its settling primitive
 (`format/ipc.md` §`clock`).
 
-Native and the browser each hold one; the browser's stays real,
-because what advances a virtual clock is the per-frame drain, which is
-native today (`CLAUDE.md` "Dual-target status"). Both read the wall
-clock through `web_time`, which is `performance.now()` in the browser.
+Native and the browser each hold one; the browser's stays real. What
+it lacks is not the tick — since #144 the browser's frame runs the
+same `animation_drain` body and, like native's loop frame, ticks on a
+real clock only, so it would stand still under a virtual one — but the
+step driver (`heartbeat::step`, a method on native's
+`InputHandlerContext`) and the IPC transport to command it
+(`CLAUDE.md` "Dual-target status", "Virtual-clock stepping"). Both
+read the wall clock through `web_time`, which is `performance.now()`
+in the browser.
 
 ---
 
 ### Action dispatch
 
 Every user-driven application-level effect is a variant
-of `enum Action` (`src/application/keybinds/action.rs`) and runs
+of `enum Action` (`src/application/keybinds/action/mod.rs`) and runs
 through a single `dispatch_action(action, ctx, hit)` funnel
 (`src/application/app/dispatch/native.rs`). Mouse, keyboard, the future
 macro runtime, and any plugin host all reach the same arms.
@@ -3628,8 +3838,9 @@ mutation against the tree (not the model) so the user sees
 in-flight characters; on commit, the model is updated and a
 single `EditNodeText` undo entry is pushed.
 
-`src/application/app/text_edit/mod.rs:29-80`.
-Cross-platform — works on both native and WASM. Cursor math
+`src/application/app/text_edit/mod.rs` (`TextEditState`; the
+session body is `editor.rs`). Cross-platform — works on both native
+and WASM. Cursor math
 runs on grapheme-cluster indices throughout (via
 [`grapheme_chad`](#utilities--grapheme_chad-color-geometry)),
 so emoji and combining marks behave as single units. Original
@@ -3705,8 +3916,8 @@ contract a unit test on either editor cannot see.
 
 ### Glyph-wheel color picker
 
-A modal HSV picker rendered as a 24-glyph hue ring
-with sat/value crosshairs and theme-variable quick-pick chips.
+A modal HSV picker rendered as a hue ring of `HUE_SLOT_COUNT`
+glyphs with sat/value crosshairs and a central preview glyph.
 
 Picking a color for the current selection
 without leaving the canvas. Hover live-previews through the
@@ -3714,10 +3925,15 @@ without leaving the canvas. Hover live-previews through the
 connection, label, and portal passes read it during projection
 and substitute the preview color for the targeted element. Click commits, click
 outside cancels. Keyboard: h/H nudges hue, s/S sat, v/V value,
-Tab cycles theme chips, Enter commits, Esc cancels.
+Enter commits, Esc cancels. The theme-variable quick-pick chip row
+and its Tab cycling are gone: the `ColorPicker` context's `Action`
+set is cancel, commit and the six nudges, the layout carries no
+chip positions, and `compute_sizing.rs` names the retired row where
+its width reservation used to be.
 
-`src/application/color_picker/mod.rs:1-77`
-and `src/application/color_picker_overlay/`. Native-only today.
+`src/application/color_picker/mod.rs` (`ColorPickerState`,
+`PickerMode`, `OpenPicker` in `state.rs`) and
+`src/application/color_picker_overlay/`. Native-only today.
 `compute_color_picker_layout()` is a pure function over
 geometry + viewport, so layout can be unit-tested without GPU.
 Two modes: contextual (modal, opened from edge context menu;
@@ -3802,8 +4018,9 @@ console verbs, plus the `BorderPreview` lifecycle.
 
 ### Console
 
-A CLI-style command palette (Ctrl+;) for mutations,
-styling, settings, and document operations.
+A CLI-style command palette (`/` by default, the `open_console`
+binding) for mutations, styling, settings, and document
+operations.
 
 Power-user operations that don't have a
 keybind. The console covers the long tail: zoom-bound
@@ -3813,14 +4030,18 @@ and application, FPS toggle. Tokenized shell-style
 first-class). Tab-completion is contextual and prefix-matched;
 scrollback shows command history with dimmed older lines.
 
-`src/application/console/mod.rs:1-170`.
-Native-only today. The verbs are the `COMMANDS` table in
-`console/commands/mod.rs`: `help`, `anchor`, `body`, `border`,
-`canvas`, `cap`, `color`, `edge`, `font`, `fps`, `spacing`, `label`,
-`mode`, `mutation` (with `list`, `help`, `apply`, `inspect`
-subverbs), `save`, `screenshot` (see
-[Screenshot capture](#screenshot-capture)), `open`, `new`, `node`,
-`section`, `zoom`. Visuals borrow
+`src/application/console/mod.rs` (`ConsoleState`, `ConsoleEffects`;
+the line executor, `execute_console_line`, sits with the native
+shell in `app/console_input/exec.rs`). Native-only today. The verbs
+are the
+`COMMANDS` table in `console/commands/mod.rs`, in its order: `help`,
+`anchor`, `body`, `border`, `canvas`, `cap`, `color`, `edge`, `font`,
+`fps`, `spacing`, `label`, `mode`, `mutation` (with `list`, `help`,
+`apply`, `inspect` subverbs), `save`, `screenshot` (see
+[Screenshot capture](#screenshot-capture)), `record` (see
+[Frame-sequence recording](#frame-sequence-recording)), `clock` (see
+[App clock](#app-clock)), `open`, `new`, `node`, `section`, `zoom`.
+Visuals borrow
 `baumhard::mindmap::border::BorderGlyphSet::box_drawing_rounded`
 for the frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
@@ -3841,10 +4062,10 @@ A `Grammar` is a **level**, not a verb. `border` is one,
 `border preview` is another, `canvas section-frame focused` a
 third, each joined to its parent by a `&'static` reference on
 `Subverb::child`. `subverb_sets` and `key_sets` are slices *of
-slices*, so `canvas border` names border's fifteen keys and
-border's seven per-field subverbs rather than transcribing
-them; `section frame` names the same fifteen and adds its own
-`section=`.
+slices*, so `canvas border` names border's fifteen keys and its
+seven positional subverbs (five in the `per-field` group, `side`
+and `corner` in `glyphs`) rather than transcribing them; `section
+frame` names the same fifteen and adds its own `section=`.
 
 Four things the shape is load-bearing for:
 
@@ -3854,9 +4075,9 @@ Four things the shape is load-bearing for:
   `Rows` covers both the document-derived vocabularies (a
   map's palettes, a node's sections, the host's font families)
   and the *suggestion* lists too open-ended to print: `zoom
-  min=` offers eight zoom levels and accepts any positive
-  float, so the popup gets the eight and the usage line gets
-  `<zoom|unset>`.
+  min=` offers the presets in `zoom.rs`'s `VALUE_PRESETS` and
+  accepts any positive float, so the popup gets the presets and
+  the usage line gets `<zoom|unset>`.
 - **A `Form` is (slots, keys), and a subverb may declare
   several.** `section move` takes `dx=`/`dy=` *or* `x=`/`y=`;
   `section resize` takes the `fill` literal *or* `w=`/`h=`.
@@ -3966,8 +4187,9 @@ configuration via XDG (native) and `localStorage` (WASM).
 
 Every keystroke that does *anything* maps to
 an `Action` first; the `Action` is then dispatched in the right
-input context (Document, Console, ColorPicker, LabelEdit,
-TextEdit). This indirection means users can rebind keys without
+input context (`InputContext`: Document, Console, ColorPicker,
+LabelEdit, TextEdit, NodeEdit). This indirection means users can
+rebind keys without
 touching code, and the same `Action` works on both targets even
 though the config-loading paths differ.
 
@@ -4120,9 +4342,9 @@ The three user-owned JSON files (`keybinds.json`,
 the finding is written once in
 `src/application/user_config/`.
 
-- `MAX_USER_PAYLOAD_BYTES` (1 MiB) and `check_cap` are the single
-  wording and enforcement of the size cap. A real config is a few
-  KB; a multi-megabyte one is accidental or hostile and is
+- `MAX_USER_PAYLOAD_BYTES` and `check_cap` are the single wording
+  and enforcement of the size cap. A real config is a few KB; one
+  large enough to exceed the cap is accidental or hostile and is
   rejected before serde ever sees it.
 - `read_capped(path)` is the native filesystem read: stat, cap,
   read. Native-only, like its neighbor `xdg_mandala_path` — the
@@ -4194,9 +4416,13 @@ round-trip; on paste, the payload is consulted only when its
 `text` snapshot matches the OS clipboard's current text exactly
 (consistency check; falls through to plain text when the user
 copied from another app between Mandala copy and paste).
-Failures (permission denied, unavailable) log via `log::warn!`
-and return `None` — interactive paths must not panic. WASM
-stubs warn-and-noop pending the browser's async clipboard API.
+Failures on native are silent by construction — `read_clipboard`
+maps a failed `arboard` call to `None` through `.ok()` and
+`write_clipboard` discards its `Result` — because interactive
+paths must not panic, and a clipboard that is merely unavailable
+is not worth a log line per keystroke. The WASM stubs return
+`None` / do nothing and say so at `log::debug!`, pending the
+browser's async clipboard API.
 
 ### `mandalactl` CLI
 

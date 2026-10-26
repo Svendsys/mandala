@@ -4,7 +4,7 @@
 //! selection's section (when the selection is
 //! `SelectionState::Section` / `SectionRange`) or an explicit
 //! `section=K` kv (when the selection is a single node). Subverbs
-//! (per `SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5):
+//! (per `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5):
 //!
 //! - `section show [section=<idx>]` — multi-line resolved-property
 //!   readout (text preview / runs / offset / size / channel /

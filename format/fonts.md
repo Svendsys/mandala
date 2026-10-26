@@ -34,12 +34,18 @@ all rather than naming a family that exists on one target.
 
 Two fields hold the user's font choice:
 
-- **`MindNode.text_runs[*].font`** (`String`) — per-run pin on a
-  node's text. See [`text-runs.md`](./text-runs.md).
+- **`MindNode.sections[*].text_runs[*].font`** (`String`) — per-run
+  pin on a section's text; runs live on each `MindSection`, not on
+  the node. Empty (the default) means no pin. See
+  [`text-runs.md`](./text-runs.md).
 - **`MindEdge.glyph_connection.font`**
   (`Option<String>`) — pin for the edge body's connection glyphs.
-  When `null` (or absent), the edge inherits the canvas-level
-  default connection font.
+  The precedence is per **config**, not per field: an edge with no
+  `glyph_connection` at all uses `canvas.default_connection` whole
+  (font included), then the built-in default; an edge that carries a
+  `glyph_connection` uses that object alone, so its `font: null`
+  means the default face, *not* the canvas font
+  (`GlyphConnectionConfig::resolved_for`).
 
 Edge labels, portal icons, and portal text **inherit** the owning
 edge's font today — there is no per-channel `font_family` slot on

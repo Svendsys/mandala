@@ -39,7 +39,7 @@
 //! native and WASM. The native vs. WASM divergence is largely
 //! confined to the run-loop entry point; cross-platform
 //! `Action` arms route through [`dispatch::action_core`]'s
-//! `dispatch_compatible`. See `WASM_CONVERGENCE.md` for the
+//! `dispatch_compatible`. See `work_plans/WASM_CONVERGENCE.md` for the
 //! current convergence status.
 
 mod animation_drain;
@@ -98,7 +98,7 @@ mod pump;
 #[cfg(not(target_arch = "wasm32"))]
 mod record_flow;
 // Cross-platform context-bundles for the unified `dispatch_action`
-// funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
+// funnel. Track C from `work_plans/WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
 #[cfg(not(target_arch = "wasm32"))]
 mod modal_editor;
@@ -761,6 +761,61 @@ impl PendingPress {
     }
 }
 
+/// An input that is *held*: it is down now and will come up, and
+/// coming up is how the user says "stop". The two kinds the window
+/// delivers a release for.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HeldInput {
+    /// A mouse button.
+    Button(crate::application::platform::input::MouseButton),
+    /// A key, by the name `keybinds::key_to_name` gives it on the
+    /// press, which the release must spell the same way to end the
+    /// pan. `key_to_name` only lowercases, so for a letter a Shift
+    /// lifted first still matches; for a key whose shifted character
+    /// differs (`!` over `1`) it does not, and that pan lasts until a
+    /// left press or focus loss. Narrow in practice — key lookups have
+    /// no modifier fallback, so a shifted-punctuation binding is
+    /// mostly unreachable — but it is why the claim stops at letters.
+    Key(String),
+}
+
+/// What ends a [`DragState::Panning`].
+///
+/// **A pan belongs to the input that armed it** (#153). An input
+/// that is held ends the pan on its own release — momentary, the
+/// mouse's posture and the Space-to-pan posture of most canvas
+/// tools. An input that has no release — a macro step, a console
+/// line, an IPC `act.action`, and a touch `LongPress`, since
+/// [`HeldInput`] has no finger — cannot be momentary, so its pan is
+/// modal: it toggles.
+///
+/// Whichever owner a pan has, a left *press* still re-arms `Pending`
+/// over it (`DragState::would_abandon_gesture` keeps `Panning` out of
+/// the class a press may not overwrite): `Panning` owes the model
+/// nothing, and the ownership rule is about which *release* ends a
+/// pan, not about presses.
+///
+/// The Action cannot see which input reached it: `dispatch_action`
+/// strips the gesture down to an [`Action`](crate::application::keybinds::Action).
+/// So the arm arms every pan [`PanOwner::Toggled`], and a held input
+/// that dispatched the arming Action claims it afterwards
+/// (`dispatch::native::dispatch_held_action`, through
+/// [`DragState::hand_armed_pan_to`]) — the same read-the-decision-back
+/// shape `event_cursor_moved::emits_first_pan_delta` already uses.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PanOwner {
+    /// Momentary: ends on this input's release, and on no other
+    /// release. A release of any other button or key leaves it
+    /// running.
+    Held(HeldInput),
+    /// Modal: armed by an input with no release. Ends on the next
+    /// `Action::PanCanvas` that finds it — from a key, a macro, the
+    /// console or IPC alike — and no button or key release ends it.
+    Toggled,
+}
+
 /// Tracks the current drag interaction state.
 ///
 /// Continuous, high-rate-input-driven drag variants
@@ -840,10 +895,16 @@ enum DragState {
         /// non-node hits.
         hit_section_idx: Option<usize>,
     },
-    /// Dragging to pan the camera (started on empty space).
-    /// Unthrottled — emits a `CameraPan` decree directly, no
-    /// tree or model mutation involved.
-    Panning,
+    /// Panning the camera: every cursor move emits a `CameraPan`
+    /// decree directly. Unthrottled, no tree or model mutation
+    /// involved.
+    ///
+    /// `owner` is which release ends it — see [`PanOwner`]; a left
+    /// press re-arms over it whoever owns it. Before #153 the
+    /// variant carried nothing, so a middle release ended a
+    /// left-drag pan, a left release ended a middle-started one, and
+    /// a key-armed pan had no release that belonged to it at all.
+    Panning { owner: PanOwner },
     /// Shift+drag on empty space: rubber-band selection rectangle.
     ///
     /// Unthrottled: the overlay rectangle is redrawn every frame
@@ -920,9 +981,12 @@ impl DragState {
     /// outside it: none owes the model anything, and each is
     /// re-derived from the next press or the next cursor sample.
     /// Refusing a left press there would strand a click after a
-    /// release the window never delivered (focus loss mid-drag)
-    /// instead of re-arming from it, which is the behavior those
-    /// three have always had.
+    /// release the window never delivered instead of re-arming from
+    /// it, which is the behavior those three have always had. Focus
+    /// loss no longer reaches that case — [`Self::end_on_focus_loss`]
+    /// resolves every state when the window loses focus — but a
+    /// release the OS eats with the window still focused does, and
+    /// nothing else would recover from it.
     ///
     /// It lives on the enum rather than beside any one caller
     /// because it is a property of the state, and two dispatch
@@ -932,6 +996,86 @@ impl DragState {
     /// reach as well as the middle button.
     fn would_abandon_gesture(&self) -> bool {
         matches!(self, Self::PendingRight { .. } | Self::Throttled(_))
+    }
+
+    /// True when this is a pan `input` holds, i.e. one that `input`'s
+    /// release ends. A [`PanOwner::Toggled`] pan is held by nothing,
+    /// so no release ends it.
+    fn is_pan_held_by(&self, input: &HeldInput) -> bool {
+        matches!(self, Self::Panning { owner: PanOwner::Held(held) } if held == input)
+    }
+
+    /// End the pan `input` holds, if this is one; leave every other
+    /// state — any other pan included — exactly as it is. The body
+    /// the left, right and key releases end a pan through; the middle
+    /// button's pure route asks [`Self::is_pan_held_by`] instead.
+    fn end_pan_held_by(&mut self, input: &HeldInput) {
+        if self.is_pan_held_by(input) {
+            *self = Self::None;
+        }
+    }
+
+    /// Hand a pan the dispatch just armed to the held `input` that
+    /// dispatched it.
+    ///
+    /// `was_panning` is the state *before* the dispatch, and is the
+    /// whole of the "just armed" test: a dispatch that started from
+    /// a pan cannot have armed one (`Action::PanCanvas` either ends a
+    /// toggled pan or refuses a held one), so a toggled pan found
+    /// afterwards is the one that was already running and is not
+    /// this input's to claim. Without it, any key — bound to
+    /// `zoom_in`, say — pressed during a toggled pan would turn it
+    /// into a momentary pan that key's release then ends.
+    fn hand_armed_pan_to(&mut self, was_panning: bool, input: HeldInput) {
+        if was_panning {
+            return;
+        }
+        if let Self::Panning { owner } = self {
+            if *owner == PanOwner::Toggled {
+                *owner = PanOwner::Held(input);
+            }
+        }
+    }
+
+    /// True for any pan, whoever owns it.
+    fn is_panning(&self) -> bool {
+        matches!(self, Self::Panning { .. })
+    }
+
+    /// Resolve the drag state when the window loses focus: every
+    /// gesture's owning release is now one the window may never
+    /// deliver, so none is left waiting for it.
+    ///
+    /// The state always ends at `None`. What it owed decides the rest:
+    ///
+    /// - `Throttled(..)` owes the model a write and an undo entry, and
+    ///   is handed back for the caller to **commit** — through
+    ///   `release::commit_if_resolved` with `Release::FocusLost`,
+    ///   the gate that answers `Commit` for it whichever button
+    ///   started the drag. Committing keeps what the user was looking
+    ///   at and pushes an undo entry, so the gesture stays reversible;
+    ///   discarding it would snap the canvas back with nothing to
+    ///   redo it from.
+    /// - `Pending` / `PendingRight` are dropped. A press whose release
+    ///   never came is not a click, so neither `handle_click` nor the
+    ///   `RightClick` binding fires.
+    /// - `Panning` (any owner) and `SelectingRect` are dropped. Neither
+    ///   owes the model anything; the per-frame drain ends the
+    ///   rubber band's two artifacts on the next frame, as it does for
+    ///   every other way out of `SelectingRect`.
+    ///
+    /// A toggled pan ends too, although its end was never a release:
+    /// returning to the window with the camera already following the
+    /// pointer is a pan nobody can see they armed.
+    fn end_on_focus_loss(&mut self) -> Option<Box<ThrottledDrag>> {
+        match std::mem::replace(self, Self::None) {
+            Self::Throttled(drag) => Some(drag),
+            Self::None
+            | Self::Pending(_)
+            | Self::PendingRight { .. }
+            | Self::Panning { .. }
+            | Self::SelectingRect { .. } => None,
+        }
     }
 
     /// Where the pending press began, in surface pixels: the state a
