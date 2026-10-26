@@ -502,7 +502,7 @@ pub(in crate::application::app) fn dispatch_compatible(
             let parsed = match value.parse::<f32>() {
                 Ok(v) if is_positive_finite(v) => v,
                 _ => {
-                    log::warn!("SetFont{{slot={:?}}}: invalid '{}'", slot, value);
+                    log::warn!("dispatch: SetFont{{slot={:?}}}: invalid '{}'", slot, value);
                     return DispatchOutcome::Handled;
                 }
             };
@@ -521,7 +521,7 @@ pub(in crate::application::app) fn dispatch_compatible(
             let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(value) {
                 Some(e) => e,
                 None => {
-                    log::warn!("SetZoom{{bound={:?}}}: invalid '{}'", bound, value);
+                    log::warn!("dispatch: SetZoom{{bound={:?}}}: invalid '{}'", bound, value);
                     return DispatchOutcome::Handled;
                 }
             };
@@ -536,7 +536,11 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::ClearZoom => with_doc_rebuild(core, super::cross_dispatch::apply_clear_zoom),
         Action::SetSectionOffsetDelta { dx, dy } => {
             let (Some(dx_v), Some(dy_v)) = (dx.parse::<f64>().ok(), dy.parse::<f64>().ok()) else {
-                log::warn!("SetSectionOffsetDelta: invalid dx='{}' or dy='{}'", dx, dy);
+                log::warn!(
+                    "dispatch: SetSectionOffsetDelta: invalid dx='{}' or dy='{}'",
+                    dx,
+                    dy
+                );
                 return DispatchOutcome::Handled;
             };
             with_doc_rebuild(core, |rc| {
@@ -545,7 +549,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         }
         Action::SetSectionSizeAbs { w, h } => {
             let (Some(w_v), Some(h_v)) = (w.parse::<f64>().ok(), h.parse::<f64>().ok()) else {
-                log::warn!("SetSectionSizeAbs: invalid w='{}' or h='{}'", w, h);
+                log::warn!("dispatch: SetSectionSizeAbs: invalid w='{}' or h='{}'", w, h);
                 return DispatchOutcome::Handled;
             };
             with_doc_rebuild(core, |rc| {
@@ -563,7 +567,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         }
         Action::SetSectionOffsetAbs { x, y } => {
             let (Some(x_v), Some(y_v)) = (x.parse::<f64>().ok(), y.parse::<f64>().ok()) else {
-                log::warn!("SetSectionOffsetAbs: invalid x='{}' or y='{}'", x, y);
+                log::warn!("dispatch: SetSectionOffsetAbs: invalid x='{}' or y='{}'", x, y);
                 return DispatchOutcome::Handled;
             };
             with_doc_rebuild(core, |rc| {
@@ -573,7 +577,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetSectionText { text, runs_mode } => {
             let Some(clear_runs) = parse_action_runs_mode(runs_mode) else {
                 log::warn!(
-                    "SetSectionText: runs_mode='{}' not recognized; use 'preserve' or 'clear'",
+                    "dispatch: SetSectionText: runs_mode='{}' not recognized; use 'preserve' or 'clear'",
                     runs_mode
                 );
                 return DispatchOutcome::Handled;
@@ -585,7 +589,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         }
         Action::AddSection { at, text } => {
             let Some(at_opt) = parse_action_optional_usize(at) else {
-                log::warn!("AddSection: at='{}' is not a non-negative integer", at);
+                log::warn!("dispatch: AddSection: at='{}' is not a non-negative integer", at);
                 return DispatchOutcome::Handled;
             };
             let text_owned = text.clone();
@@ -597,7 +601,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SplitSection { at_grapheme } => {
             let Some(at_opt) = parse_action_optional_usize(at_grapheme) else {
                 log::warn!(
-                    "SplitSection: at_grapheme='{}' is not a non-negative integer",
+                    "dispatch: SplitSection: at_grapheme='{}' is not a non-negative integer",
                     at_grapheme
                 );
                 return DispatchOutcome::Handled;

@@ -791,7 +791,7 @@ impl NodeBackgroundRect {
 pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: u32) -> (u32, u32) {
     let clamped_width = if width > max_dim {
         warn!(
-            "Requested surface width {} exceeds GPU max_texture_dimension_2d {}; clamping",
+            "renderer: requested surface width {} exceeds GPU max_texture_dimension_2d {}; clamping",
             width, max_dim
         );
         max_dim
@@ -800,7 +800,7 @@ pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: 
     };
     let clamped_height = if height > max_dim {
         warn!(
-            "Requested surface height {} exceeds GPU max_texture_dimension_2d {}; clamping",
+            "renderer: requested surface height {} exceeds GPU max_texture_dimension_2d {}; clamping",
             height, max_dim
         );
         max_dim
@@ -1388,11 +1388,11 @@ impl Renderer {
     #[inline]
     fn update_surface_size(&mut self, width: u32, height: u32) {
         if width == 0 {
-            error!("Width has to be higher than 0 but was {}", width);
+            error!("renderer: width has to be higher than 0 but was {}", width);
             return;
         }
         if height == 0 {
-            error!("Height has to be higher than 0 but was {}", height);
+            error!("renderer: height has to be higher than 0 but was {}", height);
             return;
         }
         let max_dim = self.device.limits().max_texture_dimension_2d;

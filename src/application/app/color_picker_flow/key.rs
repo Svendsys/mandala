@@ -264,7 +264,7 @@ pub(in crate::application::app) fn handle_color_picker_clipboard_key(
             // and log loudly rather than run a second copy of the
             // arm body.
             log::error!(
-                "handle_color_picker_clipboard_key reached with funnel-owned Action {:?}; \
+                "color picker: clipboard key handler reached with funnel-owned Action {:?}; \
                  caller skipped the dispatch pre-filter",
                 a
             );

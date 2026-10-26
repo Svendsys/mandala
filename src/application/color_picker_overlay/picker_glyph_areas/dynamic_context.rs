@@ -324,7 +324,7 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
                 // log loudly, degrade the cell to an empty colour
                 // region, and keep the frame alive.
                 log::error!(
-                    "picker dynamic context received unsupported field {other:?}; \
+                    "color picker: dynamic context received unsupported field {other:?}; \
                      dynamic spec should only list Text / scale / ColorFontRegions / Operation"
                 );
                 return GlyphAreaField::ColorFontRegions(ColorFontRegions::single_span(0, None, None));

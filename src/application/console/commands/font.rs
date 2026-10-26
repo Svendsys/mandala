@@ -476,8 +476,8 @@ fn write_section_font(
                 // here means `range_end` extends past the section's
                 // grapheme count or the section was deleted.
                 log::warn!(
-                    "font on section {} of node {} range {}..{} produced no change \
-                     (range may extend past the section's grapheme count or \
+                    "font: the change on section {} of node {} range {}..{} produced nothing \
+                     (the range may extend past the section's grapheme count, or the \
                      section was deleted)",
                     section_idx,
                     node_id,
@@ -719,7 +719,7 @@ pub(crate) fn apply_font_kv_to_selection(
             report.changed > 0
         }
         Err(msg) => {
-            log::warn!("font {}: {} (Action path; no scrollback)", which, msg);
+            log::warn!("font: {} rejected: {} (Action path; no scrollback)", which, msg);
             false
         }
     }

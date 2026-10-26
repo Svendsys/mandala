@@ -51,6 +51,12 @@ pub mod grapheme_chad;
 /// since `log` is the universal Rust facade. On native, `capture`
 /// collects the `warn!` / `error!` records one stretch of code emits.
 pub mod log;
+/// CODE_CONVENTIONS §9's two log-content rules, checked: every
+/// shipped `warn!` / `error!` names its area, and none formats a
+/// path raw. Test-only and native-only for the same reasons
+/// `unwrap_posture`, whose file list it reads, is.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod log_posture;
 /// Reader over the workspace's own `Cargo.toml` files, so the
 /// "one version, declared once in `[workspace.dependencies]`" rule
 /// is enforced instead of merely written down. Test-only and

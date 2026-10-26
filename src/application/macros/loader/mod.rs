@@ -390,7 +390,8 @@ mod tests {
         let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(messages.len(), 1, "{messages:?}");
         assert!(
-            messages[0].starts_with("macros: Map-tier entry [1] (id=missing-steps) failed to parse: "),
+            messages[0]
+                .starts_with("user config: macros Map-tier entry [1] (id=missing-steps) failed to parse: "),
             "{}",
             messages[0]
         );
@@ -441,8 +442,9 @@ mod tests {
         let (parsed, captured) = baumhard::util::log::capture::capture(|| parse_inline_macros(&doc));
         // The skipped entry is named with the node it sits on, since
         // inline ids are only unique by convention.
-        let expected =
-            format!("macros: Inline-tier (node '{n0}') entry [1] (id=node0-malformed) failed to parse: ");
+        let expected = format!(
+            "user config: macros Inline-tier (node '{n0}') entry [1] (id=node0-malformed) failed to parse: "
+        );
         assert!(
             captured.records.iter().any(|r| r.message.starts_with(&expected)),
             "expected {expected:?} in {:?}",
@@ -548,7 +550,7 @@ mod tests {
         assert!(
             warning
                 .message
-                .starts_with("macros: user entry [1] (id=typo-5e21) failed to parse: "),
+                .starts_with("user config: macros user entry [1] (id=typo-5e21) failed to parse: "),
             "{}",
             warning.message
         );
@@ -572,7 +574,7 @@ mod tests {
         let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(
             messages,
-            vec!["macros: key '[0].id' appears more than once; the last occurrence is used"]
+            vec!["user config: macros key '[0].id' appears more than once; the last occurrence is used"]
         );
     }
 

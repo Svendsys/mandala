@@ -858,7 +858,11 @@ fn dispatch_action_arms(
                     }
                 }
                 None => {
-                    log::warn!("dispatch: {}: no document loaded; skipping '{}'", verb, line);
+                    log::warn!(
+                        "dispatch: {}: no document loaded; skipping '{}'",
+                        verb,
+                        baumhard::util::log::console_line_excerpt(&line)
+                    );
                     DispatchOutcome::Unhandled
                 }
             }
@@ -1198,7 +1202,7 @@ impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchT
             None => {
                 log::warn!(
                     "macros: ConsoleLine step: no document loaded; skipping '{}'",
-                    line
+                    baumhard::util::log::console_line_excerpt(line)
                 );
                 false
             }

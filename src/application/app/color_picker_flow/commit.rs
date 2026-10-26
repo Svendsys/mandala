@@ -118,7 +118,7 @@ pub(in crate::application::app) fn commit_color_picker(
         // the caller picked the wrong commit path.
         Some(_) => {
             log::warn!(
-                "commit_color_picker called in non-contextual mode; \
+                "color picker: commit called in non-contextual mode; \
                  use commit_color_picker_to_selection for Standalone mode"
             );
             return;
@@ -190,7 +190,7 @@ pub(in crate::application::app) fn commit_color_picker(
                         // so the user sees the keystroke didn't
                         // silently eat their commit.
                         log::warn!(
-                            "color picker commit on section {} of node {} \
+                            "color picker: commit on section {} of node {} \
                              range {}..{} produced no change \
                              (section may have shrunk below the range \
                              or been deleted since picker open)",
