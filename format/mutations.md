@@ -441,6 +441,23 @@ so for them routing is by channel alone. (A key on its own — an
 engine `Mutator`'s `"key"` — is the same pair:
 `{"kind": null, "channel": 0}`.)
 
+Kind routing holds wherever a mutator meets an element:
+
+- **Children** are paired by equal key, kind and channel.
+- **The root** meets the element the walk starts at — the tree's root,
+  or each anchor of an anchored walk such as the selection — by
+  **kind** alone; its channel is not compared. At an element of
+  another kind the mutator does not apply at all, and nothing below
+  that element is reached: a mutator tree's shape is relative to its
+  root. Of the selected elements, only those of the root's kind are
+  anchors, and an anchor inside another anchor's subtree is dropped
+  only for an anchor the root applies at.
+- **`RepeatWhile`'s descent** visits only the descendants of the
+  repeated mutator's kind, on every channel; a descendant of another
+  kind is not tested, not mutated and not descended into.
+- `MapChildren` and `SpatialDescend` are the two exemptions: they pair
+  by position and by point, and compare no key.
+
 ```json
 { "Void": { "kind": null, "channel": 0, "children": [] } }
 ```
@@ -462,9 +479,12 @@ Five variants:
   descendants).
 - **`Instruction { kind, channel, instruction, children }`** — control
   flow wrapping inner children. Instructions:
-  - `RepeatWhileAlwaysTrue` — apply children to every descendant.
+  - `RepeatWhileAlwaysTrue` — apply children to every descendant of
+    their kind.
   - `RepeatWhile(<Predicate>)` — apply children to every descendant
-    for which the predicate holds, short-circuit once it fails.
+    of their kind for which the predicate holds, short-circuit once
+    it fails. A descendant of another kind is skipped together with
+    its subtree, before the predicate is asked.
     Note the predicate genuinely filters: a `RepeatWhile` whose
     predicate is the bare `{ "fields": [] }` shape (no fields,
     `always_match` absent/false) matches **nothing**. Today's

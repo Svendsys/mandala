@@ -93,11 +93,11 @@ fn test_engine_walk_broadcasts_to_equal_channels() {
     do_engine_walk_broadcasts_to_equal_channels();
 }
 
-/// One mutator reaches every target sharing its channel. The merge
-/// consumes those targets as it goes, so a *second* mutator on the
-/// same channel finds none left and reaches nothing — pinned here as
-/// the walk does it, because this issue keeps the merge's semantics
-/// exactly (routing keys replace it in a later sub-issue).
+/// One mutator reaches every target sharing its key — a broadcast. The
+/// merge consumes those targets as it goes, so a *second* mutator on
+/// the same key finds none left and reaches nothing: the first mutator
+/// on a key wins. Routing keys kept this rule from the channel-only
+/// merge; it is pinned here as the walk does it.
 pub fn do_engine_walk_broadcasts_to_equal_channels() {
     let (mut tree, t) = flat_tree(&[(1, 10), (2, 20), (1, 30)]);
     let (mt, _) = mutators(vec![
@@ -273,6 +273,42 @@ pub fn do_engine_repeat_while_filters_on_kind() {
     assert_eq!(value(&tree, second), 13);
     assert_eq!(value(&tree, marked), 4, "Marked fails the predicate");
     assert_eq!(value(&tree, below_marked), 5, "and nothing below it is reached");
+}
+
+#[test]
+fn test_engine_repeat_while_descends_by_kind() {
+    do_engine_repeat_while_descends_by_kind();
+}
+
+/// Below its first level, `RepeatWhile` visits only children of the
+/// repeated mutator's kind, on every channel: a `Plain` child on
+/// channel 5 is reached, a `Marked` child is not tested, not mutated
+/// and not descended into — the `Plain` element below it stays as it
+/// was, though the always-true predicate would have passed it.
+pub fn do_engine_repeat_while_descends_by_kind() {
+    let mut tree = Tree::new_non_indexed_with(TestElement::new(0, 0));
+    let root = tree.root;
+    let top = add(&mut tree, root, TestElement::new(0, 1));
+    let marked = add(&mut tree, top, TestElement::marked(0, 2));
+    let below_marked = add(&mut tree, marked, TestElement::new(0, 3));
+    let other_channel = add(&mut tree, top, TestElement::new(5, 4));
+
+    let mut mt = MutatorTree::new_with(Mutator::new_instruction(
+        Instruction::RepeatWhile(Predicate::always_true()),
+        plain(0),
+    ));
+    let mroot = mt.root;
+    add_mutator(&mut mt, mroot, Mutator::new(TestMutation::Add(10), plain(0)));
+
+    walk_tree(&mut tree, &mt, &0);
+    assert_eq!(value(&tree, top), 11);
+    assert_eq!(
+        value(&tree, other_channel),
+        14,
+        "the descent broadcasts across channels"
+    );
+    assert_eq!(value(&tree, marked), 2, "a child of another kind is not reached");
+    assert_eq!(value(&tree, below_marked), 3, "nor is anything below it");
 }
 
 #[test]

@@ -594,7 +594,8 @@ hand-listing every target.
 `lib/baumhard/src/engine/mutator.rs`.
 - `RepeatWhile(Predicate)` — iterates children, applies mutator
   children while predicate holds, stops on failure. Aligns by
-  key (broadcast semantics).
+  key (broadcast semantics), and below that descends into the
+  children of the repeated mutator's kind only, on every channel.
 - `SpatialDescend(OrderedVec2)` — finds the smallest descendant
   whose own box (`TreeElement::spatial_bounds`) contains the given
   point, applies the mutation there. Bypasses key alignment.

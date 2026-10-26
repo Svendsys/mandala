@@ -47,10 +47,12 @@
 //! so a caller that drives [`walk_tree_from`](crate::engine::walker::walk_tree_from()) directly sees no stale
 //! derived state afterwards. Nothing inside a walk reads the cache.
 //!
-//! The entry points are [`walk_tree`](crate::engine::walker::walk_tree()) and [`walk_tree_from`](crate::engine::walker::walk_tree_from()).
-//! [`repeat_while`](crate::engine::walker::repeat_while()) and [`default_terminator`](crate::engine::walker::default_terminator()) are `pub` too, so
-//! mutator-DSL authors can compose custom terminators without forking
-//! the walker; everything else in this module is internal.
+//! The entry points are [`walk_tree`](crate::engine::walker::walk_tree()) and [`walk_tree_from`](crate::engine::walker::walk_tree_from()),
+//! beside [`MutatorTree::apply_to`](crate::engine::tree::MutatorTree::apply_to) and
+//! [`MutatorTree::apply_at`](crate::engine::tree::MutatorTree::apply_at). Every one of them settles
+//! the keys its walk changed before it returns, so a walk can only be
+//! started where the sorted-children invariant is restored at its end;
+//! everything else in this module is internal to the engine.
 
 use crate::engine::element::{TreeCache, TreeElement};
 use crate::engine::mutation::Mutation;
@@ -73,7 +75,7 @@ use std::cmp::Ordering;
 /// path. A child recorded twice (its key changed by two applies) is
 /// moved once.
 #[derive(Debug, Default)]
-pub struct Rekeyed {
+pub(in crate::engine) struct Rekeyed {
     moved: Vec<(NodeId, NodeId)>,
 }
 
@@ -96,7 +98,7 @@ impl Rekeyed {
     /// when nothing was recorded; otherwise, per recorded child, a
     /// detach, a scan from the end of its row and an O(depth)
     /// re-attach.
-    pub fn settle<E: TreeElement>(mut self, tree: &mut Tree<E>) {
+    pub(in crate::engine) fn settle<E: TreeElement>(mut self, tree: &mut Tree<E>) {
         if self.moved.is_empty() {
             return;
         }
@@ -124,21 +126,19 @@ impl Rekeyed {
 /// parent_state, rekeyed)`, with `parent_state` the inherited state of
 /// `target_id`'s parent and `rekeyed` the walk's record of changed
 /// keys. [`default_terminator`] is the one the walker uses.
-pub type Terminator<E, M> =
+pub(in crate::engine) type Terminator<E, M> =
     fn(&mut Tree<E>, &MutatorTree<E, M>, NodeId, NodeId, &<E as TreeElement>::Inherited, &mut Rekeyed);
 
 /// Continuation called after a conditional loop
 /// ([`Instruction::RepeatWhile`]) exits — it resumes the normal walk
 /// from the mutator's children whose key matches the current target.
-/// `pub` so mutator authors can substitute custom terminators when
-/// extending the walker; not a stable public API.
 ///
 /// The after-mutations attached under `mutator_id` are in key order
 /// (the sorted-children invariant), so they are scanned in sibling
 /// order: every one whose key equals the target's is dispatched with
 /// the target's own `parent_state`, and the scan stops at the first
 /// key above the target's. No allocation.
-pub fn default_terminator<E: TreeElement, M: Mutation<E>>(
+pub(in crate::engine) fn default_terminator<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
     target_id: NodeId,
@@ -232,7 +232,7 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
 /// anchor or below it. A stale `anchor` reaches nothing. Changed keys
 /// are recorded in `rekeyed`; settling them is the caller's, once every
 /// anchor has been walked.
-pub(crate) fn walk_anchor<E: TreeElement, M: Mutation<E>>(
+pub(in crate::engine) fn walk_anchor<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
     anchor: NodeId,
@@ -654,13 +654,16 @@ fn zip_map_children<E: TreeElement, M: Mutation<E>>(
 /// `parent_state` is the inherited state of `target_id`'s parent, and
 /// `rekeyed` the walk's record of changed keys.
 ///
-/// This is the engine behind [`Instruction::RepeatWhile`]; it is
-/// exposed so mutator authors can supply a custom `terminator` without
-/// forking the walker (see [`default_terminator`] for the default
-/// continuation). The `terminator` receives the same tree pair, the
-/// current target/mutator ids, `parent_state` and `rekeyed`.
+/// This is the engine behind [`Instruction::RepeatWhile`]. Below
+/// `target_id` it visits only the children of the repeated mutator's
+/// **kind**, whatever their channel; a child of another kind is not
+/// tested, not mutated and not descended into. The `terminator` —
+/// [`default_terminator`] in every walk — receives the same tree pair,
+/// the current target/mutator ids, `parent_state` and `rekeyed`.
+/// Internal to the engine: `rekeyed` must be settled when the walk is
+/// over, which only the walk's entry points do.
 #[allow(clippy::too_many_arguments)]
-pub fn repeat_while<E: TreeElement, M: Mutation<E>>(
+pub(in crate::engine) fn repeat_while<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
     target_id: NodeId,
@@ -710,12 +713,22 @@ fn apply_repeat_while_to_children<E: TreeElement, M: Mutation<E>>(
         return;
     }
     let state = own_state(tree, target_id, parent_state);
+    // The descent is routed by kind, as every walk is: a child of
+    // another kind than the repeated mutator is not tested, not mutated
+    // and not descended into. The channel is not compared — the
+    // descent broadcasts across channels on purpose.
+    let kind = get_mutator(&mutator_tree.arena, mutator_id).get().key().kind;
     // The sibling link is read *before* recursing, because the
     // recursion may mutate the child it is handed and we still need
     // somewhere to go next.
     while let Some(head_id) = head {
+        let child = get_target(&tree.arena, head_id);
+        head = child.next_sibling();
+        if child.get().kind() != kind {
+            debug!("Child of another kind, not descending into it");
+            continue;
+        }
         debug!("Found child, recursing down sub-tree");
-        head = get_target(&tree.arena, head_id).next_sibling();
         repeat_while(
             tree,
             mutator_tree,

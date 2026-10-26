@@ -27,13 +27,17 @@ pub enum Instruction<E: TreeElement> {
     /// Recursively apply the child mutator nodes of this instruction
     /// on every target descendant for which the [`Predicate`] returns
     /// true. When the predicate fails on a node the branch terminates
-    /// and the walker resumes with
-    /// [`default_terminator`](crate::engine::walker::default_terminator).
-    /// O(n) in the number of descendants tested.
+    /// and the walker resumes, at that node, with the repeated
+    /// mutator's own children aligned by key. O(n) in the number of
+    /// descendants tested.
     ///
-    /// Aligns mutator children to target children by
-    /// [key](BranchKey) — kind and channel. For per-index targeting
-    /// that sidesteps keys entirely, see [`Instruction::MapChildren`].
+    /// Routed by kind at every level. The instruction's children reach
+    /// the target's children by [key](BranchKey) — kind and channel —
+    /// and below that a repeated child descends into the children of
+    /// its own **kind** on every channel: a descendant of another kind
+    /// is not tested, not mutated and not descended into. For
+    /// per-index targeting that sidesteps keys entirely, see
+    /// [`Instruction::MapChildren`].
     RepeatWhile(Predicate<E>),
     /// Find the descendant of the current target whose own box
     /// ([`TreeElement::spatial_bounds`]) contains the point — the

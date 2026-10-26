@@ -1624,6 +1624,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("engine_repeat_while_resumes_with_the_terminator", |b| {
         b.iter(do_engine_repeat_while_resumes_with_the_terminator)
     });
+    c.bench_function("engine_repeat_while_descends_by_kind", |b| {
+        b.iter(do_engine_repeat_while_descends_by_kind)
+    });
     c.bench_function("engine_map_children_pairs_by_position", |b| {
         b.iter(do_engine_map_children_pairs_by_position)
     });
