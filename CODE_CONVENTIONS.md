@@ -671,14 +671,21 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `baumhard::util::log` are the whole policy: a console line, a
   macro step or any other text the user authored goes through
   `excerpt` (one line, `EXCERPT_WIDTH` display cells, cut on a
-  grapheme boundary and marked), and a path goes through `tilde_path`
-  — or `collapse_home_in` when the path is already inside a message
-  composed elsewhere, as a loader error or a console failure is. The
-  same scan holds the path half as far as a lexical reader can: a
-  `.display()` or `.to_string_lossy()` inside a `warn!` / `error!`
-  invocation fails `./test.sh`. Where a macro id and step index are
-  in scope they identify a failing step better than its text does;
-  log those and not the line.
+  grapheme boundary and marked; every control character and the
+  Unicode line separators folded to a space), and a path goes
+  through `tilde_path` — or `collapse_home_in` when the path is
+  already inside a message composed elsewhere, as a loader error or
+  a console failure is. Where a value needs both, as a console line
+  does (it can be `save /home/<user>/…`), it goes through
+  `console_line_excerpt`, which folds and *then* cuts in one call,
+  so the cut can never land inside the home path; a console failure,
+  which since #136 echoes the token it rejected, goes through
+  `failure_excerpt`, the same composition at the wider
+  `FAILURE_WIDTH`. The same scan holds the path half as far as a
+  lexical reader can: a `.display()` or `.to_string_lossy()` inside
+  a `warn!` / `error!` invocation fails `./test.sh`. Where a macro id
+  and step index are in scope they identify a failing step better
+  than its text does; log those and not the line.
 - **A log line is also a reply.** Under `--ipc`, every `warn!` /
   `error!` a command's execution emits on the main thread is carried
   in that command's reply as a warning, in the line's own words

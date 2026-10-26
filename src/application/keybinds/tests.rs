@@ -2062,7 +2062,11 @@ fn test_a_stale_clear_zoom_shape_costs_only_clear_zoom() {
         .iter()
         .find(|r| r.message.contains("'clear_zoom'"))
         .unwrap_or_else(|| panic!("the malformed key must be named: {:?}", captured.records));
-    assert!(warning.message.starts_with("keybinds: "), "{}", warning.message);
+    assert!(
+        warning.message.starts_with("user config: keybinds "),
+        "{}",
+        warning.message
+    );
     assert!(
         warning.message.contains("has a malformed value"),
         "{}",
@@ -2848,7 +2852,7 @@ fn test_a_repeated_keybinds_key_uses_the_last_occurrence_and_says_so() {
     let messages: Vec<&str> = captured.records.iter().map(|r| r.message.as_str()).collect();
     assert_eq!(
         messages,
-        vec!["keybinds: key 'undo' appears more than once; the last occurrence is used"]
+        vec!["user config: keybinds key 'undo' appears more than once; the last occurrence is used"]
     );
 }
 

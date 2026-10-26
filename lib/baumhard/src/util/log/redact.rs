@@ -37,6 +37,14 @@ use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 /// [`truncate_to_display_width`] measures.
 pub const EXCERPT_WIDTH: usize = 40;
 
+/// Display cells a *diagnosis* keeps — the console's own error for a
+/// failed line, which since #136 echoes the offending token as the
+/// user typed it, so a quoted paragraph would otherwise come back
+/// whole in the tail of the record that excerpted it in the head.
+/// Wider than [`EXCERPT_WIDTH`] because the diagnosis is the part a
+/// bug report is about.
+pub const FAILURE_WIDTH: usize = 120;
+
 /// Appended to an excerpt that was cut, so a reader can tell a short
 /// line from the head of a long one.
 pub const EXCERPT_MARK: &str = "…";
@@ -45,23 +53,61 @@ pub const EXCERPT_MARK: &str = "…";
 /// [`EXCERPT_WIDTH`] display cells, cut on a grapheme boundary and
 /// marked with [`EXCERPT_MARK`] when anything was dropped.
 ///
-/// Line breaks become spaces first, so a multi-line value cannot
-/// make one log record read as two.
+/// Every control character — `\n`, `\r`, the C0 range an escape
+/// sequence starts with, U+0085 — and the Unicode line and paragraph
+/// separators U+2028 / U+2029 become one space first, so a value
+/// cannot make one log record read as two, or as none, on any
+/// terminal that writes it raw (`env_logger` does). A `\r\n` pair
+/// folds to a single space.
 ///
 /// Cost: one pass over `text` and one `String` of at most its length
 /// plus the mark.
 pub fn excerpt(text: &str) -> String {
+    excerpt_to(text, EXCERPT_WIDTH)
+}
+
+/// [`excerpt`] at a caller-chosen width — [`FAILURE_WIDTH`] for a
+/// diagnosis, [`EXCERPT_WIDTH`] for authored text.
+pub fn excerpt_to(text: &str, width: usize) -> String {
     let one_line: String = text
         .replace("\r\n", " ")
         .chars()
-        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .map(|c| if breaks_a_record(c) { ' ' } else { c })
         .collect();
-    let kept = truncate_to_display_width(&one_line, EXCERPT_WIDTH);
+    let kept = truncate_to_display_width(&one_line, width);
     if kept.len() == one_line.len() {
         one_line
     } else {
         format!("{kept}{EXCERPT_MARK}")
     }
+}
+
+/// Whether `c`, written raw, could end a log record early or start a
+/// second one: a control character or a Unicode line/paragraph
+/// separator.
+fn breaks_a_record(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
+}
+
+/// A console line, for a log line: the home directory folded to `~`
+/// *and then* excerpted — one call, so the two cannot be half-applied
+/// and the cut can never land inside `/home/<user>` and leave the
+/// account name in the kept half.
+///
+/// The three places a console line is logged without the prompt — a
+/// file-path `Action`'s line, a macro `ConsoleLine` step, and the
+/// browser's no-runtime skip — all go through here, so the record
+/// reads the same however the line was reached. On wasm32 there is
+/// no home to fold and this is [`excerpt`].
+pub fn console_line_excerpt(line: &str) -> String {
+    excerpt(&collapse_home_in(line))
+}
+
+/// A console failure, for a log line: home-collapsed, then excerpted
+/// at [`FAILURE_WIDTH`]. The peer of [`console_line_excerpt`] for the
+/// other half of the same record.
+pub fn failure_excerpt(failure: &str) -> String {
+    excerpt_to(&collapse_home_in(failure), FAILURE_WIDTH)
 }
 
 /// `path`, for a log line: the home directory folded to `~` when the
@@ -229,6 +275,50 @@ mod tests {
     fn test_excerpt_folds_line_breaks_into_spaces() {
         assert_eq!(excerpt("one\ntwo\r\nthree\rfour"), "one two three four");
         assert_eq!(excerpt("one two"), "one two");
+        // The breaks a terminal honors that are not `\n` / `\r`: the
+        // Unicode separators, NEL, and the ESC an escape sequence
+        // starts with (the rest of the sequence is then ordinary text).
+        assert_eq!(excerpt("a\u{2028}b\u{2029}c\u{85}d\x1b[2Je\tf"), "a b c d [2Je f");
+    }
+
+    #[test]
+    fn test_console_line_and_failure_excerpts_fold_home_before_they_cut() {
+        let Some(home) = home_dir() else {
+            eprintln!("no home directory in this environment; the composed helpers are unexercised here");
+            return;
+        };
+        let home = home.display().to_string();
+        // Exactly `EXCERPT_WIDTH` cells once folded, so the line is
+        // kept whole with the account name gone. Unfolded it is longer by
+        // the home path less the `~`, so the other order — cut first,
+        // fold second — keeps the home path and cuts the tail, which
+        // the control below shows.
+        let tail = "m".repeat(EXCERPT_WIDTH - "open ~/".len());
+        let line = format!("open {home}/{tail}");
+        assert_eq!(console_line_excerpt(&line), format!("open ~/{tail}"));
+        assert!(
+            excerpt(&line).contains(&home),
+            "control: cutting before folding keeps the account name: {:?}",
+            excerpt(&line)
+        );
+        assert_eq!(
+            failure_excerpt(&format!("could not open '{home}/x': denied")),
+            "could not open '~/x': denied"
+        );
+        // The failure width is the wider one: a diagnosis of
+        // `EXCERPT_WIDTH + 1` cells survives `failure_excerpt` whole
+        // and is cut by `excerpt`.
+        let diagnosis = "d".repeat(EXCERPT_WIDTH + 1);
+        assert_eq!(failure_excerpt(&diagnosis), diagnosis);
+        assert_eq!(
+            excerpt(&diagnosis),
+            format!("{}{EXCERPT_MARK}", "d".repeat(EXCERPT_WIDTH))
+        );
+        let paragraph = "p".repeat(FAILURE_WIDTH + 1);
+        assert_eq!(
+            failure_excerpt(&paragraph),
+            format!("{}{EXCERPT_MARK}", "p".repeat(FAILURE_WIDTH))
+        );
     }
 
     /// A path under the home directory folds to `~`, the home itself

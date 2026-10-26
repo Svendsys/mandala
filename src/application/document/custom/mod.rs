@@ -125,8 +125,8 @@ fn unsupported_fields_of_mutation(m: &baumhard::gfx_structs::mutator::Mutation) 
 fn warn_if_predicate_filtered_everything(mutation_id: &str, has_predicate: bool, seen: usize, passed: usize) {
     if has_predicate && seen > 0 && passed == 0 {
         log::warn!(
-            "mutation: '{}': top-level predicate filtered every candidate ({} elements seen, 0 passed); \
-             the apply path completed but no element was mutated",
+            "mutation: the top-level predicate of '{}' filtered every candidate ({} elements seen, \
+             0 passed); the apply path completed but no element was mutated",
             mutation_id,
             seen
         );
@@ -278,7 +278,7 @@ impl MindMapDocument {
             let reach = mutator_reach(mutator);
             if !custom.target_scope.covers_reach(reach) {
                 log::warn!(
-                    "mutation: '{}': mutator reach is {:?} but target_scope is \
+                    "mutation: '{}' has mutator reach {:?} but target_scope \
                      {:?}; undo will not capture edits beyond the declared scope",
                     custom.id,
                     reach,
@@ -411,7 +411,7 @@ impl MindMapDocument {
         };
         let Some(mutations) = flat_mutations(mutator) else {
             log::warn!(
-                "mutation: '{}': mutator AST is not flat-extractable — the flat-apply path \
+                "mutation: the mutator AST of '{}' is not flat-extractable — the flat-apply path \
                  can't evaluate this shape, so the apply is skipped. Causes: a root that \
                  isn't a `Macro` with a literal list, a `RepeatWhile` predicate that isn't \
                  `always_match`, a runtime-supplied payload, or two nested payloads that \
@@ -432,7 +432,7 @@ impl MindMapDocument {
         }
         if !fields.is_empty() {
             log::warn!(
-                "mutation: '{}': writes field(s) [{}] that have no model home; the change \
+                "mutation: '{}' writes field(s) [{}] that have no model home; the change \
                  applies to the display tree but is NOT persisted and reverts on the next \
                  rebuild. Persisted fields: position, section offset/size, text, color/font \
                  runs, font size.",
@@ -604,7 +604,7 @@ impl MindMapDocument {
         if let Some(p) = predicate_gate {
             if p.fields.is_empty() && !p.always_match {
                 log::warn!(
-                    "mutation: '{}': predicate has no fields and `always_match` is false; \
+                    "mutation: the predicate of '{}' has no fields and `always_match` is false; \
                      every candidate element will be filtered out (apply runs but produces no change)",
                     custom.id
                 );

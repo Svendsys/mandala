@@ -578,7 +578,7 @@ Warning code registry (additions are non-breaking, like error codes):
 | `macro_gate_rejected` | A macro step was refused by its tier's privilege gate, and the rest of the macro aborted (`format/macros.md` "Privilege model"). |
 | `save_unbound` | `SaveDocument` found no file path bound to the document, so nothing was written. `SaveDocumentAs` (or `act.console` with `save <path>`) binds one. |
 | `save_failed` | `SaveDocument` could not write the bound file; `message` carries the I/O error. |
-| `console_error` | A console line run by something other than `act.console` failed: a file-path `Action`'s line, or a macro `ConsoleLine` step. Matches the `act.console` error code, so a console failure is branchable however the line was reached. `message` is the log line's words: the failed line, excerpted and with the home directory folded to `~` (CODE_CONVENTIONS §9), then the console's own error. |
+| `console_error` | A console line run by something other than `act.console` failed: a file-path `Action`'s line, or a macro `ConsoleLine` step. Matches the `act.console` error code, so a console failure is branchable however the line was reached. `message` is the log line's words: the failed line and then the console's own error, each with the home directory folded to `~` and excerpted — the line at `EXCERPT_WIDTH`, the error at the wider `FAILURE_WIDTH` (CODE_CONVENTIONS §9). |
 
 ### Large payloads
 

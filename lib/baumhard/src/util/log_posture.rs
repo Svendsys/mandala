@@ -52,6 +52,7 @@
 use crate::util::rust_source::{blank_string_literals, matching_delimiter, string_literals, strip_comments};
 use crate::util::source_scan::{production_source, relative_to_repo};
 use crate::util::unwrap_posture::production_rust_sources;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The two macro names whose lines a release build keeps.
@@ -97,18 +98,18 @@ impl Fault {
 
 /// The area a conforming message names, or `None`.
 ///
-/// The area is one or more words of `[a-z0-9_]`, the first starting
-/// with a letter, joined by `::`, a single space or a hyphen, and
-/// followed by `: ` (or a bare `:` ending the literal).
+/// The area is one or more words of `[a-z0-9_]`, each starting with
+/// a letter, joined by `::`, a single space or a hyphen, and followed
+/// by `: ` (or a bare `:` ending the literal). One rule for every
+/// word, whichever joiner precedes it: `a::2d: x` and `a 2d: x` are
+/// both rejected.
 pub(crate) fn area_prefix(literal: &str) -> Option<&str> {
     let bytes = literal.as_bytes();
     let mut i = 0usize;
     loop {
         // One word.
         let word_start = i;
-        if !bytes.get(i).is_some_and(u8::is_ascii_lowercase)
-            && !(i > 0 && bytes.get(i).is_some_and(u8::is_ascii_digit))
-        {
+        if !bytes.get(i).is_some_and(u8::is_ascii_lowercase) {
             return None;
         }
         while bytes
@@ -249,6 +250,12 @@ pub(crate) struct Report {
     /// How many invocations were read, faulted or not — the floor a
     /// clean report is measured against.
     pub(crate) invocations: usize,
+    /// The same count per file, keyed by the repo-relative path, for
+    /// every file that held at least one invocation. A gate asks it
+    /// where the invocations came from: a file list that silently
+    /// lost a directory still sums to a number, but not to one from
+    /// that directory.
+    pub(crate) by_file: BTreeMap<String, usize>,
     /// One line per fault, `"<file>:<line>: <remedy>: <head>"`.
     pub(crate) offenders: Vec<String>,
 }
@@ -256,7 +263,20 @@ pub(crate) struct Report {
 impl Report {
     fn absorb(&mut self, other: Report) {
         self.invocations += other.invocations;
+        for (file, count) in other.by_file {
+            *self.by_file.entry(file).or_default() += count;
+        }
         self.offenders.extend(other.offenders);
+    }
+
+    /// How many invocations were read from files under `dir`, a
+    /// repo-relative prefix.
+    pub(crate) fn invocations_under(&self, dir: &str) -> usize {
+        self.by_file
+            .iter()
+            .filter(|(file, _)| file.starts_with(dir))
+            .map(|(_, count)| count)
+            .sum()
     }
 }
 
@@ -271,6 +291,7 @@ pub(crate) fn report_for(file: &Path, text: &str) -> Report {
     let mut report = Report::default();
     for invocation in log_invocations(&code) {
         report.invocations += 1;
+        *report.by_file.entry(name.to_string()).or_default() += 1;
         let head: String = invocation
             .message
             .as_deref()
@@ -307,6 +328,22 @@ pub(crate) fn report_for_files(files: &[PathBuf]) -> Report {
 mod tests {
     use super::*;
     use crate::util::unwrap_posture::SHIPPED_ROOTS;
+
+    /// The least number of shipped invocations the gate accepts as a
+    /// whole tree, against roughly 200 today.
+    const INVOCATION_FLOOR: usize = 180;
+
+    /// Directories the gate must have read at least one invocation
+    /// from. The three of the five `SHIPPED_ROOTS` that hold any
+    /// (`mandala_derive`, `maptool` and `mandalactl` log nothing at
+    /// these levels today), and the wasm32-only directory, which is
+    /// the witness that the browser half is read and not only
+    /// claimed.
+    const WITNESS_DIRS: &[&str] = &[
+        "lib/baumhard/src/",
+        "src/application/",
+        "src/application/app/run_wasm/",
+    ];
 
     /// A shipped file's worth of invocations with every shape the
     /// reader must get right, and the line each offender sits on.
@@ -362,6 +399,16 @@ fn f(path: &std::path::Path, msg: &str) {
             control.invocations, 9,
             "the control plants nine invocations: {control:#?}"
         );
+        assert_eq!(
+            control.invocations_under("log_posture_control.rs"),
+            9,
+            "the per-file count is the same nine, under the file's own name: {control:#?}"
+        );
+        assert_eq!(
+            control.invocations_under("src/application/"),
+            0,
+            "and none of them under a directory the control is not in: {control:#?}"
+        );
         let expected = [
             (11, Fault::NoAreaPrefix),
             (12, Fault::NoAreaPrefix),
@@ -383,16 +430,30 @@ fn f(path: &std::path::Path, msg: &str) {
         }
 
         let report = report_for_files(&files);
-        // Floor well under the roughly 170 shipped invocations the
+        // Floor just under the roughly 200 shipped invocations the
         // workspace holds today: a reader that dropped whole files or
         // stopped matching lands here before it can hollow out the
-        // check.
+        // check. Raise it as the tree grows; lower it only with the
+        // removal that explains why.
         assert!(
-            report.invocations >= 120,
+            report.invocations >= INVOCATION_FLOOR,
             "the reader found only {} shipped `warn!` / `error!` invocations where roughly \
-             170 exist; it has lost most of the surface it checks",
+             200 exist; it has lost most of the surface it checks",
             report.invocations
         );
+        // The floor is a sum, and a sum cannot say *where* the
+        // invocations came from: the wasm32-only files hold a handful
+        // of sites, so a file list that lost `run_wasm/` entirely would
+        // still clear it. Each directory named here must have
+        // contributed at least one, or the "both targets" claim in the
+        // module header has quietly stopped being true.
+        for dir in WITNESS_DIRS {
+            assert!(
+                report.invocations_under(dir) >= 1,
+                "no shipped `warn!` / `error!` was read from under `{dir}`, which holds some: \
+                 the walk or the reader has lost that directory"
+            );
+        }
         assert!(
             report.offenders.is_empty(),
             "{} shipped log line(s) break CODE_CONVENTIONS §9's content rules:\n  {}",
@@ -434,6 +495,9 @@ fn f(path: &std::path::Path, msg: &str) {
             "",
             ": x",
             "::x: y",
+            "a::2d: x",
+            "a 2d: x",
+            "a-2d: x",
         ];
         for literal in rejected {
             assert_eq!(area_prefix(literal), None, "{literal:?}");

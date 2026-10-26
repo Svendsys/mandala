@@ -254,14 +254,16 @@ pub(in crate::application::app) fn print_console_line(
 /// dropped.
 pub(in crate::application::app) fn log_console_line(line: &str, outcome: &LineOutcome) {
     if let Some(failure) = outcome.failure() {
-        // The line is the user's (or a macro author's) text and the
-        // failure may name a file: a release build keeps this record,
-        // so it carries an excerpt and a home-collapsed path (§9).
+        // The line is the user's (or a macro author's) text, the
+        // failure echoes the token it rejected, and either may name a
+        // file: a release build keeps this record, so both halves are
+        // home-collapsed and excerpted — the failure at the wider
+        // `FAILURE_WIDTH`, since it carries the diagnosis (§9).
         log::warn!(
             code = crate::application::console::LINE_FAILED_CODE;
             "console: `{}` failed: {}",
-            baumhard::util::log::excerpt(&baumhard::util::log::collapse_home_in(line)),
-            baumhard::util::log::collapse_home_in(&failure)
+            baumhard::util::log::console_line_excerpt(line),
+            baumhard::util::log::failure_excerpt(&failure)
         );
     }
 }

@@ -343,7 +343,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
         // load posture (false return on the warn arm).
         log::warn!(
             "macros: ConsoleLine step '{}' has no console runtime on WASM; skipping",
-            baumhard::util::log::excerpt(line),
+            baumhard::util::log::console_line_excerpt(line),
         );
         false
     }
