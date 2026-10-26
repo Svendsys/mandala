@@ -155,7 +155,8 @@ and, for an element type with geometry, its own box
 (`spatial_bounds`). A payload implements
 `Mutation<E>`: one `apply_to(target, inherited)`, plus the shape of
 its builder template. The glyph trees are the first instantiation —
-`GfxElement` with the `GfxMutation` payload — and
+`GfxElement` with the `GfxMutation` payload — the document is the
+second ([below](#the-document--document-docelement-dockind)), and
 `util::engine_isolation`'s scan holds the engine to importing nothing
 from `gfx_structs`, `mindmap` or `font`.
 
@@ -1144,6 +1145,50 @@ own take:
 `lib/baumhard/src/util/`. All pure functions,
 no shared state, no allocations beyond what the return types
 demand.
+
+### The document — `Document`, `DocElement`, `DocKind`
+
+The map as the engine's second instantiation: a `Tree<DocElement>`
+whose shape *is* the map's structure. The root `Map` holds the
+`Theme`, the `Palette`s, the map's `Defaults` and the root nodes; a
+`Node` holds its `Section`s, its `Frame` and its `Ring`s, its
+`Connector` to its parent, its `Link`s and its child nodes; text is
+always a run of `Span`s under whatever draws it. There is no parent
+pointer, no id that encodes a path and no edge list — structure is
+stored once, as nesting. Built in V1-B1 (#235) beside the model it
+replaces; nothing in the app uses it until the cut-over (V1-C3).
+
+- **`DocKind`** is the element's kind, the first half of its routing
+  key, and its declaration order is the order a parent keeps its
+  children in: a node's sections, frame, connector, links, then child
+  nodes. A mutator for one kind never lands on another.
+- **Typed values** (`document::values`): a color is a `ColorRef`
+  (a literal, a theme variable, or a palette field), a font an
+  `AppFont`, a size a `FontSize` (`Pt`, or `Rel` — a fraction of the
+  node's shorter side, for frames), a shape a `Shape`. Strings are
+  parsed once, at load.
+- **Identity** (`document::ids`): in memory an element is its arena
+  `NodeId`; from outside, a node is its `NodeIdent`, which only
+  `Document::node_by_ident` maps — for the loader, the console and IPC.
+- **Per-field inheritance** (`document::resolve`): every style field
+  is an `Option`, and a resolver computes each one from the element,
+  its owners, the node's palette binding, the map's `Defaults` and
+  `BUILT_IN` (`document::defaults`), recording every input it reads
+  through a `ReadRecorder` so the projection can learn what depends on
+  what. An input names as little as the read needed — an element's
+  style, its placement, a node's palette binding, a children row, the
+  theme, a palette, the defaults, a depth — and
+  `document::deps::inputs_changed` maps a change of one element onto
+  them, so moving or resizing a node dirties no resolution, and
+  dragging a label or a portal marker dirties no text resolution. A connector's, portal marker's, label's or
+  frame's size and color stay in their own flow and never come from
+  the node's text.
+- **Shape rules** (`document::shape::validate_shape`) say which kind
+  may hold which; **bounds** (`document::bounds`) every number's
+  range.
+
+`lib/baumhard/src/document/`. `util::document_surface` holds it to
+naming nothing of the model it replaces.
 
 ---
 

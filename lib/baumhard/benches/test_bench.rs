@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use baumhard::core::tests::primitives_tests::*;
+use baumhard::document::tests::bounds_tests::*;
+use baumhard::document::tests::deps_tests::*;
+use baumhard::document::tests::element_tests::*;
+use baumhard::document::tests::ids_tests::*;
+use baumhard::document::tests::inspect_tests::*;
+use baumhard::document::tests::journal_tests::*;
+use baumhard::document::tests::resolve_tests::*;
+use baumhard::document::tests::shape_tests::*;
 use baumhard::engine::tests::anchor_tests::*;
 use baumhard::engine::tests::builder_tests::*;
 use baumhard::engine::tests::inherited_tests::*;
@@ -1606,6 +1614,223 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("map_children_ignores_sibling_channels_when_unequal_counts", |b| {
         b.iter(do_map_children_ignores_sibling_channels_when_unequal_counts)
+    });
+    // the document: shape rules, identity, resolution and its read
+    // records, the predicate surface, the bounds //
+    c.bench_function("document_bounds_canvas_coord", |b| {
+        b.iter(do_document_bounds_canvas_coord)
+    });
+    c.bench_function("document_bounds_font_size_pt", |b| {
+        b.iter(do_document_bounds_font_size_pt)
+    });
+    c.bench_function("document_bounds_rel_size", |b| {
+        b.iter(do_document_bounds_rel_size)
+    });
+    c.bench_function("document_bounds_unit_interval", |b| {
+        b.iter(do_document_bounds_unit_interval)
+    });
+    c.bench_function("document_bounds_non_negative", |b| {
+        b.iter(do_document_bounds_non_negative)
+    });
+    c.bench_function("document_bounds_fit", |b| b.iter(do_document_bounds_fit));
+    c.bench_function("document_bounds_percent", |b| b.iter(do_document_bounds_percent));
+    c.bench_function("document_bounds_weight", |b| b.iter(do_document_bounds_weight));
+    c.bench_function("document_bounds_control_points", |b| {
+        b.iter(do_document_bounds_control_points)
+    });
+    c.bench_function("document_kind_order_is_the_declared_order", |b| {
+        b.iter(do_document_kind_order_is_the_declared_order)
+    });
+    c.bench_function("document_rows_are_laid_out_by_kind", |b| {
+        b.iter(do_document_rows_are_laid_out_by_kind)
+    });
+    c.bench_function("document_walk_routes_by_kind", |b| {
+        b.iter(do_document_walk_routes_by_kind)
+    });
+    c.bench_function("document_anchored_walk_reaches_the_selection", |b| {
+        b.iter(do_document_anchored_walk_reaches_the_selection)
+    });
+    c.bench_function("document_walk_moves_a_rekeyed_element", |b| {
+        b.iter(do_document_walk_moves_a_rekeyed_element)
+    });
+    c.bench_function("document_element_keys", |b| b.iter(do_document_element_keys));
+    c.bench_function("document_idents_index_every_node", |b| {
+        b.iter(do_document_idents_index_every_node)
+    });
+    c.bench_function("document_ident_counter_starts_past_the_highest", |b| {
+        b.iter(do_document_ident_counter_starts_past_the_highest)
+    });
+    c.bench_function("document_refuses_a_duplicate_or_unassigned_ident", |b| {
+        b.iter(do_document_refuses_a_duplicate_or_unassigned_ident)
+    });
+    c.bench_function("document_tree_reads", |b| b.iter(do_document_tree_reads));
+    c.bench_function("document_depth_counts_node_ancestors", |b| {
+        b.iter(do_document_depth_counts_node_ancestors)
+    });
+    c.bench_function("document_owning_node", |b| b.iter(do_document_owning_node));
+    c.bench_function("document_map_reads", |b| b.iter(do_document_map_reads));
+    c.bench_function("document_inspect_kind_and_channel", |b| {
+        b.iter(do_document_inspect_kind_and_channel)
+    });
+    c.bench_function("document_inspect_a_field_the_kind_lacks_falls_through", |b| {
+        b.iter(do_document_inspect_a_field_the_kind_lacks_falls_through)
+    });
+    c.bench_function("document_inspect_optional_fields", |b| {
+        b.iter(do_document_inspect_optional_fields)
+    });
+    c.bench_function("document_inspect_values_are_stored_not_resolved", |b| {
+        b.iter(do_document_inspect_values_are_stored_not_resolved)
+    });
+    c.bench_function("document_inspect_text_fields_across_kinds", |b| {
+        b.iter(do_document_inspect_text_fields_across_kinds)
+    });
+    c.bench_function("document_field_json_spelling", |b| {
+        b.iter(do_document_field_json_spelling)
+    });
+    c.bench_function("document_resolve_own_field_wins", |b| {
+        b.iter(do_document_resolve_own_field_wins)
+    });
+    c.bench_function("document_resolve_owner_chain", |b| {
+        b.iter(do_document_resolve_owner_chain)
+    });
+    c.bench_function("document_resolve_ring_owner_chain", |b| {
+        b.iter(do_document_resolve_ring_owner_chain)
+    });
+    c.bench_function("document_resolve_defaults_tier", |b| {
+        b.iter(do_document_resolve_defaults_tier)
+    });
+    c.bench_function("document_resolve_built_in_tier", |b| {
+        b.iter(do_document_resolve_built_in_tier)
+    });
+    c.bench_function("document_resolve_is_per_field", |b| {
+        b.iter(do_document_resolve_is_per_field)
+    });
+    c.bench_function("document_resolve_built_in_by_flow", |b| {
+        b.iter(do_document_resolve_built_in_by_flow)
+    });
+    c.bench_function("document_resolve_path_and_portal_text_tiers", |b| {
+        b.iter(do_document_resolve_path_and_portal_text_tiers)
+    });
+    c.bench_function("document_resolve_ring_size_never_reads_points", |b| {
+        b.iter(do_document_resolve_ring_size_never_reads_points)
+    });
+    c.bench_function("document_resolve_palette_fill_by_depth", |b| {
+        b.iter(do_document_resolve_palette_fill_by_depth)
+    });
+    c.bench_function("document_resolve_palette_clamps_and_nearest_binding_wins", |b| {
+        b.iter(do_document_resolve_palette_clamps_and_nearest_binding_wins)
+    });
+    c.bench_function("document_resolve_palette_field_mapping", |b| {
+        b.iter(do_document_resolve_palette_field_mapping)
+    });
+    c.bench_function("document_resolve_explicit_palette_reference", |b| {
+        b.iter(do_document_resolve_explicit_palette_reference)
+    });
+    c.bench_function("document_resolve_var_through_the_active_variant", |b| {
+        b.iter(do_document_resolve_var_through_the_active_variant)
+    });
+    c.bench_function("document_records_only_the_span_for_a_complete_rgba_span", |b| {
+        b.iter(do_document_records_only_the_span_for_a_complete_rgba_span)
+    });
+    c.bench_function("document_records_every_tier_it_looks_at", |b| {
+        b.iter(do_document_records_every_tier_it_looks_at)
+    });
+    c.bench_function("document_records_the_palette_binding", |b| {
+        b.iter(do_document_records_the_palette_binding)
+    });
+    c.bench_function("document_records_node_and_frame_reads", |b| {
+        b.iter(do_document_records_node_and_frame_reads)
+    });
+    c.bench_function("document_resolve_connector_content", |b| {
+        b.iter(do_document_resolve_connector_content)
+    });
+    c.bench_function("document_resolve_portal_end_content_and_position", |b| {
+        b.iter(do_document_resolve_portal_end_content_and_position)
+    });
+    c.bench_function("document_resolve_frame_ring_path_and_label", |b| {
+        b.iter(do_document_resolve_frame_ring_path_and_label)
+    });
+    c.bench_function("document_resolve_node_chain", |b| {
+        b.iter(do_document_resolve_node_chain)
+    });
+    c.bench_function("document_shape_accepts_the_full_example", |b| {
+        b.iter(do_document_shape_accepts_the_full_example)
+    });
+    c.bench_function("document_shape_map_row", |b| b.iter(do_document_shape_map_row));
+    c.bench_function("document_shape_node_row", |b| b.iter(do_document_shape_node_row));
+    c.bench_function("document_bounds_node_ident", |b| {
+        b.iter(do_document_bounds_node_ident)
+    });
+    c.bench_function("document_bounds_counts", |b| b.iter(do_document_bounds_counts));
+    c.bench_function("document_resolve_cap_takes_its_path", |b| {
+        b.iter(do_document_resolve_cap_takes_its_path)
+    });
+    c.bench_function("document_journal_reverts_and_replays_exactly", |b| {
+        b.iter(do_document_journal_reverts_and_replays_exactly)
+    });
+    c.bench_function("document_same_state_sees_every_field", |b| {
+        b.iter(do_document_same_state_sees_every_field)
+    });
+    c.bench_function("document_write_interpolated", |b| {
+        b.iter(do_document_write_interpolated)
+    });
+    c.bench_function("document_interpolate_blends_numbers_and_colors", |b| {
+        b.iter(do_document_interpolate_blends_numbers_and_colors)
+    });
+    c.bench_function("document_never_reissues_an_ident", |b| {
+        b.iter(do_document_never_reissues_an_ident)
+    });
+    c.bench_function("document_refuses_more_than_an_index_addresses", |b| {
+        b.iter(do_document_refuses_more_than_an_index_addresses)
+    });
+    c.bench_function(
+        "document_validate_row_is_order_independent_and_names_no_id",
+        |b| b.iter(do_document_validate_row_is_order_independent_and_names_no_id),
+    );
+    c.bench_function("document_geometry_touches_no_input", |b| {
+        b.iter(do_document_geometry_touches_no_input)
+    });
+    c.bench_function("document_inputs_changed_by_kind", |b| {
+        b.iter(do_document_inputs_changed_by_kind)
+    });
+    c.bench_function("document_records_and_changes_agree", |b| {
+        b.iter(do_document_records_and_changes_agree)
+    });
+    c.bench_function("document_resolve_node_text_stays_out_of_other_flows", |b| {
+        b.iter(do_document_resolve_node_text_stays_out_of_other_flows)
+    });
+    c.bench_function("document_resolve_untitled_group_titles_with_text", |b| {
+        b.iter(do_document_resolve_untitled_group_titles_with_text)
+    });
+    c.bench_function("document_resolve_first_section_reads_the_row", |b| {
+        b.iter(do_document_resolve_first_section_reads_the_row)
+    });
+    c.bench_function("document_shape_section_row", |b| {
+        b.iter(do_document_shape_section_row)
+    });
+    c.bench_function("document_shape_frame_row", |b| {
+        b.iter(do_document_shape_frame_row)
+    });
+    c.bench_function("document_shape_span_holder_rows", |b| {
+        b.iter(do_document_shape_span_holder_rows)
+    });
+    c.bench_function("document_shape_connector_row", |b| {
+        b.iter(do_document_shape_connector_row)
+    });
+    c.bench_function("document_shape_line_link_row", |b| {
+        b.iter(do_document_shape_line_link_row)
+    });
+    c.bench_function("document_shape_portal_link_row", |b| {
+        b.iter(do_document_shape_portal_link_row)
+    });
+    c.bench_function("document_shape_portal_end_row", |b| {
+        b.iter(do_document_shape_portal_end_row)
+    });
+    c.bench_function("document_shape_leaf_rows", |b| {
+        b.iter(do_document_shape_leaf_rows)
+    });
+    c.bench_function("document_shape_checks_only_its_own_row", |b| {
+        b.iter(do_document_shape_checks_only_its_own_row)
     });
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
