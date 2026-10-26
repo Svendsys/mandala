@@ -688,10 +688,10 @@ Workspace-level commitment:
 - **`./test.sh` green before every commit.**
 - **Review asks of every new assertion what input makes it fail.**
   A test that cannot fail on its subject passes CI and reads as
-  coverage, so the author's green run says nothing about it; four of
-  the six such defects
-  [`TEST_CONVENTIONS.md §T13`](./TEST_CONVENTIONS.md) catalogs were
-  found by a reviewer asking exactly that, not by the author. Review a
+  coverage, so the author's green run says nothing about it; most of
+  the instances [`TEST_CONVENTIONS.md §T13`](./TEST_CONVENTIONS.md)
+  catalogs were found by a reviewer asking exactly that, not by the
+  author. Review a
   test against §T13's six shapes, and hold the pull request to the
   negative controls §T13.2 requires it to report.
 

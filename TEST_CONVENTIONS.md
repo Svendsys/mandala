@@ -399,7 +399,6 @@ its subject (§T13) adds one to the count and nothing to the coverage,
 and it is worse than the gap it hides, because the gap no longer
 looks like one.
 
-
 ## §T13 Assertions that cannot fail
 
 A test that cannot fail for the reason it claims to exist is worse
@@ -407,10 +406,12 @@ than no test: it passes CI, reads as coverage, and stops the next
 person from writing the real one. The defect is invisible by
 construction — a vacuous assertion looks exactly like a satisfied
 one — so no amount of re-reading the green output finds it. Across
-the six PRs of the July review epic (#126, #127, #128, #131, #132,
-#133) it was the most common real defect found, ahead of wrong code,
-and four of the six instances below were found by a reviewer rather
-than by the author. Two rules carry most of this section:
+the six PRs of the July 2026 review epic (#54: #126, #127, #128,
+#131, #132, #133) it was the most common real defect found, ahead of
+wrong code, and four of the six instances below were found by a
+reviewer rather than by the author. #138 is the record for that count
+and for the instances whose defective form is no longer in the tree.
+Two rules carry most of this section:
 
 > **Before committing an assertion, name the input that makes it
 > fail.** If you cannot, it is not a test.
@@ -434,9 +435,12 @@ names the instance that taught it.
    `\r\r\n` fixture was added. The clause was later shown to be
    redundant outright: the test's other properties already determine
    the whole range table uniquely, so no predicate over that table
-   could have added coverage. The question that finds this shape is
-   *what does the broken output look like, and can the test produce
-   it?*
+   could have added coverage. `test_line_model_is_coherent` is the
+   fixed shape: instead of a predicate over its own reconstruction,
+   it holds the byte-level `slice_to_newline` — the member of the
+   family that *can* swallow a terminator — against the cluster
+   bounds. The question that finds this shape is *what does the
+   broken output look like, and can the test produce it?*
 
 2. **Default-shadowed.** The value under test also arrives from a
    fallback. Resolving the shipped keybinds template and asserting
@@ -456,18 +460,24 @@ names the instance that taught it.
    `KeybindConfig::from_json` puts on a bare `{`, on a wrong value
    type, and on text that is not JSON at all, so it would still pass
    had the input started failing for an unrelated reason —
-   `clear_zoom` deleted from the table, say. `test_clear_zoom_rejects_the_parametric_binding_shape`
-   keeps the prefix and adds the discriminating half — serde naming
-   the value shape it refused. Assert the part of the message only
-   *this* failure produces.
+   `clear_zoom` deleted from the table, say.
+   `test_clear_zoom_rejects_the_parametric_binding_shape` keeps the
+   prefix and adds the discriminating half — serde naming the value
+   shape it refused. Assert the part of the message only *this*
+   failure produces.
 
 4. **Captured but never asserted.** A field rendered into a fixture,
    signature or comparison that no row ever exercises. The console
-   oracle rendered `font_family` into each candidate's signature, but
-   no corpus row produced a candidate carrying one: a mutant setting
-   it to a sentinel left every oracle test green. Rendering a field is
-   a promise to check it; a row that makes it non-default is what
-   keeps the promise.
+   oracle (`src/application/console/tests/oracle.rs`) rendered
+   `font_family` into each candidate's signature, but no corpus row
+   produced a candidate carrying one: a mutant setting it to a
+   sentinel left every oracle test green, and so did checking it with
+   `is_some()` alone.
+   `test_console_oracle_font_vocabularies_track_the_loaded_families`
+   is the fixed shape: every family row must carry *its own* family,
+   not merely some family. Rendering a field is a promise to check it;
+   a row that makes it non-default, asserted against the value it
+   should hold, is what keeps the promise.
 
 5. **Two tables at different depths.** When one behavior is pinned
    from two sides — a corpus of lines that execute and a corpus of
@@ -489,7 +499,13 @@ names the instance that taught it.
    halves were described as generated from one list while the field
    list was duplicated as a literal, and a test computing its expected
    width through the same metric-cache path as the code under test.
-   The second rule above is this shape stated as a requirement.
+   `test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing`
+   is the fixed shape of the second: its expectations come from
+   shaping each cluster in a scratch `cosmic_text::Buffer`, not from
+   the `glyph_advance` the subject calls, so an algorithm that agreed
+   with itself no longer passes by doing so. That is the *compute it
+   independently* half of the second rule above, which is this shape
+   stated as a requirement.
 
 ### §T13.2 The negative control is a requirement
 
@@ -521,10 +537,12 @@ Two refinements, each paid for in that epic:
 ### §T13.3 Precondition assertions are not ceremony
 
 A test whose meaning depends on its fixture holding some property
-asserts that property first, with a message that says what the test
-would otherwise prove: `test_border_show_reports_the_effective_frame_color`
-opens with `assert_ne!(effective, node.style.frame_color, "the fixture
-must keep its tiers apart or this test proves nothing")`, and
+asserts that property before the assertion that depends on it, with
+a message that says what the test would otherwise prove.
+`test_border_show_reports_the_effective_frame_color` guards its
+readout assertion with `assert_ne!(effective, node.style.frame_color,
+"the fixture must keep its tiers apart or this test proves nothing")`,
+and
 `test_the_console_source_scan_reads_what_it_claims_to` exists because
 a scan that read nothing finds nothing. These guards are the cheap,
 committed half of §T13.2: they turn shape 2 and shape 4 from a silent
