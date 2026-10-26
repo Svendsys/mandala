@@ -1015,7 +1015,7 @@ fn test_a_committed_positional_narrows_a_subverb_to_the_form_that_declares_it() 
 /// A repeated key resolves to its **last** occurrence.
 ///
 /// The rule outlived its test. A parser-side test pinned it while
-/// `Args::kv` owned it; `Args::kv` was deleted with the hand-rolled
+/// `Args::kv` (gone) owned it; it was deleted with the hand-rolled
 /// grammar, the rule moved intact to [`super::kvs::value`]'s
 /// `rfind`, and what replaced that test —
 /// [`crate::application::console::parser`]'s

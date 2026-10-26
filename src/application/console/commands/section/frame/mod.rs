@@ -417,7 +417,7 @@ fn resolve_section_idx_for(
 /// the matching `(node_id, section_idx)` pairs; `Single(node_id)`
 /// requires an explicit `section=K` kv (mirroring the committing
 /// `section frame …` verb's posture). The preview's
-/// `selection_snapshot` rides on `self.selection` at set time.
+/// `BorderPreviewTarget` is taken from `self.selection` at set time.
 fn execute_section_frame_preview(
     descent: &crate::application::console::spec::Descent,
     args: &Args,

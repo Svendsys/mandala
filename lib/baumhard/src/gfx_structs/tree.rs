@@ -269,7 +269,7 @@ impl Tree<GfxElement, GfxMutator> {
     /// (e.g. edge handles, console close-buttons).
     ///
     /// `slack` must be `>= 0.0`. The shape-refinement step inside
-    /// `bvh_descend` inflates the shape by `slack` on every side;
+    /// `bvh_find` inflates the shape by `slack` on every side;
     /// a negative value would require a *tightening* of the shape,
     /// which this API does not provide (and which would make the
     /// AABB pre-test and the shape post-test disagree). Debug

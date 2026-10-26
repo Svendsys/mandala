@@ -9,8 +9,8 @@
 //! `Vec<Mutation>` into the AST shape that matches the scope the
 //! author intended.
 //!
-//! The shapes mirror the ones the (now-deleted)
-//! `build_mutator_tree_for_scope` function emitted. Keeping the
+//! The shapes mirror the ones the
+//! `build_mutator_tree_for_scope` (gone) function emitted. Keeping the
 //! constructors as named helpers lets the backward-compat deserializer,
 //! tests, and human authors reach for them without open-coding the
 //! AST shape each time.
@@ -63,7 +63,7 @@ pub fn descendants(mutations: Vec<Mutation>) -> MutatorNode {
 /// to self), with one `Instruction(RepeatWhile(always_true))` child
 /// whose own `Macro` child carries the same mutations (applies to
 /// each descendant via the walker's repeat-while semantics). Mirrors
-/// the topology the (now-deleted) `build_mutator_tree_for_scope`
+/// the topology the `build_mutator_tree_for_scope` (gone)
 /// function emitted.
 ///
 /// The `mutations` list is cloned once into the root Macro and the

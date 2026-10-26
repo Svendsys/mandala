@@ -609,7 +609,7 @@ fn test_ensure_glyph_connection_forks_from_canvas_default() {
 /// `doc.color_picker_preview` never pushes an undo entry and
 /// never flips dirty. Mirrors what the picker hover path does
 /// after the Step C refactor, which moved preview from model-
-/// mutation (`preview_edge_color`) to a transient scene-level
+/// mutation, `preview_edge_color` (gone), to a transient scene-level
 /// substitution via the document field.
 #[test]
 fn test_color_picker_preview_does_not_push_undo_or_dirty() {
@@ -1654,7 +1654,7 @@ fn test_edge_font_triple_clamps_into_the_loaders_domain() {
 }
 
 /// **A curve reset must not write a control point the loader
-/// refuses.** `add_edge_curve` computes the control point from two
+/// refuses.** `curve_straight_edge` computes the control point from two
 /// node centers plus a quarter of the distance between them, so two
 /// positions that are each inside `MAX_CANVAS_COORD` can produce an
 /// offset outside it — and the loader bounds control points at that

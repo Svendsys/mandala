@@ -12,7 +12,7 @@
 //! helper already exists here.
 //!
 //! The vocabulary is deliberately *selection-shaped*. A second family
-//! lived here once — `body_is`, `cap_end_is`, `effective_spacing` and
+//! lived here once — `body_is` (gone), `cap_end_is` (gone), `effective_spacing` (gone) and
 //! twenty of their neighbors, which resolved the selected edge's
 //! `GlyphConnectionConfig` so a palette entry could render itself as
 //! "already active". They outlived the palette that asked the

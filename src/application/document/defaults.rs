@@ -211,8 +211,8 @@ pub(in crate::application) fn default_cross_link_edge(from_id: &str, to_id: &str
 
 /// Build a default-styled portal-mode edge. Like `default_cross_link_edge`,
 /// but with `display_mode = Some("portal")` and a `glyph_connection` that
-/// carries the chosen marker glyph. Callers rotate `glyph_preset_index`
-/// through `PORTAL_GLYPH_PRESETS.len()` to pick distinct glyphs per
+/// carries the chosen marker `glyph`. Callers pick it by rotating an
+/// index through `PORTAL_GLYPH_PRESETS.len()`, distinct glyphs per
 /// portal without forcing the user to choose up front.
 ///
 /// Test-gated along with its only caller,

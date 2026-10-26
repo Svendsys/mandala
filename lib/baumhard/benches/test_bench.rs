@@ -2034,7 +2034,7 @@ fn resize_mode_rebuild_benchmark(c: &mut Criterion) {
     });
 }
 
-/// Plan §7.4: `bench_scene_rebuild_with_node_edit_mode_active`.
+/// Plan §7.4: "bench_scene_rebuild_with_node_edit_mode_active".
 /// Pins the cost of the section-frame pass on a NodeEdit-active
 /// rebuild. Uses the synthetic 50-node × 5-section fixture so
 /// the section-frame chrome has real work to do (the testament
@@ -2075,7 +2075,7 @@ fn node_edit_mode_rebuild_benchmark(c: &mut Criterion) {
     });
 }
 
-/// Plan §7.4: `bench_fast_resize_anchor_inference`. The pure
+/// Plan §7.4: "bench_fast_resize_anchor_inference". The pure
 /// quadrant-math helper; sub-microsecond per call. Pin against
 /// the eight quadrant cases.
 fn fast_resize_anchor_inference_benchmark(c: &mut Criterion) {
@@ -2102,7 +2102,7 @@ fn fast_resize_anchor_inference_benchmark(c: &mut Criterion) {
     });
 }
 
-/// Plan §7.4: `bench_section_frame_emission`. Isolates the
+/// Plan §7.4: "bench_section_frame_emission". Isolates the
 /// section-frame scene-builder pass against a 50×5 synthetic
 /// map; pins the chrome-emission cost separate from the rest of
 /// the scene rebuild.

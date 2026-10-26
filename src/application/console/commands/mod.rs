@@ -5,7 +5,7 @@
 //! Each command lives in its own submodule so the surface stays
 //! scannable. The public `COMMANDS` slice gathers them in one place,
 //! matching the `const PALETTE_ACTIONS` pattern — zero-cost startup,
-//! no HashMap construction, and `action_by_id`-style lookup is a
+//! no HashMap construction, and a by-id lookup is a
 //! linear scan over a dozen entries.
 //!
 //! # Casing

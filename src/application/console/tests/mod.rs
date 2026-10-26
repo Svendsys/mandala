@@ -13,7 +13,7 @@
 //! - [`wheel_dispatch`] — `AcceptsWheelColor` per-target dispatch.
 //! - [`apply_kvs`] — `apply_kvs` aggregation behavior.
 //! - [`multi_fanout`] — multi-selection fanout + trait dispatcher.
-//! - [`applicability`] — per-command `is_applicable` predicates.
+//! - [`applicability`] — per-command `applicable` predicates.
 //! - [`completion`] — completion engine.
 //! - [`resize_mode_lifecycle`] — end-to-end Default → Resize → Default
 //!   driven by `mode resize` / `mode default`. Plan §7.2.4.

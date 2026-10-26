@@ -701,7 +701,7 @@ pub type ConnectionEdgeIdentity = (
 );
 
 /// Identity sequence for a slice of `ConnectionElement`s. Used by
-/// the dispatcher in `update_connection_tree` to choose between
+/// the dispatcher in `update_connection_trees` to choose between
 /// full rebuild and the in-place mutator path. During endpoint
 /// drag the body-glyph count typically shifts every few pixels and
 /// the dispatcher takes the rebuild path; for selection / color
@@ -793,7 +793,7 @@ fn connection_edge_layout(edge_index: usize, elem: &ConnectionElement) -> (usize
 /// Each GlyphArea is sized `(font_size, font_size)` and centered on
 /// the connection-element's reported glyph position via the same
 /// `(half_glyph, half_height)` offset the legacy
-/// `Renderer::rebuild_connection_buffers_keyed` applied. Color is
+/// `Renderer::rebuild_connection_buffers_keyed` (gone) applied. Color is
 /// baked into a single `ColorFontRegion` covering the body glyph.
 ///
 /// Channels come from `connection_edge_layout` so the in-place

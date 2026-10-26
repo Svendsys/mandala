@@ -150,8 +150,8 @@ impl ZoomVisibility {
         Some(ZoomVisibility { min, max })
     }
 
-    /// Replace-not-intersect cascade: if `override_pair` contains
-    /// any `Some`, return a window from `override_pair` as-is;
+    /// Replace-not-intersect cascade: if either of `override_min` /
+    /// `override_max` is `Some`, return a window built from them as-is;
     /// otherwise inherit `parent` unchanged. Matches the cascade
     /// posture the portal font-clamp resolver already uses for
     /// `PortalEndpointState.text_{min,max}_font_size_pt`. O(1).
