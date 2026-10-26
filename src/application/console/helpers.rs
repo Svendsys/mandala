@@ -12,7 +12,7 @@
 //! [`ApplyTally::finalize`] picks the right Ok/Err shape.
 //!
 //! The kv *collection* used to live here too, as
-//! `collect_kvs_or_usage(args, "<hand-written usage line>")`.
+//! `collect_kvs_or_usage(args, "<hand-written usage line>")` (gone).
 //! `console::spec::kvs` does that now, from the declaration, so the
 //! usage line is derived and an unread key is refused by name.
 //!

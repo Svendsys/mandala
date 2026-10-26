@@ -21,6 +21,12 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capture;
+pub mod redact;
+
+pub use redact::{
+    collapse_home, collapse_home_in, collapse_home_in_with, console_line_excerpt, console_line_excerpt_with,
+    excerpt, excerpt_to, failure_excerpt, failure_excerpt_with, tilde_path, EXCERPT_WIDTH, FAILURE_WIDTH,
+};
 
 /// Initialize the global logger for whichever target this binary
 /// is built for. Native uses `env_logger` (reads `RUST_LOG`);
@@ -288,7 +294,7 @@ mod tests {
     /// release half of the policy is only observable under
     /// `cargo test --release`; `./test.sh` runs the dev profile and
     /// exercises the `Trace` half. Both halves are asserted rather
-    /// than only the interesting one, because a `max_level_*` feature
+    /// than only the interesting one, because a `log/max_level_*` feature
     /// arriving from some future dependency would cap debug builds
     /// too and silently delete the instrumentation this repo debugs
     /// with.

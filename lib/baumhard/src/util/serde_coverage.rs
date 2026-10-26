@@ -2513,8 +2513,8 @@ pub struct PlantedLeaf {
     ///
     /// - `ABCd`, because serde's variant snake rule inserts a
     ///   separator before *every* capital after the first, so a run
-    ///   of them becomes one underscore per letter (`a_b_cd`) rather
-    ///   than the `ab_cd` a reader would write;
+    ///   of them becomes one underscore per letter (`"a_b_cd"`) rather
+    ///   than the `"ab_cd"` a reader would write;
     /// - `thing_ß` and `NaÏve`, because serde's rules are
     ///   `to_ascii_uppercase` and `to_ascii_lowercase` throughout.
     ///   Unicode case maps `ß` to `SS` and `Ï` to `ï`, so a walk that

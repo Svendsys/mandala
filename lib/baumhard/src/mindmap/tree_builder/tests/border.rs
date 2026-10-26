@@ -347,7 +347,7 @@ fn framed_ids(nodes: &[BorderNodeData]) -> Vec<&str> {
 /// height. With `.ceil()` the last row would overflow the node
 /// bounds — cosmic-text's `shape_until_scroll(false)` then
 /// dropped it, producing a visible gap above the bottom corner.
-/// `.floor()` keeps the rendered rail within `node_height`
+/// `.floor()` keeps the rendered rail within the node height
 /// exactly.
 ///
 /// For nh=100, fs=14: `floor(100/14) = 7` clusters.
@@ -441,7 +441,7 @@ fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
 /// Per-node `GlyphBorderConfig` reaches the tree's emitted text:
 /// when the user authors a custom side pattern, the border-tree
 /// builder's resolved style consumes it through
-/// `BorderStyle::top_text` / `bottom_text` etc. Pre-fix, the
+/// `BorderStyle::side_patterns`. Pre-fix, the
 /// builder ignored `node.style.border` entirely; this test fails
 /// loudly on a regression to that behavior.
 #[test]

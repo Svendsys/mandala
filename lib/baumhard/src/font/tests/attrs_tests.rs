@@ -153,7 +153,7 @@ fn test_attrs_list_slice_at_zwj_grapheme_boundary() {
 /// covers the whole 18-byte cluster, not just the first 4 bytes
 /// (the leading scalar). Mirrors
 /// `do_rich_text_spans_slice_at_zwj_grapheme_boundary` on the
-/// `Buffer::set_rich_text` path; both code paths route through
+/// `cosmic_text::Buffer::set_rich_text` path; both code paths route through
 /// `find_byte_index_of_grapheme`, and a regression that swaps
 /// either back to char-indexed slicing trips here loudly.
 pub fn do_attrs_list_slice_at_zwj_grapheme_boundary() {

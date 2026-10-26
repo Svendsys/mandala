@@ -105,7 +105,7 @@ pub fn declares(set: &[Subverb], subverb: &Subverb) -> bool {
 /// `error!` because reaching it means that test was not run.
 pub fn miss(level: &Grammar, subverb: &Subverb) -> String {
     log::error!(
-        "{}: subverb '{}' is declared but no dispatcher routes it",
+        "console: {} subverb '{}' is declared but no dispatcher routes it",
         level.label,
         subverb.name
     );

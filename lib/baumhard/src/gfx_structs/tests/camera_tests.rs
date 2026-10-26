@@ -159,7 +159,7 @@ fn test_fit_to_bounds_with_single_element() {
     do_fit_to_bounds_with_single_element();
 }
 
-/// `fit_camera_to_bounds` with a small bounding box produces a zoom
+/// `Camera2D::fit_to_bounds` with a small bounding box produces a zoom
 /// level and offset that centre the content and scale it to fill the
 /// usable viewport area.
 pub fn do_fit_to_bounds_with_single_element() {

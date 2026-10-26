@@ -300,7 +300,7 @@ fn adopt_unknown_keys(
     let probe = serde_json::to_value(map).ok();
     let captured = unknown_keys::take_from(&mut raw, probe.as_ref(), routes);
     for entry in captured.iter() {
-        log::warn!("{}", entry.warning());
+        log::warn!("loader: {}", entry.warning_body());
     }
     Ok(captured)
 }
@@ -384,14 +384,14 @@ fn load_skipping_unreadable_constructs(json: &str) -> Option<Result<MindMap, Str
         return Some(Err(err));
     }
     for entry in skipped.iter() {
-        log::warn!("{}", entry.warning());
+        log::warn!("loader: {}", entry.warning_body());
     }
     map.skipped_constructs = skipped;
     if !routes.is_empty() {
         let probe = serde_json::to_value(&map).ok();
         let captured = unknown_keys::take_from(&mut raw, probe.as_ref(), routes);
         for entry in captured.iter() {
-            log::warn!("{}", entry.warning());
+            log::warn!("loader: {}", entry.warning_body());
         }
         map.unknown_keys = captured;
     }
@@ -864,7 +864,7 @@ fn warn_on_duplicate_edges(map: &MindMap) {
         );
         if let Some(&first) = seen.get(&key) {
             log::warn!(
-                "duplicate edge tuple (from_id={:?}, to_id={:?}, edge_type={:?}) \
+                "loader: duplicate edge tuple (from_id={:?}, to_id={:?}, edge_type={:?}) \
                  at edges[{}] and edges[{}]; EdgeRef / scene-cache lookups are unstable",
                 edge.from_id,
                 edge.to_id,
@@ -1090,7 +1090,10 @@ fn create_with_mode(tmp_path: &Path, inherited: Option<fs::Permissions>) -> std:
     let file = fs::File::create(tmp_path)?;
     if let Some(permissions) = inherited {
         if let Err(e) = file.set_permissions(permissions) {
-            log::warn!("could not carry permissions onto {}: {e}", tmp_path.display());
+            log::warn!(
+                "loader: could not carry permissions onto {}: {e}",
+                crate::util::log::tilde_path(tmp_path)
+            );
         }
     }
     Ok(file)
@@ -2973,8 +2976,8 @@ mod tests {
         "to_value",
     ];
 
-    /// Whether a name reads as holding a map: `map`, `mind_map`,
-    /// `stress_map`.
+    /// Whether a name reads as holding a map: `"map"`, `"mind_map"`,
+    /// `"stress_map"`.
     fn reads_as_a_map(name: &str) -> bool {
         name.to_ascii_lowercase().ends_with("map")
     }
@@ -4289,7 +4292,7 @@ mod tests {
     }
 
     /// **The zero that aborted the process.** A border font size of
-    /// zero reaches cosmic-text's `Buffer::new`, whose
+    /// zero reaches `cosmic_text::Buffer::new`, whose
     /// `assert_ne!(line_height, 0.0)` fires on the scene-build path
     /// — outside any `catch_unwind`, so the editor dies on the frame
     /// after the map opens.

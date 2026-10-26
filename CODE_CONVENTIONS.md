@@ -452,24 +452,38 @@ industrial cost/benefit reasoning. This is not license for speculation.
   rather than a fix-when-it-bites: the error names neither a file nor
   a line, so the only way to locate it is to bisect the doc comments.
   `[`Foo`](crate::path::to::Foo)` resolves.
-- **Prose must not name an item the same change deleted, and a
-  rename sweep is what catches it — with two blind spots worth
-  knowing before you trust one.** A doc that says "which the first
-  `insert` overwrites" after `insert` is gone reads as a pointer and
-  is a dead end; the same sentence inside a *control instruction* is
-  worse, because the next reader runs it. The sweep is: extract every
+- **Prose must not name an item the same change deleted. A gate
+  catches the backticked half; a rename sweep is still what catches
+  the rest — with two blind spots worth knowing before you trust
+  one.** A doc that says "which the first `insert` overwrites" after
+  `insert` is gone reads as a pointer and is a dead end; the same
+  sentence inside a *control instruction* is worse, because the next
+  reader runs it. `test_no_doc_names_an_identifier_that_does_not_exist`
+  (`lib/baumhard/src/util/doc_identifiers.rs`) reads every `///` and
+  `//!` on an item in the tree — `cfg(test)` and `cfg(wasm32)` modules
+  included; `//` comments, Markdown, doc comments on statements inside
+  a function body, and a span rustfmt wrapped across two doc lines are
+  not read — and fails on a backticked `snake_case` name that is
+  qualified (`Type::method`, `module::function`, `Self::…`) and not
+  declared by that type or module, or that is a bare multi-word name
+  no file's code writes and nothing declares. A deliberate mention of
+  a removed item is fine and sometimes required
+  — naming the input that made a regression test fail, or the shape a
+  rewrite replaced — and it carries its own disclosure so a reader is
+  never sent looking: write `(gone)` directly after the closing
+  backtick, `` `reclaim_sample_buffer` (gone) ``, which is both the
+  sentence's disclosure and the gate's opt-out; on a qualified name
+  the gate also fails when the marked thing still exists. The sweep
+  remains for what the gate's own doc lists as uncaught: extract every
   `fn` / `struct` / field name the change removed from its own diff,
   grep the tree for each, then triage. It found four such sentences in
   one series. What it does **not** find: (1) removed field names that
   are ordinary English words — `color`, `font`, `position` — where the
   prose is in a file the change never touched, so no qualified
-  spelling and no file-locality narrows the grep; (2) a sentence whose
-  every identifier still exists but whose *claim* went false, which
-  needs reading rather than matching. Both were real misses. A
-  deliberate mention of a removed item is fine and sometimes required
-  — naming the input that made a regression test fail, or the shape a
-  rewrite replaced — but it carries its own disclosure that the thing
-  is gone, so a reader is never sent looking.
+  spelling and no file-locality narrows the grep, and which the gate
+  does not read either; (2) a sentence whose every identifier still
+  exists but whose *claim* went false, which needs reading rather than
+  matching. Both were real misses.
 - **A figure derived from a recorded constant belongs beside the
   constant, not copied into prose.** Name the constant and state the
   relation; a number restated in a doc comment goes stale silently
@@ -654,8 +668,38 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `"font::attrs: ..."`, `"keybinds: ..."`, `"console history: ..."`.
   Function names go stale under refactor and tell a user nothing; the
   area is what they can name in a bug report. Bare messages with no
-  prefix are not acceptable. Normalize prefixes in files you are
-  already editing rather than in a repository-wide sweep.
+  prefix are not acceptable, and since #110 that is checked rather
+  than asked: `baumhard::util::log_posture` reads every shipped
+  `warn!` / `error!` on both targets and fails `./test.sh` naming the
+  site whose message is not a literal beginning `"<area>: "` — one or
+  more lowercase words joined by `::`, a space or a hyphen. The
+  reader cannot tell a function name from a subsystem, so that half
+  stays yours; a CamelCase `Action` name, a `{placeholder}` and a bare
+  message it does catch. The rule was introduced by #104 and violated
+  by its own passthrough sites in the same change, which is why it is
+  held by a scan and not by a sentence.
+- **A `warn!` / `error!` line is user-facing, so it carries excerpts
+  and `~`, not document text and account names.** Release builds keep
+  the two channels (above), so their *content* is pasted into bug
+  reports and read off the browser console. Two helpers in
+  `baumhard::util::log` are the whole policy: a console line, a
+  macro step or any other text the user authored goes through
+  `excerpt` (one line, `EXCERPT_WIDTH` display cells, cut on a
+  grapheme boundary and marked; every control character and the
+  Unicode line separators folded to a space), and a path goes
+  through `tilde_path` — or `collapse_home_in` when the path is
+  already inside a message composed elsewhere, as a loader error or
+  a console failure is. Where a value needs both, as a console line
+  does (it can be `save /home/<user>/…`), it goes through
+  `console_line_excerpt`, which folds and *then* cuts in one call,
+  so the cut can never land inside the home path; a console failure,
+  which since #136 echoes the token it rejected, goes through
+  `failure_excerpt`, the same composition at the wider
+  `FAILURE_WIDTH`. The same scan holds the path half as far as a
+  lexical reader can: a `.display()` or `.to_string_lossy()` inside
+  a `warn!` / `error!` invocation fails `./test.sh`. Where a macro id
+  and step index are in scope they identify a failing step better
+  than its text does; log those and not the line.
 - **A log line is also a reply.** Under `--ipc`, every `warn!` /
   `error!` a command's execution emits on the main thread is carried
   in that command's reply as a warning, in the line's own words

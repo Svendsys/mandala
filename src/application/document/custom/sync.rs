@@ -123,7 +123,7 @@ pub(in crate::application::document) fn clamp_run_size_pt(size_pt: f32) -> f32 {
 /// `scale` is sufficient and the next rebuild reproduces the right
 /// line-height for free. A mutation that touches *only* line-height
 /// is surfaced at apply time by
-/// `MindMapDocument::warn_unsupported_mutator_fields`.
+/// `MindMapDocument::warn_about_mutator`.
 ///
 /// **Runless sections** have nowhere to store a size, so the change
 /// would evaporate. To honor it we synthesize one run spanning the

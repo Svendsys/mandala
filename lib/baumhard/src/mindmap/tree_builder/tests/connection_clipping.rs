@@ -122,7 +122,7 @@ fn test_scene_caps_survive_for_unframed_endpoints() {
 /// A degenerate edge samples to one point, and both caps land on it.
 ///
 /// The one-sample case used to be covered by a unit test over
-/// `CachedConnection::cap_positions`, a method that had no production
+/// `CachedConnection::cap_positions` (gone), a method that had no production
 /// caller and was deleted. This covers the reachable half of what it
 /// asserted, through the pass that actually reads the ends: a zero-
 /// length path produces a single sample, and `first()` and `last()`

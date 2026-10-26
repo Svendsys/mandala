@@ -8,7 +8,7 @@
 //! has no "selected slot" highlight, so unlike the sat and val bars
 //! (whose highlights drive `sat_value_to_cell` / `val_value_to_cell`)
 //! it never needs to quantize a continuous hue back to a cell. The
-//! inverse `degrees_to_hue_slot` existed and was tested here without
+//! inverse `degrees_to_hue_slot` (gone) existed and was tested here without
 //! any production caller; it went in #41.
 
 use crate::application::color_picker::{

@@ -2,9 +2,10 @@
 
 //! Free-fn body helpers reachable from closures passed into
 //! [`super::super::MindMapDocument::mutate_edge`] without having
-//! to capture `Self`. The corresponding methods on
-//! [`super::super::MindMapDocument`] (`ensure_glyph_connection`,
-//! `ensure_label_config`) delegate here.
+//! to capture `Self`. The per-axis setters on
+//! [`super::super::MindMapDocument`] call
+//! `ensure_glyph_connection_inline` and `ensure_label_config_inline`
+//! directly.
 
 use baumhard::mindmap::model::{
     Canvas, EdgeLabelConfig, GlyphConnectionConfig, MindEdge, PortalEndpointState,

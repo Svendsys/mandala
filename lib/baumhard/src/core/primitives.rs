@@ -291,7 +291,7 @@ impl ColorFontRegions {
     pub fn submit_region(&mut self, region: ColorFontRegion) {
         if region.range.start > region.range.end {
             warn!(
-                "submit_region dropped inverted range {}..{}",
+                "core::primitives: submit_region dropped inverted range {}..{}",
                 region.range.start, region.range.end
             );
             return;
@@ -381,7 +381,7 @@ impl ColorFontRegions {
     pub fn split_and_separate(&mut self, range: Range) {
         if range.end < range.start {
             warn!(
-                "split_and_separate dropped inverted range {}..{}",
+                "core::primitives: split_and_separate dropped inverted range {}..{}",
                 range.start, range.end
             );
             return;
@@ -402,7 +402,7 @@ impl ColorFontRegions {
             // shifted (§5: no half-state).
             let Some(shifted_end) = region.range.end.checked_add(magnitude) else {
                 warn!(
-                    "split_and_separate dropped: shifting region {}..{} right by {} overflows usize",
+                    "core::primitives: split_and_separate dropped: shifting region {}..{} right by {} overflows usize",
                     region.range.start, region.range.end, magnitude
                 );
                 return;
@@ -491,7 +491,7 @@ impl ColorFontRegions {
         for region in &mut copy_of_regions {
             if region.range.start > idx && !region.range.checked_push_right(magnitude) {
                 warn!(
-                    "shift_regions_after dropped: shifting region {}..{} right by {} overflows usize",
+                    "core::primitives: shift_regions_after dropped: shifting region {}..{} right by {} overflows usize",
                     region.range.start, region.range.end, magnitude
                 );
                 return;
@@ -523,7 +523,7 @@ impl ColorFontRegions {
     ///
     /// Contrast with [`Self::shift_regions_after`], whose "replace
     /// and shift" semantics leave straddling regions in place — that
-    /// primitive exists for `GlyphMatrix::copy_from`, which explicitly
+    /// primitive exists for `GlyphMatrix::copy_from` (gone), which explicitly
     /// follows up with a `submit_region` for the inserted span — and
     /// with [`Self::split_and_separate`], which shares this
     /// primitive's `start >= idx` shift but does **not** absorb: a
@@ -561,7 +561,7 @@ impl ColorFontRegions {
                 // Fully right of the insertion — shift both bounds.
                 if !r.range.checked_push_right(magnitude) {
                     warn!(
-                        "insert_regions_at dropped: shifting region {}..{} right by {} overflows usize",
+                        "core::primitives: insert_regions_at dropped: shifting region {}..{} right by {} overflows usize",
                         r.range.start, r.range.end, magnitude
                     );
                     return false;
@@ -570,7 +570,7 @@ impl ColorFontRegions {
                 // First straddling / left-adjacent region — absorb.
                 let Some(end) = r.range.end.checked_add(magnitude) else {
                     warn!(
-                        "insert_regions_at dropped: growing region {}..{} by {} overflows usize",
+                        "core::primitives: insert_regions_at dropped: growing region {}..{} by {} overflows usize",
                         r.range.start, r.range.end, magnitude
                     );
                     return false;

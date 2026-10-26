@@ -182,7 +182,7 @@ fn process_instruction_node(
     };
 }
 
-/// Walk the children of `target_parent` and `mutator_parent` as
+/// Walk the children of `target_parent_id` and `mutator_parent_id` as
 /// channel-sorted streams, applying [`repeat_while`] for every
 /// matching (target, mutator) pair.
 ///
