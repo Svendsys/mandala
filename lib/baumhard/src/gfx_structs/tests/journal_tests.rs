@@ -16,12 +16,14 @@ use crate::engine::element::TreeElement;
 use crate::engine::interpolate::Snap;
 use crate::engine::journal::JournalBuilder;
 use crate::engine::tree::Placement;
-use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField};
+use crate::gfx_structs::area::{DeltaGlyphArea, EdgePadding, GlyphArea, GlyphAreaField, OutlineStyle};
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::model::GlyphModel;
+use crate::gfx_structs::model::{GlyphLine, GlyphModel};
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
+use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use crate::gfx_structs::util::hitbox::BoundingRectangle;
+use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
 use indextree::NodeId;
@@ -70,52 +72,135 @@ fn test_gfx_same_state_compares_every_state_field() {
     do_gfx_same_state_compares_every_state_field();
 }
 
-/// Each variation of `rich_area` that changes one state field — a
-/// region's color, the hit box, a flag, the channel, the id, the text —
-/// is not the same state. For the region color and the hit box, `==`
-/// says the two are equal, which is why a journal cannot close on it.
-/// A clone, and a copy with one more event subscriber, are the same
-/// state: subscribers are callbacks, not state. Models and voids
-/// compare their own fields the same way, and two variants never
-/// compare the same.
+/// A change to one field, applied to an element.
+type Variation = (&'static str, fn(&mut GfxElement));
+
+/// Run `f` on the `GlyphModel` inside `element`.
+fn with_model(element: &mut GfxElement, f: impl FnOnce(&mut GlyphModel)) {
+    if let Some(model) = element.glyph_model_mut() {
+        f(model);
+    }
+}
+
+/// One variation per state field of a `GlyphArea` element: every field
+/// of the area, then the element's flags, channel and id.
+const AREA_VARIATIONS: &[Variation] = &[
+    ("text", |e| with_area(e, |a| a.text = "glyphs".to_string())),
+    ("scale", |e| with_area(e, |a| a.scale = OrderedFloat(11.0))),
+    ("line_height", |e| {
+        with_area(e, |a| a.line_height = OrderedFloat(13.0))
+    }),
+    ("position", |e| {
+        with_area(e, |a| a.position = OrderedVec2::new_f32(0.0, 1.0))
+    }),
+    ("render_bounds", |e| {
+        with_area(e, |a| a.render_bounds = OrderedVec2::new_f32(100.0, 41.0))
+    }),
+    ("regions (color only)", |e| {
+        with_area(e, |a| {
+            a.regions
+                .replace_regions(&ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                    Range::new(0, 2),
+                    None,
+                    Some([0.0, 0.0, 1.0, 1.0]),
+                )]))
+        })
+    }),
+    ("background_color", |e| {
+        with_area(e, |a| a.background_color = Some([10, 20, 31, 255]))
+    }),
+    ("background_padding", |e| {
+        with_area(e, |a| a.background_padding = EdgePadding::new(0.0, 0.0, 1.0, 0.0))
+    }),
+    ("align_center", |e| with_area(e, |a| a.align_center = true)),
+    ("outline", |e| {
+        with_area(e, |a| {
+            a.outline = Some(OutlineStyle {
+                color: [0, 0, 0, 255],
+                px: 1.0,
+            })
+        })
+    }),
+    ("shape", |e| with_area(e, |a| a.shape = NodeShape::Ellipse)),
+    ("zoom_visibility", |e| {
+        with_area(e, |a| {
+            a.zoom_visibility = ZoomVisibility::from_pair(Some(0.5), None)
+        })
+    }),
+    ("hitbox", |e| {
+        with_area(e, |a| a.hitbox.add(BoundingRectangle::at_origin(1.0, 1.0)))
+    }),
+    ("flags", |e| e.set_flag(Flag::Focused)),
+    ("channel", |e| set_channel(e, 2)),
+    ("unique_id", |e| e.set_unique_id(8)),
+];
+
+/// One variation per state field of a `GlyphModel` element.
+const MODEL_VARIATIONS: &[Variation] = &[
+    ("glyph_matrix", |e| {
+        with_model(e, |m| m.glyph_matrix.push(GlyphLine::new()))
+    }),
+    ("layer", |e| with_model(e, |m| m.layer = 1)),
+    ("position", |e| {
+        with_model(e, |m| m.position = OrderedVec2::new_f32(0.0, 1.0))
+    }),
+    ("hitbox", |e| {
+        with_model(e, |m| m.hitbox.add(BoundingRectangle::at_origin(1.0, 1.0)))
+    }),
+    ("flags", |e| e.set_flag(Flag::Focused)),
+    ("channel", |e| set_channel(e, 2)),
+    ("unique_id", |e| e.set_unique_id(8)),
+];
+
+/// One variation per state field of a `Void` element. `set_flag` is a
+/// no-op on a void, so its flags are written directly.
+const VOID_VARIATIONS: &[Variation] = &[
+    ("flags", |e| {
+        if let GfxElement::Void { flags, .. } = e {
+            flags.insert(Flag::Focused);
+        }
+    }),
+    ("channel", |e| set_channel(e, 2)),
+    ("unique_id", |e| e.set_unique_id(8)),
+];
+
+/// Every variation in `variations`, applied to a clone of `base` one at
+/// a time, must make an element that is not the same state as `base`,
+/// asked either way round. A variation that changed nothing fails this
+/// too, so no row can pass without varying its field.
+fn assert_each_variation_changes_state(kind: &str, base: &GfxElement, variations: &[Variation]) {
+    for (field, vary) in variations {
+        let mut varied = base.clone();
+        vary(&mut varied);
+        assert!(
+            !varied.same_state(base) && !base.same_state(&varied),
+            "{kind}: a different `{field}` is a change of state"
+        );
+    }
+}
+
+/// `same_state` against every state field, one at a time, for each
+/// variant. Each variation of the area fixture (`rich_area`) — every
+/// `GlyphArea` field, then the element's flags, channel and id — of a
+/// model and of a void is not the same state. A clone, and a copy with
+/// one more event subscriber, are the same state: subscribers are
+/// callbacks, not state. For a recolor and a hit box `==` says the two
+/// are equal, which is why a journal cannot close on it. Two variants
+/// never compare the same.
 pub fn do_gfx_same_state_compares_every_state_field() {
     let base = rich_area();
     assert!(base.same_state(&base.clone()));
+    assert_each_variation_changes_state("area", &base, AREA_VARIATIONS);
 
-    let mut recolored = base.clone();
-    with_area(&mut recolored, |area| {
-        area.regions
-            .replace_regions(&ColorFontRegions::new_from(vec![ColorFontRegion::new(
-                Range::new(0, 2),
-                None,
-                Some([0.0, 0.0, 1.0, 1.0]),
-            )]));
-    });
-    assert!(
-        recolored == base,
-        "`==` cannot see a recolor — the fixture must keep that so"
-    );
-    assert!(!recolored.same_state(&base), "a recolor is a change of state");
-
-    let mut moved_hitbox = base.clone();
-    with_area(&mut moved_hitbox, |area| {
-        area.hitbox.add(BoundingRectangle::at_origin(1.0, 1.0))
-    });
-    assert!(moved_hitbox == base, "`==` ignores the hit box");
-    assert!(!moved_hitbox.same_state(&base));
-
-    let mut flagged = base.clone();
-    flagged.set_flag(Flag::Focused);
-    assert!(!flagged.same_state(&base), "flags are state");
-    let mut rechanneled = base.clone();
-    set_channel(&mut rechanneled, 2);
-    assert!(!rechanneled.same_state(&base), "the channel is state");
-    let mut renamed = base.clone();
-    renamed.set_unique_id(8);
-    assert!(!renamed.same_state(&base), "the id is state");
-    let mut retexted = base.clone();
-    with_area(&mut retexted, |area| area.text = "glyphs".to_string());
-    assert!(!retexted.same_state(&base));
+    for blind in ["regions (color only)", "hitbox"] {
+        let (_, vary) = AREA_VARIATIONS.iter().find(|(field, _)| *field == blind).unwrap();
+        let mut varied = base.clone();
+        vary(&mut varied);
+        assert!(
+            varied == base,
+            "`==` cannot see a change of `{blind}` — the fixture must keep that so"
+        );
+    }
 
     let mut subscribed = base.clone();
     subscribed
@@ -124,19 +209,15 @@ pub fn do_gfx_same_state_compares_every_state_field() {
     assert!(subscribed.same_state(&base), "subscribers are not state");
 
     let model = GfxElement::new_model_non_indexed_with_id(GlyphModel::new(), 1, 7);
-    let mut model_hitbox = model.clone();
-    if let Some(model) = model_hitbox.glyph_model_mut() {
-        model.hitbox.add(BoundingRectangle::at_origin(1.0, 1.0));
-    }
-    assert!(model_hitbox == model, "`==` ignores a model's hit box too");
-    assert!(!model_hitbox.same_state(&model));
     assert!(model.same_state(&model.clone()));
+    assert_each_variation_changes_state("model", &model, MODEL_VARIATIONS);
 
     let void = GfxElement::new_void_with_id(1, 7);
     assert!(void.same_state(&GfxElement::new_void_with_id(1, 7)));
-    assert!(!void.same_state(&GfxElement::new_void_with_id(1, 8)));
+    assert_each_variation_changes_state("void", &void, VOID_VARIATIONS);
+
     assert!(
-        !void.same_state(&model),
+        !void.same_state(&model) && !model.same_state(&base),
         "different variants are different states"
     );
 }
