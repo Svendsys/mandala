@@ -20,14 +20,15 @@ use crate::application::user_config::load_desktop_layered;
 /// Load user mutations, with layered fallback: the explicit CLI
 /// path first, then `$XDG_CONFIG_HOME/mandala/mutations.json` (or
 /// `$HOME/.config/mandala/mutations.json`), then empty. Never fails
-/// — missing or invalid files are logged and the next layer is
-/// tried.
+/// — a missing or unusable file is logged and the next layer is
+/// tried; a malformed mutation inside a usable file is skipped on its
+/// own (see [`super::parse_user_mutations_json`]).
 pub fn load_user(explicit_path: Option<&Path>) -> Vec<CustomMutation> {
     match load_desktop_layered(
         "mutations",
         "mutations.json",
         explicit_path,
-        super::parse_mutations_json,
+        super::parse_user_mutations_json,
     ) {
         Some((v, source)) => {
             log::info!("loaded {} user mutations from {}", v.len(), source);
@@ -89,5 +90,30 @@ mod tests {
         let v = load_user(Some(&tmp));
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, "user-mut");
+    }
+
+    /// The desktop loader parses the user file entry by entry: a bad
+    /// mutation beside a good one costs only itself. Held here, not
+    /// only on the parser, because a loader handed the strict bundle
+    /// parser would pass every parser test and drop the whole file.
+    #[test]
+    fn test_load_user_skips_a_malformed_entry_and_keeps_the_rest() {
+        let scratch = TempDir::new("mixed-mutations");
+        let tmp = scratch.join("mutations.json");
+        let entry = |id: &str, scope: &str| {
+            format!(
+                r#"{{"id": "{id}", "name": "{id}",
+                    "mutator": {{"Macro": {{"channel": 0, "mutations": {{"Literal": []}}}}}},
+                    "target_scope": "{scope}"}}"#
+            )
+        };
+        let src = format!(
+            r#"{{"mutations": [{}, {}]}}"#,
+            entry("bad", "NoSuchScope"),
+            entry("good", "SelfOnly")
+        );
+        std::fs::write(&tmp, src).unwrap();
+        let ids: Vec<String> = load_user(Some(&tmp)).into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["good".to_string()]);
     }
 }

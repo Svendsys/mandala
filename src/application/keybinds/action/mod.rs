@@ -893,7 +893,8 @@ pub enum Action {
     SetSectionOffsetAbs { x: String, y: String },
     /// Mirror `section text "<text>" [runs=preserve|clear]`.
     /// `runs_mode = "preserve"` clips existing runs to the new text
-    /// length; `"clear"` collapses to a single run. Destructive.
+    /// length and extends the last one's style over appended text;
+    /// `"clear"` collapses to a single run. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SetSectionText { text: String, runs_mode: String },
     /// Mirror `section add [at=<idx>] [text="<text>"]`. `at = ""`

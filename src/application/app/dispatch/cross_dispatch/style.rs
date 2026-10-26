@@ -341,7 +341,8 @@ pub(in crate::application::app) fn apply_set_section_offset_abs(x: f64, y: f64, 
 /// Replace the selected section's text. `clear_runs == true`
 /// drops every prior run and lays down a single template-cloned
 /// run; `false` (the default for `runs=preserve`) clips existing
-/// runs to the new text length. Mirror of `section text "<text>"
+/// runs to the new text length and extends the last one's style
+/// over appended text. Mirror of `section text "<text>"
 /// [runs=preserve|clear]` for the keybind / macro path
 /// (`Action::SetSectionText`). Destructive.
 pub(in crate::application::app) fn apply_set_section_text(
