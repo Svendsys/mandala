@@ -99,8 +99,14 @@ const WAIT_MAX_MS: u128 = 60_000;
 /// The `timeout_ms` the server gives a `clock.wait` that names none.
 const WAIT_DEFAULT_MS: u64 = 10_000;
 
-const NO_SOCKET: &str = "no socket path (on Windows, no pipe name). Pass --ipc <path> or set MANDALA_IPC. \
+/// No endpoint named, in this platform's spelling, as
+/// `client::LAUNCH_HINT` is.
+#[cfg(not(windows))]
+const NO_SOCKET: &str = "no socket path. Pass --ipc <path> or set MANDALA_IPC. \
                          Start the app with: mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"";
+#[cfg(windows)]
+const NO_SOCKET: &str = "no pipe name. Pass --ipc <name> or set MANDALA_IPC. \
+                         Start the app with: mandala <map.mindmap.json> --ipc mandala";
 
 /// Run one invocation. `args` are the command line without the
 /// program name; `env_ipc` is `$MANDALA_IPC`, if set.

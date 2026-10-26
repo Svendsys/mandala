@@ -2,8 +2,9 @@
 
 //! The test helper that turns a taught command line into the words a
 //! shell would hand the program. Its own module rather than a part of
-//! `testing` because it touches no socket: `help`'s tests read it on
-//! every platform, and `testing`'s fake server is Unix-only.
+//! `testing` because it touches no endpoint: `help`'s tests read it
+//! without the fake server, which exists only where the client has a
+//! transport.
 
 /// A minimal shell word splitter: whitespace separates, single and
 /// double quotes group, nothing else is special — enough to read what

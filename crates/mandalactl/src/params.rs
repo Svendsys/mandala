@@ -402,6 +402,7 @@ pub fn coerce(text: &str, shapes: &[Shape]) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::native;
     use crate::verbs::{lookup, VERBS};
     use serde_json::json;
 
@@ -700,6 +701,11 @@ mod tests {
         assert!(err.contains("no bare arguments"), "{err}");
     }
 
+    /// The working directory most of these tests run in.
+    fn work() -> &'static str {
+        native("/work", r"C:\work")
+    }
+
     fn built_in(cwd: &str, verb: &str, line: &[&str]) -> Map<String, Value> {
         let signature = Signature::of(lookup(verb).expect("a known verb"));
         build_params(&signature, &tokenize(&words(line)), Some(Path::new(cwd))).expect("builds")
@@ -707,35 +713,51 @@ mod tests {
 
     #[test]
     fn test_a_relative_path_parameter_is_made_absolute_against_the_shells_directory() {
-        let by_word = built_in("/work/maps", "capture.screenshot", &["after.png"]);
-        assert_eq!(by_word["path"], json!("/work/maps/after.png"));
-        let by_name = built_in("/work", "query.document", &["to_file=out/model.json"]);
-        assert_eq!(by_name["to_file"], json!("/work/out/model.json"));
-        let dotted = built_in("/work", "scene.dump", &["to_file=./dump.json"]);
+        let by_word = built_in(
+            native("/work/maps", r"C:\work\maps"),
+            "capture.screenshot",
+            &["after.png"],
+        );
+        assert_eq!(
+            by_word["path"],
+            json!(native("/work/maps/after.png", r"C:\work\maps\after.png"))
+        );
+        let by_name = built_in(work(), "query.document", &["to_file=out/model.json"]);
+        assert_eq!(
+            by_name["to_file"],
+            json!(native("/work/out/model.json", r"C:\work\out\model.json")),
+            "`/` separates on both platforms; the path is spelled the platform's way"
+        );
+        let dotted = built_in(work(), "scene.dump", &["to_file=./dump.json"]);
         assert_eq!(
             dotted["to_file"],
-            json!("/work/dump.json"),
+            json!(native("/work/dump.json", r"C:\work\dump.json")),
             "a leading ./ is dropped"
         );
-        let parent = built_in("/work/a", "capture.screenshot", &["path=../shot.png"]);
+        let parent = built_in(
+            native("/work/a", r"C:\work\a"),
+            "capture.screenshot",
+            &["path=../shot.png"],
+        );
         assert_eq!(
             parent["path"],
-            json!("/work/a/../shot.png"),
+            json!(native("/work/a/../shot.png", r"C:\work\a\..\shot.png")),
             ".. is the filesystem's to resolve"
         );
     }
 
     #[test]
     fn test_an_absolute_path_parameter_and_a_json_one_are_sent_as_written() {
-        let params = built_in("/work", "capture.screenshot", &["/tmp/x.png"]);
-        assert_eq!(params["path"], json!("/tmp/x.png"));
-        let params = built_in("/work", "capture.screenshot", &["path:=\"rel.png\""]);
+        let absolute = native("/tmp/x.png", r"C:\tmp\x.png");
+        let params = built_in(work(), "capture.screenshot", &[absolute]);
+        assert_eq!(params["path"], json!(absolute));
+        let params = built_in(work(), "capture.screenshot", &["path:=\"rel.png\""]);
         assert_eq!(params["path"], json!("rel.png"), "`:=` is JSON as written");
     }
 
     #[test]
     fn test_an_empty_path_is_left_for_the_app_to_refuse() {
-        let params = built_in("/work", "capture.screenshot", &["path="]);
+        let params = built_in(work(), "capture.screenshot", &["path="]);
         assert_eq!(params["path"], json!(""));
     }
 
@@ -752,16 +774,19 @@ mod tests {
         let params = build_params(
             &signature,
             &tokenize(&words(&["out=out.json", "label=out.json"])),
-            Some(Path::new("/work")),
+            Some(Path::new(work())),
         )
         .expect("builds");
-        assert_eq!(params["out"], json!("/work/out.json"));
+        assert_eq!(
+            params["out"],
+            json!(native("/work/out.json", r"C:\work\out.json"))
+        );
         assert_eq!(params["label"], json!("out.json"));
     }
 
     #[test]
     fn test_only_path_parameters_are_joined_to_the_directory() {
-        let params = built_in("/work", "scene.find_text", &["notes.txt"]);
+        let params = built_in(work(), "scene.find_text", &["notes.txt"]);
         assert_eq!(params["text"], json!("notes.txt"));
     }
 
@@ -773,7 +798,8 @@ mod tests {
             err.contains("`path`") && err.contains("working directory"),
             "{err}"
         );
-        assert!(build_params(&signature, &tokenize(&words(&["/abs.png"])), None).is_ok());
+        let absolute = native("/abs.png", r"C:\abs.png");
+        assert!(build_params(&signature, &tokenize(&words(&[absolute])), None).is_ok());
     }
 
     #[test]

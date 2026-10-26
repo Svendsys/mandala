@@ -91,11 +91,11 @@ jobs:
   #   pipe (and `mandalactl` round-tripping a `ping` over it), the
   #   pipe's own unit tests, and the protocol tests above the
   #   transport;
-  # - `mandalactl`'s connection tests (`client::`), the part of its
-  #   suite the pipe client shares with the socket one. Not the rest of
-  #   that suite: its path-parameter tests spell Unix paths
-  #   (`/work/dump.json`), so running them here is the same port as
-  #   running `./test.sh`, not part of a transport. Tracked in #221.
+  # - `mandalactl`'s whole test target (#221): its unit tests, the
+  #   loopback scenarios against a fake app on a real pipe, and
+  #   `tests/binary.rs` driving the shipped binary over one. Path
+  #   expectations are spelled per platform, and the handful of tests
+  #   that are Unix-only by nature say why beside their `cfg`.
   #
   # Same triggers as the Linux job, so a pull request cannot merge red on
   # the platform this code is for.
@@ -138,14 +138,24 @@ jobs:
             exit 1
           fi
 
-      - name: The mandalactl connection tests, Windows
+      # Beyond a zero count, the step checks that the two halves that
+      # used to be Unix-only actually ran: a `cfg` that quietly dropped
+      # them again would still leave a non-zero count behind.
+      - name: The mandalactl tests, Windows
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p mandalactl --lib client:: 2>&1 | tee client-tests.log
-          count=$(grep -Eo 'test result: ok\. [0-9]+ passed' client-tests.log | awk '{ sum += $4 } END { print sum + 0 }')
-          echo "mandalactl client:: tests passed: $count"
+          cargo test -p mandalactl 2>&1 | tee mandalactl-tests.log
+          count=$(grep -Eo 'test result: ok\. [0-9]+ passed' mandalactl-tests.log | awk '{ sum += $4 } END { print sum + 0 }')
+          echo "mandalactl tests passed: $count"
           if [ "$count" -eq 0 ]; then
-            echo "FAILED: the client:: filter selected no tests"
+            echo "FAILED: mandalactl ran no tests"
             exit 1
           fi
+          for ran in 'loopback_tests::test_ping_prints_the_result_fields_and_exits_zero ... ok' \
+                     'test_exit_zero_and_a_greppable_line_when_the_app_says_ok ... ok'; do
+            if ! grep -qF "$ran" mandalactl-tests.log; then
+              echo "FAILED: expected \"$ran\" in the mandalactl run"
+              exit 1
+            fi
+          done

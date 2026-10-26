@@ -47,9 +47,11 @@ pub mod verbs;
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 mod wire;
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 mod loopback_tests;
-#[cfg(all(test, unix))]
+#[cfg(test)]
+mod platform;
+#[cfg(all(test, any(unix, windows)))]
 mod testing;
 #[cfg(test)]
 mod words;

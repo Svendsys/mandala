@@ -6,32 +6,88 @@
 //! `run`; what only this file can see is `main.rs` — that the status
 //! it returns is the one `run` decided, that the environment reaches
 //! it, and that stdin is read for `raw -`.
-
-#![cfg(unix)]
+//!
+//! The server stands in for the app on its own endpoint: a Unix socket,
+//! or on Windows a named pipe.
 
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 
 use serde_json::{json, Value};
 
+/// Where a test's server listens: the `--ipc` value that reaches it,
+/// and on Unix the private directory its socket lives in.
+struct Endpoint {
+    #[cfg(unix)]
+    _dir: tempfile::TempDir,
+    ipc: PathBuf,
+}
+
+/// An endpoint nobody listens on yet, under `name`.
+#[cfg(unix)]
+fn endpoint(name: &str) -> Endpoint {
+    let dir = tempfile::tempdir().expect("a directory");
+    let ipc = dir.path().join(format!("{name}.sock"));
+    Endpoint { _dir: dir, ipc }
+}
+
+/// An endpoint nobody listens on yet, under `name`. A pipe name is
+/// machine-wide, where a socket lives in its test's own directory, so
+/// it carries the process id and a count.
+#[cfg(windows)]
+fn endpoint(name: &str) -> Endpoint {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    Endpoint {
+        ipc: PathBuf::from(format!(
+            "mandalactl-binary-{name}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        )),
+    }
+}
+
 /// A one-connection server: greets, then answers each request with
 /// whatever `answer` makes of it, until the client hangs up.
-fn serve_once(path: &Path, answer: impl Fn(&Value) -> Value + Send + 'static) {
-    let listener = UnixListener::bind(path).expect("the socket binds");
+fn serve_once(at: &Endpoint, answer: impl Fn(&Value) -> Value + Send + 'static) {
+    #[cfg(unix)]
+    let listener = UnixListener::bind(&at.ipc).expect("the socket binds");
+    #[cfg(windows)]
+    let listener = {
+        use interprocess::os::windows::named_pipe::{pipe_mode, PipeListenerOptions};
+        let name = at.ipc.to_str().expect("a test name is Unicode");
+        let pipe = mandalactl::pipe_path(name).expect("a test name names a pipe");
+        PipeListenerOptions::new()
+            .path(pipe.as_str())
+            .create_duplex::<pipe_mode::Bytes>()
+            .expect("the pipe is created")
+    };
     thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
+        #[cfg(unix)]
+        let Ok((stream, _)) = listener.accept() else {
             return;
         };
+        #[cfg(unix)]
+        let (reader, mut writer) = (stream.try_clone().expect("clone"), stream);
+        #[cfg(windows)]
+        let Ok(stream) = listener.accept() else {
+            return;
+        };
+        #[cfg(windows)]
+        let (reader, writer) = stream.split();
+        #[cfg(windows)]
+        let mut writer = &writer;
         let hello = json!({"event": "hello", "data": {"protocol": 1, "app": "mandala", "version": "0.1.0", "pid": 1, "map": null}});
-        let _ = writeln!(stream, "{hello}");
-        let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+        let _ = writeln!(writer, "{hello}");
+        let mut reader = BufReader::new(reader);
         let mut line = String::new();
         while reader.read_line(&mut line).is_ok_and(|n| n > 0) {
             let request: Value = serde_json::from_str(line.trim()).expect("the client sends JSON");
-            let _ = writeln!(stream, "{}", answer(&request));
+            let _ = writeln!(writer, "{}", answer(&request));
             line.clear();
         }
     });
@@ -64,13 +120,12 @@ fn text(bytes: &[u8]) -> String {
 
 #[test]
 fn test_exit_zero_and_a_greppable_line_when_the_app_says_ok() {
-    let dir = tempfile::tempdir().expect("a directory");
-    let socket = dir.path().join("m.sock");
+    let socket = endpoint("m");
     serve_once(
         &socket,
         |r| json!({"id": r["id"], "ok": true, "result": {"now_ms": 12.5}}),
     );
-    let output = mandalactl(&["ping"], Some(&socket), "");
+    let output = mandalactl(&["ping"], Some(&socket.ipc), "");
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(text(&output.stdout), "now_ms: 12.5\n");
     assert_eq!(text(&output.stderr), "");
@@ -78,13 +133,12 @@ fn test_exit_zero_and_a_greppable_line_when_the_app_says_ok() {
 
 #[test]
 fn test_exit_one_when_the_app_says_no() {
-    let dir = tempfile::tempdir().expect("a directory");
-    let socket = dir.path().join("m.sock");
+    let socket = endpoint("m");
     serve_once(
         &socket,
         |r| json!({"id": r["id"], "ok": false, "error": {"code": "no_document", "message": "load one"}}),
     );
-    let output = mandalactl(&["query.selection"], Some(&socket), "");
+    let output = mandalactl(&["query.selection"], Some(&socket.ipc), "");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(text(&output.stdout), "");
     assert_eq!(text(&output.stderr), "error: no_document: load one\n");
@@ -92,9 +146,8 @@ fn test_exit_one_when_the_app_says_no() {
 
 #[test]
 fn test_exit_two_when_nothing_is_listening() {
-    let dir = tempfile::tempdir().expect("a directory");
-    let socket = dir.path().join("absent.sock");
-    let output = mandalactl(&["ping"], Some(&socket), "");
+    let socket = endpoint("absent");
+    let output = mandalactl(&["ping"], Some(&socket.ipc), "");
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(text(&output.stdout), "");
     assert!(
@@ -121,11 +174,15 @@ fn test_exit_three_for_a_bad_command_line_and_for_no_socket_at_all() {
 
 #[test]
 fn test_the_flag_names_the_socket_and_json_prints_the_envelope() {
-    let dir = tempfile::tempdir().expect("a directory");
-    let socket = dir.path().join("m.sock");
+    let socket = endpoint("m");
     serve_once(&socket, |r| json!({"id": r["id"], "ok": true, "result": {}}));
     let output = mandalactl(
-        &["--ipc", socket.to_str().expect("utf-8 path"), "ping", "--json"],
+        &[
+            "--ipc",
+            socket.ipc.to_str().expect("utf-8 path"),
+            "ping",
+            "--json",
+        ],
         None,
         "",
     );
@@ -135,13 +192,12 @@ fn test_the_flag_names_the_socket_and_json_prints_the_envelope() {
 
 #[test]
 fn test_raw_reads_the_request_from_standard_input() {
-    let dir = tempfile::tempdir().expect("a directory");
-    let socket = dir.path().join("m.sock");
+    let socket = endpoint("m");
     serve_once(
         &socket,
         |r| json!({"id": r["id"], "ok": true, "result": {"saw": r["cmd"]}}),
     );
-    let output = mandalactl(&["raw", "-"], Some(&socket), "{\"cmd\":\"ping\"}");
+    let output = mandalactl(&["raw", "-"], Some(&socket.ipc), "{\"cmd\":\"ping\"}");
     assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
     assert_eq!(text(&output.stdout), "saw: \"ping\"\n");
 }

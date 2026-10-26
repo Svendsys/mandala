@@ -50,6 +50,8 @@ pub const SPELLINGS: &[&str] = &[
 pub fn overview() -> String {
     let mut text = String::new();
     text.push_str(HEAD);
+    text.push_str(START);
+    text.push_str(SOCKET);
     text.push_str("\nSPELLINGS\n");
     for line in SPELLINGS {
         text.push_str(&format!("  {line}\n"));
@@ -167,8 +169,18 @@ describe` lists what the connected app serves, with every parameter and result, 
 than this build is still callable (name=value arguments are then typed from that list).
 
 SOCKET
-  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
-  With no display (a container, CI), add --headless: no window, and a clock that moves only by
+";
+
+/// How to start the app with IPC on, in this platform's spelling of the
+/// endpoint, as `client::LAUNCH_HINT` is.
+#[cfg(not(windows))]
+const START: &str = "  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
+";
+#[cfg(windows)]
+const START: &str = "  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc mandala
+";
+
+const SOCKET: &str = "  With no display (a container, CI), add --headless: no window, and a clock that moves only by
   clock.step until clock.set_mode real (format/ipc.md \"Headless and one-shot launches\")
   Name it here with --ipc <path>, or once per shell with:  export MANDALA_IPC=<path>
   On Windows the value is a pipe name, the app's own --ipc value: --ipc mandala is \\\\.\\pipe\\mandala-mandala
@@ -378,6 +390,17 @@ mod tests {
         ] {
             assert!(text.contains(needle), "the overview never mentions {needle:?}");
         }
+    }
+
+    /// How to start the app is spelled for the platform the help is read
+    /// on, as the client's connection errors are.
+    #[test]
+    fn test_the_overview_spells_the_launch_for_this_platform() {
+        let start = crate::platform::native(
+            "--ipc \"$XDG_RUNTIME_DIR/mandala.sock\"",
+            "testament.mindmap.json --ipc mandala\n",
+        );
+        assert!(overview().contains(start), "{start:?}");
     }
 
     #[test]

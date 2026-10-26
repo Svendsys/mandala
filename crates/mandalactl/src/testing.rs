@@ -3,13 +3,15 @@
 //! Test support: a real server on a real socket, and the invocation
 //! harness that talks to it.
 //!
-//! No mocks (TEST_CONVENTIONS §T10). The "fake server" is a
-//! `std::os::unix::net::UnixListener` in a thread that speaks the
-//! protocol's bytes, so what the tests exercise is the client's real
-//! connect, framing, deadlines and reads. It is a stand-in for the
-//! *app*, not for any part of this crate.
+//! No mocks (TEST_CONVENTIONS §T10). The "fake server" is a listener
+//! in a thread that speaks the protocol's bytes — a Unix socket, or on
+//! Windows a named pipe, the two endpoints the app serves — so what the
+//! tests exercise is the client's real connect, framing, deadlines and
+//! reads. It is a stand-in for the *app*, not for any part of this
+//! crate.
 
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,8 +23,12 @@ use serde_json::{json, Value};
 use crate::run::{run, Io};
 use crate::Exit;
 
-/// The working directory every [`invoke`] pretends to run in.
+/// The working directory every [`invoke`] pretends to run in, spelled
+/// as a shell on each platform would hand it over.
+#[cfg(unix)]
 pub const WORKING_DIRECTORY: &str = "/work/maps";
+#[cfg(windows)]
+pub const WORKING_DIRECTORY: &str = r"C:\work\maps";
 
 /// What a shell would have shown for one invocation.
 #[derive(Debug)]
@@ -77,16 +83,35 @@ pub fn no(id: &Value, code: &str, message: &str) -> Value {
     json!({"id": id, "ok": false, "error": {"code": code, "message": message}})
 }
 
+#[cfg(unix)]
+type Sender = UnixStream;
+#[cfg(unix)]
+type Receiver = UnixStream;
+#[cfg(windows)]
+type Sender = pipe::SendHalf;
+#[cfg(windows)]
+type Receiver = pipe::RecvHalf;
+
 /// One accepted connection, as the server end sees it.
 pub struct Peer {
-    stream: UnixStream,
-    reader: BufReader<UnixStream>,
+    stream: Sender,
+    reader: BufReader<Receiver>,
 }
 
 impl Peer {
+    #[cfg(unix)]
     fn new(stream: UnixStream) -> Peer {
         let reader = BufReader::new(stream.try_clone().expect("the socket can be cloned"));
         Peer { stream, reader }
+    }
+
+    #[cfg(windows)]
+    fn new(stream: pipe::Duplex) -> Peer {
+        let (recv, send) = stream.split();
+        Peer {
+            stream: send,
+            reader: BufReader::new(recv),
+        }
     }
 
     /// Write one frame as one line.
@@ -94,10 +119,16 @@ impl Peer {
         self.send_raw(&format!("{frame}\n"));
     }
 
-    /// Write bytes as given.
+    /// Write bytes as given. Not flushed on a pipe: there a flush waits
+    /// until the client has read everything, which a scenario whose
+    /// client stops reading must not be made to wait for. What is
+    /// written stays readable after the connection ends (`interprocess`
+    /// hands an unflushed stream to a background flush when dropped).
     pub fn send_raw(&mut self, text: &str) {
-        let _ = self.stream.write_all(text.as_bytes());
-        let _ = self.stream.flush();
+        let mut stream = &self.stream;
+        let _ = stream.write_all(text.as_bytes());
+        #[cfg(unix)]
+        let _ = stream.flush();
     }
 
     /// The next request line, parsed; `None` at end of input.
@@ -124,9 +155,12 @@ impl Peer {
     }
 }
 
-/// A server on a socket in a private temporary directory.
+/// A server on a socket in a private temporary directory, or on
+/// Windows on a pipe of a name no other test uses.
 pub struct FakeServer {
+    #[cfg(unix)]
     _dir: tempfile::TempDir,
+    /// The `--ipc` value that reaches it.
     path: PathBuf,
     seen: Arc<Mutex<Vec<Value>>>,
     connections: Arc<AtomicUsize>,
@@ -140,9 +174,16 @@ impl FakeServer {
     pub fn start(
         behavior: impl Fn(usize, &mut Peer, &Mutex<Vec<Value>>) + Send + Sync + 'static,
     ) -> FakeServer {
+        #[cfg(unix)]
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let path = dir.path().join("m.sock");
-        let listener = UnixListener::bind(&path).expect("the socket binds");
+        #[cfg(unix)]
+        let (path, listener) = {
+            let path = dir.path().join("m.sock");
+            let listener = UnixListener::bind(&path).expect("the socket binds");
+            (path, listener)
+        };
+        #[cfg(windows)]
+        let (path, listener) = pipe::listen();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let connections = Arc::new(AtomicUsize::new(0));
         let (log, count) = (Arc::clone(&seen), Arc::clone(&connections));
@@ -155,6 +196,7 @@ impl FakeServer {
             }
         });
         FakeServer {
+            #[cfg(unix)]
             _dir: dir,
             path,
             seen,
@@ -184,6 +226,40 @@ impl FakeServer {
     /// How many connections have been accepted.
     pub fn connections(&self) -> usize {
         self.connections.load(Ordering::SeqCst)
+    }
+}
+
+/// The pipe end of the fake server: `interprocess`'s blocking listener,
+/// which is what `mandalactl`'s own pipe client is built on.
+#[cfg(windows)]
+mod pipe {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use interprocess::os::windows::named_pipe::{
+        pipe_mode, DuplexPipeStream, PipeListener, PipeListenerOptions, RecvPipeStream, SendPipeStream,
+    };
+
+    pub type Duplex = DuplexPipeStream<pipe_mode::Bytes>;
+    pub type RecvHalf = RecvPipeStream<pipe_mode::Bytes>;
+    pub type SendHalf = SendPipeStream<pipe_mode::Bytes>;
+
+    /// Listen on a pipe named for this test alone, and give back the
+    /// `--ipc` value that names it. A pipe name is machine-wide, where
+    /// a socket lives in its test's own directory.
+    pub fn listen() -> (PathBuf, PipeListener<pipe_mode::Bytes, pipe_mode::Bytes>) {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let name = format!(
+            "mandalactl-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        );
+        let path = crate::pipe_path(&name).expect("a test name names a pipe");
+        let listener = PipeListenerOptions::new()
+            .path(path.as_str())
+            .create_duplex::<pipe_mode::Bytes>()
+            .expect("the pipe is created");
+        (PathBuf::from(name), listener)
     }
 }
 
