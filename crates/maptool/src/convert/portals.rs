@@ -33,9 +33,9 @@ use std::path::Path;
 /// present but not an array is dropped rather than carried through —
 /// no legacy writer produced that shape, and preserving it would
 /// keep nothing the loader or the app can read while leaving a key
-/// the format no longer defines. (The loader itself only rejects a
-/// *non-empty array* `portals`; the other shapes load, they just
-/// mean nothing.)
+/// the format no longer defines. (The loader rejects a `portals`
+/// key of any shape — `detect_legacy_shape` tests for presence —
+/// so dropping it is what makes the output loadable at all.)
 ///
 /// Errors only on a root that is not a JSON object, or an `edges`
 /// key that is not an array — both of which make the file unusable

@@ -116,9 +116,15 @@ pub(in crate::application::app) enum ThrottledDrag {
 impl ThrottledDrag {
     /// Widen the active variant to a trait-object borrow so every
     /// dispatcher — accumulate, drain, commit-on-release — can reach
-    /// it without naming the kind. One match arm per variant, and
-    /// this is the only place in the crate that has one; the three
-    /// dispatchers themselves stay shapeless.
+    /// it without naming the kind. One match arm per variant. This
+    /// and [`Self::as_dyn`] are the only per-variant matches on the
+    /// gesture path, so the three dispatchers themselves stay
+    /// shapeless; the one other production-path match is the IPC
+    /// projection `to_ipc_json` in `app/ipc_state.rs`, exhaustive by
+    /// design so `query.mode` cannot omit a gesture, and the test
+    /// module adds `variant_name` and `latches_the_cursor`. A new
+    /// variant is a compile error at exactly those three production
+    /// sites.
     ///
     /// Widened to [`ThrottledDragInteraction`] rather than to
     /// [`ThrottledInteraction`]: the drag trait has the other as a

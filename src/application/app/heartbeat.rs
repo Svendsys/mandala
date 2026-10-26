@@ -257,8 +257,9 @@ impl InputHandlerContext<'_> {
         } else if self.picker_hover.has_pending() {
             // Picker closed while a throttle-deferred hover drain
             // was still queued. The drain body's closed-picker
-            // branch (`color_picker_hover.rs:88-92`) is a no-op
-            // rebuild that just clears both flags — going through
+            // branch (`ColorPickerHoverInteraction::drain`, the
+            // `!is_open()` arm) is a no-op rebuild that just clears
+            // both flags — going through
             // the throttle would still strand them for the throttle
             // window's worth of frames, during which
             // `needs_continuation` reads `has_pending=true` and

@@ -271,6 +271,30 @@ else
     [ "$("$CTL" query.camera)" = "$camera_before" ] || fail "the capture moved the live camera"
 fi
 
+# ---- A pan ends on its own button's release ---------------------------
+
+# The left and right release arms end a pan behind a `mem::replace` with
+# no pure route in front of them, so the suite cannot reach them (#153,
+# TEST_CONVENTIONS §T8); this is the one place they run. A middle press
+# arms a pan the middle button holds; the left and right releases must
+# leave it, and the middle release must end it.
+pan_state() { # the drag state's kind and owner, as `query.mode` reports them
+    local mode
+    mode="$("$CTL" query.mode)" || fail "query.mode failed"
+    printf '%s %s %s' "$(field "$mode" drag_state.kind)" "$(field "$mode" drag_state.owner)" \
+        "$(field "$mode" drag_state.button)"
+}
+step "pan ownership"
+"$CTL" input.mouse_button middle press --wait-settled >/dev/null || fail "middle press failed"
+held='"Panning" "button" "middle"'
+[ "$(pan_state)" = "$held" ] || fail "a middle press did not arm a middle-held pan: $(pan_state)"
+for other in left right; do
+    "$CTL" input.mouse_button "$other" release --wait-settled >/dev/null || fail "$other release failed"
+    [ "$(pan_state)" = "$held" ] || fail "a $other release ended the middle-held pan: $(pan_state)"
+done
+"$CTL" input.mouse_button middle release --wait-settled >/dev/null || fail "middle release failed"
+[ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "the middle release did not end its pan"
+
 # ---- Graceful quit -----------------------------------------------------
 
 # A path-less capture first, so there is an artifacts dir for the graceful

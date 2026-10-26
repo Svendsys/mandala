@@ -2243,7 +2243,7 @@ fn test_tick_completion_deleted_node_not_resurrected() {
     assert!(doc.tick_animations(500, Some(&mut tree)));
 
     // Delete the node mid-flight (model removal mirrors the
-    // `mindmap.nodes` side of `delete_node`); the animation stays
+    // `mindmap.nodes` side of `delete_nodes`); the animation stays
     // queued because the delete doesn't touch `active_animations`.
     doc.mindmap.nodes.remove(&node_id);
     assert!(doc.has_active_animations());

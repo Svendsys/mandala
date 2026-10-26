@@ -1100,7 +1100,7 @@ mod edge_label {
 /// `EdgeLabel` row at the end.
 mod release_gate {
     use super::*;
-    use crate::application::app::throttled_interaction::release::commit_if_resolved;
+    use crate::application::app::throttled_interaction::release::{commit_if_resolved, Release};
     use crate::application::app::throttled_interaction::{
         EdgeLabelInteraction, MovingNodeInteraction, NodeResizeInteraction, ThrottledDrag,
     };
@@ -1196,7 +1196,7 @@ mod release_gate {
         let before_pos = node_pos(&world);
         let mut drag = left_started_drag();
 
-        let refresh = commit_if_resolved(MouseButton::Right, &mut drag, world.commit());
+        let refresh = commit_if_resolved(Release::Button(MouseButton::Right), &mut drag, world.commit());
 
         assert_eq!(refresh, None, "a put-back owes the canvas no decree");
         assert_eq!(undo_depth(&world), 0, "a put-back must push no undo entry");
@@ -1217,7 +1217,7 @@ mod release_gate {
         let before_pos = node_pos(&world);
         let mut drag = left_started_drag();
 
-        let refresh = commit_if_resolved(MouseButton::Left, &mut drag, world.commit());
+        let refresh = commit_if_resolved(Release::Button(MouseButton::Left), &mut drag, world.commit());
 
         assert_eq!(refresh, Some(ReleaseRefresh::All));
         assert_eq!(undo_depth(&world), 1, "the commit pushes its undo entry");
@@ -1244,7 +1244,7 @@ mod release_gate {
         let mut world = edge_world(false);
         let mut drag = right_started_drag();
 
-        let refresh = commit_if_resolved(MouseButton::Right, &mut drag, world.commit());
+        let refresh = commit_if_resolved(Release::Button(MouseButton::Right), &mut drag, world.commit());
 
         assert_eq!(refresh, Some(ReleaseRefresh::All));
         assert_eq!(undo_depth(&world), 1);
@@ -1273,7 +1273,7 @@ mod release_gate {
         let before_size = node_size(&world);
         let mut drag = right_started_drag();
 
-        let refresh = commit_if_resolved(MouseButton::Left, &mut drag, world.commit());
+        let refresh = commit_if_resolved(Release::Button(MouseButton::Left), &mut drag, world.commit());
 
         assert_eq!(refresh, None, "a put-back owes the canvas no decree");
         assert_eq!(undo_depth(&world), 0, "a put-back must push no undo entry");
@@ -1281,6 +1281,50 @@ mod release_gate {
             node_size(&world),
             before_size,
             "a put-back must not resize the node"
+        );
+    }
+
+    /// **Focus loss commits the drag a stray button would hand back.**
+    /// The window losing focus mid-gesture is the case where the
+    /// owning release may never arrive, so the gate commits on it
+    /// for either origin (#153) — the left-started move-node that
+    /// `test_right_release_on_a_left_started_drag_commits_nothing`
+    /// puts back, and the right-started fast-resize that
+    /// `test_left_release_hands_back_a_right_started_drag` puts
+    /// back. Those two are this test's negative controls: same
+    /// gestures, same world, and the gate wrote nothing for them.
+    ///
+    /// Asserted at the model, not the resolver: what focus loss owes
+    /// the user is the write and its undo entry, and a gate that
+    /// answered `Commit` without running the core would pass a
+    /// resolver-level test.
+    #[test]
+    fn test_focus_loss_commits_either_origin_with_its_undo_entry() {
+        let mut world = edge_world(false);
+        let before_pos = node_pos(&world);
+        let mut drag = left_started_drag();
+
+        let refresh = commit_if_resolved(Release::FocusLost, &mut drag, world.commit());
+
+        assert_eq!(refresh, Some(ReleaseRefresh::All));
+        assert_eq!(undo_depth(&world), 1, "the commit pushes its undo entry");
+        assert_eq!(
+            node_pos(&world),
+            (before_pos.0 + 30.0, before_pos.1),
+            "focus loss commits the full accumulated delta"
+        );
+
+        let mut world = edge_world(false);
+        let mut drag = right_started_drag();
+
+        let refresh = commit_if_resolved(Release::FocusLost, &mut drag, world.commit());
+
+        assert_eq!(refresh, Some(ReleaseRefresh::All));
+        assert_eq!(undo_depth(&world), 1);
+        assert_eq!(
+            node_size(&world).1,
+            60.0,
+            "focus loss commits the fast-resize the left release put back"
         );
     }
 
@@ -1301,7 +1345,7 @@ mod release_gate {
         let mut world = edge_world(false);
         let mut drag = edge_label_drag(&world);
 
-        let refresh = commit_if_resolved(MouseButton::Left, &mut drag, world.commit());
+        let refresh = commit_if_resolved(Release::Button(MouseButton::Left), &mut drag, world.commit());
 
         assert_eq!(
             refresh,
