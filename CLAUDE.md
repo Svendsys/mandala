@@ -106,7 +106,8 @@ the parity trajectory (or why none is owed):
   the named-pipe adapter lands (#169).
 - **Screenshot capture** (`src/application/capture/`,
   `src/application/renderer/capture.rs`,
-  `src/application/app/capture_flow.rs`; IPC-07/#67) — the engine
+  `src/application/app/capture_flow.rs`,
+  `src/application/app/capture_scene.rs`; IPC-07/#67, #178) — the engine
   behind `capture.screenshot` and the `screenshot` console verb, and
   with it frame-sequence recording (`capture/record.rs`,
   `app/record_flow.rs`; IPC-08/#68: `capture.record_start` /
@@ -116,7 +117,10 @@ the parity trajectory (or why none is owed):
   and the map resolves only when the event loop yields). The frame it
   draws is not gated: `Renderer::prepare_frame` / `encode_frame` are
   the browser's render path too, so a browser capture would draw the
-  same frame. Parity is the browser canvas capture parked with the
+  same frame — including the composed canvas a capture at another
+  zoom reads (`CanvasSource::Composed`, `renderer/scene_shape_cache.rs`),
+  which compiles for both targets and is simply never asked for by
+  the window. Parity is the browser canvas capture parked with the
   WebSocket transport in IPC-15 (#75), resolving asynchronously
   rather than blocking.
 - **Headless and one-shot launches** (`--headless`, `--size`,

@@ -16,6 +16,7 @@ use wgpu::StoreOp;
 use baumhard::font::{fonts, COLOR_WHITE};
 use baumhard::util::color_conversion::convert_u8_to_f32;
 
+use super::scene_shape_cache::CanvasSource;
 use super::{Renderer, RECT_VBUF_INITIAL_CAPACITY, RECT_VERTEX_FLOATS};
 
 use baumhard::gfx_structs::camera::Camera2D;
@@ -184,7 +185,7 @@ impl Renderer {
         // On lock contention or prepare failure, skip the rest of this
         // frame — before acquiring a surface texture, so a skipped
         // frame takes no vsync backpressure.
-        let prepared = self.prepare_frame(&camera, ModalLayer::Drawn)?;
+        let prepared = self.prepare_frame(&camera, ModalLayer::Drawn, CanvasSource::Live)?;
         let frame = match self.sink.current_texture() {
             Some(wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t)) => t,
             other => {
@@ -232,6 +233,12 @@ impl Renderer {
     /// With [`ModalLayer::Omitted`], an open modal's backdrop and glyphs
     /// are left out of the frame; nothing else changes.
     ///
+    /// `canvas` names which shaped canvas set the main pass draws the
+    /// tree-rendered roles from: the window's live set, or a capture's
+    /// composition of it with a scratch projection
+    /// ([`CanvasSource`]). The node text and backgrounds are the
+    /// renderer's own and are drawn either way.
+    ///
     /// Leaves the glyphon viewport at the target's resolution; the next
     /// frame's prepare sets it to its own. `Viewport::update` writes
     /// only on a change, so the window's frames pay a compare.
@@ -239,6 +246,7 @@ impl Renderer {
         &mut self,
         camera: &Camera2D,
         modal: ModalLayer,
+        canvas: CanvasSource,
     ) -> Result<PreparedFrame, FrameSkip> {
         let (width, height) = camera.viewport_size;
         let vp_w_px = width as f32;
@@ -255,7 +263,11 @@ impl Renderer {
             .node_background_rects
             .iter()
             .chain(super::scene_shape_cache::background_fills(
-                &self.canvas_scene_elements,
+                super::scene_shape_cache::canvas_elements(
+                    canvas,
+                    &self.canvas_scene_elements,
+                    &self.capture_canvas,
+                ),
             ))
         {
             if !rect.visible_at(camera) {
@@ -355,7 +367,7 @@ impl Renderer {
         // warm-up sees exactly the same glyph set that the next real
         // frame will draw — no risk of warming a different set than
         // gets rasterized.
-        self.prepare_text_for_pass(camera, modal)?;
+        self.prepare_text_for_pass(camera, modal, canvas)?;
         Ok(PreparedFrame {
             main_bytes: main_bytes_len as u64,
             palette_bytes: palette_bytes_len as u64,
@@ -470,7 +482,12 @@ impl Renderer {
     /// would reject it across a method boundary, which is why the
     /// prepare call lives in this method rather than splitting into
     /// a separate collection helper.
-    fn prepare_text_for_pass(&mut self, camera: &Camera2D, modal_layer: ModalLayer) -> Result<(), FrameSkip> {
+    fn prepare_text_for_pass(
+        &mut self,
+        camera: &Camera2D,
+        modal_layer: ModalLayer,
+        canvas: CanvasSource,
+    ) -> Result<(), FrameSkip> {
         let vp_w = camera.viewport_size.0 as i32;
         let vp_h = camera.viewport_size.1 as i32;
         let ratio = camera.pixel_ratio;
@@ -493,18 +510,23 @@ impl Renderer {
         // through several reallocs. Visibility-culling reduces the
         // realized count below this; allocating once at the ceiling
         // is still cheaper than `push` reallocations.
+        let canvas_elements = || {
+            super::scene_shape_cache::canvas_elements(
+                canvas,
+                &self.canvas_scene_elements,
+                &self.capture_canvas,
+            )
+        };
         let main_capacity = self.mindmap_buffers.values().map(|v| v.len()).sum::<usize>()
             + self.overlay_buffers.len()
-            + super::scene_shape_cache::buffer_count(&self.canvas_scene_elements);
+            + super::scene_shape_cache::buffer_count(canvas_elements());
         let mut main_text_areas: Vec<TextArea> = Vec::with_capacity(main_capacity);
         main_text_areas.extend(
             self.mindmap_buffers
                 .values()
                 .flat_map(|v| v.iter())
                 .chain(self.overlay_buffers.iter())
-                .chain(super::scene_shape_cache::text_buffers(
-                    &self.canvas_scene_elements,
-                ))
+                .chain(super::scene_shape_cache::text_buffers(canvas_elements()))
                 .filter_map(|tb| {
                     if !tb.visible_at(camera) {
                         return None;
