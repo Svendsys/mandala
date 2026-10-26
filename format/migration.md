@@ -231,10 +231,13 @@ path and move the result into place yourself.
    The `groups`, `theme_id` and `variant` fields are dropped; `variant` != 2 gets
    folded into the palette name (`"coral"` + `variant: 3` becomes
    `"coral-v3"`) — unless `palette` already ends in that `-vN`, or the
-   schema carries no `groups` of its own and `palette` already names a
-   palette the input's `palettes` table defines; either is taken to
-   mean the fold happened on an earlier pass (see
-   [Known limitations](#known-limitations)). A schema
+   schema carries no `groups` of its own, `palette` names a palette
+   the input's `palettes` table defines, and the folded name is
+   neither defined there nor hoisted from another node; either is
+   taken to mean the fold happened on an earlier pass (see
+   [Known limitations](#known-limitations)). The decision is per
+   palette-and-variant pair, so a legacy subtree whose deeper nodes
+   carry no `groups` follows its root's fold. A schema
    with no `palette` name is keyed
    `"default"`, and missing `starts_at_root` / `connections_colored`
    default to `true`. A negative `level` is floored to 0 with a

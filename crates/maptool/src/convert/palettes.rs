@@ -10,8 +10,12 @@ use std::collections::{HashMap, HashSet};
 pub fn hoist_palettes(root: &mut Value) {
     let defined = defined_palettes(root);
     let palettes = collect_palettes(root, &defined);
+    // Every name a schema may end up pointing at: the input's own
+    // table plus what this pass hoists. `palette_key` needs both, so a
+    // groups-less schema follows its subtree's hoisted fold.
+    let targets: HashSet<String> = defined.iter().chain(palettes.keys()).cloned().collect();
     inject_palettes(root, &palettes);
-    simplify_node_schemas(root, &defined);
+    simplify_node_schemas(root, &defined, &targets);
 }
 
 /// The names the input's own `palettes` table defines, before any
@@ -55,7 +59,7 @@ fn collect_palettes(root: &Value, defined: &HashSet<String>) -> HashMap<String, 
         // `format/migration.md` §"Known limitations" documents. One
         // hash lookup via `entry` rather than the `contains_key` +
         // `insert` pair this used to do (clippy::map_entry).
-        let palette_name = palette_key(schema, defined);
+        let palette_name = palette_key(schema, defined, defined);
         palettes
             .entry(palette_name)
             .or_insert_with(|| json!({ "groups": groups }));
@@ -67,34 +71,48 @@ fn collect_palettes(root: &Value, defined: &HashSet<String>) -> HashMap<String, 
 /// Derive a palette key from a color_schema object. Uses the palette
 /// name, with variant folded in for non-standard variants.
 ///
-/// The fold happens once. A `palette` that already ends in
-/// `-v{variant}` is taken to have been folded on an earlier pass, and
-/// so is one that names a palette in `defined` (the input's own table)
-/// when the schema has no `groups` of its own to hoist; either is the
-/// key as it stands. The loader keeps a stray `variant` on a current
-/// map as an unknown key, and folding again turned `coral-v3` into
-/// `coral-v3-v3`, a name no table defines (#211 review).
+/// The fold happens once, and is decided per `(palette, variant)` pair
+/// rather than per node, so a legacy subtree keys as one:
 ///
-/// The `groups` condition is what keeps a legacy schema's own palette:
-/// `{palette: "autumn", variant: 3, groups: [...]}` in a map whose
-/// table already defines `autumn` has not been hoisted, so it still
-/// folds to `autumn-v3` and its groups land there, instead of binding
-/// silently to `autumn` and dropping them.
-fn palette_key(schema: &serde_json::Map<String, Value>, defined: &HashSet<String>) -> String {
+/// - A `palette` that already ends in `-v{variant}` is taken to have
+///   been folded on an earlier pass and is the key as it stands.
+/// - Otherwise the folded name is the key, unless the schema has no
+///   `groups` of its own, its base name is one `defined` (the input's
+///   own table) holds, and the folded name is not a palette at all —
+///   neither defined nor hoisted in this pass (`targets`). That case
+///   is a stray `variant` on an already-current node.
+///
+/// History (#211 review): folding unconditionally turned a current
+/// map's `coral-v3` + stray `variant: 3` into `coral-v3-v3`, which no
+/// table defines. A guard on the defined base alone then bound a
+/// legacy `autumn` + `variant: 3` schema to the table's `autumn` and
+/// dropped its groups; narrowing that to groups-less schemas still
+/// split a legacy subtree, its root folding to `autumn-v3` while its
+/// groups-less children stayed on `autumn`. Asking whether the folded
+/// name exists is what keeps the subtree together.
+fn palette_key(
+    schema: &serde_json::Map<String, Value>,
+    defined: &HashSet<String>,
+    targets: &HashSet<String>,
+) -> String {
     let base = schema
         .get("palette")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let variant = schema.get("variant").and_then(|v| v.as_i64()).unwrap_or(2);
     let suffix = format!("-v{variant}");
+    if variant == 2 || base.ends_with(&suffix) {
+        return base.to_string();
+    }
+    let folded = format!("{base}{suffix}");
     let has_groups = schema
         .get("groups")
         .and_then(Value::as_array)
         .is_some_and(|groups| !groups.is_empty());
-    if variant == 2 || (!has_groups && defined.contains(base)) || base.ends_with(&suffix) {
-        base.to_string()
+    if has_groups || targets.contains(&folded) || !defined.contains(base) {
+        folded
     } else {
-        format!("{base}{suffix}")
+        base.to_string()
     }
 }
 
@@ -157,7 +175,7 @@ fn nonnegative_level(raw: Option<&Value>, node_id: &str) -> u64 {
 /// the loader would carry too. This used to rebuild the object from
 /// the four keys above, so a second pass over a current map deleted
 /// the overrides the first pass's documentation recommended.
-fn simplify_node_schemas(root: &mut Value, defined: &HashSet<String>) {
+fn simplify_node_schemas(root: &mut Value, defined: &HashSet<String>, targets: &HashSet<String>) {
     let Some(nodes) = super::nodes_obj_mut(root) else { return };
 
     for (node_id, node) in nodes.iter_mut() {
@@ -165,7 +183,7 @@ fn simplify_node_schemas(root: &mut Value, defined: &HashSet<String>) {
             continue;
         };
 
-        let key = palette_key(schema, defined);
+        let key = palette_key(schema, defined, targets);
         let level = nonnegative_level(schema.get("level"), node_id);
         for legacy in ["groups", "theme_id", "variant"] {
             schema.remove(legacy);
@@ -298,9 +316,11 @@ mod tests {
     /// The loader keeps it as an unknown key, so an app-saved map can
     /// carry one; folding `coral-v3` again gave `coral-v3-v3`, which
     /// no table defines. Both guards are checked: a name the table
-    /// already defines on a schema with nothing to hoist, and a name
-    /// that already ends in the suffix. A schema that does carry its
-    /// own `groups` still folds even when its base name is defined.
+    /// already defines on a schema with nothing to hoist whose folded
+    /// name is no palette, and a name that already ends in the suffix.
+    /// A schema that does carry its own `groups` still folds even when
+    /// its base name is defined, and a groups-less schema follows the
+    /// fold when its folded name is hoisted from another node.
     #[test]
     fn test_hoist_palettes_folds_a_variant_once() {
         // Defined in the table, no groups to hoist; the suffix would
@@ -324,6 +344,25 @@ mod tests {
         assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
         assert_eq!(root["palettes"]["coral-v3"]["groups"], own_groups);
         assert_eq!(root["palettes"]["coral"]["groups"][0]["background"], "#defined");
+
+        // A legacy subtree under a defined base name: the root carries
+        // the groups, its child the same palette and variant with
+        // `groups: []`. The child follows its subtree's fold to the
+        // hoisted `coral-v3` rather than staying on the table's
+        // `coral`, because the folded name is being hoisted.
+        let mut root = legacy_map_with_level(json!(0));
+        root["palettes"] = json!({ "coral": { "groups": [{ "background": "#defined" }] } });
+        root["nodes"]["0"]["color_schema"]["variant"] = json!(3);
+        root["nodes"]["0.0"] = json!({
+            "parent_id": "0",
+            "color_schema": { "palette": "coral", "variant": 3, "level": 1, "groups": [] }
+        });
+        hoist_palettes(&mut root);
+        assert_eq!(root["nodes"]["0"]["color_schema"]["palette"], "coral-v3");
+        assert_eq!(
+            root["nodes"]["0.0"]["color_schema"]["palette"], "coral-v3",
+            "a groups-less child must follow its subtree's hoisted fold"
+        );
 
         // Not in any table, but already folded with this variant.
         let mut root = legacy_map_with_level(json!(0));
