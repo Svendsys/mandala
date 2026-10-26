@@ -90,6 +90,8 @@ impl<'a> IpcCommandTarget<'a> {
         DispatchHit {
             click_hit: parts.click_hit,
             canvas_pos: canvas,
+            // A synthetic pointer holds no button.
+            held_by: None,
         }
     }
 }

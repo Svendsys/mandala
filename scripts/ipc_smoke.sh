@@ -293,6 +293,35 @@ done
 "$CTL" input.mouse_button middle release --wait-settled >/dev/null || fail "middle release failed"
 [ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "the middle release did not end its pan"
 
+# ---- A right drag resizes from where it pressed ----------------------
+
+# `Ctrl+RightDrag` is `FastResizeStart`: the `RightDrag` threshold cross
+# takes its pending press down and dispatches with a hit built from the
+# press (#194). That cross needs a live renderer, so this is where it
+# runs. Uses the node the region check found wholly on screen: a press
+# just inside its SE corner, dragged further SE, must grow it, and one
+# undo must put it back.
+if [ -z "$node" ]; then
+    echo "   no node is wholly inside the window capture; fast-resize check skipped"
+else
+    step "fast resize of $node"
+    geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+    fx="$(awk -v x="$(field "$geo" surface.x)" -v w="$(field "$geo" surface.w)" 'BEGIN { print x + w * 0.9 }')"
+    fy="$(awk -v y="$(field "$geo" surface.y)" -v h="$(field "$geo" surface.h)" 'BEGIN { print y + h * 0.9 }')"
+    before="$(field "$geo" model.size.width) $(field "$geo" model.size.height)"
+    "$CTL" input.drag "$fx" "$fy" "$(awk -v a="$fx" 'BEGIN { print a + 40 }')" "$(awk -v a="$fy" 'BEGIN { print a + 40 }')" \
+        button=right mods='["ctrl"]' --wait-settled >/dev/null || fail "Ctrl+RightDrag failed"
+    "$CTL" clock.step frames=40 >/dev/null || fail "clock.step failed"
+    geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+    after="$(field "$geo" model.size.width) $(field "$geo" model.size.height)"
+    [ "$after" != "$before" ] || fail "a Ctrl+RightDrag from inside $node's SE corner did not resize it (still $before)"
+    [ "$(field "$("$CTL" query.mode)" drag_state.kind)" = '"None"' ] || fail "the right release did not end the resize"
+    "$CTL" act.action Undo --wait-settled >/dev/null || fail "undo failed"
+    geo="$("$CTL" scene.node_geometry "$node")" || fail "scene.node_geometry $node failed"
+    [ "$(field "$geo" model.size.width) $(field "$geo" model.size.height)" = "$before" ] \
+        || fail "one undo did not restore $node's size"
+fi
+
 # ---- Graceful quit -----------------------------------------------------
 
 # A path-less capture first, so there is an artifacts dir for the graceful

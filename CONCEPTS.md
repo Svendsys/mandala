@@ -2793,7 +2793,13 @@ the arm (`dispatch::native::route_pan_canvas`, pure and pinned at
 `DragState` level the way `route_middle_button` is), which closes
 all three at once. `Pending` stays outside the refused class
 precisely because the `LeftDrag` threshold cross dispatches
-`PanCanvas` from it.
+`PanCanvas` from it. The `RightDrag` cross does not need the same
+exemption for `PendingRight`: it takes the press down to `None`
+before it dispatches, with a hit built from the press, so a
+`RightDrag`-bound `pan_canvas` arms from rest and the right release
+ends it. `FastResizeStart` reads its target, its anchor and its
+owning button off that hit rather than off `PendingRight` (#194),
+which is what let the state come down first.
 
 The release halves match, and the rule is the same one: **the
 button that started a gesture is the one that finalizes it.**

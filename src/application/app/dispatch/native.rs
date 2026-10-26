@@ -422,19 +422,17 @@ fn dispatch_action_arms(
             DispatchOutcome::Handled
         }
         Action::FastResizeStart => {
-            // Fast-resize gesture start. Reads the press-time hit
-            // off `ctx.drag_state` (PendingRight, set by the
-            // right-button press in `event_mouse_click.rs`) and the
-            // threshold-cross cursor position from
-            // `hit.canvas_pos`. Computes a corner anchor via
-            // `infer_resize_anchor` and transitions
-            // `PendingRight → Throttled(NodeResize | SectionResize)`
-            // with the chosen `ResizeHandleSide`. Drag drains and
-            // release commit follow the existing left-button
-            // resize plumbing (commit goes through `set_node_aabb`
-            // / `set_section_aabb` on right-button release).
-            apply_fast_resize_start(ctx, hit);
-            DispatchOutcome::Handled
+            // Fast-resize gesture start: the press-time target, the
+            // press-time anchor and the owning button all come off
+            // `hit` (`fast_resize_drag`), and the drag drains and
+            // commits through the existing resize plumbing on its
+            // owning button's release. A refusal ran nothing, and the
+            // native macro loop reads this for `any_ran`.
+            if apply_fast_resize_start(ctx, hit) {
+                DispatchOutcome::Handled
+            } else {
+                DispatchOutcome::Unhandled
+            }
         }
         Action::EnterNodeEdit | Action::EnterNodeEditClean => {
             // NodeEdit-mode entry. Single-section nodes
@@ -1229,136 +1227,120 @@ impl<'a, 'b, 'o> super::macro_core::MacroDispatchTarget for NativeMacroDispatchT
 
 /// Fast-resize gesture start (`Action::FastResizeStart`).
 ///
-/// Threshold-cross arm in `event_cursor_moved.rs` dispatches this
-/// when a `DragState::PendingRight` press has moved past the drag
-/// threshold. The threshold-cross arm packs the **press-time**
-/// canvas position into `hit.canvas_pos` (not the threshold-cross
-/// position) so anchor inference fires from where the user pressed
-/// — plan §6.3: "Quadrant determined at press time, not
-/// continuously". This helper reads that press-time canvas pos,
-/// reads the press-time hit off `PendingRight`, computes the
-/// corner anchor via `infer_resize_anchor`, and transitions
-/// `PendingRight → Throttled(NodeResize | SectionResize)` so the
-/// existing per-frame drain + right-button release commit handles
-/// the rest.
+/// The shell around [`fast_resize_drag`], which decides everything:
+/// this only clears the scene cache and installs the drag it hands
+/// back. A refusal leaves the drag state as it found it — the
+/// threshold cross that dispatched this has already taken its pending
+/// press down (#194), so there is nothing stale to reset. True when a
+/// drag started.
+fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit>) -> bool {
+    let Some(h) = hit else {
+        log::debug!("dispatch: FastResizeStart: no DispatchHit; skipping");
+        return false;
+    };
+    let Some(doc) = ctx.document.as_ref() else {
+        log::debug!("dispatch: FastResizeStart: no document; skipping");
+        return false;
+    };
+    match fast_resize_drag(doc, h) {
+        Ok(drag) => {
+            ctx.scene_cache.clear();
+            *ctx.drag_state = DragState::throttled(drag);
+            true
+        }
+        Err(why) => {
+            log::debug!("dispatch: FastResizeStart: {why}; skipping");
+            false
+        }
+    }
+}
+
+/// The resize a fast-resize gesture starts, or why it starts none.
 ///
-/// No-op on:
-/// - hit was empty (right-press on empty canvas)
-/// - section's `size` is `None` (fill-parent — can't resize)
-/// - node / section vanished between press and threshold (e.g.
-///   the user deleted via console while right-button was held)
+/// Everything comes off `hit`, which the drag gesture's threshold
+/// cross builds (`event_cursor_moved`; #194):
 ///
-/// In each case the state resets to `None` so the cursor doesn't
-/// re-fire the threshold-cross.
-fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit>) {
+/// - **the target** is `hit.click_hit` — the press-time body hit, a
+///   node or one of its sections;
+/// - **the anchor** is inferred from `hit.canvas_pos`, which the cross
+///   fills with the **press-time** canvas position, not the cursor's
+///   at the cross: "Quadrant determined at press time, not
+///   continuously" (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3), so the
+///   corner you grab is the one nearest where you pressed;
+/// - **the owner** is `hit.held_by`, the button whose release
+///   finalizes the drag. A hit no button holds — a synthetic IPC
+///   pointer — is refused rather than start a drag no release can end.
+///
+/// It used to read the target off `DragState::PendingRight` and
+/// hard-code the right button as owner. That coupling is what made a
+/// `RightDrag`-bound `pan_canvas` impossible: the pending right press
+/// had to survive into the dispatch for this arm, and `PanCanvas`
+/// refuses a pending right press (#194).
+///
+/// Renderer-free, so the harness drives it (§T8).
+fn fast_resize_drag(
+    doc: &crate::application::document::MindMapDocument,
+    hit: &DispatchHit,
+) -> Result<super::super::throttled_interaction::ThrottledDrag, String> {
     use baumhard::mindmap::tree_builder::infer_resize_anchor;
     use glam::Vec2;
 
     use super::super::throttled_interaction::{
         NodeResizeInteraction, SectionResizeInteraction, ThrottledDrag,
     };
+    use crate::application::platform::input::MouseButton;
 
-    let Some(h) = hit else {
-        log::debug!("dispatch: FastResizeStart: no DispatchHit; skipping");
-        return;
+    let started_with_right = match hit.held_by {
+        Some(MouseButton::Right) => true,
+        Some(MouseButton::Left) => false,
+        Some(other) => return Err(format!("{other:?} does not finalize a drag")),
+        None => return Err("no button holds the gesture, so no release could end it".into()),
     };
-    // Snapshot press-time hit out of PendingRight. If the state
-    // doesn't match, the threshold-cross caller already moved on
-    // (race with another gesture) — log + bail without mutating.
-    let (hit_node, hit_section_idx) = match ctx.drag_state {
-        DragState::PendingRight {
-            hit_node,
-            hit_section_idx,
-            ..
-        } => (hit_node.clone(), *hit_section_idx),
-        _ => {
-            log::debug!("dispatch: FastResizeStart: drag_state isn't PendingRight; skipping");
-            return;
-        }
+    let (node_id, section_idx) = match &hit.click_hit {
+        super::super::ClickHit::Node(id, section_idx) => (id, *section_idx),
+        _ => return Err("the press did not land on a node".into()),
     };
-    let Some(node_id) = hit_node else {
-        // Empty-canvas right-press — no fast-resize target.
-        log::debug!("dispatch: FastResizeStart: press landed on empty canvas; skipping");
-        *ctx.drag_state = DragState::None;
-        return;
-    };
+    let node = doc
+        .mindmap
+        .nodes
+        .get(node_id)
+        .ok_or_else(|| format!("node '{node_id}' not found"))?;
 
-    let Some(doc) = ctx.document.as_mut() else {
-        log::debug!("dispatch: FastResizeStart: no document; skipping");
-        *ctx.drag_state = DragState::None;
-        return;
-    };
-
-    // Two paths: section target (multi-section node hit) or node
-    // target (whole-node hit, including single-section nodes).
-    if let Some(section_idx) = hit_section_idx {
-        let Some(node) = doc.mindmap.nodes.get(&node_id) else {
-            log::debug!(
-                "dispatch: FastResizeStart: node '{}' not found; skipping",
-                node_id
-            );
-            *ctx.drag_state = DragState::None;
-            return;
-        };
-        let Some(section) = node.sections.get(section_idx) else {
-            log::debug!(
-                "dispatch: FastResizeStart: section[{}] not found on '{}'; skipping",
-                section_idx,
-                node_id
-            );
-            *ctx.drag_state = DragState::None;
-            return;
-        };
-        let Some(start_size) = section.size else {
-            // fill-parent section — no AABB to anchor against.
-            log::info!(
-                "dispatch: FastResizeStart: section[{}] of '{}' is fill-parent (size=None); cannot fast-resize",
-                section_idx,
-                node_id
-            );
-            *ctx.drag_state = DragState::None;
-            return;
-        };
+    // Two targets: a section of a multi-section node, or the node.
+    if let Some(section_idx) = section_idx {
+        let section = node
+            .sections
+            .get(section_idx)
+            .ok_or_else(|| format!("section[{section_idx}] not found on '{node_id}'"))?;
+        let start_size = section
+            .size
+            .ok_or_else(|| format!("section[{section_idx}] of '{node_id}' is fill-parent (size=None)"))?;
         let start_offset = section.offset;
         let aabb_pos = Vec2::new(
             (node.position.x + start_offset.x) as f32,
             (node.position.y + start_offset.y) as f32,
         );
         let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
-        let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
-        ctx.scene_cache.clear();
-        *ctx.drag_state = DragState::throttled(ThrottledDrag::SectionResize(SectionResizeInteraction::new(
-            node_id,
+        let side = infer_resize_anchor(hit.canvas_pos, aabb_pos, aabb_size);
+        Ok(ThrottledDrag::SectionResize(SectionResizeInteraction::new(
+            node_id.clone(),
             section_idx,
             side,
             start_offset,
             start_size,
-            // Fast-resize gesture (`PendingRight` promotion) — the
-            // right-button release path may finalize this drag.
-            true,
-        )));
+            started_with_right,
+        )))
     } else {
-        let Some(node) = doc.mindmap.nodes.get(&node_id) else {
-            log::debug!(
-                "dispatch: FastResizeStart: node '{}' not found; skipping",
-                node_id
-            );
-            *ctx.drag_state = DragState::None;
-            return;
-        };
-        let start_position = node.position;
-        let start_size = node.size;
-        let aabb_pos = Vec2::new(start_position.x as f32, start_position.y as f32);
-        let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
-        let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
-        ctx.scene_cache.clear();
-        *ctx.drag_state = DragState::throttled(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
-            node_id,
+        let aabb_pos = Vec2::new(node.position.x as f32, node.position.y as f32);
+        let aabb_size = Vec2::new(node.size.width as f32, node.size.height as f32);
+        let side = infer_resize_anchor(hit.canvas_pos, aabb_pos, aabb_size);
+        Ok(ThrottledDrag::NodeResize(NodeResizeInteraction::new(
+            node_id.clone(),
             side,
-            start_position,
-            start_size,
-            true,
-        )));
+            node.position,
+            node.size,
+            started_with_right,
+        )))
     }
 }
 
@@ -1403,6 +1385,135 @@ mod tests {
             false,
             HashSet::new(),
         )))
+    }
+
+    /// A pending right press on node 1, pressed at `press` (canvas).
+    fn pending_right_on_node_1(press: glam::Vec2) -> DragState {
+        DragState::PendingRight {
+            start_pos: (0.0, 0.0),
+            start_canvas: press,
+            hit_node: Some("1".into()),
+            hit_section_idx: None,
+        }
+    }
+
+    /// Node 1's canvas AABB in the canonical fixture: (min, max).
+    fn node_1_corners(doc: &crate::application::document::MindMapDocument) -> (glam::Vec2, glam::Vec2) {
+        let node = doc.mindmap.nodes.get("1").expect("fixture carries node 1");
+        let min = glam::Vec2::new(node.position.x as f32, node.position.y as f32);
+        let size = glam::Vec2::new(node.size.width as f32, node.size.height as f32);
+        (min, min + size)
+    }
+
+    /// The side a fast-resize armed from `hit` anchors at.
+    fn fast_resize_side(
+        doc: &crate::application::document::MindMapDocument,
+        hit: &DispatchHit,
+    ) -> ResizeHandleSide {
+        match super::fast_resize_drag(doc, hit).expect("a node hit held by a button starts a resize") {
+            ThrottledDrag::NodeResize(i) => i.side,
+            _ => panic!("a whole-node hit starts a node resize"),
+        }
+    }
+
+    /// **The `RightDrag` cross hands the Action the press, not the
+    /// cross** (#194): its hit carries the pending press's canvas
+    /// position and body hit, and the right button as holder. Read
+    /// back through `fast_resize_drag`, a press near the SE corner
+    /// anchors SE.
+    ///
+    /// The control is the same node with the hit's `canvas_pos` moved
+    /// to near the NW corner — where a drag that started SE could have
+    /// crossed the threshold — which anchors NW. So the anchor follows
+    /// `canvas_pos`, and the cross filling it with the press position is
+    /// what decides the corner. Fails on a cross that built its hit from
+    /// the cursor at the cross.
+    #[test]
+    fn test_a_fast_resize_anchors_at_the_press_not_the_threshold_cross() {
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let (min, max) = node_1_corners(&doc);
+        let near_se = max - glam::Vec2::splat(4.0);
+        let near_nw = min + glam::Vec2::splat(4.0);
+
+        let hit = pending_right_on_node_1(near_se)
+            .right_drag_hit()
+            .expect("a pending right press builds the cross's hit");
+        assert_eq!(hit.canvas_pos, near_se, "the hit carries the press position");
+        assert!(matches!(hit.click_hit, crate::application::app::ClickHit::Node(ref id, None) if id == "1"));
+        assert_eq!(
+            hit.held_by,
+            Some(crate::application::platform::input::MouseButton::Right)
+        );
+        assert_eq!(fast_resize_side(&doc, &hit), ResizeHandleSide::SE);
+
+        let crossed_elsewhere = DispatchHit {
+            canvas_pos: near_nw,
+            ..hit
+        };
+        assert_eq!(
+            fast_resize_side(&doc, &crossed_elsewhere),
+            ResizeHandleSide::NW,
+            "the anchor follows canvas_pos, so the press position is what must fill it"
+        );
+    }
+
+    /// Only a pending right press builds a `RightDrag` hit; every other
+    /// state has no right press to describe.
+    #[test]
+    fn test_only_a_pending_right_press_builds_a_right_drag_hit() {
+        assert!(pending_right_on_node_1(glam::Vec2::ZERO)
+            .right_drag_hit()
+            .is_some());
+        for state in [
+            DragState::None,
+            DragState::Panning {
+                owner: PanOwner::Toggled,
+            },
+            fast_resize_drag(),
+        ] {
+            assert!(state.right_drag_hit().is_none());
+        }
+    }
+
+    /// **A fast-resize is owned by the button that holds its gesture,
+    /// and refused when none does** (#194). The owner used to be
+    /// hard-coded to the right button, read off `PendingRight`; once
+    /// the cross takes that state down, the hit is the only witness.
+    ///
+    /// Right owns it on a right drag, left on a left drag — a
+    /// `LeftDrag`-bound fast-resize, which used to arm a right-owned
+    /// drag under a held left button that no release could end. The
+    /// refusal row is IPC `act.action FastResizeStart x= y=`, whose
+    /// synthetic pointer holds nothing: the same hit with an owner
+    /// starts a resize (the two rows above), so the refusal is the
+    /// owner's absence and nothing else.
+    #[test]
+    fn test_a_fast_resize_takes_its_owner_from_the_hit_and_refuses_none() {
+        use crate::application::platform::input::MouseButton;
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let (_, max) = node_1_corners(&doc);
+        let hit = |held_by| DispatchHit {
+            click_hit: crate::application::app::ClickHit::Node("1".into(), None),
+            canvas_pos: max,
+            held_by,
+        };
+        let owner = |held_by| {
+            super::fast_resize_drag(&doc, &hit(held_by)).map(|drag| drag.as_dyn().started_with_right())
+        };
+        assert_eq!(owner(Some(MouseButton::Right)), Ok(true));
+        assert_eq!(owner(Some(MouseButton::Left)), Ok(false));
+        assert!(owner(None).is_err(), "no button holds an IPC pointer's gesture");
+        assert!(
+            super::fast_resize_drag(
+                &doc,
+                &DispatchHit {
+                    click_hit: crate::application::app::ClickHit::Empty,
+                    ..hit(Some(MouseButton::Right))
+                }
+            )
+            .is_err(),
+            "a press on empty canvas has no target to resize"
+        );
     }
 
     /// **A `pan_canvas` dispatch mid-drag must not destroy the drag.**

@@ -865,9 +865,12 @@ enum DragState {
     /// threshold. Press-time hit captures the body of any node /
     /// section under the cursor (no edge-handle / portal-label /
     /// resize-handle precedence — fast-resize is body-only by
-    /// design). Threshold-cross promotes to
-    /// `Throttled(NodeResize | SectionResize)` via
-    /// `Action::FastResizeStart`; release-without-movement fires
+    /// design). The threshold cross takes it down to `None` and
+    /// dispatches whatever `MouseGesture::RightDrag` is bound to, with
+    /// a hit built from the press ([`Self::right_drag_hit`]) — by
+    /// default `Action::FastResizeStart`, which promotes to
+    /// `Throttled(NodeResize | SectionResize)`, and `PanCanvas` when
+    /// the user binds it there (#194); release-without-movement fires
     /// the bound `MouseGesture::RightClick` action (default
     /// unbound) and resets to `None`.
     PendingRight {
@@ -974,8 +977,8 @@ impl DragState {
     ///   until the next model rebuild snaps them back. Reachable
     ///   from a *right*-started fast-resize, which is in flight
     ///   while the left button is still free.
-    /// - `PendingRight` holds a user-named gesture (`RightClick` /
-    ///   `FastResizeStart`) that has not fired yet.
+    /// - `PendingRight` holds a user-named gesture (`RightClick`, or
+    ///   whatever `RightDrag` is bound to) that has not fired yet.
     ///
     /// `Pending` / `Panning` / `SelectingRect` are deliberately
     /// outside it: none owes the model anything, and each is
@@ -1076,6 +1079,38 @@ impl DragState {
             | Self::Panning { .. }
             | Self::SelectingRect { .. } => None,
         }
+    }
+
+    /// The hit a `RightDrag` threshold cross dispatches with, built from
+    /// the pending right press: its press-time body hit, its press-time
+    /// canvas position, and the right button as the holder. `None` for
+    /// every other state.
+    ///
+    /// Press-time on purpose, both halves: `Action::FastResizeStart`
+    /// anchors its corner at `canvas_pos`, and the corner the user
+    /// means is the one nearest where they pressed, not the one the
+    /// cursor happened to cross the threshold toward
+    /// (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3). A pure read, so the
+    /// harness pins it without the cursor handler's renderer.
+    fn right_drag_hit(&self) -> Option<dispatch::DispatchHit> {
+        let Self::PendingRight {
+            start_canvas,
+            hit_node,
+            hit_section_idx,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let click_hit = match hit_node {
+            Some(id) => ClickHit::Node(id.clone(), *hit_section_idx),
+            None => ClickHit::Empty,
+        };
+        Some(dispatch::DispatchHit {
+            click_hit,
+            canvas_pos: *start_canvas,
+            held_by: Some(crate::application::platform::input::MouseButton::Right),
+        })
     }
 
     /// Where the pending press began, in surface pixels: the state a
