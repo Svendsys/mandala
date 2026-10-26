@@ -1646,6 +1646,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("inherited_state_reaches_the_terminator", |b| {
         b.iter(do_inherited_state_reaches_the_terminator)
     });
+    c.bench_function("inherited_state_reaches_a_spatial_descend_hit", |b| {
+        b.iter(do_inherited_state_reaches_a_spatial_descend_hit)
+    });
     c.bench_function("engine_build_resolves_templates_and_runtime_payloads", |b| {
         b.iter(do_engine_build_resolves_templates_and_runtime_payloads)
     });

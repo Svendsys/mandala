@@ -6,7 +6,9 @@
 //! the seed is the state of the walk root's parent. [`TestElement`]
 //! makes the state observable — each element hands its children
 //! `parent + value`, and [`TestMutation::SetToInherited`] writes what a
-//! target received into its value.
+//! target received into its value. [`SpatialTestElement`] does the
+//! same for the `SpatialDescend` arm, which folds a hit's state down a
+//! path rather than descending to it.
 //!
 //! The expected values are sums of fixture literals worked out by
 //! hand; each test keeps an element whose state the walk must not
@@ -16,8 +18,12 @@
 
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::predicate::Predicate;
-use crate::engine::tests::test_element::{add, add_mutator, value, TestElement, TestMutation};
+use crate::engine::tests::test_element::{
+    add, add_mutator, value, SpatialTestElement, TestElement, TestMutation,
+};
 use crate::engine::tree::{MutatorTree, Tree};
+use crate::util::ordered_vec2::OrderedVec2;
+use indextree::NodeId;
 
 /// The seed every test walks with, chosen apart from every fixture
 /// value so a sum that dropped it could not land on the expected one.
@@ -217,4 +223,105 @@ pub fn do_inherited_state_reaches_the_terminator() {
     mt.apply_to(&mut tree, &SEED);
     assert_eq!(value(&tree, passes), 11);
     assert_eq!(value(&tree, fails), 1012, "SEED + root 1 + passes 11");
+}
+
+#[test]
+fn test_inherited_state_reaches_a_spatial_descend_hit() {
+    do_inherited_state_reaches_a_spatial_descend_hit();
+}
+
+/// `SpatialDescend` reaches its hit without descending to it level by
+/// level, so the walker folds the hit's state down the path instead:
+/// the hit receives seed + every element from the walk target down to
+/// the hit's parent, and nothing of its own.
+///
+/// The target root (1) holds a parent box (10, 100×100 at the origin)
+/// holding a grandchild box (100, 20×20 at (10, 10)), beside a sibling
+/// box (7) far from the point. The point (15, 15) is in the parent and
+/// the grandchild; the grandchild is smaller and wins, so
+/// `SetToInherited` makes it `SEED + 1 + 10`. Folding the hit itself in
+/// would give 1111; starting below the target, 1010; skipping the fold,
+/// `SEED`.
+///
+/// An `Instruction` also applies its mutation to its own target when
+/// their channels match. The first walk keeps the target on another
+/// channel, so the hit is the only element written. The second puts it
+/// on the instruction's channel: the target becomes `SEED` first, and
+/// the fold reads that, so the hit gets `SEED + SEED + 10`.
+pub fn do_inherited_state_reaches_a_spatial_descend_hit() {
+    fn add_spatial(
+        tree: &mut Tree<SpatialTestElement>,
+        parent: NodeId,
+        element: SpatialTestElement,
+    ) -> NodeId {
+        let id = tree.arena.new_node(element);
+        parent.append(id, &mut tree.arena);
+        id
+    }
+    fn value_of(tree: &Tree<SpatialTestElement>, id: NodeId) -> i64 {
+        tree.arena
+            .get(id)
+            .expect("fixture id belongs to the tree")
+            .get()
+            .value
+    }
+    fn fixture(root_channel: usize) -> (Tree<SpatialTestElement>, [NodeId; 3]) {
+        let mut tree = Tree::new_non_indexed_with(SpatialTestElement::unboxed(root_channel, 1));
+        let root = tree.root;
+        let parent = add_spatial(
+            &mut tree,
+            root,
+            SpatialTestElement::boxed(0, 10, (0.0, 0.0, 100.0, 100.0)),
+        );
+        let grandchild = add_spatial(
+            &mut tree,
+            parent,
+            SpatialTestElement::boxed(0, 100, (10.0, 10.0, 20.0, 20.0)),
+        );
+        let sibling = add_spatial(
+            &mut tree,
+            root,
+            SpatialTestElement::boxed(0, 7, (200.0, 200.0, 50.0, 50.0)),
+        );
+        (tree, [parent, grandchild, sibling])
+    }
+    let mt: MutatorTree<SpatialTestElement, TestMutation> = MutatorTree::new_with(Mutator::Instruction {
+        channel: 0,
+        instruction: Instruction::SpatialDescend(OrderedVec2::new_f32(15.0, 15.0)),
+        mutation: Some(TestMutation::SetToInherited),
+    });
+
+    let (mut tree, [parent, grandchild, sibling]) = fixture(5);
+    mt.apply_to(&mut tree, &SEED);
+    assert_eq!(value_of(&tree, grandchild), 1011, "SEED + target 1 + parent 10");
+    assert_eq!(
+        value_of(&tree, tree.root),
+        1,
+        "an off-channel target is not written"
+    );
+    assert_eq!(
+        value_of(&tree, parent),
+        10,
+        "the larger box loses to the grandchild"
+    );
+    assert_eq!(
+        value_of(&tree, sibling),
+        7,
+        "a box away from the point is not hit"
+    );
+
+    let (mut tree, [parent, grandchild, sibling]) = fixture(0);
+    mt.apply_to(&mut tree, &SEED);
+    assert_eq!(
+        value_of(&tree, tree.root),
+        1000,
+        "the on-channel target takes SEED"
+    );
+    assert_eq!(
+        value_of(&tree, grandchild),
+        2010,
+        "SEED + the target's new 1000 + parent 10"
+    );
+    assert_eq!(value_of(&tree, parent), 10);
+    assert_eq!(value_of(&tree, sibling), 7);
 }

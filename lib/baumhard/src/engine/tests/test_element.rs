@@ -8,6 +8,9 @@
 //! leaned on anything glyph-shaped, this type could not instantiate
 //! them.
 //!
+//! [`SpatialTestElement`] is the same element with a box, for the one
+//! walker arm `TestElement` cannot reach: `SpatialDescend`.
+//!
 //! Plus the fixture helpers the engine tests and the walker bench
 //! build trees with.
 
@@ -16,6 +19,7 @@ use crate::engine::mutation::Mutation;
 use crate::engine::mutator::Mutator;
 use crate::engine::predicate::{Comparator, Inspect};
 use crate::engine::tree::{MutatorTree, Tree};
+use glam::Vec2;
 use indextree::NodeId;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
@@ -179,4 +183,97 @@ pub fn value(tree: &Tree<TestElement>, id: NodeId) -> i64 {
         .expect("fixture id belongs to the tree")
         .get()
         .value
+}
+
+/// A [`TestElement`] with a box: the same integer, channel and
+/// inherited state (`Inherited = i64`, each element handing its
+/// children `parent + value`), plus an optional `(top_left, size)` that
+/// makes it reachable by `SpatialDescend` (`SPATIAL = true`). It exists
+/// so the walker's spatial arm, which folds the hit's inherited state
+/// down a path instead of descending one level at a time, has an
+/// element type whose state is observable. The glyph instantiation's
+/// `Inherited = ()` cannot show a wrong fold.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpatialTestElement {
+    /// The channel the walker aligns it on.
+    pub channel: usize,
+    /// The element's own value, as on [`TestElement`].
+    pub value: i64,
+    /// The element's box as `(top_left, size)`, or `None` for an
+    /// element `SpatialDescend` cannot hit.
+    pub bounds: Option<(Vec2, Vec2)>,
+}
+
+impl SpatialTestElement {
+    /// An element with no box.
+    pub fn unboxed(channel: usize, value: i64) -> Self {
+        SpatialTestElement {
+            channel,
+            value,
+            bounds: None,
+        }
+    }
+
+    /// An element whose box has its top-left corner at `(x, y)` and
+    /// measures `w` by `h`.
+    pub fn boxed(channel: usize, value: i64, (x, y, w, h): (f32, f32, f32, f32)) -> Self {
+        SpatialTestElement {
+            channel,
+            value,
+            bounds: Some((Vec2::new(x, y), Vec2::new(w, h))),
+        }
+    }
+}
+
+impl Inspect for SpatialTestElement {
+    type Field = TestField;
+
+    /// Only [`TestField::Value`] applies; this element has no kind.
+    fn test_field(&self, field: &TestField, comparator: &Comparator) -> Option<bool> {
+        match (field, comparator) {
+            (TestField::Value(v), Comparator::Equals(neg)) => Some((self.value == *v) != *neg),
+            (TestField::Value(v), Comparator::GreaterThan(neg)) => Some((self.value > *v) != *neg),
+            (TestField::Value(v), Comparator::LessThan(neg)) => Some((self.value < *v) != *neg),
+            (TestField::Value(_), Comparator::Exists(neg)) => Some(!neg),
+            (TestField::Kind(_), _) => None,
+        }
+    }
+}
+
+impl TreeElement for SpatialTestElement {
+    type Kind = ();
+    type Cache = TestCache;
+    type Inherited = i64;
+    const SPATIAL: bool = true;
+
+    fn kind(&self) {}
+
+    fn channel(&self) -> usize {
+        self.channel
+    }
+
+    fn void() -> Self {
+        SpatialTestElement::unboxed(0, 0)
+    }
+
+    fn inherit(&self, parent: &i64) -> i64 {
+        parent + self.value
+    }
+
+    fn spatial_bounds(&self) -> Option<(Vec2, Vec2)> {
+        self.bounds
+    }
+}
+
+impl Mutation<SpatialTestElement> for TestMutation {
+    type Template = TestMutation;
+
+    /// The same three operations as on [`TestElement`].
+    fn apply_to(&self, target: &mut SpatialTestElement, inherited: &i64) {
+        match self {
+            TestMutation::Add(n) => target.value += n,
+            TestMutation::Set(n) => target.value = *n,
+            TestMutation::SetToInherited => target.value = *inherited,
+        }
+    }
 }
