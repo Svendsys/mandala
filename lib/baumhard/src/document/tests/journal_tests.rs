@@ -108,7 +108,7 @@ fn test_document_same_state_sees_every_field() {
     do_document_same_state_sees_every_field();
 }
 
-/// `same_state` is `==`: a change of any one field, a position or a
+/// `same_state` is `==`: a change of any one field, a size or a
 /// span's text included, is a change of state, so a journal never drops
 /// it. Control: an unchanged clone is the same state.
 pub fn do_document_same_state_sees_every_field() {
@@ -117,7 +117,7 @@ pub fn do_document_same_state_sees_every_field() {
     assert!(node.same_state(&node.clone()));
     let mut moved = node.clone();
     if let DocElement::Node(n) = &mut moved {
-        n.position.x += 0.5;
+        n.min_size = Some(Vec2::ONE);
     }
     assert!(!node.same_state(&moved));
     let span = builder.tree().arena()[ids.b_span].get().clone();

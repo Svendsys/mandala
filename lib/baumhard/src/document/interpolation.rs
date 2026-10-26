@@ -14,11 +14,12 @@
 //! appears or disappears switches rather than inventing a value.
 //!
 //! Every interpolated element starts as a clone of the side the snap
-//! picks ([`Snap::pick`]), and only the interpolating fields are
-//! overwritten. The **key** — a node's, section's or ring's channel, a
-//! portal end's `end` — is never one of them, so it always comes from
-//! the same side as the element's place in its row, which keeps every
-//! row sorted at every `t` (the `Interpolable` contract). At `t = 0`
+//! picks ([`Snap::pick`](crate::engine::interpolate::Snap::pick)), and
+//! only the interpolating fields are overwritten. The **key** — a
+//! node's, section's or ring's channel, a portal end's `end` — is
+//! never one of them, so it always comes from the same side as the
+//! element's place in its row, which keeps every row sorted at every
+//! `t` (the `Interpolable` contract). At `t = 0`
 //! each lerp returns its `from` exactly and at `t = 1` its `to`, so the
 //! endpoints hold the before and after states exactly.
 
