@@ -1190,6 +1190,49 @@ replaces; nothing in the app uses it until the cut-over (V1-C3).
 `lib/baumhard/src/document/`. `util::document_surface` holds it to
 naming nothing of the model it replaces.
 
+### TextFlow — `FlowSpan`, `ShapedRun`, `ShapedBox`, `PlacedRun`, `Outline`, `Curve`
+
+The one text primitive: a sequence of spans plus a layout. A section
+or a label is a **box** flow — its spans shaped as lines broken at
+`\n` only, in a box that grows to fit them (`shape_box`). A frame
+ring, a connector, a line link and a portal marker are **path**
+flows: shaped once as a single line (`shape_run`), then placed around
+the node's outline (`place_on_closed`), along the connection curve
+(`place_on_open`) or at a point (`place_at_point`) — shape once, place
+many. Built in V1-B5 (#239); nothing draws it until the renderer
+sub-issues.
+
+- **Spans are real.** Each `FlowSpan` is text, a `ResolvedText` and
+  an optional link. Its face, size (per span, through cosmic-text's
+  per-span metrics), weight, slant and color all reach the shaper.
+  Sizes arrive in points; converting a frame's relative size is the
+  projection's job.
+- **Glyphs are never rotated.** A glyph of advance `w` and line
+  height `h` takes a step `|cos θ|·w + |sin θ|·h` along the path, θ
+  the direction of travel: side by side along a horizontal stretch, a
+  line apart along a vertical one, blended on a curve — the way ASCII
+  art makes one. Around an outline each glyph is pushed outward by
+  half its extent, so text sits on the outline rather than across it.
+- **Outlines** (`outline`, `offset`, `ring_offset`): a node's
+  rectangle shaped as a rounded rectangle (radius a percentage of half
+  the shorter side) or the inscribed ellipse; ring *k* runs around the
+  outline grown past the rings inside it. Lines and circular arcs are
+  walked exactly by arc length, ellipses and Béziers through a table
+  whose points are evaluated on the curve itself.
+- **Fit modes** say what happens when text and path differ in length:
+  `Once` (with an optional filler, appended to the run in the flow's
+  style), `Repeat` (reusing the run's glyph indices), `Spread` and
+  `Fit` (rescaling the run), the last two solved so the last glyph
+  ends at the path's end. Text too long is cut at the last whole
+  grapheme and never overlaps.
+- **Hit mapping.** Every glyph names its span and its bytes of that
+  span's text (`GlyphMetrics`, `ShapedBox::glyph_spans`); a filler
+  glyph names `FILLER_SPAN`.
+
+`lib/baumhard/src/flow/`. It caches nothing, builds no glyph tree and
+never takes the font lock: every shaping function takes the guard its
+caller holds.
+
 ---
 
 ## §3 The mindmap domain

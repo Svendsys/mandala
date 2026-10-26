@@ -77,6 +77,9 @@ Exemplars:
 - `lib/baumhard/src/document/tests/` — the document: shape rules,
   identity, style resolution and its read records, built through
   `test_support::DocumentBuilder`.
+- `lib/baumhard/src/flow/tests/` — TextFlow: shaping and span mapping,
+  outlines and the arc-length walk, placement geometry and the fit
+  modes' end conditions.
 
 ### §T2.3 Cross-crate rule
 
@@ -378,7 +381,9 @@ we test for non-native targets.
   gate was green. `lib/baumhard/tests/wasm_font_lock.rs` therefore
   builds a small `cdylib` that calls the lock helpers and runs it under
   `node`, and asserts both that the uncontended path works and that
-  each same-thread re-entrancy case panics with its own message. It is
+  each same-thread re-entrancy case panics with its own message. It
+  also runs TextFlow's shaping and placement (`baumhard::flow`) under
+  the guard, the browser's path for every text it draws. It is
   deliberately narrow — no browser, no DOM, no GPU — and it is the
   template if another wasm-only runtime hazard needs pinning: keep the
   probe tiny, and judge pass or fail by the panic *message*, because a
