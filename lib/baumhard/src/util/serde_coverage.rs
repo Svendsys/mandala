@@ -427,6 +427,10 @@ struct Mention {
     arguments: Vec<Type>,
 }
 
+/// Files the index leaves out because they declare a bare type name
+/// another indexed file declares; see [`TypeGraph::build`].
+const UNINDEXED: &[&str] = &["document/element.rs", "document/values.rs"];
+
 impl TypeGraph {
     /// Parse every `.rs` file under `src_root` and index the items it
     /// declares, descending into inline `mod { … }` blocks.
@@ -452,16 +456,20 @@ impl TypeGraph {
     /// `#[cfg(test)]` modules were all excluded. Nothing had
     /// collided yet, which is the only reason it was quiet.
     ///
-    /// **`src/document/` is not indexed either.** This graph is the
-    /// `.mindmap.json` model's, walked from `MindMap`; the document
-    /// (V1-B1) is the model that replaces it, and reuses bare type
-    /// names the model also declares — `NodeStyle`, `Anchor`,
-    /// `PaletteField`, `Rgba` — which an index keyed by bare name
-    /// cannot hold twice. No `MindMap` walk can reach a document type:
-    /// the model names nothing in `document`
+    /// **Two document files are not indexed either:
+    /// `document/element.rs` and `document/values.rs`** ([`UNINDEXED`]).
+    /// The index is keyed by bare type name, and those two files
+    /// declare names other files declare too — `NodeStyle` and
+    /// `PaletteField` (the `.mindmap.json` model's), `Anchor`
+    /// (`core::primitives`) and `Rgba` (`util::color`'s alias) — which
+    /// one bare-name key cannot hold twice. Every other file under
+    /// `document/` is indexed, so a gate that walks a document type
+    /// declared elsewhere — B2's format types among them — sees it. No
+    /// walk from `MindMap` reaches either file
     /// (`test_the_mindmap_model_is_walked_without_the_document` holds
-    /// that). This module goes with the model's unknown-key capture,
-    /// which the document's strict format does not have (design §7.2).
+    /// that). The exclusion stays until the index is keyed by module
+    /// path: `Anchor` and `Rgba` outlive the model, so deleting the
+    /// model (V1-C3) does not remove the collision.
     ///
     /// Panics if a file cannot be read or parsed, or if a `mod x;`
     /// names no file on disk: this backs a test whose entire job is to
@@ -470,8 +478,7 @@ impl TypeGraph {
         let mut graph = TypeGraph::default();
         let mut files = Vec::new();
         collect_source_files(src_root, &mut files);
-        let document = src_root.join("document");
-        files.retain(|file| !file.starts_with(&document));
+        files.retain(|file| !UNINDEXED.iter().any(|unindexed| file.ends_with(unindexed)));
         files.sort();
         let test_only = test_gated_module_files(&files);
         files.retain(|file| !test_only.contains(file));
@@ -2204,17 +2211,26 @@ mod tests {
         );
     }
 
-    /// The document's files are left out of the index, and that costs
-    /// the `MindMap` walk nothing: nothing it reaches is declared under
-    /// `src/document/`, and where the two declare one name the index
-    /// holds the model's — an index that took the document's
-    /// `NodeStyle` would walk the wrong type silently. Control: the
-    /// exclusion is real, since `DocElement` is not in the index.
+    /// The two unindexed document files cost the `MindMap` walk
+    /// nothing: nothing it reaches is declared under `src/document/`,
+    /// and where a name collides the index holds the model's — an index
+    /// that took the document's `NodeStyle` would walk the wrong type
+    /// silently. The exclusion is exactly those two files: `DocElement`
+    /// (in `element.rs`) is not indexed, and `Document` (in `ids.rs`)
+    /// and `ShapeError` (in `shape.rs`) are.
     #[test]
     fn test_the_mindmap_model_is_walked_without_the_document() {
         let graph = TypeGraph::build(&crate_src_root());
         assert!(graph.get("MindMap").is_some(), "the model is indexed");
-        assert!(graph.get("DocElement").is_none(), "the document is not");
+        assert!(graph.get("DocElement").is_none(), "element.rs is not");
+        for indexed in ["Document", "ShapeError"] {
+            assert!(
+                graph
+                    .get(indexed)
+                    .is_some_and(|info| info.file.starts_with(crate_src_root().join("document"))),
+                "the rest of document/ is indexed: {indexed}"
+            );
+        }
         let document = crate_src_root().join("document");
         for reached in graph.reachable_from("MindMap") {
             assert!(
