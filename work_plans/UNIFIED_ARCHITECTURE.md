@@ -49,6 +49,10 @@ develops it.
 | D22 | A Connector (the line to the parent) is always a line. A parent-child relation shown as a portal is a hidden connector plus a portal link. `edge_type` no longer exists. | §5.6 |
 | D23 | Neither pan nor zoom re-projects anything; screen-space min/max connection font sizes are dropped from V1 (V2-13). | §12.4 |
 | D24 | `GlyphModel` (and its `GlyphMatrix` / `GlyphLine` / `GlyphComponent` family, its commands and deltas) stays, as a first-class part of the glyph instantiation: models are stamped onto an area and have their own operations, and they are meant for building animations. V1 keeps them working and tested; it adds no use of them. Stamping models from presentations is V2-14. | §4.2, §18 |
+| D25 | A Frame element is **shown unless it says otherwise**: the built-in `visible` is `true`. A node with no Frame element draws no frame. | §5.6, §7 |
+| D26 | Box flows (sections, labels) break lines at `\n` only; the box grows to fit (D5). Automatic wrapping is not in V1. | §6.1 |
+| D27 | A verb target naming a node id that does not exist is **skipped at run time with a logged warning**, never a load error. Deleting a node a verb names is an ordinary delete. | §11.1 |
+| D28 | **One open transaction, and who yields.** While an interactive transaction is open (text editor session, drag or resize, color picker, frame preview), any other `apply` or `begin` is refused and the user sees a short status message; a verb's `Edit` step in that state is skipped with a warning. An animated edit is not interactive: any new `apply` or `begin` first fast-forwards it to its end and commits it, then proceeds. | §9 |
 
 ---
 
@@ -229,7 +233,13 @@ pub struct BranchKey<K> { pub kind: K, pub channel: usize }
 ```
 
 (The full trait, with caches, spatial bounds, state comparison and
-split / merge, is specified in V1-A1 to A4.)
+split / merge, is specified in V1-A1 to A4. **The code blocks in this
+section are illustrative; the exact signatures are those of V1-A1 to
+A4**: for example `apply_at(tree, &Anchors, seed_for) -> Result<(),
+TreeError>` and the journaled `apply_at_journaled(…, &mut
+JournalBuilder<E>)`, a `Journal` closed from a `JournalBuilder` whose
+`revert` / `replay` return `Result`, `StructOp::Move { to: NodeId, at
+}`, and `Merge` absorbing the next equal-key sibling.)
 
 The walker routes on `(kind, channel)`, not on channel alone. A
 mutator addressed to `(Section, 0)` cannot land on `(Node, 0)` or
@@ -388,7 +398,7 @@ animation code.
 - No string compares or hashing on the walk; keys are `Copy` integers.
 - Journals allocate per touched element, not per visited element.
 - Every new primitive in this section ships a bench entry beside it
-  (baumhard CONVENTIONS §B3/§B7); `cargo check --workspace --benches`
+  (baumhard CONVENTIONS §B8); `cargo check --workspace --benches`
   proves they build. Benchmarks are not run by agents (CLAUDE.md §6),
   and no performance claim is made — work removed is stated as a fact
   visible in the diff.
@@ -450,9 +460,13 @@ bindings (triggers are node-level, D14).
   `mandalactl` can name a node. One `id → NodeId` index serves those
   external callers and the loader; no internal path consults it.
 - A node inserted by a mutation carries the reserved ident `0`
-  (unassigned); `Document::apply` assigns `max_id + 1` in tree order.
-- New nodes take `max_id + 1`. Ids do not encode structure, so moving
-  a node never renames anything.
+  (unassigned); `Document::apply` assigns the next id in tree order.
+- **The id rule:** at load the counter starts at `max_id + 1`; within
+  a session it only increases, so an id is never reused while the
+  document is open. The counter is not saved (§2.2): after a save and
+  reload, the id of a node deleted at the top of the range may be
+  issued again. Ids do not encode structure, so moving a node never
+  renames anything.
 
 ### §5.3 Typed values
 
@@ -481,6 +495,17 @@ Every style field on every element is an `Option`. Resolution is
 element field → owning node's field (for spans: section → node) → node's palette binding
              → Defaults → built-in default
 ```
+
+**The palette tier.** A node bound to a palette (`palette: p`)
+colors itself and its descendants by depth, for every field that is
+`None` up to that tier: group = `depth(node) − depth(binding node)`,
+clamped to the last group; the nearest ancestor-or-self binding wins.
+Field mapping: node `fill` ← group `fill`; frame and ring text color ←
+group `frame`; section text color ← group `text`, except the node's
+first section (lowest channel), which takes group `title` when the
+group sets one. Connectors, links and labels are not palette-colored.
+An explicit `ColorRef::Palette(field)` written on any element resolves
+against the same binding.
 
 A node that sets only a frame's `fit` still inherits everything else
 from `Defaults`; editing one field never copies a default into the
@@ -551,7 +576,7 @@ by `Document` beside the tree, not as tree elements.
 
 | Where | Layout |
 |---|---|
-| Section, Label | **Box** — wraps within a width, grows the box (§5.5) |
+| Section, Label | **Box** — breaks lines at `\n` only, grows the box (§5.5, D26) |
 | Frame ring | **Closed path** — the node's outline, offset outward per ring |
 | Connector, line Link | **Open path** — the connection curve |
 | PortalEnd marker | **Point** — a single placed run |
@@ -668,7 +693,7 @@ structure of the tree: a node's children are nested inside it.
   },
   "defaults": {
     "ring":      { "size": 0.06, "color": "var(accent)" },
-    "connector": { "spans": [ { "text": "─" } ], "fit": "repeat", "size": 12 }
+    "connector": { "content": "─", "fit": "repeat", "size": 12 }
   },
   "edits":         [ ],
   "presentations": [ ],
@@ -751,14 +776,16 @@ impl Document {
     pub fn undo(&mut self) -> Option<Revision>;
     pub fn redo(&mut self) -> Option<Revision>;
     // §9
-    pub fn begin(&mut self, source: ChangeSource) -> Transaction;
+    pub fn begin(&mut self, source: ChangeSource) -> Result<Transaction, ApplyError>;
     pub fn stage(&mut self, tx: &Transaction, req: EditRequest) -> Result<(), ApplyError>;
     pub fn commit(&mut self, tx: Transaction) -> Option<Revision>;
     pub fn cancel(&mut self, tx: Transaction);
 }
 
-pub struct EditRequest { pub mutator: DocMutatorTree, pub anchors: Anchors, pub label: Label }
+pub struct EditRequest { pub mutator: DocMutatorTree, pub anchors: Anchors, pub label: String }
 ```
+
+(Illustrative, as in §4: the exact signatures are V1-B4's.)
 
 `Document::apply` is the **only** way the document changes after
 load. Actions, console verbs, IPC, drags, the text editor, the color
@@ -789,7 +816,9 @@ build an `EditRequest` and call it (or the transaction API, §9).
   the revision. `dirty` is `revision != saved_revision`, so undoing
   back to the saved state is clean again.
 - **Sources.** `ChangeSource::{Action, Console, Ipc, Input, Edit,
-  Verb, Undo, Redo}`. Every apply declares one; there is no fallback.
+  Verb, Undo, Redo, Presentation}`. Every apply declares one; there is
+  no fallback. `Presentation` tags the presentation layer's changes
+  in the change feed (§12), which never enter the history.
 
 ### §8.3 What it replaces
 
@@ -838,7 +867,12 @@ not a preview painted over it.
 
 Rules:
 
-- At most one transaction is open at a time.
+- At most one transaction is open at a time. Who yields when a second
+  change arrives is D28: interactive transactions refuse it; an
+  animated edit is fast-forwarded and committed first.
+- `stage` and `cancel` discard the reverted staged journal
+  (`Journal::discard`), so a long editing session frees what each
+  stage detached.
 - `undo` while a transaction is open cancels it first.
 - Saving while a transaction is open writes the committed state:
   revert the staged journal, serialize, replay — cost proportional to
@@ -1007,7 +1041,10 @@ interface — what makes a map interactive.
 `"selection"`, `{ "nodes": [ids] }`, `{ "channel": n, "within": "self" | "map" }`,
 `"children"`, `"descendants"`. Channels are how a verb addresses a
 group of nodes ("animate the channel-2 children out") — the purpose
-`format/channels.md` gave them from the start.
+`format/channels.md` gave them from the start. A `{ "nodes": [ids] }`
+id that names no node is skipped at run time with a logged warning
+(D27); deleting a node a verb names is an ordinary delete, and the map
+still loads.
 
 **Edits are visible in a verb.** A verb that contains `edit` steps is
 listed as changing the map (`verb list`, `describe`), so "Flower
@@ -1306,12 +1343,12 @@ levels; where they differ, the epic is updated, then this table.
 | A2 | Routing keys, sorted children, anchored walks | A1 |
 | A3 | Journals and interpolation | A2 |
 | A4 | Structural commands | A3 |
-| B1 | Document types, typed values, inheritance | A2 |
+| B1 | Document types, typed values, inheritance | A2 (bridges A3/A4, below) |
 | B2 | Format: schema, loader, saver | B1 |
 | B3 | Document mutation vocabulary | A4, B1 |
 | B4 | Document writer: apply, history, transactions | B3 |
 | B5 | TextFlow: layout and path placement | B1 |
-| B6 | Glyph instantiation: `GlyphRun` and `Fill` elements | B5 |
+| B6 | Glyph instantiation: `GlyphRun` and `Fill` elements | A3, B5 |
 | B7 | Projection: glyph layers, captured dependencies, oracle | B4, B6 |
 | C1 | Renderer spike: drawing positioned glyphs | B6 |
 | C2 | Renderer: runs, fills, journal-driven buffers | C1, B7 |
@@ -1320,9 +1357,9 @@ levels; where they differ, the epic is updated, then this table.
 | C5 | Field editing I: nodes, sections, frames, theme, defaults | C3 |
 | C6 | Field editing II: connectors, links, portals, labels | C3 |
 | C7 | Transactions: drags, resizes, color picker, previews | C3 |
-| C8 | Text editing on spans | C3 |
+| C8 | Text editing on spans | C3 (merges after C5, C6) |
 | D1 | Edits | C3 |
-| D2 | Presentations | C3 |
+| D2 | Presentations | C3, D1 |
 | D3 | Map verbs, triggers, links | D1, D2 |
 | E1 | maptool on the document | C3 |
 | E2 | IPC: journal events, queries, protocol version | D3 |
@@ -1338,6 +1375,7 @@ graph LR
   B1 --> B3 --> B4
   B1 --> B2
   B1 --> B5 --> B6
+  A3 --> B6
   B4 --> B7
   B6 --> B7
   B6 --> C1
@@ -1347,12 +1385,20 @@ graph LR
   B7 --> C3
   C2 --> C3
   C3 --> C4 & C5 & C6 & C7 & C8 & D1 & D2 & E1
+  D1 --> D2
   D1 --> D3
   D2 --> D3
   D3 --> E2
   C4 & C5 & C6 & C7 & C8 & D3 & E1 & E2 --> E3
   E3 --> E4 --> E5
 ```
+
+**Bridging B1 and A3/A4.** B1 runs beside A3 and A4. The trait
+items those two add (`same_state`, `SplitPoint`, `split`, `merge`) are
+implemented for `DocElement` by whichever of them merges *second*:
+B1's specification gives their semantics. C8's console subverbs
+(`frame ring <i> edit`, `path edit`) extend verbs C5 and C6 create,
+so C8 merges after them.
 
 **Why this order.** The engine comes first because everything is
 built on it, and its journal precedes structural commands because a
@@ -1376,7 +1422,7 @@ result.
   a hover presentation, a verb fired by click.
 - `./test.sh --lint` is green on native and wasm32, with GPU tests
   required in CI.
-- The docs describe what the code does (E2), and nothing in them
+- The docs describe what the code does (E4), and nothing in them
   describes a path that does not exist.
 
 ---
