@@ -103,8 +103,20 @@ impl Renderer {
         self.selection_rect_shape_cache = Some((char_count, row_count));
     }
 
-    /// Clear all overlay buffers (e.g., after selection rect is finished).
-    pub fn clear_overlay_buffers(&mut self) {
+    /// Drop the rubber-band selection rectangle — the four edges
+    /// [`Self::rebuild_selection_rect_overlay`] shaped, and the shape
+    /// cache that lets it re-position them instead of re-shaping. The
+    /// peer of that function, and named after the same thing: it
+    /// clears the selection rectangle and no other overlay, since the
+    /// store it empties holds nothing else.
+    ///
+    /// Two callers, both ending a rubber band:
+    /// `app::drain_frame::end_rect_select_gesture` (every frame no band
+    /// is live, and the left release that finishes one) and
+    /// `app::dispatch::native::end_target_picker_rubber_band` (a
+    /// target-picker mode taking the pointer mid-band). Code spans
+    /// rather than links: `app` is a private module.
+    pub fn clear_selection_rect_overlay(&mut self) {
         self.overlay_buffers.clear();
         self.selection_rect_shape_cache = None;
     }
