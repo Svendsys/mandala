@@ -1404,6 +1404,30 @@ pub struct MindMapTextBuffer {
 }
 
 impl MindMapTextBuffer {
+    /// Where a buffer stamped at `emission_offset` from `anchor`, in
+    /// a tree registered at `offset`, is drawn: `anchor +
+    /// emission_offset + offset`, summed in that order.
+    ///
+    /// The one spelling of the stamp-placement sum. The walker places
+    /// every buffer it emits through it, and both position patches —
+    /// [`place_at`](Self::place_at) on the scene passes,
+    /// `Renderer::patch_drag_positions` on the mindmap — re-derive
+    /// through it, so a patched buffer lands bit-for-bit where shaping
+    /// would have put it, and an outlined element's halo stamps keep
+    /// their ring instead of collapsing onto the glyph.
+    pub(super) fn stamp_pos(anchor: (f32, f32), emission_offset: (f32, f32), offset: Vec2) -> (f32, f32) {
+        (
+            anchor.0 + emission_offset.0 + offset.x,
+            anchor.1 + emission_offset.1 + offset.y,
+        )
+    }
+
+    /// Re-place this buffer for a moved `anchor` / `offset`, keeping
+    /// the stamp offset it was emitted at. No shaping.
+    pub(super) fn place_at(&mut self, anchor: (f32, f32), offset: Vec2) {
+        self.pos = Self::stamp_pos(anchor, self.emission_offset, offset);
+    }
+
     /// Should this text buffer render at the current camera
     /// state? Asks the one cull predicate, `Camera2D::visibility`,
     /// which the IPC scene introspection reports verbatim. Pure,

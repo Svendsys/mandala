@@ -271,11 +271,13 @@ pub(crate) struct ScenePassCounts {
     /// exactly one [`shape_one_element_into_buffers`] call: this
     /// counter is incremented at that call's only site.
     pub(crate) reshaped: usize,
-    /// How many were *moved* rather than re-shaped: only their
-    /// placement changed — [`Verdict::Moved`] — so their buffers'
-    /// positions and their fill were re-derived in place and no
-    /// shaping ran for them. The rest, `walked - reshaped - patched`,
-    /// kept their output untouched.
+    /// Walk positions whose placement changed and nothing else —
+    /// [`Verdict::Moved`] — so whatever output they hold (buffers, a
+    /// fill, or for a `Void` / `GlyphModel` element nothing but the
+    /// recorded offset) was re-placed in place and no shaping ran for
+    /// them. Counted the way `reshaped` counts: per walk position, a
+    /// `Void` whose tree moved included. The rest,
+    /// `walked - reshaped - patched`, kept their output untouched.
     pub(crate) patched: usize,
 }
 
@@ -404,8 +406,9 @@ impl ShapedSceneElement {
     /// **Halos.** An outlined element holds one buffer per halo stamp
     /// plus its main glyph, and every one of them sits at a different
     /// distance from the anchor. Each buffer's position is therefore
-    /// re-derived as `anchor + emission_offset + offset`, the walker's
-    /// own sum in the walker's own order, from the
+    /// re-derived through [`MindMapTextBuffer::place_at`] — the same
+    /// [`MindMapTextBuffer::stamp_pos`] the walker placed it with —
+    /// from the
     /// [`emission_offset`](MindMapTextBuffer#structfield.emission_offset)
     /// the walker recorded when it stamped it. Writing the anchor
     /// flat would stack all eight halos under the glyph — the hazard
@@ -432,11 +435,9 @@ impl ShapedSceneElement {
             return;
         };
         cached.position = live.position;
+        let anchor = (live.position.x.0, live.position.y.0);
         for buffer in &mut self.buffers {
-            buffer.pos = (
-                live.position.x.0 + buffer.emission_offset.0 + offset.x,
-                live.position.y.0 + buffer.emission_offset.1 + offset.y,
-            );
+            buffer.place_at(anchor, offset);
         }
         if self.background.is_some() {
             self.background = extract_background_rect(element, live, offset);

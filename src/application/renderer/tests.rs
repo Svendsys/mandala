@@ -2065,6 +2065,66 @@ fn test_a_position_only_change_patches_and_shapes_nothing() {
     );
 }
 
+/// A patch re-derives a kept fill where the walker would emit it,
+/// tree offset included.
+///
+/// The overlay pass keeps no fills, so the sibling test above cannot
+/// reach this half of `patch_placement`: it is the canvas pass that
+/// holds a fill on a moved element. Same fixture, same move — both
+/// leaves and the tree offset — run as `Canvas`, and the fill stream
+/// is held to a cold pass over the moved scene, the way the text
+/// stream is above. The outlined leaf carries a `background_color`
+/// and the plain one does not, so exactly one fill is in play, and
+/// the literal below says where it has to sit without asking the
+/// code under test.
+#[test]
+fn test_a_patched_canvas_fill_follows_the_move_and_the_tree_offset() {
+    baumhard::font::fonts::init();
+
+    let (mut scene, id) = patch_fixture_scene();
+    let mut shaped: Vec<ShapedSceneElement> = Vec::new();
+    scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Canvas);
+    assert_eq!(
+        canvas_fill_stream(&shaped).len(),
+        1,
+        "the outlined leaf authors the one fill this test follows"
+    );
+
+    edit_leaf_area(&mut scene, id, 0, |a| a.set_position((40.0, 70.0)));
+    edit_leaf_area(&mut scene, id, 1, |a| a.set_position((130.0, 75.0)));
+    let tree_offset = Vec2::new(12.0, -8.0);
+    scene.set_offset(id, tree_offset);
+
+    let moved = scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Canvas);
+    assert_eq!(
+        (moved.reshaped, moved.patched),
+        (0, 3),
+        "a pure move is patched on the canvas pass too"
+    );
+
+    let mut full: Vec<ShapedSceneElement> = Vec::new();
+    scene_shape_cache::refresh(&scene, &[id], &mut full, ScenePassKind::Canvas);
+    assert_eq!(
+        canvas_fill_stream(&shaped),
+        canvas_fill_stream(&full),
+        "a patched fill must be the one re-shaping the moved scene emits"
+    );
+
+    // Independent of both passes: the fixture's fill rect, read off
+    // the moved area itself, plus the tree offset.
+    let mut moved_area = overlay_cache_fixture_area();
+    moved_area.set_position((40.0, 70.0));
+    let (rect_pos, _) = moved_area.background_rect().expect("the fixture area has a fill");
+    let fill = scene_shape_cache::background_fills(&shaped)
+        .next()
+        .expect("the fill survived the patch");
+    assert_eq!(
+        fill.position,
+        rect_pos + tree_offset,
+        "the patched fill sits at the moved rect plus the tree offset"
+    );
+}
+
 /// Where the walker stamps the outlined fixture leaf's nine buffers
 /// for an anchor at `anchor` (tree offset folded in): the eight halo
 /// offsets, then the glyph. Read off `OutlineStyle::offsets`, the
@@ -2168,11 +2228,23 @@ fn test_a_shaping_change_re_shapes_even_alongside_a_move() {
         scene_shape_cache::refresh(&scene, &[id], &mut shaped, ScenePassKind::Overlay);
         edit_leaf_area(&mut scene, id, 0, |area| {
             if with_shaping_change {
+                // The row's own precondition: the payload must differ
+                // from the fixture, or this run is the control under
+                // another name. Asked through derived `Debug`, for the
+                // reason the field-loop test gives — `PartialEq` is
+                // half of what `classify` consults.
+                let before = format!("{area:?}");
                 DeltaGlyphArea::new(vec![
                     GlyphAreaField::Operation(ApplyOperation::Assign),
                     overlay_cache_field_for(tag),
                 ])
                 .apply_to(area);
+                assert_ne!(
+                    format!("{area:?}"),
+                    before,
+                    "the representative payload for GlyphAreaField::{tag} does not differ from \
+                     the fixture, so this row cannot prove anything"
+                );
             }
             area.set_position((40.0, 70.0));
         });
