@@ -51,8 +51,10 @@ borders, connection paths — is laid out as positioned font glyphs.
   benchmark-reuse, no-unsafe policy, and performance rules. Read this
   before touching anything under `lib/baumhard/`.
 - **`TEST_CONVENTIONS.md`** — testing philosophy, where to put tests, the
-  `do_*()` benchmark-reuse pattern, and what we deliberately don't do
-  (no mocks, no snapshots, no GPU tests).
+  `do_*()` benchmark-reuse pattern, what we deliberately don't do
+  (no mocks, no snapshots, no GPU tests), and §T13's checklist of
+  assertions that cannot fail on their subject, with the negative
+  control every passing assertion owes.
 - **`format/`** — the `.mindmap.json` format specification.
   `format/schema.md` is the primary reference; per-concept docs cover
   Dewey-decimal IDs, named enums, palettes, channels, text runs,
