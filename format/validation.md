@@ -45,8 +45,10 @@ that moved.
    address nodes by different spellings, and a disagreement between
    them is a walk that never terminates. The first and last are
    model-entry invariants: `sections` is serde-defaulted, so only the
-   loader can insist a node has one, and the cap is the same bound
-   the document's own section mutators hold.
+   loader can insist a node has one, and the cap bounds one node's
+   content strata. On the editor side `add_section` holds the cap
+   and `split_section` does not, so repeated splits can save a map
+   this rule then refuses to reopen (#208).
 3. **Coherence — `verify` reports.** Everything else: a file that
    loads and renders but still says something incoherent. Dangling
    edge references, a Dewey ID that disagrees with `parent_id`, an

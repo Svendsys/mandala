@@ -3286,9 +3286,11 @@ The remainder are deferred here:
       gate cite (now spread across 88, 93, 516, 545, 608, 635);
       `CancelMode → ExitMode` rename marked deferred but actually
       shipped. Spot-fix or add a once-over follow-up. — closed by
-      the #51 reconciliation: all four spots in Batches 2 and 5 now
-      name the current code (fn names rather than line numbers), and
-      the header records the path moves.
+      the #51 reconciliation: the status lists in Batches 2 and 5
+      now name the current code by function rather than by line;
+      Batch 2's pre-implementation list keeps its original line
+      ranges as history, with the current site appended after each;
+      and the header records the path moves.
 - [x] **`format/sections.md` 9-subverb table omits `frame`** (docs
       MEDIUM): table says "Nine subverbs" then renders 10 rows
       with no `frame` row. — shipped: the table in `format/sections.md`

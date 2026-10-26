@@ -147,9 +147,9 @@ Two edge cases, both in `convert::sections::migrate_one_node`:
   `convert --sections` the fix for the loader's zero-section
   refusal.
 
-The loader's own refusal messages currently spell this command with
-one path; it takes two (the same path twice converts in place).
-That mismatch is #199.
+Every `convert` verb takes an input and an output path; the same
+path twice converts in place (see [Writes are atomic](#writes-are-atomic)).
+The loader's refusal messages are held to this arity by #199.
 
 ## The legacy-format command
 

@@ -115,7 +115,12 @@ Commands:
                                 constructs this build does not
                                 recognize. Exit 0 if clean or if only
                                 warnings are found; nonzero with a
-                                list of violations otherwise.";
+                                list of violations otherwise. Each
+                                violation is tagged with one of the
+                                categories: tree, ids, references,
+                                edges, palettes, enums, sections,
+                                numeric, unknown_keys,
+                                unknown_variant.";
 
 fn main() -> ExitCode {
     // maptool is a shipped release binary that walks the same
