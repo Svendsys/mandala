@@ -2038,6 +2038,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("structure_discard_frees_exactly_what_the_journal_holds", |b| {
         b.iter(do_structure_discard_frees_exactly_what_the_journal_holds)
     });
+    c.bench_function("structure_journal_names_the_parents_a_node_left_and_took", |b| {
+        b.iter(do_structure_journal_names_the_parents_a_node_left_and_took)
+    });
+    c.bench_function("structure_touched_names_an_entering_subtree_from_its_top", |b| {
+        b.iter(do_structure_touched_names_an_entering_subtree_from_its_top)
+    });
+    c.bench_function(
+        "structure_touched_names_a_removed_subtree_in_one_pre_order",
+        |b| b.iter(do_structure_touched_names_a_removed_subtree_in_one_pre_order),
+    );
+    c.bench_function("structure_walk_tree_from_refuses_a_node_out_of_the_tree", |b| {
+        b.iter(do_structure_walk_tree_from_refuses_a_node_out_of_the_tree)
+    });
     c.bench_function("structure_discard_frees_only_what_is_still_detached", |b| {
         b.iter(do_structure_discard_frees_only_what_is_still_detached)
     });

@@ -973,7 +973,12 @@ restore puts back arrangements, not a history of moves — which is what
 lets structure and key changes mix in one builder. `touched()` reads
 each node's change from where it is before and after: `Field` (state,
 or place in its row), `Moved` (another parent), `Inserted` / `Removed`
-(in the tree at one end only — a subtree's every node, in pre-order).
+(in the tree at one end only — the whole subtree that moved with it,
+from its top, in the pre-order of the arrangement it is in, however
+many calls built it). `parents(node)` names the parent a node left or
+took — the row a removal changed, which the arena no longer links to.
+A journal is never cloned into a history: a clone shares the subtrees
+it owns.
 A journal **owns** the subtrees it holds out of the tree — what it
 removed while applied, what it inserted while reverted — and
 `Journal::discard` frees them when the journal leaves the history;

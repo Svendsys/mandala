@@ -445,6 +445,12 @@ pub struct StructuralScenario {
     pub calls: usize,
     rng: StdRng,
     busy: NodeId,
+    /// The nodes of [`Self::tree`]: any other node in the tree was
+    /// created by a call.
+    initial: FxHashSet<NodeId>,
+    /// The parents of nodes earlier calls set out to remove, for a later
+    /// removal to take next: a subtree removed after a node below it.
+    removed_from: Vec<NodeId>,
 }
 
 /// The structural scenario for `seed`: a random tree and one to ten
@@ -455,11 +461,14 @@ pub fn structural_scenario(seed: u64) -> StructuralScenario {
     let tree = random_tree(&mut rng);
     let busy = busy_parent(&mut rng, &tree);
     let calls = rng.random_range(1..=10);
+    let initial = tree.descendants().collect();
     StructuralScenario {
         tree,
         calls,
         rng,
         busy,
+        initial,
+        removed_from: Vec::new(),
     }
 }
 
@@ -517,7 +526,21 @@ impl StructuralScenario {
                 let node = pick(rng, pool);
                 (Call::Update { node, mutation }, Intent::Field)
             }
-            _ => structural_call(rng, tree, busy, &nodes, &row),
+            _ => {
+                let created: Vec<NodeId> = nodes
+                    .iter()
+                    .copied()
+                    .filter(|id| !self.initial.contains(id))
+                    .collect();
+                let context = Context {
+                    tree,
+                    busy,
+                    nodes: &nodes,
+                    row: &row,
+                    created: &created,
+                };
+                structural_call(rng, &context, &mut self.removed_from)
+            }
         }
     }
 }
@@ -527,11 +550,16 @@ impl StructuralScenario {
 /// or a second command below it now and then. See [`StructuralScenario`].
 fn structural_call(
     rng: &mut StdRng,
-    tree: &Tree<TestElement>,
-    busy: NodeId,
-    nodes: &[NodeId],
-    row: &[NodeId],
+    context: &Context<'_>,
+    removed_from: &mut Vec<NodeId>,
 ) -> (Call, Intent) {
+    let Context {
+        tree,
+        busy,
+        nodes,
+        row,
+        created,
+    } = *context;
     let arena = tree.arena();
     let pool: &[NodeId] = if !row.is_empty() && rng.random_bool(0.6) {
         row
@@ -555,12 +583,34 @@ fn structural_call(
             (target, StructOp::Insert { subtree, at })
         }
         Intent::Remove => {
-            let target = if rng.random_bool(0.02) {
-                tree.root
-            } else {
-                pick(rng, pool)
+            let follow = removed_from
+                .pop()
+                .filter(|&id| tree.contains(id) && id != tree.root);
+            let target = match follow {
+                Some(parent) if rng.random_bool(0.5) => parent,
+                _ if rng.random_bool(0.02) => tree.root,
+                _ => pick(rng, pool),
             };
+            removed_from.extend(arena[target].parent());
             (target, StructOp::Remove)
+        }
+        Intent::Move if created.len() >= 2 && rng.random_bool(0.8) => {
+            // Created nodes into created subtrees: a builder that inserts
+            // one subtree into another after both entered. Placed last and
+            // never under the target's own subtree, so that it succeeds.
+            let target = pick(rng, created);
+            let outside: Vec<NodeId> = created
+                .iter()
+                .copied()
+                .filter(|&id| !id.ancestors(arena).any(|a| a == target))
+                .collect();
+            let to = if outside.is_empty() {
+                pick(rng, created)
+            } else {
+                pick(rng, &outside)
+            };
+            let at = Placement::Last;
+            (target, StructOp::Move { to, at })
         }
         Intent::Move => {
             let target = pick(rng, pool);
@@ -640,6 +690,18 @@ fn structural_call(
     }
     let anchors = Anchors::Nodes(targets);
     (Call::Walk { mutators, anchors }, intent)
+}
+
+/// What a structural call is generated against: the tree as the calls
+/// so far left it, the busy row's parent and its children, every node
+/// in the tree, and the nodes calls created.
+#[derive(Clone, Copy)]
+struct Context<'a> {
+    tree: &'a Tree<TestElement>,
+    busy: NodeId,
+    nodes: &'a [NodeId],
+    row: &'a [NodeId],
+    created: &'a [NodeId],
 }
 
 /// A random placement among `parent`'s children: `Last` or `First`
@@ -738,6 +800,20 @@ pub fn effect(pre: &[SnapshotRow], post: &[SnapshotRow]) -> Effect {
     effect
 }
 
+/// `node`'s ancestors in a snapshot, nearest first.
+fn ancestors(
+    rows: &FxHashMap<NodeId, (Option<NodeId>, Option<NodeId>, TestElement)>,
+    node: NodeId,
+) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut cursor = rows.get(&node).and_then(|(parent, _, _)| *parent);
+    while let Some(id) = cursor {
+        out.push(id);
+        cursor = rows.get(&id).and_then(|(parent, _, _)| *parent);
+    }
+    out
+}
+
 /// The name of an error's variant, for counting.
 pub fn error_name(error: &TreeError) -> &'static str {
     match error {
@@ -772,6 +848,13 @@ pub struct StructuralStats {
     pub continued_after_failure: u64,
     /// Runs whose tree changed.
     pub changed: u64,
+    /// Builders that closed holding a removal of a node above one an
+    /// earlier call of theirs had removed: a subtree that left in pieces.
+    pub nested_removals: u64,
+    /// Builders that closed holding a move of a node they had created
+    /// into another node they had created: a subtree that entered in
+    /// pieces.
+    pub created_into_created: u64,
 }
 
 /// One structural run: the tree as its calls left it, snapshots from
@@ -799,6 +882,9 @@ pub fn run_structural(seed: u64, stats: &mut StructuralStats) -> StructuralRun {
     let mut builder = JournalBuilder::new();
     let mut effects: Vec<Effect> = Vec::new();
     let mut failed = false;
+    let start = placed(&before);
+    let mut removed: FxHashSet<NodeId> = FxHashSet::default();
+    let (mut nested_removal, mut created_into_created) = (false, false);
     for _ in 0..scenario.calls {
         let (call, intent) = scenario.next_call(&tree);
         let pre = snapshot(&tree);
@@ -806,7 +892,20 @@ pub fn run_structural(seed: u64, stats: &mut StructuralStats) -> StructuralRun {
             Ok(()) => {
                 tree.check_sorted()
                     .unwrap_or_else(|e| panic!("seed {seed}: rows are sorted after a {intent:?} call: {e}"));
-                let effect = effect(&pre, &snapshot(&tree));
+                let post = snapshot(&tree);
+                let (pre_placed, post_placed) = (placed(&pre), placed(&post));
+                for id in pre_placed.keys().filter(|id| !post_placed.contains_key(id)) {
+                    let mut ancestry = removed.iter().map(|&earlier| ancestors(&start, earlier));
+                    nested_removal |= ancestry.any(|chain| chain.contains(id));
+                    removed.insert(*id);
+                }
+                created_into_created |= post_placed.iter().any(|(id, (parent, _, _))| {
+                    let moved = pre_placed.get(id).is_some_and(|(was, _, _)| was != parent);
+                    moved
+                        && !start.contains_key(id)
+                        && parent.is_some_and(|parent| !start.contains_key(&parent))
+                });
+                let effect = effect(&pre, &post);
                 if effect.structural {
                     *stats.structural.entry(intent).or_default() += 1;
                 }
@@ -833,6 +932,8 @@ pub fn run_structural(seed: u64, stats: &mut StructuralStats) -> StructuralRun {
                 }
                 *stats.errors.entry(error_name(&e)).or_default() += 1;
                 effects.clear();
+                removed.clear();
+                (nested_removal, created_into_created) = (false, false);
                 failed = true;
             }
         }
@@ -846,6 +947,8 @@ pub fn run_structural(seed: u64, stats: &mut StructuralStats) -> StructuralRun {
     if failed && !effects.is_empty() {
         stats.continued_after_failure += 1;
     }
+    stats.nested_removals += u64::from(nested_removal);
+    stats.created_into_created += u64::from(created_into_created);
     let after = snapshot(&tree);
     if before != after {
         stats.changed += 1;

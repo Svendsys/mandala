@@ -26,6 +26,7 @@ use crate::engine::tests::test_element::{
     add, add_mutator, marked, plain, value, SpatialTestElement, TestElement, TestKind, TestMutation,
 };
 use crate::engine::tree::{MutatorTree, Placement, Tree, TreeError};
+use crate::engine::walker::walk_tree_from;
 use indextree::NodeId;
 use rustc_hash::FxHashSet;
 
@@ -1293,4 +1294,150 @@ pub fn do_structure_discard_frees_exactly_what_the_journal_holds() {
         freed_reverted >= SEEDS / 10,
         "reverted journals must free nodes: {freed_reverted}"
     );
+}
+
+// ── review round: parents, order across calls, walk_tree_from ─────
+
+#[test]
+fn test_structure_journal_names_the_parents_a_node_left_and_took() {
+    do_structure_journal_names_the_parents_a_node_left_and_took();
+}
+
+/// One builder removes `b`, which has a child; moves `x` from `p` to
+/// `q`; inserts `s` under `a`; raises `c`; and re-keys `d` within its
+/// row. `parents` names the parent `b` left — which the arena no longer
+/// links it to — both of `x`'s, and the one `s` took. The negative
+/// controls answer `None`: `b`'s child, which kept its parent; `c`,
+/// whose state alone changed; `d`, which moved within its row; and `e`,
+/// which nothing touched.
+pub fn do_structure_journal_names_the_parents_a_node_left_and_took() {
+    let (mut tree, t) = flat_tree(&[(0, 1), (0, 2), (0, 3), (0, 4), (1, 5), (1, 6), (2, 7)]);
+    let (a, b, c, d, p, q, e) = (t[0], t[1], t[2], t[3], t[4], t[5], t[6]);
+    let root = tree.root;
+    let kid = add(&mut tree, b, TestElement::new(0, 20));
+    let x = add(&mut tree, p, TestElement::new(0, 30));
+    let mut builder = JournalBuilder::new();
+    run(&mut tree, &command(StructOp::Remove), vec![b], &mut builder).unwrap();
+    let to_q = command(StructOp::Move {
+        to: q,
+        at: Placement::Last,
+    });
+    run(&mut tree, &to_q, vec![x], &mut builder).unwrap();
+    let insert = command(StructOp::Insert {
+        subtree: Subtree::leaf(TestElement::new(0, 40)),
+        at: Placement::Last,
+    });
+    run(&mut tree, &insert, vec![a], &mut builder).unwrap();
+    let s = row(&tree, a)[0];
+    tree.update_journaled(c, &mut builder, |e| e.value = 33).unwrap();
+    tree.update_journaled(d, &mut builder, |e| e.channel = 3).unwrap();
+    let journal = builder.close(&tree);
+    assert_eq!(
+        tree.arena()[b].parent(),
+        None,
+        "the arena no longer links b to root"
+    );
+
+    assert_eq!(journal.parents(b), Some((Some(root), None)));
+    assert_eq!(journal.parents(x), Some((Some(p), Some(q))));
+    assert_eq!(journal.parents(s), Some((None, Some(a))));
+    assert!(journal.before(d).is_some(), "d is in the journal");
+    assert!(journal.before(c).is_some(), "and so is c");
+    for (name, node) in [("b's child", kid), ("c", c), ("d", d), ("e", e)] {
+        assert_eq!(journal.parents(node), None, "{name} kept its parent");
+    }
+    journal.discard(&mut tree);
+}
+
+#[test]
+fn test_structure_touched_names_an_entering_subtree_from_its_top() {
+    do_structure_touched_names_an_entering_subtree_from_its_top();
+}
+
+/// One builder inserts `u` under `p`, then `s` under `q`, then moves `u`
+/// into `s` — three calls. `u` was recorded first, but `s` is the top of
+/// the subtree that entered, so `touched` names `s` and then `u`, never
+/// a child before its parent.
+pub fn do_structure_touched_names_an_entering_subtree_from_its_top() {
+    let (mut tree, t) = flat_tree(&[(0, 1), (0, 2)]);
+    let (p, q) = (t[0], t[1]);
+    let leaf = |value| {
+        command(StructOp::Insert {
+            subtree: Subtree::leaf(TestElement::new(0, value)),
+            at: Placement::Last,
+        })
+    };
+    let mut builder = JournalBuilder::new();
+    run(&mut tree, &leaf(10), vec![p], &mut builder).unwrap();
+    let u = row(&tree, p)[0];
+    run(&mut tree, &leaf(20), vec![q], &mut builder).unwrap();
+    let s = row(&tree, q)[0];
+    let into_s = command(StructOp::Move {
+        to: s,
+        at: Placement::Last,
+    });
+    run(&mut tree, &into_s, vec![u], &mut builder).unwrap();
+    let journal = builder.close(&tree);
+    assert_eq!(
+        journal.touched().collect::<Vec<_>>(),
+        vec![(s, Touch::Inserted), (u, Touch::Inserted)]
+    );
+}
+
+#[test]
+fn test_structure_touched_names_a_removed_subtree_in_one_pre_order() {
+    do_structure_touched_names_a_removed_subtree_in_one_pre_order();
+}
+
+/// `a` holds `a1` (which holds `a12`) and `a2`. One builder removes
+/// `a1`, then `a`. The subtree that left is `a`'s as it stood before,
+/// so `touched` names `a, a1, a12, a2` — its pre-order then — where the
+/// entries alone, oldest first, would name `a1`'s part before `a`.
+pub fn do_structure_touched_names_a_removed_subtree_in_one_pre_order() {
+    let (mut tree, t) = flat_tree(&[(0, 1)]);
+    let a = t[0];
+    let a1 = add(&mut tree, a, TestElement::new(0, 10));
+    let a12 = add(&mut tree, a1, TestElement::new(0, 11));
+    let a2 = add(&mut tree, a, TestElement::new(0, 20));
+    let mut builder = JournalBuilder::new();
+    run(&mut tree, &command(StructOp::Remove), vec![a1], &mut builder).unwrap();
+    run(&mut tree, &command(StructOp::Remove), vec![a], &mut builder).unwrap();
+    let journal = builder.close(&tree);
+    assert_eq!(
+        journal.touched().collect::<Vec<_>>(),
+        vec![
+            (a, Touch::Removed),
+            (a1, Touch::Removed),
+            (a12, Touch::Removed),
+            (a2, Touch::Removed),
+        ]
+    );
+    journal.discard(&mut tree);
+}
+
+#[test]
+fn test_structure_walk_tree_from_refuses_a_node_out_of_the_tree() {
+    do_structure_walk_tree_from_refuses_a_node_out_of_the_tree();
+}
+
+/// A journal removes `a`, which has a child. `walk_tree_from` at that
+/// child — held by the journal, out of the tree — applies nothing, so
+/// undoing the removal brings the child back as it was. The control:
+/// the same walk at `b`, in the tree, raises it.
+pub fn do_structure_walk_tree_from_refuses_a_node_out_of_the_tree() {
+    let (mut tree, t) = flat_tree(&[(0, 1), (0, 2)]);
+    let (a, b) = (t[0], t[1]);
+    let kid = add(&mut tree, a, TestElement::new(0, 10));
+    let mut builder = JournalBuilder::new();
+    run(&mut tree, &command(StructOp::Remove), vec![a], &mut builder).unwrap();
+    let journal = builder.close(&tree);
+    let raise: TestMutatorTree = MutatorTree::new_with(Mutator::new(TestMutation::Add(5), plain(0)));
+    let mroot = raise.root;
+    walk_tree_from(&mut tree, &raise, kid, mroot, &0);
+    assert_eq!(value(&tree, kid), 10, "the held child is not changed");
+    walk_tree_from(&mut tree, &raise, b, mroot, &0);
+    assert_eq!(value(&tree, b), 7, "the control: b, in the tree, is raised");
+    journal.revert(&mut tree).unwrap();
+    assert_eq!(row(&tree, a), vec![kid]);
+    assert_eq!(value(&tree, kid), 10);
 }

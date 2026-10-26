@@ -179,6 +179,10 @@ struct Recorded<E> {
 /// builder empty. [`abandon`](Self::abandon) is the same step for a
 /// failure the caller detects itself.
 ///
+/// A builder is closed or abandoned, never dropped: a dropped builder
+/// leaves every node its commands created and every subtree they removed
+/// allocated, out of the tree, owned by nothing.
+///
 /// Cost: one entry per element applied to — a clone of the element and
 /// a hash-map slot — never per element visited. A walk that changes no
 /// key and no structure records no position beyond each entry's own.
@@ -327,6 +331,7 @@ impl<E: TreeElement> JournalBuilder<E> {
     /// the moved elements alone; only when a node entered, left or
     /// changed parent, the [touches](Journal::touched) of every node of
     /// each subtree that entered or left, at O(depth) each at worst.
+    #[must_use = "a journal owns detached subtrees: discard it, do not drop it"]
     pub fn close(self, tree: &Tree<E>) -> Journal<E> {
         let arena = &tree.arena;
         let mut read: Vec<(Recorded<E>, E, Option<At>)> = Vec::with_capacity(self.recorded.len());
@@ -510,10 +515,22 @@ fn out_of_place<E>(read: &[(Recorded<E>, E, Option<At>)]) -> Vec<bool> {
 /// its place in its row did. A node in neither is outside what anyone
 /// can see — created and removed again — and is not reported.
 ///
-/// The entries are reported oldest first, and an entry that entered or
-/// left the tree is reported with its whole subtree as it stands at
-/// close, in pre-order: every node of it whose own membership changed
-/// — all of them, unless one was moved in from elsewhere — each once.
+/// **Order.** The entries are taken oldest first, and every node is
+/// named once:
+/// - A node that entered the tree is named with the whole subtree that
+///   entered with it. That subtree's top is the highest node above it,
+///   in the arrangement after, that was not in the tree before; the
+///   top's subtree is named in the after arrangement's pre-order, at the
+///   first entry that leads to it.
+/// - A node that left is named the same way with the subtree that left
+///   with it, in the **before** arrangement's pre-order, rebuilt from the
+///   recorded positions.
+/// - A node in the tree at both ends is named at its own entry, unless
+///   one of those subtrees named it first.
+///
+/// So a node that entered or left is never named before an ancestor
+/// that entered or left with it, and each subtree that entered or left
+/// is named in one piece.
 ///
 /// `read` holds every element recorded, `out(i)` whether element `i`
 /// changed position, and `keep[i]` whether it is an entry of the
@@ -521,7 +538,9 @@ fn out_of_place<E>(read: &[(Recorded<E>, E, Option<At>)]) -> Vec<bool> {
 ///
 /// Cost: an O(entries) scan; when something entered, left or changed
 /// parent, hash maps over the recorded nodes and the nodes looked at,
-/// and each subtree that entered or left walked once.
+/// an O(depth) climb per entry, each subtree that entered or left
+/// walked once, and the rows of the before arrangement rebuilt only
+/// where a moved node stood in them.
 fn structural_touches<E>(
     arena: &Arena<E>,
     root: NodeId,
@@ -538,12 +557,21 @@ fn structural_touches<E>(
     }
     // A node's parent before the journal is its recorded one if it
     // changed position, and its parent now otherwise: nothing else
-    // changes parent.
+    // changes parent. The nodes that changed position, by the parent
+    // they stood under before, are what the before rows are rebuilt
+    // from.
     let mut before_parent: FxHashMap<NodeId, Option<NodeId>> = FxHashMap::default();
+    let mut moved_from: FxHashMap<NodeId, Vec<(NodeId, Option<NodeId>)>> = FxHashMap::default();
     let mut entry_of: FxHashMap<NodeId, usize> = FxHashMap::default();
     for (i, (recorded, _, _)) in read.iter().enumerate() {
         if out(i) {
             before_parent.insert(recorded.node, recorded.at.map(|at| at.parent));
+            if let Some(at) = recorded.at {
+                moved_from
+                    .entry(at.parent)
+                    .or_default()
+                    .push((recorded.node, at.prev));
+            }
         }
         if keep[i] {
             entry_of.insert(recorded.node, i);
@@ -555,6 +583,7 @@ fn structural_touches<E>(
         before_parent,
         before: FxHashMap::default(),
         after: FxHashMap::default(),
+        chain: Vec::new(),
     };
     // The touch of a node in the tree at both ends: what its own entry
     // says, or none when it has no entry.
@@ -566,35 +595,109 @@ fn structural_touches<E>(
     };
     let mut seen: FxHashSet<NodeId> = FxHashSet::default();
     let mut touched = Vec::new();
+    let mut pending: Vec<NodeId> = Vec::new();
+    let mut row: Vec<NodeId> = Vec::new();
+    let mut name = |member: NodeId, presence: &mut Presence<'_, E>, touched: &mut Vec<(NodeId, Touch)>| {
+        if !seen.insert(member) {
+            return;
+        }
+        let touch = match (presence.before(member), presence.after(member)) {
+            (false, true) => Some(Touch::Inserted),
+            (true, false) => Some(Touch::Removed),
+            (true, true) => own(member),
+            (false, false) => None,
+        };
+        touched.extend(touch.map(|touch| (member, touch)));
+    };
+    let mut named_tops: FxHashSet<NodeId> = FxHashSet::default();
     for (i, (recorded, _, _)) in read.iter().enumerate() {
         if !keep[i] {
             continue;
         }
         let node = recorded.node;
-        match (presence.before(node), presence.after(node)) {
-            (false, false) => {}
-            (true, true) => {
-                if seen.insert(node) {
-                    touched.extend(own(node).map(|touch| (node, touch)));
-                }
-            }
-            _ => {
-                for member in node.descendants(arena) {
-                    if !seen.insert(member) {
-                        continue;
+        let (before, after) = (presence.before(node), presence.after(node));
+        let mut in_a_subtree = false;
+        if after {
+            if let Some(top) = presence.top_entered(node) {
+                in_a_subtree = true;
+                if named_tops.insert(top) {
+                    for member in top.descendants(arena) {
+                        name(member, &mut presence, &mut touched);
                     }
-                    let touch = match (presence.before(member), presence.after(member)) {
-                        (false, true) => Some(Touch::Inserted),
-                        (true, false) => Some(Touch::Removed),
-                        (true, true) => own(member),
-                        (false, false) => None,
-                    };
-                    touched.extend(touch.map(|touch| (member, touch)));
                 }
             }
         }
+        if before {
+            if let Some(top) = presence.top_left(node) {
+                in_a_subtree = true;
+                if named_tops.insert(top) {
+                    pending.clear();
+                    pending.push(top);
+                    while let Some(member) = pending.pop() {
+                        name(member, &mut presence, &mut touched);
+                        children_before(arena, member, &presence.before_parent, &moved_from, &mut row);
+                        pending.extend(row.iter().rev());
+                    }
+                }
+            }
+        }
+        if before && after && !in_a_subtree {
+            name(node, &mut presence, &mut touched);
+        }
     }
     Some(touched)
+}
+
+/// `parent`'s children in the arrangement before a journal, front to
+/// back, into `row`: its children now that kept their position, in the
+/// order they keep, with every node that stood under `parent` before
+/// and changed position put back after its recorded previous sibling —
+/// the restore [`Journal::revert`] makes, read without writing.
+/// `before_parent` names the nodes that changed position; `moved_from`
+/// holds them by the parent they stood under before.
+///
+/// Cost: one pass over the row; for a row a moved node stood in, a
+/// scan per moved node, which allocates a work list.
+fn children_before<E>(
+    arena: &Arena<E>,
+    parent: NodeId,
+    before_parent: &FxHashMap<NodeId, Option<NodeId>>,
+    moved_from: &FxHashMap<NodeId, Vec<(NodeId, Option<NodeId>)>>,
+    row: &mut Vec<NodeId>,
+) {
+    row.clear();
+    row.extend(
+        parent
+            .children(arena)
+            .filter(|child| !before_parent.contains_key(child)),
+    );
+    let Some(moved) = moved_from.get(&parent) else {
+        return;
+    };
+    // Each goes in once its previous sibling is in place, as a
+    // restore puts them back.
+    let mut waiting = moved.clone();
+    while !waiting.is_empty() {
+        let left = waiting.len();
+        waiting.retain(|&(node, prev)| {
+            let slot = match prev {
+                None => Some(0),
+                Some(prev) => row.iter().position(|&id| id == prev).map(|i| i + 1),
+            };
+            match slot {
+                Some(slot) => {
+                    row.insert(slot, node);
+                    false
+                }
+                None => true,
+            }
+        });
+        if waiting.len() == left {
+            error!("engine: a journal's recorded positions under {parent} form a cycle");
+            row.extend(waiting.iter().map(|&(node, _)| node));
+            break;
+        }
+    }
 }
 
 /// Whether nodes are in the tree before and after a journal, memoized:
@@ -609,9 +712,20 @@ struct Presence<'a, E> {
     before_parent: FxHashMap<NodeId, Option<NodeId>>,
     before: FxHashMap<NodeId, bool>,
     after: FxHashMap<NodeId, bool>,
+    /// Scratch for [`resolve`]'s chain, kept so a close allocates it
+    /// once.
+    chain: Vec<NodeId>,
 }
 
 impl<E> Presence<'_, E> {
+    /// `id`'s parent before the journal.
+    fn parent_before(&self, id: NodeId) -> Option<NodeId> {
+        match self.before_parent.get(&id) {
+            Some(&parent) => parent,
+            None => self.arena.get(id).and_then(|n| n.parent()),
+        }
+    }
+
     /// Whether `node` was in the tree before the journal.
     fn before(&mut self, node: NodeId) -> bool {
         let arena = self.arena;
@@ -620,6 +734,7 @@ impl<E> Presence<'_, E> {
             self.root,
             arena.len(),
             &mut self.before,
+            &mut self.chain,
             node,
             |id| match before_parent.get(&id) {
                 Some(&parent) => parent,
@@ -631,24 +746,75 @@ impl<E> Presence<'_, E> {
     /// Whether `node` is in the tree as the journal left it.
     fn after(&mut self, node: NodeId) -> bool {
         let arena = self.arena;
-        resolve(self.root, arena.len(), &mut self.after, node, |id| {
-            arena.get(id).and_then(|n| n.parent())
-        })
+        resolve(
+            self.root,
+            arena.len(),
+            &mut self.after,
+            &mut self.chain,
+            node,
+            |id| arena.get(id).and_then(|n| n.parent()),
+        )
+    }
+
+    /// The top of the subtree that entered the tree with `node`, which
+    /// is in the tree after the journal: the highest node on its chain
+    /// of parents after — `node` included — that was not in the tree
+    /// before. `None` when `node` and every node above it were.
+    /// O(depth).
+    fn top_entered(&mut self, node: NodeId) -> Option<NodeId> {
+        let mut top = None;
+        let mut cursor = Some(node);
+        let mut steps = 0;
+        while let Some(id) = cursor {
+            if !self.before(id) {
+                top = Some(id);
+            }
+            steps += 1;
+            if steps > self.arena.len() {
+                break;
+            }
+            cursor = self.arena.get(id).and_then(|n| n.parent());
+        }
+        top
+    }
+
+    /// The top of the subtree that left the tree with `node`, which was
+    /// in the tree before the journal: the highest node on its chain of
+    /// parents before — `node` included — that is not in the tree after.
+    /// `None` when `node` and every node above it still are. O(depth).
+    fn top_left(&mut self, node: NodeId) -> Option<NodeId> {
+        let mut top = None;
+        let mut cursor = Some(node);
+        let mut steps = 0;
+        while let Some(id) = cursor {
+            if !self.after(id) {
+                top = Some(id);
+            }
+            steps += 1;
+            if steps > self.arena.len() {
+                break;
+            }
+            cursor = self.parent_before(id);
+        }
+        top
     }
 }
 
 /// Whether the chain of `parent_of` from `node` reaches `root`, with
-/// every node on the chain memoized in `memo`. A chain longer than the
-/// arena's `limit` nodes is a cycle — no real arrangement has one — and
-/// answers `false` with an error logged. O(chain up to a memoized node).
+/// every node on the chain memoized in `memo`; `chain` is scratch,
+/// cleared first. A chain longer than the arena's `limit` nodes is a
+/// cycle — no real arrangement has one — and answers `false` with an
+/// error logged. O(chain up to a memoized node); no allocation once
+/// `chain` has grown to the depth.
 fn resolve(
     root: NodeId,
     limit: usize,
     memo: &mut FxHashMap<NodeId, bool>,
+    chain: &mut Vec<NodeId>,
     node: NodeId,
     parent_of: impl Fn(NodeId) -> Option<NodeId>,
 ) -> bool {
-    let mut chain = Vec::new();
+    chain.clear();
     let mut cursor = Some(node);
     let answer = loop {
         let Some(id) = cursor else {
@@ -667,7 +833,7 @@ fn resolve(
         chain.push(id);
         cursor = parent_of(id);
     };
-    for id in chain {
+    for &id in chain.iter() {
         memo.insert(id, answer);
     }
     answer
@@ -791,6 +957,14 @@ enum Side {
 /// `NodeId`s come back, until [`discard`](Self::discard) frees them. A
 /// journal dropped without `discard` leaves them allocated, unreachable,
 /// for as long as the tree lives.
+///
+/// A clone shares that ownership: both copies name the same detached
+/// subtrees, and only one may free them. Keep one journal per change —
+/// a history holds journals, never clones of them — and discard each
+/// once, after its last write. (`discard` frees only what is still
+/// detached, so a clone discarded on the wrong side frees nothing that
+/// is in the tree; but the subtree a copy still needs to restore is gone
+/// from under it.)
 #[derive(Clone, Debug)]
 pub struct Journal<E: TreeElement> {
     entries: Vec<Entry<E>>,
@@ -836,11 +1010,18 @@ impl<E: TreeElement> Journal<E> {
     /// Every node the journal changed, with what happened to it
     /// ([`Touch`]), each once.
     ///
-    /// The entries come oldest first. A node that entered or left the
-    /// tree comes with every node of its subtree, in pre-order, each
-    /// with its own touch — the same one, unless a node was moved into
-    /// that subtree from elsewhere. A node that was neither in the tree
-    /// before nor after — created and removed again — is not reported.
+    /// The entries are taken oldest first. A node that entered the tree
+    /// is named with the whole subtree that entered with it, from that
+    /// subtree's top down, in the pre-order of the arrangement after the
+    /// journal; a node that left, with the whole subtree that left with
+    /// it, in the pre-order of the arrangement before. Each node there
+    /// carries its own touch — the same one, unless a node was moved
+    /// into that subtree from elsewhere. So a node that entered or left
+    /// is never named before an ancestor that entered or left with it,
+    /// and each such subtree is named in one piece, however many calls
+    /// of the builder made it. Any other node is named at its own entry.
+    /// A node that was neither in the tree before nor after — created
+    /// and removed again — is not reported.
     ///
     /// No allocation: a journal with no structural change reports its
     /// entries as they are, and one with a structural change computed
@@ -868,6 +1049,26 @@ impl<E: TreeElement> Journal<E> {
     /// journal did not change it. O(1).
     pub fn after(&self, node: NodeId) -> Option<&E> {
         self.index.get(&node).map(|&i| &self.entries[i].after)
+    }
+
+    /// Where `node` hung before the journal and where it hangs after it,
+    /// as `(parent before, parent after)` — `None` on a side where it is
+    /// out of the tree — or `None` when its parent did not change. A
+    /// removed node answers `(Some(old parent), None)`, an inserted one
+    /// `(None, Some(new parent))`, a re-parented one both.
+    ///
+    /// Only the node that itself changed parent answers: the nodes below
+    /// the top of a subtree that entered or left keep their parent, and
+    /// the arena has it. So the parent a removed subtree left — the row
+    /// a removal changed, which the arena no longer links to — is read
+    /// here for its top. O(1); no allocation.
+    pub fn parents(&self, node: NodeId) -> Option<(Option<NodeId>, Option<NodeId>)> {
+        let position = self.entries[*self.index.get(&node)?].position?;
+        let parents = (
+            position.before.map(|at| at.parent),
+            position.after.map(|at| at.parent),
+        );
+        (parents.0 != parents.1).then_some(parents)
     }
 
     /// Undo the journal: write every entry's before-image, newest entry

@@ -308,10 +308,14 @@ pub fn walk_tree<E: TreeElement, M: Mutation<E>>(
 /// when it returns (`Walk::settle`), and the
 /// [structural commands](crate::engine::structure) it reached run then.
 /// Not journaled: a command that fails undoes the whole walk, and the
-/// error is logged, as [`MutatorTree::apply_to`] does.
+/// error is logged, as [`MutatorTree::apply_to`] does. A `target_id`
+/// not in the tree ([`Tree::contains`]) — a node of a subtree a journal
+/// holds detached among them — is refused the same way, with nothing
+/// applied, as [`Tree::update`] and the anchored walks refuse it.
 ///
-/// Cost: O(sum of matching (target, mutator) pairs) — every pairwise
-/// match is one apply; pruned branches are free.
+/// Cost: an O(depth) check that `target_id` is in the tree, then
+/// O(sum of matching (target, mutator) pairs) — every pairwise match is
+/// one apply; pruned branches are free.
 pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
     tree: &mut Tree<E>,
     mutator_tree: &MutatorTree<E, M>,
@@ -319,6 +323,10 @@ pub fn walk_tree_from<E: TreeElement, M: Mutation<E>>(
     mutator_id: NodeId,
     parent_state: &E::Inherited,
 ) {
+    if !tree.contains(target_id) {
+        error!("engine: walk_tree_from refused node {target_id}, which is not in the tree");
+        return;
+    }
     let keys_match = get_mutator(&mutator_tree.arena, mutator_id).get().key()
         == get_target(&tree.arena, target_id).get().key();
     let result = run_walk(tree, mutator_tree, None, |tree, walk| {

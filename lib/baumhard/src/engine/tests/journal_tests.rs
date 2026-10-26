@@ -191,6 +191,16 @@ fn revert_and_replay_are_exact_with_structure() {
             tree.check_sorted().unwrap();
         }
     }
+    assert!(
+        stats.nested_removals >= SEEDS / 50,
+        "builders must remove a node above one they removed before: {}",
+        stats.nested_removals
+    );
+    assert!(
+        stats.created_into_created >= SEEDS / 50,
+        "builders must move a node they created into another they created: {}",
+        stats.created_into_created
+    );
     for intent in Intent::STRUCTURAL {
         let count = stats.structural.get(&intent).copied().unwrap_or(0);
         assert!(
@@ -268,6 +278,63 @@ fn check_touched(seed: u64, before: &[SnapshotRow], after: &[SnapshotRow], journ
                 "seed {seed}: {id} kept its parent and state, so it is a field touch or none"
             ),
         }
+    }
+    check_touched_order(seed, &touched, after, &a, &b, Touch::Inserted);
+    check_touched_order(seed, &touched, before, &b, &a, Touch::Removed);
+}
+
+/// The order `touched` names the nodes that entered (`kind`
+/// `Inserted`) or left (`Removed`) the tree, against the snapshot of the
+/// arrangement they are in (`rows`, indexed as `here`; `there` is the
+/// other one). Each such node belongs to the subtree that moved with
+/// it, whose top is its highest ancestor that is in `here` and not in
+/// `there`. Within each subtree the nodes come in `rows`' pre-order,
+/// and no node of another subtree comes between them.
+fn check_touched_order(
+    seed: u64,
+    touched: &[(NodeId, Touch)],
+    rows: &[SnapshotRow],
+    here: &FxHashMap<NodeId, (Option<NodeId>, Option<NodeId>, TestElement)>,
+    there: &FxHashMap<NodeId, (Option<NodeId>, Option<NodeId>, TestElement)>,
+    kind: Touch,
+) {
+    let pre_order: FxHashMap<NodeId, usize> =
+        rows.iter().enumerate().map(|(i, (id, _, _))| (*id, i)).collect();
+    let top = |mut node: NodeId| {
+        while let Some(parent) = here.get(&node).and_then(|(parent, _, _)| *parent) {
+            if there.contains_key(&parent) {
+                break;
+            }
+            node = parent;
+        }
+        node
+    };
+    let moved: Vec<(usize, NodeId, NodeId)> = touched
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, touch))| *touch == kind)
+        .map(|(i, (id, _))| (i, *id, top(*id)))
+        .collect();
+    let tops: FxHashSet<NodeId> = moved.iter().map(|&(_, _, top)| top).collect();
+    for group in tops {
+        let members: Vec<&(usize, NodeId, NodeId)> = moved.iter().filter(|m| m.2 == group).collect();
+        let (first, last) = (members[0].0, members[members.len() - 1].0);
+        assert!(
+            moved
+                .iter()
+                .all(|&(i, _, other)| other == group || i < first || i > last),
+            "seed {seed}: the {kind:?} subtree of {group} is named in one piece"
+        );
+        assert!(
+            members
+                .windows(2)
+                .all(|pair| pre_order[&pair[0].1] < pre_order[&pair[1].1]),
+            "seed {seed}: the {kind:?} subtree of {group} is named in pre-order"
+        );
+        assert_eq!(
+            members[0].1, group,
+            "seed {seed}: the top of the {kind:?} subtree comes first"
+        );
     }
 }
 
