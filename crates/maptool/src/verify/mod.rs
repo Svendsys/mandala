@@ -321,13 +321,19 @@ mod category_parity_tests {
 
     /// Every category string `source` hands to a `Violation`
     /// constructor: a literal first argument
-    /// (`Violation::node("ids", …)`), or the module's `CATEGORY`
-    /// constant when the argument names it.
+    /// (`Violation::node("ids", …)`), or an identifier naming any
+    /// `const NAME: &str = "…"` the module declares (`CATEGORY` is the
+    /// usual one, but any name resolves). An identifier that names no
+    /// such constant is a route this scan cannot read, so it stops the
+    /// test rather than leaving that category unpublished in silence.
     fn categories_in(source: &str) -> Vec<String> {
-        let constant = source
-            .split_once("const CATEGORY: &str = \"")
-            .and_then(|(_, rest)| rest.split_once('"'))
-            .map(|(value, _)| value.to_string());
+        let mut constants: Vec<(&str, &str)> = Vec::new();
+        for (at, _) in source.match_indices("const ") {
+            let decl = &source[at + "const ".len()..];
+            let Some((name, rest)) = decl.split_once(": &str = \"") else { continue };
+            let Some((value, _)) = rest.split_once('"') else { continue };
+            constants.push((name.trim(), value));
+        }
         let mut out = Vec::new();
         for (at, _) in source.match_indices("Violation::") {
             let Some((_, args)) = source[at..].split_once('(') else { continue };
@@ -336,9 +342,23 @@ mod category_parity_tests {
                 if let Some((value, _)) = literal.split_once('"') {
                     out.push(value.to_string());
                 }
-            } else if args.starts_with("CATEGORY") {
-                out.extend(constant.clone());
+                continue;
             }
+            let ident: String = args
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let (_, value) = constants
+                .iter()
+                .find(|(name, _)| *name == ident)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "a `Violation` is built with category `{ident}`, which is neither \
+                         a string literal nor a `const …: &str` this module declares — \
+                         teach `categories_in` the route, or the category goes unchecked"
+                    )
+                });
+            out.push(value.to_string());
         }
         out.sort();
         out.dedup();
@@ -377,7 +397,9 @@ mod category_parity_tests {
     ///
     /// Fails when: a module is added to `verify` without a row in
     /// [`shipped_source`]; a module starts emitting a category neither
-    /// list names; a list names a category nothing emits any more; or
+    /// list names; a list names a category nothing emits any more; a
+    /// `Violation` takes its category through a route the scan cannot
+    /// resolve (anything but a literal or a module `const …: &str`); or
     /// either list stops opening with the words this test looks for.
     #[test]
     fn test_every_verify_category_is_published() {
