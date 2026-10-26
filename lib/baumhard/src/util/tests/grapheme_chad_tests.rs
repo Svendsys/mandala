@@ -5,8 +5,8 @@ use lazy_static::lazy_static;
 use crate::util::grapheme_chad::{
     byte_indices_of_graphemes, count_grapheme_clusters, count_number_lines, delete_back_unicode,
     delete_front_unicode, delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_grapheme_range,
-    first_non_whitespace_grapheme, grapheme_display_width, insert_new_lines, insert_spaces,
-    insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
+    first_non_whitespace_grapheme, grapheme_byte_starts, grapheme_display_width, insert_new_lines,
+    insert_spaces, insert_str_at_grapheme, insert_str_at_grapheme_counted, join_graphemes, line_bounds_at,
     prev_word_boundary_ws, push_spaces, replace_graphemes_until_newline, replace_substring,
     scalar_display_width, slice_to_newline, split_graphemes_owned, split_off_graphemes, take_graphemes,
     token_start_ws, truncate_to_byte_budget, truncate_to_display_width, word_left, word_right,
@@ -732,6 +732,22 @@ pub fn do_count_grapheme_clusters() {
         let result = count_grapheme_clusters(string);
         assert_eq!(result, num_clusters);
     }
+}
+
+#[test]
+fn test_grapheme_byte_starts() {
+    do_grapheme_byte_starts();
+}
+
+/// Each start is the first byte of a cluster: an emoji with a skin-tone
+/// modifier (8 bytes, one cluster), a combining acute (`e` + U+0301, 3
+/// bytes, one cluster) and a CRLF pair (one cluster) each count once.
+/// The expected offsets are literals, not a second segmentation.
+pub fn do_grapheme_byte_starts() {
+    let starts: Vec<usize> = grapheme_byte_starts("a\u{1F64F}\u{1F3FB}e\u{301}\r\nz").collect();
+    assert_eq!(starts, vec![0, 1, 9, 12, 14]);
+    assert_eq!(grapheme_byte_starts("").count(), 0);
+    assert_eq!(grapheme_byte_starts("x").collect::<Vec<_>>(), vec![0]);
 }
 
 #[test]

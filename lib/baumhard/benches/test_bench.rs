@@ -824,6 +824,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_the_text_edit_primitives_carry_no_whole_buffer_copy)
     });
     c.bench_function("count_grapheme_clusters", |b| b.iter(do_count_grapheme_clusters));
+    c.bench_function("grapheme_byte_starts", |b| b.iter(do_grapheme_byte_starts));
     c.bench_function("first_non_whitespace_grapheme", |b| {
         b.iter(do_first_non_whitespace_grapheme)
     });
