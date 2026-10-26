@@ -50,7 +50,7 @@ pub(super) enum HandleStep {
     Press,
     /// The finger moved: the pointer moves with it.
     Move,
-    /// The finger lifted, or the OS cancelled it: the pointer moves
+    /// The finger lifted, or the OS canceled it: the pointer moves
     /// there, then the left button comes up, which commits the drag. A
     /// cancel commits too, for the reason focus loss does
     /// (`throttled_interaction::release::Release::FocusLost`): the

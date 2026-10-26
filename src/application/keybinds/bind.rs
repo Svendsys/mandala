@@ -191,8 +191,8 @@ pub const RETIRED_NAMES: &[RetiredName] = &[RetiredName {
     spelling: "TwoFingerDrag",
     replacement: "two fingers now pan and zoom the canvas, and the gesture no longer \
                   binds an Action (#35). fast_resize_start keeps Ctrl+RightDrag; to resize \
-                  by touch, long-press a node (LongPress → enter_resize_mode) and drag one \
-                  of its handles",
+                  by touch on desktop, long-press a node (LongPress → enter_resize_mode) and \
+                  drag one of its handles",
 }];
 
 /// The retired name `token` is, if it is one.

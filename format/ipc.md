@@ -1538,10 +1538,15 @@ reports.
 
 ### `input.touch`
 
-One finger event, as `WindowEvent::Touch`, into the touch-gesture
-recognizer (tap, long-press, one-finger pan, pinch). The recognizer
-measures time on the real clock, so a long-press is a `started`, a
-wait, and the finger's next event.
+One finger event, as `WindowEvent::Touch`, through the native touch
+path: the touch-gesture recognizer (tap, long-press, one-finger pan,
+pinch), with one exception. A finger that *starts a gesture* on a
+resize handle in Resize mode drives the handle drag instead, as the
+left button would, until it lifts (#160): it resizes, commits with
+one undo entry on `ended` or `canceled`, and never reaches the
+recognizer, so it does not pan. Another finger landing meanwhile is
+ignored. The recognizer measures time on the real clock, so a
+long-press is a `started`, a wait, and the finger's next event.
 
 | param | type | required | meaning |
 |---|---|---|---|

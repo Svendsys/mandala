@@ -573,3 +573,110 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
     }
     panic!("the font system stayed contended through {ATTEMPTS} capture attempts: {reply}");
 }
+
+/// **A finger on a resize handle resizes; a finger anywhere else pans**
+/// (#160), through the real `dispatch_touch_event` on a device, which
+/// no renderer-free test reaches: the claim is decided next to the
+/// renderer that converts the finger to canvas space.
+///
+/// In `Resize` mode on node 1, a finger that lands on its SE handle
+/// and drags drives the handle drag: the node grows, the camera does
+/// not move, the drag ends at `None` on lift, and one undo entry
+/// stands. Before #160 that drag was the recognizer's one-finger pan.
+///
+/// The control is the same finger, same mode, same distance, started
+/// in the node's middle instead: it pans the camera and resizes
+/// nothing. So the handle, and only the handle, is what changes where
+/// the finger goes — which fails on a claim that never fires (every
+/// touch to the recognizer: the size assertion) and on one that fires
+/// everywhere (the control's camera assertion).
+#[test]
+fn test_a_finger_on_a_resize_handle_resizes_and_a_finger_elsewhere_pans() {
+    use crate::application::platform::input::TouchPhase;
+    use crate::application::platform::window::PhysicalPosition;
+
+    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.document.as_mut().expect("document").selection = SelectionState::Single("1".into());
+    let (reply, _) = act(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "EnterResizeMode"}),
+    );
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    assert!(matches!(init.interaction_mode, InteractionMode::Resize { .. }));
+
+    let node_rect = |init: &InitState| {
+        let n = &init.document.as_ref().expect("document").mindmap.nodes["1"];
+        (
+            glam::Vec2::new(n.position.x as f32, n.position.y as f32),
+            glam::Vec2::new(n.size.width as f32, n.size.height as f32),
+        )
+    };
+    // One finger, `id`, from `from` (surface pixels) 40 px down-right,
+    // a frame between moves as a hand's samples land.
+    let drag_finger = |init: &mut InitState, id: u64, from: glam::Vec2| {
+        let at = |i: f32| PhysicalPosition::new(f64::from(from.x + i * 8.0), f64::from(from.y + i * 8.0));
+        init.input_context()
+            .dispatch_touch_event(TouchPhase::Started, id, at(0.0));
+        for i in 1..=5 {
+            init.input_context()
+                .dispatch_touch_event(TouchPhase::Moved, id, at(i as f32));
+            init.input_context().drain_frame(Beat::Loop);
+        }
+        init.input_context()
+            .dispatch_touch_event(TouchPhase::Ended, id, at(5.0));
+        init.input_context().drain_frame(Beat::Loop);
+    };
+
+    // Zoom in about the node until nothing else sits on its corner: at
+    // the fixture's opening zoom an edge label overlaps the SE handle,
+    // and a label grab outranks a handle grab at the threshold cross
+    // for a mouse and a finger alike (`Grab::PRECEDENCE`).
+    let (pos, size) = node_rect(init);
+    let center = pos + size / 2.0;
+    for id in 0..12 {
+        let (reply, _) = act(
+            init,
+            json!({"id": 10 + id, "cmd": "act.action", "action": "ZoomIn", "x": center.x, "y": center.y}),
+        );
+        assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    }
+    init.input_context().drain_frame(Beat::Loop);
+
+    let camera = init.renderer.camera().position;
+    let se = init.renderer.canvas_to_screen(pos + size);
+    drag_finger(init, 2, se);
+    let (_, resized) = node_rect(init);
+    assert!(
+        resized.x > size.x && resized.y > size.y,
+        "a finger dragged from the SE handle must grow the node: {size:?} -> {resized:?}"
+    );
+    assert_eq!(
+        init.renderer.camera().position,
+        camera,
+        "a finger holding a handle is never the recognizer's, so it must not pan"
+    );
+    assert!(
+        matches!(init.drag_state, super::DragState::None),
+        "the lift ended the drag"
+    );
+    assert_eq!(
+        init.document.as_ref().expect("document").undo_stack.len(),
+        1,
+        "the lift committed the resize with one undo entry"
+    );
+
+    // Control: the same drag from the node's middle, still in Resize.
+    let (pos, size) = node_rect(init);
+    let camera = init.renderer.camera().position;
+    let middle = init.renderer.canvas_to_screen(pos + size / 2.0);
+    drag_finger(init, 3, middle);
+    assert_eq!(node_rect(init).1, size, "off a handle the finger resizes nothing");
+    assert_ne!(
+        init.renderer.camera().position,
+        camera,
+        "off a handle the finger is the recognizer's one-finger pan"
+    );
+}

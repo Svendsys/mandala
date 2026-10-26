@@ -933,7 +933,7 @@ mod tests {
         );
     }
 
-    /// A left-started move-node drag, mid-gesture: pending state    /// A left-started move-node drag, mid-gesture: pending state
+    /// A left-started move-node drag, mid-gesture: pending state
     /// buffered, `commit_on_release_core` not yet run.
     fn moving_node_drag() -> DragState {
         DragState::throttled(ThrottledDrag::MovingNode(MovingNodeInteraction::new(

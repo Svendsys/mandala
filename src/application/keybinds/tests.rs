@@ -1123,26 +1123,41 @@ fn test_a_retired_name_is_refused_with_a_diagnostic() {
     }
 }
 
-/// **The point of the diagnostic, end to end**: a user config that
-/// still binds a retired name loses that one entry, and nothing else.
+/// **The point of the diagnostic, end to end**: a `keybinds.json` that
+/// still binds a retired name loses that one entry, and nothing else —
+/// through `from_json`, the loader's own parse, then `resolve`.
 ///
 /// Fails without the `RETIRED_NAMES` check in a way the user could
-/// never see: `TwoFingerDrag` parsed as the key `twofingerdrag`, so
-/// the lookup below answered `Some(FastResizeStart)` for a gesture
-/// the recognizer no longer emits. The `RightDrag` row is the negative
-/// control — the entry beside it in the same list still binds.
+/// never see: `TwoFingerDrag` parsed as the key `twofingerdrag`, so the
+/// first lookup answered `Some(FastResizeStart)` for a gesture the
+/// recognizer no longer emits.
+///
+/// The sibling entry is `Alt+F9`, deliberately **not**
+/// `fast_resize_start`'s built-in default: a sibling equal to the
+/// default would pass under a fault that dropped the whole field back
+/// to its default on a bad entry (§T13's default-shadowed control).
+/// So the second lookup proves the user's own entry survived, and the
+/// third proves the field is the user's, not the default — the
+/// default `Ctrl+RightDrag` no longer binds.
 #[test]
 fn test_a_retired_name_in_a_user_config_is_skipped_rather_than_bound() {
-    let cfg = KeybindConfig {
-        fast_resize_start: vec!["TwoFingerDrag".into(), "Ctrl+RightDrag".into()],
-        ..KeybindConfig::default()
-    };
+    let cfg = KeybindConfig::from_json(r#"{ "fast_resize_start": ["TwoFingerDrag", "Alt+F9"] }"#)
+        .expect("a JSON object loads");
     let r = cfg.resolve();
-    assert_eq!(r.action_for_gesture("twofingerdrag", false, false, false), None);
+    assert_eq!(
+        r.action_for_gesture("twofingerdrag", false, false, false),
+        None,
+        "the retired entry must bind nothing"
+    );
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "f9", false, false, true),
+        Some(Action::FastResizeStart),
+        "the live entry beside it in the same list must still bind"
+    );
     assert_eq!(
         r.action_for_gesture("rightdrag", true, false, false),
-        Some(Action::FastResizeStart),
-        "the live entry in the same list must still bind"
+        None,
+        "the user's list replaced the default, so Ctrl+RightDrag must not bind"
     );
 }
 
