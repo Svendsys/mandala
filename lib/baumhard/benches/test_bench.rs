@@ -12,6 +12,7 @@ use baumhard::font::tests::metric_cache_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::font::tests::name_rules_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
+use baumhard::gfx_structs::tests::builder_tests::*;
 use baumhard::gfx_structs::tests::bvh_descent_tests::*;
 use baumhard::gfx_structs::tests::camera_tests::*;
 use baumhard::gfx_structs::tests::delta_tests::*;
@@ -1659,6 +1660,93 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("engine_build_refuses_spatial_descend_without_geometry", |b| {
         b.iter(do_engine_build_refuses_spatial_descend_without_geometry)
+    });
+    c.bench_function("repeat_literal_expands_to_consecutive_channels", |b| {
+        b.iter(do_repeat_literal_expands_to_consecutive_channels)
+    });
+    c.bench_function("repeat_skip_indices_stride_channels", |b| {
+        b.iter(do_repeat_skip_indices_stride_channels)
+    });
+    c.bench_function("multiple_sections_concatenate_in_declaration_order", |b| {
+        b.iter(do_multiple_sections_concatenate_in_declaration_order)
+    });
+    c.bench_function("template_resolves_against_each_iterations_area", |b| {
+        b.iter(do_template_resolves_against_each_iterations_area)
+    });
+    c.bench_function("iter_section_channels_walks_in_order", |b| {
+        b.iter(do_iter_section_channels_walks_in_order)
+    });
+    c.bench_function("repeat_runtime_count_consults_context", |b| {
+        b.iter(do_repeat_runtime_count_consults_context)
+    });
+    c.bench_function("void_root_with_no_children", |b| {
+        b.iter(do_void_root_with_no_children)
+    });
+    c.bench_function("single_as_tree_root_with_literal_channel", |b| {
+        b.iter(do_single_as_tree_root_with_literal_channel)
+    });
+    c.bench_function("mutation_src_runtime_consults_context", |b| {
+        b.iter(do_mutation_src_runtime_consults_context)
+    });
+    c.bench_function("macro_pulls_mutation_list_from_runtime_context", |b| {
+        b.iter(do_macro_pulls_mutation_list_from_runtime_context)
+    });
+    c.bench_function("instruction_with_children_mirrors_scope_topology", |b| {
+        b.iter(do_instruction_with_children_mirrors_scope_topology)
+    });
+    c.bench_function(
+        "instruction_spec_repeat_while_always_true_materializes_predicate",
+        |b| b.iter(do_instruction_spec_repeat_while_always_true_materializes_predicate),
+    );
+    c.bench_function("instruction_spec_spatial_descend_carries_its_point", |b| {
+        b.iter(do_instruction_spec_spatial_descend_carries_its_point)
+    });
+    c.bench_function("repeat_template_wrapping_void_threads_iter_channel", |b| {
+        b.iter(do_repeat_template_wrapping_void_threads_iter_channel)
+    });
+    c.bench_function("repeat_at_tree_root_is_a_build_error", |b| {
+        b.iter(do_repeat_at_tree_root_is_a_build_error)
+    });
+    c.bench_function("channel_src_section_index_outside_repeat_is_a_build_error", |b| {
+        b.iter(do_channel_src_section_index_outside_repeat_is_a_build_error)
+    });
+    c.bench_function("template_outside_repeat_is_a_build_error", |b| {
+        b.iter(do_template_outside_repeat_is_a_build_error)
+    });
+    c.bench_function("repeat_as_template_is_a_build_error", |b| {
+        b.iter(do_repeat_as_template_is_a_build_error)
+    });
+    c.bench_function("spatial_descend_builds_only_for_a_spatial_element", |b| {
+        b.iter(do_spatial_descend_builds_only_for_a_spatial_element)
+    });
+    c.bench_function("json_roundtrip_minimal_repeat_tree", |b| {
+        b.iter(do_json_roundtrip_minimal_repeat_tree)
+    });
+    c.bench_function("json_skip_indices_defaults_to_empty", |b| {
+        b.iter(do_json_skip_indices_defaults_to_empty)
+    });
+    c.bench_function("json_instruction_mutation_defaults_to_none", |b| {
+        b.iter(do_json_instruction_mutation_defaults_to_none)
+    });
+    c.bench_function("json_mutation_src_runtime_carries_its_label", |b| {
+        b.iter(do_json_mutation_src_runtime_carries_its_label)
+    });
+    c.bench_function("json_instruction_spec_map_children_materializes_correctly", |b| {
+        b.iter(do_json_instruction_spec_map_children_materializes_correctly)
+    });
+    c.bench_function(
+        "json_round_trip_macro_with_literal_mutations_preserves_shape",
+        |b| b.iter(do_json_round_trip_macro_with_literal_mutations_preserves_shape),
+    );
+    c.bench_function("json_round_trip_instruction_map_children_preserves_shape", |b| {
+        b.iter(do_json_round_trip_instruction_map_children_preserves_shape)
+    });
+    c.bench_function(
+        "json_round_trip_repeat_inside_map_children_preserves_shape",
+        |b| b.iter(do_json_round_trip_repeat_inside_map_children_preserves_shape),
+    );
+    c.bench_function("json_round_trip_repeat_while_predicate_preserves_shape", |b| {
+        b.iter(do_json_round_trip_repeat_while_predicate_preserves_shape)
     });
     // camera viewport math //
     c.bench_function("canvas_to_screen_round_trips", |b| {

@@ -333,7 +333,7 @@ rationale.
   under a header claiming every public body in them was
   benchmark-reachable.
 - **The id names what the row measures, and by default that is the
-  body's name minus `do_`.** 524 of the 560 entries are exactly
+  body's name minus `do_`.** 553 of the 589 entries are exactly
   that, and a new entry should be. The 36 that are not depart in
   three ways, none of which the default can express:
 
@@ -374,7 +374,7 @@ rationale.
   **The list below is not a list of permissions.** It is the shapes
   a body *cannot* take the split in, enumerated so that a body which
   could is never left off the surface by argument. Four exist, and
-  they are what a census of the tree finds: 70 plain non-wrapper
+  they are what a census of the tree finds: 42 plain non-wrapper
   `#[test]` fns live in the `pub mod tests;` trees, and 31 of them
   are one of these.
 
@@ -410,13 +410,13 @@ rationale.
   not the disk. Their entries say so, so the number is read as I/O
   rather than mistaken for a classifier's.
 
-  **The other 39 are not opt-outs; they are unconverted.** Nothing
+  **The other 11 are not opt-outs; they are unconverted.** Nothing
   about them forbids the split — they are ordinary unit tests over
   pure functions, written beside the convention rather than under
-  it: 28 in `gfx_structs::tests::builder_tests`, the seven `test_factor_*` in
-  `region_params_tests`, the three camera-invariance tests in
-  `camera_tests`, and `test_clone_preserves_depth_first_pre_order`
-  in `arena_utils_tests`. Converting them is a §B8 two-file change
+  it: the seven `test_factor_*` in `region_params_tests`, the three
+  camera-invariance tests in `camera_tests`, and
+  `test_clone_preserves_depth_first_pre_order` in
+  `arena_utils_tests`. Converting them is a §B8 two-file change
   each, and a judgment about what earns a criterion row rather than
   unfinished #44 work — #44's subject was the 173 `do_*()` bodies
   with no entry, and that set is closed. Naming them here is what keeps
