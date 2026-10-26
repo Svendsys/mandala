@@ -2,8 +2,9 @@
 
 //! The wasm32 side of `tests/wasm_font_lock.rs`: a `cdylib` that
 //! exports one function per scenario, each calling baumhard's real
-//! font-lock helpers, so a node runner can execute them in a real
-//! WebAssembly engine.
+//! font-lock helpers — or, in `flow_shape_and_place`, TextFlow's
+//! shaping and placement under the guard — so a node runner can execute
+//! them in a real WebAssembly engine.
 //!
 //! This file is not part of any cargo target in the repository. The
 //! test copies it into a staging crate under `target/` and builds it
@@ -11,7 +12,8 @@
 //! dependency graph the app ships rather than a second one that could
 //! drift.
 //!
-//! Every export returns `1` on success. The `reentrant_*` exports are
+//! Every export returns `1` on success; a probe that checks several
+//! things returns a distinct other number for each that went wrong. The `reentrant_*` exports are
 //! *meant* to panic: on `wasm32-unknown-unknown` a panic aborts as a
 //! trap, which says nothing about its cause, so the hook below leaves
 //! the message where the host can read it. The runner decides pass or
@@ -32,7 +34,13 @@
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Once;
 
-use baumhard::font::fonts::{acquire_font_system_read, acquire_font_system_write, try_acquire_font_system_write};
+use baumhard::document::resolve::ResolvedText;
+use baumhard::document::values::{Align, Direction, Edge, FitMode, FontSize, Percent, Rgba, Shape, StartPoint, Weight};
+use baumhard::flow::{outline, place_on_closed, place_on_open, shape_box, shape_run, Curve, FlowSpan, Rect};
+use baumhard::font::fonts::{
+    self, acquire_font_system_read, acquire_font_system_write, try_acquire_font_system_write, AppFont,
+};
+use glam::Vec2;
 
 /// Longest panic message kept. Longer ones are truncated; every message
 /// the runner looks for is in the first line.
@@ -135,4 +143,61 @@ pub extern "C" fn reentrant_read_write() -> u32 {
     let _outer = acquire_font_system_read("probe::outer");
     let _inner = acquire_font_system_write("probe::inner");
     0
+}
+
+/// TextFlow's shaping and placement, run for real: shape a run and a
+/// box under the guard, then place the run around an outline with
+/// `Fit` (which reshapes) and along a line with a `Once` filler (which
+/// shapes the filler). This is the path every frame, connector and
+/// section takes in the browser, and the one most likely to reach a
+/// clock or a thread the browser has not got.
+#[no_mangle]
+pub extern "C" fn flow_shape_and_place() -> u32 {
+    install_hook();
+    fonts::init();
+    let style = ResolvedText {
+        font: AppFont::GalatiaSIL,
+        size: FontSize::Pt(14.0),
+        color: Rgba::opaque(255, 255, 255),
+        weight: Weight::BOLD,
+        italic: true,
+    };
+    let span = |text| FlowSpan {
+        text,
+        style: &style,
+        link: None,
+    };
+    let mut fs = acquire_font_system_write("probe::flow");
+    let run = shape_run(&[span("abc")], 1.0, &mut fs);
+    if run.glyphs.len() != 3 {
+        return 2;
+    }
+    let shaped = shape_box(&[span("ab\ncd")], None, Align::Center, &mut fs);
+    if shaped.glyph_spans.len() != 4 || shaped.buffer.layout_runs().count() != 2 {
+        return 3;
+    }
+    let path = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(120.0, 80.0)),
+        Shape::Rectangle {
+            radius: Percent::new(30),
+        },
+    );
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.5,
+    };
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let (rescaled, placed) = place_on_closed(&run, &path, start, Direction::Clockwise, &fit, true, &style, &mut fs);
+    if rescaled.is_none() || placed.glyphs.len() != 3 {
+        return 4;
+    }
+    let filler = FitMode::Once {
+        filler: Some("-".to_owned()),
+    };
+    let line = Curve::Line(Vec2::ZERO, Vec2::new(300.0, 0.0));
+    let (filled, placed) = place_on_open(&run, &line, &filler, 0.0, &style, &mut fs);
+    if filled.is_none() || placed.glyphs.len() <= 3 {
+        return 5;
+    }
+    1
 }
